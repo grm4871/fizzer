@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: netaris-staging-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: netaris
+      POSTGRES_USER: netaris
+      POSTGRES_PASSWORD: netaris_staging_password
+    ports:
+      - "5434:5432"  # Different port from production
+    volumes:
+      - postgres_data_staging:/var/lib/postgresql/data
+      - ./sql/perms.sql:/docker-entrypoint-initdb.d/01-perms.sql:ro
+      - ./init.sql:/docker-entrypoint-initdb.d/02-init.sql:ro
+      - ./sql/seed.sql:/docker-entrypoint-initdb.d/03-seed.sql:ro
+      - ./sql/perms_triggers.sql:/docker-entrypoint-initdb.d/04-perms_triggers.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U netaris -d netaris"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - staging
+
+  # Runs Prisma db push after PostgreSQL is ready to sync any Prisma-only schema changes
+  db-init:
+    image: node:20-alpine
+    container_name: netaris-staging-db-init
+    working_dir: /app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://netaris:netaris_staging_password@postgres:5432/netaris
+    volumes:
+      - .:/app
+    command: sh -c "npm install prisma @prisma/client --silent && npx prisma db pull && npx prisma db push --accept-data-loss --skip-generate && npx prisma generate"
+    # Run once and exit
+    restart: "no"
+    networks:
+      - staging
+
+networks:
+  staging:
+    driver: bridge
+
+volumes:
+  postgres_data_staging:

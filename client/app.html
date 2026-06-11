@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <link rel="icon" type="image/png" href="/favicon.jpeg" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Netaris</title>
+
+  <!-- Mincho font for landing page -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho&display=swap" rel="stylesheet">
+
+  <!-- Version check script - always loaded fresh from server -->
+  <script src="/version-check.js"></script>
+
+</head>
+
+<body>
+<div id="root"></div>
+
+  <script type="module">
+    const veil = document.getElementById('blur-veil');
+    const root = document.documentElement;
+    const size = 140;                       // spotlight radius in px
+    root.style.setProperty('--spot-size', size + 'px');
+
+    let mx = -999, my = -999;                 // off-screen until first move
+
+    window.addEventListener('pointermove', e => {
+      mx = e.clientX;                         // just cache the numbers…
+      my = e.clientY;
+    }, { passive: true });
+
+    // one write per frame – keeps it smooth
+    const tick = () => {
+      root.style.setProperty('--mx', mx + 'px');
+      root.style.setProperty('--my', my + 'px');
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  </script>
+  <script type="module" src="/src/main.tsx"></script>
+</body>
+
+</html>

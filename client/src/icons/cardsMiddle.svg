@@ -1,0 +1,13 @@
+<svg width="50" height="50" viewBox="-10 -10 60 60" xmlns="http://www.w3.org/2000/svg">
+  <rect
+    x="6"
+    y="0"
+    width="30"
+    height="42"
+    rx="4"
+    ry="4"
+    fill="none"
+    stroke="#c1a263"
+    stroke-width="1.5"
+  />
+</svg>

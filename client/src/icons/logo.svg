@@ -1,0 +1,31 @@
+<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Mask for the circle with bottom third cut off -->
+    <mask id="circleMask">
+      <circle cx="100" cy="100" r="80" fill="white" />
+      <rect x="0" y="133.33" width="200" height="66.67" fill="black" />
+    </mask>
+  </defs>
+  
+  <!-- Top semicircle -->
+  <path d="M 20 100 A 80 80 0 0 1 180 100 Z" fill="black" mask="url(#circleMask)" />
+  
+  <!-- Bottom 6 sections with equal gaps and heights -->
+  <!-- Row 1, Left -->
+  <rect x="20" y="102" width="79" height="9.11" fill="black" mask="url(#circleMask)" />
+  
+  <!-- Row 1, Right -->
+  <rect x="101" y="102" width="79" height="9.11" fill="black" mask="url(#circleMask)" />
+  
+  <!-- Row 2, Left -->
+  <rect x="20" y="113.11" width="79" height="9.11" fill="black" mask="url(#circleMask)" />
+  
+  <!-- Row 2, Right -->
+  <rect x="101" y="113.11" width="79" height="9.11" fill="black" mask="url(#circleMask)" />
+  
+  <!-- Row 3, Left -->
+  <rect x="20" y="124.22" width="79" height="9.11" fill="black" mask="url(#circleMask)" />
+  
+  <!-- Row 3, Right -->
+  <rect x="101" y="124.22" width="79" height="9.11" fill="black" mask="url(#circleMask)" />
+</svg>

@@ -1,0 +1,3 @@
+psql -h localhost -p 5433 -U netaris -d netaris
+netaris_dev_password
+pm2 restart netaris

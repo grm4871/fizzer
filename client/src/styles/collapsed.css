@@ -1,0 +1,27 @@
+.collapsed h1,
+.collapsed h2,
+.collapsed h3,
+.collapsed h4,
+.collapsed h5,
+.collapsed h6 {
+  font-size: 1em;
+  margin: 0;
+  padding: 0;
+  font-weight: 900;
+}
+
+.collapsed p {
+  margin: 0;
+  padding: 0;
+}
+
+.collapsed * {
+  margin: 0;
+  padding: 0;
+}
+
+.pseudolink {
+  color: teal;
+  text-decoration: none;
+  cursor: default;
+}

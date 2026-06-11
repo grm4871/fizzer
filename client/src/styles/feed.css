@@ -1,0 +1,306 @@
+/* === FEEDS === */
+main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+#timeline, .folder-viewer-feed {
+  overflow-y: scroll;
+  flex-direction: column;
+  position: relative;
+  --scroll-percentage: 0%;
+}
+
+
+/* Webkit browsers scrollbar styling - gradient thumb */
+#timeline::-webkit-scrollbar, .folder-viewer-feed::-webkit-scrollbar {
+  width: 6px;
+  background: transparent;
+}
+
+#timeline::-webkit-scrollbar-track, .folder-viewer-feed::-webkit-scrollbar-track {
+  background: linear-gradient(to bottom, var(--accent-blue) 0%, var(--accent-blue) var(--scroll-percentage), var(--accent-orange) var(--scroll-percentage), var(--accent-orange) 100%);
+}
+
+#timeline::-webkit-scrollbar-thumb, .folder-viewer-feed::-webkit-scrollbar-thumb {
+  background-image: linear-gradient(var(--accent-blue), var(--accent-orange));
+
+  border: none;
+}
+
+.routes-wrapper { flex: 1; display: flex; flex-direction: column; min-height: 0; /* transparent to show background pattern */
+  background: transparent; }
+.timeline-top-controls { 
+  display: flex; justify-content: flex-end; 
+  /* transparent background to avoid overlaying on the feed background */
+  background: transparent;
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  height: 3.5em; /* reserve space so the dark posts area starts below */
+  align-items: center;
+}
+.channel-settings-button { margin: 0 0.5em 0 0.5em; font-size: 1.05em; }
+.document { padding: 0.75em; margin-bottom: 0.5em; background: #111; border-left: 3px solid #dec572; }
+.loading-text { padding: 16px; }
+
+/* === FOLDER VIEWER === */
+.folder-viewer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: transparent;
+}
+
+.folder-viewer-header {
+  padding: 1em;
+  border-bottom: 1px solid #333;
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.folder-viewer-header h2 {
+  margin: 0;
+  font-size: 1.5em;
+  color: var(--accent-blue);
+}
+
+.folder-viewer-feed {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0;
+}
+
+.folder-feed-item {
+  margin-bottom: 0;
+  border: none;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 0;
+  background: transparent;
+  overflow: hidden;
+}
+
+.folder-feed-item-footer {
+  padding: 4px 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-top: 1px solid rgba(255, 255, 255, 0.02);
+  background: rgba(0, 0, 0, 0.03);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  user-select: none;
+  min-height: 32px;
+}
+
+.folder-feed-item-footer:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.folder-feed-item-footer:hover .footer-right,
+.folder-feed-item-footer:hover .expand-arrow {
+  color: var(--accent-blue);
+}
+
+.folder-feed-item-footer.active {
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.folder-feed-item-footer.active .footer-right {
+  color: var(--accent-orange);
+}
+
+.folder-feed-item-footer.active .expand-arrow {
+  color: var(--accent-orange);
+}
+
+.footer-left {
+  display: flex;
+  align-items: center;
+}
+
+.footer-right {
+  display: flex;
+  align-items: center;
+  color: #444;
+  transition: color 0.2s ease;
+}
+
+.expand-arrow {
+  font-size: 0.7rem;
+  color: #444;
+  transition: all 0.3s ease;
+  display: inline-block;
+}
+
+.expand-arrow.expanded {
+  transform: rotate(180deg);
+}
+
+.folder-feed-comments {
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  max-height: 600px;
+  display: flex;
+  flex-direction: column;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.folder-feed-comments .embedded-feed {
+  flex: 1;
+  min-height: 200px;
+}
+
+.loading-indicator {
+  padding: 2em;
+  text-align: center;
+  color: #888;
+  font-style: italic;
+}
+
+.error-message {
+  padding: 1em;
+  margin: 1em;
+  background: rgba(255, 0, 0, 0.1);
+  border: 1px solid #f44;
+  color: #f44;
+  border-radius: 4px;
+  text-align: center;
+}
+
+/* === INDIVIDUAL POST === */
+.post-container { width: 100%; min-width: 0; display: flex; margin-bottom: 0.5em; transition: border-left 0.2s ease; z-index: 0; }
+.post {
+  padding: 0.75em;
+  text-align: left;
+  width: auto;
+  max-width: 100%;
+  overflow-wrap: break-word;
+  word-wrap: break-word;
+  transition: border 0.2s ease;
+  position: relative;
+}
+.post::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 6px; background: var(--post-author-color, var(--current-user-color)); animation: goldPulse 5s infinite; opacity: 1; transition: opacity 0.1s ease; }
+.post-iso::before { left: auto; right: 0; }
+.post-iso { text-align: right; margin-left: auto; transition: border 0.2s ease; background: linear-gradient(
+    to left,
+    color-mix(in srgb, var(--post-author-color) 20%, #111) 0px,
+    color-mix(in srgb, var(--post-author-color) 17%, #111) 15px,
+    color-mix(in srgb, var(--post-author-color) 12%, #111) 30px,
+    color-mix(in srgb, var(--post-author-color) 7%, #111) 50px,
+    color-mix(in srgb, var(--post-author-color) 3%, #111) 70px,
+    #111 100px,
+    #111 100%
+  );
+}
+
+/* there are dupe definitions here. I know it looks bad but changing it breaks things */
+
+.post-iso ul,
+.post-iso ol {
+  padding-left: 0;
+  margin-left: auto;
+  width: fit-content;
+}
+
+.post-iso li,
+.post-iso ol {
+  text-align: left;
+  direction: ltr;
+  list-style-position: outside;
+  padding-right: 0.5em;
+  margin-left: 1em;
+}
+
+.post-alloi {
+  background: linear-gradient(
+    to right,
+    color-mix(in srgb, var(--post-author-color) 20%, #111) 0px,
+    color-mix(in srgb, var(--post-author-color) 17%, #111) 15px,
+    color-mix(in srgb, var(--post-author-color) 12%, #111) 30px,
+    color-mix(in srgb, var(--post-author-color) 7%, #111) 50px,
+    color-mix(in srgb, var(--post-author-color) 3%, #111) 70px,
+    #111 100px,
+    #111 100%
+  );
+}
+
+.post-with-preview {
+  /* Don't force the entire post to full-width when it contains an
+     embed (channel/document). Let the post size to its content while
+     remaining bounded by the feed container. This prevents the outer
+     message box from stretching horizontally just because it contains
+     an embed. */
+  width: -moz-fit-content;
+  width: fit-content;
+  max-width: 100%;
+}
+.post > * { max-width: 100%; word-wrap: break-word; }
+
+/* Embedded media (images/videos in comments) should size naturally without constraint */
+.post-content img,
+.post-content video {
+  max-width: 100%;
+  width: auto;
+  height: auto;
+  max-height: 400px;
+  display: block;
+}
+
+.post-content p { margin: 0.75em 0; }
+.post-content p:first-child { margin-top: 0; }
+.post-content p:last-child { margin-bottom: 0; }
+
+/* Fast scrolling: highlight the left and right edges of the feed pane
+   (not each individual post). This avoids flashing when posts shift
+   horizontally during fast scroll or programmatic routing. */
+
+/* Fast scroll edge overlay bars - positioned on left and right sides of the feed */
+.fast-scroll-edge {
+  position: fixed;
+  width: 8px;
+  background: #d2b34e;
+  pointer-events: none;
+  z-index: 999999;
+  transition: opacity 0.1s linear;
+}
+
+/* Position bars using data attributes for left/right values - will be set by JavaScript */
+.fast-scroll-edge-left {
+  left: 0;
+  width: 6px;
+}
+
+.fast-scroll-edge-right {
+  right: 0;
+  background: linear-gradient(to right, #d2b34e 0%, #d2b34e 62.5%, transparent 62.5%, transparent 100%);
+}
+
+/* Fade per-post edge borders to 50% opacity during fast scrolling */
+.feed-root.fast-scrolling .post::before {
+  opacity: 0.5;
+  animation: none;
+}
+
+@keyframes goldPulse { 0%{opacity:1}100%{opacity:1} }
+
+/* Feed helpers */
+.feed-root {
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  position: relative;
+  pointer-events: auto;
+  min-width: 0;
+}
+
+/* System messages (kick notifications) */
+.system-message {
+  text-align: center;
+  color: #666;
+  font-size: 0.85rem;
+  padding: 0.5rem;
+  margin: 0.5rem 0;
+  font-style: italic;
+}
+
+.post-timestamp {
+  font-size: 0.6rem;
+  color: #888;
+  margin-top: 0.25rem;
+}

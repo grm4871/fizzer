@@ -1,0 +1,4 @@
+{
+  "skipVerificationSteps": true,
+  "notes": "Assistant will avoid printing run/verification instructions (e.g., 'start dev server', manual checks). Edit or remove this file to change behavior."
+}

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Define mask for hamburger lines -->
+    <mask id="lineMask">
+      <!-- White rectangle = show everything by default -->
+      <rect x="0" y="0" width="24" height="24" fill="white"/>
+      <!-- Black shape = hide the star area with padding -->
+      <circle cx="17" cy="7" r="5.5" fill="black"/>
+    </mask>
+  </defs>
+  
+  <!-- Three horizontal lines with mask applied -->
+  <g mask="url(#lineMask)">
+    <path d="M4 6 L20 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    <path d="M4 12 L20 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    <path d="M4 18 L20 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+  </g>
+  
+  <!-- Even larger star outline in top right (not masked) -->
+  <path d="M17 3 L18.2 6 L21.5 6.4 L19.2 8.6 L19.8 11.9 L17 10.3 L14.2 11.9 L14.8 8.6 L12.5 6.4 L15.8 6 Z" 
+        stroke="currentColor" 
+        stroke-width="1.5" 
+        stroke-linejoin="round" 
+        fill="none"/>
+</svg>

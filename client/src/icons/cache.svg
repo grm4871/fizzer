@@ -1,0 +1,13 @@
+<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <!-- Three stacked rectangles, 12px wide, 20px tall total, centered in 24x24 grid -->
+  <!-- Each rectangle is 12px wide and ~6.67px tall -->
+
+  <!-- Top rectangle -->
+  <rect x="6" y="2" width="12" height="6.67" fill="none" stroke="currentColor" stroke-width="1.5"/>
+
+  <!-- Middle rectangle -->
+  <rect x="6" y="8.67" width="12" height="6.67" fill="none" stroke="currentColor" stroke-width="1.5"/>
+
+  <!-- Bottom rectangle -->
+  <rect x="6" y="15.33" width="12" height="6.67" fill="none" stroke="currentColor" stroke-width="1.5"/>
+</svg>

@@ -1,0 +1,8 @@
+{
+	"appId": "is.netar.ios",
+	"appName": "Netaris",
+	"webDir": "client/dist",
+	"packageClassList": [
+		"KeyboardPlugin"
+	]
+}

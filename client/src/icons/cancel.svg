@@ -1,0 +1,7 @@
+<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <!-- Circle -->
+  <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.5"/>
+
+  <!-- 45 degree line through it -->
+  <line x1="5.636" y1="5.636" x2="18.364" y2="18.364" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+</svg>

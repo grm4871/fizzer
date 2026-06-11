@@ -1,0 +1,25 @@
+/* Markdown rendering styles for NetdocHeader */
+
+.markdown-preview p {
+  display: inline;
+}
+
+.markdown-preview a {
+  color: #b5975a;
+  text-decoration: underline;
+}
+
+.markdown-content { color: var(--main-text); font-size: 1.1rem; line-height: 1.8; letter-spacing: 0.01em; }
+.markdown-content p { margin-bottom: 1.5rem; word-wrap: break-word; overflow-wrap: break-word; }
+.markdown-content h1 { color: var(--dark-accent); font-size: 2rem; margin-top: 1.5rem; margin-bottom: 0.75rem; font-weight: bold; }
+.markdown-content h2 { color: var(--dark-accent); font-size: 1.6rem; margin-top: 1.5rem; margin-bottom: 0.75rem; font-weight: bold; }
+.markdown-content h3 { color: var(--dark-accent); font-size: 1.3rem; margin-top: 1.25rem; margin-bottom: 0.5rem; font-weight: bold; }
+.markdown-content ul, .markdown-content ol { margin-bottom: 1.5rem; padding-left: 2rem; }
+.markdown-content li { margin-bottom: 0.5rem; }
+.markdown-content strong { color: #e8d7b0; font-weight: bold; }
+.markdown-content em { color: #c8b790; font-style: italic; }
+.markdown-content code { background: #1a1a1a; color: #c8b790; padding: 0.2rem 0.4rem; border-radius: 3px; font-family: monospace; font-size: 0.95rem; }
+.markdown-content pre { background: #1a1a1a; color: #c8b790; padding: 1rem; border-radius: 4px; overflow: auto; margin-bottom: 1.5rem; border: 1px solid #333; }
+.markdown-content blockquote { border-left: 4px solid var(--dark-accent); padding-left: 1rem; margin-left: 0; margin-bottom: 1.5rem; color: #aaa; font-style: italic; }
+.markdown-content a { color: var(--dark-accent); text-decoration: none; border-bottom: 1px solid var(--dark-accent); }
+.markdown-content del { text-decoration: line-through; text-decoration-thickness: 2px; text-decoration-color: #dc0000; color: inherit; }
