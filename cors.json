@@ -1,8 +1,0 @@
-[
-  {
-    "origin": ["http://localhost:5173", "http://localhost:3000", "https://netar.is", "https://api.netar.is"],
-    "method": ["GET", "HEAD", "PUT", "POST", "DELETE"],
-    "responseHeader": ["Content-Type", "Access-Control-Allow-Origin"],
-    "maxAgeSeconds": 3600
-  }
-]

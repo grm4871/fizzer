@@ -1,6 +1,0 @@
-{
-  "dependencies": {
-    "remark-gfm": "^4.0.1",
-    "unist-util-visit": "^5.0.0"
-  }
-}

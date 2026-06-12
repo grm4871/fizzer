@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <!-- Downward arrow -->
-  <path d="M12 3 L12 13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-  <path d="M8 10 L12 14 L16 10" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-  
-  <!-- Tray/container (upside down staple shape) -->
-  <path d="M5 16 L5 19 C5 20 6 21 7 21 L17 21 C18 21 19 20 19 19 L19 16" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-</svg>

@@ -1,0 +1,33 @@
+{
+  "name": "netaris",
+  "version": "0.1.0",
+  "productName": "Netaris",
+  "description": "Netaris Desktop App",
+  "main": "main.cjs",
+  "type": "module",
+  "scripts": {
+    "start": "electron .",
+    "package": "electron-forge package",
+    "make": "electron-forge make",
+    "postinstall": "electron-rebuild -f -w better-sqlite3"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.5.0",
+    "express": "^4.18.2",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "@electron-forge/cli": "^7.2.0",
+    "@electron-forge/maker-deb": "^7.2.0",
+    "@electron-forge/maker-dmg": "^7.11.1",
+    "@electron-forge/maker-rpm": "^7.2.0",
+    "@electron-forge/maker-squirrel": "^7.2.0",
+    "@electron-forge/maker-zip": "^7.2.0",
+    "@electron-forge/plugin-auto-unpack-natives": "^7.2.0",
+    "@electron/rebuild": "^4.0.2",
+    "concurrently": "^9.1.2",
+    "electron": "^29.0.0",
+    "electron-reload": "^2.0.0-alpha.1",
+    "nodemon": "^3.1.10"
+  }
+}

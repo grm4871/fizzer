@@ -1,6 +1,0 @@
-{
-    "watch": ["index.js", "utils.js", "data/"],
-    "ext": "js,json",
-    "ignore": ["public/*", "data/*"],
-    "exec": "node index.js"
-  }
