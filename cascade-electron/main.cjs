@@ -11,14 +11,36 @@ if (process.platform === 'linux') {
 let mainWindow;
 let serverProcess;
 
+function isDevelopmentMode() {
+  return !app.isPackaged;
+}
+
+function buildApplicationMenu() {
+  if (!isDevelopmentMode()) return null;
+
+  return Menu.buildFromTemplate([
+    {
+      label: 'Debug',
+      submenu: [
+        { role: 'reload', label: 'Reload' },
+        { role: 'forceReload', label: 'Force Reload' },
+        { role: 'toggleDevTools', label: 'Toggle DevTools' },
+        { type: 'separator' },
+        { role: 'resetZoom', label: 'Actual Size' },
+        { role: 'zoomIn', label: 'Zoom In' },
+        { role: 'zoomOut', label: 'Zoom Out' },
+      ],
+    },
+  ]);
+}
+
 function createWindow() {
-  // Hide the application menu bar (Edit, View, Window, Help)
-  Menu.setApplicationMenu(null);
+  Menu.setApplicationMenu(buildApplicationMenu());
 
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
-    autoHideMenuBar: true, // Fallback for Linux
+    autoHideMenuBar: !isDevelopmentMode(),
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,

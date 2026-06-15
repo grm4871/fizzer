@@ -58,6 +58,17 @@ const buildVersion = new Date().getTime().toString();
 function versionGenerationPlugin() {
   return {
     name: 'version-generation',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        if (req.method === 'GET' && req.url?.startsWith('/version.json')) {
+          res.setHeader('Content-Type', 'application/json');
+          res.setHeader('Cache-Control', 'no-cache');
+          res.end(JSON.stringify({ version: buildVersion }));
+          return;
+        }
+        next();
+      });
+    },
     writeBundle() {
       const versionFile = { version: buildVersion };
       const distPath = path.resolve(__dirname, 'dist');

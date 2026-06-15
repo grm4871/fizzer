@@ -14,11 +14,11 @@ function getAppDataPath() {
   const platform = os.platform();
 
   if (platform === 'win32') {
-    // Windows: %APPDATA%/netaris
-    return path.join(process.env.APPDATA, 'netaris');
+    // Windows: %APPDATA%/cascade
+    return path.join(process.env.APPDATA, 'cascade');
   } else {
-    // macOS and Linux: ~/.config/netaris
-    return path.join(os.homedir(), '.config', 'netaris');
+    // macOS and Linux: ~/.config/cascade
+    return path.join(os.homedir(), '.config', 'cascade');
   }
 }
 
@@ -37,7 +37,7 @@ function initConfig() {
 
   // Create default config if it doesn't exist
   if (!fs.existsSync(configPath)) {
-    const defaultDbPath = path.join(appDataPath, 'netaris.db');
+    const defaultDbPath = path.join(appDataPath, 'cascade.db');
     config = {
       db_path: defaultDbPath
     };
