@@ -134,6 +134,16 @@ function createWindow() {
       // Reset zoom: Cmd/Ctrl + 0
       event.preventDefault();
       mainWindow.webContents.setZoomLevel(0);
+    } else if (modifier && input.code === 'KeyN' && !input.shift) {
+      // New Note: Cmd/Ctrl + N
+      // Chromium reserves Ctrl+N (new window) and never dispatches it to the
+      // page, so we intercept it here and forward it to the renderer.
+      event.preventDefault();
+      mainWindow.webContents.send('shortcut', 'new-note');
+    } else if (modifier && input.code === 'Backslash' && !input.shift) {
+      // Toggle Sidebar: Cmd/Ctrl + \
+      event.preventDefault();
+      mainWindow.webContents.send('shortcut', 'toggle-sidebar');
     }
   });
 }

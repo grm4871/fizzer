@@ -1,55 +1,58 @@
-type Db = {
-  exec(sql: string): void;
-  prepare(sql: string): {
-    get(...params: unknown[]): unknown;
-    all(...params: unknown[]): unknown[];
-    run(...params: unknown[]): { lastInsertRowid: number | bigint; changes: number };
-  };
-};
+import type Database from 'better-sqlite3';
 
-export type SpecVersion = {
-  id: number;
-  spec_id: string;
+type Db = Database.Database;
+
+export type NoteVersion = {
+  id: string;
+  note_id: string;
   content: string;
   label: string | null;
   created_at: string;
 };
 
-export function ensureVersionsSchema(db: Db) {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS spec_versions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      spec_id TEXT NOT NULL REFERENCES specs(id) ON DELETE CASCADE,
-      content TEXT NOT NULL,
-      label TEXT,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-  `);
+export type NoteVersionSummary = {
+  id: string;
+  note_id: string;
+  label: string | null;
+  created_at: string;
+};
+
+/**
+ * Schema is now created in index.ts (note_versions table).
+ * This hook is kept for potential future migrations.
+ */
+export function ensureVersionsSchema(_db: Db) {
+  // no-op — schema lives in index.ts
 }
 
-export function createSpecVersion(db: Db, specId: string, content: string, label?: string) {
-  const result = db.prepare('INSERT INTO spec_versions (spec_id, content, label) VALUES (?, ?, ?)').run(specId, content, label || null);
-  return getSpecVersion(db, Number(result.lastInsertRowid));
+export function createNoteVersion(db: Db, noteId: string, content: string, label?: string): NoteVersion | undefined {
+  const id = crypto.randomUUID();
+  const validLabels = ['manual', 'auto', 'ai-edit', 'pre-ai', 'save', 'created'];
+  const safeLabel = label && validLabels.includes(label) ? label : label || null;
+  db.prepare(
+    'INSERT INTO note_versions (id, note_id, content, label) VALUES (?, ?, ?, ?)'
+  ).run(id, noteId, content, safeLabel);
+  return db.prepare('SELECT * FROM note_versions WHERE id = ?').get(id) as NoteVersion | undefined;
 }
 
-export function listSpecVersions(db: Db, specId: string) {
+export function listNoteVersions(db: Db, noteId: string): NoteVersionSummary[] {
   return db.prepare(`
-    SELECT id, spec_id, label, created_at
-    FROM spec_versions
-    WHERE spec_id = ?
-    ORDER BY created_at DESC, id DESC
-  `).all(specId);
+    SELECT id, note_id, label, created_at
+    FROM note_versions
+    WHERE note_id = ?
+    ORDER BY created_at DESC
+  `).all(noteId) as NoteVersionSummary[];
 }
 
-export function getSpecVersion(db: Db, id: number) {
-  return db.prepare('SELECT * FROM spec_versions WHERE id = ?').get(id) as SpecVersion | undefined;
+export function getNoteVersion(db: Db, id: string): NoteVersion | undefined {
+  return db.prepare('SELECT * FROM note_versions WHERE id = ?').get(id) as NoteVersion | undefined;
 }
 
-export function diffVersions(db: Db, fromId: number, toId: number) {
-  const from = getSpecVersion(db, fromId);
-  const to = getSpecVersion(db, toId);
+export function diffNoteVersions(db: Db, fromId: string, toId: string) {
+  const from = getNoteVersion(db, fromId);
+  const to = getNoteVersion(db, toId);
   if (!from || !to) return undefined;
-  return unifiedDiff(from.content, to.content, `version-${from.id}`, `version-${to.id}`);
+  return diffText(from.content, to.content, `version-${from.id.slice(0, 8)}`, `version-${to.id.slice(0, 8)}`);
 }
 
 export function diffText(from: string, to: string, fromLabel = 'before', toLabel = 'after') {

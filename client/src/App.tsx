@@ -1,102 +1,285 @@
-import { useEffect, useMemo, useState } from 'react';
-import { AgentPanel } from './components/AgentPanel';
-import { SpecEditor } from './components/SpecEditor';
-import { SpecTree } from './components/SpecTree';
-import { api, type Spec, type SpecSummary, type SpecVersion, type User, type Workspace } from './api';
-import { connectRunSocket } from './socket';
+import { useEffect, useState, useCallback } from 'react';
+import { Sidebar } from './components/Sidebar';
+import { TabBar } from './components/TabBar';
+import { NoteEditor } from './components/NoteEditor';
+import { AIPanel } from './components/AIPanel';
+import { SearchOverlay } from './components/SearchOverlay';
+import { CommandPalette } from './components/CommandPalette';
+import { api, type User, type Vault, type Folder, type NoteSummary, type Note } from './api';
+import { connectVaultSocket } from './socket';
+import { Gem, Sparkles, PanelLeftOpen } from 'lucide-react';
 
 export default function App() {
+  // Auth state
   const [user, setUser] = useState<User | null>(null);
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [authError, setAuthError] = useState('');
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
-  const [activeWorkspaceId, setActiveWorkspaceId] = useState<number | null>(null);
-  const [specs, setSpecs] = useState<SpecSummary[]>([]);
-  const [activeSpecId, setActiveSpecId] = useState<string | null>(null);
-  const [activeSpec, setActiveSpec] = useState<Spec | null>(null);
+
+  // App data state
+  const [vaults, setVaults] = useState<Vault[]>([]);
+  const [activeVaultId, setActiveVaultId] = useState<string | null>(null);
+  const [folders, setFolders] = useState<Folder[]>([]);
+  const [notes, setNotes] = useState<NoteSummary[]>([]);
+
+  // Tabbed navigation state
+  const [openTabs, setOpenTabs] = useState<{ id: string; title: string; dirty: boolean }[]>([]);
+  const [activeTabId, setActiveTabId] = useState<string | null>(null);
+  const [activeNote, setActiveNote] = useState<Note | null>(null);
   const [draftContent, setDraftContent] = useState('');
-  const [versions, setVersions] = useState<SpecVersion[]>([]);
-  const [diff, setDiff] = useState('');
-  const [preview, setPreview] = useState(false);
-  const [status, setStatus] = useState('');
 
-  const dirty = activeSpec ? draftContent !== activeSpec.content : false;
-  const activeWorkspace = useMemo(
-    () => workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? null,
-    [activeWorkspaceId, workspaces],
-  );
+  // UI panels state
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [aiPanelOpen, setAiPanelOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
 
+
+  // Load vaults
+  const loadVaults = useCallback(async () => {
+    try {
+      const data = await api<{ vaults: Vault[] }>('/api/vaults');
+      setVaults(data.vaults);
+      if (data.vaults.length > 0 && !activeVaultId) {
+        setActiveVaultId(data.vaults[0].id);
+      } else if (data.vaults.length === 0) {
+        // Create a default vault if none exist
+        const created = await api<{ vault: Vault }>('/api/vaults', {
+          method: 'POST',
+          body: JSON.stringify({
+            // Omit root_path so the server places it in a persistent location.
+            name: 'My Vault',
+          }),
+        });
+        setVaults([created.vault]);
+        setActiveVaultId(created.vault.id);
+      }
+    } catch (error) {
+      console.error('Error loading vaults:', error);
+    }
+  }, [activeVaultId]);
+
+  // Check login on mount
   useEffect(() => {
     const token = localStorage.getItem('docs_token');
     if (!token) return;
     api<{ user: User }>('/api/me')
       .then((data) => {
         setUser(data.user);
-        return loadWorkspaces();
+        void loadVaults();
       })
       .catch(() => localStorage.removeItem('docs_token'));
+  }, [loadVaults]);
+
+  // Load folders and notes when active vault changes
+  const loadVaultData = useCallback(async (vaultId: string) => {
+    try {
+      const [folderData, noteData] = await Promise.all([
+        api<{ folders: Folder[] }>(`/api/vaults/${vaultId}/folders`),
+        api<{ notes: NoteSummary[] }>(`/api/vaults/${vaultId}/notes`),
+      ]);
+      setFolders(folderData.folders || []);
+      setNotes(noteData.notes || []);
+    } catch (error) {
+      console.error('Error loading vault data:', error);
+    }
   }, []);
 
   useEffect(() => {
-    if (activeWorkspaceId) loadSpecs(activeWorkspaceId, true);
-  }, [activeWorkspaceId]);
+    if (activeVaultId) {
+      void loadVaultData(activeVaultId);
+    } else {
+      setFolders([]);
+      setNotes([]);
+      setOpenTabs([]);
+      setActiveTabId(null);
+      setActiveNote(null);
+      setDraftContent('');
+    }
+  }, [activeVaultId, loadVaultData]);
 
+  // Join/leave socket room
   useEffect(() => {
-    if (activeSpecId) loadSpec(activeSpecId);
-  }, [activeSpecId]);
+    if (!activeVaultId) return;
+    const socket = connectVaultSocket();
+    socket.emit('joinVault', activeVaultId);
 
-  useEffect(() => {
-    if (!activeWorkspaceId) return;
-    const socket = connectRunSocket();
-    socket.emit('joinWorkspace', activeWorkspaceId);
-    socket.on('workspace:changed', (message) => {
-      if (message.workspaceId === activeWorkspaceId) void loadSpecs(activeWorkspaceId);
-    });
+    const handleNoteChanged = (data: { noteId: string; vaultId: string }) => {
+      if (data.vaultId === activeVaultId) {
+        void loadVaultData(activeVaultId);
+        if (activeNote && activeNote.id === data.noteId) {
+          // If the changed note is currently active and not dirty, reload it
+          const tab = openTabs.find((t) => t.id === data.noteId);
+          if (!tab || !tab.dirty) {
+            void loadActiveNote(data.noteId);
+          }
+        }
+      }
+    };
+
+    const handleNoteCreated = (data: { noteId: string; vaultId: string }) => {
+      if (data.vaultId === activeVaultId) {
+        void loadVaultData(activeVaultId);
+      }
+    };
+
+    const handleNoteDeleted = (data: { noteId: string; vaultId: string }) => {
+      if (data.vaultId === activeVaultId) {
+        void loadVaultData(activeVaultId);
+        // Close tab if deleted note is open
+        setOpenTabs((prev) => prev.filter((t) => t.id !== data.noteId));
+        if (activeTabId === data.noteId) {
+          setActiveTabId(null);
+          setActiveNote(null);
+          setDraftContent('');
+        }
+      }
+    };
+
+    socket.on('vault:noteChanged', handleNoteChanged);
+    socket.on('vault:noteCreated', handleNoteCreated);
+    socket.on('vault:noteDeleted', handleNoteDeleted);
+
     return () => {
-      socket.emit('leaveWorkspace', activeWorkspaceId);
+      socket.emit('leaveVault', activeVaultId);
+      socket.off('vault:noteChanged', handleNoteChanged);
+      socket.off('vault:noteCreated', handleNoteCreated);
+      socket.off('vault:noteDeleted', handleNoteDeleted);
       socket.disconnect();
     };
-  }, [activeWorkspaceId]);
+  }, [activeVaultId, activeNote, openTabs, activeTabId, loadVaultData]);
 
-  async function loadWorkspaces() {
-    const data = await api<{ workspaces: Workspace[] }>('/api/workspaces');
-    if (data.workspaces.length === 0) {
-      const created = await api<{ workspace: Workspace }>('/api/workspaces', {
-        method: 'POST',
-        body: JSON.stringify({ name: 'This repo' }),
+  // Load a single note's full content
+  const loadActiveNote = async (noteId: string) => {
+    try {
+      const data = await api<{ note: Note }>(`/api/notes/${noteId}`);
+      setActiveNote(data.note);
+      setDraftContent(data.note.content);
+
+      // Add to open tabs if not already present
+      setOpenTabs((prev) => {
+        if (prev.some((t) => t.id === noteId)) return prev;
+        return [...prev, { id: noteId, title: data.note.title, dirty: false }];
       });
-      setWorkspaces([created.workspace]);
-      setActiveWorkspaceId(created.workspace.id);
-      return;
+      setActiveTabId(noteId);
+    } catch (error) {
+      console.error('Error loading note:', error);
     }
-    setWorkspaces(data.workspaces);
-    setActiveWorkspaceId((current) => current ?? data.workspaces[0].id);
-  }
+  };
 
-  async function loadSpecs(workspaceId: number, selectFirst = false) {
-    const data = await api<{ specs: SpecSummary[] }>(`/api/workspaces/${workspaceId}/specs`);
-    setSpecs(data.specs);
-    if (selectFirst) setActiveSpecId((current) => current ?? data.specs[0]?.id ?? null);
-  }
+  // Select tab
+  const handleSelectTab = (tabId: string) => {
+    void loadActiveNote(tabId);
+  };
 
-  async function refreshSelectedSpec() {
-    if (activeWorkspaceId) await loadSpecs(activeWorkspaceId);
-    if (activeSpecId) await loadSpec(activeSpecId);
-  }
+  // Open a note referenced by a [[wikilink]] (matched by title)
+  const handleOpenWikilink = (title: string) => {
+    const target = notes.find((n) => n.title.toLowerCase() === title.toLowerCase());
+    if (target) {
+      void loadActiveNote(target.id);
+    }
+  };
 
-  async function loadSpec(id: string) {
-    const [specData, versionData] = await Promise.all([
-      api<{ spec: Spec }>(`/api/specs/${id}`),
-      api<{ versions: SpecVersion[] }>(`/api/specs/${id}/versions`),
-    ]);
-    setActiveSpec(specData.spec);
-    setDraftContent(specData.spec.content);
-    setVersions(versionData.versions);
-    setDiff('');
-  }
+  // Close tab
+  const handleCloseTab = (tabId: string) => {
+    setOpenTabs((prev) => {
+      const next = prev.filter((t) => t.id !== tabId);
+      if (activeTabId === tabId) {
+        if (next.length > 0) {
+          // Select last tab
+          const lastTab = next[next.length - 1];
+          void loadActiveNote(lastTab.id);
+        } else {
+          setActiveTabId(null);
+          setActiveNote(null);
+          setDraftContent('');
+        }
+      }
+      return next;
+    });
+  };
 
+  // Create new note
+  const handleCreateNote = async () => {
+    if (!activeVaultId) return;
+    try {
+      const data = await api<{ note: Note }>(`/api/vaults/${activeVaultId}/notes`, {
+        method: 'POST',
+        body: JSON.stringify({
+          title: 'Untitled Note',
+          content: '# Untitled Note\n\nStart typing...',
+        }),
+      });
+      // Refresh notes list
+      await loadVaultData(activeVaultId);
+      // Open new note
+      void loadActiveNote(data.note.id);
+    } catch (error) {
+      console.error('Error creating note:', error);
+    }
+  };
+
+  // Save current note
+  const handleSaveNote = async () => {
+    if (!activeNote) return;
+    try {
+      const data = await api<{ note: Note }>(`/api/notes/${activeNote.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ content: draftContent }),
+      });
+      setActiveNote(data.note);
+      // Mark tab as clean
+      setOpenTabs((prev) =>
+        prev.map((t) => (t.id === activeNote.id ? { ...t, title: data.note.title, dirty: false } : t))
+      );
+      // Refresh notes list
+      if (activeVaultId) {
+        void loadVaultData(activeVaultId);
+      }
+      return data.note;
+    } catch (error) {
+      console.error('Error saving note:', error);
+      throw error;
+    }
+  };
+
+  // Handle note content edits
+  const handleContentChange = (newContent: string) => {
+    setDraftContent(newContent);
+    if (activeNote) {
+      const isDirty = newContent !== activeNote.content;
+      setOpenTabs((prev) =>
+        prev.map((t) => (t.id === activeNote.id ? { ...t, dirty: isDirty } : t))
+      );
+    }
+  };
+
+  // Run AI directives in the active note
+  const handleRunDirectives = async () => {
+    if (!activeNote) return;
+    try {
+      // First save the current draft content so the directives are saved to disk
+      await handleSaveNote();
+
+      const data = await api<{ note: Note }>(`/api/notes/${activeNote.id}/run-directives`, {
+        method: 'POST',
+      });
+      setActiveNote(data.note);
+      setDraftContent(data.note.content);
+      // Mark tab as clean and update title if it changed
+      setOpenTabs((prev) =>
+        prev.map((t) => (t.id === activeNote.id ? { ...t, title: data.note.title, dirty: false } : t))
+      );
+      if (activeVaultId) {
+        void loadVaultData(activeVaultId);
+      }
+    } catch (error) {
+      console.error('Error running directives:', error);
+    }
+  };
+
+  // Handle login/register submit
   async function submitAuth(event: React.FormEvent) {
     event.preventDefault();
     setAuthError('');
@@ -108,216 +291,219 @@ export default function App() {
       localStorage.setItem('docs_token', data.token);
       setUser(data.user);
       setPassword('');
-      await loadWorkspaces();
+      await loadVaults();
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : 'Authentication failed');
     }
   }
 
-  async function createSpec() {
-    if (!activeWorkspace) return;
-    const title = 'Untitled Spec';
-    const data = await api<{ spec: Spec }>(`/api/workspaces/${activeWorkspace.id}/specs`, {
-      method: 'POST',
-      body: JSON.stringify({ title }),
-    });
-    await loadSpecs(activeWorkspace.id);
-    setActiveSpecId(data.spec.id);
-  }
-
-  async function saveSpec() {
-    if (!activeSpec) return;
-    setStatus('');
-    try {
-      const data = await api<{ spec: Spec }>(`/api/specs/${activeSpec.id}`, {
-        method: 'PUT',
-        body: JSON.stringify({ content: draftContent }),
-      });
-      setActiveSpec(data.spec);
-      setDraftContent(data.spec.content);
-      setStatus('Saved');
-      await Promise.all([loadSpecs(data.spec.workspace_id), loadVersions(data.spec.id)]);
-      window.setTimeout(() => setStatus(''), 1500);
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : 'Save failed');
-    }
-  }
-
-  async function loadVersions(specId: string) {
-    const data = await api<{ versions: SpecVersion[] }>(`/api/specs/${specId}/versions`);
-    setVersions(data.versions);
-  }
-
-  async function rescanWorkspace() {
-    if (!activeWorkspaceId) return;
-    const data = await api<{ specs: SpecSummary[] }>(`/api/workspaces/${activeWorkspaceId}/rescan`, { method: 'POST' });
-    setSpecs(data.specs);
-  }
-
-  async function showLatestDiff() {
-    if (!activeSpec) return;
-    const data = await api<{ diff: string }>(`/api/specs/${activeSpec.id}/diff`);
-    setDiff(data.diff);
-  }
-
-  function logout() {
+  // Logout
+  const handleLogout = () => {
     localStorage.removeItem('docs_token');
     setUser(null);
-    setWorkspaces([]);
-    setSpecs([]);
-    setActiveSpec(null);
-    setActiveSpecId(null);
-  }
+    setVaults([]);
+    setActiveVaultId(null);
+    setFolders([]);
+    setNotes([]);
+    setOpenTabs([]);
+    setActiveTabId(null);
+    setActiveNote(null);
+    setDraftContent('');
+  };
+
+  // Keyboard shortcuts listener
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ctrl+P / Cmd+P - Command Palette
+      if ((e.ctrlKey || e.metaKey) && e.key === 'p') {
+        e.preventDefault();
+        setCommandPaletteOpen((prev) => !prev);
+      }
+      // Ctrl+Shift+F / Cmd+Shift+F - Search
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        setSearchOpen((prev) => !prev);
+      }
+      // Ctrl+\ / Cmd+\ - Sidebar Toggle
+      if ((e.ctrlKey || e.metaKey) && e.key === '\\') {
+        e.preventDefault();
+        setSidebarOpen((prev) => !prev);
+      }
+      // Ctrl+N / Cmd+N - New Note
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 'n') {
+        e.preventDefault();
+        void handleCreateNote();
+      }
+      // Ctrl+S / Cmd+S - Save Note
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault();
+        void handleSaveNote();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [activeNote, draftContent, activeVaultId]);
+
+  // Shortcuts that Chromium reserves (Ctrl+N, Ctrl+\) never reach the renderer,
+  // so the Electron main process intercepts them and forwards them here.
+  useEffect(() => {
+    const electronAPI = (window as unknown as {
+      electronAPI?: { onShortcut?: (cb: (action: string) => void) => () => void };
+    }).electronAPI;
+    if (!electronAPI?.onShortcut) return;
+    return electronAPI.onShortcut((action) => {
+      if (action === 'new-note') {
+        void handleCreateNote();
+      } else if (action === 'toggle-sidebar') {
+        setSidebarOpen((prev) => !prev);
+      }
+    });
+  }, [activeVaultId]);
 
   if (!user) {
     return (
       <main className="auth-shell">
-        <form className="auth-panel" onSubmit={submitAuth}>
-          <h1>Cascade</h1>
-          <p>Sign in to browse and edit implementation specs from a target repo.</p>
-          <label>
+        <form className="auth-panel" id="auth-panel" onSubmit={submitAuth}>
+          <h1 style={{ display: 'flex', alignItems: 'center', gap: '8px', justifyContent: 'center' }}>
+            <Gem size={28} /> Cascade Notes
+          </h1>
+          <p>An intelligent Obsidian-style editor with inline LLM directives.</p>
+          <label htmlFor="username">
             Username
-            <input value={username} onChange={(event) => setUsername(event.target.value)} autoFocus />
+            <input
+              id="username"
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+              autoFocus
+            />
           </label>
-          <label>
+          <label htmlFor="password">
             Password
-            <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" />
+            <input
+              id="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              type="password"
+            />
           </label>
           {authError && <div className="error">{authError}</div>}
-          <button type="submit">{authMode === 'login' ? 'Log in' : 'Create account'}</button>
-          <button type="button" className="link-button" onClick={() => setAuthMode(authMode === 'login' ? 'register' : 'login')}>
-            {authMode === 'login' ? 'Need an account?' : 'Already have an account?'}
+          <button id="auth-submit" type="submit">
+            {authMode === 'login' ? 'Log in' : 'Create account'}
+          </button>
+          <button
+            id="auth-toggle-mode"
+            type="button"
+            className="link-button"
+            onClick={() => setAuthMode(authMode === 'login' ? 'register' : 'login')}
+          >
+            {authMode === 'login' ? 'Need an account? Sign up' : 'Already have an account? Log in'}
           </button>
         </form>
-        <Style />
       </main>
     );
   }
 
   return (
-    <main className="app-shell">
-      <SpecTree
-        username={user.username}
-        workspaces={workspaces}
-        activeWorkspaceId={activeWorkspaceId}
-        specs={specs}
-        activeSpecId={activeSpecId}
-        onSelectWorkspace={setActiveWorkspaceId}
-        onSelectSpec={setActiveSpecId}
-        onNewSpec={createSpec}
-        onRescan={rescanWorkspace}
-        onLogout={logout}
-      />
-      <SpecEditor
-        spec={activeSpec}
-        content={draftContent}
-        dirty={dirty}
-        status={status}
-        versions={versions}
-        diff={diff}
-        preview={preview}
-        onContentChange={setDraftContent}
-        onSave={saveSpec}
-        onPreviewChange={setPreview}
-        onDiffLatest={showLatestDiff}
-      />
-      <AgentPanel spec={activeSpec} onSpecChanged={refreshSelectedSpec} />
-      <Style />
-    </main>
-  );
-}
+    <main
+      className="app-shell"
+      style={{
+        display: 'grid',
+        gridTemplateColumns: `${sidebarOpen ? '280px' : '0px'} minmax(0, 1fr) ${aiPanelOpen ? '340px' : '0px'}`,
+        height: '100vh',
+        overflow: 'hidden',
+      }}
+    >
+      {/* Sidebar */}
+      {sidebarOpen && (
+        <Sidebar
+          user={user}
+          vaults={vaults}
+          activeVaultId={activeVaultId}
+          folders={folders}
+          notes={notes}
+          activeNoteId={activeTabId}
+          onSelectVault={setActiveVaultId}
+          onSelectNote={handleSelectTab}
+          onNewNote={handleCreateNote}
+          onSearch={() => setSearchOpen(true)}
+          onCollapse={() => setSidebarOpen(false)}
+          onLogout={handleLogout}
+        />
+      )}
 
-function Style() {
-  return (
-    <style>{`
-      * { box-sizing: border-box; }
-      body { margin: 0; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #111315; color: #ece8df; }
-      button, input, textarea, select { font: inherit; }
-      button, select { border: 1px solid #3b3d40; background: #1f2124; color: #ece8df; padding: 0.5rem 0.7rem; cursor: pointer; border-radius: 6px; }
-      button:disabled { opacity: 0.45; cursor: default; }
-      input, textarea { width: 100%; border: 1px solid #34373c; background: #111315; color: #ece8df; padding: 0.65rem; outline: none; border-radius: 6px; }
-      input:focus, textarea:focus, select:focus { border-color: #8ea7ff; }
-      .auth-shell { min-height: 100vh; display: grid; place-items: center; padding: 1rem; }
-      .auth-panel { width: min(420px, 100%); display: grid; gap: 1rem; border: 1px solid #303236; padding: 1.5rem; background: #17191b; border-radius: 8px; }
-      .auth-panel h1 { margin: 0; font-size: 2rem; }
-      .auth-panel p { margin: 0; color: #a9adb4; line-height: 1.5; }
-      label { display: grid; gap: 0.35rem; color: #c9cbd0; }
-      .error { color: #ff9c9c; }
-      .link-button { background: transparent; border: 0; color: #aebcff; padding: 0; justify-self: start; }
-      .app-shell { height: 100vh; display: grid; grid-template-columns: 290px minmax(0, 1fr) 340px; }
-      .sidebar, .agent-panel { background: #151719; display: flex; flex-direction: column; min-height: 0; }
-      .sidebar { border-right: 1px solid #303236; }
-      .agent-panel { border-left: 1px solid #303236; overflow: hidden; }
-      .sidebar-top, .agent-panel header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1rem; border-bottom: 1px solid #303236; }
-      .workspace-tools { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.5rem; padding: 1rem; border-bottom: 1px solid #303236; }
-      .workspace-tools select { min-width: 0; }
-      .new-doc { margin: 1rem; }
-      .doc-list { overflow: auto; padding: 0 0.5rem 1rem; }
-      .spec-row { width: 100%; text-align: left; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.25rem 0.5rem; margin-bottom: 0.35rem; }
-      .spec-row.active { border-color: #8ea7ff; background: #252936; }
-      .spec-title, .spec-row small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .spec-row small { grid-column: 1 / -1; color: #8d9299; }
-      .badge { border: 1px solid #4a4d52; border-radius: 999px; padding: 0.05rem 0.45rem; font-size: 0.72rem; color: #d9dce2; }
-      .badge.ready { border-color: #667a45; color: #d9f5b4; }
-      .badge.implemented { border-color: #477467; color: #b9f3de; }
-      .badge.implementing { border-color: #7a6845; color: #ffe1a9; }
-      .badge.stale { border-color: #7c4c4c; color: #ffb4b4; }
-      .empty, .empty-state { color: #8d9299; padding: 1rem; }
-      .document { min-width: 0; display: flex; flex-direction: column; height: 100vh; }
-      .document-header { display: flex; justify-content: space-between; gap: 1rem; padding: 1rem; border-bottom: 1px solid #303236; }
-      .document-header h1 { margin: 0; font-size: 1.3rem; }
-      .document-header p { margin: 0.35rem 0 0; color: #8d9299; }
-      .actions { display: flex; align-items: center; gap: 0.5rem; white-space: nowrap; }
-      .danger { border-color: #6a3030; color: #ffb4b4; }
-      .frontmatter-strip { display: grid; grid-template-columns: 140px 1fr 1fr; gap: 0.75rem; padding: 0.75rem 1rem; border-bottom: 1px solid #303236; background: #17191b; }
-      .frontmatter-strip label span { font-size: 0.75rem; color: #8d9299; }
-      .editor { flex: 1; resize: none; border: 0; border-radius: 0; padding: 1rem; line-height: 1.6; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.95rem; }
-      .preview { flex: 1; overflow: auto; padding: 1rem 1.25rem; line-height: 1.65; }
-      .preview h1, .preview h2, .preview h3 { line-height: 1.2; }
-      .history-bar { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; padding: 0.65rem 1rem; border-top: 1px solid #303236; color: #a9adb4; }
-      .diff-view { max-height: 30vh; overflow: auto; margin: 0; padding: 0.75rem 1rem; border-top: 1px solid #303236; background: #0d0f10; }
-      .diff-view code { display: block; min-height: 1.35rem; white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.82rem; }
-      .diff-view .add { color: #a5f3c8; background: #102218; }
-      .diff-view .remove { color: #ffb4b4; background: #261414; }
-      .diff-view .hunk { color: #aebcff; }
-      .agent-panel h2 { margin: 0; font-size: 1rem; }
-      .run-actions { display: flex; gap: 0.4rem; }
-      .panel-error { color: #ffb4b4; padding: 0.75rem 1rem; border-bottom: 1px solid #303236; }
-      .runs-panel { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
-      .run-list { flex: 0 0 auto; border-bottom: 1px solid #303236; max-height: 24vh; overflow: auto; padding: 0.5rem; }
-      .run-row { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.25rem 0.5rem; text-align: left; margin-bottom: 0.35rem; }
-      .run-row.active { border-color: #8ea7ff; background: #252936; }
-      .run-row small { grid-column: 1 / -1; color: #8d9299; }
-      .run-detail { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-      .run-meta { display: grid; gap: 0.25rem; padding: 0.8rem 1rem; border-bottom: 1px solid #303236; }
-      .run-meta strong, .run-meta small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .run-meta small { color: #a9adb4; }
-      .run-feed { flex: 1 1 auto; min-height: 0; overflow: auto; display: grid; align-content: start; gap: 0.5rem; padding: 0.75rem 1rem; }
-      .event-line { display: grid; gap: 0.2rem; padding-bottom: 0.5rem; border-bottom: 1px solid #25282c; }
-      .event-line span { color: #8ea7ff; font-size: 0.75rem; text-transform: uppercase; }
-      .event-line p { margin: 0; color: #d6d8dd; line-height: 1.4; overflow-wrap: anywhere; }
-      .review-actions { display: flex; gap: 0.5rem; padding: 0.75rem 1rem; border-top: 1px solid #303236; border-bottom: 1px solid #303236; }
-      .follow-up { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.5rem; padding: 0.75rem 1rem; border-top: 1px solid #303236; }
-      .run-empty { padding: 1rem; color: #a9adb4; line-height: 1.5; }
-      .run-empty strong { display: block; color: #ece8df; margin-bottom: 0.35rem; }
-      .threads-panel { flex: 0 0 auto; max-height: 32vh; border-top: 1px solid #303236; padding: 0.75rem 1rem; overflow: hidden; }
-      .threads-panel h3 { margin: 0 0 0.6rem; font-size: 0.95rem; }
-      .thread-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.5rem; margin-bottom: 0.75rem; }
-      .thread-list { display: grid; gap: 0.6rem; max-height: 22vh; overflow: auto; padding-right: 0.25rem; }
-      .thread-row { display: grid; gap: 0.35rem; border-bottom: 1px solid #25282c; padding-bottom: 0.6rem; }
-      .thread-row small { color: #8d9299; }
-      .thread-row p { margin: 0; line-height: 1.4; color: #d6d8dd; overflow-wrap: anywhere; }
-      .thread-row div { display: flex; gap: 0.4rem; }
-      @media (max-width: 1050px) {
-        .app-shell { grid-template-columns: 260px minmax(0, 1fr); }
-        .agent-panel { display: none; }
-      }
-      @media (max-width: 760px) {
-        .app-shell { height: auto; min-height: 100vh; grid-template-columns: 1fr; grid-template-rows: 38vh 62vh; }
-        .sidebar { border-right: 0; border-bottom: 1px solid #303236; }
-        .document { height: auto; min-height: 0; }
-        .document-header, .frontmatter-strip { grid-template-columns: 1fr; flex-direction: column; }
-      }
-    `}</style>
+      {/* Editor & Tabs pane */}
+      <div className="flex flex-col flex-1" style={{ height: '100%', overflow: 'hidden', gridColumn: 2 }}>
+        <div style={{ display: 'flex', alignItems: 'center', background: 'var(--bg-surface)' }}>
+          {!sidebarOpen && (
+            <button
+              id="sidebar-expand-btn"
+              className="btn-icon"
+              style={{ margin: '0 8px 0 12px' }}
+              onClick={() => setSidebarOpen(true)}
+              title="Expand sidebar"
+            >
+              <PanelLeftOpen size={16} />
+            </button>
+          )}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <TabBar
+              tabs={openTabs}
+              activeTabId={activeTabId}
+              onSelectTab={handleSelectTab}
+              onCloseTab={handleCloseTab}
+            />
+          </div>
+          {!aiPanelOpen && activeNote && (
+            <button
+              id="ai-panel-expand-btn"
+              className="btn-icon"
+              style={{ margin: '0 12px 0 8px' }}
+              onClick={() => setAiPanelOpen(true)}
+              title="Open AI assistant"
+            >
+              <Sparkles size={16} />
+            </button>
+          )}
+        </div>
+
+        <div className="flex-1" style={{ position: 'relative', overflow: 'hidden' }}>
+          <NoteEditor
+            note={activeNote}
+            content={draftContent}
+            onContentChange={handleContentChange}
+            onSave={handleSaveNote}
+            onRunDirectives={handleRunDirectives}
+            onOpenWikilink={handleOpenWikilink}
+          />
+        </div>
+      </div>
+
+      {/* AI Panel */}
+      {aiPanelOpen && (
+        <AIPanel
+          note={activeNote}
+          vaultId={activeVaultId}
+          onSave={handleSaveNote}
+          onClose={() => setAiPanelOpen(false)}
+        />
+      )}
+
+      {/* Search overlay modal */}
+      <SearchOverlay
+        open={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        vaultId={activeVaultId}
+        onSelectNote={handleSelectTab}
+      />
+
+      {/* Command palette modal */}
+      <CommandPalette
+        open={commandPaletteOpen}
+        onClose={() => setCommandPaletteOpen(false)}
+        notes={notes}
+        onSelectNote={handleSelectTab}
+        onCreateNote={handleCreateNote}
+      />
+    </main>
   );
 }

@@ -1,24 +1,30 @@
 import { io, type Socket } from 'socket.io-client';
-import type { RunEvent } from './api';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
-export function connectRunSocket(): Socket<ServerEvents, ClientEvents> {
-  return io(`${API_BASE}/runs`, {
+type ServerEvents = {
+  'vault:noteChanged': (data: { noteId: string; vaultId: string }) => void;
+  'vault:noteCreated': (data: { noteId: string; vaultId: string }) => void;
+  'vault:noteDeleted': (data: { noteId: string; vaultId: string }) => void;
+  'directive:chunk': (data: { noteId: string; content: string }) => void;
+  'directive:done': (data: { noteId: string; directiveId: string }) => void;
+};
+
+type ClientEvents = {
+  joinVault: (vaultId: string) => void;
+  leaveVault: (vaultId: string) => void;
+};
+
+export function connectVaultSocket(): Socket<ServerEvents, ClientEvents> {
+  return io(`${API_BASE}/vault`, {
     auth: { token: localStorage.getItem('docs_token') },
     transports: ['websocket', 'polling'],
   });
 }
 
-type ServerEvents = {
-  event: (event: RunEvent) => void;
-  status: (message: { runId: number; status?: string }) => void;
-  'workspace:changed': (message: { workspaceId: number }) => void;
-};
-
-type ClientEvents = {
-  join: (runId: number) => void;
-  leave: (runId: number) => void;
-  joinWorkspace: (workspaceId: number) => void;
-  leaveWorkspace: (workspaceId: number) => void;
-};
+export function connectRunsSocket(): Socket {
+  return io(`${API_BASE}/runs`, {
+    auth: { token: localStorage.getItem('docs_token') },
+    transports: ['websocket', 'polling'],
+  });
+}

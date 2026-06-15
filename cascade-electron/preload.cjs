@@ -19,5 +19,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   deleteNetdoc: (id) => ipcRenderer.invoke('netdoc:delete', id),
   getNetdocVersions: (netdocId) => ipcRenderer.invoke('netdoc:getVersions', netdocId),
   saveNetdocVersion: ({ id, netdocId, content, title, author }) => ipcRenderer.invoke('netdoc:saveVersion', { id, netdocId, content, title, author }),
-  getLatestVersionContent: (netdocId) => ipcRenderer.invoke('netdoc:getLatestVersionContent', netdocId)
+  getLatestVersionContent: (netdocId) => ipcRenderer.invoke('netdoc:getLatestVersionContent', netdocId),
+
+  // Subscribe to keyboard shortcuts forwarded from the main process.
+  // Returns an unsubscribe function.
+  onShortcut: (callback) => {
+    const listener = (_event, action) => callback(action);
+    ipcRenderer.on('shortcut', listener);
+    return () => ipcRenderer.removeListener('shortcut', listener);
+  }
 });

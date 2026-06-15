@@ -7,85 +7,154 @@ import jwt from 'jsonwebtoken';
 import Database from 'better-sqlite3';
 import { Server } from 'socket.io';
 import {
-  createSpecFile,
-  createWorkspace,
-  ensureWorkspaceSchema,
-  getSpec,
-  getWorkspace,
-  listAllWorkspaces,
-  listSpecs,
-  listWorkspaces,
-  readSpecFile,
-  scanWorkspace,
-  watchWorkspace,
-  writeSpecFile,
-} from './server/workspace.js';
+  addTag,
+  createFolder,
+  createNote,
+  createVault,
+  deleteFolder,
+  deleteNote,
+  ensureVaultSchema,
+  extractLinks,
+  getBacklinks,
+  getGraph,
+  getNote,
+  getVault,
+  listFolders,
+  listNotes,
+  listTags,
+  listVaults,
+  moveNote,
+  removeTag,
+  searchNotes,
+  toggleArchive,
+  togglePin,
+  updateFolder,
+  updateNote,
+} from './server/vault.js';
 import {
-  createSpecVersion,
+  createNoteVersion,
+  diffNoteVersions,
   diffText,
-  diffVersions,
   ensureVersionsSchema,
-  listSpecVersions,
+  listNoteVersions,
 } from './server/versions.js';
 import {
-  addThreadMessage,
-  createThread,
-  ensureThreadsSchema,
-  getThread,
-  listThreads,
-  setThreadStatus,
-} from './server/threads.js';
-import {
-  discardRun,
   ensureRunnerSchema,
-  getRun,
-  getRunDiff,
-  listRunEvents,
-  listRuns,
-  mergeRun,
-  sendRunMessage,
   setRunEventSink,
+  listRuns,
+  getRun,
+  listRunEvents,
   startRun,
+  sendRunMessage,
 } from './server/runner.js';
+import { runDirectivesInNote } from './server/directives.js';
 
 const PORT = Number(process.env.API_PORT || 3000);
 const JWT_SECRET = process.env.JWT_SECRET || 'cascade-dev-secret';
 const DB_PATH = process.env.DOCS_DB_PATH || path.join(process.cwd(), 'docs.db');
 
 type User = { id: number; username: string; password_hash: string; created_at: string };
-type Doc = { id: number; title: string; content: string; creator_id: number; created_at: string; updated_at: string };
 type AuthedRequest = Request & { user?: { id: number; username: string } };
+
+// ── Database ───────────────────────────────────────────────────────
 
 const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
-  CREATE TABLE IF NOT EXISTS docs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+  CREATE TABLE IF NOT EXISTS vaults (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    root_path TEXT NOT NULL,
+    created_by INTEGER NOT NULL REFERENCES users(id),
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS folders (
+    id TEXT PRIMARY KEY,
+    vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
+    parent_id TEXT REFERENCES folders(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    position INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS notes (
+    id TEXT PRIMARY KEY,
+    vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
+    folder_id TEXT REFERENCES folders(id) ON DELETE SET NULL,
     title TEXT NOT NULL,
     content TEXT NOT NULL DEFAULT '',
-    creator_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    content_preview TEXT NOT NULL DEFAULT '',
+    is_pinned INTEGER NOT NULL DEFAULT 0,
+    is_archived INTEGER NOT NULL DEFAULT 0,
+    word_count INTEGER NOT NULL DEFAULT 0,
+    created_by INTEGER NOT NULL REFERENCES users(id),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
-  CREATE TABLE IF NOT EXISTS sidebar_items (
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    doc_id INTEGER NOT NULL REFERENCES docs(id) ON DELETE CASCADE,
-    position INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (user_id, doc_id)
+  CREATE TABLE IF NOT EXISTS tags (
+    id TEXT PRIMARY KEY,
+    vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    color TEXT,
+    UNIQUE(vault_id, name)
+  );
+
+  CREATE TABLE IF NOT EXISTS note_tags (
+    note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+    tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+    PRIMARY KEY (note_id, tag_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS note_links (
+    source_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+    target_id TEXT,
+    target_title TEXT NOT NULL,
+    context TEXT,
+    PRIMARY KEY (source_id, target_title)
+  );
+
+  CREATE TABLE IF NOT EXISTS note_versions (
+    id TEXT PRIMARY KEY,
+    note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+    content TEXT NOT NULL,
+    label TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 `);
-ensureWorkspaceSchema(db);
+
+// FTS5 virtual table
+db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(title, content, content='notes', content_rowid='rowid');`);
+
+// FTS triggers for keeping the index in sync
+db.exec(`
+  CREATE TRIGGER IF NOT EXISTS notes_ai AFTER INSERT ON notes BEGIN
+    INSERT INTO notes_fts(rowid, title, content) VALUES (NEW.rowid, NEW.title, NEW.content);
+  END;
+  CREATE TRIGGER IF NOT EXISTS notes_ad AFTER DELETE ON notes BEGIN
+    INSERT INTO notes_fts(notes_fts, rowid, title, content) VALUES('delete', OLD.rowid, OLD.title, OLD.content);
+  END;
+  CREATE TRIGGER IF NOT EXISTS notes_au AFTER UPDATE ON notes BEGIN
+    INSERT INTO notes_fts(notes_fts, rowid, title, content) VALUES('delete', OLD.rowid, OLD.title, OLD.content);
+    INSERT INTO notes_fts(rowid, title, content) VALUES (NEW.rowid, NEW.title, NEW.content);
+  END;
+`);
+
+ensureVaultSchema(db);
 ensureVersionsSchema(db);
 ensureRunnerSchema(db);
-ensureThreadsSchema(db);
+
+// ── Express & Socket.io setup ──────────────────────────────────────
 
 const app = express();
 app.use(cors({ origin: true, credentials: true }));
@@ -93,17 +162,9 @@ app.use(express.json({ limit: '2mb' }));
 const httpServer = http.createServer(app);
 const io = new Server(httpServer, { cors: { origin: true, credentials: true } });
 const runsNamespace = io.of('/runs');
-const workspaceWatchers = new Map<number, () => void>();
+const vaultNamespace = io.of('/vault');
 
-setRunEventSink((event) => {
-  runsNamespace.to(`run:${event.run_id}`).emit('event', event);
-  if (event.type === 'status') {
-    const payload = safeJson(event.payload_json) as { status?: string };
-    runsNamespace.to(`run:${event.run_id}`).emit('status', { runId: event.run_id, status: payload.status });
-  }
-});
-
-for (const workspace of listAllWorkspaces(db)) registerWorkspaceWatcher(workspace);
+// ── Auth helpers ───────────────────────────────────────────────────
 
 function signToken(user: { id: number; username: string }) {
   return jwt.sign(user, JWT_SECRET, { expiresIn: '30d' });
@@ -127,7 +188,9 @@ function requireAuth(req: AuthedRequest, res: Response, next: NextFunction) {
   }
 }
 
-runsNamespace.use((socket, next) => {
+// ── Socket.io auth & namespaces ────────────────────────────────────
+
+function socketAuth(socket: { handshake: { auth: { token?: unknown } }; data: Record<string, unknown> }, next: (err?: Error) => void) {
   const token = typeof socket.handshake.auth.token === 'string' ? socket.handshake.auth.token : null;
   if (!token) return next(new Error('Authentication required'));
   try {
@@ -137,43 +200,46 @@ runsNamespace.use((socket, next) => {
   } catch {
     next(new Error('Invalid or expired token'));
   }
+}
+
+runsNamespace.use(socketAuth);
+vaultNamespace.use(socketAuth);
+
+vaultNamespace.on('connection', (socket) => {
+  socket.on('joinVault', (vaultId: string) => {
+    const user = socket.data.user as { id: number };
+    const vault = getVault(db, vaultId, user.id);
+    if (vault) socket.join(`vault:${vaultId}`);
+  });
+  socket.on('leaveVault', (vaultId: string) => {
+    socket.leave(`vault:${vaultId}`);
+  });
 });
 
 runsNamespace.on('connection', (socket) => {
-  socket.on('join', (runId: number) => {
-    const id = Number(runId);
-    const run = Number.isFinite(id) ? getRun(db, id) : undefined;
-    if (run && canAccessRun(run.spec_id, socket.data.user.id)) socket.join(`run:${id}`);
+  socket.on('joinRun', (runId: number) => {
+    socket.join(`run:${runId}`);
   });
-  socket.on('leave', (runId: number) => {
-    if (Number.isFinite(Number(runId))) socket.leave(`run:${Number(runId)}`);
-  });
-  socket.on('joinWorkspace', (workspaceId: number) => {
-    const workspace = getWorkspace(db, Number(workspaceId), socket.data.user.id);
-    if (workspace) socket.join(`workspace:${workspace.id}`);
-  });
-  socket.on('leaveWorkspace', (workspaceId: number) => {
-    if (Number.isFinite(Number(workspaceId))) socket.leave(`workspace:${Number(workspaceId)}`);
+  socket.on('leaveRun', (runId: number) => {
+    socket.leave(`run:${runId}`);
   });
 });
 
-function getDocForUser(docId: number, userId: number) {
-  return db.prepare(`
-    SELECT d.id, d.title, d.content, d.creator_id, d.created_at, d.updated_at, u.username AS creator_username
-    FROM docs d
-    JOIN users u ON u.id = d.creator_id
-    WHERE d.id = ?
-  `).get(docId) as (Doc & { creator_username: string }) | undefined;
+setRunEventSink((event) => {
+  runsNamespace.to(`run:${event.run_id}`).emit('event', event);
+});
+
+function emitVaultEvent(vaultId: string, event: string, data: unknown) {
+  vaultNamespace.to(`vault:${vaultId}`).emit(event, data);
 }
 
-function ensureSidebarItem(userId: number, docId: number) {
-  const maxPosition = db.prepare('SELECT COALESCE(MAX(position), -1) + 1 AS next FROM sidebar_items WHERE user_id = ?').get(userId) as { next: number };
-  db.prepare('INSERT OR IGNORE INTO sidebar_items (user_id, doc_id, position) VALUES (?, ?, ?)').run(userId, docId, maxPosition.next);
-}
+// ── Health ──────────────────────────────────────────────────────────
 
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
+
+// ── Auth routes ────────────────────────────────────────────────────
 
 app.post('/api/auth/register', async (req, res) => {
   const username = String(req.body.username || '').trim().toLowerCase();
@@ -212,313 +278,362 @@ app.get('/api/me', requireAuth, (req: AuthedRequest, res) => {
   res.json({ user: req.user });
 });
 
-app.get('/api/docs', requireAuth, (req: AuthedRequest, res) => {
-  const docs = db.prepare(`
-    SELECT d.id, d.title, d.creator_id, d.updated_at, u.username AS creator_username
-    FROM sidebar_items s
-    JOIN docs d ON d.id = s.doc_id
-    JOIN users u ON u.id = d.creator_id
-    WHERE s.user_id = ?
-    ORDER BY s.position ASC, d.updated_at DESC
-  `).all(req.user!.id);
-  res.json({ docs });
+// ── Vault routes ───────────────────────────────────────────────────
+
+app.get('/api/vaults', requireAuth, (req: AuthedRequest, res) => {
+  res.json({ vaults: listVaults(db, req.user!.id) });
 });
 
-app.post('/api/docs', requireAuth, (req: AuthedRequest, res) => {
-  const title = String(req.body.title || 'Untitled').trim() || 'Untitled';
-  const content = String(req.body.content || '');
-  const result = db.prepare('INSERT INTO docs (title, content, creator_id) VALUES (?, ?, ?)').run(title, content, req.user!.id);
-  const docId = Number(result.lastInsertRowid);
-  ensureSidebarItem(req.user!.id, docId);
-  res.status(201).json({ doc: getDocForUser(docId, req.user!.id) });
-});
-
-app.get('/api/docs/:id', requireAuth, (req: AuthedRequest, res) => {
-  const docId = Number(req.params.id);
-  const doc = getDocForUser(docId, req.user!.id);
-  if (!doc) return res.status(404).json({ error: 'Document not found' });
-  ensureSidebarItem(req.user!.id, docId);
-  res.json({ doc, canEdit: doc.creator_id === req.user!.id });
-});
-
-app.patch('/api/docs/:id', requireAuth, (req: AuthedRequest, res) => {
-  const docId = Number(req.params.id);
-  const doc = getDocForUser(docId, req.user!.id);
-  if (!doc) return res.status(404).json({ error: 'Document not found' });
-  if (doc.creator_id !== req.user!.id) return res.status(403).json({ error: 'Only the creator can edit this document' });
-
-  const title = String(req.body.title ?? doc.title).trim() || 'Untitled';
-  const content = String(req.body.content ?? doc.content);
-  db.prepare('UPDATE docs SET title = ?, content = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(title, content, docId);
-  res.json({ doc: getDocForUser(docId, req.user!.id) });
-});
-
-app.delete('/api/docs/:id', requireAuth, (req: AuthedRequest, res) => {
-  const docId = Number(req.params.id);
-  const doc = getDocForUser(docId, req.user!.id);
-  if (!doc) return res.status(404).json({ error: 'Document not found' });
-  if (doc.creator_id !== req.user!.id) return res.status(403).json({ error: 'Only the creator can delete this document' });
-  db.prepare('DELETE FROM docs WHERE id = ?').run(docId);
-  res.json({ ok: true });
-});
-
-app.post('/api/sidebar/reorder', requireAuth, (req: AuthedRequest, res) => {
-  const ids = Array.isArray(req.body.docIds) ? req.body.docIds.map(Number).filter(Number.isFinite) : [];
-  const update = db.prepare('UPDATE sidebar_items SET position = ? WHERE user_id = ? AND doc_id = ?');
-  const tx = db.transaction((docIds: number[]) => {
-    docIds.forEach((docId, index) => update.run(index, req.user!.id, docId));
-  });
-  tx(ids);
-  res.json({ ok: true });
-});
-
-app.get('/api/workspaces', requireAuth, (req: AuthedRequest, res) => {
-  res.json({ workspaces: listWorkspaces(db, req.user!.id) });
-});
-
-app.post('/api/workspaces', requireAuth, (req: AuthedRequest, res) => {
+app.post('/api/vaults', requireAuth, (req: AuthedRequest, res) => {
   try {
-    const workspace = createWorkspace(db, req.user!.id, req.body || {});
-    registerWorkspaceWatcher(workspace);
-    res.status(201).json({ workspace });
+    const vault = createVault(db, req.user!.id, req.body || {});
+    res.status(201).json({ vault });
   } catch (error) {
-    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not create workspace' });
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not create vault' });
   }
 });
 
-app.post('/api/workspaces/:id/rescan', requireAuth, (req: AuthedRequest, res) => {
-  const workspace = getWorkspace(db, Number(req.params.id), req.user!.id);
-  if (!workspace) return res.status(404).json({ error: 'Workspace not found' });
-  registerWorkspaceWatcher(workspace);
-  res.json({ specs: scanWorkspace(db, workspace) });
+app.get('/api/vaults/:id', requireAuth, (req: AuthedRequest, res) => {
+  const vault = getVault(db, req.params.id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Vault not found' });
+  res.json({ vault });
 });
 
-app.get('/api/workspaces/:id/specs', requireAuth, (req: AuthedRequest, res) => {
-  const workspace = getWorkspace(db, Number(req.params.id), req.user!.id);
-  if (!workspace) return res.status(404).json({ error: 'Workspace not found' });
-  res.json({ specs: listSpecs(db, workspace.id) });
+// ── Folder routes ──────────────────────────────────────────────────
+
+app.get('/api/vaults/:id/folders', requireAuth, (req: AuthedRequest, res) => {
+  const vault = getVault(db, req.params.id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Vault not found' });
+  res.json({ folders: listFolders(db, vault.id) });
 });
 
-app.post('/api/workspaces/:id/specs', requireAuth, (req: AuthedRequest, res) => {
-  const workspace = getWorkspace(db, Number(req.params.id), req.user!.id);
-  if (!workspace) return res.status(404).json({ error: 'Workspace not found' });
+app.post('/api/vaults/:id/folders', requireAuth, (req: AuthedRequest, res) => {
+  const vault = getVault(db, req.params.id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Vault not found' });
   try {
-    const spec = createSpecFile(db, workspace, req.body || {});
-    if (!spec) return res.status(500).json({ error: 'Spec was created but could not be read' });
-    createSpecVersion(db, spec.id, spec.content, 'created');
-    res.status(201).json({ spec });
+    const folder = createFolder(db, vault.id, req.body || {});
+    res.status(201).json({ folder });
   } catch (error) {
-    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not create spec' });
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not create folder' });
   }
 });
 
-app.get('/api/specs/:id', requireAuth, (req: AuthedRequest, res) => {
-  const spec = readSpecFile(db, req.params.id);
-  if (!spec) return res.status(404).json({ error: 'Spec not found' });
-  const workspace = getWorkspace(db, spec.workspace_id, req.user!.id);
-  if (!workspace) return res.status(404).json({ error: 'Spec not found' });
-  res.json({ spec, canEdit: true });
+app.patch('/api/folders/:id', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const folder = updateFolder(db, req.params.id, req.body || {});
+    res.json({ folder });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : 'Could not update folder';
+    const status = msg === 'Folder not found' ? 404 : 400;
+    res.status(status).json({ error: msg });
+  }
 });
 
-app.put('/api/specs/:id', requireAuth, (req: AuthedRequest, res) => {
-  const existing = readSpecFile(db, req.params.id);
-  if (!existing) return res.status(404).json({ error: 'Spec not found' });
-  const workspace = getWorkspace(db, existing.workspace_id, req.user!.id);
-  if (!workspace) return res.status(404).json({ error: 'Spec not found' });
-
-  const content = String(req.body.content ?? existing.content);
-  const spec = writeSpecFile(db, req.params.id, content);
-  if (!spec) return res.status(404).json({ error: 'Spec not found' });
-  createSpecVersion(db, spec.id, spec.content, 'save');
-  res.json({ spec });
+app.delete('/api/folders/:id', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    deleteFolder(db, req.params.id);
+    res.json({ ok: true });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : 'Could not delete folder';
+    const status = msg === 'Folder not found' ? 404 : 400;
+    res.status(status).json({ error: msg });
+  }
 });
 
-app.get('/api/specs/:id/versions', requireAuth, (req: AuthedRequest, res) => {
-  const spec = getSpec(db, req.params.id);
-  if (!spec) return res.status(404).json({ error: 'Spec not found' });
-  const workspace = getWorkspace(db, spec.workspace_id, req.user!.id);
-  if (!workspace) return res.status(404).json({ error: 'Spec not found' });
-  res.json({ versions: listSpecVersions(db, spec.id) });
+// ── Note routes ────────────────────────────────────────────────────
+
+app.get('/api/vaults/:id/notes', requireAuth, (req: AuthedRequest, res) => {
+  const vault = getVault(db, req.params.id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Vault not found' });
+
+  const opts: { folder_id?: string; is_archived?: boolean; tag?: string } = {};
+  if (typeof req.query.folder_id === 'string') opts.folder_id = req.query.folder_id;
+  if (req.query.is_archived === 'true') opts.is_archived = true;
+  if (req.query.is_archived === 'false') opts.is_archived = false;
+  if (typeof req.query.tag === 'string') opts.tag = req.query.tag;
+
+  res.json({ notes: listNotes(db, vault.id, opts) });
 });
 
-app.get('/api/specs/:id/diff', requireAuth, (req: AuthedRequest, res) => {
-  const spec = readSpecFile(db, req.params.id);
-  if (!spec) return res.status(404).json({ error: 'Spec not found' });
-  const workspace = getWorkspace(db, spec.workspace_id, req.user!.id);
-  if (!workspace) return res.status(404).json({ error: 'Spec not found' });
+app.post('/api/vaults/:id/notes', requireAuth, (req: AuthedRequest, res) => {
+  const vault = getVault(db, req.params.id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Vault not found' });
+  try {
+    const note = createNote(db, vault.id, req.user!.id, req.body || {});
+    createNoteVersion(db, note.id, note.content, 'created');
+    emitVaultEvent(vault.id, 'vault:noteCreated', { noteId: note.id, title: note.title });
+    res.status(201).json({ note });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not create note' });
+  }
+});
 
-  const from = Number(req.query.from);
-  const to = Number(req.query.to);
-  if (Number.isFinite(from) && Number.isFinite(to)) {
-    const diff = diffVersions(db, from, to);
+app.get('/api/notes/:id', requireAuth, (req: AuthedRequest, res) => {
+  const note = getNote(db, req.params.id);
+  if (!note) return res.status(404).json({ error: 'Note not found' });
+  // Verify vault access
+  const vault = getVault(db, note.vault_id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Note not found' });
+  res.json({ note });
+});
+
+app.put('/api/notes/:id', requireAuth, (req: AuthedRequest, res) => {
+  const existing = getNote(db, req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Note not found' });
+  const vault = getVault(db, existing.vault_id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Note not found' });
+
+  try {
+    const content = String(req.body.content ?? existing.content);
+    const note = updateNote(db, req.params.id, content);
+    createNoteVersion(db, note.id, content, 'auto');
+    emitVaultEvent(vault.id, 'vault:noteChanged', { noteId: note.id, title: note.title });
+    res.json({ note });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not update note' });
+  }
+});
+
+app.post('/api/notes/:id/run-directives', requireAuth, async (req: AuthedRequest, res) => {
+  const existing = getNote(db, req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Note not found' });
+  const vault = getVault(db, existing.vault_id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Note not found' });
+
+  try {
+    const newContent = await runDirectivesInNote(db, existing.id);
+    const updatedNote = getNote(db, existing.id)!;
+    emitVaultEvent(vault.id, 'vault:noteChanged', { noteId: updatedNote.id, title: updatedNote.title });
+    res.json({ note: updatedNote });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+app.delete('/api/notes/:id', requireAuth, (req: AuthedRequest, res) => {
+  const existing = getNote(db, req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Note not found' });
+  const vault = getVault(db, existing.vault_id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Note not found' });
+
+  deleteNote(db, req.params.id);
+  emitVaultEvent(vault.id, 'vault:noteDeleted', { noteId: req.params.id, title: existing.title });
+  res.json({ ok: true });
+});
+
+app.post('/api/notes/:id/move', requireAuth, (req: AuthedRequest, res) => {
+  const existing = getNote(db, req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Note not found' });
+  const vault = getVault(db, existing.vault_id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Note not found' });
+
+  try {
+    const folderId = req.body.folder_id !== undefined ? (req.body.folder_id || null) : null;
+    moveNote(db, req.params.id, folderId);
+    const note = getNote(db, req.params.id);
+    emitVaultEvent(vault.id, 'vault:noteChanged', { noteId: req.params.id, title: existing.title });
+    res.json({ note });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not move note' });
+  }
+});
+
+app.post('/api/notes/:id/pin', requireAuth, (req: AuthedRequest, res) => {
+  const existing = getNote(db, req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Note not found' });
+  const vault = getVault(db, existing.vault_id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Note not found' });
+
+  togglePin(db, req.params.id);
+  const note = getNote(db, req.params.id);
+  res.json({ note });
+});
+
+app.post('/api/notes/:id/archive', requireAuth, (req: AuthedRequest, res) => {
+  const existing = getNote(db, req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Note not found' });
+  const vault = getVault(db, existing.vault_id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Note not found' });
+
+  toggleArchive(db, req.params.id);
+  const note = getNote(db, req.params.id);
+  res.json({ note });
+});
+
+// ── Search routes ──────────────────────────────────────────────────
+
+app.get('/api/vaults/:id/search', requireAuth, (req: AuthedRequest, res) => {
+  const vault = getVault(db, req.params.id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Vault not found' });
+
+  const query = String(req.query.q || '').trim();
+  if (!query) return res.json({ results: [] });
+
+  try {
+    res.json({ results: searchNotes(db, vault.id, query) });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Search failed' });
+  }
+});
+
+// ── Backlinks routes ───────────────────────────────────────────────
+
+app.get('/api/notes/:id/backlinks', requireAuth, (req: AuthedRequest, res) => {
+  const note = getNote(db, req.params.id);
+  if (!note) return res.status(404).json({ error: 'Note not found' });
+  const vault = getVault(db, note.vault_id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Note not found' });
+
+  res.json({ backlinks: getBacklinks(db, req.params.id) });
+});
+
+// ── Tag routes ─────────────────────────────────────────────────────
+
+app.get('/api/vaults/:id/tags', requireAuth, (req: AuthedRequest, res) => {
+  const vault = getVault(db, req.params.id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Vault not found' });
+  res.json({ tags: listTags(db, vault.id) });
+});
+
+app.post('/api/notes/:id/tags', requireAuth, (req: AuthedRequest, res) => {
+  const note = getNote(db, req.params.id);
+  if (!note) return res.status(404).json({ error: 'Note not found' });
+  const vault = getVault(db, note.vault_id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Note not found' });
+
+  try {
+    addTag(db, req.params.id, vault.id, String(req.body.name || ''), req.body.color);
+    const updated = getNote(db, req.params.id);
+    res.json({ note: updated });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not add tag' });
+  }
+});
+
+app.delete('/api/notes/:id/tags/:tagId', requireAuth, (req: AuthedRequest, res) => {
+  const note = getNote(db, req.params.id);
+  if (!note) return res.status(404).json({ error: 'Note not found' });
+  const vault = getVault(db, note.vault_id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Note not found' });
+
+  removeTag(db, req.params.id, req.params.tagId);
+  const updated = getNote(db, req.params.id);
+  res.json({ note: updated });
+});
+
+// ── Version routes ─────────────────────────────────────────────────
+
+app.get('/api/notes/:id/versions', requireAuth, (req: AuthedRequest, res) => {
+  const note = getNote(db, req.params.id);
+  if (!note) return res.status(404).json({ error: 'Note not found' });
+  const vault = getVault(db, note.vault_id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Note not found' });
+
+  res.json({ versions: listNoteVersions(db, req.params.id) });
+});
+
+app.get('/api/notes/:id/diff', requireAuth, (req: AuthedRequest, res) => {
+  const note = getNote(db, req.params.id);
+  if (!note) return res.status(404).json({ error: 'Note not found' });
+  const vault = getVault(db, note.vault_id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Note not found' });
+
+  const from = String(req.query.from || '');
+  const to = String(req.query.to || '');
+
+  if (from && to) {
+    const diff = diffNoteVersions(db, from, to);
     if (!diff) return res.status(404).json({ error: 'Version not found' });
     return res.json({ diff });
   }
 
-  const versions = listSpecVersions(db, spec.id) as { id: number }[];
-  const latest = versions[0]?.id;
-  if (!latest) return res.json({ diff: diffText('', spec.content, 'empty', spec.rel_path) });
-  const latestVersion = db.prepare('SELECT content FROM spec_versions WHERE id = ?').get(latest) as { content: string } | undefined;
-  res.json({ diff: diffText(latestVersion?.content || '', spec.content, `version-${latest}`, spec.rel_path) });
+  // Diff current content against latest version
+  const versions = listNoteVersions(db, req.params.id);
+  const latest = versions[0];
+  if (!latest) return res.json({ diff: diffText('', note.content, 'empty', note.title) });
+
+  const latestVersion = db.prepare('SELECT content FROM note_versions WHERE id = ?').get(latest.id) as { content: string } | undefined;
+  res.json({ diff: diffText(latestVersion?.content || '', note.content, `version-${latest.id.slice(0, 8)}`, note.title) });
 });
 
-app.get('/api/specs/:id/runs', requireAuth, (req: AuthedRequest, res) => {
-  const spec = getSpec(db, req.params.id);
-  if (!spec) return res.status(404).json({ error: 'Spec not found' });
-  const workspace = getWorkspace(db, spec.workspace_id, req.user!.id);
-  if (!workspace) return res.status(404).json({ error: 'Spec not found' });
-  res.json({ runs: listRuns(db, spec.id) });
+// ── Graph routes ───────────────────────────────────────────────────
+
+app.get('/api/vaults/:id/graph', requireAuth, (req: AuthedRequest, res) => {
+  const vault = getVault(db, req.params.id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Vault not found' });
+  res.json(getGraph(db, vault.id));
 });
 
-app.post('/api/specs/:id/runs', requireAuth, async (req: AuthedRequest, res) => {
-  const spec = getSpec(db, req.params.id);
-  if (!spec) return res.status(404).json({ error: 'Spec not found' });
-  const workspace = getWorkspace(db, spec.workspace_id, req.user!.id);
-  if (!workspace) return res.status(404).json({ error: 'Spec not found' });
+// ── Agent / Run routes ─────────────────────────────────────────────
+
+app.get('/api/vaults/:id/runs', requireAuth, (req: AuthedRequest, res) => {
+  const vault = getVault(db, req.params.id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Vault not found' });
+  res.json({ runs: listRuns(db, vault.id) });
+});
+
+app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) => {
+  const vault = getVault(db, req.params.id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Vault not found' });
+
+  const { prompt, note_id } = req.body;
+  if (!prompt || !prompt.trim()) {
+    return res.status(400).json({ error: 'Prompt is required' });
+  }
 
   try {
-    const kind = req.body?.kind === 'describe' ? 'describe' : 'reconcile';
-    const run = await startRun(db, workspace, spec.id, kind);
-    res.status(201).json({ run });
-  } catch (error) {
-    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not start run' });
+    const run = await startRun(db, vault, note_id || null, prompt);
+    res.json({ run });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
 
 app.get('/api/runs/:id', requireAuth, (req: AuthedRequest, res) => {
   const run = getRun(db, Number(req.params.id));
   if (!run) return res.status(404).json({ error: 'Run not found' });
-  if (!canAccessRun(run.spec_id, req.user!.id)) return res.status(404).json({ error: 'Run not found' });
+
+  const vault = getVault(db, run.vault_id, req.user!.id);
+  if (!vault) return res.status(403).json({ error: 'Access denied' });
+
   res.json({ run });
 });
 
 app.get('/api/runs/:id/events', requireAuth, (req: AuthedRequest, res) => {
   const run = getRun(db, Number(req.params.id));
   if (!run) return res.status(404).json({ error: 'Run not found' });
-  if (!canAccessRun(run.spec_id, req.user!.id)) return res.status(404).json({ error: 'Run not found' });
+
+  const vault = getVault(db, run.vault_id, req.user!.id);
+  if (!vault) return res.status(403).json({ error: 'Access denied' });
+
   res.json({ events: listRunEvents(db, run.id) });
 });
 
-app.get('/api/runs/:id/diff', requireAuth, async (req: AuthedRequest, res) => {
+app.post('/api/runs/:id/messages', requireAuth, async (req: AuthedRequest, res) => {
   const run = getRun(db, Number(req.params.id));
   if (!run) return res.status(404).json({ error: 'Run not found' });
-  if (!canAccessRun(run.spec_id, req.user!.id)) return res.status(404).json({ error: 'Run not found' });
-  res.json({ diff: await getRunDiff(db, run.id) });
-});
 
-app.post('/api/runs/:id/merge', requireAuth, async (req: AuthedRequest, res) => {
-  const run = getRun(db, Number(req.params.id));
-  if (!run) return res.status(404).json({ error: 'Run not found' });
-  if (!canAccessRun(run.spec_id, req.user!.id)) return res.status(404).json({ error: 'Run not found' });
+  const vault = getVault(db, run.vault_id, req.user!.id);
+  if (!vault) return res.status(403).json({ error: 'Access denied' });
+
+  const { message } = req.body;
   try {
-    res.json({ run: await mergeRun(db, run.id) });
-  } catch (error) {
-    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not merge run' });
+    const event = await sendRunMessage(db, run.id, message);
+    res.json({ event });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
 
-app.post('/api/runs/:id/discard', requireAuth, async (req: AuthedRequest, res) => {
-  const run = getRun(db, Number(req.params.id));
-  if (!run) return res.status(404).json({ error: 'Run not found' });
-  if (!canAccessRun(run.spec_id, req.user!.id)) return res.status(404).json({ error: 'Run not found' });
-  try {
-    res.json({ run: await discardRun(db, run.id) });
-  } catch (error) {
-    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not discard run' });
-  }
-});
-
-app.post('/api/runs/:id/message', requireAuth, async (req: AuthedRequest, res) => {
-  const run = getRun(db, Number(req.params.id));
-  if (!run) return res.status(404).json({ error: 'Run not found' });
-  if (!canAccessRun(run.spec_id, req.user!.id)) return res.status(404).json({ error: 'Run not found' });
-  try {
-    const event = await sendRunMessage(db, run.id, String(req.body.message || ''));
-    res.status(201).json({ event });
-  } catch (error) {
-    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not send message' });
-  }
-});
-
-app.get('/api/specs/:id/threads', requireAuth, (req: AuthedRequest, res) => {
-  const spec = getSpec(db, req.params.id);
-  if (!spec) return res.status(404).json({ error: 'Spec not found' });
-  const workspace = getWorkspace(db, spec.workspace_id, req.user!.id);
-  if (!workspace) return res.status(404).json({ error: 'Spec not found' });
-  res.json({ threads: listThreads(db, spec.id) });
-});
-
-app.post('/api/specs/:id/threads', requireAuth, (req: AuthedRequest, res) => {
-  const spec = getSpec(db, req.params.id);
-  if (!spec) return res.status(404).json({ error: 'Spec not found' });
-  const workspace = getWorkspace(db, spec.workspace_id, req.user!.id);
-  if (!workspace) return res.status(404).json({ error: 'Spec not found' });
-  try {
-    res.status(201).json({ thread: createThread(db, spec.id, req.body || {}) });
-  } catch (error) {
-    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not create thread' });
-  }
-});
-
-app.post('/api/threads/:id/messages', requireAuth, (req: AuthedRequest, res) => {
-  const thread = getThread(db, Number(req.params.id));
-  if (!thread) return res.status(404).json({ error: 'Thread not found' });
-  if (!canAccessThread(thread.spec_id, req.user!.id)) return res.status(404).json({ error: 'Thread not found' });
-  try {
-    res.status(201).json({ thread: addThreadMessage(db, thread.id, String(req.body.role || 'user'), String(req.body.content || '')) });
-  } catch (error) {
-    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not add message' });
-  }
-});
-
-app.post('/api/threads/:id/resolve', requireAuth, (req: AuthedRequest, res) => {
-  const thread = getThread(db, Number(req.params.id));
-  if (!thread) return res.status(404).json({ error: 'Thread not found' });
-  if (!canAccessThread(thread.spec_id, req.user!.id)) return res.status(404).json({ error: 'Thread not found' });
-  res.json({ thread: setThreadStatus(db, thread.id, 'resolved') });
-});
-
-app.post('/api/threads/:id/dismiss', requireAuth, (req: AuthedRequest, res) => {
-  const thread = getThread(db, Number(req.params.id));
-  if (!thread) return res.status(404).json({ error: 'Thread not found' });
-  if (!canAccessThread(thread.spec_id, req.user!.id)) return res.status(404).json({ error: 'Thread not found' });
-  res.json({ thread: setThreadStatus(db, thread.id, 'dismissed') });
-});
+// ── 404 fallback ───────────────────────────────────────────────────
 
 app.use((_req, res) => {
   res.status(404).json({ error: 'Not found' });
 });
 
-function canAccessRun(specId: string, userId: number) {
-  const row = db.prepare(`
-    SELECT w.id
-    FROM specs s
-    JOIN workspaces w ON w.id = s.workspace_id
-    WHERE s.id = ? AND w.created_by = ?
-  `).get(specId, userId);
-  return Boolean(row);
-}
-
-function canAccessThread(specId: string, userId: number) {
-  return canAccessRun(specId, userId);
-}
-
-function safeJson(value: string) {
-  try {
-    return JSON.parse(value);
-  } catch {
-    return {};
-  }
-}
-
-function registerWorkspaceWatcher(workspace: { id: number; name: string; repo_path: string; specs_dir: string; created_by: number; created_at: string }) {
-  workspaceWatchers.get(workspace.id)?.();
-  workspaceWatchers.set(workspace.id, watchWorkspace(db, workspace, (changed) => {
-    runsNamespace.to(`workspace:${changed.id}`).emit('workspace:changed', { workspaceId: changed.id });
-  }));
-}
+// ── Start server ───────────────────────────────────────────────────
 
 httpServer.listen(PORT, () => {
-  console.log(`Docs API running on http://localhost:${PORT}`);
+  console.log(`Cascade Notes API running on http://localhost:${PORT}`);
   console.log(`SQLite database: ${DB_PATH}`);
 });
