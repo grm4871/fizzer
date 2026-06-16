@@ -32,31 +32,31 @@ const cascadeTheme = EditorView.theme({
   '&': {
     height: '100%',
     fontSize: '0.9375rem',
-    fontFamily: "'Inter', ui-sans-serif, system-ui, sans-serif",
+    fontFamily: "'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif",
   },
   '.cm-content': {
-    padding: '16px 24px 80px',
-    fontFamily: "'Inter', ui-sans-serif, system-ui, sans-serif",
-    lineHeight: '1.7',
-    caretColor: 'hsl(260, 60%, 60%)',
+    padding: '16px 26px 80px',
+    fontFamily: "'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif",
+    lineHeight: '1.8',
+    caretColor: 'hsl(33, 68%, 55%)',
   },
   '&.cm-focused .cm-cursor': {
-    borderLeftColor: 'hsl(260, 60%, 60%)',
+    borderLeftColor: 'hsl(33, 68%, 55%)',
     borderLeftWidth: '2px',
   },
   '&.cm-focused .cm-selectionBackground, .cm-selectionBackground': {
-    background: 'hsla(260, 50%, 55%, 0.25) !important',
+    background: 'hsla(33, 65%, 50%, 0.22) !important',
   },
   '.cm-activeLine': {
-    background: 'hsla(225, 12%, 14%, 0.5)',
+    background: 'hsla(22, 8%, 14%, 0.45)',
   },
   '.cm-activeLineGutter': {
-    background: 'hsla(225, 12%, 14%, 0.5)',
+    background: 'hsla(22, 8%, 14%, 0.45)',
   },
   '.cm-gutters': {
-    background: 'hsl(225, 15%, 7%)',
-    color: 'hsl(220, 8%, 30%)',
-    borderRight: '1px solid hsl(225, 10%, 14%)',
+    background: 'hsl(22, 8%, 7%)',
+    color: 'hsl(25, 5%, 28%)',
+    borderRight: '1px solid hsl(22, 7%, 13%)',
     fontFamily: "'JetBrains Mono', ui-monospace, monospace",
     fontSize: '0.75rem',
   },
@@ -74,46 +74,46 @@ const cascadeTheme = EditorView.theme({
   /* WYSIWYG heading styles */
   '.cm-heading-1': {
     fontSize: '1.8em',
-    fontWeight: '700',
+    fontWeight: '300',
     lineHeight: '1.3',
-    letterSpacing: '-0.02em',
-    color: 'hsl(40, 15%, 95%)',
+    letterSpacing: '-0.03em',
+    color: 'hsl(35, 12%, 95%)',
   },
   '.cm-heading-2': {
     fontSize: '1.4em',
-    fontWeight: '600',
+    fontWeight: '400',
     lineHeight: '1.35',
-    letterSpacing: '-0.01em',
-    color: 'hsl(40, 15%, 92%)',
+    letterSpacing: '-0.02em',
+    color: 'hsl(35, 10%, 92%)',
   },
   '.cm-heading-3': {
     fontSize: '1.2em',
-    fontWeight: '600',
+    fontWeight: '500',
     lineHeight: '1.4',
-    color: 'hsl(40, 15%, 88%)',
+    color: 'hsl(35, 10%, 88%)',
   },
   '.cm-heading-4': {
     fontSize: '1.05em',
     fontWeight: '600',
-    color: 'hsl(40, 15%, 85%)',
+    color: 'hsl(35, 8%, 85%)',
   },
   /* Bold / Italic */
   '.cm-md-bold': {
     fontWeight: '700',
-    color: 'hsl(40, 20%, 95%)',
+    color: 'hsl(35, 14%, 95%)',
   },
   '.cm-md-italic': {
     fontStyle: 'italic',
-    color: 'hsl(40, 18%, 85%)',
+    color: 'hsl(35, 10%, 85%)',
   },
-  /* Inline code */
+  /* Inline code — warm amber */
   '.cm-md-inline-code': {
     fontFamily: "'JetBrains Mono', ui-monospace, monospace",
     fontSize: '0.875em',
-    background: 'hsl(225, 12%, 16%)',
+    background: 'hsl(22, 8%, 13%)',
     padding: '1px 5px',
-    borderRadius: '4px',
-    color: 'hsl(150, 50%, 65%)',
+    borderRadius: '3px',
+    color: 'hsl(38, 75%, 65%)',
   },
   /* Hidden markers */
   '.cm-md-hidden': {
@@ -123,82 +123,79 @@ const cascadeTheme = EditorView.theme({
     overflow: 'hidden',
     color: 'transparent',
   },
-  /* Wiki-link chip */
+  /* Wiki-link chip — copper */
   '.cm-wikilink': {
-    color: 'hsl(260, 60%, 68%)',
-    background: 'hsla(260, 60%, 60%, 0.12)',
+    color: 'hsl(33, 72%, 65%)',
+    background: 'hsla(33, 68%, 52%, 0.13)',
     padding: '1px 6px',
-    borderRadius: '4px',
+    borderRadius: '3px',
     cursor: 'pointer',
     fontWeight: '500',
   },
   '.cm-wikilink:hover': {
-    background: 'hsla(260, 60%, 60%, 0.2)',
+    background: 'hsla(33, 68%, 52%, 0.22)',
   },
-  /* External Link chip */
+  /* External Link — cool blue for contrast in the warm world */
   '.cm-external-link': {
-    color: 'hsl(210, 80%, 70%)',
+    color: 'hsl(205, 75%, 68%)',
     textDecoration: 'underline',
     cursor: 'pointer',
   },
   '.cm-external-link:hover': {
-    color: 'hsl(210, 90%, 80%)',
+    color: 'hsl(205, 85%, 78%)',
   },
-  /* AI directive chip — `{{ai: ...}}`, runs in the agent panel via a shortcut */
+  /* AI directive chip — teal, visually distinct from copper context */
   '.cm-directive': {
-    color: 'hsl(260, 60%, 72%)',
-    background: 'hsla(260, 60%, 60%, 0.15)',
+    color: 'hsl(185, 65%, 62%)',
+    background: 'hsla(185, 65%, 50%, 0.12)',
     padding: '2px 8px',
-    borderRadius: '6px',
-    border: '1px solid hsla(260, 60%, 60%, 0.3)',
+    borderRadius: '5px',
+    border: '1px solid hsla(185, 65%, 50%, 0.28)',
     fontFamily: "'JetBrains Mono', ui-monospace, monospace",
     fontSize: '0.85em',
   },
-  /* Checkboxes */
   '.cm-checkbox': {
     cursor: 'pointer',
   },
-  /* Horizontal rule */
   '.cm-hr-widget': {
     display: 'block',
     height: '1px',
-    background: 'hsl(225, 10%, 22%)',
-    margin: '12px 0',
+    background: 'hsl(25, 7%, 20%)',
+    margin: '14px 0',
     border: 'none',
   },
-  /* Fenced code blocks */
   '.cm-code-block-line': {
-    background: 'hsl(225, 15%, 9%)',
+    background: 'hsl(22, 8%, 8%)',
     fontFamily: "'JetBrains Mono', ui-monospace, monospace",
     fontSize: '0.875em',
-    borderLeft: '2px solid hsl(225, 10%, 22%)',
+    borderLeft: '2px solid hsl(25, 7%, 20%)',
     paddingLeft: '12px',
   },
 }, { dark: true });
 
 /* ─── Syntax Highlighting ────────────────────────────────── */
 const cascadeHighlightStyle = HighlightStyle.define([
-  { tag: tags.heading1, color: 'hsl(40, 15%, 95%)', fontWeight: '700', fontSize: '1.8em' },
-  { tag: tags.heading2, color: 'hsl(40, 15%, 92%)', fontWeight: '600', fontSize: '1.4em' },
-  { tag: tags.heading3, color: 'hsl(40, 15%, 88%)', fontWeight: '600', fontSize: '1.2em' },
-  { tag: tags.heading4, color: 'hsl(40, 15%, 85%)', fontWeight: '600' },
-  { tag: tags.heading5, color: 'hsl(40, 15%, 82%)', fontWeight: '600' },
-  { tag: tags.heading6, color: 'hsl(40, 15%, 78%)', fontWeight: '600' },
-  { tag: tags.strong, fontWeight: '700', color: 'hsl(40, 20%, 95%)' },
-  { tag: tags.emphasis, fontStyle: 'italic', color: 'hsl(40, 18%, 85%)' },
-  { tag: tags.strikethrough, textDecoration: 'line-through', color: 'hsl(220, 10%, 50%)' },
-  { tag: tags.link, color: 'hsl(260, 60%, 68%)', textDecoration: 'underline' },
-  { tag: tags.url, color: 'hsl(260, 50%, 55%)' },
-  { tag: tags.monospace, fontFamily: "'JetBrains Mono', ui-monospace, monospace", color: 'hsl(150, 50%, 65%)', fontSize: '0.875em' },
-  { tag: tags.processingInstruction, color: 'hsl(260, 60%, 60%)' },
-  { tag: tags.quote, color: 'hsl(220, 10%, 60%)', fontStyle: 'italic' },
-  { tag: tags.keyword, color: 'hsl(260, 60%, 68%)' },
-  { tag: tags.string, color: 'hsl(150, 50%, 65%)' },
-  { tag: tags.number, color: 'hsl(35, 80%, 65%)' },
-  { tag: tags.comment, color: 'hsl(220, 8%, 40%)' },
-  { tag: tags.meta, color: 'hsl(220, 8%, 45%)' },
-  { tag: tags.punctuation, color: 'hsl(220, 8%, 40%)' },
-  { tag: tags.contentSeparator, color: 'hsl(225, 10%, 30%)' },
+  { tag: tags.heading1, color: 'hsl(35, 12%, 95%)', fontWeight: '300', fontSize: '1.8em' },
+  { tag: tags.heading2, color: 'hsl(35, 10%, 92%)', fontWeight: '400', fontSize: '1.4em' },
+  { tag: tags.heading3, color: 'hsl(35, 10%, 88%)', fontWeight: '500', fontSize: '1.2em' },
+  { tag: tags.heading4, color: 'hsl(35, 8%, 85%)', fontWeight: '600' },
+  { tag: tags.heading5, color: 'hsl(35, 8%, 82%)', fontWeight: '600' },
+  { tag: tags.heading6, color: 'hsl(35, 8%, 78%)', fontWeight: '600' },
+  { tag: tags.strong, fontWeight: '700', color: 'hsl(35, 14%, 95%)' },
+  { tag: tags.emphasis, fontStyle: 'italic', color: 'hsl(35, 10%, 85%)' },
+  { tag: tags.strikethrough, textDecoration: 'line-through', color: 'hsl(25, 5%, 45%)' },
+  { tag: tags.link, color: 'hsl(33, 72%, 65%)', textDecoration: 'underline' },
+  { tag: tags.url, color: 'hsl(33, 60%, 55%)' },
+  { tag: tags.monospace, fontFamily: "'JetBrains Mono', ui-monospace, monospace", color: 'hsl(38, 75%, 65%)', fontSize: '0.875em' },
+  { tag: tags.processingInstruction, color: 'hsl(33, 68%, 58%)' },
+  { tag: tags.quote, color: 'hsl(25, 6%, 55%)', fontStyle: 'italic' },
+  { tag: tags.keyword, color: 'hsl(195, 65%, 62%)' },
+  { tag: tags.string, color: 'hsl(150, 45%, 62%)' },
+  { tag: tags.number, color: 'hsl(38, 80%, 65%)' },
+  { tag: tags.comment, color: 'hsl(25, 5%, 38%)' },
+  { tag: tags.meta, color: 'hsl(25, 5%, 42%)' },
+  { tag: tags.punctuation, color: 'hsl(25, 5%, 36%)' },
+  { tag: tags.contentSeparator, color: 'hsl(25, 7%, 25%)' },
 ]);
 
 /* ─── Checkbox Widget ────────────────────────────────────── */
