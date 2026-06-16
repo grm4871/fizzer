@@ -8,7 +8,7 @@ import { SearchOverlay } from './components/SearchOverlay';
 import { CommandPalette } from './components/CommandPalette';
 import { api, type User, type Vault, type Folder, type NoteSummary, type Note } from './api';
 import { connectVaultSocket } from './socket';
-import { Gem, Sparkles, PanelLeftOpen, Columns } from 'lucide-react';
+import { Gem, Sparkles, PanelLeftOpen } from 'lucide-react';
 
 /**
  * @file App.tsx — Root component for Cascade Notes

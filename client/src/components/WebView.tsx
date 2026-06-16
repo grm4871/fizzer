@@ -18,7 +18,7 @@
  */
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { ArrowLeft, ArrowRight, RotateCw, ExternalLink, X, Globe, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, ArrowRight, RotateCw, ExternalLink, Globe, AlertTriangle } from 'lucide-react';
 
 // ═══════════════════════════════════════════════════════════════
 // TYPES
@@ -72,28 +72,15 @@ export function WebView({ url, onNavigate, onTitleChange }: WebViewProps) {
   const currentUrlRef = useRef(currentUrl);
   currentUrlRef.current = currentUrl;
 
-  // ─── Programmatic URL Loading ────────────────────────────
+  // Load the URL by imperatively setting the `src` attribute. React's handling
+  // of `src` on the <webview> custom element is unreliable (it can render blank
+  // because the attribute never reaches the element), and loadURL() throws
+  // before the webview's `dom-ready` event. Setting the attribute works in all
+  // cases and re-navigates whenever the URL changes.
   useEffect(() => {
     if (!useWebview || !webviewRef.current) return;
-    const wv = webviewRef.current as any;
-
-    const loadTarget = () => {
-      if (typeof wv.loadURL === 'function') {
-        wv.loadURL(url);
-        return true;
-      }
-      return false;
-    };
-
-    // If loadURL is not immediately available, poll until it is.
-    if (!loadTarget()) {
-      const interval = setInterval(() => {
-        if (loadTarget()) {
-          clearInterval(interval);
-        }
-      }, 50);
-      return () => clearInterval(interval);
-    }
+    const wv = webviewRef.current as HTMLElement;
+    if (wv.getAttribute('src') !== url) wv.setAttribute('src', url);
   }, [useWebview, url]);
 
   // ─── Navigation Controls ────────────────────────────────
@@ -156,6 +143,7 @@ export function WebView({ url, onNavigate, onTitleChange }: WebViewProps) {
 
     const handleFailLoad = (event: any) => {
       if (event.errorCode === -3) return; // ERR_ABORTED
+      if (event.isMainFrame === false) return; // ignore subframe/subresource failures
       setHasError(true);
       setIsLoading(false);
       setErrorMessage(`${event.errorDescription || 'Failed to load page'} (Error: ${event.errorCode})`);
@@ -166,6 +154,11 @@ export function WebView({ url, onNavigate, onTitleChange }: WebViewProps) {
       console.log(`[WebView Console] Line ${event.line} (${event.sourceId}): ${event.message}`);
     };
 
+    // Diagnostics — visible in the main window's DevTools (Debug → Toggle DevTools).
+    const getUrl = () => (typeof wv.getURL === 'function' ? wv.getURL() : '');
+    const handleDomReady = () => console.log('[WebView] dom-ready', getUrl());
+    const handleFinishLoad = () => console.log('[WebView] did-finish-load', getUrl());
+
     wv.addEventListener('did-start-loading', handleStartLoading);
     wv.addEventListener('did-stop-loading', handleStopLoading);
     wv.addEventListener('did-navigate', handleNavigate);
@@ -173,6 +166,8 @@ export function WebView({ url, onNavigate, onTitleChange }: WebViewProps) {
     wv.addEventListener('page-title-updated', handleTitleUpdate);
     wv.addEventListener('did-fail-load', handleFailLoad);
     wv.addEventListener('console-message', handleConsoleMessage);
+    wv.addEventListener('dom-ready', handleDomReady);
+    wv.addEventListener('did-finish-load', handleFinishLoad);
 
     return () => {
       wv.removeEventListener('did-start-loading', handleStartLoading);
@@ -182,6 +177,8 @@ export function WebView({ url, onNavigate, onTitleChange }: WebViewProps) {
       wv.removeEventListener('page-title-updated', handleTitleUpdate);
       wv.removeEventListener('did-fail-load', handleFailLoad);
       wv.removeEventListener('console-message', handleConsoleMessage);
+      wv.removeEventListener('dom-ready', handleDomReady);
+      wv.removeEventListener('did-finish-load', handleFinishLoad);
     };
   }, [useWebview, onNavigate, onTitleChange]);
 
@@ -264,14 +261,13 @@ export function WebView({ url, onNavigate, onTitleChange }: WebViewProps) {
       {/* Web Content */}
       {!hasError && (
         useWebview ? (
-          /* Electron webview — static JSX, URL is loaded programmatically */
+          /* Electron webview — src present at attach (most reliable first load),
+             with the effect above as a safety net for URL changes. */
           <webview
             ref={webviewRef as any}
-            src="about:blank"
+            src={url}
             className="webview-frame"
-            /* Allow basic web features but block popups and nodeIntegration */
             {...{
-              allowpopups: 'false',
               partition: 'persist:webview',
             } as any}
           />
