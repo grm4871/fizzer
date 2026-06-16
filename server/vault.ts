@@ -230,7 +230,7 @@ export function getVault(db: Db, vaultId: string, userId: number): Vault | undef
 }
 
 function prepopulateWalkthrough(vault: Vault): void {
-  const welcomeContent = `# 💎 Welcome to Cascade Notes\n\nCascade Notes is an intelligent, Obsidian-style personal wiki designed for writing, organizing, and thinking alongside AI.\n\n## Key Features\n\n1. **Local Markdown Files**: All notes are stored as standard \`.md\` files in your vault folder: \`${vault.root_path}\`.\n2. **Rich Live Preview**: A modern CodeMirror 6 editor renders headers, bold/italic, checkboxes, and wikilinks directly as you type.\n3. **Wikilinks & Backlinks**: Connect notes using wikilinks like [[Navigation & Search]]. Check the backlinks panel to explore note relationships.\n4. **AI Assistant**: Open the AI panel and pick an agent (Claude Code, Codex, or Grok) to read, edit, and organize your notes directly on disk.\n\n## Get Started\n\n- Click the **✨ AI Assistant** button on the tab bar to open the agent panel, then choose your agent and tell it what to do.\n- Drop an inline directive anywhere in a note with the \`{{ai: your instruction}}\` syntax, then put your cursor on it and press \`Ctrl+Enter\` (\`Cmd+Enter\` on macOS) to run it in the agent panel. Try it: {{ai: write a one-line welcome message at the top of this note}}\n- Check the boxes below to try out interactive checklists:\n  - [ ] Edit this note and change this checkbox\n  - [ ] Click on the checkbox widget directly to toggle it!\n  - [x] Press \`Ctrl+P\` to open the command palette\n`;
+  const welcomeContent = `# 💎 Welcome to Cascade Notes\n\nCascade Notes is an intelligent, Obsidian-style personal wiki designed for writing, organizing, and thinking alongside AI.\n\n## Key Features\n\n1. **Local Markdown Files**: All notes are stored as standard \`.md\` files in your vault folder: \`${vault.root_path}\`.\n2. **Rich Live Preview**: A modern CodeMirror 6 editor renders headers, bold/italic, checkboxes, and wikilinks directly as you type.\n3. **Wikilinks & Backlinks**: Connect notes using wikilinks like [[Navigation & Search]]. Check the backlinks panel to explore note relationships.\n4. **Agent**: Open the agent panel and pick an agent (Claude Code, Codex, Grok, Antigravity, Copilot, or Hermes) to read, edit, and organize your notes directly on disk.\n\n## Get Started\n\n- Click the **🤖 Agent** button on the tab bar to open the agent panel, then choose your agent and tell it what to do.\n- Drop an inline directive anywhere in a note with the \`{{ai: your instruction}}\` syntax, then put your cursor on it and press \`Ctrl+Enter\` (\`Cmd+Enter\` on macOS) to run it in the agent panel. Try it: {{ai: write a one-line welcome message at the top of this note}}\n- Check the boxes below to try out interactive checklists:\n  - [ ] Edit this note and change this checkbox\n  - [ ] Click on the checkbox widget directly to toggle it!\n  - [x] Press \`Ctrl+P\` to open the command palette\n`;
 
   const navContent = `# 🔍 Navigation & Search\n\nCascade Notes is built for speed and keyboard-driven navigation.\n\n## Keyboard Shortcuts\n\nHere are the key shortcuts to keep your hands on the keyboard:\n\n- \`Ctrl+P\` (or \`Cmd+P\`): Open the **Command Palette**. Search through note titles fuzzy-style, or press Enter on a non-existent name to create a new note instantly.\n- \`Ctrl+Shift+F\`: Open **Vault Search**. Perform ranked full-text search across all note contents using SQLite FTS5.\n- \`Ctrl+S\`: Save the current note.\n- \`Ctrl+N\`: Create a new note.\n- \`Ctrl+\\\`: Toggle the sidebar.\n\n## Organizing with Tags\n\nYou can add tags to notes (e.g., #tutorial, #reference) or add them via the tag manager in the sidebar. Tags help you filter notes in search and group them in the folder tree.\n`;
 
@@ -291,6 +291,20 @@ export function createFolder(db: Db, vaultId: string, opts: { name: string; pare
   return db.prepare('SELECT * FROM folders WHERE id = ?').get(id) as Folder;
 }
 
+function isDescendantFolder(db: Db, folderId: string, possibleDescendantId: string): boolean {
+  let current = db.prepare('SELECT id, parent_id FROM folders WHERE id = ?').get(possibleDescendantId) as {
+    id: string;
+    parent_id: string | null;
+  } | undefined;
+
+  while (current?.parent_id) {
+    if (current.parent_id === folderId) return true;
+    current = db.prepare('SELECT id, parent_id FROM folders WHERE id = ?').get(current.parent_id) as typeof current;
+  }
+
+  return false;
+}
+
 export function updateFolder(db: Db, folderId: string, opts: { name?: string; parent_id?: string | null; position?: number }): Folder {
   const folder = db.prepare('SELECT * FROM folders WHERE id = ?').get(folderId) as Folder | undefined;
   if (!folder) throw new Error('Folder not found');
@@ -301,6 +315,13 @@ export function updateFolder(db: Db, folderId: string, opts: { name?: string; pa
   const name = opts.name !== undefined ? String(opts.name).trim() || folder.name : folder.name;
   const parentId = opts.parent_id !== undefined ? opts.parent_id : folder.parent_id;
   const position = opts.position !== undefined ? opts.position : folder.position;
+
+  if (parentId) {
+    if (parentId === folderId) throw new Error('Cannot move a folder into itself');
+    const parent = db.prepare('SELECT * FROM folders WHERE id = ?').get(parentId) as Folder | undefined;
+    if (!parent || parent.vault_id !== folder.vault_id) throw new Error('Parent folder not found');
+    if (isDescendantFolder(db, folderId, parentId)) throw new Error('Cannot move a folder into its own subfolder');
+  }
 
   db.prepare(
     'UPDATE folders SET name = ?, parent_id = ?, position = ? WHERE id = ?'

@@ -11,9 +11,9 @@ import crypto from 'node:crypto';
 import type Database from 'better-sqlite3';
 import { query, type Query, type SDKMessage, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { getNote, rescanVault, type Vault } from './vault.js';
-import { runCliAgent } from './cli-agent.js';
+import { runCliAgent, activeCliProcesses } from './cli-agent.js';
 
-export type AgentId = 'claude-code' | 'codex' | 'grok';
+export type AgentId = 'claude-code' | 'codex' | 'grok' | 'antigravity' | 'copilot' | 'hermes';
 
 type Db = Database.Database;
 
@@ -41,6 +41,7 @@ export type Run = {
   started_at: string;
   finished_at: string | null;
   summary: string | null;
+  model: string | null;
 };
 
 export type RunEvent = {
@@ -76,7 +77,8 @@ export function ensureRunnerSchema(db: Db) {
       status TEXT NOT NULL DEFAULT 'queued',
       started_at TEXT NOT NULL DEFAULT (datetime('now')),
       finished_at TEXT,
-      summary TEXT
+      summary TEXT,
+      model TEXT
     );
 
     CREATE TABLE IF NOT EXISTS run_events (
@@ -100,6 +102,9 @@ export function ensureRunnerSchema(db: Db) {
   }
   if (!runCols.some(col => col.name === 'conversation_id')) {
     db.exec("ALTER TABLE runs ADD COLUMN conversation_id TEXT NOT NULL DEFAULT ''");
+  }
+  if (!runCols.some(col => col.name === 'model')) {
+    db.exec("ALTER TABLE runs ADD COLUMN model TEXT");
   }
 }
 
@@ -137,6 +142,48 @@ export async function sendRunMessage(db: Db, runId: number, message: string) {
   return event;
 }
 
+export async function cancelRun(db: Db, runId: number): Promise<boolean> {
+  let canceled = false;
+
+  // 1. Claude SDK
+  const stream = liveQueries.get(runId);
+  if (stream) {
+    try {
+      stream.close();
+    } catch (err) {
+      console.error('Error closing Claude stream:', err);
+    }
+    liveQueries.delete(runId);
+    canceled = true;
+  }
+
+  // 2. CLI process
+  const child = activeCliProcesses.get(runId);
+  if (child) {
+    try {
+      child.kill('SIGKILL');
+    } catch (err) {
+      console.error('Error killing CLI process:', err);
+    }
+    activeCliProcesses.delete(runId);
+    canceled = true;
+  }
+
+  // Update DB status to failed
+  const run = getRun(db, runId);
+  if (run && (run.status === 'running' || run.status === 'queued')) {
+    db.prepare(`
+      UPDATE runs
+      SET status = 'failed', finished_at = datetime('now'), summary = 'Run canceled by user.'
+      WHERE id = ?
+    `).run(runId);
+    appendRunEvent(db, runId, 'status', { status: 'failed', summary: 'Run canceled by user.' });
+    canceled = true;
+  }
+
+  return canceled;
+}
+
 export type RunImage = { media_type: string; data: string };
 
 // Images attached to a run, held in memory between startRun and the async
@@ -149,13 +196,14 @@ export async function startRun(
   noteId: string | null,
   prompt: string,
   agent: AgentId = 'claude-code',
-  opts: { conversationId?: string; images?: RunImage[] } = {},
+  opts: { conversationId?: string; images?: RunImage[]; model?: string } = {},
 ) {
   const conversationId = opts.conversationId || crypto.randomUUID();
+  const model = opts.model || null;
   const result = db.prepare(`
-    INSERT INTO runs (vault_id, note_id, prompt, agent, conversation_id, status)
-    VALUES (?, ?, ?, ?, ?, 'queued')
-  `).run(vault.id, noteId, prompt, agent, conversationId);
+    INSERT INTO runs (vault_id, note_id, prompt, agent, conversation_id, status, model)
+    VALUES (?, ?, ?, ?, ?, 'queued', ?)
+  `).run(vault.id, noteId, prompt, agent, conversationId, model);
 
   const runId = Number(result.lastInsertRowid);
   const run = getRun(db, runId)!;
@@ -213,8 +261,8 @@ async function executeRunAsync(db: Db, vault: Vault, runId: number) {
     // Resume the conversation's prior session for this agent, if any.
     const resumeSessionId = findPriorSession(db, run);
 
-    if (run.agent === 'codex' || run.agent === 'grok') {
-      // Codex / Grok run via their locally-installed CLI agents (own logins).
+    if (run.agent === 'codex' || run.agent === 'grok' || run.agent === 'antigravity' || run.agent === 'copilot' || run.agent === 'hermes') {
+      // Codex / Grok / Antigravity / Copilot / Hermes run via their locally-installed CLI/API agents.
       const result = await runCliAgent({
         agent: run.agent,
         context,
@@ -222,6 +270,7 @@ async function executeRunAsync(db: Db, vault: Vault, runId: number) {
         cwd: vault.root_path,
         resumeSessionId,
         images,
+        model: run.model || undefined,
         emit: (type, payload) => appendRunEvent(db, run.id, type, payload),
       });
       summary = result.summary;
@@ -252,7 +301,7 @@ async function executeRunAsync(db: Db, vault: Vault, runId: number) {
         prompt: claudePrompt as any,
         options: {
           cwd: vault.root_path,
-          model: RUNNER_MODEL,
+          model: run.model || RUNNER_MODEL,
           maxTurns: RUNNER_MAX_TURNS,
           permissionMode: 'acceptEdits',
           ...(resumeSessionId ? { resume: resumeSessionId } : {}),
@@ -283,22 +332,28 @@ async function executeRunAsync(db: Db, vault: Vault, runId: number) {
       }
     }
 
-    db.prepare(`
-      UPDATE runs
-      SET status = 'completed', finished_at = datetime('now'), summary = ?, session_id = ?
-      WHERE id = ?
-    `).run(summary || 'Completed note operations successfully.', sessionId ?? run.session_id, run.id);
+    const currentRun = getRun(db, run.id);
+    if (currentRun && currentRun.status === 'running') {
+      db.prepare(`
+        UPDATE runs
+        SET status = 'completed', finished_at = datetime('now'), summary = ?, session_id = ?
+        WHERE id = ?
+      `).run(summary || 'Completed note operations successfully.', sessionId ?? run.session_id, run.id);
 
-    appendRunEvent(db, run.id, 'status', { status: 'completed', summary });
+      appendRunEvent(db, run.id, 'status', { status: 'completed', summary });
+    }
 
   } catch (error) {
-    const errMsg = error instanceof Error ? error.message : String(error);
-    db.prepare(`
-      UPDATE runs
-      SET status = 'failed', finished_at = datetime('now'), summary = ?
-      WHERE id = ?
-    `).run(errMsg, run.id);
-    appendRunEvent(db, run.id, 'status', { status: 'failed', summary: errMsg });
+    const currentRun = getRun(db, run.id);
+    if (currentRun && (currentRun.status === 'running' || currentRun.status === 'queued')) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      db.prepare(`
+        UPDATE runs
+        SET status = 'failed', finished_at = datetime('now'), summary = ?
+        WHERE id = ?
+      `).run(errMsg, run.id);
+      appendRunEvent(db, run.id, 'status', { status: 'failed', summary: errMsg });
+    }
   } finally {
     // Sync disk changes the agent made to the DB, then notify open clients so
     // an active editor reloads the edits live. Runs even on failure, since the

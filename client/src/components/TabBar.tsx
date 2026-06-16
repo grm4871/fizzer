@@ -12,7 +12,7 @@
  */
 
 import { useState, useEffect } from 'react';
-import { Globe, FileText, Columns } from 'lucide-react';
+import { Globe, FileText, Columns, X } from 'lucide-react';
 
 export interface Tab {
   id: string;
@@ -29,6 +29,7 @@ interface TabBarProps {
   onSelectTab: (id: string) => void;
   onCloseTab: (id: string) => void;
   onOpenSplitTab?: (id: string) => void;
+  onCloseAllTabs?: () => void;
 }
 
 export function TabBar({
@@ -38,6 +39,7 @@ export function TabBar({
   onSelectTab,
   onCloseTab,
   onOpenSplitTab,
+  onCloseAllTabs,
 }: TabBarProps) {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; tabId: string } | null>(null);
 
@@ -146,6 +148,14 @@ export function TabBar({
           >
             <Columns size={13} />
             Open in Split View
+          </button>
+          <button
+            onClick={() => {
+              onCloseAllTabs?.();
+            }}
+          >
+            <X size={13} />
+            Close all tabs
           </button>
         </div>
       )}

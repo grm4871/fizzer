@@ -5,18 +5,45 @@ import type { Note } from '../api';
 import { api } from '../api';
 import { connectRunsSocket, connectVaultSocket } from '../socket';
 import {
-  Sparkles, FileText, MessageSquare,
+  Bot, FileText,
   Brain, FilePen, FilePlus, SquareTerminal, Search, Folder,
   ListTodo, Wrench, Globe, Check, CircleAlert, ChevronRight, SquarePen,
 } from 'lucide-react';
 
-type AgentId = 'claude-code' | 'codex' | 'grok';
+type AgentId = 'claude-code' | 'codex' | 'grok' | 'antigravity' | 'copilot' | 'hermes';
 
 const AGENTS: { id: AgentId; label: string }[] = [
   { id: 'claude-code', label: 'Claude Code' },
   { id: 'codex', label: 'Codex' },
   { id: 'grok', label: 'Grok' },
+  { id: 'antigravity', label: 'Antigravity' },
+  { id: 'copilot', label: 'Copilot' },
+  { id: 'hermes', label: 'Hermes' },
 ];
+
+const CUSTOM_MODEL_VALUE = '__custom__';
+
+const AGENT_MODEL_PRESETS: Record<AgentId, { id: string; label: string }[]> = {
+  'claude-code': [],
+  'codex': [],
+  'grok': [{ id: 'grok-build', label: 'grok-build' }],
+  'antigravity': [],
+  'copilot': [],
+  'hermes': [],
+};
+
+const REMOVED_MODEL_PRESET_IDS = new Set([
+  'codex-flash',
+  'codex-pro',
+  'grok-2',
+  'grok-beta',
+  'flash_lite',
+  'flash',
+  'pro',
+  'gpt-4o',
+  'claude-3.5-sonnet',
+  'o1-mini',
+]);
 
 const isAgentId = (v: string): v is AgentId => AGENTS.some((a) => a.id === v);
 
@@ -82,7 +109,7 @@ function normalizeContentBlocks(content: any): ChatBlock[] {
         if (c.text) out.push({ type: 'text', text: c.text });
         break;
       case 'thinking':
-        out.push({ type: 'thinking', text: c.thinking || '' });
+        out.push({ type: 'thinking', text: c.thinking || c.text || '' });
         break;
       case 'redacted_thinking':
         out.push({ type: 'thinking', text: '', redacted: true });
@@ -268,6 +295,8 @@ export function AIPanel({ note, vaultId, onSave, pendingPrompt, onPromptConsumed
   const [toast, setToast] = useState('');
   const [status, setStatus] = useState<'idle' | 'queued' | 'running' | 'completed' | 'failed'>('idle');
   const [agent, setAgent] = useState<AgentId>('claude-code');
+  const [modelChoice, setModelChoice] = useState<string>('');
+  const [customModel, setCustomModel] = useState<string>('');
   const [historyReady, setHistoryReady] = useState(false);
   // Current conversation thread (null = start a fresh one on the next run).
   const [conversationId, setConversationId] = useState<string | null>(null);
@@ -275,6 +304,8 @@ export function AIPanel({ note, vaultId, onSave, pendingPrompt, onPromptConsumed
   const [pendingImages, setPendingImages] = useState<{ media_type: string; data: string; url: string }[]>([]);
   // Agents with a running/queued run for this note (for the activity dot).
   const [busyAgents, setBusyAgents] = useState<Set<AgentId>>(new Set());
+  const [currentRunId, setCurrentRunId] = useState<number | null>(null);
+  const [workingSeconds, setWorkingSeconds] = useState(0);
   const processedNonceRef = useRef<number | null>(null);
   // Tracks the last note we loaded, to restore its last-used agent on open.
   const lastNoteRef = useRef<string | null | undefined>(undefined);
@@ -287,6 +318,29 @@ export function AIPanel({ note, vaultId, onSave, pendingPrompt, onPromptConsumed
   const showToast = useCallback((msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(''), 3000);
+  }, []);
+
+  const applyModelSelection = useCallback((agentId: AgentId, model?: string | null) => {
+    const trimmed = model?.trim();
+    if (!trimmed) {
+      setModelChoice('');
+      setCustomModel('');
+      return;
+    }
+    if (REMOVED_MODEL_PRESET_IDS.has(trimmed)) {
+      setModelChoice('');
+      setCustomModel('');
+      return;
+    }
+
+    const presets = AGENT_MODEL_PRESETS[agentId];
+    if (presets.some((preset) => preset.id === trimmed)) {
+      setModelChoice(trimmed);
+      setCustomModel('');
+    } else {
+      setModelChoice(CUSTOM_MODEL_VALUE);
+      setCustomModel(trimmed);
+    }
   }, []);
 
   useEffect(() => {
@@ -317,11 +371,23 @@ export function AIPanel({ note, vaultId, onSave, pendingPrompt, onPromptConsumed
     const appendBlocks = (blocks: ChatBlock[]) => {
       if (blocks.length === 0) return;
       setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === aiMsgId
-            ? { ...msg, content: undefined, blocks: [...(msg.blocks || []), ...blocks] }
-            : msg
-        )
+        prev.map((msg) => {
+          if (msg.id !== aiMsgId) return msg;
+          
+          const newBlocks = [...(msg.blocks || [])];
+          for (const b of blocks) {
+            const last = newBlocks[newBlocks.length - 1];
+            if (last && last.type === b.type && (b.type === 'text' || b.type === 'thinking')) {
+              newBlocks[newBlocks.length - 1] = {
+                ...last,
+                text: (last.text || '') + (b.text || ''),
+              };
+            } else {
+              newBlocks.push({ ...b });
+            }
+          }
+          return { ...msg, content: undefined, blocks: newBlocks };
+        })
       );
     };
 
@@ -406,11 +472,14 @@ export function AIPanel({ note, vaultId, onSave, pendingPrompt, onPromptConsumed
       if (relevantRuns.length === 0) {
         setMessages([]);
         setStatus('idle');
+        applyModelSelection(viewAgent, null);
         return;
       }
 
       const latestRun = relevantRuns[relevantRuns.length - 1];
       setStatus(latestRun.status);
+      setCurrentRunId(latestRun.id);
+      applyModelSelection(viewAgent, latestRun.model);
 
       const eventsMap = new Map<number, any[]>();
       await Promise.all(relevantRuns.map(async (r) => {
@@ -446,8 +515,17 @@ export function AIPanel({ note, vaultId, onSave, pendingPrompt, onPromptConsumed
             const blocks = normalizeContentBlocks(payload.message.content);
             for (const b of blocks) {
               if (b.type === 'thinking' && ts && prevTs) b.durationMs = ts - prevTs;
+              
+              const last = aiBlocks[aiBlocks.length - 1];
+              if (last && last.type === b.type && (b.type === 'text' || b.type === 'thinking')) {
+                aiBlocks[aiBlocks.length - 1] = {
+                  ...last,
+                  text: (last.text || '') + (b.text || ''),
+                };
+              } else {
+                aiBlocks.push({ ...b });
+              }
             }
-            aiBlocks = [...aiBlocks, ...blocks];
           } else if (ev.type === 'user' && payload.message?.content) {
             const results = normalizeContentBlocks(payload.message.content).filter((b) => b.type === 'tool_result');
             aiBlocks = [...aiBlocks, ...results];
@@ -476,7 +554,7 @@ export function AIPanel({ note, vaultId, onSave, pendingPrompt, onPromptConsumed
     } catch (err) {
       console.error('Error loading run history:', err);
     }
-  }, [vaultId, note?.id, agent, connectAndListenToRun]);
+  }, [vaultId, note?.id, agent, connectAndListenToRun, applyModelSelection]);
 
   useEffect(() => {
     setHistoryReady(false);
@@ -534,11 +612,13 @@ export function AIPanel({ note, vaultId, onSave, pendingPrompt, onPromptConsumed
           agent,
           conversation_id: conversationId,
           images: images.map(({ media_type, data }) => ({ media_type, data })),
+          model: (modelChoice === CUSTOM_MODEL_VALUE ? customModel.trim() : modelChoice) || undefined,
         }),
       });
 
       if (res.run.conversation_id) setConversationId(res.run.conversation_id);
       setStatus(res.run.status as any);
+      setCurrentRunId(res.run.id);
       connectAndListenToRun(res.run.id, []);
     } catch (err) {
       console.error('Failed to start agent run:', err);
@@ -552,7 +632,7 @@ export function AIPanel({ note, vaultId, onSave, pendingPrompt, onPromptConsumed
         )
       );
     }
-  }, [vaultId, note, onSave, connectAndListenToRun, showToast, agent, conversationId]);
+  }, [vaultId, note, onSave, connectAndListenToRun, showToast, agent, conversationId, modelChoice, customModel]);
 
   // Run a directive queued from the editor — once history has loaded so it
   // doesn't get clobbered, and once per distinct nonce.
@@ -568,11 +648,28 @@ export function AIPanel({ note, vaultId, onSave, pendingPrompt, onPromptConsumed
     onPromptConsumed?.();
   }, [pendingPrompt, historyReady, vaultId, status, startRunSession, onPromptConsumed, showToast]);
 
+  const handleCancel = useCallback(async () => {
+    if (!currentRunId) return;
+    try {
+      await api(`/api/runs/${currentRunId}/cancel`, { method: 'POST' });
+      showToast('Cancellation requested');
+    } catch (err) {
+      showToast('Failed to cancel run');
+      console.error(err);
+    }
+  }, [currentRunId, showToast]);
+
+  const handleCancelForm = useCallback((e: React.FormEvent) => {
+    e.preventDefault();
+    void handleCancel();
+  }, [handleCancel]);
+
   const handleSend = useCallback((e: React.FormEvent) => {
     e.preventDefault();
     if ((!input.trim() && pendingImages.length === 0) || status === 'running' || status === 'queued') return;
-    if (pendingImages.length > 0 && agent === 'grok') {
-      showToast('Grok has no image support — sending text only.');
+    if (pendingImages.length > 0 && (agent === 'grok' || agent === 'antigravity' || agent === 'copilot' || agent === 'hermes')) {
+      const name = agent === 'grok' ? 'Grok' : agent === 'antigravity' ? 'Antigravity' : agent === 'copilot' ? 'Copilot' : 'Hermes';
+      showToast(`${name} has no image support — sending text only.`);
     }
     void startRunSession(input.trim(), pendingImages);
     setPendingImages([]);
@@ -608,14 +705,53 @@ export function AIPanel({ note, vaultId, onSave, pendingPrompt, onPromptConsumed
 
   const isBusy = status === 'running' || status === 'queued';
 
+  useEffect(() => {
+    let timer: any;
+    if (isBusy) {
+      const startTime = Date.now();
+      setWorkingSeconds(0);
+      timer = setInterval(() => {
+        setWorkingSeconds(Math.round((Date.now() - startTime) / 1000));
+      }, 1000);
+    } else {
+      setWorkingSeconds(0);
+    }
+    return () => clearInterval(timer);
+  }, [isBusy]);
+
   return (
     <aside className="ai-panel" id="ai-panel" style={{ gridColumn: 3 }}>
       {/* Header */}
       <div className="ai-panel-header">
         <div className="ai-title" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <span className="ai-sparkle"><Sparkles size={16} /></span>
-          AI Assistant
-          {isBusy && <span className="ai-status-pill">{status === 'queued' ? 'queued' : 'working'}</span>}
+          <span className="ai-sparkle"><Bot size={16} /></span>
+          Agent
+          {isBusy && (
+            <span className="ai-status-pill">
+              {status === 'queued' ? 'queued' : 'working'}
+              {workingSeconds > 0 && ` (${workingSeconds}s)`}
+            </span>
+          )}
+          {isBusy && (
+            <button
+              id="ai-cancel-header"
+              type="button"
+              onClick={handleCancel}
+              title="Cancel run"
+              style={{
+                fontSize: '0.75rem',
+                padding: '2px 6px',
+                color: 'var(--danger)',
+                background: 'var(--danger-subtle)',
+                border: '1px solid hsla(5, 62%, 58%, 0.2)',
+                borderRadius: 'var(--radius-sm)',
+                cursor: 'pointer',
+                marginLeft: '6px'
+              }}
+            >
+              Cancel
+            </button>
+          )}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
           <button
@@ -648,7 +784,10 @@ export function AIPanel({ note, vaultId, onSave, pendingPrompt, onPromptConsumed
             role="radio"
             aria-checked={agent === a.id}
             className={`ai-agent-btn ${agent === a.id ? 'active' : ''}`}
-            onClick={() => setAgent(a.id)}
+            onClick={() => {
+              setAgent(a.id);
+              applyModelSelection(a.id, null);
+            }}
           >
             {a.label}
             {busyAgents.has(a.id) && <span className="ai-agent-dot" title="Working…" />}
@@ -656,17 +795,41 @@ export function AIPanel({ note, vaultId, onSave, pendingPrompt, onPromptConsumed
         ))}
       </div>
 
+      {/* Model selector */}
+      <div className="ai-model-selector">
+        <label htmlFor="ai-model-select">Model</label>
+        <select
+          id="ai-model-select"
+          className="ai-model-select"
+          value={modelChoice}
+          disabled={isBusy}
+          onChange={(e) => {
+            setModelChoice(e.target.value);
+            if (e.target.value !== CUSTOM_MODEL_VALUE) setCustomModel('');
+          }}
+        >
+          <option value="">Agent default</option>
+          {AGENT_MODEL_PRESETS[agent].map((m) => (
+            <option key={m.id} value={m.id}>{m.label}</option>
+          ))}
+          <option value={CUSTOM_MODEL_VALUE}>Custom model ID…</option>
+        </select>
+        {modelChoice === CUSTOM_MODEL_VALUE && (
+          <input
+            className="ai-model-input"
+            value={customModel}
+            disabled={isBusy}
+            spellCheck={false}
+            onChange={(e) => setCustomModel(e.target.value)}
+            placeholder="model id"
+          />
+        )}
+      </div>
+
       {/* Chat area */}
       <div className="ai-chat">
-        {messages.length === 0 ? (
-          <div className="ai-empty">
-            <span className="ai-empty-icon"><MessageSquare size={32} /></span>
-            <span>Ask anything about your notes…</span>
-            <span className="text-xs text-tertiary">AI-powered writing assistant</span>
-          </div>
-        ) : (
-          <div className="ai-messages" id="ai-messages">
-            {messages.map((msg) => (
+        <div className="ai-messages" id="ai-messages">
+          {messages.map((msg) => (
               <div key={msg.id} className={`ai-message ${msg.role === 'user' ? 'user' : 'assistant'}`}>
                 {msg.role === 'user'
                   ? <>
@@ -684,8 +847,7 @@ export function AIPanel({ note, vaultId, onSave, pendingPrompt, onPromptConsumed
               </div>
             ))}
             <div ref={chatEndRef} />
-          </div>
-        )}
+        </div>
 
         {/* Pasted image previews */}
         {pendingImages.length > 0 && (
@@ -705,7 +867,7 @@ export function AIPanel({ note, vaultId, onSave, pendingPrompt, onPromptConsumed
         )}
 
         {/* Input */}
-        <form className="ai-input-wrap" onSubmit={handleSend}>
+        <form className="ai-input-wrap" onSubmit={isBusy ? handleCancelForm : handleSend}>
           <input
             id="ai-input"
             className="ai-input"
@@ -713,10 +875,21 @@ export function AIPanel({ note, vaultId, onSave, pendingPrompt, onPromptConsumed
             disabled={!vaultId || isBusy}
             onChange={(e) => setInput(e.target.value)}
             onPaste={handlePaste}
-            placeholder={isBusy ? 'Agent is working…' : 'Ask about your notes…  (paste an image)'}
+            placeholder={isBusy ? 'Agent is working…' : ''}
           />
-          <button id="ai-send" className="ai-send-btn" type="submit" disabled={(!input.trim() && pendingImages.length === 0) || !vaultId || isBusy}>
-            {isBusy ? '…' : '↑'}
+          <button
+            id="ai-send"
+            className={`ai-send-btn ${isBusy ? 'is-busy' : ''}`}
+            type="submit"
+            disabled={!isBusy && ((!input.trim() && pendingImages.length === 0) || !vaultId)}
+            style={isBusy ? {
+              color: 'var(--danger)',
+              background: 'var(--danger-subtle)',
+              border: '1px solid hsla(5, 62%, 58%, 0.2)',
+              cursor: 'pointer'
+            } : undefined}
+          >
+            {isBusy ? '■' : '↑'}
           </button>
         </form>
       </div>

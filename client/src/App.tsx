@@ -8,7 +8,7 @@ import { SearchOverlay } from './components/SearchOverlay';
 import { CommandPalette } from './components/CommandPalette';
 import { api, type User, type Vault, type Folder, type NoteSummary, type Note } from './api';
 import { connectVaultSocket } from './socket';
-import { Gem, Sparkles, PanelLeftOpen } from 'lucide-react';
+import { Gem, Bot, PanelLeftOpen } from 'lucide-react';
 
 /**
  * @file App.tsx — Root component for Cascade Notes
@@ -61,10 +61,70 @@ export default function App() {
   // UI panels state
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
+
+  // Resizable side-panel widths (persisted across sessions).
+  const [sidebarWidth, setSidebarWidth] = useState(
+    () => Number(localStorage.getItem('cascade_sidebar_w')) || 280,
+  );
+  const [aiPanelWidth, setAiPanelWidth] = useState(
+    () => Number(localStorage.getItem('cascade_aipanel_w')) || 340,
+  );
+  const [isResizing, setIsResizing] = useState(false);
+
+  useEffect(() => {
+    localStorage.setItem('cascade_sidebar_w', String(sidebarWidth));
+  }, [sidebarWidth]);
+  useEffect(() => {
+    localStorage.setItem('cascade_aipanel_w', String(aiPanelWidth));
+  }, [aiPanelWidth]);
+
+  /**
+   * Begin a drag on a side-panel divider. Tracks the pointer on `window` so the
+   * drag keeps working even as the cursor leaves the thin handle, and disables
+   * the grid transition while dragging so resizing tracks the pointer 1:1.
+   */
+  const startResize = useCallback((panel: 'sidebar' | 'ai', event: React.MouseEvent) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startSidebar = sidebarWidth;
+    const startAi = aiPanelWidth;
+    const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
+
+    setIsResizing(true);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    const onMove = (e: MouseEvent) => {
+      const delta = e.clientX - startX;
+      if (panel === 'sidebar') {
+        setSidebarWidth(clamp(startSidebar + delta, 180, 480));
+      } else {
+        // The AI panel is on the right edge, so dragging left widens it.
+        setAiPanelWidth(clamp(startAi - delta, 260, 560));
+      }
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      setIsResizing(false);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, [sidebarWidth, aiPanelWidth]);
   // A directive prompt queued from the editor for the AI panel to run (nonce makes repeats distinct).
   const [directivePrompt, setDirectivePrompt] = useState<{ text: string; nonce: number } | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+
+  // Transient status message (e.g. a note that failed to open). Auto-dismisses.
+  const [notice, setNotice] = useState<string | null>(null);
+  useEffect(() => {
+    if (!notice) return;
+    const id = setTimeout(() => setNotice(null), 4000);
+    return () => clearTimeout(id);
+  }, [notice]);
 
   // ═══════════════════════════════════════════════════════════════
   // DATA LOADING
@@ -202,22 +262,33 @@ export default function App() {
    * Fetch a single note's full content by ID, set it as the active note,
    * and ensure it has an open tab.
    */
-  const loadActiveNote = async (noteId: string) => {
+  const loadActiveNote = useCallback(async (noteId: string) => {
     try {
       const data = await api<{ note: Note }>(`/api/notes/${noteId}`);
       setActiveNote(data.note);
       setDraftContent(data.note.content);
 
-      // Add to open tabs if not already present
-      setOpenTabs((prev) => {
-        if (prev.some((t) => t.id === noteId)) return prev;
-        return [...prev, { id: noteId, title: data.note.title, type: 'note', dirty: false }];
-      });
+      // Add to open tabs if not already present; otherwise refresh its title.
+      setOpenTabs((prev) =>
+        prev.some((t) => t.id === noteId)
+          ? prev.map((t) => (t.id === noteId ? { ...t, title: data.note.title, type: 'note' } : t))
+          : [...prev, { id: noteId, title: data.note.title, type: 'note', dirty: false }],
+      );
       setActiveTabId(noteId);
     } catch (error) {
+      // The note is listed but won't open — typically the sidebar index and the
+      // files on disk have drifted (moved/deleted/renamed out from under us).
+      // A swallowed error here reads to the user as a dead click, so instead we
+      // surface it and self-heal: drop the stale tab and refresh the sidebar so
+      // the unopenable entry disappears.
       console.error('Error loading note:', error);
+      setOpenTabs((prev) => prev.filter((t) => t.id !== noteId));
+      setActiveTabId((prev) => (prev === noteId ? null : prev));
+      setActiveNote((prev) => (prev && prev.id === noteId ? null : prev));
+      setNotice('That note could not be opened — it may have been moved or deleted. Refreshing the list.');
+      if (activeVaultId) void loadVaultData(activeVaultId);
     }
-  };
+  }, [activeVaultId, loadVaultData]);
 
   /**
    * Create a new "Untitled Note" in the active vault, refresh the sidebar,
@@ -230,7 +301,7 @@ export default function App() {
         method: 'POST',
         body: JSON.stringify({
           title: 'Untitled Note',
-          content: '# Untitled Note\n\nStart typing...',
+          content: '',
         }),
       });
       // Refresh notes list
@@ -303,6 +374,114 @@ export default function App() {
       throw error; // let the editor revert its title draft
     }
   };
+
+  /** Delete a note (after confirmation), close its tab, and refresh the sidebar. */
+  const handleDeleteNote = useCallback(async (noteId: string) => {
+    if (!window.confirm('Delete this note? This cannot be undone.')) return;
+    try {
+      await api(`/api/notes/${noteId}`, { method: 'DELETE' });
+      // Close the note's tab and clear it from the panes if it was showing.
+      setOpenTabs((prev) => prev.filter((t) => t.id !== noteId));
+      setActiveTabId((prev) => (prev === noteId ? null : prev));
+      setActiveNote((prev) => (prev && prev.id === noteId ? null : prev));
+      setSplitTabId((prev) => {
+        if (prev !== noteId) return prev;
+        setSplitNote(null);
+        setSplitDraftContent('');
+        return null;
+      });
+      if (activeVaultId) await loadVaultData(activeVaultId);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not delete note');
+    }
+  }, [activeVaultId, loadVaultData]);
+
+  /** Move a note into a folder (or to the vault root when `folderId` is null). */
+  const handleMoveNote = useCallback(async (noteId: string, folderId: string | null) => {
+    try {
+      await api(`/api/notes/${noteId}/move`, {
+        method: 'POST',
+        body: JSON.stringify({ folder_id: folderId }),
+      });
+      if (activeVaultId) await loadVaultData(activeVaultId);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not move note');
+    }
+  }, [activeVaultId, loadVaultData]);
+
+  /** Create a folder (optionally nested) and return it so the sidebar can name it inline. */
+  const handleCreateFolder = useCallback(async (parentId: string | null = null) => {
+    if (!activeVaultId) return undefined;
+    try {
+      const data = await api<{ folder: Folder }>(`/api/vaults/${activeVaultId}/folders`, {
+        method: 'POST',
+        body: JSON.stringify({ name: 'New Folder', parent_id: parentId ?? undefined }),
+      });
+      await loadVaultData(activeVaultId);
+      return data.folder;
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not create folder');
+      return undefined;
+    }
+  }, [activeVaultId, loadVaultData]);
+
+  /** Rename a folder by id (used by the sidebar's inline editor). */
+  const handleRenameFolder = useCallback(async (folderId: string, name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    try {
+      await api(`/api/folders/${folderId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ name: trimmed }),
+      });
+      if (activeVaultId) await loadVaultData(activeVaultId);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not rename folder');
+    }
+  }, [activeVaultId, loadVaultData]);
+
+  /** Move a folder under another folder, or back to the vault root. */
+  const handleMoveFolder = useCallback(async (folderId: string, parentId: string | null, position: number) => {
+    try {
+      await api(`/api/folders/${folderId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ parent_id: parentId, position }),
+      });
+      if (activeVaultId) await loadVaultData(activeVaultId);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not move folder');
+    }
+  }, [activeVaultId, loadVaultData]);
+
+  /** Delete a folder; notes inside reparent to its parent (handled server-side). */
+  const handleDeleteFolder = useCallback(async (folderId: string) => {
+    if (!window.confirm('Delete this folder? Notes inside it move to the parent folder.')) return;
+    try {
+      await api(`/api/folders/${folderId}`, { method: 'DELETE' });
+      if (activeVaultId) await loadVaultData(activeVaultId);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not delete folder');
+    }
+  }, [activeVaultId, loadVaultData]);
+
+  /** Create a new note inside a specific folder, then open it. */
+  const handleCreateNoteInFolder = useCallback(async (folderId: string | null) => {
+    if (!activeVaultId) return;
+    try {
+      const data = await api<{ note: Note }>(`/api/vaults/${activeVaultId}/notes`, {
+        method: 'POST',
+        body: JSON.stringify({
+          title: 'Untitled Note',
+          content: '',
+          folder_id: folderId ?? undefined,
+        }),
+      });
+      await loadVaultData(activeVaultId);
+      void loadActiveNote(data.note.id);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not create note');
+    }
+  }, [activeVaultId, loadVaultData, loadActiveNote]);
 
   /**
    * Run an inline `{{ai: …}}` directive: open the AI panel and queue
@@ -412,15 +591,19 @@ export default function App() {
   // TAB MANAGEMENT
   // ═══════════════════════════════════════════════════════════════
 
-  /** Switch the active tab and load the corresponding note if it is a note tab. */
-  const handleSelectTab = (tabId: string) => {
+  /**
+   * Switch the active tab. Web tabs just become active; note tabs (and any
+   * sidebar entry, which has no tab yet) load through `loadActiveNote`, which
+   * also handles the case where the note can no longer be opened.
+   */
+  const handleSelectTab = useCallback((tabId: string) => {
     const tab = openTabs.find((t) => t.id === tabId);
-    if (!tab || tab.type === 'note') {
-      void loadActiveNote(tabId);
-    } else {
+    if (tab?.type === 'web') {
       setActiveTabId(tabId);
+    } else {
+      void loadActiveNote(tabId);
     }
-  };
+  }, [openTabs, loadActiveNote]);
 
   /**
    * Navigate to a note referenced by a `[[wikilink]]` (matched by title,
@@ -437,49 +620,54 @@ export default function App() {
    * Close a tab. If the closed tab was active, activate the last remaining tab
    * or clear the editor if no tabs remain.
    */
-  const handleCloseTab = (tabId: string) => {
-    setOpenTabs((prev) => {
-      const next = prev.filter((t) => t.id !== tabId);
+  const handleCloseTab = useCallback((tabId: string) => {
+    const closeSplit = () => {
+      setSplitTabId(null);
+      setSplitNote(null);
+      setSplitDraftContent('');
+    };
 
-      // If closed tab was in split pane, close split view
-      if (splitTabId === tabId) {
-        setSplitTabId(null);
-        setSplitNote(null);
-        setSplitDraftContent('');
-      }
+    // If the closed tab was in the split pane, tear the split down.
+    if (splitTabId === tabId) closeSplit();
 
-      if (activeTabId === tabId) {
-        if (next.length > 0) {
-          // Select last tab that is not the split tab, or just select any remaining
-          const remaining = next.filter((t) => t.id !== splitTabId);
-          if (remaining.length > 0) {
-            const lastTab = remaining[remaining.length - 1];
-            if (lastTab.type === 'note') {
-              void loadActiveNote(lastTab.id);
-            } else {
-              setActiveTabId(lastTab.id);
-            }
-          } else {
-            // If only the split tab remains, we make it the active tab and close split
-            const lastTab = next[next.length - 1];
-            if (lastTab.type === 'note') {
-              void loadActiveNote(lastTab.id);
-            } else {
-              setActiveTabId(lastTab.id);
-            }
-            setSplitTabId(null);
-            setSplitNote(null);
-            setSplitDraftContent('');
-          }
-        } else {
-          setActiveTabId(null);
-          setActiveNote(null);
-          setDraftContent('');
-        }
-      }
-      return next;
-    });
-  };
+    const next = openTabs.filter((t) => t.id !== tabId);
+    setOpenTabs(next);
+
+    // Closing an inactive tab leaves the current selection untouched.
+    if (activeTabId !== tabId) return;
+
+    // Pick the next tab to activate: prefer the last one that isn't the split
+    // tab so we don't show the same note in both panes; otherwise fall back to
+    // whatever remains (and collapse the split, since it's all that's left).
+    const nonSplit = [...next].reverse().find((t) => t.id !== splitTabId);
+    const fallback = next[next.length - 1] ?? null;
+    const target = nonSplit ?? fallback;
+
+    if (!target) {
+      setActiveTabId(null);
+      setActiveNote(null);
+      setDraftContent('');
+      return;
+    }
+
+    if (!nonSplit) closeSplit(); // only the split tab was left — promote it
+    if (target.type === 'web') {
+      setActiveTabId(target.id);
+    } else {
+      void loadActiveNote(target.id);
+    }
+  }, [openTabs, activeTabId, splitTabId, loadActiveNote]);
+
+  /** Close every open tab and clear both editor panes. */
+  const handleCloseAllTabs = useCallback(() => {
+    setOpenTabs([]);
+    setActiveTabId(null);
+    setActiveNote(null);
+    setDraftContent('');
+    setSplitTabId(null);
+    setSplitNote(null);
+    setSplitDraftContent('');
+  }, []);
 
   // ═══════════════════════════════════════════════════════════════
   // UI HANDLERS
@@ -660,11 +848,37 @@ export default function App() {
       className="app-shell"
       style={{
         display: 'grid',
-        gridTemplateColumns: `${sidebarOpen ? '280px' : '0px'} minmax(0, 1fr) ${aiPanelOpen ? '340px' : '0px'}`,
+        gridTemplateColumns: `${sidebarOpen ? `${sidebarWidth}px` : '0px'} minmax(0, 1fr) ${aiPanelOpen ? `${aiPanelWidth}px` : '0px'}`,
         height: '100vh',
         overflow: 'hidden',
+        position: 'relative',
+        transition: isResizing ? 'none' : undefined,
       }}
     >
+      {/* Resize handles (overlay the panel boundaries) */}
+      {sidebarOpen && (
+        <div
+          className="resize-handle"
+          style={{ left: sidebarWidth - 3 }}
+          onMouseDown={(e) => startResize('sidebar', e)}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize sidebar"
+          title="Drag to resize"
+        />
+      )}
+      {aiPanelOpen && (
+        <div
+          className="resize-handle"
+          style={{ right: aiPanelWidth - 3 }}
+          onMouseDown={(e) => startResize('ai', e)}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize assistant panel"
+          title="Drag to resize"
+        />
+      )}
+
       {/* Sidebar */}
       {sidebarOpen && (
         <Sidebar
@@ -677,9 +891,16 @@ export default function App() {
           onSelectVault={setActiveVaultId}
           onSelectNote={handleSelectTab}
           onNewNote={handleCreateNote}
+          onNewNoteInFolder={handleCreateNoteInFolder}
           onSearch={() => setSearchOpen(true)}
           onCollapse={() => setSidebarOpen(false)}
           onLogout={handleLogout}
+          onDeleteNote={handleDeleteNote}
+          onMoveNote={handleMoveNote}
+          onMoveFolder={handleMoveFolder}
+          onCreateFolder={handleCreateFolder}
+          onRenameFolder={handleRenameFolder}
+          onDeleteFolder={handleDeleteFolder}
         />
       )}
 
@@ -705,17 +926,18 @@ export default function App() {
               onSelectTab={handleSelectTab}
               onCloseTab={handleCloseTab}
               onOpenSplitTab={handleSplitTab}
+              onCloseAllTabs={handleCloseAllTabs}
             />
           </div>
-          {!aiPanelOpen && activeNote && (
+          {!aiPanelOpen && (
             <button
               id="ai-panel-expand-btn"
               className="btn-icon"
               style={{ margin: '0 12px 0 8px' }}
               onClick={() => setAiPanelOpen(true)}
-              title="Open AI assistant"
+              title="Open agent"
             >
-              <Sparkles size={16} />
+              <Bot size={16} />
             </button>
           )}
         </div>
@@ -812,6 +1034,9 @@ export default function App() {
         onSelectNote={handleSelectTab}
         onCreateNote={handleCreateNote}
       />
+
+      {/* Transient status toast */}
+      {notice && <div className="toast" role="status">{notice}</div>}
     </main>
   );
 }

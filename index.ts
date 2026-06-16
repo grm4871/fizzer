@@ -58,6 +58,7 @@ import {
   listRunEvents,
   startRun,
   sendRunMessage,
+  cancelRun,
 } from './server/runner.js';
 
 const PORT = Number(process.env.API_PORT || 3000);
@@ -589,13 +590,28 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
   const vault = getVault(db, req.params.id, req.user!.id);
   if (!vault) return res.status(404).json({ error: 'Vault not found' });
 
-  const { prompt, note_id, agent, conversation_id, images } = req.body;
+  const { prompt, note_id, agent, conversation_id, images, model } = req.body;
   if (!prompt || !prompt.trim()) {
     return res.status(400).json({ error: 'Prompt is required' });
   }
 
-  const validAgents = ['claude-code', 'codex', 'grok'];
+  const validAgents = ['claude-code', 'codex', 'grok', 'antigravity', 'copilot', 'hermes'];
   const selectedAgent = validAgents.includes(agent) ? agent : 'claude-code';
+  const removedModelPresets = new Set([
+    'codex-flash',
+    'codex-pro',
+    'grok-2',
+    'grok-beta',
+    'flash_lite',
+    'flash',
+    'pro',
+    'gpt-4o',
+    'claude-3.5-sonnet',
+    'o1-mini',
+  ]);
+  const selectedModel = typeof model === 'string' && model.trim() && !removedModelPresets.has(model.trim())
+    ? model.trim()
+    : undefined;
 
   // Sanitize image attachments to { media_type, data } base64 entries.
   const cleanImages = Array.isArray(images)
@@ -609,6 +625,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     const run = await startRun(db, vault, note_id || null, prompt, selectedAgent, {
       conversationId: typeof conversation_id === 'string' && conversation_id ? conversation_id : undefined,
       images: cleanImages,
+      model: selectedModel,
     });
     res.json({ run });
   } catch (err) {
@@ -647,6 +664,21 @@ app.post('/api/runs/:id/messages', requireAuth, async (req: AuthedRequest, res) 
   try {
     const event = await sendRunMessage(db, run.id, message);
     res.json({ event });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+app.post('/api/runs/:id/cancel', requireAuth, async (req: AuthedRequest, res) => {
+  const run = getRun(db, Number(req.params.id));
+  if (!run) return res.status(404).json({ error: 'Run not found' });
+
+  const vault = getVault(db, run.vault_id, req.user!.id);
+  if (!vault) return res.status(403).json({ error: 'Access denied' });
+
+  try {
+    const success = await cancelRun(db, run.id);
+    res.json({ success });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }

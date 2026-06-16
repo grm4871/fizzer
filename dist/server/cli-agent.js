@@ -30,6 +30,7 @@ import readline from 'node:readline';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+export const activeCliProcesses = new Map();
 // ═══════════════════════════════════════════════════════════════
 // CONFIG
 // ═══════════════════════════════════════════════════════════════
@@ -62,9 +63,21 @@ export async function runCliAgent(opts) {
     const prompt = opts.context
         ? `[Context: ${opts.context}]\n\n${opts.userPrompt}`
         : opts.userPrompt;
-    return opts.agent === 'codex'
-        ? runCodex(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.images || [])
-        : runGrok(prompt, opts.cwd, opts.emit, opts.resumeSessionId);
+    if (opts.agent === 'codex') {
+        return runCodex(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.images || [], opts.runId, opts.model);
+    }
+    else if (opts.agent === 'grok') {
+        return runGrok(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.runId, opts.model);
+    }
+    else if (opts.agent === 'copilot') {
+        return runCopilot(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.runId, opts.model);
+    }
+    else if (opts.agent === 'hermes') {
+        return runHermes(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.runId);
+    }
+    else {
+        return runAntigravity(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.runId, opts.db, opts.model);
+    }
 }
 // ═══════════════════════════════════════════════════════════════
 // INTERNAL HELPERS
@@ -105,21 +118,30 @@ function writeTempImages(images) {
  * @returns The summary string from getSummary on success
  * @throws On timeout, non-zero exit code, or spawn failure
  */
-function driveProcess(bin, args, cwd, onLine, getSummary, label) {
+function driveProcess(bin, args, cwd, onLine, getSummary, label, runId) {
     return new Promise((resolve, reject) => {
         let child;
         try {
             child = spawn(bin, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+            if (runId !== undefined) {
+                activeCliProcesses.set(runId, child);
+            }
         }
         catch (err) {
             reject(new Error(`Failed to launch ${label} ('${bin}'): ${err instanceof Error ? err.message : String(err)}`));
             return;
         }
+        const cleanUpProcess = () => {
+            if (runId !== undefined) {
+                activeCliProcesses.delete(runId);
+            }
+        };
         let stderr = '';
         let settled = false;
         const timer = setTimeout(() => {
             if (!settled) {
                 settled = true;
+                cleanUpProcess();
                 child.kill('SIGTERM');
                 reject(new Error(`${label} timed out after ${CLI_TIMEOUT_MS}ms`));
             }
@@ -140,6 +162,7 @@ function driveProcess(bin, args, cwd, onLine, getSummary, label) {
                 return;
             settled = true;
             clearTimeout(timer);
+            cleanUpProcess();
             reject(new Error(`${label} ('${bin}') could not be started: ${err.message}. Is it installed and on PATH?`));
         });
         child.on('close', (code) => {
@@ -147,6 +170,7 @@ function driveProcess(bin, args, cwd, onLine, getSummary, label) {
                 return;
             settled = true;
             clearTimeout(timer);
+            cleanUpProcess();
             if (code === 0) {
                 resolve(getSummary());
             }
@@ -182,15 +206,16 @@ function truncate(s, n) {
  * @param images     - Optional images to attach via `-i` flags
  * @returns Summary text and optional session id
  */
-async function runCodex(prompt, cwd, emit, resumeId, images = []) {
+async function runCodex(prompt, cwd, emit, resumeId, images = [], runId, model) {
     const { paths: imagePaths, cleanup } = writeTempImages(images);
     // `-i/--image` is variadic, so it must come AFTER the positional prompt (and
     // session id on resume) or it swallows them. `codex exec resume` rejects
     // --sandbox, so the sandbox mode is set via -c instead.
     const imageArgs = imagePaths.flatMap((p) => ['-i', p]);
+    const modelArgs = model ? ['--model', model] : [];
     const args = resumeId
-        ? ['exec', 'resume', '--json', '--skip-git-repo-check', '-c', 'sandbox_mode=workspace-write', resumeId, prompt, ...imageArgs]
-        : ['exec', '--json', '--skip-git-repo-check', '--sandbox', 'workspace-write', prompt, ...imageArgs];
+        ? ['exec', 'resume', '--json', '--skip-git-repo-check', '-c', 'sandbox_mode=workspace-write', ...modelArgs, resumeId, prompt, ...imageArgs]
+        : ['exec', '--json', '--skip-git-repo-check', '--sandbox', 'workspace-write', ...modelArgs, prompt, ...imageArgs];
     let summary = '';
     let sessionId;
     const emittedTool = new Set();
@@ -245,7 +270,7 @@ async function runCodex(prompt, cwd, emit, resumeId, images = []) {
         }
     };
     try {
-        const summaryText = await driveProcess(CODEX_BIN, args, cwd, onLine, () => summary || 'Completed note operations successfully.', 'Codex');
+        const summaryText = await driveProcess(CODEX_BIN, args, cwd, onLine, () => summary || 'Completed note operations successfully.', 'Codex', runId);
         return { summary: summaryText, sessionId };
     }
     finally {
@@ -275,36 +300,316 @@ async function runCodex(prompt, cwd, emit, resumeId, images = []) {
  * @param resumeId - Optional session id to resume a prior conversation
  * @returns Summary text and optional session id
  */
-async function runGrok(prompt, cwd, emit, resumeId) {
-    const baseArgs = ['--single', prompt, '--output-format', 'streaming-json', '--always-approve', '--cwd', cwd];
+async function runGrok(prompt, cwd, emit, resumeId, runId, model) {
+    const modelArgs = model ? ['--model', model] : [];
+    const baseArgs = ['--single', prompt, '--output-format', 'streaming-json', '--always-approve', '--cwd', cwd, ...modelArgs];
     const args = resumeId ? ['--resume', resumeId, ...baseArgs] : baseArgs;
-    let thought = '';
     let text = '';
-    let thoughtFlushed = false;
     let sessionId;
-    const flushThought = () => {
-        if (thought && !thoughtFlushed) {
-            emit('text', { message: { content: [{ type: 'thinking', text: thought }] } });
-            thoughtFlushed = true;
-        }
-    };
     const onLine = (line) => {
         const ev = JSON.parse(line);
         if (ev.type === 'thought') {
-            thought += ev.data || '';
+            emit('text', { message: { content: [{ type: 'thinking', thinking: ev.data || '' }] } });
         }
         else if (ev.type === 'text') {
-            flushThought(); // reasoning is done once answer text begins
+            emit('text', { message: { content: [{ type: 'text', text: ev.data || '' }] } });
             text += ev.data || '';
         }
         else if (ev.type === 'end') {
-            flushThought();
             if (ev.sessionId)
                 sessionId = ev.sessionId;
-            if (text)
-                emit('text', { message: { content: [{ type: 'text', text }] } });
         }
     };
-    const summaryText = await driveProcess(GROK_BIN, args, cwd, onLine, () => text || 'Completed note operations successfully.', 'Grok');
+    const summaryText = await driveProcess(GROK_BIN, args, cwd, onLine, () => text || 'Completed note operations successfully.', 'Grok', runId);
     return { summary: summaryText, sessionId };
+}
+// ═══════════════════════════════════════════════════════════════
+// ANTIGRAVITY AGENT
+// ═══════════════════════════════════════════════════════════════
+/**
+ * Helper to run a command and return stdout as string.
+ */
+function runCommand(bin, args, cwd) {
+    return new Promise((resolve, reject) => {
+        const child = spawn(bin, args, { cwd });
+        let stdout = '';
+        let stderr = '';
+        child.stdout.on('data', (d) => { stdout += d.toString(); });
+        child.stderr.on('data', (d) => { stderr += d.toString(); });
+        child.on('error', (err) => reject(err));
+        child.on('close', (code) => {
+            if (code === 0) {
+                resolve(stdout);
+            }
+            else {
+                reject(new Error(`Exit code ${code}: ${stderr}`));
+            }
+        });
+    });
+}
+/**
+ * Runs the Antigravity agent using the `agentapi` language server wrapper commands.
+ * Polls the generated `transcript.jsonl` file to stream assistant reasoning and responses.
+ *
+ * @param prompt   - Full prompt (context + user prompt)
+ * @param cwd      - Vault root path
+ * @param emit     - Event emitter callback
+ * @param resumeId - Optional session id to resume a prior conversation
+ * @returns Summary text and session id
+ */
+async function runAntigravity(prompt, cwd, emit, resumeId, runId, db, model) {
+    const bin = process.env.ANTIGRAVITY_BIN || path.join(os.homedir(), '.gemini', 'antigravity', 'bin', 'agentapi');
+    let args = [];
+    if (resumeId) {
+        args = ['send-message', resumeId, prompt];
+    }
+    else {
+        args = ['new-conversation'];
+        if (model) {
+            args.push(`--model=${model}`);
+        }
+        args.push(prompt);
+    }
+    let stdoutStr;
+    try {
+        stdoutStr = await runCommand(bin, args, cwd);
+    }
+    catch (err) {
+        throw new Error(`Failed to run agentapi: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    let conversationId = '';
+    try {
+        const res = JSON.parse(stdoutStr);
+        if (res.response?.newConversation?.conversationId) {
+            conversationId = res.response.newConversation.conversationId;
+        }
+        else if (res.response?.sendMessage?.recipientId) {
+            conversationId = res.response.sendMessage.recipientId;
+        }
+    }
+    catch (err) {
+        throw new Error(`Failed to parse agentapi JSON output: ${stdoutStr}`);
+    }
+    if (!conversationId) {
+        throw new Error(`No conversationId returned by agentapi: ${stdoutStr}`);
+    }
+    const transcriptPath = path.join(os.homedir(), '.gemini', 'antigravity', 'brain', conversationId, '.system_generated', 'logs', 'transcript.jsonl');
+    let processedLines = 0;
+    let summary = 'Completed note operations successfully.';
+    let done = false;
+    let isChecking = false;
+    let noNewLinesCount = 0;
+    // Wait for the transcript.jsonl file to exist
+    let exists = false;
+    for (let i = 0; i < 100; i++) {
+        if (fs.existsSync(transcriptPath)) {
+            exists = true;
+            break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    if (!exists) {
+        throw new Error(`Transcript file was not created at ${transcriptPath}`);
+    }
+    const getToolFriendlyName = (name) => {
+        if (name === 'list_dir')
+            return 'List Directory';
+        if (name === 'view_file')
+            return 'View File';
+        if (name === 'write_to_file')
+            return 'Write File';
+        if (name === 'replace_file_content')
+            return 'Edit File';
+        if (name === 'multi_replace_file_content')
+            return 'Edit File';
+        if (name === 'grep_search')
+            return 'Search Workspace';
+        if (name === 'run_command')
+            return 'Bash';
+        return name;
+    };
+    const emittedTools = new Set();
+    const checkTranscript = async () => {
+        if (isChecking)
+            return;
+        isChecking = true;
+        try {
+            const content = fs.readFileSync(transcriptPath, 'utf-8');
+            const lines = content.split('\n').filter(l => l.trim());
+            if (lines.length > processedLines) {
+                noNewLinesCount = 0;
+                for (let i = processedLines; i < lines.length; i++) {
+                    const step = JSON.parse(lines[i]);
+                    if (step.source === 'MODEL' && step.type === 'PLANNER_RESPONSE') {
+                        const text = step.content || '';
+                        const toolCalls = step.tool_calls || [];
+                        if (text) {
+                            summary = text;
+                            emit('text', { message: { content: [{ type: 'text', text }] } });
+                        }
+                        for (const tc of toolCalls) {
+                            const toolId = tc.id || `tc-${step.step_index}`;
+                            if (!emittedTools.has(toolId)) {
+                                emittedTools.add(toolId);
+                                const friendlyName = getToolFriendlyName(tc.name);
+                                emit('text', {
+                                    message: {
+                                        content: [{
+                                                type: 'tool_use',
+                                                id: toolId,
+                                                name: friendlyName,
+                                                input: tc.args || {}
+                                            }]
+                                    }
+                                });
+                            }
+                        }
+                        if (step.status === 'DONE' && toolCalls.length === 0) {
+                            done = true;
+                        }
+                    }
+                    else if (step.source === 'MODEL' && step.type !== 'USER_INPUT' && step.type !== 'CONVERSATION_HISTORY' && step.type !== 'SYSTEM_MESSAGE') {
+                        const toolId = `tc-${step.step_index - 1}`;
+                        const outText = step.content || '';
+                        const isError = step.status === 'ERROR' || step.type === 'ERROR_MESSAGE';
+                        emit('user', {
+                            message: {
+                                content: [{
+                                        type: 'tool_result',
+                                        tool_use_id: toolId,
+                                        content: truncate(String(outText), 8000),
+                                        is_error: isError
+                                    }]
+                            }
+                        });
+                    }
+                }
+                processedLines = lines.length;
+            }
+            else {
+                noNewLinesCount++;
+            }
+            if (done || (processedLines > 2 && noNewLinesCount >= 20)) {
+                done = true;
+            }
+        }
+        catch (err) {
+            // ignore read/parse errors
+        }
+        finally {
+            isChecking = false;
+        }
+    };
+    while (!done) {
+        if (db && runId !== undefined) {
+            const currentRun = db.prepare('SELECT status FROM runs WHERE id = ?').get(runId);
+            if (currentRun && currentRun.status === 'failed') {
+                done = true;
+                break;
+            }
+        }
+        await checkTranscript();
+        if (!done) {
+            await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+    }
+    return {
+        summary,
+        sessionId: conversationId
+    };
+}
+// ═══════════════════════════════════════════════════════════════
+// COPILOT AGENT
+// ═══════════════════════════════════════════════════════════════
+const COPILOT_BIN = process.env.COPILOT_BIN || 'copilot';
+/**
+ * Runs the Copilot CLI and translates its JSONL event stream into content blocks.
+ */
+async function runCopilot(prompt, cwd, emit, resumeId, runId, model) {
+    const modelArgs = model ? ['--model', model] : [];
+    const baseArgs = ['-p', prompt, '--output-format', 'json', '--yolo', ...modelArgs];
+    const args = resumeId ? ['--session-id', resumeId, ...baseArgs] : baseArgs;
+    let summary = '';
+    let sessionId;
+    const emittedTool = new Set();
+    const isToolItem = (type) => type !== 'agent_message' && type !== 'reasoning';
+    const toolUseBlock = (item) => {
+        if (item.type === 'command_execution') {
+            return { type: 'tool_use', id: item.id, name: 'Bash', input: { command: item.command || '' } };
+        }
+        if (item.type === 'file_change') {
+            const file = item.path || item.changes?.[0]?.path || '(files)';
+            return { type: 'tool_use', id: item.id, name: 'Edit', input: { file_path: file } };
+        }
+        return { type: 'tool_use', id: item.id, name: String(item.type), input: {} };
+    };
+    const emitToolUse = (item) => {
+        if (!item.id || emittedTool.has(item.id))
+            return;
+        emittedTool.add(item.id);
+        emit('text', { message: { content: [toolUseBlock(item)] } });
+    };
+    const onLine = (line) => {
+        try {
+            if (line.startsWith('{')) {
+                const ev = JSON.parse(line);
+                const item = ev.item;
+                switch (ev.type) {
+                    case 'thread.started':
+                        if (ev.thread_id)
+                            sessionId = ev.thread_id;
+                        break;
+                    case 'item.started':
+                        if (item && isToolItem(item.type))
+                            emitToolUse(item);
+                        break;
+                    case 'item.completed':
+                        if (!item)
+                            break;
+                        if (item.type === 'agent_message') {
+                            summary = item.text || summary;
+                            emit('text', { message: { content: [{ type: 'text', text: item.text || '' }] } });
+                        }
+                        else if (item.type === 'reasoning') {
+                            emit('text', { message: { content: [{ type: 'thinking', text: item.text || '' }] } });
+                        }
+                        else {
+                            emitToolUse(item);
+                            const out = item.aggregated_output ?? item.output ?? '';
+                            const isError = typeof item.exit_code === 'number' && item.exit_code !== 0;
+                            emit('user', { message: { content: [{ type: 'tool_result', tool_use_id: item.id, content: truncate(String(out), 8000), is_error: isError }] } });
+                        }
+                        break;
+                }
+            }
+            else {
+                summary = line;
+                emit('text', { message: { content: [{ type: 'text', text: line }] } });
+            }
+        }
+        catch {
+            summary = line;
+            emit('text', { message: { content: [{ type: 'text', text: line }] } });
+        }
+    };
+    const summaryText = await driveProcess(COPILOT_BIN, args, cwd, onLine, () => summary || 'Completed note operations successfully.', 'Copilot', runId);
+    return { summary: summaryText, sessionId: sessionId || resumeId };
+}
+// ═══════════════════════════════════════════════════════════════
+// HERMES AGENT
+// ═══════════════════════════════════════════════════════════════
+const HERMES_BIN = process.env.HERMES_BIN || 'hermes';
+/**
+ * Runs the Hermes CLI in one-shot mode and streams its text output line by line.
+ */
+async function runHermes(prompt, cwd, emit, resumeId, runId) {
+    const baseArgs = ['-z', prompt, '--yolo'];
+    const args = resumeId ? ['-r', resumeId, ...baseArgs] : baseArgs;
+    let text = '';
+    const onLine = (line) => {
+        text += line + '\n';
+        emit('text', { message: { content: [{ type: 'text', text: line }] } });
+    };
+    const summaryText = await driveProcess(HERMES_BIN, args, cwd, onLine, () => text.trim() || 'Completed note operations successfully.', 'Hermes', runId);
+    return { summary: summaryText, sessionId: resumeId };
 }
