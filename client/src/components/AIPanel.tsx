@@ -1,14 +1,52 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
+import type { ReactNode } from 'react';
+import ReactMarkdown from 'react-markdown';
 import type { Note } from '../api';
 import { api } from '../api';
-import { connectRunsSocket } from '../socket';
-import { Wrench, Sparkles, FileText, Link2, Tags, MessageSquare } from 'lucide-react';
+import { connectRunsSocket, connectVaultSocket } from '../socket';
+import {
+  Sparkles, FileText, MessageSquare,
+  Brain, FilePen, FilePlus, SquareTerminal, Search, Folder,
+  ListTodo, Wrench, Globe, Check, CircleAlert, ChevronRight, SquarePen,
+} from 'lucide-react';
+
+type AgentId = 'claude-code' | 'codex' | 'grok';
+
+const AGENTS: { id: AgentId; label: string }[] = [
+  { id: 'claude-code', label: 'Claude Code' },
+  { id: 'codex', label: 'Codex' },
+  { id: 'grok', label: 'Grok' },
+];
+
+const isAgentId = (v: string): v is AgentId => AGENTS.some((a) => a.id === v);
+
+// Which agents have a running/queued run for this note (their latest run).
+function computeBusyAgents(runs: any[], noteId: string | null): Set<AgentId> {
+  const relevant = runs
+    .filter((r) => (noteId ? r.note_id === noteId : r.note_id === null))
+    .sort((a, b) => a.id - b.id);
+  const latestByAgent = new Map<string, any>();
+  for (const r of relevant) latestByAgent.set(r.agent, r); // last write = latest
+  const busy = new Set<AgentId>();
+  for (const [ag, r] of latestByAgent) {
+    if ((r.status === 'running' || r.status === 'queued') && isAgentId(ag)) busy.add(ag);
+  }
+  return busy;
+}
 
 interface ChatBlock {
-  type: string;
+  type: 'text' | 'thinking' | 'tool_use' | 'tool_result';
   text?: string;
+  // tool_use
   name?: string;
   input?: any;
+  toolUseId?: string;
+  // tool_result
+  content?: any;
+  isError?: boolean;
+  // thinking
+  durationMs?: number;
+  redacted?: boolean;
 }
 
 interface ChatMessage {
@@ -16,6 +54,7 @@ interface ChatMessage {
   role: 'user' | 'assistant';
   content?: string;
   blocks?: ChatBlock[];
+  images?: string[];
   isStreaming?: boolean;
 }
 
@@ -23,50 +62,236 @@ interface AIPanelProps {
   note: Note | null;
   vaultId: string | null;
   onSave?: () => Promise<any>;
+  /** A directive prompt queued from the editor; runs once per distinct nonce. */
+  pendingPrompt?: { text: string; nonce: number } | null;
+  onPromptConsumed?: () => void;
   onClose: () => void;
 }
 
-function ToolUseView({ block }: { block: ChatBlock }) {
+// ---------------------------------------------------------------------------
+// Helpers: normalize SDK content blocks into our flat ChatBlock model
+// ---------------------------------------------------------------------------
+
+function normalizeContentBlocks(content: any): ChatBlock[] {
+  if (!Array.isArray(content)) return [];
+  const out: ChatBlock[] = [];
+  for (const c of content) {
+    if (!c || typeof c !== 'object') continue;
+    switch (c.type) {
+      case 'text':
+        if (c.text) out.push({ type: 'text', text: c.text });
+        break;
+      case 'thinking':
+        out.push({ type: 'thinking', text: c.thinking || '' });
+        break;
+      case 'redacted_thinking':
+        out.push({ type: 'thinking', text: '', redacted: true });
+        break;
+      case 'tool_use':
+        out.push({ type: 'tool_use', name: c.name, input: c.input, toolUseId: c.id });
+        break;
+      case 'tool_result':
+        out.push({ type: 'tool_result', toolUseId: c.tool_use_id, content: c.content, isError: c.is_error });
+        break;
+    }
+  }
+  return out;
+}
+
+function stringifyResult(content: any): string {
+  if (content == null) return '';
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((c) => (typeof c === 'string' ? c : c?.text ?? JSON.stringify(c)))
+      .join('\n');
+  }
+  return JSON.stringify(content, null, 2);
+}
+
+function basename(p?: string): string {
+  if (!p) return '';
+  const parts = p.split(/[\\/]/);
+  return parts[parts.length - 1] || p;
+}
+
+function truncate(s: string, n: number): string {
+  if (!s) return '';
+  return s.length > n ? s.slice(0, n - 1) + '…' : s;
+}
+
+function formatDuration(ms?: number): string {
+  if (!ms || ms < 0) return '';
+  if (ms < 1000) return '<1s';
+  const s = ms / 1000;
+  return s < 10 ? `${s.toFixed(1)}s` : `${Math.round(s)}s`;
+}
+
+// Friendly label + icon for a tool call, mirroring opencode / Claude Code style.
+function describeTool(name?: string, input?: any): { icon: ReactNode; verb: string; target: string } {
+  const i = input || {};
+  switch (name) {
+    case 'Read':
+      return { icon: <FileText size={13} />, verb: 'Read', target: basename(i.file_path) };
+    case 'Write':
+      return { icon: <FilePlus size={13} />, verb: 'Wrote', target: basename(i.file_path) };
+    case 'Edit':
+    case 'MultiEdit':
+      return { icon: <FilePen size={13} />, verb: 'Edited', target: basename(i.file_path) };
+    case 'Bash':
+      return { icon: <SquareTerminal size={13} />, verb: 'Ran', target: truncate(i.command || '', 52) };
+    case 'Grep':
+      return { icon: <Search size={13} />, verb: 'Searched', target: truncate(i.pattern || '', 40) };
+    case 'Glob':
+      return { icon: <Search size={13} />, verb: 'Globbed', target: truncate(i.pattern || '', 40) };
+    case 'LS':
+      return { icon: <Folder size={13} />, verb: 'Listed', target: basename(i.path) || '.' };
+    case 'TodoWrite':
+      return { icon: <ListTodo size={13} />, verb: 'Updated plan', target: '' };
+    case 'WebFetch':
+      return { icon: <Globe size={13} />, verb: 'Fetched', target: truncate(i.url || '', 40) };
+    case 'WebSearch':
+      return { icon: <Globe size={13} />, verb: 'Searched web', target: truncate(i.query || '', 40) };
+    default:
+      return { icon: <Wrench size={13} />, verb: name || 'Tool', target: '' };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Sub-views
+// ---------------------------------------------------------------------------
+
+function ThinkingView({ block }: { block: ChatBlock }) {
   const [open, setOpen] = useState(false);
+  const dur = formatDuration(block.durationMs);
+  const label = block.redacted
+    ? 'Thought (redacted)'
+    : dur ? `Thought for ${dur}` : 'Thought process';
+  const expandable = !block.redacted && !!block.text;
   return (
-    <div className="ai-tool-use" style={{ marginTop: '0.5rem', marginBottom: '0.5rem', border: '1px solid var(--border-color)', borderRadius: '6px', background: 'var(--bg-secondary)', overflow: 'hidden' }}>
-      <div 
-        className="ai-tool-header" 
-        onClick={() => setOpen(!open)}
-        style={{ padding: '0.5rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}
+    <div className={`ai-thinking ${open ? 'open' : ''}`}>
+      <div
+        className="ai-thinking-header"
+        onClick={() => expandable && setOpen((o) => !o)}
+        style={{ cursor: expandable ? 'pointer' : 'default' }}
       >
-        <span><Wrench size={14} /></span>
-        <span style={{ flex: 1, fontFamily: 'monospace' }}>Used: {block.name}</span>
-        <span>{open ? '▼' : '▶'}</span>
+        <Brain size={13} />
+        <span className="ai-thinking-label">{label}</span>
+        {expandable && <ChevronRight size={13} className="ai-chevron" />}
       </div>
-      {open && block.input && (
-        <pre style={{ margin: 0, padding: '0.5rem', fontSize: '0.75rem', overflowX: 'auto', borderTop: '1px solid var(--border-color)', background: 'var(--bg-tertiary)' }}>
-          {JSON.stringify(block.input, null, 2)}
-        </pre>
+      {open && expandable && <div className="ai-thinking-body">{block.text}</div>}
+    </div>
+  );
+}
+
+function ToolView({ block, result }: { block: ChatBlock; result?: ChatBlock }) {
+  const [open, setOpen] = useState(false);
+  const { icon, verb, target } = describeTool(block.name, block.input);
+  const status: 'running' | 'done' | 'error' = !result
+    ? 'running'
+    : result.isError ? 'error' : 'done';
+  const resultText = result ? stringifyResult(result.content) : '';
+  return (
+    <div className={`ai-tool status-${status} ${open ? 'open' : ''}`}>
+      <div className="ai-tool-header" onClick={() => setOpen((o) => !o)}>
+        <span className="ai-tool-icon">{icon}</span>
+        <span className="ai-tool-verb">{verb}</span>
+        {target && <code className="ai-tool-target">{target}</code>}
+        <span className="ai-tool-status">
+          {status === 'running' && <span className="ai-spinner" />}
+          {status === 'done' && <Check size={13} />}
+          {status === 'error' && <CircleAlert size={13} />}
+        </span>
+        <ChevronRight size={13} className="ai-chevron" />
+      </div>
+      {open && (
+        <div className="ai-tool-detail">
+          {block.input && Object.keys(block.input).length > 0 && (
+            <pre className="ai-tool-input">{JSON.stringify(block.input, null, 2)}</pre>
+          )}
+          {result && (
+            <pre className={`ai-tool-output ${result.isError ? 'is-error' : ''}`}>
+              {truncate(resultText, 4000) || '(no output)'}
+            </pre>
+          )}
+        </div>
       )}
     </div>
   );
 }
 
-export function AIPanel({ note, vaultId, onSave, onClose }: AIPanelProps) {
+function MessageBlocks({ msg }: { msg: ChatMessage }) {
+  // Build a lookup of tool results by tool_use id so each tool card can show its output.
+  const resultMap = new Map<string, ChatBlock>();
+  for (const b of msg.blocks || []) {
+    if (b.type === 'tool_result' && b.toolUseId) resultMap.set(b.toolUseId, b);
+  }
+  return (
+    <>
+      {msg.content && (
+        <div className="ai-markdown">
+          <ReactMarkdown>{msg.content}</ReactMarkdown>
+        </div>
+      )}
+      {(msg.blocks || []).map((block, i) => {
+        if (block.type === 'tool_result') return null; // rendered inside its tool card
+        if (block.type === 'text') {
+          return (
+            <div key={i} className="ai-markdown">
+              <ReactMarkdown>{block.text || ''}</ReactMarkdown>
+            </div>
+          );
+        }
+        if (block.type === 'thinking') return <ThinkingView key={i} block={block} />;
+        if (block.type === 'tool_use') {
+          return (
+            <ToolView
+              key={i}
+              block={block}
+              result={block.toolUseId ? resultMap.get(block.toolUseId) : undefined}
+            />
+          );
+        }
+        return null;
+      })}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Main panel
+// ---------------------------------------------------------------------------
+
+export function AIPanel({ note, vaultId, onSave, pendingPrompt, onPromptConsumed, onClose }: AIPanelProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [toast, setToast] = useState('');
   const [status, setStatus] = useState<'idle' | 'queued' | 'running' | 'completed' | 'failed'>('idle');
-  const [runningTool, setRunningTool] = useState<string | null>(null);
+  const [agent, setAgent] = useState<AgentId>('claude-code');
+  const [historyReady, setHistoryReady] = useState(false);
+  // Current conversation thread (null = start a fresh one on the next run).
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  // Pasted images staged for the next message.
+  const [pendingImages, setPendingImages] = useState<{ media_type: string; data: string; url: string }[]>([]);
+  // Agents with a running/queued run for this note (for the activity dot).
+  const [busyAgents, setBusyAgents] = useState<Set<AgentId>>(new Set());
+  const processedNonceRef = useRef<number | null>(null);
+  // Tracks the last note we loaded, to restore its last-used agent on open.
+  const lastNoteRef = useRef<string | null | undefined>(undefined);
 
   const socketRef = useRef<any>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  // Timestamp used to estimate how long the model "thought" before each message.
+  const turnStartRef = useRef<number>(Date.now());
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(''), 3000);
   }, []);
 
-  // Scroll to bottom on messages/runningTool update
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, runningTool]);
+  }, [messages]);
 
   // Connect socket and register listeners for run events
   const connectAndListenToRun = useCallback((runId: number, existingBlocks: ChatBlock[]) => {
@@ -76,25 +301,34 @@ export function AIPanel({ note, vaultId, onSave, onClose }: AIPanelProps) {
 
     const socket = connectRunsSocket();
     socketRef.current = socket;
-
     socket.emit('joinRun', runId);
 
     const aiMsgId = `ai-stream-${runId}`;
+    turnStartRef.current = Date.now();
 
     setMessages((prev) => {
       const last = prev[prev.length - 1];
       if (last && last.role === 'assistant') {
         return prev.map((msg, i) => i === prev.length - 1 ? { ...msg, id: aiMsgId, isStreaming: true } : msg);
-      } else {
-        return [...prev, { id: aiMsgId, role: 'assistant', blocks: existingBlocks, content: existingBlocks.length === 0 ? 'Thinking...' : undefined, isStreaming: true }];
       }
+      return [...prev, { id: aiMsgId, role: 'assistant', blocks: existingBlocks, content: existingBlocks.length === 0 ? 'Thinking…' : undefined, isStreaming: true }];
     });
+
+    const appendBlocks = (blocks: ChatBlock[]) => {
+      if (blocks.length === 0) return;
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === aiMsgId
+            ? { ...msg, content: undefined, blocks: [...(msg.blocks || []), ...blocks] }
+            : msg
+        )
+      );
+    };
 
     socket.on('event', (event: any) => {
       if (event.type === 'status') {
         const payload = JSON.parse(event.payload_json);
         setStatus(payload.status);
-        
         if (payload.status === 'completed' || payload.status === 'failed') {
           setMessages((prev) =>
             prev.map((msg) => {
@@ -102,53 +336,76 @@ export function AIPanel({ note, vaultId, onSave, onClose }: AIPanelProps) {
                 const hasBlocks = msg.blocks && msg.blocks.length > 0;
                 return {
                   ...msg,
-                  content: hasBlocks ? undefined : (payload.status === 'completed' ? 'Agent finished successfully.' : 'Agent failed.'),
-                  isStreaming: false
+                  content: hasBlocks ? undefined : (payload.status === 'completed' ? 'Done.' : 'Agent failed.'),
+                  isStreaming: false,
                 };
               }
               return msg;
             })
           );
-          setRunningTool(null);
           socket.disconnect();
           socketRef.current = null;
         }
       } else if (event.type === 'text') {
         const payload = JSON.parse(event.payload_json);
-        if (payload.message && payload.message.content) {
-          const newBlocks = payload.message.content;
-          
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === aiMsgId
-                ? { ...msg, content: undefined, blocks: [...(msg.blocks || []), ...newBlocks] }
-                : msg
-            )
-          );
-
-          // Update last used tool if available
-          const toolUses = newBlocks.filter((c: any) => c.type === 'tool_use');
-          if (toolUses.length > 0) {
-            setRunningTool(toolUses[toolUses.length - 1].name);
+        if (payload.message?.content) {
+          const blocks = normalizeContentBlocks(payload.message.content);
+          const now = Date.now();
+          for (const b of blocks) {
+            if (b.type === 'thinking') b.durationMs = now - turnStartRef.current;
           }
+          turnStartRef.current = now;
+          appendBlocks(blocks);
         }
+      } else if (event.type === 'user') {
+        // Tool results come back as user messages with tool_result content.
+        const payload = JSON.parse(event.payload_json);
+        const results = normalizeContentBlocks(payload.message?.content).filter((b) => b.type === 'tool_result');
+        turnStartRef.current = Date.now();
+        appendBlocks(results);
       }
     });
   }, []);
+
+  // Parse SQLite 'YYYY-MM-DD HH:MM:SS' (UTC) timestamps
+  const parseTs = (ts?: string): number => {
+    if (!ts) return 0;
+    const v = Date.parse(ts.includes('T') ? ts : ts.replace(' ', 'T') + 'Z');
+    return Number.isNaN(v) ? 0 : v;
+  };
 
   // Fetch the full history of runs for this note context
   const loadLatestRunHistory = useCallback(async () => {
     if (!vaultId) return;
     try {
       const { runs } = await api<{ runs: any[] }>(`/api/vaults/${vaultId}/runs`);
-      const relevantRuns = note
-        ? runs.filter((r) => r.note_id === note.id).sort((a,b) => a.id - b.id)
-        : runs.filter((r) => r.note_id === null).sort((a,b) => a.id - b.id);
+      setBusyAgents(computeBusyAgents(runs, note?.id ?? null));
+      const noteRuns = (note
+        ? runs.filter((r) => r.note_id === note.id)
+        : runs.filter((r) => r.note_id === null)
+      ).sort((a, b) => a.id - b.id);
+
+      // On opening a different note, restore the agent it was last used with.
+      const noteKey = note?.id ?? null;
+      let viewAgent = agent;
+      if (lastNoteRef.current !== noteKey) {
+        lastNoteRef.current = noteKey;
+        const lastRun = noteRuns[noteRuns.length - 1];
+        if (lastRun && isAgentId(lastRun.agent)) {
+          viewAgent = lastRun.agent;
+          if (viewAgent !== agent) setAgent(viewAgent); // reloads via the agent dep
+        }
+      }
+
+      // Each agent has its own thread; show only the latest conversation in it.
+      const agentRuns = noteRuns.filter((r) => r.agent === viewAgent);
+      const latestConversation = agentRuns.length ? agentRuns[agentRuns.length - 1].conversation_id : null;
+      setConversationId(latestConversation);
+      const relevantRuns = agentRuns.filter((r) => r.conversation_id === latestConversation);
 
       if (relevantRuns.length === 0) {
         setMessages([]);
         setStatus('idle');
-        setRunningTool(null);
         return;
       }
 
@@ -160,50 +417,46 @@ export function AIPanel({ note, vaultId, onSave, onClose }: AIPanelProps) {
         try {
           const { events } = await api<{ events: any[] }>(`/api/runs/${r.id}/events`);
           eventsMap.set(r.id, events);
-        } catch(e) {
-          // ignore
-        }
+        } catch { /* ignore */ }
       }));
 
       const newMessages: ChatMessage[] = [];
 
       for (const r of relevantRuns) {
-        newMessages.push({
-          id: `user-init-${r.id}`,
-          role: 'user',
-          content: r.prompt,
-        });
+        newMessages.push({ id: `user-init-${r.id}`, role: 'user', content: r.prompt });
 
         const events = eventsMap.get(r.id) || [];
         let aiBlocks: ChatBlock[] = [];
-        
+        let prevTs = parseTs(r.started_at) || (events.length ? parseTs(events[0].ts) : 0);
+
+        const flush = (idSuffix: string) => {
+          if (aiBlocks.length > 0) {
+            newMessages.push({ id: `ai-msg-${r.id}-${idSuffix}`, role: 'assistant', blocks: aiBlocks });
+            aiBlocks = [];
+          }
+        };
+
         for (const ev of events) {
           const payload = JSON.parse(ev.payload_json);
+          const ts = parseTs(ev.ts);
           if (ev.type === 'follow_up') {
-            if (aiBlocks.length > 0) {
-              newMessages.push({
-                id: `ai-msg-${r.id}-${ev.id}-pre`,
-                role: 'assistant',
-                blocks: aiBlocks,
-              });
-              aiBlocks = [];
-            }
-            newMessages.push({
-              id: `user-msg-${ev.id}`,
-              role: 'user',
-              content: payload.message,
-            });
+            flush(`pre-${ev.id}`);
+            newMessages.push({ id: `user-msg-${ev.id}`, role: 'user', content: payload.message });
           } else if (ev.type === 'text' && payload.message?.content) {
-            aiBlocks = [...aiBlocks, ...payload.message.content];
+            const blocks = normalizeContentBlocks(payload.message.content);
+            for (const b of blocks) {
+              if (b.type === 'thinking' && ts && prevTs) b.durationMs = ts - prevTs;
+            }
+            aiBlocks = [...aiBlocks, ...blocks];
+          } else if (ev.type === 'user' && payload.message?.content) {
+            const results = normalizeContentBlocks(payload.message.content).filter((b) => b.type === 'tool_result');
+            aiBlocks = [...aiBlocks, ...results];
           }
+          if (ts) prevTs = ts;
         }
-        
+
         if (aiBlocks.length > 0) {
-          newMessages.push({
-            id: `ai-msg-${r.id}-final`,
-            role: 'assistant',
-            blocks: aiBlocks,
-          });
+          flush('final');
         } else if (r.status === 'completed' || r.status === 'failed') {
           newMessages.push({
             id: `ai-msg-${r.id}-fallback`,
@@ -215,22 +468,19 @@ export function AIPanel({ note, vaultId, onSave, onClose }: AIPanelProps) {
 
       setMessages(newMessages);
 
-      // Reconnect and stream if the latest run is active
       if (latestRun.status === 'running' || latestRun.status === 'queued') {
         const lastMsg = newMessages[newMessages.length - 1];
         const existingBlocks = (lastMsg && lastMsg.role === 'assistant' && lastMsg.blocks) ? lastMsg.blocks : [];
         connectAndListenToRun(latestRun.id, existingBlocks);
-      } else {
-        setRunningTool(null);
       }
     } catch (err) {
       console.error('Error loading run history:', err);
     }
-  }, [vaultId, note?.id, connectAndListenToRun]);
+  }, [vaultId, note?.id, agent, connectAndListenToRun]);
 
-  // Load history when note/vault changes
   useEffect(() => {
-    void loadLatestRunHistory();
+    setHistoryReady(false);
+    void loadLatestRunHistory().finally(() => setHistoryReady(true));
     return () => {
       if (socketRef.current) {
         socketRef.current.disconnect();
@@ -239,41 +489,57 @@ export function AIPanel({ note, vaultId, onSave, onClose }: AIPanelProps) {
     };
   }, [note?.id, vaultId, loadLatestRunHistory]);
 
-  // Handle sending user prompt
-  const startRunSession = useCallback(async (promptText: string) => {
+  // Keep the per-agent activity dots fresh: runs emit vault:noteChanged on
+  // completion, so re-derive busy agents whenever the vault signals a change.
+  useEffect(() => {
     if (!vaultId) return;
+    const socket = connectVaultSocket();
+    socket.emit('joinVault', vaultId);
+    const refresh = async () => {
+      try {
+        const { runs } = await api<{ runs: any[] }>(`/api/vaults/${vaultId}/runs`);
+        setBusyAgents(computeBusyAgents(runs, note?.id ?? null));
+      } catch { /* ignore */ }
+    };
+    socket.on('vault:noteChanged', refresh);
+    return () => {
+      socket.off('vault:noteChanged', refresh);
+      socket.emit('leaveVault', vaultId);
+      socket.disconnect();
+    };
+  }, [vaultId, note?.id]);
 
+  // Handle sending user prompt
+  const startRunSession = useCallback(async (promptText: string, images: { media_type: string; data: string; url: string }[] = []) => {
+    if (!vaultId) return;
     try {
-      // Auto-save active note if dirty
       if (note && onSave) {
         await onSave();
       }
 
       const userMsgId = `user-${Date.now()}`;
-      setMessages((prev) => [
-        ...prev,
-        { id: userMsgId, role: 'user', content: promptText },
-      ]);
+      setMessages((prev) => [...prev, { id: userMsgId, role: 'user', content: promptText, images: images.map((i) => i.url) }]);
       setInput('');
       setStatus('queued');
+      setBusyAgents((prev) => new Set(prev).add(agent));
 
       const aiMsgId = `ai-stream-new`;
-      setMessages((prev) => [
-        ...prev,
-        { id: aiMsgId, role: 'assistant', content: 'Initializing agent session...', isStreaming: true },
-      ]);
+      setMessages((prev) => [...prev, { id: aiMsgId, role: 'assistant', content: 'Thinking…', isStreaming: true }]);
 
-      const res = await api<{ run: { id: number; status: string } }>(`/api/vaults/${vaultId}/runs`, {
+      const res = await api<{ run: { id: number; status: string; conversation_id: string } }>(`/api/vaults/${vaultId}/runs`, {
         method: 'POST',
         body: JSON.stringify({
           prompt: promptText,
           note_id: note?.id || null,
+          agent,
+          conversation_id: conversationId,
+          images: images.map(({ media_type, data }) => ({ media_type, data })),
         }),
       });
 
+      if (res.run.conversation_id) setConversationId(res.run.conversation_id);
       setStatus(res.run.status as any);
       connectAndListenToRun(res.run.id, []);
-
     } catch (err) {
       console.error('Failed to start agent run:', err);
       showToast(err instanceof Error ? err.message : 'Error starting agent run');
@@ -286,44 +552,59 @@ export function AIPanel({ note, vaultId, onSave, onClose }: AIPanelProps) {
         )
       );
     }
-  }, [vaultId, note, onSave, connectAndListenToRun, showToast]);
+  }, [vaultId, note, onSave, connectAndListenToRun, showToast, agent, conversationId]);
+
+  // Run a directive queued from the editor — once history has loaded so it
+  // doesn't get clobbered, and once per distinct nonce.
+  useEffect(() => {
+    if (!pendingPrompt || !historyReady) return;
+    if (processedNonceRef.current === pendingPrompt.nonce) return;
+    processedNonceRef.current = pendingPrompt.nonce;
+    if (vaultId && status !== 'running' && status !== 'queued') {
+      void startRunSession(pendingPrompt.text);
+    } else if (status === 'running' || status === 'queued') {
+      showToast('Agent is currently running');
+    }
+    onPromptConsumed?.();
+  }, [pendingPrompt, historyReady, vaultId, status, startRunSession, onPromptConsumed, showToast]);
 
   const handleSend = useCallback((e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || status === 'running' || status === 'queued') return;
-    void startRunSession(input.trim());
-  }, [input, status, startRunSession]);
-
-  const handleQuickAction = useCallback((action: string) => {
-    if (!note) {
-      showToast('Please open a note first');
-      return;
+    if ((!input.trim() && pendingImages.length === 0) || status === 'running' || status === 'queued') return;
+    if (pendingImages.length > 0 && agent === 'grok') {
+      showToast('Grok has no image support — sending text only.');
     }
-    if (status === 'running' || status === 'queued') {
-      showToast('Agent is currently running');
-      return;
-    }
+    void startRunSession(input.trim(), pendingImages);
+    setPendingImages([]);
+  }, [input, pendingImages, status, startRunSession, agent, showToast]);
 
-    let promptText = '';
-    switch (action) {
-      case 'Summarize':
-        promptText = `Please read the note "${note.title}.md" and write a concise, bulleted summary of its contents in a neat card.`;
-        break;
-      case 'Expand':
-        promptText = `Please read the note "${note.title}.md", write detailed additions extending the concepts, and write the expanded contents directly back to the note file.`;
-        break;
-      case 'Find Related':
-        promptText = `Search the notes in the vault for other notes related to "${note.title}.md", and present them as a list of wikilinks with brief explanations of the relationships.`;
-        break;
-      case 'Suggest Tags':
-        promptText = `Analyze the note "${note.title}.md" and suggest tags. If any recommended tags are not already present in the note, edit the file on disk to append them at the bottom in #tag format.`;
-        break;
-      default:
-        return;
-    }
+  // Start a fresh conversation thread for the current note + agent.
+  const handleNewChat = useCallback(() => {
+    if (socketRef.current) { socketRef.current.disconnect(); socketRef.current = null; }
+    setMessages([]);
+    setConversationId(null);
+    setStatus('idle');
+    setPendingImages([]);
+  }, []);
 
-    void startRunSession(promptText);
-  }, [note, status, startRunSession, showToast]);
+  // Capture images pasted into the input.
+  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    const files = Array.from(e.clipboardData?.items || [])
+      .filter((it) => it.kind === 'file' && it.type.startsWith('image/'))
+      .map((it) => it.getAsFile())
+      .filter((f): f is File => !!f);
+    if (files.length === 0) return;
+    e.preventDefault();
+    for (const file of files) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const url = String(reader.result);
+        const data = url.split(',')[1] || '';
+        setPendingImages((prev) => [...prev, { media_type: file.type, data, url }].slice(0, 8));
+      };
+      reader.readAsDataURL(file);
+    }
+  }, []);
 
   const isBusy = status === 'running' || status === 'queued';
 
@@ -334,15 +615,20 @@ export function AIPanel({ note, vaultId, onSave, onClose }: AIPanelProps) {
         <div className="ai-title" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
           <span className="ai-sparkle"><Sparkles size={16} /></span>
           AI Assistant
+          {isBusy && <span className="ai-status-pill">{status === 'queued' ? 'queued' : 'working'}</span>}
         </div>
-        <button
-          id="ai-panel-close"
-          className="btn-icon"
-          onClick={onClose}
-          title="Close AI panel"
-        >
-          ✕
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+          <button
+            id="ai-new-chat"
+            className="btn-icon"
+            onClick={handleNewChat}
+            disabled={messages.length === 0 || isBusy}
+            title="New chat"
+          >
+            <SquarePen size={15} />
+          </button>
+          <button id="ai-panel-close" className="btn-icon" onClick={onClose} title="Close AI panel">✕</button>
+        </div>
       </div>
 
       {/* Context indicator */}
@@ -353,44 +639,21 @@ export function AIPanel({ note, vaultId, onSave, onClose }: AIPanelProps) {
         </div>
       )}
 
-      {/* Quick actions */}
-      <div className="ai-quick-actions">
-        <button
-          id="ai-summarize"
-          className="ai-action-btn"
-          disabled={!note || isBusy}
-          onClick={() => handleQuickAction('Summarize')}
-        >
-          <span className="action-emoji"><Sparkles size={16} /></span>
-          Summarize
-        </button>
-        <button
-          id="ai-expand"
-          className="ai-action-btn"
-          disabled={!note || isBusy}
-          onClick={() => handleQuickAction('Expand')}
-        >
-          <span className="action-emoji"><FileText size={16} /></span>
-          Expand
-        </button>
-        <button
-          id="ai-related"
-          className="ai-action-btn"
-          disabled={!note || isBusy}
-          onClick={() => handleQuickAction('Find Related')}
-        >
-          <span className="action-emoji"><Link2 size={16} /></span>
-          Find Related
-        </button>
-        <button
-          id="ai-tags"
-          className="ai-action-btn"
-          disabled={!note || isBusy}
-          onClick={() => handleQuickAction('Suggest Tags')}
-        >
-          <span className="action-emoji"><Tags size={16} /></span>
-          Suggest Tags
-        </button>
+      {/* Agent selector */}
+      <div className="ai-agent-selector" role="radiogroup" aria-label="Agent">
+        {AGENTS.map((a) => (
+          <button
+            key={a.id}
+            type="button"
+            role="radio"
+            aria-checked={agent === a.id}
+            className={`ai-agent-btn ${agent === a.id ? 'active' : ''}`}
+            onClick={() => setAgent(a.id)}
+          >
+            {a.label}
+            {busyAgents.has(a.id) && <span className="ai-agent-dot" title="Working…" />}
+          </button>
+        ))}
       </div>
 
       {/* Chat area */}
@@ -398,33 +661,46 @@ export function AIPanel({ note, vaultId, onSave, onClose }: AIPanelProps) {
         {messages.length === 0 ? (
           <div className="ai-empty">
             <span className="ai-empty-icon"><MessageSquare size={32} /></span>
-            <span>Ask anything about your notes...</span>
-            <span className="text-xs text-tertiary">
-              AI-powered writing assistant
-            </span>
+            <span>Ask anything about your notes…</span>
+            <span className="text-xs text-tertiary">AI-powered writing assistant</span>
           </div>
         ) : (
           <div className="ai-messages" id="ai-messages">
             {messages.map((msg) => (
-              <div
-                key={msg.id}
-                className={`ai-message ${msg.role === 'user' ? 'user' : 'assistant'}`}
-              >
-                {msg.content && <div style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</div>}
-                {msg.blocks && msg.blocks.map((block, i) => (
-                  <div key={i}>
-                    {block.type === 'text' && <div style={{ whiteSpace: 'pre-wrap' }}>{block.text}</div>}
-                    {block.type === 'tool_use' && <ToolUseView block={block} />}
-                  </div>
-                ))}
+              <div key={msg.id} className={`ai-message ${msg.role === 'user' ? 'user' : 'assistant'}`}>
+                {msg.role === 'user'
+                  ? <>
+                      {msg.images && msg.images.length > 0 && (
+                        <div className="ai-msg-images">
+                          {msg.images.map((src, i) => <img key={i} src={src} alt="" className="ai-msg-image" />)}
+                        </div>
+                      )}
+                      {msg.content && <div style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</div>}
+                    </>
+                  : <MessageBlocks msg={msg} />}
+                {msg.isStreaming && (
+                  <div className="ai-typing"><span /><span /><span /></div>
+                )}
               </div>
             ))}
-            {runningTool && (
-              <div className="ai-tool-log" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                <Wrench size={12} /> running <code>{runningTool}</code>...
-              </div>
-            )}
             <div ref={chatEndRef} />
+          </div>
+        )}
+
+        {/* Pasted image previews */}
+        {pendingImages.length > 0 && (
+          <div className="ai-paste-previews">
+            {pendingImages.map((img, i) => (
+              <div key={i} className="ai-paste-thumb">
+                <img src={img.url} alt="" />
+                <button
+                  type="button"
+                  className="ai-paste-remove"
+                  title="Remove image"
+                  onClick={() => setPendingImages((prev) => prev.filter((_, j) => j !== i))}
+                >✕</button>
+              </div>
+            ))}
           </div>
         )}
 
@@ -436,15 +712,11 @@ export function AIPanel({ note, vaultId, onSave, onClose }: AIPanelProps) {
             value={input}
             disabled={!vaultId || isBusy}
             onChange={(e) => setInput(e.target.value)}
-            placeholder={isBusy ? "Agent is working..." : "Ask about your notes..."}
+            onPaste={handlePaste}
+            placeholder={isBusy ? 'Agent is working…' : 'Ask about your notes…  (paste an image)'}
           />
-          <button
-            id="ai-send"
-            className="ai-send-btn"
-            type="submit"
-            disabled={!input.trim() || !vaultId || isBusy}
-          >
-            {isBusy ? '...' : '↑'}
+          <button id="ai-send" className="ai-send-btn" type="submit" disabled={(!input.trim() && pendingImages.length === 0) || !vaultId || isBusy}>
+            {isBusy ? '…' : '↑'}
           </button>
         </form>
       </div>

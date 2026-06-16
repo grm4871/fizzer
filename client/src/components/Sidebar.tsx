@@ -1,3 +1,20 @@
+/**
+ * @file Sidebar.tsx — Folder tree navigation and vault controls
+ *
+ * Renders the left sidebar panel containing:
+ * - Vault name header with collapse button
+ * - Quick-action buttons (new note, search)
+ * - Vault selector dropdown (when multiple vaults exist)
+ * - Recursive folder tree with expandable folders and note items
+ * - User info footer with logout
+ *
+ * Notes are grouped by folder, sorted pinned-first then by last updated.
+ * Folders are expandable/collapsible, with state tracked locally via a
+ * `Set<string>` of expanded folder IDs.
+ *
+ * @component
+ */
+
 import { useState, useMemo } from 'react';
 import type { Vault, Folder, NoteSummary } from '../api';
 import { Folder as FolderIcon, FileText, Pin, Gem, Edit2, Search, ChevronRight, PanelLeftClose, LogOut } from 'lucide-react';
@@ -82,6 +99,14 @@ export function Sidebar({
     });
   }
 
+  /**
+   * Recursively render a folder row with its children (sub-folders and notes).
+   * Indentation increases with `depth`; the folder is expandable/collapsible
+   * and shows a count of direct children.
+   *
+   * @param folder - The folder to render
+   * @param depth - Current nesting depth (0 = root level)
+   */
   function renderFolder(folder: Folder, depth: number) {
     const isExpanded = expandedFolders.has(folder.id);
     const folderNotes = notesByFolder.get(folder.id) ?? [];
@@ -111,6 +136,14 @@ export function Sidebar({
     );
   }
 
+  /**
+   * Render a single note item in the sidebar tree. Shows the note title,
+   * a pin icon if pinned, and tag dots for up to 3 tags.
+   * Highlights when it matches the `activeNoteId`.
+   *
+   * @param note - The note summary to render
+   * @param depth - Current nesting depth (determines indentation)
+   */
   function renderNote(note: NoteSummary, depth: number) {
     const paddingLeft = 12 + depth * 16 + 16; // extra indent to align under folder
     return (

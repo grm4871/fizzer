@@ -1,17 +1,31 @@
-import fs from 'node:fs';
-import path from 'node:path';
+/**
+ * @file runner.ts — Multi-agent run orchestrator
+ *
+ * Runs agent run sessions (Claude SDK, Codex, Grok) and manages
+ * Socket.IO streaming of run events to the client.
+ *
+ * @module server/runner
+ */
+
 import crypto from 'node:crypto';
 import type Database from 'better-sqlite3';
 import { query, type Query, type SDKMessage, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
-import { getVault, getNote, updateNote, rescanVault, type Vault } from './vault.js';
+import { getNote, rescanVault, type Vault } from './vault.js';
+import { runCliAgent } from './cli-agent.js';
+
+export type AgentId = 'claude-code' | 'codex' | 'grok';
 
 type Db = Database.Database;
 
 const liveQueries = new Map<number, Query>();
 let eventSink: ((event: RunEvent) => void) | null = null;
+// Sink for vault-level events (e.g. notifying open editors to reload agent edits).
+let vaultEventSink: ((vaultId: string, event: string, data: unknown) => void) | null = null;
 
 const RUNNER_MODEL = process.env.RUNNER_MODEL || 'claude-sonnet-4-6';
 const RUNNER_MAX_TURNS = Number(process.env.RUNNER_MAX_TURNS || 30);
+// Thinking budget (tokens). Set RUNNER_THINKING=0 to disable extended thinking.
+const RUNNER_THINKING_TOKENS = Number(process.env.RUNNER_THINKING ?? 4000);
 
 export type RunStatus = 'queued' | 'running' | 'completed' | 'failed';
 
@@ -20,6 +34,9 @@ export type Run = {
   vault_id: string;
   note_id: string | null;
   prompt: string;
+  agent: AgentId;
+  session_id: string | null;
+  conversation_id: string;
   status: RunStatus;
   started_at: string;
   finished_at: string | null;
@@ -53,6 +70,9 @@ export function ensureRunnerSchema(db: Db) {
       vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
       note_id TEXT REFERENCES notes(id) ON DELETE SET NULL,
       prompt TEXT NOT NULL,
+      agent TEXT NOT NULL DEFAULT 'claude-code',
+      session_id TEXT,
+      conversation_id TEXT NOT NULL DEFAULT '',
       status TEXT NOT NULL DEFAULT 'queued',
       started_at TEXT NOT NULL DEFAULT (datetime('now')),
       finished_at TEXT,
@@ -69,10 +89,26 @@ export function ensureRunnerSchema(db: Db) {
       UNIQUE(run_id, seq)
     );
   `);
+
+  // Migrations: add columns to pre-existing runs tables.
+  const runCols = db.prepare("PRAGMA table_info(runs)").all() as Array<{ name: string }>;
+  if (!runCols.some(col => col.name === 'agent')) {
+    db.exec("ALTER TABLE runs ADD COLUMN agent TEXT NOT NULL DEFAULT 'claude-code'");
+  }
+  if (!runCols.some(col => col.name === 'session_id')) {
+    db.exec("ALTER TABLE runs ADD COLUMN session_id TEXT");
+  }
+  if (!runCols.some(col => col.name === 'conversation_id')) {
+    db.exec("ALTER TABLE runs ADD COLUMN conversation_id TEXT NOT NULL DEFAULT ''");
+  }
 }
 
 export function setRunEventSink(sink: ((event: RunEvent) => void) | null) {
   eventSink = sink;
+}
+
+export function setVaultEventSink(sink: ((vaultId: string, event: string, data: unknown) => void) | null) {
+  vaultEventSink = sink;
 }
 
 export function listRuns(db: Db, vaultId: string) {
@@ -101,21 +137,50 @@ export async function sendRunMessage(db: Db, runId: number, message: string) {
   return event;
 }
 
-export async function startRun(db: Db, vault: Vault, noteId: string | null, prompt: string) {
+export type RunImage = { media_type: string; data: string };
+
+// Images attached to a run, held in memory between startRun and the async
+// executor (kept out of the DB to avoid bloating it with base64 blobs).
+const pendingImages = new Map<number, RunImage[]>();
+
+export async function startRun(
+  db: Db,
+  vault: Vault,
+  noteId: string | null,
+  prompt: string,
+  agent: AgentId = 'claude-code',
+  opts: { conversationId?: string; images?: RunImage[] } = {},
+) {
+  const conversationId = opts.conversationId || crypto.randomUUID();
   const result = db.prepare(`
-    INSERT INTO runs (vault_id, note_id, prompt, status)
-    VALUES (?, ?, ?, 'queued')
-  `).run(vault.id, noteId, prompt);
-  
+    INSERT INTO runs (vault_id, note_id, prompt, agent, conversation_id, status)
+    VALUES (?, ?, ?, ?, ?, 'queued')
+  `).run(vault.id, noteId, prompt, agent, conversationId);
+
   const runId = Number(result.lastInsertRowid);
   const run = getRun(db, runId)!;
-  
+
+  if (opts.images && opts.images.length) pendingImages.set(runId, opts.images);
+
   appendRunEvent(db, run.id, 'status', { status: 'queued' });
-  
+
   // Run asynchronously in the background
   queueMicrotask(() => executeRunAsync(db, vault, runId));
-  
+
   return run;
+}
+
+// Find the session id of the most recent prior run in the same conversation
+// (same vault + note + agent), so the next turn can resume that session.
+function findPriorSession(db: Db, run: Run): string | undefined {
+  const cond = run.note_id
+    ? 'vault_id = ? AND note_id = ? AND agent = ? AND conversation_id = ? AND session_id IS NOT NULL AND id < ?'
+    : 'vault_id = ? AND note_id IS NULL AND agent = ? AND conversation_id = ? AND session_id IS NOT NULL AND id < ?';
+  const params = run.note_id
+    ? [run.vault_id, run.note_id, run.agent, run.conversation_id, run.id]
+    : [run.vault_id, run.agent, run.conversation_id, run.id];
+  const row = db.prepare(`SELECT session_id FROM runs WHERE ${cond} ORDER BY id DESC LIMIT 1`).get(...params) as { session_id: string } | undefined;
+  return row?.session_id || undefined;
 }
 
 async function executeRunAsync(db: Db, vault: Vault, runId: number) {
@@ -132,69 +197,98 @@ async function executeRunAsync(db: Db, vault: Vault, runId: number) {
       if (note) activeNoteTitle = note.title;
     }
 
-    const previousRunsCondition = run.note_id 
-      ? `vault_id = ? AND note_id = ? AND status IN ('completed', 'failed') AND id < ?` 
-      : `vault_id = ? AND note_id IS NULL AND status IN ('completed', 'failed') AND id < ?`;
-    
-    const previousRunsParams = run.note_id 
-      ? [run.vault_id, run.note_id, run.id]
-      : [run.vault_id, run.id];
+    // Minimal, IDE-style context: which note is open and that it lives in a
+    // vault of interlinked notes — nothing more. No persona or behavioral
+    // steering; the user's prompt drives everything the agent does.
+    const context = [
+      'This working directory is a vault of interlinked markdown (.md) notes.',
+      activeNoteTitle ? `The currently selected note is "${activeNoteTitle}.md".` : '',
+    ].filter(Boolean).join(' ');
 
-    const previousRuns = db.prepare(`SELECT prompt, summary FROM runs WHERE ${previousRunsCondition} ORDER BY id ASC`).all(...previousRunsParams) as Run[];
-    
-    let historyContext = '';
-    if (previousRuns.length > 0) {
-      historyContext = 'Previous conversation history in this session:\n' + 
-        previousRuns.map(r => `User: ${r.prompt}\nAssistant: ${r.summary || 'Task completed.'}`).join('\n\n') + '\n\n';
-    }
+    const images = pendingImages.get(runId) || [];
+    pendingImages.delete(runId);
 
-    const systemPromptAppend = [
-      'You are an intelligent Obsidian-style notes assistant. You operate directly on the user\'s local vault directory of markdown (.md) files.',
-      'Your workspace directory contains the raw markdown files representing the notes. You can read, search, edit, create, and list notes using your standard file tools (like grep, view_file, write_to_file, etc.).',
-      activeNoteTitle ? `The user is currently viewing the note: "${activeNoteTitle}.md".` : '',
-      historyContext ? `IMPORTANT CONTEXT:\n${historyContext}` : '',
-      'Keep your responses helpful, concise, and focus on editing or creating notes as requested in the prompt. Output any markdown widgets (like tables or checkboxes) if helpful.',
-    ].filter(Boolean).join('\n\n');
-
-    // Run using Claude SDK query
-    const stream = query({
-      prompt: run.prompt,
-      options: {
-        cwd: vault.root_path,
-        model: RUNNER_MODEL,
-        maxTurns: RUNNER_MAX_TURNS,
-        permissionMode: 'acceptEdits',
-        systemPrompt: {
-          type: 'preset',
-          preset: 'claude_code',
-          append: systemPromptAppend,
-        },
-      },
-    });
-
-    liveQueries.set(run.id, stream);
     let summary = '';
+    let sessionId: string | undefined;
+    // Resume the conversation's prior session for this agent, if any.
+    const resumeSessionId = findPriorSession(db, run);
 
-    try {
-      for await (const message of stream) {
-        appendRunEvent(db, run.id, classifySdkMessage(message), message);
-        if (message.type === 'result') {
-          summary = (message as any).result || (message as any).subtype || summary;
+    if (run.agent === 'codex' || run.agent === 'grok') {
+      // Codex / Grok run via their locally-installed CLI agents (own logins).
+      const result = await runCliAgent({
+        agent: run.agent,
+        context,
+        userPrompt: run.prompt,
+        cwd: vault.root_path,
+        resumeSessionId,
+        images,
+        emit: (type, payload) => appendRunEvent(db, run.id, type, payload),
+      });
+      summary = result.summary;
+      sessionId = result.sessionId;
+    } else {
+      // Run using Claude SDK query. With images, send a structured user message
+      // (text + image blocks); otherwise a plain string prompt.
+      const claudePrompt = images.length
+        ? (async function* () {
+            yield {
+              type: 'user' as const,
+              message: {
+                role: 'user' as const,
+                content: [
+                  { type: 'text' as const, text: run.prompt },
+                  ...images.map((img) => ({
+                    type: 'image' as const,
+                    source: { type: 'base64' as const, media_type: img.media_type as any, data: img.data },
+                  })),
+                ],
+              },
+              parent_tool_use_id: null,
+              session_id: '',
+            };
+          })()
+        : run.prompt;
+      const stream = query({
+        prompt: claudePrompt as any,
+        options: {
+          cwd: vault.root_path,
+          model: RUNNER_MODEL,
+          maxTurns: RUNNER_MAX_TURNS,
+          permissionMode: 'acceptEdits',
+          ...(resumeSessionId ? { resume: resumeSessionId } : {}),
+          ...(RUNNER_THINKING_TOKENS > 0
+            ? { thinking: { type: 'enabled' as const, budgetTokens: RUNNER_THINKING_TOKENS } }
+            : {}),
+          systemPrompt: {
+            type: 'preset',
+            preset: 'claude_code',
+            append: context,
+          },
+        },
+      });
+
+      liveQueries.set(run.id, stream);
+
+      try {
+        for await (const message of stream) {
+          appendRunEvent(db, run.id, classifySdkMessage(message), message);
+          const sid = (message as any).session_id;
+          if (sid) sessionId = sid;
+          if (message.type === 'result') {
+            summary = (message as any).result || (message as any).subtype || summary;
+          }
         }
+      } finally {
+        liveQueries.delete(run.id);
       }
-    } finally {
-      liveQueries.delete(run.id);
     }
-
-    // Sync vault disk changes to database
-    rescanVault(db, vault.id, vault.created_by);
 
     db.prepare(`
       UPDATE runs
-      SET status = 'completed', finished_at = datetime('now'), summary = ?
+      SET status = 'completed', finished_at = datetime('now'), summary = ?, session_id = ?
       WHERE id = ?
-    `).run(summary || 'Completed note operations successfully.', run.id);
-    
+    `).run(summary || 'Completed note operations successfully.', sessionId ?? run.session_id, run.id);
+
     appendRunEvent(db, run.id, 'status', { status: 'completed', summary });
 
   } catch (error) {
@@ -205,6 +299,12 @@ async function executeRunAsync(db: Db, vault: Vault, runId: number) {
       WHERE id = ?
     `).run(errMsg, run.id);
     appendRunEvent(db, run.id, 'status', { status: 'failed', summary: errMsg });
+  } finally {
+    // Sync disk changes the agent made to the DB, then notify open clients so
+    // an active editor reloads the edits live. Runs even on failure, since the
+    // agent may have edited files before erroring (e.g. running out of tokens).
+    rescanVault(db, vault.id, vault.created_by);
+    vaultEventSink?.(vault.id, 'vault:noteChanged', { noteId: run.note_id ?? '', vaultId: vault.id });
   }
 }
 

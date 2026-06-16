@@ -1,8 +1,8 @@
-import { useEffect, useRef, useMemo, useCallback } from 'react';
+import { useEffect, useRef, useMemo, useCallback, useState } from 'react';
 import type { Note } from '../api';
 import { formatRelativeDate } from '../api';
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, placeholder as cmPlaceholder, Decoration, type DecorationSet, ViewPlugin, type ViewUpdate, WidgetType, drawSelection } from '@codemirror/view';
-import { EditorState, type Extension, RangeSetBuilder } from '@codemirror/state';
+import { EditorState, type Extension, RangeSetBuilder, Prec } from '@codemirror/state';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { syntaxHighlighting, HighlightStyle, indentOnInput, bracketMatching, defaultHighlightStyle } from '@codemirror/language';
 import { defaultKeymap, indentWithTab, history, historyKeymap } from '@codemirror/commands';
@@ -10,7 +10,7 @@ import { closeBrackets } from '@codemirror/autocomplete';
 import { languages } from '@codemirror/language-data';
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
 import { tags } from '@lezer/highlight';
-import { FileText, Link2, Sparkles, Zap } from 'lucide-react';
+import { FileText, Link2 } from 'lucide-react';
 
 /* ═══════════════════════════════════════════════════════════
    NoteEditor — CodeMirror 6 Live Preview Markdown Editor
@@ -21,8 +21,10 @@ interface NoteEditorProps {
   content: string;
   onContentChange: (content: string) => void;
   onSave: () => void;
-  onRunDirectives?: () => void;
+  onRename?: (title: string) => Promise<void>;
+  onExecuteDirective?: (prompt: string) => void;
   onOpenWikilink?: (title: string) => void;
+  onOpenWebView?: (url: string) => void;
 }
 
 /* ─── Custom Dark Theme ──────────────────────────────────── */
@@ -133,7 +135,16 @@ const cascadeTheme = EditorView.theme({
   '.cm-wikilink:hover': {
     background: 'hsla(260, 60%, 60%, 0.2)',
   },
-  /* LLM directive chip */
+  /* External Link chip */
+  '.cm-external-link': {
+    color: 'hsl(210, 80%, 70%)',
+    textDecoration: 'underline',
+    cursor: 'pointer',
+  },
+  '.cm-external-link:hover': {
+    color: 'hsl(210, 90%, 80%)',
+  },
+  /* AI directive chip — `{{ai: ...}}`, runs in the agent panel via a shortcut */
   '.cm-directive': {
     color: 'hsl(260, 60%, 72%)',
     background: 'hsla(260, 60%, 60%, 0.15)',
@@ -218,11 +229,28 @@ class HRWidget extends WidgetType {
 }
 
 /* ─── WYSIWYG Decorations Plugin ─────────────────────────── */
-function buildDecorations(view: EditorView): DecorationSet {
+export function buildDecorations(view: EditorView): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
   const doc = view.state.doc;
   const cursorLine = view.state.selection.main.head;
   const activeLine = doc.lineAt(cursorLine).number;
+
+  const hidden = Decoration.mark({ class: 'cm-md-hidden' });
+  const boldDeco = Decoration.mark({ class: 'cm-md-bold' });
+  const italicDeco = Decoration.mark({ class: 'cm-md-italic' });
+  const codeDeco = Decoration.mark({ class: 'cm-md-inline-code' });
+  const wikilinkDeco = Decoration.mark({ class: 'cm-wikilink' });
+  const directiveDeco = Decoration.mark({ class: 'cm-directive' });
+
+  // Flat list to collect all decoration ranges
+  const decos: { from: number; to: number; deco: Decoration }[] = [];
+
+  // Helper to collect a decoration range safely
+  const collectDeco = (from: number, to: number, deco: Decoration) => {
+    if (from < to) {
+      decos.push({ from, to, deco });
+    }
+  };
 
   for (let i = 1; i <= doc.lines; i++) {
     const line = doc.line(i);
@@ -234,16 +262,22 @@ function buildDecorations(view: EditorView): DecorationSet {
     if (headingMatch) {
       const level = headingMatch[1].length;
       const cls = `cm-heading-${Math.min(level, 4)}`;
-      builder.add(line.from, line.to, Decoration.mark({ class: cls }));
+      collectDeco(line.from, line.to, Decoration.mark({ class: cls }));
       if (!isActive) {
         // Hide the # markers
-        builder.add(line.from, line.from + headingMatch[0].length, Decoration.mark({ class: 'cm-md-hidden' }));
+        collectDeco(line.from, line.from + headingMatch[0].length, hidden);
       }
     }
 
     // Horizontal rule
     if (/^---+$/.test(text.trim()) && !isActive) {
-      builder.add(line.from, line.to, Decoration.replace({ widget: new HRWidget() }));
+      if (line.from < line.to) {
+        decos.push({
+          from: line.from,
+          to: line.to,
+          deco: Decoration.replace({ widget: new HRWidget() }),
+        });
+      }
       continue;
     }
 
@@ -253,82 +287,135 @@ function buildDecorations(view: EditorView): DecorationSet {
       const checked = checkMatch[2].toLowerCase() === 'x';
       const cbStart = line.from + checkMatch[1].length;
       const cbEnd = cbStart + 3; // [x] or [ ]
-      builder.add(cbStart, cbEnd, Decoration.replace({ widget: new CheckboxWidget(checked) }));
+      if (cbStart < cbEnd) {
+        decos.push({
+          from: cbStart,
+          to: cbEnd,
+          deco: Decoration.replace({ widget: new CheckboxWidget(checked) }),
+        });
+      }
     }
 
-    if (isActive) continue; // Don't hide markers on the active line
+    if (isActive) continue; // Don't hide/decorate formatting markers on the active line
 
-    // Inline patterns — only apply when cursor is not on this line
-    let pos = 0;
-    while (pos < text.length) {
-      // Bold: **text**
-      const boldIdx = text.indexOf('**', pos);
-      if (boldIdx !== -1) {
-        const endBold = text.indexOf('**', boldIdx + 2);
-        if (endBold !== -1 && endBold > boldIdx + 2) {
-          // Hide opening **
-          builder.add(line.from + boldIdx, line.from + boldIdx + 2, Decoration.mark({ class: 'cm-md-hidden' }));
-          // Mark bold text
-          builder.add(line.from + boldIdx + 2, line.from + endBold, Decoration.mark({ class: 'cm-md-bold' }));
-          // Hide closing **
-          builder.add(line.from + endBold, line.from + endBold + 2, Decoration.mark({ class: 'cm-md-hidden' }));
-          pos = endBold + 2;
-          continue;
-        }
+    // Determine starting index for inline pattern scanning to avoid matching block prefixes
+    let inlineStart = 0;
+    const listMatch = text.match(/^(\s*[-*+]|\d+\.)\s/);
+
+    if (headingMatch) {
+      inlineStart = headingMatch[0].length;
+    } else if (checkMatch) {
+      inlineStart = checkMatch[0].length;
+    } else if (listMatch) {
+      inlineStart = listMatch[0].length;
+    }
+
+    // Bold: **text**
+    let boldIdx = text.indexOf('**', inlineStart);
+    while (boldIdx !== -1) {
+      const endBold = text.indexOf('**', boldIdx + 2);
+      if (endBold !== -1 && endBold > boldIdx + 2) {
+        collectDeco(line.from + boldIdx, line.from + boldIdx + 2, hidden);
+        collectDeco(line.from + boldIdx + 2, line.from + endBold, boldDeco);
+        collectDeco(line.from + endBold, line.from + endBold + 2, hidden);
+        boldIdx = text.indexOf('**', endBold + 2);
+      } else {
+        break;
       }
+    }
 
-      // Italic: *text* (but not **)
-      const italicIdx = text.indexOf('*', pos);
-      if (italicIdx !== -1 && text[italicIdx + 1] !== '*') {
+    // Italic: *text* (but ignore bold **)
+    let italicIdx = text.indexOf('*', inlineStart);
+    while (italicIdx !== -1) {
+      if (text[italicIdx + 1] !== '*' && text[italicIdx - 1] !== '*') {
         const endItalic = text.indexOf('*', italicIdx + 1);
-        if (endItalic !== -1 && endItalic > italicIdx + 1 && text[endItalic - 1] !== '*') {
-          builder.add(line.from + italicIdx, line.from + italicIdx + 1, Decoration.mark({ class: 'cm-md-hidden' }));
-          builder.add(line.from + italicIdx + 1, line.from + endItalic, Decoration.mark({ class: 'cm-md-italic' }));
-          builder.add(line.from + endItalic, line.from + endItalic + 1, Decoration.mark({ class: 'cm-md-hidden' }));
-          pos = endItalic + 1;
+        if (endItalic !== -1 && endItalic > italicIdx + 1 && text[endItalic + 1] !== '*' && text[endItalic - 1] !== '*') {
+          collectDeco(line.from + italicIdx, line.from + italicIdx + 1, hidden);
+          collectDeco(line.from + italicIdx + 1, line.from + endItalic, italicDeco);
+          collectDeco(line.from + endItalic, line.from + endItalic + 1, hidden);
+          italicIdx = text.indexOf('*', endItalic + 1);
           continue;
         }
       }
+      italicIdx = text.indexOf('*', italicIdx + 1);
+    }
 
-      // Inline code: `code`
-      const codeIdx = text.indexOf('`', pos);
-      if (codeIdx !== -1 && text[codeIdx + 1] !== '`') {
+    // Inline Code: `code`
+    let codeIdx = text.indexOf('`', inlineStart);
+    while (codeIdx !== -1) {
+      if (text[codeIdx + 1] !== '`') {
         const endCode = text.indexOf('`', codeIdx + 1);
         if (endCode !== -1 && endCode > codeIdx + 1) {
-          builder.add(line.from + codeIdx, line.from + codeIdx + 1, Decoration.mark({ class: 'cm-md-hidden' }));
-          builder.add(line.from + codeIdx + 1, line.from + endCode, Decoration.mark({ class: 'cm-md-inline-code' }));
-          builder.add(line.from + endCode, line.from + endCode + 1, Decoration.mark({ class: 'cm-md-hidden' }));
-          pos = endCode + 1;
+          collectDeco(line.from + codeIdx, line.from + codeIdx + 1, hidden);
+          collectDeco(line.from + codeIdx + 1, line.from + endCode, codeDeco);
+          collectDeco(line.from + endCode, line.from + endCode + 1, hidden);
+          codeIdx = text.indexOf('`', endCode + 1);
           continue;
         }
       }
-
-      // Wikilinks: [[title]]
-      const wikiIdx = text.indexOf('[[', pos);
-      if (wikiIdx !== -1) {
-        const endWiki = text.indexOf(']]', wikiIdx + 2);
-        if (endWiki !== -1) {
-          builder.add(line.from + wikiIdx, line.from + wikiIdx + 2, Decoration.mark({ class: 'cm-md-hidden' }));
-          builder.add(line.from + wikiIdx + 2, line.from + endWiki, Decoration.mark({ class: 'cm-wikilink' }));
-          builder.add(line.from + endWiki, line.from + endWiki + 2, Decoration.mark({ class: 'cm-md-hidden' }));
-          pos = endWiki + 2;
-          continue;
-        }
-      }
-
-      // LLM Directives: {{ai: prompt}}
-      const dirIdx = text.indexOf('{{ai:', pos);
-      if (dirIdx !== -1) {
-        const endDir = text.indexOf('}}', dirIdx + 5);
-        if (endDir !== -1) {
-          builder.add(line.from + dirIdx, line.from + endDir + 2, Decoration.mark({ class: 'cm-directive' }));
-          pos = endDir + 2;
-          continue;
-        }
-      }
-
-      pos++;
+      codeIdx = text.indexOf('`', codeIdx + 1);
     }
+
+    // Wikilinks: [[title]]
+    let wikiIdx = text.indexOf('[[', inlineStart);
+    while (wikiIdx !== -1) {
+      const endWiki = text.indexOf(']]', wikiIdx + 2);
+      if (endWiki !== -1) {
+        collectDeco(line.from + wikiIdx, line.from + wikiIdx + 2, hidden);
+        collectDeco(line.from + wikiIdx + 2, line.from + endWiki, wikilinkDeco);
+        collectDeco(line.from + endWiki, line.from + endWiki + 2, hidden);
+        wikiIdx = text.indexOf('[[', endWiki + 2);
+      } else {
+        break;
+      }
+    }
+
+    // External links: [text](https://...)
+    let extIdx = text.indexOf('[', inlineStart);
+    while (extIdx !== -1) {
+      if (text[extIdx + 1] !== '[') {
+        const sub = text.slice(extIdx);
+        const match = sub.match(/^\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/);
+        if (match) {
+          const label = match[1];
+          const destUrl = match[2];
+          collectDeco(line.from + extIdx, line.from + extIdx + 1, hidden);
+          collectDeco(line.from + extIdx + 1, line.from + extIdx + 1 + label.length, Decoration.mark({
+            class: 'cm-external-link',
+            attributes: { 'data-url': destUrl }
+          }));
+          collectDeco(line.from + extIdx + 1 + label.length, line.from + extIdx + match[0].length, hidden);
+          extIdx += match[0].length;
+          continue;
+        }
+      }
+      extIdx = text.indexOf('[', extIdx + 1);
+    }
+
+    // AI Directives: {{ai: prompt}}
+    let dirIdx = text.indexOf('{{ai:', inlineStart);
+    while (dirIdx !== -1) {
+      const endDir = text.indexOf('}}', dirIdx + 5);
+      if (endDir !== -1) {
+        collectDeco(line.from + dirIdx, line.from + endDir + 2, directiveDeco);
+        dirIdx = text.indexOf('{{ai:', endDir + 2);
+      } else {
+        break;
+      }
+    }
+  }
+
+  // Sort decorations by start position ascending, then end position descending
+  decos.sort((a, b) => {
+    if (a.from !== b.from) {
+      return a.from - b.from;
+    }
+    return b.to - a.to;
+  });
+
+  // Add all sorted decorations to builder
+  for (const item of decos) {
+    builder.add(item.from, item.to, item.deco);
   }
 
   return builder.finish();
@@ -377,21 +464,36 @@ const checkboxClickHandler = EditorView.domEventHandlers({
 });
 
 /* ─── Component ──────────────────────────────────────────── */
-export function NoteEditor({ note, content, onContentChange, onSave, onRunDirectives, onOpenWikilink }: NoteEditorProps) {
+export function NoteEditor({ note, content, onContentChange, onSave, onRename, onExecuteDirective, onOpenWikilink, onOpenWebView }: NoteEditorProps) {
   const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const contentRef = useRef(content);
   const onContentChangeRef = useRef(onContentChange);
   const onSaveRef = useRef(onSave);
-  const onRunDirectivesRef = useRef(onRunDirectives);
+  const onExecuteDirectiveRef = useRef(onExecuteDirective);
   const onOpenWikilinkRef = useRef(onOpenWikilink);
+  const onOpenWebViewRef = useRef(onOpenWebView);
+
+  // Inline, editable note title (Obsidian-style). Synced from the note.
+  const [titleDraft, setTitleDraft] = useState(note?.title ?? '');
+  useEffect(() => { setTitleDraft(note?.title ?? ''); }, [note?.id, note?.title]);
+
+  const commitTitle = useCallback(() => {
+    const next = titleDraft.trim();
+    if (!note || !next || next === note.title) {
+      setTitleDraft(note?.title ?? '');
+      return;
+    }
+    onRename?.(next)?.catch(() => setTitleDraft(note.title));
+  }, [titleDraft, note, onRename]);
 
   // Keep refs updated
   contentRef.current = content;
   onContentChangeRef.current = onContentChange;
   onSaveRef.current = onSave;
-  onRunDirectivesRef.current = onRunDirectives;
+  onExecuteDirectiveRef.current = onExecuteDirective;
   onOpenWikilinkRef.current = onOpenWikilink;
+  onOpenWebViewRef.current = onOpenWebView;
 
   // Word count and stats
   const stats = useMemo(() => {
@@ -433,6 +535,15 @@ export function NoteEditor({ note, content, onContentChange, onSave, onRunDirect
               return true;
             }
           }
+          const extLink = target.closest('.cm-external-link');
+          if (extLink) {
+            const url = extLink.getAttribute('data-url');
+            if (url) {
+              event.preventDefault();
+              onOpenWebViewRef.current?.(url);
+              return true;
+            }
+          }
           return false;
         },
       }),
@@ -445,13 +556,6 @@ export function NoteEditor({ note, content, onContentChange, onSave, onRunDirect
           key: 'Mod-s',
           run: () => {
             onSaveRef.current();
-            return true;
-          },
-        },
-        {
-          key: 'Mod-Shift-Enter',
-          run: () => {
-            onRunDirectivesRef.current?.();
             return true;
           },
         },
@@ -477,6 +581,21 @@ export function NoteEditor({ note, content, onContentChange, onSave, onRunDirect
           },
         },
       ]),
+      // Highest precedence so it beats defaultKeymap's Mod-Enter (insertBlankLine):
+      // run the {{ai: …}} directive at the cursor through the agent panel.
+      Prec.highest(
+        keymap.of([
+          {
+            key: 'Mod-Enter',
+            run: (view) => {
+              const prompt = directiveAtCursor(view);
+              if (!prompt) return false;
+              onExecuteDirectiveRef.current?.(prompt);
+              return true;
+            },
+          },
+        ])
+      ),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) {
           const newDoc = update.state.doc.toString();
@@ -565,12 +684,6 @@ export function NoteEditor({ note, content, onContentChange, onSave, onRunDirect
       case 'numbered':
         toggleLinePrefix(view, '1. ');
         break;
-      case 'directive':
-        insertAtCursor(view, '{{ai: }}');
-        break;
-      case 'run-directives':
-        onRunDirectivesRef.current?.();
-        break;
       case 'hr':
         insertAtCursor(view, '\n---\n');
         break;
@@ -617,11 +730,22 @@ export function NoteEditor({ note, content, onContentChange, onSave, onRunDirect
         <div className="toolbar-divider" />
 
         <button id="toolbar-hr" className="toolbar-btn" onClick={() => toolbarAction('hr')} title="Horizontal Rule">―</button>
-        <button id="toolbar-directive" className="toolbar-btn accent" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => toolbarAction('directive')} title="Insert AI Directive"><Sparkles size={16} /></button>
-        {onRunDirectives && (
-          <button id="toolbar-run-directives" className="toolbar-btn accent" style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '4px' }} onClick={() => toolbarAction('run-directives')} title="Run AI Directives (Ctrl+Shift+Enter)"><Zap size={16} /> Run AI</button>
-        )}
       </div>
+
+      {/* Inline editable title */}
+      <input
+        id="editor-title"
+        className="editor-title"
+        value={titleDraft}
+        spellCheck={false}
+        placeholder="Untitled"
+        onChange={(e) => setTitleDraft(e.target.value)}
+        onBlur={commitTitle}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') { e.preventDefault(); commitTitle(); viewRef.current?.focus(); }
+          else if (e.key === 'Escape') { setTitleDraft(note.title); (e.target as HTMLInputElement).blur(); }
+        }}
+      />
 
       {/* Editor */}
       <div className="editor-codemirror" id="editor-codemirror" ref={editorRef} />
@@ -700,4 +824,22 @@ function insertAtCursor(view: EditorView, text: string) {
     changes: { from, insert: text },
     selection: { anchor: from + text.length },
   });
+}
+
+// Extract the prompt of the {{ai: …}} directive on the cursor's line. Prefers a
+// directive the cursor sits inside; otherwise falls back to the first on the line.
+function directiveAtCursor(view: EditorView): string | null {
+  const head = view.state.selection.main.head;
+  const line = view.state.doc.lineAt(head);
+  const col = head - line.from;
+  const re = /\{\{ai:([\s\S]*?)\}\}/g;
+  let match: RegExpExecArray | null;
+  let fallback: string | null = null;
+  while ((match = re.exec(line.text))) {
+    const prompt = match[1].trim();
+    if (!prompt) continue;
+    if (col >= match.index && col <= match.index + match[0].length) return prompt;
+    if (fallback === null) fallback = prompt;
+  }
+  return fallback;
 }

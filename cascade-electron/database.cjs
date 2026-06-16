@@ -1,3 +1,18 @@
+/**
+ * @file database.cjs — SQLite database module for Cascade
+ *
+ * Manages a local SQLite database (via better-sqlite3) that stores application
+ * settings and netdoc documents. Handles config file management (config.json),
+ * database initialization, schema creation / migration, user settings CRUD,
+ * and full netdoc + version-history persistence.
+ *
+ * The database path is configurable via `config.json` which lives in the
+ * platform-specific app-data directory (~/.config/cascade on Linux/macOS,
+ * %APPDATA%/cascade on Windows).
+ *
+ * @module cascade-electron/database
+ */
+
 const Database = require('better-sqlite3');
 const fs = require('fs');
 const path = require('path');
@@ -7,8 +22,16 @@ let db = null;
 let configPath = null;
 let config = null;
 
+// ═══════════════════════════════════════════════════════════════
+// CONFIG MANAGEMENT
+// ═══════════════════════════════════════════════════════════════
+
 /**
- * Get the application data directory based on platform
+ * Returns the platform-specific application data directory.
+ *  - Windows: `%APPDATA%/cascade`
+ *  - macOS / Linux: `~/.config/cascade`
+ *
+ * @returns {string} Absolute path to the app data directory.
  */
 function getAppDataPath() {
   const platform = os.platform();
@@ -23,7 +46,11 @@ function getAppDataPath() {
 }
 
 /**
- * Initialize or load the config file
+ * Initializes or loads the config file (`config.json`).
+ * Creates the app-data directory and a default config (with `db_path`)
+ * if they do not already exist.
+ *
+ * @returns {{ db_path: string }} The parsed config object.
  */
 function initConfig() {
   const appDataPath = getAppDataPath();
@@ -54,7 +81,115 @@ function initConfig() {
 }
 
 /**
- * Initialize the database schema
+ * Updates the database file path stored in `config.json` and persists
+ * the change to disk. Does not reopen the database connection — the
+ * caller is responsible for restarting the app if a path change is needed.
+ *
+ * @param {string} newPath - The new absolute path for the SQLite file.
+ * @returns {boolean} `true` on success.
+ * @throws {Error} If config has not been initialized or the write fails.
+ */
+function updateDbPath(newPath) {
+  if (!configPath) {
+    throw new Error('Config not initialized. Call initConfig() first.');
+  }
+
+  try {
+    config.db_path = newPath;
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+    console.log('[Database] Updated db_path in config to:', newPath);
+    return true;
+  } catch (error) {
+    console.error('[Database] Failed to update db_path:', error);
+    throw error;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// DATABASE INITIALIZATION
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Opens (or returns the existing) database connection, creates the
+ * schema if needed, and enables WAL journal mode.
+ *
+ * @returns {import('better-sqlite3').Database} The live database instance.
+ * @throws {Error} If the database file cannot be opened or schema fails.
+ */
+function initDatabase() {
+  if (db) {
+    console.log('[Database] Database already initialized');
+    return db;
+  }
+
+  try {
+    // Load config
+    const cfg = initConfig();
+    const dbPath = cfg.db_path;
+
+    // Ensure database directory exists
+    const dbDir = path.dirname(dbPath);
+    if (!fs.existsSync(dbDir)) {
+      fs.mkdirSync(dbDir, { recursive: true });
+    }
+
+    // Open database
+    db = new Database(dbPath);
+    console.log('[Database] Opened database at:', dbPath);
+
+    // Initialize schema
+    createSchema(db);
+
+    // Enable WAL mode for better concurrency
+    db.pragma('journal_mode = WAL');
+
+    return db;
+  } catch (error) {
+    console.error('[Database] Failed to initialize database:', error);
+    throw error;
+  }
+}
+
+/**
+ * Closes the active database connection and resets the module-level
+ * reference. Safe to call even if no connection is open.
+ */
+function closeDatabase() {
+  if (db) {
+    try {
+      db.close();
+      console.log('[Database] Database connection closed');
+      db = null;
+    } catch (error) {
+      console.error('[Database] Error closing database:', error);
+      throw error;
+    }
+  }
+}
+
+/**
+ * Returns the live database instance, throwing if it has not yet been
+ * initialized via {@link initDatabase}.
+ *
+ * @returns {import('better-sqlite3').Database}
+ * @throws {Error} If the database has not been initialized.
+ */
+function getDatabase() {
+  if (!db) {
+    throw new Error('Database not initialized. Call initDatabase() first.');
+  }
+  return db;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SCHEMA
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Creates all required tables if they do not already exist and runs
+ * lightweight ALTER TABLE migrations for columns added after v1.
+ *
+ * @param {import('better-sqlite3').Database} database
  */
 function createSchema(database) {
   // Netdoc table (main content storage)
@@ -136,71 +271,15 @@ function createSchema(database) {
   console.log('[Database] Schema initialized');
 }
 
-/**
- * Initialize the database connection
- */
-function initDatabase() {
-  if (db) {
-    console.log('[Database] Database already initialized');
-    return db;
-  }
-
-  try {
-    // Load config
-    const cfg = initConfig();
-    const dbPath = cfg.db_path;
-
-    // Ensure database directory exists
-    const dbDir = path.dirname(dbPath);
-    if (!fs.existsSync(dbDir)) {
-      fs.mkdirSync(dbDir, { recursive: true });
-    }
-
-    // Open database
-    db = new Database(dbPath);
-    console.log('[Database] Opened database at:', dbPath);
-
-    // Initialize schema
-    createSchema(db);
-
-    // Enable WAL mode for better concurrency
-    db.pragma('journal_mode = WAL');
-
-    return db;
-  } catch (error) {
-    console.error('[Database] Failed to initialize database:', error);
-    throw error;
-  }
-}
+// ═══════════════════════════════════════════════════════════════
+// SETTINGS
+// ═══════════════════════════════════════════════════════════════
 
 /**
- * Close the database connection
- */
-function closeDatabase() {
-  if (db) {
-    try {
-      db.close();
-      console.log('[Database] Database connection closed');
-      db = null;
-    } catch (error) {
-      console.error('[Database] Error closing database:', error);
-      throw error;
-    }
-  }
-}
-
-/**
- * Get the database instance
- */
-function getDatabase() {
-  if (!db) {
-    throw new Error('Database not initialized. Call initDatabase() first.');
-  }
-  return db;
-}
-
-/**
- * Get a setting from the database
+ * Retrieves a single user setting by key.
+ *
+ * @param {string} key - The setting key.
+ * @returns {string | null} The setting value, or `null` if not found.
  */
 function getSetting(key) {
   const database = getDatabase();
@@ -210,7 +289,10 @@ function getSetting(key) {
 }
 
 /**
- * Set a setting in the database
+ * Inserts or replaces a user setting.
+ *
+ * @param {string} key   - The setting key.
+ * @param {string} value - The setting value.
  */
 function setSetting(key, value) {
   const database = getDatabase();
@@ -219,7 +301,9 @@ function setSetting(key, value) {
 }
 
 /**
- * Delete a setting from the database
+ * Deletes a user setting by key.
+ *
+ * @param {string} key - The setting key to remove.
  */
 function deleteSetting(key) {
   const database = getDatabase();
@@ -227,10 +311,15 @@ function deleteSetting(key) {
   stmt.run(key);
 }
 
-// ==================== NETDOC OPERATIONS ====================
+// ═══════════════════════════════════════════════════════════════
+// NETDOC CRUD
+// ═══════════════════════════════════════════════════════════════
 
 /**
- * Check if a netdoc exists in the local database
+ * Checks whether a netdoc with the given ID exists in the local database.
+ *
+ * @param {string} id - The netdoc ID.
+ * @returns {boolean}
  */
 function netdocExists(id) {
   const database = getDatabase();
@@ -240,7 +329,10 @@ function netdocExists(id) {
 }
 
 /**
- * Get a netdoc from the local database
+ * Retrieves a full netdoc row by ID (case-insensitive lookup).
+ *
+ * @param {string} id - The netdoc ID.
+ * @returns {object | null} The netdoc row, or `null` if not found.
  */
 function getNetdoc(id) {
   const database = getDatabase();
@@ -249,17 +341,26 @@ function getNetdoc(id) {
 }
 
 /**
- * Save or update a netdoc in the local database
+ * Inserts a new netdoc or upserts an existing one (matched by `id`).
+ * On conflict the name, text, can_edit, last_synced, and updated_at
+ * columns are overwritten.
+ *
+ * @param {string}  id      - Unique netdoc identifier.
+ * @param {string}  name    - Human-readable title.
+ * @param {string}  content - The document text body.
+ * @param {boolean} canEdit - Whether the current user may edit the doc.
+ * @returns {object} The saved netdoc row (re-fetched after upsert).
  */
 function saveNetdoc(id, name, content, canEdit) {
   const database = getDatabase();
   const now = new Date().toISOString();
+  // Fixed: column is 'text' not 'content' per schema
   const stmt = database.prepare(`
-    INSERT INTO netdoc (id, name, content, can_edit, last_synced, created_at, updated_at)
+    INSERT INTO netdoc (id, name, text, can_edit, last_synced, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       name = excluded.name,
-      content = excluded.content,
+      text = excluded.text,
       can_edit = excluded.can_edit,
       last_synced = excluded.last_synced,
       updated_at = excluded.updated_at
@@ -269,20 +370,31 @@ function saveNetdoc(id, name, content, canEdit) {
 }
 
 /**
- * Update only the content of a netdoc (for local edits)
+ * Updates only the name and text content of an existing netdoc (for local
+ * edits). Sets `updated_at` to the current timestamp.
+ *
+ * @param {string} id      - Netdoc ID (matched case-insensitively).
+ * @param {string} name    - Updated title.
+ * @param {string} content - Updated document body.
+ * @returns {boolean} `true` if a row was actually modified.
  */
 function updateNetdocContent(id, name, content) {
   const database = getDatabase();
   const now = new Date().toISOString();
+  // Fixed: column is 'text' not 'content' per schema
   const stmt = database.prepare(`
-    UPDATE netdoc SET name = ?, content = ?, updated_at = ? WHERE id = ?
+    UPDATE netdoc SET name = ?, text = ?, updated_at = ? WHERE id = ?
   `);
   const result = stmt.run(name, content, now, id.toLowerCase());
   return result.changes > 0;
 }
 
 /**
- * Delete a netdoc from the local database
+ * Permanently deletes a netdoc by ID. Foreign-key cascades will also
+ * remove associated comments and versions.
+ *
+ * @param {string} id - Netdoc ID (matched case-insensitively).
+ * @returns {boolean} `true` if a row was actually deleted.
  */
 function deleteNetdoc(id) {
   const database = getDatabase();
@@ -291,8 +403,15 @@ function deleteNetdoc(id) {
   return result.changes > 0;
 }
 
+// ═══════════════════════════════════════════════════════════════
+// NETDOC VERSIONS
+// ═══════════════════════════════════════════════════════════════
+
 /**
- * Get all versions for a netdoc from local database
+ * Returns all saved versions for a netdoc, ordered newest-first.
+ *
+ * @param {string} netdocId - The parent netdoc ID.
+ * @returns {object[]} Array of version rows.
  */
 function getNetdocVersions(netdocId) {
   const database = getDatabase();
@@ -301,54 +420,55 @@ function getNetdocVersions(netdocId) {
 }
 
 /**
- * Save a new version for a netdoc
+ * Saves a new version snapshot for a netdoc.
+ *
+ * @param {string} id       - Unique version identifier.
+ * @param {string} netdocId - The parent netdoc ID.
+ * @param {string} content  - The full document text at this point in time.
+ * @param {string} title    - Version title / label.
+ * @param {string} author   - Author who created the version.
  */
 function saveNetdocVersion(id, netdocId, content, title, author) {
   const database = getDatabase();
   const now = new Date().toISOString();
+  // Fixed: column is 'text' not 'content' per schema
   const stmt = database.prepare(`
-    INSERT INTO netdoc_version (id, netdoc_id, content, title, author, created_at)
+    INSERT INTO netdoc_version (id, netdoc_id, text, title, author, created_at)
     VALUES (?, ?, ?, ?, ?, ?)
   `);
   stmt.run(id, netdocId, content, title, author, now);
 }
 
 /**
- * Get the latest version content for comparison
+ * Returns the text body of the most recent version for a netdoc,
+ * useful for diffing against the current working copy. Returns `null`
+ * if no versions exist.
+ *
+ * @param {string} netdocId - The parent netdoc ID.
+ * @returns {string | null} The latest version's text content.
  */
 function getLatestVersionContent(netdocId) {
   const database = getDatabase();
-  const stmt = database.prepare('SELECT content FROM netdoc_version WHERE netdoc_id = ? ORDER BY created_at DESC LIMIT 1');
+  // Fixed: column is 'text' not 'content' per schema
+  const stmt = database.prepare('SELECT text FROM netdoc_version WHERE netdoc_id = ? ORDER BY created_at DESC LIMIT 1');
   const row = stmt.get(netdocId.toLowerCase());
-  return row ? row.content : null;
+  return row ? row.text : null;
 }
 
-/**
- * Update the database path in config.json
- */
-function updateDbPath(newPath) {
-  if (!configPath) {
-    throw new Error('Config not initialized. Call initConfig() first.');
-  }
-
-  try {
-    config.db_path = newPath;
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
-    console.log('[Database] Updated db_path in config to:', newPath);
-    return true;
-  } catch (error) {
-    console.error('[Database] Failed to update db_path:', error);
-    throw error;
-  }
-}
+// ═══════════════════════════════════════════════════════════════
+// EXPORTS
+// ═══════════════════════════════════════════════════════════════
 
 module.exports = {
+  // Database lifecycle
   initDatabase,
   closeDatabase,
   getDatabase,
+  // Settings
   getSetting,
   setSetting,
   deleteSetting,
+  // Config
   updateDbPath,
   getAppDataPath,
   getConfigPath: () => configPath,

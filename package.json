@@ -23,6 +23,7 @@
     "sub:electron": "cd cascade-electron && npm start",
     "live": "cd cascade-electron && npm run start-live-instance",
     "build": "tsc",
+    "test": "npm --workspace=client run test",
     "start": "electron-forge start",
     "migrate:legacy": "tsx scripts/migrate-legacy-posts.ts",
     "package": "electron-forge package",

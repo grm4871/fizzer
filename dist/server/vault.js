@@ -1,6 +1,19 @@
+/**
+ * @file vault.ts — Dual-storage vault model (disk + SQLite index)
+ *
+ * Implements CRUD and synchronization for notes, folders, and tags. Vault notes
+ * are stored on the local filesystem as markdown (.md) files, while metadata
+ * (pinned/archived status, backlink relationships) is indexed in SQLite.
+ *
+ * @module server/vault
+ */
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import crypto from 'node:crypto';
+// Persistent base directory for vaults that don't specify their own root_path.
+// Lives under the user's home dir so notes survive reboots (unlike /tmp).
+export const VAULTS_BASE_DIR = path.join(os.homedir(), '.cascade', 'vaults');
 // ── Helpers ────────────────────────────────────────────────────────
 function sanitizeFilename(title) {
     return title
@@ -47,13 +60,6 @@ export function extractLinks(content) {
     }
     return titles;
 }
-function getNotePath(vault, folderName, title) {
-    const filename = `${sanitizeFilename(title)}.md`;
-    if (folderName) {
-        return path.join(vault.root_path, folderName, filename);
-    }
-    return path.join(vault.root_path, filename);
-}
 function getFolderPath(vault, db, folderId) {
     const parts = [];
     let current = db.prepare('SELECT id, parent_id, name FROM folders WHERE id = ?').get(folderId);
@@ -67,12 +73,6 @@ function getFolderPath(vault, db, folderId) {
         }
     }
     return path.join(vault.root_path, ...parts);
-}
-function getVaultForNote(db, noteId) {
-    const note = db.prepare('SELECT vault_id FROM notes WHERE id = ?').get(noteId);
-    if (!note)
-        return undefined;
-    return db.prepare('SELECT * FROM vaults WHERE id = ?').get(note.vault_id);
 }
 function resolveNotePath(db, noteId) {
     const note = db.prepare('SELECT id, vault_id, folder_id, title FROM notes WHERE id = ?').get(noteId);
@@ -129,17 +129,15 @@ export function getVault(db, vaultId, userId) {
     return db.prepare('SELECT * FROM vaults WHERE id = ? AND created_by = ?').get(vaultId, userId);
 }
 function prepopulateWalkthrough(vault) {
-    const welcomeContent = `# 💎 Welcome to Cascade Notes\n\nCascade Notes is an intelligent, Obsidian-style personal wiki designed for writing, organizing, and thinking alongside AI.\n\n## Key Features\n\n1. **Local Markdown Files**: All notes are stored as standard \`.md\` files in your vault folder: \`${vault.root_path}\`.\n2. **Rich Live Preview**: A modern CodeMirror 6 editor renders headers, bold/italic, checkboxes, and wikilinks directly as you type.\n3. **Wikilinks & Backlinks**: Connect notes using wikilinks like [[LLM Directives Guide]] or [[Navigation & Search]]. Check the backlinks panel to explore note relationships.\n4. **Intelligent Directives**: Prompt LLMs directly inside your notes to summarize, expand, outline, or query your vault!\n\n## Get Started\n\n- Open the [[LLM Directives Guide]] to learn how to prompt AI inline.\n- Check the boxes below to try out interactive checklists:\n  - [ ] Edit this note and change this checkbox\n  - [ ] Click on the checkbox widget directly to toggle it!\n  - [x] Press \`Ctrl+P\` to open the command palette\n  - [ ] Press \`Ctrl+Shift+Enter\` to run the directives in this note\n`;
-    const directivesContent = `# ✨ LLM Directives Guide\n\nCascade Notes lets you embed AI directives directly inside your notes. There are two primary types of directives: inline directives and block directives.\n\n## 1. Inline Directives\n\nInline directives use the \`{{ai: prompt}}\` syntax. They are excellent for quick edits, expansions, or summaries.\n\nTry running the directive below:\n{{ai: write a short, motivational quote about note-taking}}\n\n### How to Run:\n1. Move your cursor onto the line containing the directive (or click it).\n2. Click the **⚡ Run AI** button at the top-right of the editor toolbar, or press \`Ctrl+Shift+Enter\` (\`Cmd+Shift+Enter\` on macOS).\n3. The backend will parse the note, call the model, and replace the directive with the generated response!\n\n## 2. Block Directives\n\nBlock directives use the \` \`\`\`llm \` code block syntax. They are ideal for longer prompts, multi-note summaries, or generating structured tables.\n\nTry running this block:\n\`\`\`llm\nSummarize the key features of Cascade Notes from the welcome note [[Welcome to Cascade Notes]].\n\`\`\`\n\n## 3. Note-Aware Agent Runner\n\nFor larger tasks (e.g. searching across the entire vault, creating new notes, or organizing tags), click the **✨ AI Assistant** button on the tab bar to open the AI panel. The agent can use advanced tools to operate on files directly on disk.\n`;
+    const welcomeContent = `# 💎 Welcome to Cascade Notes\n\nCascade Notes is an intelligent, Obsidian-style personal wiki designed for writing, organizing, and thinking alongside AI.\n\n## Key Features\n\n1. **Local Markdown Files**: All notes are stored as standard \`.md\` files in your vault folder: \`${vault.root_path}\`.\n2. **Rich Live Preview**: A modern CodeMirror 6 editor renders headers, bold/italic, checkboxes, and wikilinks directly as you type.\n3. **Wikilinks & Backlinks**: Connect notes using wikilinks like [[Navigation & Search]]. Check the backlinks panel to explore note relationships.\n4. **AI Assistant**: Open the AI panel and pick an agent (Claude Code, Codex, or Grok) to read, edit, and organize your notes directly on disk.\n\n## Get Started\n\n- Click the **✨ AI Assistant** button on the tab bar to open the agent panel, then choose your agent and tell it what to do.\n- Drop an inline directive anywhere in a note with the \`{{ai: your instruction}}\` syntax, then put your cursor on it and press \`Ctrl+Enter\` (\`Cmd+Enter\` on macOS) to run it in the agent panel. Try it: {{ai: write a one-line welcome message at the top of this note}}\n- Check the boxes below to try out interactive checklists:\n  - [ ] Edit this note and change this checkbox\n  - [ ] Click on the checkbox widget directly to toggle it!\n  - [x] Press \`Ctrl+P\` to open the command palette\n`;
     const navContent = `# 🔍 Navigation & Search\n\nCascade Notes is built for speed and keyboard-driven navigation.\n\n## Keyboard Shortcuts\n\nHere are the key shortcuts to keep your hands on the keyboard:\n\n- \`Ctrl+P\` (or \`Cmd+P\`): Open the **Command Palette**. Search through note titles fuzzy-style, or press Enter on a non-existent name to create a new note instantly.\n- \`Ctrl+Shift+F\`: Open **Vault Search**. Perform ranked full-text search across all note contents using SQLite FTS5.\n- \`Ctrl+S\`: Save the current note.\n- \`Ctrl+N\`: Create a new note.\n- \`Ctrl+\\\`: Toggle the sidebar.\n\n## Organizing with Tags\n\nYou can add tags to notes (e.g., #tutorial, #reference) or add them via the tag manager in the sidebar. Tags help you filter notes in search and group them in the folder tree.\n`;
     fs.writeFileSync(path.join(vault.root_path, 'Welcome to Cascade Notes.md'), welcomeContent, 'utf8');
-    fs.writeFileSync(path.join(vault.root_path, 'LLM Directives Guide.md'), directivesContent, 'utf8');
     fs.writeFileSync(path.join(vault.root_path, 'Navigation & Search.md'), navContent, 'utf8');
 }
 export function createVault(db, userId, opts) {
     const id = crypto.randomUUID();
     const name = String(opts.name || 'My Vault').trim() || 'My Vault';
-    const rootPath = path.resolve(String(opts.root_path || path.join(process.cwd(), 'vaults', sanitizeFilename(name))));
+    const rootPath = path.resolve(String(opts.root_path || path.join(VAULTS_BASE_DIR, sanitizeFilename(name))));
     fs.mkdirSync(rootPath, { recursive: true });
     db.prepare('INSERT INTO vaults (id, name, root_path, created_by) VALUES (?, ?, ?, ?)').run(id, name, rootPath, userId);
     const vault = db.prepare('SELECT * FROM vaults WHERE id = ?').get(id);
@@ -297,6 +295,7 @@ export function createNote(db, vaultId, userId, opts) {
         filePath = path.join(folderPath, `${sanitizeFilename(title)}.md`);
     }
     else {
+        fs.mkdirSync(vault.root_path, { recursive: true });
         filePath = path.join(vault.root_path, `${sanitizeFilename(title)}.md`);
     }
     // Write .md file to disk
@@ -329,6 +328,51 @@ export function updateNote(db, noteId, content) {
   `).run(content, preview, wc, noteId);
     // Re-index links
     reIndexLinks(db, noteId, existing.vault_id, content);
+    return getNote(db, noteId);
+}
+// Update [[Old Title]] / [[Old Title|alias]] / [[Old Title#heading]] references
+// across the vault to point at the new title (Obsidian-style link maintenance).
+function updateWikilinkTargets(db, vaultId, oldTitle, newTitle) {
+    const escaped = oldTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`(\\[\\[)${escaped}(?=[\\]|#])`, 'gi');
+    const notes = db.prepare('SELECT id, content FROM notes WHERE vault_id = ?').all(vaultId);
+    for (const n of notes) {
+        if (!n.content.includes('[['))
+            continue;
+        const updated = n.content.replace(re, `$1${newTitle}`);
+        if (updated !== n.content)
+            updateNote(db, n.id, updated);
+    }
+}
+export function renameNote(db, noteId, newTitleRaw) {
+    const existing = db.prepare('SELECT * FROM notes WHERE id = ?').get(noteId);
+    if (!existing)
+        throw new Error('Note not found');
+    const newTitle = String(newTitleRaw).trim();
+    if (!newTitle)
+        throw new Error('Title cannot be empty');
+    if (newTitle === existing.title)
+        return getNote(db, noteId);
+    // Filesystem-like rule: no two notes in a vault may share a title.
+    const dupe = db.prepare('SELECT id FROM notes WHERE vault_id = ? AND title = ? COLLATE NOCASE AND id != ?').get(existing.vault_id, newTitle, noteId);
+    if (dupe)
+        throw new Error('A note with that title already exists');
+    const oldPath = resolveNotePath(db, noteId);
+    const oldTitle = existing.title;
+    // Update the title first so resolveNotePath computes the new filename.
+    db.prepare("UPDATE notes SET title = ?, updated_at = datetime('now') WHERE id = ?").run(newTitle, noteId);
+    const newPath = resolveNotePath(db, noteId);
+    if (oldPath && newPath && oldPath !== newPath) {
+        try {
+            fs.mkdirSync(path.dirname(newPath), { recursive: true });
+            if (fs.existsSync(oldPath))
+                fs.renameSync(oldPath, newPath);
+        }
+        catch {
+            // Keep the DB rename even if the on-disk move fails.
+        }
+    }
+    updateWikilinkTargets(db, existing.vault_id, oldTitle, newTitle);
     return getNote(db, noteId);
 }
 export function deleteNote(db, noteId) {

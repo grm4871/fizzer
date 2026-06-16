@@ -1,3 +1,21 @@
+/**
+ * @file SearchOverlay.tsx — Debounced full-text search overlay
+ *
+ * A modal overlay (Ctrl+Shift+F) that performs server-side full-text search
+ * across all notes in the active vault. Features:
+ * - 300ms debounced API calls to avoid excessive requests
+ * - Keyboard navigation (arrow keys, Enter, Escape)
+ * - Highlighted matching text in result snippets via `<mark>` tags
+ * - Auto-scrolling of the highlighted result into view
+ *
+ * @param props.open - Whether the overlay is visible
+ * @param props.onClose - Called when the overlay should close
+ * @param props.vaultId - Active vault ID for scoping search
+ * @param props.onSelectNote - Called when a search result is selected
+ *
+ * @component
+ */
+
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { api, type SearchResult } from '../api';
 import { Search, Loader2 } from 'lucide-react';
@@ -176,6 +194,11 @@ export function SearchOverlay({
   );
 }
 
+/**
+ * Wrap occurrences of `query` in the snippet with `<mark>` tags for
+ * visual highlighting. HTML-escapes both the snippet and query first
+ * to prevent XSS from server-provided content.
+ */
 function highlightSnippet(snippet: string, query: string): string {
   if (!query.trim() || !snippet) return escapeHtml(snippet || '');
   const escaped = escapeHtml(snippet);
@@ -184,6 +207,7 @@ function highlightSnippet(snippet: string, query: string): string {
   return escaped.replace(regex, '<mark>$1</mark>');
 }
 
+/** Escape HTML special characters to prevent XSS injection. */
 function escapeHtml(str: string): string {
   return str
     .replace(/&/g, '&amp;')

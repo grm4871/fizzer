@@ -1,3 +1,14 @@
+/**
+ * @file index.ts — Express server entry point
+ *
+ * Starts the REST API and Socket.IO server namespaces (/runs and /vault) to orchestrate
+ * user authentication, vaults, folders, notes, tagging, versions, and agent run sessions.
+ *
+ * Section Markers are used below to separate route namespaces and socket setup.
+ *
+ * @module index
+ */
+
 import path from 'node:path';
 import http from 'node:http';
 import express, { Request, Response, NextFunction } from 'express';
@@ -14,7 +25,6 @@ import {
   deleteFolder,
   deleteNote,
   ensureVaultSchema,
-  extractLinks,
   getBacklinks,
   getGraph,
   getNote,
@@ -25,6 +35,7 @@ import {
   listVaults,
   moveNote,
   removeTag,
+  renameNote,
   searchNotes,
   toggleArchive,
   togglePin,
@@ -41,13 +52,13 @@ import {
 import {
   ensureRunnerSchema,
   setRunEventSink,
+  setVaultEventSink,
   listRuns,
   getRun,
   listRunEvents,
   startRun,
   sendRunMessage,
 } from './server/runner.js';
-import { runDirectivesInNote } from './server/directives.js';
 
 const PORT = Number(process.env.API_PORT || 3000);
 const JWT_SECRET = process.env.JWT_SECRET || 'cascade-dev-secret';
@@ -233,6 +244,9 @@ function emitVaultEvent(vaultId: string, event: string, data: unknown) {
   vaultNamespace.to(`vault:${vaultId}`).emit(event, data);
 }
 
+// Let the agent runner notify clients (e.g. reload an open note after edits).
+setVaultEventSink(emitVaultEvent);
+
 // ── Health ──────────────────────────────────────────────────────────
 
 app.get('/api/health', (_req, res) => {
@@ -394,19 +408,18 @@ app.put('/api/notes/:id', requireAuth, (req: AuthedRequest, res) => {
   }
 });
 
-app.post('/api/notes/:id/run-directives', requireAuth, async (req: AuthedRequest, res) => {
+app.post('/api/notes/:id/rename', requireAuth, (req: AuthedRequest, res) => {
   const existing = getNote(db, req.params.id);
   if (!existing) return res.status(404).json({ error: 'Note not found' });
   const vault = getVault(db, existing.vault_id, req.user!.id);
   if (!vault) return res.status(404).json({ error: 'Note not found' });
 
   try {
-    const newContent = await runDirectivesInNote(db, existing.id);
-    const updatedNote = getNote(db, existing.id)!;
-    emitVaultEvent(vault.id, 'vault:noteChanged', { noteId: updatedNote.id, title: updatedNote.title });
-    res.json({ note: updatedNote });
+    const note = renameNote(db, req.params.id, String(req.body.title ?? ''));
+    emitVaultEvent(vault.id, 'vault:noteChanged', { noteId: note.id, vaultId: vault.id });
+    res.json({ note });
   } catch (error) {
-    res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not rename note' });
   }
 });
 
@@ -576,13 +589,27 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
   const vault = getVault(db, req.params.id, req.user!.id);
   if (!vault) return res.status(404).json({ error: 'Vault not found' });
 
-  const { prompt, note_id } = req.body;
+  const { prompt, note_id, agent, conversation_id, images } = req.body;
   if (!prompt || !prompt.trim()) {
     return res.status(400).json({ error: 'Prompt is required' });
   }
 
+  const validAgents = ['claude-code', 'codex', 'grok'];
+  const selectedAgent = validAgents.includes(agent) ? agent : 'claude-code';
+
+  // Sanitize image attachments to { media_type, data } base64 entries.
+  const cleanImages = Array.isArray(images)
+    ? images
+        .filter((im: any) => im && typeof im.media_type === 'string' && typeof im.data === 'string')
+        .slice(0, 8)
+        .map((im: any) => ({ media_type: im.media_type, data: im.data }))
+    : [];
+
   try {
-    const run = await startRun(db, vault, note_id || null, prompt);
+    const run = await startRun(db, vault, note_id || null, prompt, selectedAgent, {
+      conversationId: typeof conversation_id === 'string' && conversation_id ? conversation_id : undefined,
+      images: cleanImages,
+    });
     res.json({ run });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });

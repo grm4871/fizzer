@@ -1,9 +1,26 @@
+/**
+ * @file api.ts — Typed fetch wrapper and shared domain types
+ *
+ * Provides a generic `api<T>()` function that wraps `fetch` with:
+ * - Automatic JWT Bearer token injection from `localStorage('docs_token')`
+ * - JSON Content-Type headers
+ * - Error extraction from server JSON responses
+ * - Auto-logout on 401 (clears stored token)
+ *
+ * Also exports all shared domain types (User, Vault, Folder, Note, etc.)
+ * and date formatting utilities used across the client.
+ *
+ * @module
+ */
+
 /* ═══════════════════════════════════════════════════════════
    Cascade Notes — Types & API Client
    ═══════════════════════════════════════════════════════════ */
 
+/** Authenticated user record. */
 export type User = { id: number; username: string };
 
+/** A vault (workspace) containing folders and notes. */
 export type Vault = {
   id: string;
   name: string;
@@ -11,6 +28,7 @@ export type Vault = {
   created_at: string;
 };
 
+/** A folder within a vault; supports nesting via `parent_id`. */
 export type Folder = {
   id: string;
   vault_id: string;
@@ -20,6 +38,7 @@ export type Folder = {
   created_at: string;
 };
 
+/** Lightweight note metadata returned in list endpoints (no full content). */
 export type NoteSummary = {
   id: string;
   vault_id: string;
@@ -34,11 +53,13 @@ export type NoteSummary = {
   tags: string[];
 };
 
+/** Full note record including markdown content and file path. */
 export type Note = NoteSummary & {
   content: string;
   file_path: string;
 };
 
+/** A tag with an optional color and usage count. */
 export type Tag = {
   id: string;
   name: string;
@@ -46,6 +67,7 @@ export type Tag = {
   count: number;
 };
 
+/** A saved snapshot of a note for version history. */
 export type NoteVersion = {
   id: string;
   note_id: string;
@@ -53,6 +75,7 @@ export type NoteVersion = {
   created_at: string;
 };
 
+/** A full-text search result with a ranked snippet. */
 export type SearchResult = {
   id: string;
   title: string;
@@ -60,12 +83,14 @@ export type SearchResult = {
   rank: number;
 };
 
+/** A note that links back to another note via wikilink. */
 export type BacklinkResult = {
   id: string;
   title: string;
   context: string | null;
 };
 
+/** Wikilink graph data for visualization. */
 export type GraphData = {
   nodes: GraphNode[];
   edges: GraphEdge[];
@@ -86,6 +111,18 @@ export type GraphEdge = {
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
+/**
+ * Generic typed fetch wrapper for the Cascade API.
+ *
+ * Automatically attaches the JWT token from localStorage and parses the
+ * JSON response. Throws an `Error` with the server's error message on
+ * non-2xx responses and clears the stored token on 401.
+ *
+ * @template T - Expected shape of the JSON response body
+ * @param path - API path (e.g. `/api/vaults`)
+ * @param options - Standard `RequestInit` options (method, body, headers, etc.)
+ * @returns Parsed JSON response typed as `T`
+ */
 export async function api<T>(path: string, options: RequestInit = {}) {
   const token = localStorage.getItem('docs_token');
   const headers = {
@@ -100,6 +137,10 @@ export async function api<T>(path: string, options: RequestInit = {}) {
   return data as T;
 }
 
+/**
+ * Format an ISO date string into a locale-appropriate medium date + short time.
+ * Example output: "Jun 15, 2026, 3:45 PM"
+ */
 export function formatDate(value: string) {
   return new Intl.DateTimeFormat(undefined, {
     dateStyle: 'medium',
@@ -107,6 +148,11 @@ export function formatDate(value: string) {
   }).format(new Date(value));
 }
 
+/**
+ * Format an ISO date string as a human-friendly relative time.
+ * Returns "Just now", "5m ago", "3h ago", "2d ago", or falls back to
+ * `formatDate()` for dates older than a week.
+ */
 export function formatRelativeDate(value: string) {
   const now = Date.now();
   const then = new Date(value).getTime();

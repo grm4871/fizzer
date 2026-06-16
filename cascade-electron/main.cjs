@@ -1,20 +1,57 @@
+/**
+ * @file main.cjs — Electron main process entry point
+ *
+ * Creates the main BrowserWindow, handles IPC for database operations and
+ * keyboard shortcuts, and manages the application lifecycle. Provides
+ * navigation security guards that restrict loading to netar.is and local
+ * dev origins. Keyboard shortcuts are intercepted at the main-process level
+ * and forwarded to the renderer via IPC when Chromium would otherwise
+ * swallow them. In production, loads https://netar.is; in development,
+ * loads the Vite dev server.
+ *
+ * @module cascade-electron/main
+ */
+
+// ═══════════════════════════════════════════════════════════════
+// IMPORTS & CONFIG
+// ═══════════════════════════════════════════════════════════════
+
 const { app, BrowserWindow, ipcMain, session, Menu } = require('electron');
 const path = require('path');
 const db = require('./database.cjs');
 
-// Suppress GLib-GObject and GTK warnings on Linux
+// Suppress GLib-GObject and GTK warnings on Linux, and disable hardware acceleration to fix blank webviews
 if (process.platform === 'linux') {
   process.env.G_MESSAGES_DEBUG = '';
   process.env.GTK_DEBUG = '';
+  app.disableHardwareAcceleration();
 }
 
 let mainWindow;
-let serverProcess;
+// Removed: dead `serverProcess` variable — it was declared but never assigned,
+// and the corresponding `if (serverProcess) serverProcess.kill()` in the
+// 'closed' handler was therefore unreachable.
 
+// ═══════════════════════════════════════════════════════════════
+// WINDOW CREATION
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Checks whether the app is running in development mode.
+ * Returns `true` when launched via `electron .` (i.e. not packaged).
+ *
+ * @returns {boolean}
+ */
 function isDevelopmentMode() {
   return !app.isPackaged;
 }
 
+/**
+ * Builds a debug-only application menu with Reload, DevTools, and Zoom
+ * controls. Returns `null` in production so the default menu is suppressed.
+ *
+ * @returns {Electron.Menu | null}
+ */
 function buildApplicationMenu() {
   if (!isDevelopmentMode()) return null;
 
@@ -34,6 +71,13 @@ function buildApplicationMenu() {
   ]);
 }
 
+/**
+ * Creates the main application window with security-hardened webPreferences.
+ * Sets up navigation guards, keyboard shortcuts, and window lifecycle
+ * handlers. In production the window loads https://netar.is; in development
+ * it loads the URL specified by the `--APP_URL=` CLI flag (defaults to
+ * http://localhost:5173).
+ */
 function createWindow() {
   Menu.setApplicationMenu(buildApplicationMenu());
 
@@ -44,6 +88,7 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      webviewTag: true,
       preload: path.join(__dirname, 'preload.cjs')
     }
   });
@@ -69,8 +114,11 @@ function createWindow() {
 
   mainWindow.on('closed', () => {
     mainWindow = null;
-    if (serverProcess) serverProcess.kill();
   });
+
+  // ═══════════════════════════════════════════════════════════════
+  // NAVIGATION SECURITY
+  // ═══════════════════════════════════════════════════════════════
 
   // Block navigation to sites outside netar.is
   mainWindow.webContents.on('will-navigate', (event, url) => {
@@ -102,6 +150,10 @@ function createWindow() {
     }
     return { action: 'allow' };
   });
+
+  // ═══════════════════════════════════════════════════════════════
+  // KEYBOARD SHORTCUTS
+  // ═══════════════════════════════════════════════════════════════
 
   // Local keyboard shortcuts (only work when window is focused)
   mainWindow.webContents.on('before-input-event', (event, input) => {
@@ -148,7 +200,11 @@ function createWindow() {
   });
 }
 
-// IPC Handlers for database configuration
+// ═══════════════════════════════════════════════════════════════
+// DATABASE IPC HANDLERS
+// ═══════════════════════════════════════════════════════════════
+
+/** Returns the full application config object (includes db_path). */
 ipcMain.handle('db:getConfig', async () => {
   try {
     const config = db.getConfig();
@@ -159,6 +215,7 @@ ipcMain.handle('db:getConfig', async () => {
   }
 });
 
+/** Updates the database file path in config.json and persists to disk. */
 ipcMain.handle('db:updateDbPath', async (event, newPath) => {
   try {
     db.updateDbPath(newPath);
@@ -169,6 +226,7 @@ ipcMain.handle('db:updateDbPath', async (event, newPath) => {
   }
 });
 
+/** Returns the absolute path to the application config directory. */
 ipcMain.handle('db:getConfigDir', async () => {
   try {
     const configDir = db.getAppDataPath();
@@ -179,8 +237,11 @@ ipcMain.handle('db:getConfigDir', async () => {
   }
 });
 
-// ==================== NETDOC IPC HANDLERS ====================
+// ═══════════════════════════════════════════════════════════════
+// NETDOC IPC HANDLERS
+// ═══════════════════════════════════════════════════════════════
 
+/** Checks whether a netdoc with the given ID exists in the local database. */
 ipcMain.handle('netdoc:exists', async (event, id) => {
   try {
     const exists = db.netdocExists(id);
@@ -191,6 +252,7 @@ ipcMain.handle('netdoc:exists', async (event, id) => {
   }
 });
 
+/** Retrieves a single netdoc row by ID, or null if not found. */
 ipcMain.handle('netdoc:get', async (event, id) => {
   try {
     const netdoc = db.getNetdoc(id);
@@ -201,6 +263,7 @@ ipcMain.handle('netdoc:get', async (event, id) => {
   }
 });
 
+/** Inserts or upserts a netdoc (id, name, content, canEdit) into the database. */
 ipcMain.handle('netdoc:save', async (event, { id, name, content, canEdit }) => {
   try {
     const netdoc = db.saveNetdoc(id, name, content, canEdit);
@@ -211,6 +274,7 @@ ipcMain.handle('netdoc:save', async (event, { id, name, content, canEdit }) => {
   }
 });
 
+/** Updates the name and text content of an existing netdoc. */
 ipcMain.handle('netdoc:updateContent', async (event, { id, name, content }) => {
   try {
     const updated = db.updateNetdocContent(id, name, content);
@@ -221,6 +285,7 @@ ipcMain.handle('netdoc:updateContent', async (event, { id, name, content }) => {
   }
 });
 
+/** Permanently deletes a netdoc by ID (cascades to versions/comments). */
 ipcMain.handle('netdoc:delete', async (event, id) => {
   try {
     const deleted = db.deleteNetdoc(id);
@@ -231,6 +296,7 @@ ipcMain.handle('netdoc:delete', async (event, id) => {
   }
 });
 
+/** Returns all saved versions for a netdoc, ordered newest-first. */
 ipcMain.handle('netdoc:getVersions', async (event, netdocId) => {
   try {
     const versions = db.getNetdocVersions(netdocId);
@@ -241,6 +307,7 @@ ipcMain.handle('netdoc:getVersions', async (event, netdocId) => {
   }
 });
 
+/** Saves a new version snapshot for a netdoc (id, netdocId, content, title, author). */
 ipcMain.handle('netdoc:saveVersion', async (event, { id, netdocId, content, title, author }) => {
   try {
     db.saveNetdocVersion(id, netdocId, content, title, author);
@@ -251,6 +318,7 @@ ipcMain.handle('netdoc:saveVersion', async (event, { id, netdocId, content, titl
   }
 });
 
+/** Returns the text content of the most recent version for diff comparison. */
 ipcMain.handle('netdoc:getLatestVersionContent', async (event, netdocId) => {
   try {
     const content = db.getLatestVersionContent(netdocId);
@@ -261,13 +329,22 @@ ipcMain.handle('netdoc:getLatestVersionContent', async (event, netdocId) => {
   }
 });
 
-app.whenReady().then(() => {
+// ═══════════════════════════════════════════════════════════════
+// APP LIFECYCLE
+// ═══════════════════════════════════════════════════════════════
+
+  app.whenReady().then(() => {
   // Initialize database
   try {
     db.initDatabase();
   } catch (error) {
     console.error('[Main] Failed to initialize database:', error);
   }
+
+  // Allow webview tag usage
+  session.defaultSession.setPermissionCheckHandler((webContents, permission) => {
+    return true;
+  });
 
   session.defaultSession.clearStorageData({storages: ['cookies']})
         .then(() => {
@@ -277,7 +354,8 @@ app.whenReady().then(() => {
             console.error('Failed to clear cookies: ', error);
         });
 
-  setTimeout(createWindow, 1000); // wait briefly for server to start
+  // Brief delay to ensure database initialization completes
+  setTimeout(createWindow, 1000);
 });
 
 app.on('window-all-closed', () => {
@@ -296,5 +374,3 @@ app.on('will-quit', () => {
 app.on('activate', () => {
   if (mainWindow === null) createWindow();
 });
-
-

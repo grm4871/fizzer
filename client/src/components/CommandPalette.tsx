@@ -1,3 +1,19 @@
+/**
+ * @file CommandPalette.tsx — Quick note switcher with fuzzy filtering
+ *
+ * A modal overlay (Ctrl+P) that lets users quickly find and open notes by
+ * typing a query. Filters notes by title and tags using substring matching.
+ * Supports full keyboard navigation:
+ * - Arrow keys to move highlight
+ * - Enter to select highlighted note (or create a new note if no matches)
+ * - Escape to close
+ *
+ * The highlighted item auto-scrolls into view. When no results match and a
+ * query is entered, offers a "Create note" action.
+ *
+ * @component
+ */
+
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { NoteSummary } from '../api';
 import { Search, Sparkles, FileText } from 'lucide-react';
