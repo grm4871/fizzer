@@ -11,6 +11,7 @@
  *                     updateNetdocContent, deleteNetdoc
  *  - Netdoc Versions: getNetdocVersions, saveNetdocVersion,
  *                     getLatestVersionContent
+ *  - Browser:         openExternal, getAdBlockState, setAdBlockSiteEnabled
  *  - Shortcuts:       onShortcut (subscribe to main-process keyboard events)
  *
  * @module cascade-electron/preload
@@ -40,6 +41,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getNetdocVersions: (netdocId) => ipcRenderer.invoke('netdoc:getVersions', netdocId),
   saveNetdocVersion: ({ id, netdocId, content, title, author }) => ipcRenderer.invoke('netdoc:saveVersion', { id, netdocId, content, title, author }),
   getLatestVersionContent: (netdocId) => ipcRenderer.invoke('netdoc:getLatestVersionContent', netdocId),
+
+  // ── Browser ─────────────────────────────────────────────────
+  openExternal: (url) => ipcRenderer.invoke('browser:openExternal', url),
+  getAdBlockState: (url) => ipcRenderer.invoke('browser:getAdBlockState', url),
+  setAdBlockSiteEnabled: ({ url, enabled }) => ipcRenderer.invoke('browser:setAdBlockSiteEnabled', { url, enabled }),
 
   // ── Shortcuts ────────────────────────────────────────────────
   /**

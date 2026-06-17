@@ -32,6 +32,7 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.175",
+    "@ghostery/adblocker-electron": "^2.18.0",
     "@google-cloud/storage": "^7.17.3",
     "@prisma/client": "^6.19.3",
     "@types/jsonwebtoken": "^9.0.10",

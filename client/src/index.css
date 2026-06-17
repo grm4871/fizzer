@@ -1981,6 +1981,11 @@ a {
   cursor: not-allowed;
 }
 
+.webview-adblock-btn.is-active {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
 .webview-url-bar {
   flex: 1;
   display: flex;

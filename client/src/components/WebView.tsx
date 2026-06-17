@@ -18,7 +18,7 @@
  */
 
 import { useEffect, useRef, useState, useCallback, type FormEvent } from 'react';
-import { ArrowLeft, ArrowRight, RotateCw, ExternalLink, Globe, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, ArrowRight, RotateCw, ExternalLink, Globe, AlertTriangle, Shield, ShieldOff } from 'lucide-react';
 
 // ═══════════════════════════════════════════════════════════════
 // TYPES
@@ -33,12 +33,37 @@ interface WebViewProps {
   onTitleChange?: (title: string) => void;
 }
 
+type ElectronApi = {
+  openExternal?: (url: string) => Promise<{ success: boolean; error?: string }>;
+  getAdBlockState?: (url: string) => Promise<AdBlockStateResult>;
+  setAdBlockSiteEnabled?: (input: { url: string; enabled: boolean }) => Promise<AdBlockStateResult>;
+};
+
+type AdBlockStateResult = {
+  success: boolean;
+  site?: string;
+  enabled?: boolean;
+  blockerReady?: boolean;
+  error?: string;
+};
+
+type AdBlockState = {
+  site: string;
+  enabled: boolean;
+  blockerReady: boolean;
+  unavailable?: boolean;
+};
+
+function getElectronApi(): ElectronApi | undefined {
+  return (window as unknown as { electronAPI?: ElectronApi }).electronAPI;
+}
+
 /**
  * Checks if the app is running inside Electron (webview tag available).
  * We detect this by checking for the electronAPI exposed via preload.
  */
 function isElectron(): boolean {
-  return !!(window as unknown as { electronAPI?: unknown }).electronAPI;
+  return !!getElectronApi();
 }
 
 /**
@@ -60,6 +85,23 @@ function normalizeUrlInput(value: string): string {
   return `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`;
 }
 
+function getBrowserLikeUserAgent(): string {
+  return navigator.userAgent
+    .replace(/\sElectron\/[\d.]+/i, '')
+    .replace(/\sCascade\/[\d.]+/i, '');
+}
+
+function normalizeSite(value: string): string {
+  try {
+    const parsedUrl = /^[a-z][a-z\d+.-]*:/i.test(value)
+      ? new URL(value)
+      : new URL(`https://${value}`);
+    return parsedUrl.hostname.toLowerCase().replace(/^www\./, '');
+  } catch {
+    return '';
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════
 // COMPONENT
 // ═══════════════════════════════════════════════════════════════
@@ -76,6 +118,7 @@ export function WebView({ url, onNavigate, onTitleChange }: WebViewProps) {
   const [canGoForward, setCanGoForward] = useState(false);
   const [hasError, setHasError] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [adBlockState, setAdBlockState] = useState<AdBlockState | null>(null);
 
   const useWebview = isElectron();
 
@@ -93,6 +136,45 @@ export function WebView({ url, onNavigate, onTitleChange }: WebViewProps) {
     didAutoEditBlankRef.current = true;
     setIsEditingUrl(true);
   }, [currentUrl]);
+
+  useEffect(() => {
+    const electronApi = getElectronApi();
+    const site = normalizeSite(currentUrl);
+
+    if (!useWebview || currentUrl === 'about:blank' || !site) {
+      setAdBlockState(null);
+      return;
+    }
+
+    if (!electronApi?.getAdBlockState) {
+      setAdBlockState({ site, enabled: false, blockerReady: false, unavailable: true });
+      return;
+    }
+
+    let cancelled = false;
+    void electronApi.getAdBlockState(currentUrl)
+      .then((result) => {
+        if (cancelled) return;
+        if (result.success && result.site && typeof result.enabled === 'boolean') {
+          setAdBlockState({
+            site: result.site,
+            enabled: result.enabled,
+            blockerReady: Boolean(result.blockerReady),
+          });
+        } else {
+          setAdBlockState({ site, enabled: false, blockerReady: false, unavailable: true });
+        }
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        console.error('[WebView] Failed to read adblock state:', error);
+        setAdBlockState({ site, enabled: false, blockerReady: false, unavailable: true });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [useWebview, currentUrl]);
 
   const safeGetWebviewUrl = useCallback((wv: HTMLElement & { getURL?: () => string }) => {
     try {
@@ -164,9 +246,53 @@ export function WebView({ url, onNavigate, onTitleChange }: WebViewProps) {
     }
   }, [useWebview, currentUrl]);
 
+  const reloadIgnoringCache = useCallback(() => {
+    setHasError(false);
+    setIsLoading(true);
+    const wv = webviewRef.current as any;
+    if (useWebview && wv && typeof wv.reloadIgnoringCache === 'function') {
+      wv.reloadIgnoringCache();
+    } else {
+      reload();
+    }
+  }, [useWebview, reload]);
+
   const openExternal = useCallback(() => {
-    window.open(currentUrl, '_blank');
+    const electronApi = getElectronApi();
+
+    if (electronApi?.openExternal) {
+      void electronApi.openExternal(currentUrl).then((result) => {
+        if (!result.success) console.error('[WebView] Failed to open external URL:', result.error);
+      });
+      return;
+    }
+
+    window.open(currentUrl, '_blank', 'noopener,noreferrer');
   }, [currentUrl]);
+
+  const toggleAdBlockForSite = useCallback(() => {
+    const electronApi = getElectronApi();
+    if (!electronApi?.setAdBlockSiteEnabled || !adBlockState || adBlockState.unavailable) return;
+
+    const nextEnabled = !adBlockState.enabled;
+    void electronApi.setAdBlockSiteEnabled({ url: currentUrl, enabled: nextEnabled })
+      .then((result) => {
+        if (!result.success || !result.site || typeof result.enabled !== 'boolean') {
+          console.error('[WebView] Failed to update adblock state:', result.error);
+          return;
+        }
+
+        setAdBlockState({
+          site: result.site,
+          enabled: result.enabled,
+          blockerReady: Boolean(result.blockerReady),
+        });
+        reloadIgnoringCache();
+      })
+      .catch((error) => {
+        console.error('[WebView] Failed to update adblock state:', error);
+      });
+  }, [adBlockState, currentUrl, reloadIgnoringCache]);
 
   const beginUrlEdit = useCallback(() => {
     setUrlDraft(currentUrl);
@@ -360,6 +486,20 @@ export function WebView({ url, onNavigate, onTitleChange }: WebViewProps) {
           />
         </form>
 
+        {useWebview && adBlockState && (
+          <button
+            className={`btn-icon webview-nav-btn webview-adblock-btn${adBlockState.enabled ? ' is-active' : ''}`}
+            onClick={toggleAdBlockForSite}
+            disabled={adBlockState.unavailable}
+            title={adBlockState.unavailable
+              ? 'Ad blocking controls require restarting Cascade'
+              : `${adBlockState.enabled ? 'Disable' : 'Enable'} ad blocking for ${adBlockState.site}`}
+            aria-pressed={adBlockState.enabled}
+          >
+            {adBlockState.enabled ? <Shield size={14} /> : <ShieldOff size={14} />}
+          </button>
+        )}
+
         <button
           className="btn-icon webview-nav-btn"
           onClick={openExternal}
@@ -400,6 +540,7 @@ export function WebView({ url, onNavigate, onTitleChange }: WebViewProps) {
             allowpopups="true"
             {...{
               partition: 'persist:webview',
+              useragent: getBrowserLikeUserAgent(),
             } as any}
           />
         ) : (
