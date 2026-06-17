@@ -11,18 +11,16 @@ function getParsedDecorations(text: string, cursorHead: number = -1) {
   const fullText = text + '\n';
   const state = EditorState.create({ doc: fullText });
   const head = cursorHead !== -1 ? cursorHead : fullText.length;
-  const mockView = {
-    state: {
-      doc: state.doc,
-      selection: {
-        main: {
-          head
-        }
+  const mockState = {
+    doc: state.doc,
+    selection: {
+      main: {
+        head
       }
     }
-  } as unknown as EditorView;
+  } as unknown as EditorState;
 
-  const set = buildDecorations(mockView);
+  const set = buildDecorations(mockState);
   const decos: { from: number; to: number; className?: string; type: string; url?: string }[] = [];
   
   const iter = set.iter();

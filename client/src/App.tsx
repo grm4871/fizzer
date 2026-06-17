@@ -241,15 +241,45 @@ export default function App() {
       }
     };
 
+    const handleFeedNotify = (data: {
+      noteId: string;
+      feedTitle: string;
+      item?: { title?: string; url?: string | null };
+    }) => {
+      const title = data.item?.title || 'New feed item';
+      const message = `${data.feedTitle}: ${title}`;
+      setNotice(message);
+
+      if (!('Notification' in window)) return;
+      const showNotification = () => {
+        const notification = new Notification(data.feedTitle || 'Cascade feed update', {
+          body: title,
+        });
+        notification.onclick = () => {
+          window.focus();
+          void loadActiveNote(data.noteId);
+        };
+      };
+      if (Notification.permission === 'granted') {
+        showNotification();
+      } else if (Notification.permission === 'default') {
+        void Notification.requestPermission().then((permission) => {
+          if (permission === 'granted') showNotification();
+        });
+      }
+    };
+
     socket.on('vault:noteChanged', handleNoteChanged);
     socket.on('vault:noteCreated', handleNoteCreated);
     socket.on('vault:noteDeleted', handleNoteDeleted);
+    socket.on('vault:feedNotify', handleFeedNotify);
 
     return () => {
       socket.emit('leaveVault', activeVaultId);
       socket.off('vault:noteChanged', handleNoteChanged);
       socket.off('vault:noteCreated', handleNoteCreated);
       socket.off('vault:noteDeleted', handleNoteDeleted);
+      socket.off('vault:feedNotify', handleFeedNotify);
       socket.disconnect();
     };
   }, [activeVaultId, activeNote, openTabs, activeTabId, loadVaultData]);
@@ -508,6 +538,16 @@ export default function App() {
     setActiveTabId(newTabId);
   };
 
+  /** Create a fresh browser tab. */
+  const handleCreateWebTab = () => {
+    const newTabId = `web-${Date.now()}`;
+    setOpenTabs((prev) => [
+      ...prev,
+      { id: newTabId, title: 'New Tab', type: 'web', dirty: false, url: 'about:blank' },
+    ]);
+    setActiveTabId(newTabId);
+  };
+
   const updateTabUrl = (tabId: string, url: string) => {
     setOpenTabs((prev) =>
       prev.map((t) => (t.id === tabId ? { ...t, url, title: extractDomain(url) } : t))
@@ -668,6 +708,25 @@ export default function App() {
     setSplitNote(null);
     setSplitDraftContent('');
   }, []);
+
+  /** Close every tab except the requested one, promoting it to the main pane. */
+  const handleCloseOtherTabs = useCallback((tabId: string) => {
+    const tab = openTabs.find((t) => t.id === tabId);
+    if (!tab) return;
+
+    setOpenTabs([tab]);
+    setSplitTabId(null);
+    setSplitNote(null);
+    setSplitDraftContent('');
+
+    if (tab.type === 'web') {
+      setActiveTabId(tab.id);
+      setActiveNote(null);
+      setDraftContent('');
+    } else {
+      void loadActiveNote(tab.id);
+    }
+  }, [openTabs, loadActiveNote]);
 
   // ═══════════════════════════════════════════════════════════════
   // UI HANDLERS
@@ -927,6 +986,8 @@ export default function App() {
               onCloseTab={handleCloseTab}
               onOpenSplitTab={handleSplitTab}
               onCloseAllTabs={handleCloseAllTabs}
+              onCloseOtherTabs={handleCloseOtherTabs}
+              onNewTab={handleCreateWebTab}
             />
           </div>
           {!aiPanelOpen && (

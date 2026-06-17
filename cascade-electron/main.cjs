@@ -341,18 +341,13 @@ ipcMain.handle('netdoc:getLatestVersionContent', async (event, netdocId) => {
     console.error('[Main] Failed to initialize database:', error);
   }
 
-  // Allow webview tag usage
-  session.defaultSession.setPermissionCheckHandler((webContents, permission) => {
-    return true;
+  // Allow webview login flows to request browser-level permissions without
+  // clearing persisted session data. Clearing cookies here breaks sites such as
+  // x.com by wiping the webview's login/session state on every app launch.
+  session.defaultSession.setPermissionCheckHandler(() => true);
+  session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
+    callback(true);
   });
-
-  session.defaultSession.clearStorageData({storages: ['cookies']})
-        .then(() => {
-            console.log('All cookies cleared');
-        })
-        .catch((error) => {
-            console.error('Failed to clear cookies: ', error);
-        });
 
   // Brief delay to ensure database initialization completes
   setTimeout(createWindow, 1000);

@@ -10,7 +10,10 @@
  */
 
 import path from 'node:path';
+import fs from 'node:fs';
+import os from 'node:os';
 import http from 'node:http';
+import { spawn } from 'node:child_process';
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import bcrypt from 'bcrypt';
@@ -60,10 +63,41 @@ import {
   sendRunMessage,
   cancelRun,
 } from './server/runner.js';
+import {
+  ensureFeedSchema,
+  fetchFeed,
+  pollWidgetFeeds,
+  setFeedNotifySink,
+  startFeedPoller,
+} from './server/feeds.js';
+import { fetchWidgetData } from './server/widgetData.js';
 
 const PORT = Number(process.env.API_PORT || 3000);
 const JWT_SECRET = process.env.JWT_SECRET || 'cascade-dev-secret';
-const DB_PATH = process.env.DOCS_DB_PATH || path.join(process.cwd(), 'docs.db');
+
+function getDefaultDbPath(): string {
+  const dataDir = path.join(os.homedir(), '.cascade');
+  fs.mkdirSync(dataDir, { recursive: true });
+  return path.join(dataDir, 'docs.db');
+}
+
+function migrateLegacyDbIfNeeded(nextPath: string): void {
+  if (process.env.DOCS_DB_PATH) return;
+
+  const legacyPath = path.join(process.cwd(), 'docs.db');
+  if (path.resolve(legacyPath) === path.resolve(nextPath)) return;
+  if (fs.existsSync(nextPath) || !fs.existsSync(legacyPath)) return;
+
+  fs.mkdirSync(path.dirname(nextPath), { recursive: true });
+  for (const suffix of ['', '-shm', '-wal']) {
+    const from = `${legacyPath}${suffix}`;
+    if (fs.existsSync(from)) fs.copyFileSync(from, `${nextPath}${suffix}`);
+  }
+  console.log(`Migrated SQLite database from ${legacyPath} to ${nextPath}`);
+}
+
+const DB_PATH = process.env.DOCS_DB_PATH || getDefaultDbPath();
+migrateLegacyDbIfNeeded(DB_PATH);
 
 type User = { id: number; username: string; password_hash: string; created_at: string };
 type AuthedRequest = Request & { user?: { id: number; username: string } };
@@ -165,6 +199,7 @@ db.exec(`
 ensureVaultSchema(db);
 ensureVersionsSchema(db);
 ensureRunnerSchema(db);
+ensureFeedSchema(db);
 
 // ── Express & Socket.io setup ──────────────────────────────────────
 
@@ -247,6 +282,7 @@ function emitVaultEvent(vaultId: string, event: string, data: unknown) {
 
 // Let the agent runner notify clients (e.g. reload an open note after edits).
 setVaultEventSink(emitVaultEvent);
+setFeedNotifySink(emitVaultEvent);
 
 // ── Health ──────────────────────────────────────────────────────────
 
@@ -578,6 +614,31 @@ app.get('/api/vaults/:id/graph', requireAuth, (req: AuthedRequest, res) => {
   res.json(getGraph(db, vault.id));
 });
 
+// ── Feed routes ───────────────────────────────────────────────────
+
+app.post('/api/vaults/:id/feed', requireAuth, async (req: AuthedRequest, res) => {
+  const vault = getVault(db, req.params.id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Vault not found' });
+
+  const url = typeof req.body?.url === 'string' ? req.body.url.trim() : '';
+  if (!url) return res.status(400).json({ error: 'Feed URL is required' });
+
+  try {
+    const feed = await fetchFeed(url, { force: Boolean(req.body?.force) });
+    res.json({ feed });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not fetch feed' });
+  }
+});
+
+app.post('/api/vaults/:id/feed/poll', requireAuth, async (req: AuthedRequest, res) => {
+  const vault = getVault(db, req.params.id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Vault not found' });
+
+  await pollWidgetFeeds(db);
+  res.json({ ok: true });
+});
+
 // ── Agent / Run routes ─────────────────────────────────────────────
 
 app.get('/api/vaults/:id/runs', requireAuth, (req: AuthedRequest, res) => {
@@ -602,9 +663,6 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     'codex-pro',
     'grok-2',
     'grok-beta',
-    'flash_lite',
-    'flash',
-    'pro',
     'gpt-4o',
     'claude-3.5-sonnet',
     'o1-mini',
@@ -628,6 +686,68 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
       model: selectedModel,
     });
     res.json({ run });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+app.get('/api/vaults/:id/widget-data/:key', requireAuth, async (req: AuthedRequest, res) => {
+  const vault = getVault(db, req.params.id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Vault not found' });
+
+  const key = String(req.params.key || '').trim();
+  if (!key) return res.status(400).json({ error: 'Widget data key is required' });
+
+  try {
+    const result = await fetchWidgetData(vault.root_path, key, {
+      force: req.query.force === '1' || req.query.force === 'true',
+    });
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Could not fetch widget data' });
+  }
+});
+
+app.post('/api/vaults/:id/widget-command', requireAuth, async (req: AuthedRequest, res) => {
+  const vault = getVault(db, req.params.id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Vault not found' });
+
+  const command = typeof req.body?.command === 'string' ? req.body.command.trim() : '';
+  if (!command) return res.status(400).json({ error: 'Command is required' });
+  if (command.length > 4000) return res.status(400).json({ error: 'Command is too long' });
+
+  const timeoutMs = Math.min(Math.max(Number(req.body?.timeout_ms) || 10000, 1000), 30000);
+
+  try {
+    const result = await new Promise<{
+      stdout: string;
+      stderr: string;
+      exit_code: number | null;
+      timed_out: boolean;
+    }>((resolve, reject) => {
+      const child = spawn('/bin/bash', ['-lc', command], {
+        cwd: vault.root_path,
+        env: process.env,
+      });
+      let stdout = '';
+      let stderr = '';
+      let timedOut = false;
+      const limit = 64 * 1024;
+      const appendCapped = (current: string, chunk: Buffer) => (current + chunk.toString()).slice(-limit);
+      const timer = setTimeout(() => {
+        timedOut = true;
+        child.kill('SIGKILL');
+      }, timeoutMs);
+
+      child.stdout.on('data', (chunk) => { stdout = appendCapped(stdout, chunk); });
+      child.stderr.on('data', (chunk) => { stderr = appendCapped(stderr, chunk); });
+      child.on('error', reject);
+      child.on('close', (code) => {
+        clearTimeout(timer);
+        resolve({ stdout, stderr, exit_code: code, timed_out: timedOut });
+      });
+    });
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
@@ -695,4 +815,5 @@ app.use((_req, res) => {
 httpServer.listen(PORT, () => {
   console.log(`Cascade Notes API running on http://localhost:${PORT}`);
   console.log(`SQLite database: ${DB_PATH}`);
+  startFeedPoller(db);
 });

@@ -7,6 +7,8 @@
  * @module server/runner
  */
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { getNote, rescanVault } from './vault.js';
 import { runCliAgent, activeCliProcesses } from './cli-agent.js';
@@ -18,6 +20,76 @@ const RUNNER_MODEL = process.env.RUNNER_MODEL || 'claude-sonnet-4-6';
 const RUNNER_MAX_TURNS = Number(process.env.RUNNER_MAX_TURNS || 30);
 // Thinking budget (tokens). Set RUNNER_THINKING=0 to disable extended thinking.
 const RUNNER_THINKING_TOKENS = Number(process.env.RUNNER_THINKING ?? 4000);
+const WIDGET_TOOLING_RELATIVE_PATH = path.join('.cascade', 'widget-tooling.md');
+const SAFE_AGENT_CONTEXT = 'Operate as a user-authorized local workspace assistant. Use normal local file operations in this vault, respect service terms, authentication boundaries, and rate limits, and do not handle secrets except when the user explicitly provides them for this local task.';
+const WIDGET_TOOLING_DOC = `# Cascade Widget Tooling
+
+Cascade notes can contain inline interactive widgets. Use this only when the user asks for a widget, chart, calculator, dashboard, button, simulation, or other interactive notebook object.
+
+## Format
+
+Widgets are Markdown fenced code blocks:
+
+\`\`\`\`markdown
+\`\`\`cascade-widget
+---
+title: Example widget
+runtime: iframe
+autorun: false
+feed_url: https://example.com/feed.xml
+notify: false
+interval_minutes: 30
+permissions:
+  network: feed
+  actions: agent, feed
+  terminal: ask
+---
+<div id="app">Widget HTML goes here</div>
+
+<style>
+  #app { font: 14px system-ui; }
+</style>
+
+<script type="module">
+  document.querySelector('#app').textContent = 'Hello from a widget';
+</script>
+\`\`\`
+\`\`\`\`
+
+The body is self-contained HTML, CSS, and JavaScript rendered in a sandboxed iframe after the user clicks Run. Use vanilla browser APIs. Do not use external scripts or CDN imports; they are blocked in the current runtime. Avoid long-running synchronous loops because they can freeze the local renderer process.
+
+## Runtime API
+
+Widget JavaScript can call:
+
+\`\`\`js
+cascade.agent({ prompt: 'Update this widget in-place.' })
+cascade.setHeight(420)
+const feed = await cascade.feed({ url: 'https://example.com/feed.xml', force: true })
+const result = await cascade.terminal({ command: 'ls -la', timeout_ms: 10000 })
+\`\`\`
+
+\`cascade.agent\` starts an agent request with the current widget block included. Use it for buttons like Refresh, Recompute, or Improve. \`cascade.setHeight\` manually adjusts the iframe height, though widgets auto-resize in most cases. \`cascade.feed\` fetches RSS, Atom, or JSON Feed data through the host app, because the iframe itself has no network access. It returns \`{ title, url, site_url, items, fetched_at }\`, where each item has \`{ id, title, url, summary, published_at }\`. \`cascade.terminal\` asks the host app to run a shell command in the vault root; the user must approve the widget once, then the same widget source can make repeated terminal calls for polling until the widget source changes. It returns \`{ stdout, stderr, exit_code, timed_out }\`.
+
+## RSS / Feed Widgets
+
+For feed-backed widgets, put the feed URL in frontmatter as \`feed_url\` and call \`cascade.feed({ url })\` from widget JavaScript. Set \`notify: true\` only when the user wants Cascade to poll that feed in the background and notify them about new top items. Background polling honors \`interval_minutes\`, with a minimum of 5 minutes. The first poll establishes a baseline and should not be treated as unread news.
+
+## Good Practices
+
+- Keep widgets self-contained inside one \`\`\`cascade-widget block.
+- Prefer SVG, Canvas, and plain DOM for charts.
+- Include data inline unless the user asks for a refresh workflow.
+- For refresh buttons, call \`cascade.agent({ prompt })\` and ask the agent to update only that widget block.
+- For RSS-like data, prefer \`cascade.feed\` over terminal commands or direct browser fetches.
+- Use feed and terminal actions only for public or user-authorized resources, and keep refreshes respectful of published terms and rate limits.
+- For terminal-backed widgets, call \`cascade.terminal({ command })\` from a button or a short polling loop for local data like system stats. Keep polling intervals reasonable, usually 2 seconds or slower, and keep command timeouts short.
+- Do not run terminal commands immediately on load unless the user has enabled \`autorun: true\` for the widget and the command is necessary for the displayed data.
+- If the user verifies a widget and wants it to run automatically when the note opens, set \`autorun: true\` in frontmatter.
+- If the user wants background feed notifications, set \`notify: true\` and keep the feed URL in \`feed_url\`.
+- Keep source readable, because the note remains the source of truth.
+- If you need current external data, explain that the refresh/update action should gather sources and rewrite the widget.
+`;
 export function ensureRunnerSchema(db) {
     // Check if runs table exists and has vault_id column
     const info = db.prepare("PRAGMA table_info(runs)").all();
@@ -143,6 +215,12 @@ export async function cancelRun(db, runId) {
 // Images attached to a run, held in memory between startRun and the async
 // executor (kept out of the DB to avoid bloating it with base64 blobs).
 const pendingImages = new Map();
+function ensureWidgetToolingDoc(vault) {
+    const docPath = path.join(vault.root_path, WIDGET_TOOLING_RELATIVE_PATH);
+    fs.mkdirSync(path.dirname(docPath), { recursive: true });
+    fs.writeFileSync(docPath, WIDGET_TOOLING_DOC, 'utf8');
+    return WIDGET_TOOLING_RELATIVE_PATH.split(path.sep).join('/');
+}
 export async function startRun(db, vault, noteId, prompt, agent = 'claude-code', opts = {}) {
     const conversationId = opts.conversationId || crypto.randomUUID();
     const model = opts.model || null;
@@ -184,12 +262,15 @@ async function executeRunAsync(db, vault, runId) {
             if (note)
                 activeNoteTitle = note.title;
         }
+        const widgetToolingPath = ensureWidgetToolingDoc(vault);
         // Minimal, IDE-style context: which note is open and that it lives in a
         // vault of interlinked notes — nothing more. No persona or behavioral
         // steering; the user's prompt drives everything the agent does.
         const context = [
+            SAFE_AGENT_CONTEXT,
             'This working directory is a vault of interlinked markdown (.md) notes.',
             activeNoteTitle ? `The currently selected note is "${activeNoteTitle}.md".` : '',
+            `If the user asks about inline widgets, charts, buttons, or interactive notebook objects, reference ${widgetToolingPath} for the supported Cascade widget tooling.`,
         ].filter(Boolean).join(' ');
         const images = pendingImages.get(runId) || [];
         pendingImages.delete(runId);

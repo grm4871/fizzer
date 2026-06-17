@@ -701,6 +701,7 @@ function scanDirRecursive(dirPath: string): string[] {
     for (const entry of list) {
       const fullPath = path.join(dirPath, entry.name);
       if (entry.isDirectory()) {
+        if (entry.name.startsWith('.')) continue;
         results = results.concat(scanDirRecursive(fullPath));
       } else if (entry.isFile() && entry.name.endsWith('.md')) {
         results.push(fullPath);

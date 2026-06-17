@@ -17,7 +17,7 @@
  * @component
  */
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, type FormEvent } from 'react';
 import { ArrowLeft, ArrowRight, RotateCw, ExternalLink, Globe, AlertTriangle } from 'lucide-react';
 
 // ═══════════════════════════════════════════════════════════════
@@ -52,6 +52,14 @@ function extractDomain(url: string): string {
   }
 }
 
+function normalizeUrlInput(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return '';
+  if (/^[a-z][a-z\d+.-]*:/i.test(trimmed)) return trimmed;
+  if (/^[^\s]+\.[^\s]+/.test(trimmed)) return `https://${trimmed}`;
+  return `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`;
+}
+
 // ═══════════════════════════════════════════════════════════════
 // COMPONENT
 // ═══════════════════════════════════════════════════════════════
@@ -61,6 +69,8 @@ export function WebView({ url, onNavigate, onTitleChange }: WebViewProps) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
 
   const [currentUrl, setCurrentUrl] = useState(url);
+  const [urlDraft, setUrlDraft] = useState(url);
+  const [isEditingUrl, setIsEditingUrl] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [canGoBack, setCanGoBack] = useState(false);
   const [canGoForward, setCanGoForward] = useState(false);
@@ -71,17 +81,62 @@ export function WebView({ url, onNavigate, onTitleChange }: WebViewProps) {
 
   const currentUrlRef = useRef(currentUrl);
   currentUrlRef.current = currentUrl;
+  const lastInternalNavigationUrlRef = useRef<string | null>(null);
+  const didAutoEditBlankRef = useRef(false);
 
-  // Load the URL by imperatively setting the `src` attribute. React's handling
-  // of `src` on the <webview> custom element is unreliable (it can render blank
-  // because the attribute never reaches the element), and loadURL() throws
-  // before the webview's `dom-ready` event. Setting the attribute works in all
-  // cases and re-navigates whenever the URL changes.
+  useEffect(() => {
+    if (!isEditingUrl) setUrlDraft(currentUrl);
+  }, [currentUrl, isEditingUrl]);
+
+  useEffect(() => {
+    if (didAutoEditBlankRef.current || currentUrl !== 'about:blank') return;
+    didAutoEditBlankRef.current = true;
+    setIsEditingUrl(true);
+  }, [currentUrl]);
+
+  const safeGetWebviewUrl = useCallback((wv: HTMLElement & { getURL?: () => string }) => {
+    try {
+      return typeof wv.getURL === 'function' ? wv.getURL() : '';
+    } catch {
+      return '';
+    }
+  }, []);
+
+  const logWebview = useCallback((eventName: string, detail: Record<string, unknown> = {}) => {
+    console.log('[WebView]', eventName, {
+      propUrl: url,
+      currentUrl: currentUrlRef.current,
+      ...detail,
+    });
+  }, [url]);
+
+  // Load the URL by imperatively setting the `src` attribute. Keeping `src` in
+  // JSX lets React mutate the custom element after internal webview navigations,
+  // which reloads login flows such as x.com's username/password steps.
   useEffect(() => {
     if (!useWebview || !webviewRef.current) return;
-    const wv = webviewRef.current as HTMLElement;
-    if (wv.getAttribute('src') !== url) wv.setAttribute('src', url);
-  }, [useWebview, url]);
+    const wv = webviewRef.current as HTMLElement & { getURL?: () => string };
+    const loadedUrl = safeGetWebviewUrl(wv);
+    const attrUrl = wv.getAttribute('src') || '';
+
+    // The `src` attribute does not track same-tab navigations. Comparing
+    // against it after `did-navigate` causes SPA/login redirects to be loaded
+    // again from scratch, which breaks flows such as x.com's username submit.
+    if (lastInternalNavigationUrlRef.current === url) {
+      logWebview('skip-prop-load-internal-navigation', { loadedUrl, attrUrl });
+      lastInternalNavigationUrlRef.current = null;
+      return;
+    }
+
+    if (loadedUrl === url || attrUrl === url) {
+      logWebview('skip-prop-load-same-url', { loadedUrl, attrUrl });
+      return;
+    }
+
+    logWebview('set-src-from-prop', { loadedUrl, attrUrl, nextUrl: url });
+    setCurrentUrl(url);
+    wv.setAttribute('src', url);
+  }, [useWebview, url, safeGetWebviewUrl, logWebview]);
 
   // ─── Navigation Controls ────────────────────────────────
   const goBack = useCallback(() => {
@@ -113,29 +168,72 @@ export function WebView({ url, onNavigate, onTitleChange }: WebViewProps) {
     window.open(currentUrl, '_blank');
   }, [currentUrl]);
 
+  const beginUrlEdit = useCallback(() => {
+    setUrlDraft(currentUrl);
+    setIsEditingUrl(true);
+  }, [currentUrl]);
+
+  const cancelUrlEdit = useCallback(() => {
+    setUrlDraft(currentUrl);
+    setIsEditingUrl(false);
+  }, [currentUrl]);
+
+  const submitUrlEdit = useCallback((event?: FormEvent<HTMLFormElement>) => {
+    event?.preventDefault();
+    const nextUrl = normalizeUrlInput(urlDraft);
+    if (!nextUrl) {
+      cancelUrlEdit();
+      return;
+    }
+
+    setIsEditingUrl(false);
+    setCurrentUrl(nextUrl);
+    onNavigate?.(nextUrl);
+  }, [urlDraft, cancelUrlEdit, onNavigate]);
+
   // ─── Webview Event Listeners ────────────────────────────
   useEffect(() => {
     if (!useWebview || !webviewRef.current) return;
     const wv = webviewRef.current as any;
 
     const handleStartLoading = () => {
+      logWebview('did-start-loading', { loadedUrl: safeGetWebviewUrl(wv) });
       setIsLoading(true);
       setHasError(false);
     };
 
     const handleStopLoading = () => {
+      logWebview('did-stop-loading', { loadedUrl: safeGetWebviewUrl(wv) });
       setIsLoading(false);
     };
 
     const handleNavigate = (event: any) => {
-      const newUrl = event.url || (typeof wv.getURL === 'function' ? wv.getURL() : currentUrlRef.current);
+      const newUrl = event.url || safeGetWebviewUrl(wv) || currentUrlRef.current;
+      lastInternalNavigationUrlRef.current = newUrl;
+      logWebview(event.type || 'navigate', {
+        eventUrl: event.url,
+        loadedUrl: safeGetWebviewUrl(wv),
+        isMainFrame: event.isMainFrame,
+      });
       setCurrentUrl(newUrl);
       setCanGoBack(typeof wv.canGoBack === 'function' ? wv.canGoBack() : false);
       setCanGoForward(typeof wv.canGoForward === 'function' ? wv.canGoForward() : false);
       onNavigate?.(newUrl);
     };
 
+    const handleNavigationDetail = (event: any) => {
+      logWebview(event.type || 'navigation-detail', {
+        eventUrl: event.url,
+        loadedUrl: safeGetWebviewUrl(wv),
+        isMainFrame: event.isMainFrame,
+        isInPlace: event.isInPlace,
+        isSameDocument: event.isSameDocument,
+        httpResponseCode: event.httpResponseCode,
+      });
+    };
+
     const handleTitleUpdate = (event: any) => {
+      logWebview('page-title-updated', { title: event.title, loadedUrl: safeGetWebviewUrl(wv) });
       if (event.title) {
         onTitleChange?.(event.title);
       }
@@ -144,6 +242,13 @@ export function WebView({ url, onNavigate, onTitleChange }: WebViewProps) {
     const handleFailLoad = (event: any) => {
       if (event.errorCode === -3) return; // ERR_ABORTED
       if (event.isMainFrame === false) return; // ignore subframe/subresource failures
+      logWebview('did-fail-load', {
+        eventUrl: event.validatedURL || event.url,
+        loadedUrl: safeGetWebviewUrl(wv),
+        errorCode: event.errorCode,
+        errorDescription: event.errorDescription,
+        isMainFrame: event.isMainFrame,
+      });
       setHasError(true);
       setIsLoading(false);
       setErrorMessage(`${event.errorDescription || 'Failed to load page'} (Error: ${event.errorCode})`);
@@ -151,16 +256,23 @@ export function WebView({ url, onNavigate, onTitleChange }: WebViewProps) {
     };
 
     const handleConsoleMessage = (event: any) => {
-      console.log(`[WebView Console] Line ${event.line} (${event.sourceId}): ${event.message}`);
+      console.log('[WebView Console]', {
+        level: event.level,
+        line: event.line,
+        sourceId: event.sourceId,
+        message: event.message,
+        loadedUrl: safeGetWebviewUrl(wv),
+      });
     };
 
     // Diagnostics — visible in the main window's DevTools (Debug → Toggle DevTools).
-    const getUrl = () => (typeof wv.getURL === 'function' ? wv.getURL() : '');
-    const handleDomReady = () => console.log('[WebView] dom-ready', getUrl());
-    const handleFinishLoad = () => console.log('[WebView] did-finish-load', getUrl());
+    const handleDomReady = () => logWebview('dom-ready', { loadedUrl: safeGetWebviewUrl(wv) });
+    const handleFinishLoad = () => logWebview('did-finish-load', { loadedUrl: safeGetWebviewUrl(wv) });
 
     wv.addEventListener('did-start-loading', handleStartLoading);
     wv.addEventListener('did-stop-loading', handleStopLoading);
+    wv.addEventListener('did-start-navigation', handleNavigationDetail);
+    wv.addEventListener('did-redirect-navigation', handleNavigationDetail);
     wv.addEventListener('did-navigate', handleNavigate);
     wv.addEventListener('did-navigate-in-page', handleNavigate);
     wv.addEventListener('page-title-updated', handleTitleUpdate);
@@ -172,6 +284,8 @@ export function WebView({ url, onNavigate, onTitleChange }: WebViewProps) {
     return () => {
       wv.removeEventListener('did-start-loading', handleStartLoading);
       wv.removeEventListener('did-stop-loading', handleStopLoading);
+      wv.removeEventListener('did-start-navigation', handleNavigationDetail);
+      wv.removeEventListener('did-redirect-navigation', handleNavigationDetail);
       wv.removeEventListener('did-navigate', handleNavigate);
       wv.removeEventListener('did-navigate-in-page', handleNavigate);
       wv.removeEventListener('page-title-updated', handleTitleUpdate);
@@ -224,10 +338,27 @@ export function WebView({ url, onNavigate, onTitleChange }: WebViewProps) {
           <RotateCw size={14} className={isLoading ? 'webview-spinning' : ''} />
         </button>
 
-        <div className="webview-url-bar" title={currentUrl}>
+        <form className="webview-url-bar" title={currentUrl} onSubmit={submitUrlEdit}>
           <Globe size={12} className="webview-url-icon" />
-          <span className="webview-url-text">{extractDomain(currentUrl)}</span>
-        </div>
+          <input
+            className="webview-url-input"
+            value={isEditingUrl ? urlDraft : currentUrl}
+            onChange={(event) => setUrlDraft(event.target.value)}
+            onFocus={(event) => {
+              beginUrlEdit();
+              setTimeout(() => event.currentTarget.select(), 0);
+            }}
+            onBlur={() => setIsEditingUrl(false)}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                event.preventDefault();
+                cancelUrlEdit();
+                event.currentTarget.blur();
+              }
+            }}
+            autoFocus={currentUrl === 'about:blank'}
+          />
+        </form>
 
         <button
           className="btn-icon webview-nav-btn"
@@ -265,8 +396,8 @@ export function WebView({ url, onNavigate, onTitleChange }: WebViewProps) {
              with the effect above as a safety net for URL changes. */
           <webview
             ref={webviewRef as any}
-            src={url}
             className="webview-frame"
+            allowpopups="true"
             {...{
               partition: 'persist:webview',
             } as any}

@@ -12,7 +12,7 @@
  */
 
 import { useState, useEffect } from 'react';
-import { Globe, FileText, Columns, X } from 'lucide-react';
+import { Globe, FileText, Columns, X, Plus } from 'lucide-react';
 
 export interface Tab {
   id: string;
@@ -30,6 +30,8 @@ interface TabBarProps {
   onCloseTab: (id: string) => void;
   onOpenSplitTab?: (id: string) => void;
   onCloseAllTabs?: () => void;
+  onCloseOtherTabs?: (id: string) => void;
+  onNewTab?: () => void;
 }
 
 export function TabBar({
@@ -40,6 +42,8 @@ export function TabBar({
   onCloseTab,
   onOpenSplitTab,
   onCloseAllTabs,
+  onCloseOtherTabs,
+  onNewTab,
 }: TabBarProps) {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; tabId: string } | null>(null);
 
@@ -53,6 +57,11 @@ export function TabBar({
     return (
       <div className="tab-bar">
         <div className="tab-bar-empty">No open tabs</div>
+        {onNewTab && (
+          <button className="tab-new-btn" onClick={onNewTab} title="New tab">
+            <Plus size={15} />
+          </button>
+        )}
       </div>
     );
   }
@@ -130,6 +139,12 @@ export function TabBar({
         );
       })}
 
+      {onNewTab && (
+        <button className="tab-new-btn" onClick={onNewTab} title="New tab">
+          <Plus size={15} />
+        </button>
+      )}
+
       {/* Right-click Context Menu */}
       {contextMenu && (
         <div
@@ -148,6 +163,14 @@ export function TabBar({
           >
             <Columns size={13} />
             Open in Split View
+          </button>
+          <button
+            onClick={() => {
+              onCloseOtherTabs?.(contextMenu.tabId);
+            }}
+          >
+            <X size={13} />
+            Close other tabs
           </button>
           <button
             onClick={() => {

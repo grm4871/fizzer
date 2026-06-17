@@ -24,11 +24,29 @@ const AGENTS: { id: AgentId; label: string }[] = [
 const CUSTOM_MODEL_VALUE = '__custom__';
 
 const AGENT_MODEL_PRESETS: Record<AgentId, { id: string; label: string }[]> = {
-  'claude-code': [],
-  'codex': [],
-  'grok': [{ id: 'grok-build', label: 'grok-build' }],
-  'antigravity': [],
-  'copilot': [],
+  'claude-code': [
+    { id: 'claude-sonnet-4-6', label: 'Claude 4.6 Sonnet' },
+    { id: 'claude-haiku-4-5-20251001', label: 'Claude 4.5 Haiku' },
+    { id: 'claude-opus-4-7', label: 'Claude 4.7 Opus' },
+  ],
+  'codex': [
+    { id: 'gpt-5.5', label: 'GPT-5.5' },
+    { id: 'gpt-5.4', label: 'GPT-5.4' },
+  ],
+  'grok': [
+    { id: 'grok-composer-2.5-fast', label: 'Grok Composer 2.5 Fast' },
+    { id: 'grok-build', label: 'Grok Build' },
+  ],
+  'antigravity': [
+    { id: 'flash_lite', label: 'Gemini Flash Lite' },
+    { id: 'flash', label: 'Gemini Flash' },
+    { id: 'pro', label: 'Gemini Pro' },
+  ],
+  'copilot': [
+    { id: 'auto', label: 'Auto' },
+    { id: 'claude-haiku-4.5', label: 'Claude 4.5 Haiku' },
+    { id: 'gpt-5.2', label: 'GPT-5.2' },
+  ],
   'hermes': [],
 };
 
@@ -37,9 +55,6 @@ const REMOVED_MODEL_PRESET_IDS = new Set([
   'codex-pro',
   'grok-2',
   'grok-beta',
-  'flash_lite',
-  'flash',
-  'pro',
   'gpt-4o',
   'claude-3.5-sonnet',
   'o1-mini',

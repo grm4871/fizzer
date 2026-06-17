@@ -1,8 +1,8 @@
 import { useEffect, useRef, useMemo, useCallback, useState } from 'react';
 import type { Note } from '../api';
-import { formatRelativeDate } from '../api';
-import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, placeholder as cmPlaceholder, Decoration, type DecorationSet, ViewPlugin, type ViewUpdate, WidgetType, drawSelection } from '@codemirror/view';
-import { EditorState, type Extension, RangeSetBuilder, Prec } from '@codemirror/state';
+import { api, formatRelativeDate } from '../api';
+import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, placeholder as cmPlaceholder, Decoration, type DecorationSet, WidgetType, drawSelection } from '@codemirror/view';
+import { EditorState, type Extension, RangeSetBuilder, Prec, StateField } from '@codemirror/state';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { syntaxHighlighting, HighlightStyle, indentOnInput, bracketMatching, defaultHighlightStyle } from '@codemirror/language';
 import { defaultKeymap, indentWithTab, history, historyKeymap } from '@codemirror/commands';
@@ -10,7 +10,7 @@ import { closeBrackets } from '@codemirror/autocomplete';
 import { languages } from '@codemirror/language-data';
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
 import { tags } from '@lezer/highlight';
-import { FileText, Link2 } from 'lucide-react';
+import { FileText, Link2, Box } from 'lucide-react';
 
 /* ═══════════════════════════════════════════════════════════
    NoteEditor — CodeMirror 6 Live Preview Markdown Editor
@@ -225,11 +225,318 @@ class HRWidget extends WidgetType {
   }
 }
 
+type CascadeWidgetMeta = {
+  title?: string;
+  runtime?: string;
+  autorun?: boolean;
+};
+
+const TERMINAL_TRUST_PREFIX = 'cascade_widget_terminal_trust:';
+
+function parseCascadeWidget(source: string): { meta: CascadeWidgetMeta; body: string } {
+  const trimmedStart = source.replace(/^\s*\n/, '');
+  if (!trimmedStart.startsWith('---\n')) return { meta: {}, body: source };
+
+  const close = trimmedStart.indexOf('\n---', 4);
+  if (close === -1) return { meta: {}, body: source };
+
+  const metaText = trimmedStart.slice(4, close);
+  const body = trimmedStart.slice(close + 4).replace(/^\n/, '');
+  const meta: CascadeWidgetMeta = {};
+
+  for (const line of metaText.split('\n')) {
+    const match = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
+    if (!match) continue;
+    const key = match[1].trim();
+    const value = match[2].trim().replace(/^['"]|['"]$/g, '');
+    if (key === 'title') meta.title = value;
+    if (key === 'runtime') meta.runtime = value;
+    if (key === 'autorun') meta.autorun = value === 'true';
+  }
+
+  return { meta, body };
+}
+
+function buildWidgetSrcDoc(body: string): string {
+  const bridge = `
+<script>
+(() => {
+  const send = (message) => parent.postMessage({ __cascadeWidget: true, ...message }, '*');
+  const requestHost = (type, payload) => {
+    const requestId = Math.random().toString(36).slice(2);
+    send({ type, requestId, ...payload });
+    return new Promise((resolve, reject) => {
+      const onMessage = (event) => {
+        const data = event.data || {};
+        if (!data.__cascadeWidget || data.type !== type + '-result' || data.requestId !== requestId) return;
+        window.removeEventListener('message', onMessage);
+        if (data.error) reject(new Error(data.error));
+        else resolve(data.result);
+      };
+      window.addEventListener('message', onMessage);
+    });
+  };
+  window.cascade = {
+    agent(payload) {
+      const prompt = typeof payload === 'string' ? payload : payload && payload.prompt;
+      send({ type: 'agent', prompt: String(prompt || '') });
+    },
+    feed(payload) {
+      const url = typeof payload === 'string' ? payload : payload && payload.url;
+      const force = Boolean(payload && payload.force);
+      return requestHost('feed', { url: String(url || ''), force });
+    },
+    terminal(payload) {
+      const command = typeof payload === 'string' ? payload : payload && payload.command;
+      const timeoutMs = payload && payload.timeout_ms;
+      return requestHost('terminal', { command: String(command || ''), timeout_ms: timeoutMs });
+    },
+    setHeight(height) {
+      send({ type: 'height', height: Number(height) || 0 });
+    }
+  };
+  const reportHeight = () => {
+    const doc = document.documentElement;
+    const body = document.body;
+    const height = Math.max(
+      doc ? doc.scrollHeight : 0,
+      body ? body.scrollHeight : 0,
+      doc ? doc.offsetHeight : 0,
+      body ? body.offsetHeight : 0,
+      220
+    );
+    window.cascade.setHeight(height);
+  };
+  window.addEventListener('load', reportHeight);
+  window.addEventListener('resize', reportHeight);
+  if ('ResizeObserver' in window) {
+    new ResizeObserver(reportHeight).observe(document.documentElement);
+  }
+  setTimeout(reportHeight, 0);
+  setTimeout(reportHeight, 250);
+})();
+</script>`;
+
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none';" />
+  <style>
+    :root { color-scheme: dark; }
+    html, body { margin: 0; background: transparent; color: #f2eee8; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    * { box-sizing: border-box; }
+    button, input, select, textarea { font: inherit; }
+    button { cursor: pointer; }
+  </style>
+  ${bridge}
+</head>
+<body>
+${body}
+</body>
+</html>`;
+}
+
+class CascadeHtmlWidget extends WidgetType {
+  constructor(
+    private source: string,
+    private from: number,
+    private to: number,
+    private requestAgent: (prompt: string) => void,
+    private runTerminal: (command: string, timeoutMs?: number, trustKey?: string, label?: string) => Promise<unknown>,
+    private fetchFeed: (url: string, force?: boolean) => Promise<unknown>,
+    private enableAutorun: (from: number, to: number, source: string) => void,
+  ) {
+    super();
+  }
+
+  eq(other: CascadeHtmlWidget) {
+    return this.source === other.source && this.from === other.from && this.to === other.to;
+  }
+
+  toDOM() {
+    const { meta, body } = parseCascadeWidget(this.source);
+    const terminalTrustKey = widgetTrustKey(this.source);
+    const root = document.createElement('div');
+    root.className = 'cm-cascade-widget';
+
+    const header = document.createElement('div');
+    header.className = 'cm-cascade-widget-header';
+
+    const title = document.createElement('span');
+    title.className = 'cm-cascade-widget-title';
+    title.textContent = meta.title || 'Widget';
+    header.appendChild(title);
+
+    const runtime = document.createElement('span');
+    runtime.className = 'cm-cascade-widget-runtime';
+    runtime.textContent = meta.runtime || 'iframe';
+    header.appendChild(runtime);
+
+    const runButton = document.createElement('button');
+    runButton.type = 'button';
+    runButton.className = 'cm-cascade-widget-action';
+    runButton.textContent = 'Run';
+    header.appendChild(runButton);
+
+    const stopButton = document.createElement('button');
+    stopButton.type = 'button';
+    stopButton.className = 'cm-cascade-widget-action';
+    stopButton.textContent = 'Stop';
+    stopButton.hidden = true;
+    header.appendChild(stopButton);
+
+    const enableButton = document.createElement('button');
+    enableButton.type = 'button';
+    enableButton.className = 'cm-cascade-widget-action';
+    enableButton.textContent = 'Enable';
+    enableButton.hidden = Boolean(meta.autorun);
+    enableButton.title = 'Always run this widget when the note opens';
+    header.appendChild(enableButton);
+
+    root.appendChild(header);
+
+    const bodyEl = document.createElement('div');
+    bodyEl.className = 'cm-cascade-widget-body';
+
+    const placeholder = document.createElement('div');
+    placeholder.className = 'cm-cascade-widget-placeholder';
+    placeholder.textContent = 'Widget code is sandboxed and runs on demand.';
+    bodyEl.appendChild(placeholder);
+    root.appendChild(bodyEl);
+
+    let frame: HTMLIFrameElement | null = null;
+
+    const onMessage = (event: MessageEvent) => {
+      if (!frame || event.source !== frame.contentWindow || !event.data?.__cascadeWidget) return;
+      if (event.data.type === 'height') {
+        const next = Math.max(180, Math.min(1200, Number(event.data.height) || 0));
+        frame.style.height = `${next}px`;
+      }
+      if (event.data.type === 'agent') {
+        const prompt = String(event.data.prompt || '').trim();
+        if (!prompt) return;
+        this.requestAgent([
+          prompt,
+          '',
+          'Current widget block:',
+          '```cascade-widget',
+          this.source,
+          '```',
+          '',
+          'Update only this widget block unless I explicitly ask for broader note changes. Keep it as valid cascade-widget HTML.',
+        ].join('\n'));
+      }
+      if (event.data.type === 'terminal') {
+        const requestId = String(event.data.requestId || '');
+        const command = String(event.data.command || '').trim();
+        const timeoutMs = Number(event.data.timeout_ms) || undefined;
+        const respond = (payload: Record<string, unknown>) => {
+          frame?.contentWindow?.postMessage({ __cascadeWidget: true, type: 'terminal-result', requestId, ...payload }, '*');
+        };
+        if (!requestId || !command) {
+          respond({ error: 'Command is required.' });
+          return;
+        }
+        this.runTerminal(command, timeoutMs, terminalTrustKey, meta.title || 'Widget').then(
+          (result) => respond({ result }),
+          (error) => respond({ error: error instanceof Error ? error.message : String(error) }),
+        );
+      }
+      if (event.data.type === 'feed') {
+        const requestId = String(event.data.requestId || '');
+        const url = String(event.data.url || '').trim();
+        const force = Boolean(event.data.force);
+        const respond = (payload: Record<string, unknown>) => {
+          frame?.contentWindow?.postMessage({ __cascadeWidget: true, type: 'feed-result', requestId, ...payload }, '*');
+        };
+        if (!requestId || !url) {
+          respond({ error: 'Feed URL is required.' });
+          return;
+        }
+        this.fetchFeed(url, force).then(
+          (result) => respond({ result }),
+          (error) => respond({ error: error instanceof Error ? error.message : String(error) }),
+        );
+      }
+    };
+
+    const stopWidget = () => {
+      if (frame) {
+        frame.remove();
+        frame = null;
+      }
+      root.classList.remove('is-running');
+      stopButton.hidden = true;
+      runButton.hidden = false;
+      placeholder.hidden = false;
+    };
+
+    const showError = (message: string) => {
+      stopWidget();
+      placeholder.hidden = false;
+      placeholder.textContent = message;
+      placeholder.classList.add('is-error');
+    };
+
+    const runWidget = () => {
+      try {
+        placeholder.hidden = true;
+        placeholder.classList.remove('is-error');
+        placeholder.textContent = 'Widget code is sandboxed and runs on demand.';
+        if (frame) frame.remove();
+
+        frame = document.createElement('iframe');
+        frame.className = 'cm-cascade-widget-frame';
+        frame.setAttribute('sandbox', 'allow-scripts allow-forms');
+        frame.setAttribute('title', meta.title || 'Cascade widget');
+        frame.srcdoc = buildWidgetSrcDoc(body);
+        bodyEl.appendChild(frame);
+        root.classList.add('is-running');
+        runButton.hidden = true;
+        stopButton.hidden = false;
+      } catch (error) {
+        showError(error instanceof Error ? error.message : 'Widget failed to render.');
+      }
+    };
+
+    const enableAutorunClick = () => this.enableAutorun(this.from, this.to, this.source);
+    runButton.addEventListener('click', runWidget);
+    stopButton.addEventListener('click', stopWidget);
+    enableButton.addEventListener('click', enableAutorunClick);
+    window.addEventListener('message', onMessage);
+    (root as any).__cascadeWidgetCleanup = () => {
+      runButton.removeEventListener('click', runWidget);
+      stopButton.removeEventListener('click', stopWidget);
+      enableButton.removeEventListener('click', enableAutorunClick);
+      window.removeEventListener('message', onMessage);
+      stopWidget();
+    };
+
+    if (meta.autorun) {
+      setTimeout(runWidget, 0);
+    }
+
+    return root;
+  }
+
+  destroy(dom: HTMLElement) {
+    (dom as any).__cascadeWidgetCleanup?.();
+  }
+}
+
 /* ─── WYSIWYG Decorations Plugin ─────────────────────────── */
-export function buildDecorations(view: EditorView): DecorationSet {
+export function buildDecorations(
+  state: EditorState,
+  requestWidgetAgent?: (prompt: string) => void,
+  runWidgetTerminal?: (command: string, timeoutMs?: number, trustKey?: string, label?: string) => Promise<unknown>,
+  fetchWidgetFeed?: (url: string, force?: boolean) => Promise<unknown>,
+  enableWidgetAutorun?: (from: number, to: number, source: string) => void,
+): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
-  const doc = view.state.doc;
-  const cursorLine = view.state.selection.main.head;
+  const doc = state.doc;
+  const cursorLine = state.selection.main.head;
   const activeLine = doc.lineAt(cursorLine).number;
 
   const hidden = Decoration.mark({ class: 'cm-md-hidden' });
@@ -249,10 +556,54 @@ export function buildDecorations(view: EditorView): DecorationSet {
     }
   };
 
+  const widgetBlocks: { from: number; to: number; source: string }[] = [];
+  let widgetStartLine: number | null = null;
+  let widgetStartPos = 0;
+  let widgetContentStart = 0;
+  for (let i = 1; i <= doc.lines; i++) {
+    const line = doc.line(i);
+    if (widgetStartLine === null && line.text.trim() === '```cascade-widget') {
+      widgetStartLine = i;
+      widgetStartPos = line.from;
+      widgetContentStart = line.to + 1;
+      continue;
+    }
+    if (widgetStartLine !== null && line.text.trim() === '```') {
+      widgetBlocks.push({
+        from: widgetStartPos,
+        to: line.to,
+        source: doc.sliceString(widgetContentStart, Math.max(widgetContentStart, line.from - 1)),
+      });
+      widgetStartLine = null;
+    }
+  }
+
+  for (const block of widgetBlocks) {
+    if (cursorLine < doc.lineAt(block.from).number || cursorLine > doc.lineAt(block.to).number) {
+      decos.push({
+        from: block.from,
+        to: block.to,
+        deco: Decoration.replace({
+          block: true,
+          widget: new CascadeHtmlWidget(
+            block.source,
+            block.from,
+            block.to,
+            (prompt) => requestWidgetAgent?.(prompt),
+            (command, timeoutMs, trustKey, label) => runWidgetTerminal?.(command, timeoutMs, trustKey, label) ?? Promise.reject(new Error('Terminal is not available.')),
+            (url, force) => fetchWidgetFeed?.(url, force) ?? Promise.reject(new Error('Feed API is not available.')),
+            (from, to, source) => enableWidgetAutorun?.(from, to, source),
+          ),
+        }),
+      });
+    }
+  }
+
   for (let i = 1; i <= doc.lines; i++) {
     const line = doc.line(i);
     const text = line.text;
     const isActive = i === activeLine;
+    if (widgetBlocks.some((block) => line.from >= block.from && line.to <= block.to)) continue;
 
     // Headings: Apply class and optionally hide markers
     const headingMatch = text.match(/^(#{1,6})\s/);
@@ -418,22 +769,27 @@ export function buildDecorations(view: EditorView): DecorationSet {
   return builder.finish();
 }
 
-const wysiwygPlugin = ViewPlugin.fromClass(
-  class {
-    decorations: DecorationSet;
-    constructor(view: EditorView) {
-      this.decorations = buildDecorations(view);
-    }
-    update(update: ViewUpdate) {
-      if (update.docChanged || update.selectionSet || update.viewportChanged) {
-        this.decorations = buildDecorations(update.view);
+function createWysiwygDecorations(
+  requestWidgetAgent?: (prompt: string) => void,
+  runWidgetTerminal?: (command: string, timeoutMs?: number, trustKey?: string, label?: string) => Promise<unknown>,
+  fetchWidgetFeed?: (url: string, force?: boolean) => Promise<unknown>,
+  enableWidgetAutorun?: (from: number, to: number, source: string) => void,
+) {
+  const field = StateField.define<DecorationSet>({
+    create(state) {
+      return buildDecorations(state, requestWidgetAgent, runWidgetTerminal, fetchWidgetFeed, enableWidgetAutorun);
+    },
+    update(decorations, transaction) {
+      if (transaction.docChanged || transaction.selection) {
+        return buildDecorations(transaction.state, requestWidgetAgent, runWidgetTerminal, fetchWidgetFeed, enableWidgetAutorun);
       }
-    }
-  },
-  {
-    decorations: (v) => v.decorations,
-  },
-);
+      return decorations;
+    },
+    provide: (f) => EditorView.decorations.from(f),
+  });
+
+  return field;
+}
 
 /* ─── Checkbox Click Handler ─────────────────────────────── */
 const checkboxClickHandler = EditorView.domEventHandlers({
@@ -484,6 +840,56 @@ export function NoteEditor({ note, content, onContentChange, onSave, onRename, o
     onRename?.(next)?.catch(() => setTitleDraft(note.title));
   }, [titleDraft, note, onRename]);
 
+  const requestWidgetAgent = useCallback((prompt: string) => {
+    onExecuteDirectiveRef.current?.(prompt);
+  }, []);
+
+  const runWidgetTerminal = useCallback(async (command: string, timeoutMs?: number, trustKey?: string, label?: string) => {
+    if (!note?.vault_id) throw new Error('No active vault for widget command.');
+    const storageKey = trustKey ? `${TERMINAL_TRUST_PREFIX}${note.vault_id}:${trustKey}` : '';
+    const trusted = storageKey ? localStorage.getItem(storageKey) === '1' : false;
+    if (!trusted) {
+      const ok = window.confirm([
+        `Allow ${label || 'this widget'} to run terminal commands in this vault?`,
+        '',
+        'This enables repeated calls from this exact widget source, which is needed for live polling. If the widget source changes, Cascade will ask again.',
+        '',
+        'First command:',
+        command,
+      ].join('\n'));
+      if (!ok) throw new Error('Command denied by user.');
+      if (storageKey) localStorage.setItem(storageKey, '1');
+    }
+    return api(`/api/vaults/${note.vault_id}/widget-command`, {
+      method: 'POST',
+      body: JSON.stringify({ command, timeout_ms: timeoutMs }),
+    });
+  }, [note?.vault_id]);
+
+  const fetchWidgetFeed = useCallback(async (url: string, force?: boolean) => {
+    if (!note?.vault_id) throw new Error('No active vault for widget feed.');
+    const data = await api<{ feed: unknown }>(`/api/vaults/${note.vault_id}/feed`, {
+      method: 'POST',
+      body: JSON.stringify({ url, force }),
+    });
+    return data.feed;
+  }, [note?.vault_id]);
+
+  const enableWidgetAutorun = useCallback((from: number, to: number, source: string) => {
+    const view = viewRef.current;
+    if (!view) return;
+    const ok = window.confirm('Enable this widget to run automatically when the note opens?');
+    if (!ok) return;
+    const nextSource = setWidgetAutorun(source);
+    view.dispatch({
+      changes: {
+        from,
+        to,
+        insert: ['```cascade-widget', nextSource, '```'].join('\n'),
+      },
+    });
+  }, []);
+
   // Keep refs updated
   contentRef.current = content;
   onContentChangeRef.current = onContentChange;
@@ -518,7 +924,7 @@ export function NoteEditor({ note, content, onContentChange, onSave, onRename, o
       history(),
       EditorView.lineWrapping,
       cmPlaceholder('Start writing...'),
-      wysiwygPlugin,
+      createWysiwygDecorations(requestWidgetAgent, runWidgetTerminal, fetchWidgetFeed, enableWidgetAutorun),
       checkboxClickHandler,
       EditorView.domEventHandlers({
         mousedown(event) {
@@ -601,7 +1007,7 @@ export function NoteEditor({ note, content, onContentChange, onSave, onRename, o
         }
       }),
     ],
-    [],
+    [requestWidgetAgent, runWidgetTerminal, fetchWidgetFeed, enableWidgetAutorun],
   );
 
   // Create/destroy editor
@@ -684,6 +1090,9 @@ export function NoteEditor({ note, content, onContentChange, onSave, onRename, o
       case 'hr':
         insertAtCursor(view, '\n---\n');
         break;
+      case 'widget':
+        insertAtCursor(view, sampleWidgetBlock());
+        break;
     }
   }, []);
 
@@ -727,6 +1136,7 @@ export function NoteEditor({ note, content, onContentChange, onSave, onRename, o
         <div className="toolbar-divider" />
 
         <button id="toolbar-hr" className="toolbar-btn" onClick={() => toolbarAction('hr')} title="Horizontal Rule">―</button>
+        <button id="toolbar-widget" className="toolbar-btn" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => toolbarAction('widget')} title="Insert widget"><Box size={15} /></button>
       </div>
 
       {/* Inline editable title */}
@@ -821,6 +1231,39 @@ function insertAtCursor(view: EditorView, text: string) {
     changes: { from, insert: text },
     selection: { anchor: from + text.length },
   });
+}
+
+function widgetTrustKey(source: string) {
+  let hash = 2166136261;
+  for (let i = 0; i < source.length; i++) {
+    hash ^= source.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function sampleWidgetBlock() {
+  return `\n\`\`\`cascade-widget\n---\ntitle: Feed widget\nruntime: iframe\nautorun: false\nfeed_url: https://example.com/feed.xml\nnotify: false\ninterval_minutes: 30\npermissions:\n  network: feed\n  actions: feed\n---\n<div class="widget">\n  <div class="bar">\n    <strong id="title">Feed widget</strong>\n    <button id="refresh">Refresh</button>\n  </div>\n  <ol id="items"></ol>\n  <p id="status">Click refresh to fetch RSS, Atom, or JSON Feed data through Cascade.</p>\n</div>\n\n<style>\n  .widget { padding: 12px 0; }\n  .bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }\n  strong { font-size: 15px; }\n  button {\n    border: 1px solid rgba(245, 158, 64, 0.35);\n    border-radius: 5px;\n    background: rgba(245, 158, 64, 0.12);\n    color: #f5c58b;\n    padding: 5px 9px;\n  }\n  ol { margin: 0; padding-left: 22px; }\n  li { margin: 8px 0; }\n  a { color: #8ec7ff; text-decoration: none; }\n  p { margin: 10px 0 0; color: #a99f94; font-size: 13px; }\n</style>\n\n<script type="module">\n  const feedUrl = 'https://example.com/feed.xml';\n  const title = document.querySelector('#title');\n  const items = document.querySelector('#items');\n  const status = document.querySelector('#status');\n\n  async function refresh(force = false) {\n    status.textContent = 'Refreshing...';\n    const feed = await cascade.feed({ url: feedUrl, force });\n    title.textContent = feed.title || 'Feed';\n    items.replaceChildren(...feed.items.slice(0, 8).map((item) => {\n      const li = document.createElement('li');\n      const link = document.createElement(item.url ? 'a' : 'span');\n      link.textContent = item.title;\n      if (item.url) link.href = item.url;\n      li.append(link);\n      return li;\n    }));\n    status.textContent = 'Updated ' + new Date(feed.fetched_at).toLocaleTimeString();\n    cascade.setHeight(document.body.scrollHeight);\n  }\n\n  document.querySelector('#refresh').addEventListener('click', () => refresh(true).catch((error) => {\n    status.textContent = error.message;\n  }));\n</script>\n\`\`\`\n`;
+}
+
+function setWidgetAutorun(source: string): string {
+  const trimmedStart = source.replace(/^\s*\n/, '');
+  if (!trimmedStart.startsWith('---\n')) {
+    return ['---', 'autorun: true', '---', source.replace(/^\n/, '')].join('\n');
+  }
+
+  const close = trimmedStart.indexOf('\n---', 4);
+  if (close === -1) {
+    return ['---', 'autorun: true', '---', source.replace(/^\n/, '')].join('\n');
+  }
+
+  const metaText = trimmedStart.slice(4, close);
+  const body = trimmedStart.slice(close + 4).replace(/^\n/, '');
+  const lines = metaText.split('\n');
+  const existing = lines.findIndex((line) => /^autorun\s*:/.test(line));
+  if (existing === -1) lines.push('autorun: true');
+  else lines[existing] = 'autorun: true';
+  return ['---', ...lines, '---', body].join('\n');
 }
 
 // Extract the prompt of the {{ai: …}} directive on the cursor's line. Prefers a

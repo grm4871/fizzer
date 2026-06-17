@@ -327,17 +327,158 @@ async function runGrok(prompt, cwd, emit, resumeId, runId, model) {
 // ANTIGRAVITY AGENT
 // ═══════════════════════════════════════════════════════════════
 /**
+ * Dynamically discovers the active Antigravity language server address, CSRF token,
+ * project ID, and agent mode by scanning process information and config files.
+ */
+function discoverAntigravityEnv() {
+    const env = {};
+    // Discover and set ANTIGRAVITY_PROJECT_ID
+    if (process.env.ANTIGRAVITY_PROJECT_ID) {
+        env['ANTIGRAVITY_PROJECT_ID'] = process.env.ANTIGRAVITY_PROJECT_ID;
+    }
+    else {
+        try {
+            const projectsDir = path.join(os.homedir(), '.gemini', 'config', 'projects');
+            if (fs.existsSync(projectsDir)) {
+                const files = fs.readdirSync(projectsDir);
+                let projectId;
+                for (const file of files) {
+                    if (file.endsWith('.json')) {
+                        try {
+                            const filePath = path.join(projectsDir, file);
+                            const content = fs.readFileSync(filePath, 'utf-8');
+                            const data = JSON.parse(content);
+                            const cwdUri = `file://${process.cwd()}`;
+                            const matchesCwd = content.includes(cwdUri) || content.includes(process.cwd());
+                            if (matchesCwd || data.name === 'cascade') {
+                                projectId = data.id;
+                                break;
+                            }
+                        }
+                        catch {
+                            // ignore
+                        }
+                    }
+                }
+                if (!projectId && files.length > 0) {
+                    const firstJson = files.find(f => f.endsWith('.json'));
+                    if (firstJson) {
+                        projectId = firstJson.replace('.json', '');
+                    }
+                }
+                if (projectId) {
+                    env['ANTIGRAVITY_PROJECT_ID'] = projectId;
+                }
+            }
+        }
+        catch (err) {
+            console.error('Error discovering Antigravity project ID:', err);
+        }
+    }
+    // Always set agent flag for agentapi executions
+    env['ANTIGRAVITY_AGENT'] = '1';
+    if (process.env.ANTIGRAVITY_LS_ADDRESS && process.env.ANTIGRAVITY_CSRF_TOKEN) {
+        env['ANTIGRAVITY_LS_ADDRESS'] = process.env.ANTIGRAVITY_LS_ADDRESS;
+        env['ANTIGRAVITY_CSRF_TOKEN'] = process.env.ANTIGRAVITY_CSRF_TOKEN;
+        return env;
+    }
+    let token;
+    // 1. Scan /proc/*/cmdline to find the CSRF token (cmdline is readable without ptrace scopes)
+    try {
+        const files = fs.readdirSync('/proc');
+        for (const file of files) {
+            if (/^\d+$/.test(file)) {
+                try {
+                    const cmdline = fs.readFileSync(`/proc/${file}/cmdline`, 'utf-8');
+                    if (cmdline.includes('language_server')) {
+                        const parts = cmdline.split('\0');
+                        const tokenIdx = parts.indexOf('--csrf_token');
+                        if (tokenIdx !== -1 && tokenIdx + 1 < parts.length && parts[tokenIdx + 1]) {
+                            token = parts[tokenIdx + 1];
+                            break;
+                        }
+                    }
+                }
+                catch {
+                    // ignore processes we cannot read
+                }
+            }
+        }
+    }
+    catch (err) {
+        console.error('Error scanning /proc/*/cmdline:', err);
+    }
+    // 2. Scan language_server.log for the HTTP port
+    let port;
+    try {
+        const logPath = path.join(os.homedir(), '.config', 'Antigravity', 'logs', 'language_server.log');
+        if (fs.existsSync(logPath)) {
+            const content = fs.readFileSync(logPath, 'utf-8');
+            const matches = [...content.matchAll(/Language server listening on random port at (\d+) for HTTP/g)];
+            if (matches.length > 0) {
+                port = matches[matches.length - 1][1];
+            }
+        }
+    }
+    catch (err) {
+        console.error('Error reading language_server.log:', err);
+    }
+    if (port && token) {
+        env['ANTIGRAVITY_LS_ADDRESS'] = `localhost:${port}`;
+        env['ANTIGRAVITY_CSRF_TOKEN'] = token;
+        return env;
+    }
+    // Fallback: Scan /proc/*/environ (works if ptrace_scope is disabled)
+    try {
+        const files = fs.readdirSync('/proc');
+        for (const file of files) {
+            if (/^\d+$/.test(file)) {
+                try {
+                    const envContent = fs.readFileSync(`/proc/${file}/environ`, 'utf-8');
+                    const parts = envContent.split('\0');
+                    const addrVar = parts.find(p => p.startsWith('ANTIGRAVITY_LS_ADDRESS='));
+                    const tokenVar = parts.find(p => p.startsWith('ANTIGRAVITY_CSRF_TOKEN='));
+                    if (addrVar && tokenVar) {
+                        env['ANTIGRAVITY_LS_ADDRESS'] = addrVar.split('=')[1];
+                        env['ANTIGRAVITY_CSRF_TOKEN'] = tokenVar.split('=')[1];
+                        break;
+                    }
+                }
+                catch {
+                    // ignore
+                }
+            }
+        }
+    }
+    catch (err) {
+        // ignore
+    }
+    return env;
+}
+/**
  * Helper to run a command and return stdout as string.
  */
 function runCommand(bin, args, cwd) {
     return new Promise((resolve, reject) => {
-        const child = spawn(bin, args, { cwd });
+        const discoveredEnv = discoverAntigravityEnv();
+        const env = { ...process.env, ...discoveredEnv };
+        const logFile = '/home/jt/Desktop/cascade/debug.log';
+        fs.appendFileSync(logFile, `[${new Date().toISOString()}] In-App Executing: ${bin} ${args.join(' ')}\n`);
+        fs.appendFileSync(logFile, `[${new Date().toISOString()}] Discovered Env: ${JSON.stringify(discoveredEnv)}\n`);
+        fs.appendFileSync(logFile, `[${new Date().toISOString()}] Env: LS_ADDRESS=${env.ANTIGRAVITY_LS_ADDRESS}, CSRF_TOKEN=${env.ANTIGRAVITY_CSRF_TOKEN}\n`);
+        const child = spawn(bin, args, { cwd, env });
         let stdout = '';
         let stderr = '';
         child.stdout.on('data', (d) => { stdout += d.toString(); });
         child.stderr.on('data', (d) => { stderr += d.toString(); });
-        child.on('error', (err) => reject(err));
+        child.on('error', (err) => {
+            fs.appendFileSync(logFile, `[${new Date().toISOString()}] Spawn Error: ${err.message}\n`);
+            reject(err);
+        });
         child.on('close', (code) => {
+            fs.appendFileSync(logFile, `[${new Date().toISOString()}] Exit Code: ${code}\n`);
+            fs.appendFileSync(logFile, `[${new Date().toISOString()}] Stdout: ${stdout.trim()}\n`);
+            fs.appendFileSync(logFile, `[${new Date().toISOString()}] Stderr: ${stderr.trim()}\n`);
             if (code === 0) {
                 resolve(stdout);
             }
@@ -530,55 +671,108 @@ async function runCopilot(prompt, cwd, emit, resumeId, runId, model) {
     const baseArgs = ['-p', prompt, '--output-format', 'json', '--yolo', ...modelArgs];
     const args = resumeId ? ['--session-id', resumeId, ...baseArgs] : baseArgs;
     let summary = '';
+    let reasoningText = '';
     let sessionId;
     const emittedTool = new Set();
-    const isToolItem = (type) => type !== 'agent_message' && type !== 'reasoning';
-    const toolUseBlock = (item) => {
-        if (item.type === 'command_execution') {
-            return { type: 'tool_use', id: item.id, name: 'Bash', input: { command: item.command || '' } };
-        }
-        if (item.type === 'file_change') {
-            const file = item.path || item.changes?.[0]?.path || '(files)';
-            return { type: 'tool_use', id: item.id, name: 'Edit', input: { file_path: file } };
-        }
-        return { type: 'tool_use', id: item.id, name: String(item.type), input: {} };
-    };
-    const emitToolUse = (item) => {
-        if (!item.id || emittedTool.has(item.id))
-            return;
-        emittedTool.add(item.id);
-        emit('text', { message: { content: [toolUseBlock(item)] } });
+    const getToolFriendlyName = (name) => {
+        if (name === 'read' || name === 'view_file')
+            return 'View File';
+        if (name === 'write' || name === 'write_to_file' || name === 'create')
+            return 'Write File';
+        if (name === 'edit' || name === 'replace_file_content' || name === 'multi_replace_file_content')
+            return 'Edit File';
+        if (name === 'grep' || name === 'grep_search')
+            return 'Search Workspace';
+        if (name === 'bash' || name === 'run_command')
+            return 'Bash';
+        return name;
     };
     const onLine = (line) => {
         try {
             if (line.startsWith('{')) {
                 const ev = JSON.parse(line);
-                const item = ev.item;
                 switch (ev.type) {
-                    case 'thread.started':
-                        if (ev.thread_id)
-                            sessionId = ev.thread_id;
+                    case 'assistant.reasoning_delta':
+                        if (ev.data?.deltaContent) {
+                            reasoningText += ev.data.deltaContent;
+                            emit('text', { message: { content: [{ type: 'thinking', thinking: ev.data.deltaContent }] } });
+                        }
                         break;
-                    case 'item.started':
-                        if (item && isToolItem(item.type))
-                            emitToolUse(item);
+                    case 'assistant.reasoning':
+                        if (ev.data?.content) {
+                            const hadDeltas = reasoningText.length > 0;
+                            reasoningText = ev.data.content;
+                            if (!hadDeltas) {
+                                emit('text', { message: { content: [{ type: 'thinking', thinking: ev.data.content }] } });
+                            }
+                        }
                         break;
-                    case 'item.completed':
-                        if (!item)
-                            break;
-                        if (item.type === 'agent_message') {
-                            summary = item.text || summary;
-                            emit('text', { message: { content: [{ type: 'text', text: item.text || '' }] } });
+                    case 'assistant.message_delta':
+                        if (ev.data?.deltaContent) {
+                            summary += ev.data.deltaContent;
+                            emit('text', { message: { content: [{ type: 'text', text: ev.data.deltaContent }] } });
                         }
-                        else if (item.type === 'reasoning') {
-                            emit('text', { message: { content: [{ type: 'thinking', text: item.text || '' }] } });
+                        break;
+                    case 'assistant.message':
+                        if (ev.data) {
+                            if (ev.data.content) {
+                                const hadDeltas = summary.length > 0;
+                                summary = ev.data.content;
+                                if (!hadDeltas) {
+                                    emit('text', { message: { content: [{ type: 'text', text: ev.data.content }] } });
+                                }
+                            }
+                            for (const req of ev.data.toolRequests || []) {
+                                if (req.toolCallId && !emittedTool.has(req.toolCallId)) {
+                                    emittedTool.add(req.toolCallId);
+                                    emit('text', {
+                                        message: {
+                                            content: [{
+                                                    type: 'tool_use',
+                                                    id: req.toolCallId,
+                                                    name: getToolFriendlyName(req.name),
+                                                    input: req.arguments || {}
+                                                }]
+                                        }
+                                    });
+                                }
+                            }
                         }
-                        else {
-                            emitToolUse(item);
-                            const out = item.aggregated_output ?? item.output ?? '';
-                            const isError = typeof item.exit_code === 'number' && item.exit_code !== 0;
-                            emit('user', { message: { content: [{ type: 'tool_result', tool_use_id: item.id, content: truncate(String(out), 8000), is_error: isError }] } });
+                        break;
+                    case 'tool.execution_start':
+                        if (ev.data?.toolCallId && !emittedTool.has(ev.data.toolCallId)) {
+                            emittedTool.add(ev.data.toolCallId);
+                            emit('text', {
+                                message: {
+                                    content: [{
+                                            type: 'tool_use',
+                                            id: ev.data.toolCallId,
+                                            name: getToolFriendlyName(ev.data.toolName),
+                                            input: ev.data.arguments || {}
+                                        }]
+                                }
+                            });
                         }
+                        break;
+                    case 'tool.execution_complete':
+                        if (ev.data?.toolCallId) {
+                            const out = ev.data.result?.content ?? ev.data.result?.detailedContent ?? '';
+                            const isError = ev.data.success === false;
+                            emit('user', {
+                                message: {
+                                    content: [{
+                                            type: 'tool_result',
+                                            tool_use_id: ev.data.toolCallId,
+                                            content: truncate(String(out), 8000),
+                                            is_error: isError
+                                        }]
+                                }
+                            });
+                        }
+                        break;
+                    case 'result':
+                        if (ev.sessionId)
+                            sessionId = ev.sessionId;
                         break;
                 }
             }
