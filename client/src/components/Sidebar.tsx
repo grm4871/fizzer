@@ -37,6 +37,7 @@ interface SidebarProps {
   activeNoteId: string | null;
   onSelectVault: (id: string) => void;
   onSelectNote: (id: string) => void;
+  onOpenNoteInNewTab: (id: string) => void;
   onNewNote: () => void;
   onNewNoteInFolder: (folderId: string | null) => void;
   onSearch: () => void;
@@ -47,6 +48,7 @@ interface SidebarProps {
   onMoveFolder: (id: string, parentId: string | null, position: number) => void;
   onCreateFolder: (parentId?: string | null) => Promise<Folder | undefined>;
   onRenameFolder: (id: string, name: string) => void;
+  onRenameNote: (id: string, title: string) => Promise<void>;
   onDeleteFolder: (id: string) => void;
 }
 
@@ -63,6 +65,7 @@ export function Sidebar({
   activeNoteId,
   onSelectVault,
   onSelectNote,
+  onOpenNoteInNewTab,
   onNewNote,
   onNewNoteInFolder,
   onSearch,
@@ -73,6 +76,7 @@ export function Sidebar({
   onMoveFolder,
   onCreateFolder,
   onRenameFolder,
+  onRenameNote,
   onDeleteFolder,
 }: SidebarProps) {
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
@@ -81,6 +85,7 @@ export function Sidebar({
   const [moveMenu, setMoveMenu] = useState(false);
   // Folder currently being renamed inline (also used right after creation).
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [editingValue, setEditingValue] = useState('');
   // Drop target highlight: a folder id, or ROOT_DROP_ID for the root area.
   const [dragOverId, setDragOverId] = useState<string | null>(null);
@@ -179,9 +184,20 @@ export function Sidebar({
     setEditingFolderId(folder.id);
   }
 
+  function startRenameNote(note: NoteSummary) {
+    setContextMenu(null);
+    setEditingValue(note.title);
+    setEditingNoteId(note.id);
+  }
+
   function commitRename() {
-    if (editingFolderId) onRenameFolder(editingFolderId, editingValue);
-    setEditingFolderId(null);
+    if (editingFolderId) {
+      onRenameFolder(editingFolderId, editingValue);
+      setEditingFolderId(null);
+    } else if (editingNoteId) {
+      void onRenameNote(editingNoteId, editingValue);
+      setEditingNoteId(null);
+    }
   }
 
   async function createFolder(parentId: string | null) {
@@ -322,6 +338,25 @@ export function Sidebar({
   /** Render a single note item in the sidebar tree. */
   function renderNote(note: NoteSummary, depth: number) {
     const paddingLeft = 12 + depth * 14 + 16;
+    if (editingNoteId === note.id) {
+      return (
+        <div key={note.id} className="tree-item tree-editing" style={{ paddingLeft }}>
+          <span className="tree-icon"><FileText size={16} /></span>
+          <input
+            className="tree-rename-input"
+            value={editingValue}
+            autoFocus
+            spellCheck={false}
+            onChange={(e) => setEditingValue(e.target.value)}
+            onBlur={commitRename}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') { e.preventDefault(); commitRename(); }
+              else if (e.key === 'Escape') { e.preventDefault(); setEditingNoteId(null); }
+            }}
+          />
+        </div>
+      );
+    }
     return (
       <button
         key={note.id}
@@ -352,7 +387,6 @@ export function Sidebar({
       <div className="sidebar-header">
         <div className="vault-name">
           <span className="vault-icon"><Gem size={20} /></span>
-          {activeVault ? activeVault.name : 'Cascade Notes'}
         </div>
         <button id="sidebar-collapse-btn" className="btn-icon" onClick={onCollapse} title="Collapse sidebar">
           <PanelLeftClose size={16} />
@@ -423,6 +457,12 @@ export function Sidebar({
             <>
               <button onClick={() => { setContextMenu(null); onSelectNote(contextMenu.id); }}>
                 <FileText size={14} /> Open
+              </button>
+              <button onClick={() => { setContextMenu(null); onOpenNoteInNewTab(contextMenu.id); }}>
+                <FilePlus size={14} /> Open in new tab
+              </button>
+              <button onClick={() => { const n = notes.find((x) => x.id === contextMenu.id); if (n) startRenameNote(n); }}>
+                <Pencil size={14} /> Rename
               </button>
               <button onClick={() => setMoveMenu(true)}>
                 <FolderInput size={14} /> Move to…

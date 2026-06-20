@@ -10,7 +10,7 @@ import { closeBrackets } from '@codemirror/autocomplete';
 import { languages } from '@codemirror/language-data';
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
 import { tags } from '@lezer/highlight';
-import { FileText, Link2, Box } from 'lucide-react';
+import { FileText, Link2, Box, FileSymlink } from 'lucide-react';
 
 /* ═══════════════════════════════════════════════════════════
    NoteEditor — CodeMirror 6 Live Preview Markdown Editor
@@ -25,6 +25,12 @@ interface NoteEditorProps {
   onExecuteDirective?: (prompt: string) => void;
   onOpenWikilink?: (title: string) => void;
   onOpenWebView?: (url: string) => void;
+  /**
+   * Turn the selected term into a linked note. Resolves to the canonical title
+   * of the note it linked to (an existing fuzzy match or a freshly generated
+   * stub) so the editor can alias the link when the title differs.
+   */
+  onLinkifySelection?: (term: string, context: string) => Promise<{ title: string; matched: boolean } | void>;
 }
 
 /* ─── Custom Dark Theme ──────────────────────────────────── */
@@ -164,6 +170,57 @@ const cascadeTheme = EditorView.theme({
     margin: '14px 0',
     border: 'none',
   },
+  '.cm-table-widget': {
+    display: 'block',
+    maxWidth: '100%',
+    overflowX: 'auto',
+    margin: '8px 0 14px',
+  },
+  '.cm-table-widget table': {
+    width: 'max-content',
+    maxWidth: '100%',
+    borderCollapse: 'collapse',
+    fontSize: '0.93em',
+    lineHeight: '1.45',
+  },
+  '.cm-table-widget th, .cm-table-widget td': {
+    border: '1px solid hsl(25, 7%, 22%)',
+    padding: '7px 10px',
+    verticalAlign: 'top',
+  },
+  '.cm-table-widget th': {
+    background: 'hsl(22, 8%, 9%)',
+    color: 'hsl(35, 12%, 92%)',
+    fontWeight: '600',
+  },
+  '.cm-table-widget thead.is-empty-header th': {
+    padding: '0',
+    height: '0',
+    borderTop: 'none',
+    borderBottom: '1px solid hsl(25, 7%, 22%)',
+  },
+  '.cm-table-widget td': {
+    color: 'hsl(35, 10%, 86%)',
+  },
+  '.cm-table-widget tr:nth-child(even) td': {
+    background: 'hsla(22, 8%, 5%, 0.38)',
+  },
+  '.cm-table-widget code': {
+    fontFamily: "'JetBrains Mono', ui-monospace, monospace",
+    fontSize: '0.86em',
+    background: 'hsl(22, 8%, 13%)',
+    padding: '1px 5px',
+    borderRadius: '3px',
+    color: 'hsl(38, 75%, 65%)',
+  },
+  '.cm-table-widget strong': {
+    color: 'hsl(35, 14%, 95%)',
+    fontWeight: '700',
+  },
+  '.cm-table-widget a': {
+    color: 'hsl(33, 72%, 65%)',
+    textDecoration: 'underline',
+  },
   '.cm-code-block-line': {
     background: 'hsl(22, 8%, 8%)',
     fontFamily: "'JetBrains Mono', ui-monospace, monospace",
@@ -222,6 +279,146 @@ class HRWidget extends WidgetType {
     const hr = document.createElement('hr');
     hr.className = 'cm-hr-widget';
     return hr;
+  }
+}
+
+type MarkdownTable = {
+  header: string[];
+  rows: string[][];
+};
+
+function splitMarkdownTableRow(text: string): string[] {
+  const trimmed = text.trim();
+  const row = trimmed.replace(/^\|/, '').replace(/\|$/, '');
+  const cells: string[] = [];
+  let cell = '';
+  let bracketDepth = 0;
+  let parenDepth = 0;
+
+  for (let i = 0; i < row.length; i++) {
+    const char = row[i];
+    const prev = row[i - 1];
+    if (char === '[' && prev !== '\\') bracketDepth++;
+    if (char === ']' && prev !== '\\' && bracketDepth > 0) bracketDepth--;
+    if (char === '(' && prev !== '\\') parenDepth++;
+    if (char === ')' && prev !== '\\' && parenDepth > 0) parenDepth--;
+
+    if (char === '|' && prev !== '\\' && bracketDepth === 0 && parenDepth === 0) {
+      cells.push(cell.trim());
+      cell = '';
+    } else {
+      cell += char;
+    }
+  }
+
+  cells.push(cell.trim());
+  return cells;
+}
+
+function isMarkdownTableSeparator(text: string): boolean {
+  const cells = splitMarkdownTableRow(text);
+  return cells.length > 1 && cells.every((cell) => /^:?-{3,}:?$/.test(cell.trim()));
+}
+
+function parseMarkdownTable(lines: string[]): MarkdownTable | null {
+  if (lines.length < 2 || !isMarkdownTableSeparator(lines[1])) return null;
+
+  const separatorCells = splitMarkdownTableRow(lines[1]);
+  const header = lines[0].trim() === '||'
+    ? separatorCells.map(() => '')
+    : splitMarkdownTableRow(lines[0]);
+  if (header.length !== separatorCells.length) return null;
+
+  const rows = lines.slice(2).map((line) => {
+    const cells = splitMarkdownTableRow(line);
+    return separatorCells.map((_, index) => cells[index] ?? '');
+  });
+
+  return { header, rows };
+}
+
+function appendInlineMarkdown(parent: HTMLElement, text: string) {
+  const pattern = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\(https?:\/\/[^)]+\))/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  const appendText = (value: string) => {
+    if (value) parent.appendChild(document.createTextNode(value.replace(/\\\|/g, '|')));
+  };
+
+  while ((match = pattern.exec(text))) {
+    appendText(text.slice(lastIndex, match.index));
+    const token = match[0];
+
+    if (token.startsWith('**')) {
+      const strong = document.createElement('strong');
+      strong.textContent = token.slice(2, -2);
+      parent.appendChild(strong);
+    } else if (token.startsWith('`')) {
+      const code = document.createElement('code');
+      code.textContent = token.slice(1, -1);
+      parent.appendChild(code);
+    } else {
+      const linkMatch = token.match(/^\[([^\]]+)\]\((https?:\/\/[^)]+)\)$/);
+      if (linkMatch) {
+        const link = document.createElement('a');
+        link.textContent = linkMatch[1];
+        link.href = linkMatch[2];
+        link.target = '_blank';
+        link.rel = 'noreferrer';
+        parent.appendChild(link);
+      } else {
+        appendText(token);
+      }
+    }
+
+    lastIndex = match.index + token.length;
+  }
+
+  appendText(text.slice(lastIndex));
+}
+
+class TableWidget extends WidgetType {
+  constructor(private table: MarkdownTable) {
+    super();
+  }
+
+  eq(other: TableWidget) {
+    return JSON.stringify(this.table) === JSON.stringify(other.table);
+  }
+
+  toDOM() {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'cm-table-widget';
+
+    const table = document.createElement('table');
+    const thead = document.createElement('thead');
+    const headRow = document.createElement('tr');
+    const hasVisibleHeader = this.table.header.some((cell) => cell.trim());
+
+    for (const cell of this.table.header) {
+      const th = document.createElement('th');
+      appendInlineMarkdown(th, cell);
+      headRow.appendChild(th);
+    }
+    thead.appendChild(headRow);
+    if (!hasVisibleHeader) thead.className = 'is-empty-header';
+    table.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+    for (const row of this.table.rows) {
+      const tr = document.createElement('tr');
+      for (const cell of row) {
+        const td = document.createElement('td');
+        appendInlineMarkdown(td, cell);
+        tr.appendChild(td);
+      }
+      tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    wrapper.appendChild(table);
+
+    return wrapper;
   }
 }
 
@@ -578,6 +775,62 @@ export function buildDecorations(
     }
   }
 
+  const tableBlocks: { from: number; to: number; startLine: number; endLine: number; table: MarkdownTable }[] = [];
+  const isInWidgetBlock = (from: number, to: number) => widgetBlocks.some((block) => from >= block.from && to <= block.to);
+  const codeBlocks: { from: number; to: number; startLine: number; endLine: number }[] = [];
+  let codeStartLine: number | null = null;
+  let codeStartPos = 0;
+  for (let i = 1; i <= doc.lines; i++) {
+    const line = doc.line(i);
+    if (isInWidgetBlock(line.from, line.to)) continue;
+    if (codeStartLine === null && /^```/.test(line.text.trim())) {
+      codeStartLine = i;
+      codeStartPos = line.from;
+      continue;
+    }
+    if (codeStartLine !== null && line.text.trim() === '```') {
+      codeBlocks.push({
+        from: codeStartPos,
+        to: line.to,
+        startLine: codeStartLine,
+        endLine: i,
+      });
+      codeStartLine = null;
+    }
+  }
+
+  const isInCodeBlock = (lineNumber: number) => codeBlocks.some((block) => lineNumber >= block.startLine && lineNumber <= block.endLine);
+  for (let i = 1; i < doc.lines; i++) {
+    const headerLine = doc.line(i);
+    const separatorLine = doc.line(i + 1);
+    if (isInWidgetBlock(headerLine.from, separatorLine.to)) continue;
+    if (isInCodeBlock(i) || isInCodeBlock(i + 1)) continue;
+    if (!headerLine.text.includes('|') || !isMarkdownTableSeparator(separatorLine.text)) continue;
+
+    const lines = [headerLine.text, separatorLine.text];
+    let endLine = i + 1;
+    for (let j = i + 2; j <= doc.lines; j++) {
+      const rowLine = doc.line(j);
+      const trimmed = rowLine.text.trim();
+      if (!trimmed || !trimmed.includes('|') || isInWidgetBlock(rowLine.from, rowLine.to)) break;
+      if (isInCodeBlock(j)) break;
+      lines.push(rowLine.text);
+      endLine = j;
+    }
+
+    const table = parseMarkdownTable(lines);
+    if (!table || table.rows.length === 0) continue;
+
+    tableBlocks.push({
+      from: headerLine.from,
+      to: doc.line(endLine).to,
+      startLine: i,
+      endLine,
+      table,
+    });
+    i = endLine;
+  }
+
   for (const block of widgetBlocks) {
     if (cursorLine < doc.lineAt(block.from).number || cursorLine > doc.lineAt(block.to).number) {
       decos.push({
@@ -599,11 +852,41 @@ export function buildDecorations(
     }
   }
 
+  for (const block of tableBlocks) {
+    if (activeLine < block.startLine || activeLine > block.endLine) {
+      decos.push({
+        from: block.from,
+        to: block.to,
+        deco: Decoration.replace({
+          block: true,
+          widget: new TableWidget(block.table),
+        }),
+      });
+    }
+  }
+
+  for (const block of codeBlocks) {
+    if (activeLine >= block.startLine && activeLine <= block.endLine) continue;
+    const openingLine = doc.line(block.startLine);
+    const closingLine = doc.line(block.endLine);
+    collectDeco(openingLine.from, openingLine.to, hidden);
+    collectDeco(closingLine.from, closingLine.to, hidden);
+
+    for (let lineNumber = block.startLine + 1; lineNumber < block.endLine; lineNumber++) {
+      const line = doc.line(lineNumber);
+      if (line.from < line.to) {
+        collectDeco(line.from, line.to, Decoration.mark({ class: 'cm-code-block-line' }));
+      }
+    }
+  }
+
   for (let i = 1; i <= doc.lines; i++) {
     const line = doc.line(i);
     const text = line.text;
     const isActive = i === activeLine;
     if (widgetBlocks.some((block) => line.from >= block.from && line.to <= block.to)) continue;
+    if (tableBlocks.some((block) => i >= block.startLine && i <= block.endLine)) continue;
+    if (isInCodeBlock(i)) continue;
 
     // Headings: Apply class and optionally hide markers
     const headingMatch = text.match(/^(#{1,6})\s/);
@@ -704,13 +987,26 @@ export function buildDecorations(
       codeIdx = text.indexOf('`', codeIdx + 1);
     }
 
-    // Wikilinks: [[title]]
+    // Wikilinks: [[title]] or aliased [[Target|shown text]]
     let wikiIdx = text.indexOf('[[', inlineStart);
     while (wikiIdx !== -1) {
       const endWiki = text.indexOf(']]', wikiIdx + 2);
       if (endWiki !== -1) {
+        const inner = text.slice(wikiIdx + 2, endWiki);
+        const pipeIdx = inner.indexOf('|');
         collectDeco(line.from + wikiIdx, line.from + wikiIdx + 2, hidden);
-        collectDeco(line.from + wikiIdx + 2, line.from + endWiki, wikilinkDeco);
+        if (pipeIdx !== -1) {
+          // Hide the "Target|" part, render only the alias as the link chip.
+          const target = inner.slice(0, pipeIdx).trim();
+          collectDeco(line.from + wikiIdx + 2, line.from + wikiIdx + 2 + pipeIdx + 1, hidden);
+          collectDeco(
+            line.from + wikiIdx + 2 + pipeIdx + 1,
+            line.from + endWiki,
+            Decoration.mark({ class: 'cm-wikilink', attributes: { 'data-target': target } }),
+          );
+        } else {
+          collectDeco(line.from + wikiIdx + 2, line.from + endWiki, wikilinkDeco);
+        }
         collectDeco(line.from + endWiki, line.from + endWiki + 2, hidden);
         wikiIdx = text.indexOf('[[', endWiki + 2);
       } else {
@@ -817,7 +1113,7 @@ const checkboxClickHandler = EditorView.domEventHandlers({
 });
 
 /* ─── Component ──────────────────────────────────────────── */
-export function NoteEditor({ note, content, onContentChange, onSave, onRename, onExecuteDirective, onOpenWikilink, onOpenWebView }: NoteEditorProps) {
+export function NoteEditor({ note, content, onContentChange, onSave, onRename, onExecuteDirective, onOpenWikilink, onOpenWebView, onLinkifySelection }: NoteEditorProps) {
   const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const contentRef = useRef(content);
@@ -826,10 +1122,25 @@ export function NoteEditor({ note, content, onContentChange, onSave, onRename, o
   const onExecuteDirectiveRef = useRef(onExecuteDirective);
   const onOpenWikilinkRef = useRef(onOpenWikilink);
   const onOpenWebViewRef = useRef(onOpenWebView);
+  const onLinkifySelectionRef = useRef(onLinkifySelection);
 
   // Inline, editable note title (Obsidian-style). Synced from the note.
   const [titleDraft, setTitleDraft] = useState(note?.title ?? '');
   useEffect(() => { setTitleDraft(note?.title ?? ''); }, [note?.id, note?.title]);
+
+  // Floating "Link to note" button shown above a non-empty single-line selection.
+  const [linkChip, setLinkChip] = useState<{ top: number; left: number } | null>(null);
+  const computeLinkChip = useCallback((view: EditorView) => {
+    const sel = view.state.selection.main;
+    if (sel.empty) { setLinkChip(null); return; }
+    const raw = view.state.sliceDoc(sel.from, sel.to);
+    const term = raw.trim();
+    // Only offer it for a plain, single-line term (not paragraphs or existing links).
+    if (!term || term.length > 120 || /[\n\r]/.test(raw) || /\[\[|\]\]/.test(raw)) { setLinkChip(null); return; }
+    const coords = view.coordsAtPos(sel.from);
+    if (!coords) { setLinkChip(null); return; }
+    setLinkChip({ top: coords.top - 38, left: coords.left });
+  }, []);
 
   const commitTitle = useCallback(() => {
     const next = titleDraft.trim();
@@ -897,6 +1208,7 @@ export function NoteEditor({ note, content, onContentChange, onSave, onRename, o
   onExecuteDirectiveRef.current = onExecuteDirective;
   onOpenWikilinkRef.current = onOpenWikilink;
   onOpenWebViewRef.current = onOpenWebView;
+  onLinkifySelectionRef.current = onLinkifySelection;
 
   // Word count and stats
   const stats = useMemo(() => {
@@ -931,7 +1243,9 @@ export function NoteEditor({ note, content, onContentChange, onSave, onRename, o
           const target = event.target as HTMLElement;
           const wikilink = target.closest('.cm-wikilink');
           if (wikilink) {
-            const title = wikilink.textContent?.trim();
+            // Aliased links carry their real target in data-target; plain links
+            // use the visible text, which is the title.
+            const title = (wikilink.getAttribute('data-target') || wikilink.textContent || '').trim();
             if (title) {
               event.preventDefault();
               onOpenWikilinkRef.current?.(title);
@@ -997,6 +1311,15 @@ export function NoteEditor({ note, content, onContentChange, onSave, onRename, o
               return true;
             },
           },
+          {
+            // Highest precedence so the markdown editor can't swallow it.
+            key: 'Mod-Shift-l',
+            preventDefault: true,
+            run: (view) => {
+              void linkifySelection(view, onLinkifySelectionRef.current);
+              return true;
+            },
+          },
         ])
       ),
       EditorView.updateListener.of((update) => {
@@ -1005,9 +1328,16 @@ export function NoteEditor({ note, content, onContentChange, onSave, onRename, o
           contentRef.current = newDoc;
           onContentChangeRef.current(newDoc);
         }
+        if (update.selectionSet || update.docChanged || update.geometryChanged) {
+          computeLinkChip(update.view);
+        }
+      }),
+      // Keep the floating button anchored to the selection while scrolling.
+      EditorView.domEventHandlers({
+        scroll: (_event, view) => { computeLinkChip(view); return false; },
       }),
     ],
-    [requestWidgetAgent, runWidgetTerminal, fetchWidgetFeed, enableWidgetAutorun],
+    [requestWidgetAgent, runWidgetTerminal, fetchWidgetFeed, enableWidgetAutorun, computeLinkChip],
   );
 
   // Create/destroy editor
@@ -1157,6 +1487,27 @@ export function NoteEditor({ note, content, onContentChange, onSave, onRename, o
       {/* Editor */}
       <div className="editor-codemirror" id="editor-codemirror" ref={editorRef} />
 
+      {/* Floating "Link to note" action, anchored above the current selection */}
+      {linkChip && (
+        <button
+          id="link-to-note-chip"
+          className="link-note-chip"
+          style={{ position: 'fixed', top: linkChip.top, left: linkChip.left, zIndex: 50 }}
+          // Keep the editor selection intact (don't let the click blur/clear it).
+          onMouseDown={(e) => {
+            e.preventDefault();
+            const view = viewRef.current;
+            if (!view) return;
+            setLinkChip(null);
+            void linkifySelection(view, onLinkifySelectionRef.current);
+          }}
+          title="Create or link a note from this term (Ctrl+Shift+L)"
+        >
+          <FileSymlink size={13} />
+          <span>Link to note</span>
+        </button>
+      )}
+
       {/* Status bar */}
       <div className="editor-status-bar" id="editor-status-bar">
         <span className="status-item">{stats.words} words</span>
@@ -1222,6 +1573,57 @@ function insertLink(view: EditorView) {
   const insert = selected ? `[${selected}](url)` : '[link text](url)';
   view.dispatch({
     changes: { from, to, insert },
+  });
+}
+
+/**
+ * Turn the current selection (or the word under the cursor) into a wikilink that
+ * points at a note. Delegates resolution to the host, which fuzzy-matches an
+ * existing note or generates a new one, then aliases the link when the canonical
+ * title differs from the selected term so the prose reads unchanged.
+ */
+async function linkifySelection(
+  view: EditorView,
+  linkify?: (term: string, context: string) => Promise<{ title: string; matched: boolean } | void>,
+) {
+  if (!linkify) return;
+
+  let { from, to } = view.state.selection.main;
+  if (from === to) {
+    // No selection: expand to the word under the cursor.
+    const line = view.state.doc.lineAt(from);
+    const col = from - line.from;
+    const before = line.text.slice(0, col).match(/[\p{L}\p{N}_-]+$/u);
+    const after = line.text.slice(col).match(/^[\p{L}\p{N}_-]+/u);
+    from = line.from + col - (before ? before[0].length : 0);
+    to = line.from + col + (after ? after[0].length : 0);
+  }
+
+  const term = view.state.sliceDoc(from, to).trim();
+  if (!term || /\[\[|\]\]/.test(term)) return; // ignore empty or already-linked text
+
+  const context = view.state.doc.lineAt(from).text.trim();
+
+  let result: { title: string; matched: boolean } | void;
+  try {
+    result = await linkify(term, context);
+  } catch {
+    return; // host surfaces the error; leave the text untouched
+  }
+
+  const canonical = result?.title?.trim();
+  const insert = canonical && canonical.toLowerCase() !== term.toLowerCase()
+    ? `[[${canonical}|${term}]]`
+    : `[[${term}]]`;
+
+  // Re-find the term in case the doc shifted during the await, so we don't
+  // corrupt text by writing at stale offsets.
+  const stillThere = view.state.sliceDoc(from, to).trim() === term;
+  if (!stillThere) return;
+
+  view.dispatch({
+    changes: { from, to, insert },
+    selection: { anchor: from + insert.length },
   });
 }
 

@@ -7,6 +7,7 @@
   "type": "module",
   "scripts": {
     "start": "electron .",
+    "start:watch": "nodemon --watch main.cjs --watch preload.cjs --exec \"electron .\"",
     "package": "electron-forge package",
     "make": "electron-forge make",
     "postinstall": "electron-rebuild -f -w better-sqlite3"
@@ -26,7 +27,7 @@
     "@electron-forge/plugin-auto-unpack-natives": "^7.2.0",
     "@electron/rebuild": "^4.0.2",
     "concurrently": "^9.1.2",
-    "electron": "^29.0.0",
+    "electron": "39.2.7",
     "electron-reload": "^2.0.0-alpha.1",
     "nodemon": "^3.1.10"
   }

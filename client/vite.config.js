@@ -80,6 +80,12 @@ function versionGenerationPlugin() {
         path.join(distPath, 'version.json'),
         JSON.stringify(versionFile)
       );
+      // Capacitor requires index.html as the web entry point.
+      const appHtmlPath = path.join(distPath, 'app.html');
+      const indexHtmlPath = path.join(distPath, 'index.html');
+      if (fs.existsSync(appHtmlPath)) {
+        fs.copyFileSync(appHtmlPath, indexHtmlPath);
+      }
       console.log(`[version-generation] Wrote version.json with version: ${buildVersion}`);
     }
   };
@@ -108,7 +114,10 @@ function htmlFallbackPlugin() {
   };
 }
 
+const isCapacitorBuild = process.env.CAPACITOR === 'true';
+
 export default defineConfig({
+  base: isCapacitorBuild ? './' : '/',
   define: {
     '__APP_VERSION__': JSON.stringify(buildVersion)
   },

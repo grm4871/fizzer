@@ -1,6 +1,8 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
+import remarkBreaks from 'remark-breaks';
+import remarkGfm from 'remark-gfm';
 import type { Note } from '../api';
 import { api } from '../api';
 import { connectRunsSocket, connectVaultSocket } from '../socket';
@@ -169,6 +171,29 @@ function formatDuration(ms?: number): string {
   return s < 10 ? `${s.toFixed(1)}s` : `${Math.round(s)}s`;
 }
 
+const markdownPlugins = [remarkGfm, remarkBreaks];
+
+function normalizeMarkdownTables(markdown: string): string {
+  const lines = markdown.split('\n');
+  for (let i = 0; i < lines.length - 1; i++) {
+    const header = lines[i].trim();
+    const separator = lines[i + 1].trim();
+    if (header !== '||') continue;
+
+    const separatorCells = separator
+      .replace(/^\|/, '')
+      .replace(/\|$/, '')
+      .split('|')
+      .map((cell) => cell.trim());
+    const isSeparator = separatorCells.length > 1 && separatorCells.every((cell) => /^:?-{3,}:?$/.test(cell));
+    if (!isSeparator) continue;
+
+    lines[i] = `| ${separatorCells.map(() => ' ').join(' | ')} |`;
+    lines[i + 1] = `| ${separatorCells.join(' | ')} |`;
+  }
+  return lines.join('\n');
+}
+
 // Friendly label + icon for a tool call, mirroring opencode / Claude Code style.
 function describeTool(name?: string, input?: any): { icon: ReactNode; verb: string; target: string } {
   const i = input || {};
@@ -272,7 +297,7 @@ function MessageBlocks({ msg }: { msg: ChatMessage }) {
     <>
       {msg.content && (
         <div className="ai-markdown">
-          <ReactMarkdown>{msg.content}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={markdownPlugins}>{normalizeMarkdownTables(msg.content)}</ReactMarkdown>
         </div>
       )}
       {(msg.blocks || []).map((block, i) => {
@@ -280,7 +305,7 @@ function MessageBlocks({ msg }: { msg: ChatMessage }) {
         if (block.type === 'text') {
           return (
             <div key={i} className="ai-markdown">
-              <ReactMarkdown>{block.text || ''}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={markdownPlugins}>{normalizeMarkdownTables(block.text || '')}</ReactMarkdown>
             </div>
           );
         }

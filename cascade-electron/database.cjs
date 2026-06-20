@@ -158,11 +158,9 @@ function closeDatabase() {
   if (db) {
     try {
       db.close();
-      console.log('[Database] Database connection closed');
       db = null;
-    } catch (error) {
-      console.error('[Database] Error closing database:', error);
-      throw error;
+    } catch (_) {
+      db = null;
     }
   }
 }

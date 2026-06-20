@@ -25,6 +25,7 @@ type ServerEvents = {
   'vault:noteChanged': (data: { noteId: string; vaultId: string }) => void;
   'vault:noteCreated': (data: { noteId: string; vaultId: string }) => void;
   'vault:noteDeleted': (data: { noteId: string; vaultId: string }) => void;
+  'vault:feedNotify': (data: { noteId: string; feedTitle: string; item?: { title?: string } }) => void;
   /** Streamed chunk of an AI directive response. */
   'directive:chunk': (data: { noteId: string; content: string }) => void;
   /** Signals an AI directive has finished processing. */

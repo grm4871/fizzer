@@ -12,6 +12,7 @@
  *  - Netdoc Versions: getNetdocVersions, saveNetdocVersion,
  *                     getLatestVersionContent
  *  - Browser:         openExternal, getAdBlockState, setAdBlockSiteEnabled
+ *  - Terminal:        startTerminal, writeTerminal, stopTerminal, onTerminalData
  *  - Shortcuts:       onShortcut (subscribe to main-process keyboard events)
  *
  * @module cascade-electron/preload
@@ -29,6 +30,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   updateDbPath: (newPath) => ipcRenderer.invoke('db:updateDbPath', newPath),
   /** Get the config directory path */
   getConfigDir: () => ipcRenderer.invoke('db:getConfigDir'),
+  /** Read/write small app settings persisted in the local SQLite database */
+  getSetting: (key) => ipcRenderer.invoke('db:getSetting', key),
+  setSetting: ({ key, value }) => ipcRenderer.invoke('db:setSetting', { key, value }),
 
   // ── Netdoc CRUD ──────────────────────────────────────────────
   netdocExists: (id) => ipcRenderer.invoke('netdoc:exists', id),
@@ -47,6 +51,44 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getAdBlockState: (url) => ipcRenderer.invoke('browser:getAdBlockState', url),
   setAdBlockSiteEnabled: ({ url, enabled }) => ipcRenderer.invoke('browser:setAdBlockSiteEnabled', { url, enabled }),
 
+  // ── Windows ─────────────────────────────────────────────────
+  /**
+   * Pop a tab out into its own OS window. Resolves with `{ popped }`: true when
+   * the drop point was outside the current window (a new window was created),
+   * false when it was inside (caller should keep the tab where it is).
+   */
+  popOutTab: ({ tab, screenX, screenY }) => ipcRenderer.invoke('window:popOutTab', { tab, screenX, screenY }),
+  /**
+   * Merge a popped-out tab back into the window under the drop point (defaults to
+   * the main window). Resolves `{ merged }`: true closes this popout window.
+   */
+  mergeTab: ({ tab, screenX, screenY }) => ipcRenderer.invoke('window:mergeTab', { tab, screenX, screenY }),
+  /**
+   * Subscribe to a tab being merged back into this window from a popout.
+   * Returns an unsubscribe function.
+   */
+  onAdoptTab: (callback) => {
+    const listener = (_event, tab) => callback(tab);
+    ipcRenderer.on('window:adoptTab', listener);
+    return () => ipcRenderer.removeListener('window:adoptTab', listener);
+  },
+
+  // ── Terminal ────────────────────────────────────────────────
+  startTerminal: ({ id, cwd, cols, rows }) => ipcRenderer.invoke('terminal:start', { id, cwd, cols, rows }),
+  writeTerminal: ({ id, data }) => ipcRenderer.invoke('terminal:write', { id, data }),
+  resizeTerminal: ({ id, cols, rows }) => ipcRenderer.invoke('terminal:resize', { id, cols, rows }),
+  stopTerminal: (id) => ipcRenderer.invoke('terminal:stop', id),
+  onTerminalData: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('terminal:data', listener);
+    return () => ipcRenderer.removeListener('terminal:data', listener);
+  },
+  onTerminalExit: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('terminal:exit', listener);
+    return () => ipcRenderer.removeListener('terminal:exit', listener);
+  },
+
   // ── Shortcuts ────────────────────────────────────────────────
   /**
    * Subscribe to keyboard shortcuts forwarded from the main process.
@@ -56,5 +98,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
     const listener = (_event, action) => callback(action);
     ipcRenderer.on('shortcut', listener);
     return () => ipcRenderer.removeListener('shortcut', listener);
+  },
+
+  // ── WebContentsView Browser ──────────────────────────────────
+  createView: (tabId, isChatNote) => ipcRenderer.invoke('browser:createView', tabId, isChatNote),
+  setChatNote: (tabId, isChatNote) => ipcRenderer.invoke('browser:setChatNote', tabId, isChatNote),
+  setViewBounds: (tabId, bounds) => ipcRenderer.invoke('browser:setViewBounds', tabId, bounds),
+  setViewVisible: (tabId, visible) => ipcRenderer.invoke('browser:setViewVisible', tabId, visible),
+  destroyView: (tabId) => ipcRenderer.invoke('browser:destroyView', tabId),
+  loadURL: (tabId, url) => ipcRenderer.invoke('browser:loadURL', tabId, url),
+  goBack: (tabId) => ipcRenderer.invoke('browser:goBack', tabId),
+  goForward: (tabId) => ipcRenderer.invoke('browser:goForward', tabId),
+  reload: (tabId) => ipcRenderer.invoke('browser:reload', tabId),
+  onBrowserEvent: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('browser:event', listener);
+    return () => ipcRenderer.removeListener('browser:event', listener);
   }
 });

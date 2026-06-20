@@ -19,7 +19,7 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import Database from 'better-sqlite3';
 import { Server } from 'socket.io';
-import { addTag, createFolder, createNote, createVault, deleteFolder, deleteNote, ensureVaultSchema, getBacklinks, getGraph, getNote, getVault, listFolders, listNotes, listTags, listVaults, moveNote, removeTag, renameNote, searchNotes, toggleArchive, togglePin, updateFolder, updateNote, } from './server/vault.js';
+import { addTag, createFolder, createNote, createVault, deleteFolder, deleteNote, ensureVaultSchema, getBacklinks, getGraph, getNote, getVault, listFolders, listNotes, listTags, linkifyTerm, listVaults, moveNote, removeTag, renameNote, searchNotes, toggleArchive, togglePin, updateFolder, updateNote, } from './server/vault.js';
 import { createNoteVersion, diffNoteVersions, diffText, ensureVersionsSchema, listNoteVersions, } from './server/versions.js';
 import { ensureRunnerSchema, setRunEventSink, setVaultEventSink, listRuns, getRun, listRunEvents, startRun, sendRunMessage, cancelRun, } from './server/runner.js';
 import { ensureFeedSchema, fetchFeed, pollWidgetFeeds, setFeedNotifySink, startFeedPoller, } from './server/feeds.js';
@@ -339,6 +339,26 @@ app.post('/api/vaults/:id/notes', requireAuth, (req, res) => {
     }
     catch (error) {
         res.status(400).json({ error: error instanceof Error ? error.message : 'Could not create note' });
+    }
+});
+// Resolve a selected term to a note to link to: an existing fuzzy match, or a
+// freshly created minimal stub. The agent fills in / files the note afterwards.
+app.post('/api/vaults/:id/notes/linkify', requireAuth, (req, res) => {
+    const vault = getVault(db, req.params.id, req.user.id);
+    if (!vault)
+        return res.status(404).json({ error: 'Vault not found' });
+    try {
+        const { note, matched, score } = linkifyTerm(db, vault.id, req.user.id, {
+            term: String(req.body?.term ?? ''),
+        });
+        if (!matched) {
+            createNoteVersion(db, note.id, note.content, 'created');
+            emitVaultEvent(vault.id, 'vault:noteCreated', { noteId: note.id, vaultId: vault.id, title: note.title });
+        }
+        res.status(matched ? 200 : 201).json({ note, matched, score });
+    }
+    catch (error) {
+        res.status(400).json({ error: error instanceof Error ? error.message : 'Could not link term' });
     }
 });
 app.get('/api/notes/:id', requireAuth, (req, res) => {

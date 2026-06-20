@@ -21,7 +21,7 @@ function getParsedDecorations(text: string, cursorHead: number = -1) {
   } as unknown as EditorState;
 
   const set = buildDecorations(mockState);
-  const decos: { from: number; to: number; className?: string; type: string; url?: string }[] = [];
+  const decos: { from: number; to: number; className?: string; type: string; url?: string; widgetName?: string }[] = [];
   
   const iter = set.iter();
   while (iter.value) {
@@ -29,7 +29,8 @@ function getParsedDecorations(text: string, cursorHead: number = -1) {
     const decoInfo: any = {
       from: iter.from,
       to: iter.to,
-      type: val.spec?.class || (val.spec?.widget ? 'widget' : 'unknown')
+      type: val.spec?.class || (val.spec?.widget ? 'widget' : 'unknown'),
+      widgetName: val.spec?.widget?.constructor?.name,
     };
     if (val.spec?.attributes?.['data-url']) {
       decoInfo.url = val.spec.attributes['data-url'];
@@ -100,6 +101,23 @@ describe('Markdown Decoration Parser Tests', () => {
     }));
   });
 
+  it('should render a plain wikilink as a chip over its inner title', () => {
+    const decos = getParsedDecorations('[[Cascade]]');
+    // [[ hidden, "Cascade" chip, ]] hidden
+    expect(decos).toContainEqual(expect.objectContaining({ type: 'cm-md-hidden', from: 0, to: 2 }));
+    expect(decos).toContainEqual(expect.objectContaining({ type: 'cm-wikilink', from: 2, to: 9 }));
+    expect(decos).toContainEqual(expect.objectContaining({ type: 'cm-md-hidden', from: 9, to: 11 }));
+  });
+
+  it('should render an aliased wikilink showing only the display text', () => {
+    // [[Cascade|the effect]] — hide "[[", hide "Cascade|", chip over "the effect", hide "]]"
+    const decos = getParsedDecorations('[[Cascade|the effect]]');
+    expect(decos).toContainEqual(expect.objectContaining({ type: 'cm-md-hidden', from: 0, to: 2 }));
+    expect(decos).toContainEqual(expect.objectContaining({ type: 'cm-md-hidden', from: 2, to: 10 }));
+    expect(decos).toContainEqual(expect.objectContaining({ type: 'cm-wikilink', from: 10, to: 20 }));
+    expect(decos).toContainEqual(expect.objectContaining({ type: 'cm-md-hidden', from: 20, to: 22 }));
+  });
+
   it('should sort decorations strictly by start position to prevent CodeMirror RangeError', () => {
     // A line with a checkbox and preceding/following bold styles
     const text = '**bold** - [ ] **more bold**';
@@ -112,5 +130,63 @@ describe('Markdown Decoration Parser Tests', () => {
         expect(decos[i].to).toBeGreaterThanOrEqual(decos[i + 1].to);
       }
     }
+  });
+
+  it('should replace malformed empty-header pipe tables with a table widget', () => {
+    const text = [
+      '||',
+      '|---|---|',
+      '| Campaign | **Atomic Arch** |',
+      '| Payload | Rust `deps` ELF stealer |',
+    ].join('\n');
+    const decos = getParsedDecorations(text);
+
+    expect(decos).toContainEqual(expect.objectContaining({
+      type: 'widget',
+      widgetName: 'TableWidget',
+      from: 0,
+      to: text.length,
+    }));
+  });
+
+  it('should leave a table editable when the cursor is inside it', () => {
+    const text = [
+      '||',
+      '|---|---|',
+      '| Campaign | **Atomic Arch** |',
+    ].join('\n');
+    const decos = getParsedDecorations(text, 1);
+
+    expect(decos).not.toContainEqual(expect.objectContaining({
+      type: 'widget',
+      widgetName: 'TableWidget',
+    }));
+  });
+
+  it('should style fenced code block contents and hide fences outside the active block', () => {
+    const text = [
+      '```',
+      'orphaned package -> attacker adopts',
+      '-> npm/Bun pulls malicious package',
+      '```',
+    ].join('\n');
+    const decos = getParsedDecorations(text);
+
+    expect(decos).toContainEqual(expect.objectContaining({ type: 'cm-md-hidden', from: 0, to: 3 }));
+    expect(decos).toContainEqual(expect.objectContaining({ type: 'cm-code-block-line', from: 4, to: 39 }));
+    expect(decos).toContainEqual(expect.objectContaining({ type: 'cm-code-block-line', from: 40, to: 74 }));
+    expect(decos).toContainEqual(expect.objectContaining({ type: 'cm-md-hidden', from: 75, to: 78 }));
+  });
+
+  it('should leave fenced code blocks raw when the cursor is inside them', () => {
+    const text = [
+      '```',
+      'orphaned package -> attacker adopts',
+      '```',
+    ].join('\n');
+    const decos = getParsedDecorations(text, 5);
+
+    expect(decos).not.toContainEqual(expect.objectContaining({ type: 'cm-md-hidden', from: 0, to: 3 }));
+    expect(decos).not.toContainEqual(expect.objectContaining({ type: 'cm-code-block-line' }));
   });
 });

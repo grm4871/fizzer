@@ -1656,6 +1656,33 @@ a {
 }
 .ai-markdown pre code { background: none; padding: 0; color: var(--text-primary); }
 .ai-markdown a { color: var(--accent); }
+.ai-markdown table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  margin: 0.35em 0 0.75em;
+  border-collapse: collapse;
+  overflow-x: auto;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+}
+.ai-markdown th,
+.ai-markdown td {
+  border: 1px solid var(--border);
+  padding: 5px 8px;
+  vertical-align: top;
+}
+.ai-markdown th {
+  background: var(--bg-deep);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.ai-markdown td {
+  color: var(--text-secondary);
+}
+.ai-markdown tr:nth-child(even) td {
+  background: hsla(22, 8%, 5%, 0.36);
+}
 .ai-markdown blockquote {
   margin: 0.25em 0;
   padding-left: 0.75em;
@@ -1943,6 +1970,128 @@ a {
   align-self: stretch;
 }
 
+/* ─── Tiling pane grid ─────────────────────────────────────────── */
+.pane {
+  position: relative;
+}
+.pane-content {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.pane-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tertiary);
+  font-size: 0.8125rem;
+}
+
+/* Per-pane tab strip. Reuses .tab-bar/.tab-item; this only adds the focused cue. */
+.pane-tab-bar {
+  min-height: 34px;
+}
+.pane-tab-bar.is-focused {
+  box-shadow: inset 0 2px 0 var(--accent-subtle);
+}
+.tab-item .tab-popout {
+  opacity: 0;
+  border: none;
+  background: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  padding: 0;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+}
+.tab-item:hover .tab-popout {
+  opacity: 0.75;
+}
+.tab-item .tab-popout:hover {
+  opacity: 1;
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+/* Resizable split dividers */
+.pane-split-child {
+  position: relative;
+}
+.pane-divider {
+  flex-shrink: 0;
+  background: var(--border);
+  transition: background var(--transition-fast);
+  z-index: 5;
+}
+.pane-divider:hover {
+  background: var(--accent);
+}
+.pane-divider-vertical {
+  width: 4px;
+  cursor: col-resize;
+  align-self: stretch;
+}
+.pane-divider-horizontal {
+  height: 4px;
+  cursor: row-resize;
+  width: 100%;
+}
+
+/* Pop-out window drag-handle header (merge tab back into the main window) */
+.popout-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  height: 30px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border);
+  cursor: grab;
+  flex-shrink: 0;
+  user-select: none;
+}
+.popout-bar:active {
+  cursor: grabbing;
+}
+.popout-bar-title {
+  font-size: 0.8125rem;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.popout-bar-hint {
+  margin-left: auto;
+  font-size: 0.6875rem;
+  color: var(--text-tertiary);
+}
+
+/* Drag-tile drop zones (overlaid on the hovered pane's content) */
+.pane-dropzone {
+  position: absolute;
+  background: var(--accent-subtle);
+  border: 2px solid var(--accent);
+  border-radius: var(--radius-sm);
+  pointer-events: none;
+  z-index: 20;
+  transition: all 60ms ease-out;
+}
+.pane-dropzone-center { inset: 8px; }
+.pane-dropzone-left { top: 8px; bottom: 8px; left: 8px; width: calc(50% - 12px); }
+.pane-dropzone-right { top: 8px; bottom: 8px; right: 8px; width: calc(50% - 12px); }
+.pane-dropzone-top { left: 8px; right: 8px; top: 8px; height: calc(50% - 12px); }
+.pane-dropzone-bottom { left: 8px; right: 8px; bottom: 8px; height: calc(50% - 12px); }
+
 /* WebView Component */
 .webview-container {
   flex: 1;
@@ -1950,6 +2099,7 @@ a {
   flex-direction: column;
   height: 100%;
   background: var(--bg-base);
+  position: relative;
 }
 
 .webview-toolbar {
@@ -2048,7 +2198,10 @@ a {
   height: 2px;
   background: var(--accent);
   width: 100%;
-  position: relative;
+  position: absolute;
+  top: 46px;
+  left: 0;
+  z-index: 10;
   overflow: hidden;
 }
 
@@ -2112,6 +2265,95 @@ a {
   margin-top: 8px;
 }
 
+/* ═══════════════════════════════════════════════════════════
+   TERMINAL WINDOW
+   ═══════════════════════════════════════════════════════════ */
+.terminal-window {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  background: #0c0d0e;
+  color: #e7e2d8;
+  font-family: var(--font-mono);
+}
+
+.terminal-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 36px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+}
+
+.terminal-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-family: var(--font-sans);
+  font-size: 0.8125rem;
+}
+
+.terminal-status {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
+  font-size: 0.625rem;
+  line-height: 1;
+}
+
+.terminal-status-running {
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 40%, var(--border));
+}
+
+.terminal-status-stopped,
+.terminal-status-unavailable {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+}
+
+.terminal-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.terminal-action {
+  width: 26px;
+  height: 26px;
+}
+
+.terminal-xterm {
+  flex: 1;
+  min-height: 0;
+  padding: 8px 10px;
+  overflow: hidden;
+  background: #0c0d0e;
+}
+
+.terminal-xterm .xterm {
+  height: 100%;
+}
+
+.terminal-xterm .xterm-viewport {
+  background: #0c0d0e !important;
+}
+
+.terminal-xterm .xterm-screen {
+  outline: none;
+}
+
 /* Context menu */
 .tab-context-menu {
   position: fixed;
@@ -2147,4 +2389,31 @@ a {
 
 .tab-item.split-active {
   border-bottom: 2px dashed var(--accent);
+}
+
+/* ── Floating "Link to note" action ─────────────────────────── */
+.link-note-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  line-height: 1;
+  color: hsl(33, 80%, 72%);
+  background: hsl(22, 9%, 12%);
+  border: 1px solid var(--accent-glow);
+  border-radius: 999px;
+  box-shadow: 0 6px 18px hsla(0, 0%, 0%, 0.45);
+  cursor: pointer;
+  white-space: nowrap;
+  transform: translateX(-50%);
+  transition: background 0.12s ease, border-color 0.12s ease, transform 0.06s ease;
+}
+.link-note-chip:hover {
+  background: var(--accent-subtle);
+  border-color: var(--accent-hover);
+}
+.link-note-chip:active {
+  transform: translateX(-50%) translateY(1px);
 }

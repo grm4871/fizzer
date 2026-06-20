@@ -54,7 +54,9 @@ export function extractLinks(content) {
     const matches = content.matchAll(/\[\[([^\]]+)\]\]/g);
     const titles = [];
     for (const match of matches) {
-        const title = match[1].trim();
+        // A wikilink may carry an alias ([[Target|shown text]]) and/or a heading
+        // anchor ([[Target#Section]]); the link target is just the leading portion.
+        let title = match[1].split('|')[0].split('#')[0].trim();
         if (title && !titles.includes(title))
             titles.push(title);
     }
@@ -432,6 +434,108 @@ export function togglePin(db, noteId) {
 }
 export function toggleArchive(db, noteId) {
     db.prepare('UPDATE notes SET is_archived = CASE WHEN is_archived = 0 THEN 1 ELSE 0 END, updated_at = datetime(\'now\') WHERE id = ?').run(noteId);
+}
+// ── Fuzzy term resolution & on-the-fly note creation ───────────────
+function normalizeTerm(s) {
+    return s
+        .toLowerCase()
+        .normalize('NFKD')
+        .replace(/[\u0300-\u036f]/g, "") // strip diacritics
+        .replace(/[^a-z0-9\s]/g, ' ') // drop punctuation
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+// Rough singular form so "cascades" matches "cascade" during token overlap.
+function singularize(token) {
+    if (token.length > 4 && token.endsWith('ies'))
+        return `${token.slice(0, -3)}y`;
+    if (token.length > 3 && token.endsWith('es'))
+        return token.slice(0, -2);
+    if (token.length > 3 && token.endsWith('s') && !token.endsWith('ss'))
+        return token.slice(0, -1);
+    return token;
+}
+function tokenSet(s) {
+    return new Set(normalizeTerm(s).split(' ').filter(Boolean).map(singularize));
+}
+// Levenshtein edit distance (two-row variant). Titles are short, so this is cheap.
+function editDistance(a, b) {
+    if (a === b)
+        return 0;
+    if (!a.length)
+        return b.length;
+    if (!b.length)
+        return a.length;
+    let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+    let curr = new Array(b.length + 1);
+    for (let i = 1; i <= a.length; i++) {
+        curr[0] = i;
+        for (let j = 1; j <= b.length; j++) {
+            const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+            curr[j] = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost);
+        }
+        [prev, curr] = [curr, prev];
+    }
+    return prev[b.length];
+}
+// 0..1 similarity blending whole-string edit distance with token overlap, so
+// both "Cascadr" ≈ "Cascade" (typo) and "the cascade effect" ≈ "Cascade Effect"
+// (reordering / stop words) score highly.
+export function termSimilarity(a, b) {
+    const na = normalizeTerm(a);
+    const nb = normalizeTerm(b);
+    if (!na || !nb)
+        return 0;
+    if (na === nb)
+        return 1;
+    const maxLen = Math.max(na.length, nb.length);
+    const editScore = maxLen === 0 ? 0 : 1 - editDistance(na, nb) / maxLen;
+    const setA = tokenSet(a);
+    const setB = tokenSet(b);
+    let shared = 0;
+    for (const t of setA)
+        if (setB.has(t))
+            shared++;
+    const union = new Set([...setA, ...setB]).size;
+    const jaccard = union === 0 ? 0 : shared / union;
+    return Math.max(editScore, jaccard);
+}
+const FUZZY_MATCH_THRESHOLD = 0.7;
+// Find the existing note whose title best matches `term` above the confidence
+// threshold. Returns undefined when nothing is close enough, so the caller
+// creates a fresh note instead of merging into an unrelated one.
+export function fuzzyFindNote(db, vaultId, term) {
+    const rows = db.prepare('SELECT id, title FROM notes WHERE vault_id = ?').all(vaultId);
+    let best;
+    for (const row of rows) {
+        const score = termSimilarity(term, row.title);
+        if (score >= FUZZY_MATCH_THRESHOLD && (!best || score > best.score)) {
+            best = { id: row.id, title: row.title, score };
+        }
+    }
+    return best;
+}
+/**
+ * Resolve a selected term to the note it should link to. If a sufficiently
+ * similar note already exists, return it (so the caller can update it and alias
+ * the link); otherwise create a minimal placeholder note titled exactly `term`
+ * so the wikilink is immediately valid. The actual prose and folder placement
+ * are left to the agent, which fills the note in afterwards.
+ */
+export function linkifyTerm(db, vaultId, userId, opts) {
+    const term = String(opts.term || '').trim();
+    if (!term)
+        throw new Error('Term is required');
+    const existing = fuzzyFindNote(db, vaultId, term);
+    if (existing) {
+        const current = getNote(db, existing.id);
+        if (!current)
+            throw new Error('Matched note could not be loaded');
+        return { note: current, matched: true, score: existing.score };
+    }
+    // Minimal stub — just the title. The agent writes the body and files it.
+    const note = createNote(db, vaultId, userId, { title: term, content: `# ${term}\n` });
+    return { note, matched: false, score: 0 };
 }
 // ── Search ─────────────────────────────────────────────────────────
 export function searchNotes(db, vaultId, query) {

@@ -16,11 +16,18 @@
 // IMPORTS & CONFIG
 // ═══════════════════════════════════════════════════════════════
 
-const { app, BrowserWindow, ipcMain, session, Menu, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, session, Menu, shell, WebContentsView } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { ElectronBlocker } = require('@ghostery/adblocker-electron');
 const db = require('./database.cjs');
+
+let nodePty = null;
+try {
+  nodePty = require('node-pty');
+} catch (error) {
+  console.error('[Terminal] node-pty is unavailable:', error?.message || error);
+}
 
 // Suppress GLib-GObject and GTK warnings on Linux, and disable hardware acceleration to fix blank webviews
 if (process.platform === 'linux') {
@@ -39,6 +46,8 @@ let adBlocker = null;
 let webviewBrowserSession = null;
 let activeWebviewSite = '';
 const webContentsSites = new Map();
+const terminalProcesses = new Map();
+const webViews = new Map();
 // Removed: dead `serverProcess` variable — it was declared but never assigned,
 // and the corresponding `if (serverProcess) serverProcess.kill()` in the
 // 'closed' handler was therefore unreachable.
@@ -203,6 +212,53 @@ function injectAntiAdblockDefuser(webContents) {
   webContents.executeJavaScript(ANTI_ADBLOCK_DEFUSER, true).catch((error) => {
     console.error('[AntiAdblock] Injection failed:', error?.message || error);
   });
+}
+
+function injectCustomStyles(webContents) {
+  if (!webContents || webContents.isDestroyed()) return;
+  const url = webContents.getURL();
+  if (url.includes('x.com') || url.includes('twitter.com')) {
+    const css = `
+      header[role="banner"] {
+        display: none !important;
+      }
+      div[role="main"] {
+        margin-left: 0 !important;
+        margin-right: 0 !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        align-items: center !important;
+      }
+      div[data-testid="primaryColumn"] {
+        max-width: 100% !important;
+        width: 100% !important;
+        margin: 0 !important;
+        border-right-width: 0 !important;
+      }
+      div[data-testid="DMActivityContainer"] {
+        max-width: 100% !important;
+        width: 100% !important;
+      }
+    `;
+    webContents.insertCSS(css).catch((error) => {
+      console.error('[CustomCSS] Twitter CSS injection failed:', error?.message || error);
+    });
+  } else if (url.includes('discord.com')) {
+    const css = `
+      nav[aria-label="Servers sidebar"],
+      div[class*="guilds_"],
+      div[class*="sidebar_"] {
+        display: none !important;
+      }
+      div[class*="chat_"] {
+        width: 100% !important;
+        max-width: 100% !important;
+      }
+    `;
+    webContents.insertCSS(css).catch((error) => {
+      console.error('[CustomCSS] Discord CSS injection failed:', error?.message || error);
+    });
+  }
 }
 
 function normalizeSite(urlOrHostname) {
@@ -373,6 +429,34 @@ async function configureWebviewSession() {
     callback(true);
   });
 
+  // Intercept onBeforeRequest to cleanly block Discord RPC (ports 6463-6472) for both HTTP and WebSockets
+  const originalOnBeforeRequest = webviewSession.webRequest.onBeforeRequest.bind(webviewSession.webRequest);
+  webviewSession.webRequest.onBeforeRequest = (filter, listener) => {
+    const targetListener = typeof filter === 'function' ? filter : listener;
+    if (targetListener) {
+      const wrappedListener = (details, callback) => {
+        try {
+          const parsedUrl = new URL(details.url);
+          const hostname = parsedUrl.hostname;
+          const port = parseInt(parsedUrl.port, 10);
+          if ((hostname === '127.0.0.1' || hostname === 'localhost') && port >= 6463 && port <= 6472) {
+            console.log('[WebView Block] Blocked Discord RPC:', details.url);
+            callback({ cancel: true });
+            return;
+          }
+        } catch (e) {}
+        targetListener(details, callback);
+      };
+
+      const newFilter = {
+        urls: ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*', 'ftp://*/*']
+      };
+      originalOnBeforeRequest(newFilter, wrappedListener);
+    } else {
+      originalOnBeforeRequest(filter, listener);
+    }
+  };
+
   webviewSession.on('will-download', (_event, item) => {
     console.log('[WebView Download]', item.getURL(), '->', item.getFilename());
   });
@@ -389,9 +473,154 @@ async function configureWebviewSession() {
  * it loads the URL specified by the `--APP_URL=` CLI flag (defaults to
  * http://localhost:5173).
  */
+/** Resolve the base URL the app loads from (prod vs dev `--APP_URL=`). */
+function getAppBaseUrl() {
+  if (app.isPackaged) return 'https://netar.is';
+  const parsedArgs = {};
+  process.argv.slice(2).forEach((arg) => {
+    if (arg.startsWith('--')) {
+      const [key, value] = arg.slice(2).split('=');
+      parsedArgs[key] = value || true;
+    }
+  });
+  return parsedArgs['APP_URL'] || 'http://localhost:5173';
+}
+
+/** Send an IPC message to every live window (terminal output may belong to the
+ *  main window or a popped-out window). */
+function broadcastToWindows(channel, payload) {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send(channel, payload);
+  }
+}
+
+function isAllowedNavHost(hostname) {
+  return (
+    hostname === 'netar.is' ||
+    hostname.endsWith('.netar.is') ||
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1'
+  );
+}
+
+/**
+ * Shared per-window wiring: <webview> hardening + adblock tracking, navigation
+ * guards, external-window blocking, and keyboard shortcuts. Applied to the main
+ * window and every popped-out pane window so they behave identically.
+ */
+function configureWindow(win) {
+  const browserLikeUserAgent = buildBrowserLikeUserAgent();
+
+  win.on('closed', () => {
+    cleanupWindowViews(win);
+  });
+
+  win.webContents.on('will-attach-webview', (_event, webPreferences, params) => {
+    webPreferences.partition = WEBVIEW_PARTITION;
+    webPreferences.nodeIntegration = false;
+    webPreferences.contextIsolation = true;
+    delete webPreferences.preload;
+    params.partition = WEBVIEW_PARTITION;
+    params.useragent = browserLikeUserAgent;
+  });
+
+  win.webContents.on('did-attach-webview', (_event, webContents) => {
+    const rememberWebviewSite = (url) => {
+      const site = normalizeSite(url);
+      if (!site) return;
+      webContentsSites.set(webContents.id, site);
+      applyAdBlockStateForSite(site);
+    };
+
+    rememberWebviewSite(webContents.getURL());
+    webContents.on('did-start-navigation', (_navEvent, url, _isInPlace, isMainFrame) => {
+      if (isMainFrame) rememberWebviewSite(url);
+    });
+    webContents.on('did-navigate', (_navEvent, url) => rememberWebviewSite(url));
+    // Defuse "you're using an adblocker" walls; injected script is idempotent.
+    webContents.on('dom-ready', () => {
+      injectAntiAdblockDefuser(webContents);
+      injectCustomStyles(webContents);
+    });
+    webContents.on('will-navigate', (event, url) => {
+      try {
+        const parsed = new URL(url);
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:' && parsed.protocol !== 'about:') {
+          event.preventDefault();
+          console.log('[WebView] Blocked custom protocol navigation:', url);
+        }
+      } catch {
+        event.preventDefault();
+      }
+    });
+    webContents.on('destroyed', () => {
+      webContentsSites.delete(webContents.id);
+    });
+  });
+
+  // Block navigation to sites outside netar.is / local dev.
+  win.webContents.on('will-navigate', (event, url) => {
+    try {
+      if (!isAllowedNavHost(new URL(url).hostname)) {
+        event.preventDefault();
+        console.log('[Main] Blocked navigation to:', url);
+      }
+    } catch {
+      event.preventDefault();
+    }
+  });
+
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    try {
+      if (!isAllowedNavHost(new URL(url).hostname)) {
+        console.log('[Main] Blocked window open to:', url);
+        return { action: 'deny' };
+      }
+    } catch {
+      return { action: 'deny' };
+    }
+    return { action: 'allow' };
+  });
+
+  // Local keyboard shortcuts (only fire while this window is focused).
+  win.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown') return;
+    const isMac = process.platform === 'darwin';
+    const modifier = isMac ? input.meta : input.control;
+
+    if (modifier && input.code === 'KeyR' && !input.shift) {
+      event.preventDefault();
+      win.webContents.reload();
+    } else if (modifier && input.code === 'KeyR' && input.shift) {
+      event.preventDefault();
+      app.relaunch();
+      app.quit();
+    } else if (modifier && (input.code === 'Equal' || input.code === 'NumpadAdd')) {
+      event.preventDefault();
+      win.webContents.setZoomLevel(win.webContents.getZoomLevel() + 0.5);
+    } else if (modifier && (input.code === 'Minus' || input.code === 'NumpadSubtract')) {
+      event.preventDefault();
+      win.webContents.setZoomLevel(win.webContents.getZoomLevel() - 0.5);
+    } else if (modifier && (input.code === 'Digit0' || input.code === 'Numpad0')) {
+      event.preventDefault();
+      win.webContents.setZoomLevel(0);
+    } else if (modifier && input.code === 'KeyN' && !input.shift) {
+      // Chromium reserves Ctrl+N; intercept and forward to the renderer.
+      event.preventDefault();
+      win.webContents.send('shortcut', 'new-note');
+    } else if (modifier && input.code === 'Backslash' && !input.shift) {
+      event.preventDefault();
+      win.webContents.send('shortcut', 'toggle-sidebar');
+    }
+  });
+}
+
+/**
+ * Creates the main application window with security-hardened webPreferences.
+ * In production it loads https://netar.is; in development the `--APP_URL=` URL.
+ */
 function createWindow() {
   Menu.setApplicationMenu(buildApplicationMenu());
-  const browserLikeUserAgent = buildBrowserLikeUserAgent();
 
   mainWindow = new BrowserWindow({
     width: 1200,
@@ -405,144 +634,41 @@ function createWindow() {
     }
   });
 
-  mainWindow.webContents.on('will-attach-webview', (_event, webPreferences, params) => {
-    webPreferences.partition = WEBVIEW_PARTITION;
-    webPreferences.nodeIntegration = false;
-    webPreferences.contextIsolation = true;
-    delete webPreferences.preload;
-    params.partition = WEBVIEW_PARTITION;
-    params.useragent = browserLikeUserAgent;
-  });
+  configureWindow(mainWindow);
 
-  mainWindow.webContents.on('did-attach-webview', (_event, webContents) => {
-    const rememberWebviewSite = (url) => {
-      const site = normalizeSite(url);
-      if (!site) return;
-      webContentsSites.set(webContents.id, site);
-      applyAdBlockStateForSite(site);
-    };
-
-    rememberWebviewSite(webContents.getURL());
-    webContents.on('did-start-navigation', (_navEvent, url, _isInPlace, isMainFrame) => {
-      if (isMainFrame) rememberWebviewSite(url);
-    });
-    webContents.on('did-navigate', (_navEvent, url) => rememberWebviewSite(url));
-
-    // Defuse "you're using an adblocker" walls regardless of the adblock
-    // toggle. dom-ready fires on every main-frame navigation; the injected
-    // script is idempotent (guards via window.__cascadeAntiAdblockDefuser).
-    webContents.on('dom-ready', () => injectAntiAdblockDefuser(webContents));
-
-    webContents.on('destroyed', () => {
-      webContentsSites.delete(webContents.id);
-    });
-  });
-  
-  // Load URL based on environment (dev vs prod)
-  if (app.isPackaged) {
-    mainWindow.loadURL('https://netar.is');
-  } else {
-    // Development mode logic
-    const args = process.argv.slice(2);
-    const parsedArgs = {};
-    args.forEach(arg => {
-      if (arg.startsWith('--')) {
-        const [key, value] = arg.slice(2).split('=');
-        parsedArgs[key] = value || true;
-      }
-    });
-
-    const devUrl = parsedArgs['APP_URL'] || 'http://localhost:5173';
-    console.log('[Main] Loading dev URL:', devUrl);
-    mainWindow.loadURL(devUrl);
-  }
+  const baseUrl = getAppBaseUrl();
+  console.log('[Main] Loading app URL:', baseUrl);
+  mainWindow.loadURL(baseUrl);
 
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
+}
 
-  // ═══════════════════════════════════════════════════════════════
-  // NAVIGATION SECURITY
-  // ═══════════════════════════════════════════════════════════════
-
-  // Block navigation to sites outside netar.is
-  mainWindow.webContents.on('will-navigate', (event, url) => {
-    const parsedUrl = new URL(url);
-    const isAllowed =
-      parsedUrl.hostname === 'netar.is' ||
-      parsedUrl.hostname.endsWith('.netar.is') ||
-      parsedUrl.hostname === 'localhost' ||
-      parsedUrl.hostname === '127.0.0.1';
-
-    if (!isAllowed) {
-      event.preventDefault();
-      console.log('[Main] Blocked navigation to:', url);
+/**
+ * Open a tab that was dragged out of a window into its own OS window. The tab
+ * descriptor (id/type/url/title/terminal history) rides in the URL hash; the
+ * renderer detects `#popout=` and renders a single-tab workspace.
+ */
+function createPaneWindow(descriptor, bounds) {
+  const win = new BrowserWindow({
+    width: (bounds && bounds.width) || 900,
+    height: (bounds && bounds.height) || 680,
+    x: bounds && bounds.x,
+    y: bounds && bounds.y,
+    autoHideMenuBar: !isDevelopmentMode(),
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      webviewTag: true,
+      preload: path.join(__dirname, 'preload.cjs')
     }
   });
 
-  // Block new windows to external sites
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    const parsedUrl = new URL(url);
-    const isAllowed =
-      parsedUrl.hostname === 'netar.is' ||
-      parsedUrl.hostname.endsWith('.netar.is') ||
-      parsedUrl.hostname === 'localhost' ||
-      parsedUrl.hostname === '127.0.0.1';
-
-    if (!isAllowed) {
-      console.log('[Main] Blocked window open to:', url);
-      return { action: 'deny' };
-    }
-    return { action: 'allow' };
-  });
-
-  // ═══════════════════════════════════════════════════════════════
-  // KEYBOARD SHORTCUTS
-  // ═══════════════════════════════════════════════════════════════
-
-  // Local keyboard shortcuts (only work when window is focused)
-  mainWindow.webContents.on('before-input-event', (event, input) => {
-    if (input.type !== 'keyDown') return;
-
-    // Mac: Cmd, Windows/Linux: Ctrl
-    const isMac = process.platform === 'darwin';
-    const modifier = isMac ? input.meta : input.control;
-
-    if (modifier && input.code === 'KeyR' && !input.shift) {
-      // Refresh: Cmd/Ctrl + R
-      event.preventDefault();
-      mainWindow.webContents.reload();
-    } else if (modifier && input.code === 'KeyR' && input.shift) {
-      // Relaunch: Cmd/Ctrl + Shift + R
-      event.preventDefault();
-      app.relaunch();
-      app.exit(0);
-    } else if (modifier && (input.code === 'Equal' || input.code === 'NumpadAdd')) {
-      // Zoom in: Cmd/Ctrl + Plus/=
-      event.preventDefault();
-      const currentZoom = mainWindow.webContents.getZoomLevel();
-      mainWindow.webContents.setZoomLevel(currentZoom + 0.5);
-    } else if (modifier && (input.code === 'Minus' || input.code === 'NumpadSubtract')) {
-      // Zoom out: Cmd/Ctrl + Minus
-      event.preventDefault();
-      const currentZoom = mainWindow.webContents.getZoomLevel();
-      mainWindow.webContents.setZoomLevel(currentZoom - 0.5);
-    } else if (modifier && (input.code === 'Digit0' || input.code === 'Numpad0')) {
-      // Reset zoom: Cmd/Ctrl + 0
-      event.preventDefault();
-      mainWindow.webContents.setZoomLevel(0);
-    } else if (modifier && input.code === 'KeyN' && !input.shift) {
-      // New Note: Cmd/Ctrl + N
-      // Chromium reserves Ctrl+N (new window) and never dispatches it to the
-      // page, so we intercept it here and forward it to the renderer.
-      event.preventDefault();
-      mainWindow.webContents.send('shortcut', 'new-note');
-    } else if (modifier && input.code === 'Backslash' && !input.shift) {
-      // Toggle Sidebar: Cmd/Ctrl + \
-      event.preventDefault();
-      mainWindow.webContents.send('shortcut', 'toggle-sidebar');
-    }
-  });
+  configureWindow(win);
+  const hash = '#popout=' + encodeURIComponent(JSON.stringify(descriptor));
+  win.loadURL(getAppBaseUrl() + hash);
+  return win;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -578,6 +704,27 @@ ipcMain.handle('db:getConfigDir', async () => {
     return { success: true, configDir };
   } catch (error) {
     console.error('[IPC] Failed to get config dir:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+/** Reads a small renderer setting from the local SQLite database. */
+ipcMain.handle('db:getSetting', async (_event, key) => {
+  try {
+    return { success: true, value: db.getSetting(String(key)) };
+  } catch (error) {
+    console.error('[IPC] Failed to get setting:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+/** Persists a small renderer setting in the local SQLite database. */
+ipcMain.handle('db:setSetting', async (_event, { key, value }) => {
+  try {
+    db.setSetting(String(key), String(value ?? ''));
+    return { success: true };
+  } catch (error) {
+    console.error('[IPC] Failed to set setting:', error);
     return { success: false, error: error.message };
   }
 });
@@ -649,6 +796,456 @@ ipcMain.handle('browser:setAdBlockSiteEnabled', async (_event, { url, enabled })
     };
   } catch (error) {
     console.error('[IPC] Failed to set adblock state:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// ── WebContentsView Browser Handlers ──────────────────────────
+
+function cleanupWindowViews(win) {
+  for (const [tabId, entry] of webViews.entries()) {
+    if (entry.win === win) {
+      if (entry.destroyTimeout) clearTimeout(entry.destroyTimeout);
+      try {
+        win.contentView.removeChildView(entry.view);
+      } catch (e) {}
+      try {
+        entry.view.webContents.close();
+      } catch (e) {}
+      webViews.delete(tabId);
+    }
+  }
+}
+
+ipcMain.handle('browser:createView', async (event, tabId, isChatNote) => {
+  try {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) throw new Error('No parent window found');
+
+    let entry = webViews.get(tabId);
+    if (entry) {
+      const oldIsChatNote = entry.isChatNote;
+      entry.isChatNote = isChatNote;
+      if (oldIsChatNote !== isChatNote) {
+        entry.view.webContents.reload();
+      }
+      // Adoption logic
+      if (entry.destroyTimeout) {
+        clearTimeout(entry.destroyTimeout);
+        entry.destroyTimeout = null;
+      }
+      if (entry.win && entry.win !== win && !entry.win.isDestroyed()) {
+        try {
+          entry.win.contentView.removeChildView(entry.view);
+        } catch (e) {}
+      }
+      entry.win = win;
+      try {
+        win.contentView.addChildView(entry.view);
+      } catch (e) {}
+
+      const url = entry.view.webContents.getURL();
+      const title = entry.view.webContents.getTitle();
+      const isLoading = entry.view.webContents.isLoading();
+      const canGoBack = entry.view.webContents.canGoBack();
+      const canGoForward = entry.view.webContents.canGoForward();
+
+      event.sender.send('browser:event', { tabId, type: 'navigate', url });
+      event.sender.send('browser:event', { tabId, type: 'title', title });
+      event.sender.send('browser:event', { tabId, type: 'loading', isLoading });
+      event.sender.send('browser:event', { tabId, type: 'backforward', canGoBack, canGoForward });
+
+      return { success: true, adopted: true };
+    }
+
+    const browserLikeUserAgent = buildBrowserLikeUserAgent();
+    const view = new WebContentsView({
+      webPreferences: {
+        partition: WEBVIEW_PARTITION,
+        nodeIntegration: false,
+        contextIsolation: true,
+      }
+    });
+
+    view.webContents.setMaxListeners(100);
+    view.webContents.setUserAgent(browserLikeUserAgent);
+
+    view.webContents.on('dom-ready', () => {
+      injectAntiAdblockDefuser(view.webContents);
+      const e = webViews.get(tabId);
+      if (e && e.isChatNote) {
+        injectCustomStyles(view.webContents);
+      }
+    });
+
+    const sendState = () => {
+      if (win.isDestroyed() || event.sender.isDestroyed()) return;
+      try {
+        const canGoBack = view.webContents.canGoBack();
+        const canGoForward = view.webContents.canGoForward();
+        event.sender.send('browser:event', { tabId, type: 'backforward', canGoBack, canGoForward });
+      } catch (e) {}
+    };
+
+    view.webContents.on('did-start-loading', () => {
+      if (!event.sender.isDestroyed()) {
+        event.sender.send('browser:event', { tabId, type: 'loading', isLoading: true });
+      }
+    });
+
+    view.webContents.on('did-stop-loading', () => {
+      if (!event.sender.isDestroyed()) {
+        event.sender.send('browser:event', { tabId, type: 'loading', isLoading: false });
+      }
+      sendState();
+    });
+
+    view.webContents.on('did-navigate', (evt, url) => {
+      const site = normalizeSite(url);
+      if (site) {
+        webContentsSites.set(view.webContents.id, site);
+        applyAdBlockStateForSite(site);
+      }
+      if (!event.sender.isDestroyed()) {
+        event.sender.send('browser:event', { tabId, type: 'navigate', url });
+      }
+      sendState();
+    });
+
+    view.webContents.on('did-navigate-in-page', (evt, url) => {
+      if (!event.sender.isDestroyed()) {
+        event.sender.send('browser:event', { tabId, type: 'navigate', url });
+      }
+      sendState();
+    });
+
+    view.webContents.on('page-title-updated', (evt, title) => {
+      if (!event.sender.isDestroyed()) {
+        event.sender.send('browser:event', { tabId, type: 'title', title });
+      }
+    });
+
+    view.webContents.on('did-fail-load', (evt, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      if (errorCode === -3) return;
+      if (!isMainFrame) return;
+      if (!event.sender.isDestroyed()) {
+        event.sender.send('browser:event', { tabId, type: 'fail', errorDescription: `${errorDescription} (Error: ${errorCode})` });
+      }
+    });
+
+    view.webContents.on('console-message', (evt, level, message, line, sourceId) => {
+      console.log('[WebContentsView Console]', { tabId, level, message, line, sourceId });
+    });
+
+    win.contentView.addChildView(view);
+    webViews.set(tabId, { view, win, destroyTimeout: null, isChatNote });
+    return { success: true, adopted: false };
+  } catch (error) {
+    console.error('[WebContentsView] Failed to create view:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('browser:setChatNote', async (event, tabId, isChatNote) => {
+  const entry = webViews.get(tabId);
+  if (!entry) return { success: false, error: 'View not found' };
+  try {
+    const oldIsChatNote = entry.isChatNote;
+    entry.isChatNote = isChatNote;
+    if (oldIsChatNote !== isChatNote) {
+      entry.view.webContents.reload();
+    }
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('browser:setViewBounds', async (event, tabId, bounds) => {
+  const entry = webViews.get(tabId);
+  if (!entry) return { success: false, error: 'View not found' };
+  try {
+    entry.view.setBounds({
+      x: Math.round(bounds.x),
+      y: Math.round(bounds.y),
+      width: Math.round(bounds.width),
+      height: Math.round(bounds.height),
+    });
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('browser:setViewVisible', async (event, tabId, visible) => {
+  const entry = webViews.get(tabId);
+  if (!entry) return { success: false, error: 'View not found' };
+  try {
+    if (visible) {
+      const win = BrowserWindow.fromWebContents(event.sender);
+      if (win && entry.win !== win) {
+        if (entry.win && !entry.win.isDestroyed()) {
+          try { entry.win.contentView.removeChildView(entry.view); } catch (e) {}
+        }
+        entry.win = win;
+        win.contentView.addChildView(entry.view);
+      }
+    } else {
+      entry.view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+    }
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('browser:destroyView', async (event, tabId) => {
+  const entry = webViews.get(tabId);
+  if (!entry) return { success: false };
+  try {
+    if (entry.destroyTimeout) clearTimeout(entry.destroyTimeout);
+    entry.destroyTimeout = setTimeout(() => {
+      if (webViews.get(tabId) === entry) {
+        if (entry.win && !entry.win.isDestroyed()) {
+          try {
+            entry.win.contentView.removeChildView(entry.view);
+          } catch (e) {}
+        }
+        try {
+          entry.view.webContents.close();
+        } catch (e) {}
+        webViews.delete(tabId);
+      }
+    }, 1000);
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('browser:loadURL', async (event, tabId, url) => {
+  const entry = webViews.get(tabId);
+  if (!entry) return { success: false, error: 'View not found' };
+  try {
+    await entry.view.webContents.loadURL(url);
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('browser:goBack', async (event, tabId) => {
+  const entry = webViews.get(tabId);
+  if (!entry) return { success: false };
+  try {
+    if (entry.view.webContents.canGoBack()) {
+      entry.view.webContents.goBack();
+    }
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('browser:goForward', async (event, tabId) => {
+  const entry = webViews.get(tabId);
+  if (!entry) return { success: false };
+  try {
+    if (entry.view.webContents.canGoForward()) {
+      entry.view.webContents.goForward();
+    }
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('browser:reload', async (event, tabId) => {
+  const entry = webViews.get(tabId);
+  if (!entry) return { success: false };
+  try {
+    entry.view.webContents.reload();
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// WINDOW IPC HANDLERS
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Pop a tab out into its own OS window when it was dragged and released outside
+ * the sending window. `screenX/screenY` are the drop point in screen pixels;
+ * if they fall inside the sender's bounds we treat it as an in-window drop and
+ * do nothing (`popped: false`), so the renderer keeps the tab where it is.
+ */
+ipcMain.handle('window:popOutTab', async (event, { tab, screenX, screenY }) => {
+  try {
+    if (!tab || typeof tab.id !== 'string') throw new Error('Missing tab descriptor');
+    const senderWin = BrowserWindow.fromWebContents(event.sender) || mainWindow;
+    const b = senderWin ? senderWin.getBounds() : { x: 0, y: 0, width: 0, height: 0 };
+    const x = Number(screenX);
+    const y = Number(screenY);
+    const inside =
+      Number.isFinite(x) && Number.isFinite(y) &&
+      x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height;
+
+    if (inside) return { success: true, popped: false };
+
+    const width = 900;
+    const height = 680;
+    const bounds = {
+      width,
+      height,
+      x: Number.isFinite(x) ? Math.round(x - width / 2) : undefined,
+      y: Number.isFinite(y) ? Math.round(y - 40) : undefined,
+    };
+    createPaneWindow(tab, bounds);
+    return { success: true, popped: true };
+  } catch (error) {
+    console.error('[IPC] Failed to pop out tab:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+/**
+ * Merge a popped-out tab back into another window. Called when the popout's tab
+ * is dragged and released outside the popout: the destination is the window
+ * under the drop point (falling back to the main window), which is told to adopt
+ * the tab; the now-empty popout window is closed.
+ */
+ipcMain.handle('window:mergeTab', async (event, { tab, screenX, screenY }) => {
+  try {
+    if (!tab || typeof tab.id !== 'string') throw new Error('Missing tab descriptor');
+    const sender = BrowserWindow.fromWebContents(event.sender);
+    const x = Number(screenX);
+    const y = Number(screenY);
+    const within = (b) => Number.isFinite(x) && Number.isFinite(y) && x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height;
+
+    // Releasing inside the popout itself is not a merge gesture.
+    if (sender && !sender.isDestroyed() && within(sender.getBounds())) {
+      return { success: true, merged: false };
+    }
+
+    const target =
+      BrowserWindow.getAllWindows().find((w) => w !== sender && !w.isDestroyed() && within(w.getBounds())) ||
+      (sender !== mainWindow && mainWindow && !mainWindow.isDestroyed() ? mainWindow : null);
+
+    if (!target) return { success: true, merged: false };
+
+    target.webContents.send('window:adoptTab', tab);
+    target.focus();
+    if (sender && !sender.isDestroyed()) sender.close();
+    return { success: true, merged: true };
+  } catch (error) {
+    console.error('[IPC] Failed to merge tab:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// TERMINAL IPC HANDLERS
+// ═══════════════════════════════════════════════════════════════
+
+function getDefaultTerminalShell() {
+  if (process.platform === 'win32') {
+    return {
+      command: process.env.COMSPEC || 'cmd.exe',
+      args: [],
+    };
+  }
+
+  return {
+    command: process.env.SHELL || '/bin/bash',
+    args: [],
+  };
+}
+
+function getTerminalCwd(inputCwd) {
+  if (inputCwd && path.isAbsolute(inputCwd) && fs.existsSync(inputCwd)) return inputCwd;
+  return path.resolve(__dirname, '..');
+}
+
+/** Starts a shell process for a renderer terminal tab. */
+ipcMain.handle('terminal:start', async (_event, { id, cwd, cols, rows }) => {
+  try {
+    const terminalId = String(id || '');
+    if (!terminalId) throw new Error('Missing terminal id');
+    if (!nodePty) throw new Error('node-pty is unavailable. Run npm install and rebuild native modules for Electron.');
+
+    const existing = terminalProcesses.get(terminalId);
+    if (existing) return { success: true, reused: true };
+
+    const shell = getDefaultTerminalShell();
+    const ptyProcess = nodePty.spawn(shell.command, shell.args, {
+      name: 'xterm-256color',
+      cols: Number(cols) || 80,
+      rows: Number(rows) || 24,
+      cwd: getTerminalCwd(cwd),
+      env: {
+        ...process.env,
+        TERM: process.env.TERM || 'xterm-256color',
+        COLORTERM: process.env.COLORTERM || 'truecolor',
+      },
+    });
+
+    terminalProcesses.set(terminalId, ptyProcess);
+
+    // Broadcast to every window: a terminal tab may live in the main window or
+    // in a popped-out window, and which one owns it can change over time.
+    ptyProcess.onData((data) => {
+      broadcastToWindows('terminal:data', { id: terminalId, data: String(data) });
+    });
+    ptyProcess.onExit(({ exitCode, signal }) => {
+      terminalProcesses.delete(terminalId);
+      broadcastToWindows('terminal:exit', { id: terminalId, code: exitCode, signal });
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('[IPC] Failed to start terminal:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+/** Writes raw input to a running terminal shell process. */
+ipcMain.handle('terminal:write', async (_event, { id, data }) => {
+  try {
+    const ptyProcess = terminalProcesses.get(String(id));
+    if (!ptyProcess) throw new Error('Terminal is not running');
+    ptyProcess.write(String(data ?? ''));
+    return { success: true };
+  } catch (error) {
+    console.error('[IPC] Failed to write terminal input:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+/** Resizes a running terminal PTY. */
+ipcMain.handle('terminal:resize', async (_event, { id, cols, rows }) => {
+  try {
+    const ptyProcess = terminalProcesses.get(String(id));
+    if (!ptyProcess) return { success: true };
+    ptyProcess.resize(Math.max(2, Number(cols) || 80), Math.max(2, Number(rows) || 24));
+    return { success: true };
+  } catch (error) {
+    console.error('[IPC] Failed to resize terminal:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+/** Stops a terminal shell process. */
+ipcMain.handle('terminal:stop', async (_event, id) => {
+  try {
+    const terminalId = String(id);
+    const ptyProcess = terminalProcesses.get(terminalId);
+    if (ptyProcess) ptyProcess.kill();
+    terminalProcesses.delete(terminalId);
+    return { success: true };
+  } catch (error) {
+    console.error('[IPC] Failed to stop terminal:', error);
     return { success: false, error: error.message };
   }
 });
@@ -776,12 +1373,27 @@ app.on('window-all-closed', () => {
 });
 
 app.on('will-quit', () => {
-  // Close database
+  try {
+    const webviewSession = session.fromPartition(WEBVIEW_PARTITION);
+    if (webviewSession && webviewSession.cookies) {
+      webviewSession.cookies.flushStore().catch((err) => {
+        console.error('[Main] Failed to flush cookies on quit:', err);
+      });
+    }
+  } catch (err) {
+    console.error('[Main] Error flushing cookies session:', err);
+  }
+
+  for (const [, ptyProcess] of terminalProcesses) {
+    try {
+      if (ptyProcess) ptyProcess.kill();
+    } catch (_) {}
+  }
+  terminalProcesses.clear();
+
   try {
     db.closeDatabase();
-  } catch (error) {
-    console.error('[Main] Failed to close database:', error);
-  }
+  } catch (_) {}
 });
 
 app.on('activate', () => {
