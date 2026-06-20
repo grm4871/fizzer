@@ -227,22 +227,78 @@ function injectCustomStyles(webContents) {
         margin-right: 0 !important;
         width: 100% !important;
         max-width: 100% !important;
-        align-items: center !important;
       }
-      div[data-testid="primaryColumn"] {
+      div[data-testid="primaryColumn"],
+      div[data-testid="primaryColumn"] * {
         max-width: 100% !important;
-        width: 100% !important;
-        margin: 0 !important;
         border-right-width: 0 !important;
       }
-      div[data-testid="DMActivityContainer"] {
-        max-width: 100% !important;
+      div[data-testid="primaryColumn"] {
         width: 100% !important;
+        margin: 0 !important;
       }
     `;
     webContents.insertCSS(css).catch((error) => {
       console.error('[CustomCSS] Twitter CSS injection failed:', error?.message || error);
     });
+    if (url.includes('/i/chat') || url.includes('/messages')) {
+      webContents.executeJavaScript(`
+        (function hideDmList() {
+          // Find the conversation list column: on X's DM page, the main area
+          // is a flex row with two children — the conversation list (narrower)
+          // and the active chat (wider). We walk up from the chat header to
+          // find the flex container, then hide the list sibling.
+          function run() {
+            // Strategy: find the element that contains the "Chat" heading and
+            // search bar — that's the conversation list column. Walk the DOM
+            // to find the flex parent that lays it out beside the active chat.
+            const main = document.querySelector('div[data-testid="primaryColumn"]') || document.querySelector('main');
+            if (!main) return false;
+
+            // Look for a flex row whose children represent the two DM columns
+            const flexRows = main.querySelectorAll('div');
+            for (const el of flexRows) {
+              const style = window.getComputedStyle(el);
+              if (style.display !== 'flex' || style.flexDirection !== 'row') continue;
+              const kids = Array.from(el.children).filter(c => c.tagName !== 'SCRIPT');
+              if (kids.length < 2) continue;
+              // Check if first child is narrower (conversation list) and second is wider (chat)
+              const firstW = kids[0].getBoundingClientRect().width;
+              const secondW = kids[1].getBoundingClientRect().width;
+              if (firstW > 100 && secondW > 100 && firstW < secondW) {
+                kids[0].style.setProperty('display', 'none', 'important');
+                kids[1].style.setProperty('flex', '1', 'important');
+                kids[1].style.setProperty('max-width', '100%', 'important');
+                kids[1].style.setProperty('width', '100%', 'important');
+                // Walk up and force all ancestors to fill width
+                let node = kids[1];
+                while (node && node !== document.body) {
+                  node.style.setProperty('max-width', '100%', 'important');
+                  node.style.setProperty('width', '100%', 'important');
+                  // Also force all direct children inside the chat column
+                  // to expand (X nests several wrapper divs with max-width)
+                  for (const child of node.children) {
+                    if (child.tagName === 'DIV' || child.tagName === 'SECTION') {
+                      child.style.setProperty('max-width', '100%', 'important');
+                    }
+                  }
+                  node = node.parentElement;
+                }
+                return true;
+              }
+            }
+            return false;
+          }
+          if (!run()) {
+            // DOM may not be fully rendered yet; retry a few times
+            let attempts = 0;
+            const timer = setInterval(() => {
+              if (run() || ++attempts > 20) clearInterval(timer);
+            }, 500);
+          }
+        })();
+      `, true).catch(e => console.error('[ChatNote] DM list hide failed:', e));
+    }
   } else if (url.includes('discord.com')) {
     const css = `
       nav[aria-label="Servers sidebar"],

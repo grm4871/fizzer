@@ -13,7 +13,7 @@
  * @component
  */
 
-import { Fragment, useRef, useState, type DragEvent, type ReactNode } from 'react';
+import { Fragment, useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react';
 import { Globe, FileText, Terminal, Plus, ExternalLink, MessageSquare, X } from 'lucide-react';
 import type { Tab } from './TabBar';
 import { isPane, type DropSide, type LayoutNode, type PaneNode, type SplitNode } from '../layout/tree';
