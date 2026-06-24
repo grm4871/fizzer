@@ -29,7 +29,7 @@ const AGENT_MODEL_PRESETS: Record<AgentId, { id: string; label: string }[]> = {
   'claude-code': [
     { id: 'claude-sonnet-4-6', label: 'Claude 4.6 Sonnet' },
     { id: 'claude-haiku-4-5-20251001', label: 'Claude 4.5 Haiku' },
-    { id: 'claude-opus-4-7', label: 'Claude 4.7 Opus' },
+    { id: 'claude-opus-4-8', label: 'Claude 4.8 Opus' },
   ],
   'codex': [
     { id: 'gpt-5.5', label: 'GPT-5.5' },

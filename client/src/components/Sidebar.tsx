@@ -19,9 +19,11 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import type { Vault, Folder, NoteSummary } from '../api';
+import { CHAT_NOTE_MARKER } from './ChatView';
 import {
   Folder as FolderIcon, FolderOpen, FileText, Pin, Gem, Edit2, FolderPlus,
   Search, ChevronRight, PanelLeftClose, LogOut, Trash2, FilePlus, FolderInput, Pencil, RefreshCw,
+  Hash,
 } from 'lucide-react';
 
 const NOTE_DND_TYPE = 'application/x-cascade-note';
@@ -39,6 +41,7 @@ interface SidebarProps {
   onSelectNote: (id: string) => void;
   onOpenNoteInNewTab: (id: string) => void;
   onNewNote: () => void;
+  onCreateChannel: (folderId?: string | null) => Promise<{ id: string; title: string } | undefined>;
   onNewNoteInFolder: (folderId: string | null) => void;
   onSearch: () => void;
   onCollapse: () => void;
@@ -54,7 +57,8 @@ interface SidebarProps {
 
 type ContextMenu =
   | { x: number; y: number; kind: 'note'; id: string }
-  | { x: number; y: number; kind: 'folder'; id: string };
+  | { x: number; y: number; kind: 'folder'; id: string }
+  | { x: number; y: number; kind: 'root' };
 
 export function Sidebar({
   user,
@@ -67,6 +71,7 @@ export function Sidebar({
   onSelectNote,
   onOpenNoteInNewTab,
   onNewNote,
+  onCreateChannel,
   onNewNoteInFolder,
   onSearch,
   onCollapse,
@@ -208,6 +213,16 @@ export function Sidebar({
     if (folder) startRename(folder);
   }
 
+  async function createChannel(parentId: string | null) {
+    setContextMenu(null);
+    if (parentId) expandFolder(parentId);
+    const channel = await onCreateChannel(parentId);
+    if (channel) {
+      setEditingValue(channel.title);
+      setEditingNoteId(channel.id);
+    }
+  }
+
   // ─── Drag and drop ──────────────────────────────────────
   function noteDragProps(noteId: string) {
     return {
@@ -339,10 +354,11 @@ export function Sidebar({
   /** Render a single note item in the sidebar tree. */
   function renderNote(note: NoteSummary, depth: number) {
     const paddingLeft = 12 + depth * 14 + 16;
+    const isChatChannel = note.content_preview.trim().startsWith(CHAT_NOTE_MARKER);
     if (editingNoteId === note.id) {
       return (
         <div key={note.id} className="tree-item tree-editing" style={{ paddingLeft }}>
-          <span className="tree-icon"><FileText size={16} /></span>
+          <span className="tree-icon">{isChatChannel ? <Hash size={16} /> : <FileText size={16} />}</span>
           <input
             className="tree-rename-input"
             value={editingValue}
@@ -368,7 +384,7 @@ export function Sidebar({
         onContextMenu={(e) => openMenu(e, { x: 0, y: 0, kind: 'note', id: note.id })}
         {...noteDragProps(note.id)}
       >
-        <span className="tree-icon"><FileText size={16} /></span>
+        <span className="tree-icon">{isChatChannel ? <Hash size={16} /> : <FileText size={16} />}</span>
         <span className="tree-label">{note.title || 'Untitled'}</span>
         {note.is_pinned ? <span className="pin-icon"><Pin size={12} fill="currentColor" /></span> : null}
         {note.tags.length > 0 && (
@@ -402,6 +418,9 @@ export function Sidebar({
         <button id="new-folder-btn" className="btn-icon" onClick={() => createFolder(null)} title="New folder">
           <FolderPlus size={16} />
         </button>
+        <button id="new-channel-btn" className="btn-icon" onClick={() => void createChannel(null)} title="New channel">
+          <Hash size={16} />
+        </button>
         <button id="search-btn" className="btn-icon" onClick={onSearch} title="Search">
           <Search size={16} />
         </button>
@@ -421,11 +440,18 @@ export function Sidebar({
       {/* Folder tree. The "Notes" header doubles as the move-to-root drop target. */}
       <div
         className={`sidebar-section-label ${dragOverId === ROOT_DROP_ID ? 'drag-over' : ''}`}
+        onContextMenu={(e) => openMenu(e, { x: 0, y: 0, kind: 'root' })}
         {...dropTargetProps(null)}
       >
         Notes
       </div>
-      <div className="folder-tree" id="folder-tree">
+      <div
+        className="folder-tree"
+        id="folder-tree"
+        onContextMenu={(e) => {
+          if (e.target === e.currentTarget) openMenu(e, { x: 0, y: 0, kind: 'root' });
+        }}
+      >
         {rootFolders.map((folder) => renderFolder(folder, 0))}
         {rootNotes.map((note) => renderNote(note, 0))}
 
@@ -473,12 +499,20 @@ export function Sidebar({
         >
           {contextMenu.kind === 'note' && !moveMenu && (
             <>
-              <button onClick={() => { setContextMenu(null); onSelectNote(contextMenu.id); }}>
-                <FileText size={14} /> Open
-              </button>
-              <button onClick={() => { setContextMenu(null); onOpenNoteInNewTab(contextMenu.id); }}>
-                <FilePlus size={14} /> Open in new tab
-              </button>
+              {(() => {
+                const note = notes.find((x) => x.id === contextMenu.id);
+                const isChatChannel = note?.content_preview.trim().startsWith(CHAT_NOTE_MARKER);
+                return (
+                  <>
+                    <button onClick={() => { setContextMenu(null); onSelectNote(contextMenu.id); }}>
+                      {isChatChannel ? <Hash size={14} /> : <FileText size={14} />} {isChatChannel ? 'Open channel' : 'Open'}
+                    </button>
+                    <button onClick={() => { setContextMenu(null); onOpenNoteInNewTab(contextMenu.id); }}>
+                      <FilePlus size={14} /> Open in new tab
+                    </button>
+                  </>
+                );
+              })()}
               <button onClick={() => { const n = notes.find((x) => x.id === contextMenu.id); if (n) startRenameNote(n); }}>
                 <Pencil size={14} /> Rename
               </button>
@@ -487,7 +521,7 @@ export function Sidebar({
               </button>
               <div className="menu-divider" />
               <button className="menu-danger" onClick={() => { setContextMenu(null); onDeleteNote(contextMenu.id); }}>
-                <Trash2 size={14} /> Delete note
+                <Trash2 size={14} /> Delete
               </button>
             </>
           )}
@@ -514,6 +548,9 @@ export function Sidebar({
               <button onClick={() => { setContextMenu(null); expandFolder(contextMenu.id); onNewNoteInFolder(contextMenu.id); }}>
                 <FilePlus size={14} /> New note
               </button>
+              <button onClick={() => void createChannel(contextMenu.id)}>
+                <Hash size={14} /> New channel
+              </button>
               <button onClick={() => createFolder(contextMenu.id)}>
                 <FolderPlus size={14} /> New subfolder
               </button>
@@ -523,6 +560,20 @@ export function Sidebar({
               <div className="menu-divider" />
               <button className="menu-danger" onClick={() => { setContextMenu(null); onDeleteFolder(contextMenu.id); }}>
                 <Trash2 size={14} /> Delete folder
+              </button>
+            </>
+          )}
+
+          {contextMenu.kind === 'root' && (
+            <>
+              <button onClick={() => { setContextMenu(null); onNewNote(); }}>
+                <FilePlus size={14} /> New note
+              </button>
+              <button onClick={() => void createChannel(null)}>
+                <Hash size={14} /> New channel
+              </button>
+              <button onClick={() => createFolder(null)}>
+                <FolderPlus size={14} /> New folder
               </button>
             </>
           )}

@@ -4,15 +4,15 @@ import { type Tab } from './components/TabBar';
 import { NoteEditor } from './components/NoteEditor';
 import { WebView } from './components/WebView';
 import { TerminalWindow } from './components/TerminalWindow';
-import { AIPanel } from './components/AIPanel';
+import { CHAT_NOTE_MARKER, ChatView, type ChatMessage } from './components/ChatView';
 import { SearchOverlay } from './components/SearchOverlay';
 import { CommandPalette } from './components/CommandPalette';
 import { PaneGrid, type TabDragPayload } from './components/PaneGrid';
 import * as Layout from './layout/tree';
 import type { LayoutNode } from './layout/tree';
 import { api, type User, type Vault, type Folder, type NoteSummary, type Note } from './api';
-import { connectVaultSocket } from './socket';
-import { Gem, Bot, PanelLeftOpen, SquareTerminal } from 'lucide-react';
+import { connectRunsSocket, connectVaultSocket } from './socket';
+import { Gem, PanelLeftOpen, SquareTerminal } from 'lucide-react';
 
 /**
  * @file App.tsx — Root component for Cascade
@@ -48,6 +48,9 @@ function sanitizeRestoredTabs(value: unknown): Tab[] {
       if (tab.type === 'terminal') {
         return { id: tab.id, title: tab.title || 'Terminal', type: 'terminal', dirty: false, terminalHistory: typeof tab.terminalHistory === 'string' ? tab.terminalHistory : '' };
       }
+      if (tab.type === 'chat') {
+        return { id: tab.id, title: tab.title || 'Channel', type: 'chat', dirty: false };
+      }
       if (tab.type === 'note') {
         return { id: tab.id, title: tab.title, type: 'note', dirty: false };
       }
@@ -69,6 +72,13 @@ interface PersistedSession {
 }
 
 const SESSION_STORAGE_KEY = 'cascade_session';
+const CHAT_STORAGE_KEY = 'cascade_chat_state';
+
+interface ChatState {
+  messagesByChannel: Record<string, ChatMessage[]>;
+  agentConversationsByChannel: Record<string, string>;
+  agentModelsByAgent: Record<string, string>;
+}
 
 function emptySession(): PersistedSession {
   const pane = Layout.createPane();
@@ -104,8 +114,139 @@ function loadPersistedSession(): PersistedSession {
   }
 }
 
+function loadChatState(): ChatState {
+  try {
+    const raw = localStorage.getItem(CHAT_STORAGE_KEY);
+    if (!raw) return { messagesByChannel: {}, agentConversationsByChannel: {}, agentModelsByAgent: {} };
+    const parsed = JSON.parse(raw) as Partial<ChatState>;
+    const messagesByChannel: Record<string, ChatMessage[]> = {};
+    const agentConversationsByChannel: Record<string, string> = {};
+    const agentModelsByAgent: Record<string, string> = {};
+
+    if (parsed.messagesByChannel && typeof parsed.messagesByChannel === 'object') {
+      for (const [channelId, messages] of Object.entries(parsed.messagesByChannel)) {
+        if (!Array.isArray(messages)) continue;
+        messagesByChannel[channelId] = messages
+          .filter((message): message is ChatMessage =>
+            Boolean(message) &&
+            typeof message.id === 'string' &&
+            typeof message.channelId === 'string' &&
+            typeof message.author === 'string' &&
+            typeof message.body === 'string' &&
+            typeof message.createdAt === 'string',
+          );
+      }
+    }
+
+    if (parsed.agentConversationsByChannel && typeof parsed.agentConversationsByChannel === 'object') {
+      for (const [key, value] of Object.entries(parsed.agentConversationsByChannel)) {
+        if (typeof value === 'string') agentConversationsByChannel[key] = value;
+      }
+    }
+
+    if (parsed.agentModelsByAgent && typeof parsed.agentModelsByAgent === 'object') {
+      for (const [key, value] of Object.entries(parsed.agentModelsByAgent)) {
+        if (typeof value === 'string') agentModelsByAgent[key] = value;
+      }
+    }
+
+    return { messagesByChannel, agentConversationsByChannel, agentModelsByAgent };
+  } catch {
+    return { messagesByChannel: {}, agentConversationsByChannel: {}, agentModelsByAgent: {} };
+  }
+}
+
 type PaneRect = { left: number; top: number; width: number; height: number };
 type NoteEntry = { note: Note; draft: string };
+type AgentId = 'claude-code' | 'codex' | 'grok' | 'antigravity' | 'copilot' | 'hermes';
+
+const CHAT_AGENTS: Array<{ id: AgentId; label: string; aliases: string[] }> = [
+  { id: 'claude-code', label: 'Claude', aliases: ['claude', 'claude code', 'claude-code', 'claudecode'] },
+  { id: 'codex', label: 'Codex', aliases: ['codex'] },
+  { id: 'grok', label: 'Grok', aliases: ['grok'] },
+  { id: 'antigravity', label: 'Antigravity', aliases: ['antigravity', 'anti gravity', 'anti-gravity'] },
+  { id: 'copilot', label: 'Copilot', aliases: ['copilot'] },
+  { id: 'hermes', label: 'Hermes', aliases: ['hermes'] },
+];
+
+const CHAT_AGENT_MODEL_PRESETS: Record<AgentId, { id: string; label: string }[]> = {
+  'claude-code': [
+    { id: 'claude-sonnet-4-6', label: 'Claude 4.6 Sonnet' },
+    { id: 'claude-haiku-4-5-20251001', label: 'Claude 4.5 Haiku' },
+    { id: 'claude-opus-4-8', label: 'Claude 4.8 Opus' },
+  ],
+  codex: [
+    { id: 'gpt-5.5', label: 'GPT-5.5' },
+    { id: 'gpt-5.4', label: 'GPT-5.4' },
+  ],
+  grok: [
+    { id: 'grok-composer-2.5-fast', label: 'Grok Composer 2.5 Fast' },
+    { id: 'grok-build', label: 'Grok Build' },
+  ],
+  antigravity: [
+    { id: 'flash_lite', label: 'Gemini Flash Lite' },
+    { id: 'flash', label: 'Gemini Flash' },
+    { id: 'pro', label: 'Gemini Pro' },
+  ],
+  copilot: [
+    { id: 'auto', label: 'Auto' },
+    { id: 'claude-haiku-4.5', label: 'Claude 4.5 Haiku' },
+    { id: 'gpt-5.2', label: 'GPT-5.2' },
+  ],
+  hermes: [],
+};
+
+function defaultAgentModel(agentId: AgentId) {
+  return CHAT_AGENT_MODEL_PRESETS[agentId][0]?.id ?? '';
+}
+
+function selectedAgentModel(agentId: AgentId, state: ChatState) {
+  return state.agentModelsByAgent[agentId] ?? defaultAgentModel(agentId);
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function mentionPattern(alias: string) {
+  const escaped = alias.trim().split(/\s+/).map(escapeRegExp).join('[\\s-]*');
+  return new RegExp(`@\\s*${escaped}(?=$|[\\s.,:;!?\\])}])`, 'gi');
+}
+
+function getMentionedAgents(text: string): AgentId[] {
+  const mentioned: AgentId[] = [];
+  for (const agent of CHAT_AGENTS) {
+    if (agent.aliases.some((alias) => mentionPattern(alias).test(text))) mentioned.push(agent.id);
+  }
+  return mentioned;
+}
+
+function stripAgentMentions(text: string) {
+  let next = text;
+  for (const agent of CHAT_AGENTS) {
+    for (const alias of agent.aliases) next = next.replace(mentionPattern(alias), ' ');
+  }
+  return next.replace(/\s+/g, ' ').trim();
+}
+
+function agentLabel(agentId: AgentId) {
+  return CHAT_AGENTS.find((agent) => agent.id === agentId)?.label ?? agentId;
+}
+
+function chatConversationKey(channelId: string, agentId: AgentId) {
+  return `${channelId}:${agentId}`;
+}
+
+function textFromRunContent(content: unknown): string {
+  if (!Array.isArray(content)) return '';
+  return content
+    .map((block: any) => {
+      if (!block || typeof block !== 'object') return '';
+      if (block.type === 'text' && typeof block.text === 'string') return block.text;
+      return '';
+    })
+    .join('');
+}
 
 export default function App() {
   // ═══════════════════════════════════════════════════════════════
@@ -126,6 +267,7 @@ export default function App() {
   const [activeVaultId, setActiveVaultId] = useState<string | null>(persistedSessionRef.current.activeVaultId);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [notes, setNotes] = useState<NoteSummary[]>([]);
+  const [chatState, setChatState] = useState<ChatState>(loadChatState);
 
   // Tabs + tiling layout
   const [openTabs, setOpenTabs] = useState<Tab[]>(persistedSessionRef.current.openTabs);
@@ -136,12 +278,9 @@ export default function App() {
 
   // UI panels state
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(() => Number(localStorage.getItem('cascade_sidebar_w')) || 280);
-  const [aiPanelWidth, setAiPanelWidth] = useState(() => Number(localStorage.getItem('cascade_aipanel_w')) || 340);
   const [isResizing, setIsResizing] = useState(false);
 
-  const [directivePrompt, setDirectivePrompt] = useState<{ text: string; nonce: number } | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -153,8 +292,7 @@ export default function App() {
   const focusedPane = Layout.findPane(layout, focusedPaneId) ?? Layout.getFirstPane(layout);
   const activeTabId = focusedPane.activeTabId;
   const activeTab = openTabs.find((t) => t.id === activeTabId);
-  const activeNoteEntry = activeTabId ? noteContents[activeTabId] : undefined;
-  const activeNote = activeNoteEntry?.note ?? null;
+  const currentUsername = user?.username ?? '';
 
   // Refs mirror the latest state so event handlers stay stable (no dep churn)
   // and never read a stale closure during drags / async work.
@@ -164,6 +302,8 @@ export default function App() {
   const noteContentsRef = useRef(noteContents); noteContentsRef.current = noteContents;
   const activeVaultIdRef = useRef(activeVaultId); activeVaultIdRef.current = activeVaultId;
   const notesRef = useRef(notes); notesRef.current = notes;
+  const chatStateRef = useRef(chatState); chatStateRef.current = chatState;
+  const runSocketsRef = useRef<Map<number, ReturnType<typeof connectRunsSocket>>>(new Map());
 
   // ─── Persistent web-tab geometry ────────────────────────────────
   // Each pane registers its content element so we can position the persistent
@@ -200,7 +340,7 @@ export default function App() {
       observer.disconnect();
       window.removeEventListener('resize', measurePanes);
     };
-  }, [measurePanes, layout, sidebarOpen, aiPanelOpen, sidebarWidth, aiPanelWidth, openTabs]);
+  }, [measurePanes, layout, sidebarOpen, sidebarWidth, openTabs]);
 
   // Repair focus if the focused pane disappears (e.g. after collapsing a split).
   useEffect(() => {
@@ -210,7 +350,6 @@ export default function App() {
   }, [layout, focusedPaneId]);
 
   useEffect(() => { localStorage.setItem('cascade_sidebar_w', String(sidebarWidth)); }, [sidebarWidth]);
-  useEffect(() => { localStorage.setItem('cascade_aipanel_w', String(aiPanelWidth)); }, [aiPanelWidth]);
 
   // Persist the workspace session.
   useEffect(() => {
@@ -219,25 +358,36 @@ export default function App() {
   }, [activeVaultId, openTabs, layout, focusedPaneId]);
 
   useEffect(() => {
+    localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(chatState));
+  }, [chatState]);
+
+  useEffect(() => {
     if (!notice) return;
     const id = setTimeout(() => setNotice(null), 4000);
     return () => clearTimeout(id);
   }, [notice]);
 
-  /** Drag a side-panel divider (sidebar / AI panel widths). */
-  const startResize = useCallback((panel: 'sidebar' | 'ai', event: React.MouseEvent) => {
+  useEffect(() => {
+    if (notes.length === 0) return;
+    setOpenTabs((prev) => prev.map((tab) => {
+      if (tab.type !== 'chat') return tab;
+      const note = notes.find((item) => item.id === tab.id && item.content_preview.trim().startsWith(CHAT_NOTE_MARKER));
+      return note ? { ...tab, title: `#${note.title}` } : tab;
+    }));
+  }, [notes]);
+
+  /** Drag the sidebar divider. */
+  const startResize = useCallback((event: React.MouseEvent) => {
     event.preventDefault();
     const startX = event.clientX;
     const startSidebar = sidebarWidth;
-    const startAi = aiPanelWidth;
     const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
     setIsResizing(true);
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
     const onMove = (e: MouseEvent) => {
       const delta = e.clientX - startX;
-      if (panel === 'sidebar') setSidebarWidth(clamp(startSidebar + delta, 180, 480));
-      else setAiPanelWidth(clamp(startAi - delta, 260, 560));
+      setSidebarWidth(clamp(startSidebar + delta, 180, 480));
     };
     const onUp = () => {
       window.removeEventListener('mousemove', onMove);
@@ -248,7 +398,7 @@ export default function App() {
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
-  }, [sidebarWidth, aiPanelWidth]);
+  }, [sidebarWidth]);
 
   // ═══════════════════════════════════════════════════════════════
   // DATA LOADING
@@ -389,6 +539,193 @@ export default function App() {
   }, [loadVaultData]);
 
   // ═══════════════════════════════════════════════════════════════
+  // CHAT CHANNEL OPERATIONS
+  // ═══════════════════════════════════════════════════════════════
+
+  const openChatChannel = useCallback((channelId: string, title: string, mode: 'open' | 'replace' = 'open') => {
+    const name = title.trim() || 'chat';
+    const tab: Tab = { id: channelId, title: `#${name}`, type: 'chat', dirty: false };
+
+    setOpenTabs((prev) =>
+      prev.some((t) => t.id === channelId)
+        ? prev.map((t) => (t.id === channelId ? { ...t, title: tab.title, type: 'chat' } : t))
+        : [...prev, tab],
+    );
+
+    const prev = layoutRef.current;
+    const focused = focusedPaneRef.current;
+    const existingPane = Layout.findPaneByTab(prev, channelId);
+
+    if (mode !== 'replace' && existingPane) {
+      setLayout(Layout.setActiveTab(prev, existingPane.id, channelId));
+      setFocusedPaneId(existingPane.id);
+      return;
+    }
+
+    let next = Layout.addTabToPane(Layout.removeTab(prev, channelId), focused.id, channelId);
+    const oldId = focused.activeTabId;
+    if (mode === 'replace' && oldId && oldId !== channelId) {
+      next = Layout.removeTab(next, oldId);
+      setOpenTabs((p) => p.filter((t) => t.id !== oldId || t.id === channelId));
+      setNoteContents((p) => { const copy = { ...p }; delete copy[oldId]; return copy; });
+      if (openTabsRef.current.find((t) => t.id === oldId)?.type === 'terminal') {
+        const electronAPI = (window as unknown as {
+          electronAPI?: { stopTerminal?: (id: string) => Promise<{ success: boolean; error?: string }> };
+        }).electronAPI;
+        void electronAPI?.stopTerminal?.(oldId);
+      }
+    }
+    setLayout(Layout.simplify(next));
+    setFocusedPaneId(focused.id);
+  }, []);
+
+  const handleCreateChannel = useCallback(async (folderId: string | null = null) => {
+    const vaultId = activeVaultIdRef.current;
+    if (!vaultId) return undefined;
+    try {
+      const data = await api<{ note: Note }>(`/api/vaults/${vaultId}/notes`, {
+        method: 'POST',
+        body: JSON.stringify({ title: 'new-channel', content: CHAT_NOTE_MARKER, folder_id: folderId ?? undefined }),
+      });
+      await loadVaultData(vaultId);
+      openChatChannel(data.note.id, data.note.title);
+      return { id: data.note.id, title: data.note.title };
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not create channel');
+      return undefined;
+    }
+  }, [loadVaultData, openChatChannel]);
+
+  const appendChatMessage = useCallback((channelId: string, message: ChatMessage) => {
+    setChatState((prev) => ({
+      ...prev,
+      messagesByChannel: {
+        ...prev.messagesByChannel,
+        [channelId]: [...(prev.messagesByChannel[channelId] ?? []), message],
+      },
+    }));
+  }, []);
+
+  const updateChatMessage = useCallback((channelId: string, messageId: string, updater: (message: ChatMessage) => ChatMessage) => {
+    setChatState((prev) => ({
+      ...prev,
+      messagesByChannel: {
+        ...prev.messagesByChannel,
+        [channelId]: (prev.messagesByChannel[channelId] ?? []).map((message) =>
+          message.id === messageId ? updater(message) : message,
+        ),
+      },
+    }));
+  }, []);
+
+  const handleSetAgentModel = useCallback((agentId: string, model: string) => {
+    setChatState((prev) => ({
+      ...prev,
+      agentModelsByAgent: {
+        ...prev.agentModelsByAgent,
+        [agentId]: model,
+      },
+    }));
+  }, []);
+
+  const startAgentChatRun = useCallback(async (channelId: string, agentId: AgentId, prompt: string) => {
+    const vaultId = activeVaultIdRef.current;
+    if (!vaultId) return;
+
+    const agentMessageId = `agent-${agentId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    appendChatMessage(channelId, {
+      id: agentMessageId,
+      channelId,
+      author: agentLabel(agentId),
+      body: 'Thinking...',
+      createdAt: new Date().toISOString(),
+      status: 'running',
+      agentId,
+    });
+
+    try {
+      const conversationKey = chatConversationKey(channelId, agentId);
+      const model = selectedAgentModel(agentId, chatStateRef.current);
+      const res = await api<{ run: { id: number; status: string; conversation_id: string } }>(`/api/vaults/${vaultId}/runs`, {
+        method: 'POST',
+        body: JSON.stringify({
+          prompt,
+          note_id: null,
+          agent: agentId,
+          conversation_id: chatStateRef.current.agentConversationsByChannel[conversationKey],
+          model: model || undefined,
+        }),
+      });
+
+      if (res.run.conversation_id) {
+        setChatState((prev) => ({
+          ...prev,
+          agentConversationsByChannel: {
+            ...prev.agentConversationsByChannel,
+            [conversationKey]: res.run.conversation_id,
+          },
+        }));
+      }
+
+      const socket = connectRunsSocket();
+      runSocketsRef.current.set(res.run.id, socket);
+      socket.emit('joinRun', res.run.id);
+      socket.on('event', (event: any) => {
+        try {
+          if (event.type === 'status') {
+            const payload = JSON.parse(event.payload_json);
+            if (payload.status === 'completed' || payload.status === 'failed') {
+              updateChatMessage(channelId, agentMessageId, (message) => ({
+                ...message,
+                body: message.body === 'Thinking...' ? (payload.status === 'completed' ? 'Done.' : 'Agent failed.') : message.body,
+                status: payload.status === 'failed' ? 'failed' : undefined,
+              }));
+              socket.disconnect();
+              runSocketsRef.current.delete(res.run.id);
+            }
+          } else if (event.type === 'text') {
+            const payload = JSON.parse(event.payload_json);
+            const text = textFromRunContent(payload.message?.content);
+            if (!text) return;
+            updateChatMessage(channelId, agentMessageId, (message) => ({
+              ...message,
+              body: message.body === 'Thinking...' ? text : message.body + text,
+            }));
+          }
+        } catch {
+          // Ignore one malformed stream event; the run status will still settle.
+        }
+      });
+    } catch (error) {
+      updateChatMessage(channelId, agentMessageId, (message) => ({
+        ...message,
+        body: error instanceof Error ? error.message : 'Failed to start agent.',
+        status: 'failed',
+      }));
+    }
+  }, [appendChatMessage, updateChatMessage]);
+
+  const handleSendChatMessage = useCallback((channelId: string, body: string) => {
+    const trimmed = body.trim();
+    if (!trimmed || !user) return;
+    const message: ChatMessage = {
+      id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      channelId,
+      author: user.username,
+      body: trimmed,
+      createdAt: new Date().toISOString(),
+    };
+    appendChatMessage(channelId, message);
+
+    const mentionedAgents = getMentionedAgents(trimmed);
+    if (mentionedAgents.length === 0) return;
+    const prompt = stripAgentMentions(trimmed) || trimmed;
+    for (const agentId of mentionedAgents) {
+      void startAgentChatRun(channelId, agentId, prompt);
+    }
+  }, [appendChatMessage, startAgentChatRun, user]);
+
+  // ═══════════════════════════════════════════════════════════════
   // TERMINAL HELPERS
   // ═══════════════════════════════════════════════════════════════
 
@@ -422,6 +759,11 @@ export default function App() {
 
       // Shortcut URL check
       const content = data.note.content.trim();
+      if (content.startsWith(CHAT_NOTE_MARKER)) {
+        closeTab(noteId);
+        openChatChannel(noteId, data.note.title);
+        return;
+      }
       const match = content.match(/^(https?:\/\/[^\s]+)$/);
       if (match) {
         const url = match[1];
@@ -444,7 +786,7 @@ export default function App() {
       setNotice('That note could not be opened — it may have been moved or deleted. Refreshing the list.');
       if (activeVaultIdRef.current) void loadVaultData(activeVaultIdRef.current);
     }
-  }, [loadVaultData, closeTab, handleOpenWebView]);
+  }, [loadVaultData, closeTab, handleOpenWebView, openChatChannel]);
 
   /**
    * Open a note: ensure it has a tab, place it in the focused pane (or focus the
@@ -456,6 +798,10 @@ export default function App() {
     const summary = notesRef.current.find((n) => n.id === noteId);
     if (summary) {
       const preview = summary.content_preview.trim();
+      if (preview.startsWith(CHAT_NOTE_MARKER)) {
+        openChatChannel(noteId, summary.title, mode);
+        return;
+      }
       const match = preview.match(/^(https?:\/\/[^\s]+)$/);
       if (match) {
         handleOpenWebView(match[1]);
@@ -488,7 +834,7 @@ export default function App() {
     }
 
     void loadNoteContent(noteId);
-  }, [loadNoteContent, stopTerminalTab, handleOpenWebView]);
+  }, [loadNoteContent, stopTerminalTab, handleOpenWebView, openChatChannel]);
 
   /** Save a specific note tab's draft. */
   const saveNoteTab = useCallback(async (tabId: string) => {
@@ -537,7 +883,7 @@ export default function App() {
         body: JSON.stringify({ title }),
       });
       setNoteContents((prev) => (prev[tabId] ? { ...prev, [tabId]: { ...prev[tabId], note: data.note } } : prev));
-      setOpenTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, title: data.note.title } : t)));
+      setOpenTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, title: t.type === 'chat' ? `#${data.note.title}` : data.note.title } : t)));
       if (activeVaultIdRef.current) void loadVaultData(activeVaultIdRef.current);
     } catch (error) {
       window.alert(error instanceof Error ? error.message : 'Could not rename note');
@@ -616,8 +962,20 @@ export default function App() {
   const handleDeleteNote = useCallback(async (noteId: string) => {
     if (!window.confirm('Delete this note? This cannot be undone.')) return;
     try {
+      const wasChatChannel = notesRef.current.find((note) => note.id === noteId)?.content_preview.trim().startsWith(CHAT_NOTE_MARKER);
       await api(`/api/notes/${noteId}`, { method: 'DELETE' });
       closeTabRef.current(noteId);
+      if (wasChatChannel) {
+        setChatState((prev) => {
+          const messagesByChannel = { ...prev.messagesByChannel };
+          delete messagesByChannel[noteId];
+          const agentConversationsByChannel = { ...prev.agentConversationsByChannel };
+          for (const key of Object.keys(agentConversationsByChannel)) {
+            if (key.startsWith(`${noteId}:`)) delete agentConversationsByChannel[key];
+          }
+          return { ...prev, messagesByChannel, agentConversationsByChannel };
+        });
+      }
       if (activeVaultIdRef.current) await loadVaultData(activeVaultIdRef.current);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Could not delete note');
@@ -693,9 +1051,27 @@ export default function App() {
   }, [loadVaultData, openNote]);
 
   const handleExecuteDirective = useCallback((text: string) => {
-    setAiPanelOpen(true);
-    setDirectivePrompt({ text, nonce: Date.now() });
-  }, []);
+    const run = async () => {
+      const vaultId = activeVaultIdRef.current;
+      if (!vaultId) return;
+      let channel = notesRef.current.find((note) => note.content_preview.trim().startsWith(CHAT_NOTE_MARKER));
+      let channelInfo = channel ? { id: channel.id, title: channel.title } : null;
+      if (!channel) {
+        const data = await api<{ note: Note }>(`/api/vaults/${vaultId}/notes`, {
+          method: 'POST',
+          body: JSON.stringify({ title: 'agent-chat', content: CHAT_NOTE_MARKER }),
+        });
+        await loadVaultData(vaultId);
+        channelInfo = { id: data.note.id, title: data.note.title };
+      }
+      if (!channelInfo) return;
+      openChatChannel(channelInfo.id, channelInfo.title);
+      handleSendChatMessage(channelInfo.id, `@claude ${text}`);
+    };
+    void run().catch((error) => {
+      setNotice(error instanceof Error ? error.message : 'Could not start agent chat');
+    });
+  }, [handleSendChatMessage, loadVaultData, openChatChannel]);
 
   const handleLinkifyTerm = useCallback(async (term: string, _context: string, sourceTitle?: string) => {
     if (!activeVaultIdRef.current) return;
@@ -789,6 +1165,7 @@ export default function App() {
     if (!electronAPI?.popOutTab) return;
     const tab = openTabsRef.current.find((t) => t.id === tabId);
     if (!tab) return;
+    if (tab.type === 'chat') return;
     void electronAPI.popOutTab({ tab, screenX, screenY }).then((res) => {
       if (!res?.popped) return;
       // Remove from this window but DON'T stop a terminal's PTY — the popped-out
@@ -869,6 +1246,8 @@ export default function App() {
 
   const handleLogout = () => {
     const pane = Layout.createPane();
+    runSocketsRef.current.forEach((socket) => socket.disconnect());
+    runSocketsRef.current.clear();
     localStorage.removeItem('docs_token');
     setUser(null);
     setVaults([]);
@@ -931,6 +1310,26 @@ export default function App() {
         />
       );
     }
+    if (tab.type === 'chat') {
+      const channel = notes.find((note) => note.id === tab.id && note.content_preview.trim().startsWith(CHAT_NOTE_MARKER));
+      if (!channel) return <div className="pane-empty">Channel not found</div>;
+      return (
+        <ChatView
+          channelId={channel.id}
+          channelName={channel.title}
+          messages={chatState.messagesByChannel[channel.id] ?? []}
+          currentUser={currentUsername}
+          agents={CHAT_AGENTS.map((agent) => ({
+            id: agent.id,
+            label: agent.label,
+            models: CHAT_AGENT_MODEL_PRESETS[agent.id],
+          }))}
+          selectedModels={chatState.agentModelsByAgent}
+          onSetAgentModel={handleSetAgentModel}
+          onSendMessage={handleSendChatMessage}
+        />
+      );
+    }
     const entry = noteContents[tab.id];
     return (
       <NoteEditor
@@ -948,7 +1347,7 @@ export default function App() {
         onLinkifySelection={(term, context) => handleLinkifyTerm(term, context, entry?.note?.title)}
       />
     );
-  }, [noteContents, notes, updateTerminalHistory, updateTabTitle, handleNoteChange, saveNoteTab, renameNoteTab, handleExecuteDirective, handleOpenWebView, handleLinkifyTerm, openNote]);
+  }, [chatState.agentModelsByAgent, chatState.messagesByChannel, currentUsername, handleSendChatMessage, handleSetAgentModel, noteContents, notes, updateTerminalHistory, updateTabTitle, handleNoteChange, saveNoteTab, renameNoteTab, handleExecuteDirective, handleOpenWebView, handleLinkifyTerm, openNote]);
 
   if (!user) {
     return (
@@ -983,7 +1382,7 @@ export default function App() {
       className="app-shell"
       style={{
         display: 'grid',
-        gridTemplateColumns: `${sidebarOpen ? `${sidebarWidth}px` : '0px'} minmax(0, 1fr) ${aiPanelOpen ? `${aiPanelWidth}px` : '0px'}`,
+        gridTemplateColumns: `${sidebarOpen ? `${sidebarWidth}px` : '0px'} minmax(0, 1fr)`,
         height: '100vh',
         overflow: 'hidden',
         position: 'relative',
@@ -991,10 +1390,7 @@ export default function App() {
       }}
     >
       {sidebarOpen && (
-        <div className="resize-handle" style={{ left: sidebarWidth - 3 }} onMouseDown={(e) => startResize('sidebar', e)} role="separator" aria-orientation="vertical" aria-label="Resize sidebar" title="Drag to resize" />
-      )}
-      {aiPanelOpen && (
-        <div className="resize-handle" style={{ right: aiPanelWidth - 3 }} onMouseDown={(e) => startResize('ai', e)} role="separator" aria-orientation="vertical" aria-label="Resize assistant panel" title="Drag to resize" />
+        <div className="resize-handle" style={{ left: sidebarWidth - 3 }} onMouseDown={startResize} role="separator" aria-orientation="vertical" aria-label="Resize sidebar" title="Drag to resize" />
       )}
 
       {sidebarOpen && (
@@ -1009,6 +1405,7 @@ export default function App() {
           onSelectNote={(id) => openNote(id, 'replace')}
           onOpenNoteInNewTab={(id) => openNote(id)}
           onNewNote={handleCreateNote}
+          onCreateChannel={handleCreateChannel}
           onNewNoteInFolder={handleCreateNoteInFolder}
           onSearch={() => setSearchOpen(true)}
           onCollapse={() => setSidebarOpen(false)}
@@ -1035,11 +1432,6 @@ export default function App() {
           {activeTab?.type !== 'terminal' && (
             <button className="btn-icon" onClick={handleUpgradeActiveTabToTerminal} title={activeTab ? 'Turn current tab into a terminal' : 'Open terminal'}>
               <SquareTerminal size={16} />
-            </button>
-          )}
-          {!aiPanelOpen && (
-            <button id="ai-panel-expand-btn" className="btn-icon" onClick={() => setAiPanelOpen(true)} title="Open agent">
-              <Bot size={16} />
             </button>
           )}
         </div>
@@ -1102,17 +1494,6 @@ export default function App() {
           })}
         </div>
       </div>
-
-      {aiPanelOpen && (
-        <AIPanel
-          note={activeNote}
-          vaultId={activeVaultId}
-          onSave={handleSaveActiveNote}
-          pendingPrompt={directivePrompt}
-          onPromptConsumed={() => setDirectivePrompt(null)}
-          onClose={() => setAiPanelOpen(false)}
-        />
-      )}
 
       <SearchOverlay open={searchOpen} onClose={() => setSearchOpen(false)} vaultId={activeVaultId} onSelectNote={(id) => openNote(id)} />
       <CommandPalette open={commandPaletteOpen} onClose={() => setCommandPaletteOpen(false)} notes={notes} onSelectNote={(id) => openNote(id)} onCreateNote={handleCreateNote} />

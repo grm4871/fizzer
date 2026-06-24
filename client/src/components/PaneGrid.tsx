@@ -14,7 +14,7 @@
  */
 
 import { Fragment, useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react';
-import { Globe, FileText, Terminal, Plus, ExternalLink, MessageSquare, X } from 'lucide-react';
+import { Globe, FileText, Terminal, Plus, ExternalLink, MessageSquare, X, Hash } from 'lucide-react';
 import type { Tab } from './TabBar';
 import { isPane, type DropSide, type LayoutNode, type PaneNode, type SplitNode } from '../layout/tree';
 
@@ -83,6 +83,7 @@ function sideFromPosition(rect: DOMRect, clientX: number, clientY: number): Drop
 function TabIcon({ type }: { type: Tab['type'] }) {
   if (type === 'web') return <Globe size={13} className="text-secondary" style={{ marginRight: 6 }} />;
   if (type === 'terminal') return <Terminal size={13} className="text-secondary" style={{ marginRight: 6 }} />;
+  if (type === 'chat') return <Hash size={13} className="text-secondary" style={{ marginRight: 6 }} />;
   return <FileText size={13} className="text-tertiary" style={{ marginRight: 6 }} />;
 }
 
