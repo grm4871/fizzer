@@ -75,6 +75,13 @@ import {
 } from './server/feeds.js';
 import { fetchWidgetData } from './server/widgetData.js';
 import {
+  createChatMessage,
+  ensureChatSchema,
+  listChatMessages,
+  updateChatMessage,
+  type ChatMessage,
+} from './server/chat.js';
+import {
   NETWORK_MODE,
   WIDGET_SHELL_ENABLED,
   corsOrigin,
@@ -212,6 +219,7 @@ ensureVaultSchema(db);
 ensureVersionsSchema(db);
 ensureRunnerSchema(db);
 ensureFeedSchema(db);
+ensureChatSchema(db);
 
 // ── Express & Socket.io setup ──────────────────────────────────────
 
@@ -703,6 +711,65 @@ app.post('/api/vaults/:id/feed/poll', requireAuth, async (req: AuthedRequest, re
 
   await pollWidgetFeeds(db);
   res.json({ ok: true });
+});
+
+// ── Chat routes ────────────────────────────────────────────────────
+
+app.get('/api/vaults/:id/channels/:channelId/messages', requireAuth, (req: AuthedRequest, res) => {
+  const vault = getVault(db, req.params.id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Vault not found' });
+
+  try {
+    const messages = listChatMessages(db, req.params.channelId, req.user!.id);
+    res.json({ messages });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : 'Could not load chat messages';
+    res.status(msg === 'Chat channel not found' ? 404 : 400).json({ error: msg });
+  }
+});
+
+app.post('/api/vaults/:id/channels/:channelId/messages', requireAuth, (req: AuthedRequest, res) => {
+  const vault = getVault(db, req.params.id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Vault not found' });
+
+  try {
+    const message = createChatMessage(db, req.user!.id, vault.id, req.params.channelId, req.body as ChatMessage);
+    emitVaultEvent(vault.id, 'vault:chatMessageCreated', {
+      vaultId: vault.id,
+      channelId: req.params.channelId,
+      message,
+    });
+    res.status(201).json({ message });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : 'Could not create chat message';
+    res.status(msg === 'Chat channel not found' ? 404 : 400).json({ error: msg });
+  }
+});
+
+app.patch('/api/vaults/:id/channels/:channelId/messages/:messageId', requireAuth, (req: AuthedRequest, res) => {
+  const vault = getVault(db, req.params.id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Vault not found' });
+
+  try {
+    const message = updateChatMessage(
+      db,
+      req.user!.id,
+      vault.id,
+      req.params.channelId,
+      req.params.messageId,
+      req.body as Partial<ChatMessage>,
+    );
+    if (!message) return res.status(404).json({ error: 'Message not found' });
+    emitVaultEvent(vault.id, 'vault:chatMessageUpdated', {
+      vaultId: vault.id,
+      channelId: req.params.channelId,
+      message,
+    });
+    res.json({ message });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : 'Could not update chat message';
+    res.status(msg === 'Chat channel not found' ? 404 : 400).json({ error: msg });
+  }
 });
 
 // ── Agent / Run routes ─────────────────────────────────────────────

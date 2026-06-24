@@ -30,6 +30,27 @@ type ServerEvents = {
   'directive:chunk': (data: { noteId: string; content: string }) => void;
   /** Signals an AI directive has finished processing. */
   'directive:done': (data: { noteId: string; directiveId: string }) => void;
+  /** A new chat message was persisted for a channel in this vault. */
+  'vault:chatMessageCreated': (data: { vaultId: string; channelId: string; message: ChatMessagePayload }) => void;
+  /** An existing chat message was updated (merge, agent stream, etc.). */
+  'vault:chatMessageUpdated': (data: { vaultId: string; channelId: string; message: ChatMessagePayload }) => void;
+};
+
+/** Chat message shape delivered over the vault socket. */
+export type ChatMessagePayload = {
+  id: string;
+  channelId: string;
+  author: string;
+  body: string;
+  createdAt: string;
+  status?: 'sending' | 'running' | 'failed';
+  agentId?: string;
+  registrationId?: string;
+  runId?: number;
+  blocks?: Array<{ type: string; text?: string; redacted?: boolean }>;
+  images?: string[];
+  attachments?: Array<{ name: string; media_type: string; url: string }>;
+  replyTo?: { messageId: string; author: string; mention: string; preview: string };
 };
 
 /** Events emitted by the client on the `/vault` namespace. */

@@ -3,10 +3,10 @@
  *
  * Creates the main BrowserWindow, handles IPC for database operations and
  * keyboard shortcuts, and manages the application lifecycle. Provides
- * navigation security guards that restrict loading to netar.is and local
+ * navigation security guards that restrict loading to the Cascade domains and local
  * dev origins. Keyboard shortcuts are intercepted at the main-process level
  * and forwarded to the renderer via IPC when Chromium would otherwise
- * swallow them. In production, loads https://netar.is; in development,
+ * swallow them. In production, loads https://cscd.online; in development,
  * loads the Vite dev server.
  *
  * @module cascade-electron/main
@@ -541,7 +541,7 @@ async function configureWebviewSession() {
  */
 /** Resolve the base URL the app loads from (prod vs dev `--APP_URL=`). */
 function getAppBaseUrl() {
-  if (app.isPackaged) return 'https://netar.is';
+  if (app.isPackaged) return 'https://cscd.online';
   if (process.env.APP_URL || process.env.CASCADE_APP_URL) {
     return process.env.APP_URL || process.env.CASCADE_APP_URL;
   }
@@ -565,6 +565,8 @@ function broadcastToWindows(channel, payload) {
 
 function isAllowedNavHost(hostname) {
   return (
+    hostname === 'cscd.online' ||
+    hostname.endsWith('.cscd.online') ||
     hostname === 'netar.is' ||
     hostname.endsWith('.netar.is') ||
     hostname === 'localhost' ||

@@ -134,53 +134,62 @@ function loadPersistedSession(): PersistedSession {
   }
 }
 
+function readLegacyLocalChatMessages(): Record<string, ChatMessage[]> {
+  try {
+    const raw = localStorage.getItem(CHAT_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Partial<ChatState>;
+    if (!parsed.messagesByChannel || typeof parsed.messagesByChannel !== 'object') return {};
+    const messagesByChannel: Record<string, ChatMessage[]> = {};
+    for (const [channelId, messages] of Object.entries(parsed.messagesByChannel)) {
+      if (!Array.isArray(messages)) continue;
+      messagesByChannel[channelId] = messages
+        .filter((message): message is ChatMessage =>
+          Boolean(message) &&
+          typeof message.id === 'string' &&
+          typeof message.channelId === 'string' &&
+          typeof message.author === 'string' &&
+          typeof message.body === 'string' &&
+          typeof message.createdAt === 'string',
+        )
+        .map((message) => ({
+          ...message,
+          images: Array.isArray(message.images)
+            ? message.images.filter((item): item is string => typeof item === 'string')
+            : undefined,
+          attachments: Array.isArray(message.attachments)
+            ? message.attachments.filter((item): item is { name: string; media_type: string; url: string } =>
+              Boolean(item) &&
+              typeof item === 'object' &&
+              typeof item.name === 'string' &&
+              typeof item.media_type === 'string' &&
+              typeof item.url === 'string',
+            )
+            : undefined,
+          replyTo: message.replyTo &&
+            typeof message.replyTo === 'object' &&
+            typeof message.replyTo.messageId === 'string' &&
+            typeof message.replyTo.author === 'string' &&
+            typeof message.replyTo.mention === 'string' &&
+            typeof message.replyTo.preview === 'string'
+            ? message.replyTo
+            : undefined,
+        }));
+    }
+    return messagesByChannel;
+  } catch {
+    return {};
+  }
+}
+
 function loadChatState(): ChatState {
   try {
     const raw = localStorage.getItem(CHAT_STORAGE_KEY);
     if (!raw) return emptyChatState();
     const parsed = JSON.parse(raw) as Partial<ChatState>;
-    const messagesByChannel: Record<string, ChatMessage[]> = {};
     const agentConversationsByChannel: Record<string, string> = {};
     const agentModelsByAgent: Record<string, string> = {};
     const registeredAgentsByChannel: Record<string, ChatAgentRegistration[]> = {};
-
-    if (parsed.messagesByChannel && typeof parsed.messagesByChannel === 'object') {
-      for (const [channelId, messages] of Object.entries(parsed.messagesByChannel)) {
-        if (!Array.isArray(messages)) continue;
-        messagesByChannel[channelId] = messages
-          .filter((message): message is ChatMessage =>
-            Boolean(message) &&
-            typeof message.id === 'string' &&
-            typeof message.channelId === 'string' &&
-            typeof message.author === 'string' &&
-            typeof message.body === 'string' &&
-            typeof message.createdAt === 'string',
-          )
-          .map((message) => ({
-            ...message,
-            images: Array.isArray(message.images)
-              ? message.images.filter((item): item is string => typeof item === 'string')
-              : undefined,
-            attachments: Array.isArray(message.attachments)
-              ? message.attachments.filter((item): item is { name: string; media_type: string; url: string } =>
-                Boolean(item) &&
-                typeof item === 'object' &&
-                typeof item.name === 'string' &&
-                typeof item.media_type === 'string' &&
-                typeof item.url === 'string',
-              )
-              : undefined,
-            replyTo: message.replyTo &&
-              typeof message.replyTo === 'object' &&
-              typeof message.replyTo.messageId === 'string' &&
-              typeof message.replyTo.author === 'string' &&
-              typeof message.replyTo.mention === 'string' &&
-              typeof message.replyTo.preview === 'string'
-              ? message.replyTo
-              : undefined,
-          }));
-      }
-    }
 
     if (parsed.agentConversationsByChannel && typeof parsed.agentConversationsByChannel === 'object') {
       for (const [key, value] of Object.entries(parsed.agentConversationsByChannel)) {
@@ -225,7 +234,7 @@ function loadChatState(): ChatState {
       }
     }
 
-    return { messagesByChannel, agentConversationsByChannel, agentModelsByAgent, registeredAgentsByChannel };
+    return { messagesByChannel: {}, agentConversationsByChannel, agentModelsByAgent, registeredAgentsByChannel };
   } catch {
     return emptyChatState();
   }
@@ -535,7 +544,8 @@ export default function App() {
   }, [activeVaultId, openTabs, layout, focusedPaneId]);
 
   useEffect(() => {
-    localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(chatState));
+    const { messagesByChannel: _messages, ...persistedChat } = chatState;
+    localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(persistedChat));
   }, [chatState]);
 
   useEffect(() => {
@@ -609,18 +619,89 @@ export default function App() {
       .catch(() => localStorage.removeItem('docs_token'));
   }, [loadVaults]);
 
+  const loadChatMessages = useCallback(async (vaultId: string, noteList: NoteSummary[]) => {
+    const channelIds = noteList
+      .filter((note) => note.content_preview.trim().startsWith(CHAT_NOTE_MARKER))
+      .map((note) => note.id);
+    if (channelIds.length === 0) return;
+
+    const legacyMessages = readLegacyLocalChatMessages();
+    const results = await Promise.all(channelIds.map(async (channelId) => {
+      try {
+        const data = await api<{ messages: ChatMessage[] }>(`/api/vaults/${vaultId}/channels/${channelId}/messages`);
+        let messages = data.messages ?? [];
+        const local = legacyMessages[channelId] ?? [];
+        if (messages.length === 0 && local.length > 0) {
+          for (const message of local) {
+            try {
+              await api(`/api/vaults/${vaultId}/channels/${channelId}/messages`, {
+                method: 'POST',
+                body: JSON.stringify(message),
+              });
+            } catch {
+              // Best-effort migration from pre-network chat storage.
+            }
+          }
+          const refreshed = await api<{ messages: ChatMessage[] }>(`/api/vaults/${vaultId}/channels/${channelId}/messages`);
+          messages = refreshed.messages ?? [];
+        }
+        return { channelId, messages };
+      } catch {
+        return { channelId, messages: legacyMessages[channelId] ?? [] };
+      }
+    }));
+
+    setChatState((prev) => {
+      const messagesByChannel = { ...prev.messagesByChannel };
+      for (const { channelId, messages } of results) {
+        messagesByChannel[channelId] = messages;
+      }
+      return { ...prev, messagesByChannel };
+    });
+  }, []);
+
+  const persistChatMessageToServer = useCallback(async (vaultId: string, channelId: string, message: ChatMessage) => {
+    try {
+      await api(`/api/vaults/${vaultId}/channels/${channelId}/messages`, {
+        method: 'POST',
+        body: JSON.stringify(message),
+      });
+    } catch (error) {
+      console.error('Failed to persist chat message:', error);
+      setNotice(error instanceof Error ? error.message : 'Could not save chat message');
+    }
+  }, []);
+
+  const patchChatMessageOnServer = useCallback(async (
+    vaultId: string,
+    channelId: string,
+    messageId: string,
+    patch: Partial<ChatMessage>,
+  ) => {
+    try {
+      await api(`/api/vaults/${vaultId}/channels/${channelId}/messages/${messageId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(patch),
+      });
+    } catch (error) {
+      console.error('Failed to update chat message:', error);
+    }
+  }, []);
+
   const loadVaultData = useCallback(async (vaultId: string) => {
     try {
       const [folderData, noteData] = await Promise.all([
         api<{ folders: Folder[] }>(`/api/vaults/${vaultId}/folders`),
         api<{ notes: NoteSummary[] }>(`/api/vaults/${vaultId}/notes`),
       ]);
+      const nextNotes = noteData.notes || [];
       setFolders(folderData.folders || []);
-      setNotes(noteData.notes || []);
+      setNotes(nextNotes);
+      await loadChatMessages(vaultId, nextNotes);
     } catch (error) {
       console.error('Error loading vault data:', error);
     }
-  }, []);
+  }, [loadChatMessages]);
 
   useEffect(() => {
     if (activeVaultId) {
@@ -781,19 +862,26 @@ export default function App() {
         [channelId]: [...(prev.messagesByChannel[channelId] ?? []), message],
       },
     }));
-  }, []);
+    const vaultId = activeVaultIdRef.current;
+    if (vaultId) void persistChatMessageToServer(vaultId, channelId, message);
+  }, [persistChatMessageToServer]);
 
   const updateChatMessage = useCallback((channelId: string, messageId: string, updater: (message: ChatMessage) => ChatMessage) => {
+    let patched: ChatMessage | null = null;
     setChatState((prev) => ({
       ...prev,
       messagesByChannel: {
         ...prev.messagesByChannel,
-        [channelId]: (prev.messagesByChannel[channelId] ?? []).map((message) =>
-          message.id === messageId ? updater(message) : message,
-        ),
+        [channelId]: (prev.messagesByChannel[channelId] ?? []).map((message) => {
+          if (message.id !== messageId) return message;
+          patched = updater(message);
+          return patched;
+        }),
       },
     }));
-  }, []);
+    const vaultId = activeVaultIdRef.current;
+    if (vaultId && patched) void patchChatMessageOnServer(vaultId, channelId, messageId, patched);
+  }, [patchChatMessageOnServer]);
 
   const handleRegisterChatAgent = useCallback((channelId: string, registration: ChatAgentRegistration) => {
     const normalized = {
@@ -1036,22 +1124,27 @@ export default function App() {
       ...(replyTo ? { replyTo } : {}),
     };
 
+    const messages = chatStateRef.current.messagesByChannel[channelId] ?? [];
+    const last = messages[messages.length - 1];
     let outgoingMessage = candidate;
+    let mergeTargetId: string | null = null;
+    if (last && canMergeChatMessages(last, candidate)) {
+      mergeTargetId = last.id;
+      outgoingMessage = {
+        ...last,
+        body: `${last.body}\n${trimmed}`,
+        createdAt: candidate.createdAt,
+      };
+    }
+
     setChatState((prev) => {
-      const messages = prev.messagesByChannel[channelId] ?? [];
-      const last = messages[messages.length - 1];
-      if (last && canMergeChatMessages(last, candidate)) {
-        const merged: ChatMessage = {
-          ...last,
-          body: `${last.body}\n${trimmed}`,
-          createdAt: candidate.createdAt,
-        };
-        outgoingMessage = merged;
+      const channelMessages = prev.messagesByChannel[channelId] ?? [];
+      if (mergeTargetId) {
         return {
           ...prev,
           messagesByChannel: {
             ...prev.messagesByChannel,
-            [channelId]: [...messages.slice(0, -1), merged],
+            [channelId]: [...channelMessages.slice(0, -1), outgoingMessage],
           },
         };
       }
@@ -1059,10 +1152,22 @@ export default function App() {
         ...prev,
         messagesByChannel: {
           ...prev.messagesByChannel,
-          [channelId]: [...messages, candidate],
+          [channelId]: [...channelMessages, candidate],
         },
       };
     });
+
+    const vaultId = activeVaultIdRef.current;
+    if (vaultId) {
+      if (mergeTargetId) {
+        void patchChatMessageOnServer(vaultId, channelId, mergeTargetId, {
+          body: outgoingMessage.body,
+          createdAt: outgoingMessage.createdAt,
+        });
+      } else {
+        void persistChatMessageToServer(vaultId, channelId, candidate);
+      }
+    }
 
     const registrations = chatStateRef.current.registeredAgentsByChannel[channelId] ?? [];
     const implicitMention = replyTo?.mention ? `@${replyTo.mention}` : '';
@@ -1076,7 +1181,7 @@ export default function App() {
       const imagesForRun = agentsWithoutImages.has(registration.agentId as AgentId) ? [] : runImages;
       void startAgentChatRun(channelId, registration, prompt, outgoingMessage, imagesForRun);
     }
-  }, [startAgentChatRun, user]);
+  }, [patchChatMessageOnServer, persistChatMessageToServer, startAgentChatRun, user]);
 
   // ═══════════════════════════════════════════════════════════════
   // TERMINAL HELPERS
@@ -1280,16 +1385,60 @@ export default function App() {
       else if (Notification.permission === 'default') void Notification.requestPermission().then((p) => { if (p === 'granted') show(); });
     };
 
+    const handleChatMessageCreated = (data: { vaultId: string; channelId: string; message: ChatMessage }) => {
+      if (data.vaultId !== activeVaultId) return;
+      setChatState((prev) => {
+        const existing = prev.messagesByChannel[data.channelId] ?? [];
+        if (existing.some((message) => message.id === data.message.id)) return prev;
+        return {
+          ...prev,
+          messagesByChannel: {
+            ...prev.messagesByChannel,
+            [data.channelId]: [...existing, data.message],
+          },
+        };
+      });
+    };
+    const handleChatMessageUpdated = (data: { vaultId: string; channelId: string; message: ChatMessage }) => {
+      if (data.vaultId !== activeVaultId) return;
+      setChatState((prev) => {
+        const existing = prev.messagesByChannel[data.channelId] ?? [];
+        const index = existing.findIndex((message) => message.id === data.message.id);
+        if (index === -1) {
+          return {
+            ...prev,
+            messagesByChannel: {
+              ...prev.messagesByChannel,
+              [data.channelId]: [...existing, data.message],
+            },
+          };
+        }
+        const next = [...existing];
+        next[index] = data.message;
+        return {
+          ...prev,
+          messagesByChannel: {
+            ...prev.messagesByChannel,
+            [data.channelId]: next,
+          },
+        };
+      });
+    };
+
     socket.on('vault:noteChanged', handleNoteChanged);
     socket.on('vault:noteCreated', handleNoteCreated);
     socket.on('vault:noteDeleted', handleNoteDeleted);
     socket.on('vault:feedNotify', handleFeedNotify);
+    socket.on('vault:chatMessageCreated', handleChatMessageCreated);
+    socket.on('vault:chatMessageUpdated', handleChatMessageUpdated);
     return () => {
       socket.emit('leaveVault', activeVaultId);
       socket.off('vault:noteChanged', handleNoteChanged);
       socket.off('vault:noteCreated', handleNoteCreated);
       socket.off('vault:noteDeleted', handleNoteDeleted);
       socket.off('vault:feedNotify', handleFeedNotify);
+      socket.off('vault:chatMessageCreated', handleChatMessageCreated);
+      socket.off('vault:chatMessageUpdated', handleChatMessageUpdated);
       socket.disconnect();
     };
   }, [activeVaultId, loadVaultData, loadNoteContent, openNote]);
