@@ -27,7 +27,6 @@ import { delegateRunToDesktop, getDesktopRunnerStatus, initDesktopRunners, isDes
 import { ensureFeedSchema, fetchFeed, pollWidgetFeeds, setFeedNotifySink, startFeedPoller, } from './server/feeds.js';
 import { fetchWidgetData } from './server/widgetData.js';
 import { buildAgentChatContentFromRunEvents, createChatMessage, ensureChatSchema, listChatAgentMembers, listChatMessages, removeChatAgentMember, updateChatMessage, upsertChatAgentMember, } from './server/chat.js';
-import { isCliAgent } from './server/cli-agent.js';
 import { NETWORK_MODE, WIDGET_SHELL_ENABLED, corsOrigin, rateLimit, resolveJwtSecret, } from './server/security.js';
 const PORT = Number(process.env.API_PORT || 3000);
 const HOST = process.env.API_HOST || (NETWORK_MODE ? '0.0.0.0' : '127.0.0.1');
@@ -803,8 +802,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req, res) => {
     // Every agent — Claude included — executes on the user's own machine via the
     // desktop runner relay. The server never runs an LLM itself (no API keys / no
     // Claude login on the server), it only relays runs to a connected desktop.
-    const delegateToDesktop = isCliAgent(selectedAgent) || selectedAgent === 'claude-code';
-    if (delegateToDesktop && !isDesktopRunnerOnline(req.user.id)) {
+    if (!isDesktopRunnerOnline(req.user.id)) {
         return res.status(503).json({
             error: 'No desktop agent runner is connected. Open Cascade on your computer (signed in to the same account) to run agents from chat.',
         });
@@ -825,21 +823,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req, res) => {
     if (typeof cwd === 'string' && cwd.trim()) {
         const rawCwd = cwd.trim();
         if (!/^(vault\s*root|root|\.\/?)$/i.test(rawCwd)) {
-            if (delegateToDesktop) {
-                selectedCwd = rawCwd;
-            }
-            else {
-                const expandedCwd = rawCwd === '~'
-                    ? os.homedir()
-                    : rawCwd.startsWith('~/')
-                        ? path.join(os.homedir(), rawCwd.slice(2))
-                        : rawCwd;
-                const resolvedCwd = path.resolve(path.isAbsolute(expandedCwd) ? expandedCwd : path.join(vault.root_path, expandedCwd));
-                if (!fs.existsSync(resolvedCwd) || !fs.statSync(resolvedCwd).isDirectory()) {
-                    return res.status(400).json({ error: 'cwd must be an existing directory' });
-                }
-                selectedCwd = resolvedCwd;
-            }
+            selectedCwd = rawCwd;
         }
     }
     // Sanitize image attachments to { media_type, data } base64 entries.
@@ -867,25 +851,23 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req, res) => {
                 messageId: chatMessageId,
             });
         }
-        if (delegateToDesktop) {
-            const delegated = delegateRunToDesktop(req.user.id, {
-                runId: run.id,
-                vaultId: vault.id,
-                agent: selectedAgent,
-                prompt,
-                cwd: selectedCwd,
-                vaultRoot: vault.root_path,
-                model: selectedModel,
-                resumeSessionId: findPriorSession(db, run),
-                images: cleanImages,
-                yolo: yoloMode,
+        const delegated = delegateRunToDesktop(req.user.id, {
+            runId: run.id,
+            vaultId: vault.id,
+            agent: selectedAgent,
+            prompt,
+            cwd: selectedCwd,
+            vaultRoot: vault.root_path,
+            model: selectedModel,
+            resumeSessionId: findPriorSession(db, run),
+            images: cleanImages,
+            yolo: yoloMode,
+        });
+        if (!delegated) {
+            chatRunTargets.delete(run.id);
+            return res.status(503).json({
+                error: 'Desktop agent runner disconnected before the run could start. Open Cascade on your computer and try again.',
             });
-            if (!delegated) {
-                chatRunTargets.delete(run.id);
-                return res.status(503).json({
-                    error: 'Desktop agent runner disconnected before the run could start. Open Cascade on your computer and try again.',
-                });
-            }
         }
         res.json({ run });
     }
