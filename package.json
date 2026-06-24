@@ -30,6 +30,7 @@
     "build:vps": "npm run build && npm run build:client",
     "start:vps": "node dist/index.js",
     "test": "npm --workspace=client run test",
+    "test:desktop-runner": "node scripts/test-desktop-runner-e2e.mjs",
     "start": "electron-forge start",
     "migrate:legacy": "tsx scripts/migrate-legacy-posts.ts",
     "package": "electron-forge package",

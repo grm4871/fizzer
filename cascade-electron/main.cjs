@@ -32,6 +32,7 @@ if (explicitUserDataDir) {
 
 const db = require('./database.cjs');
 const { startLocalAgentRun, cancelLocalAgentRun } = require('./agent-runner.cjs');
+const { connectDesktopRunner, disconnectDesktopRunner, isDesktopRunnerConnected } = require('./desktop-runner-host.cjs');
 
 let nodePty = null;
 try {
@@ -1454,6 +1455,31 @@ ipcMain.handle('agent:cancel', async (_event, runId) => {
   }
 });
 
+/** Start the main-process /runners relay (called after login). */
+ipcMain.handle('runner:setToken', async (_event, { token, apiUrl } = {}) => {
+  try {
+    return connectDesktopRunner(token, apiUrl);
+  } catch (error) {
+    console.error('[IPC] Failed to connect desktop runner:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+/** Stop the main-process /runners relay (called on logout). */
+ipcMain.handle('runner:clearToken', async () => {
+  try {
+    disconnectDesktopRunner();
+    return { success: true };
+  } catch (error) {
+    console.error('[IPC] Failed to disconnect desktop runner:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('runner:status', async () => ({
+  connected: isDesktopRunnerConnected(),
+}));
+
 // ═══════════════════════════════════════════════════════════════
 // NETDOC IPC HANDLERS
 // ═══════════════════════════════════════════════════════════════
@@ -1592,6 +1618,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('will-quit', () => {
+  disconnectDesktopRunner();
   try {
     const webviewSession = session.fromPartition(WEBVIEW_PARTITION);
     if (webviewSession && webviewSession.cookies) {

@@ -116,8 +116,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('browser:event', listener);
   },
 
-  // ── Local CLI agents ────────────────────────────────────────
-  /** Spawn a CLI agent on this machine (Grok, Codex, etc.). Events stream via onAgentEvent. */
+  // ── Desktop agent runner relay ──────────────────────────────
+  /** Connect the main-process /runners socket after login. */
+  setRunnerToken: ({ token, apiUrl }) => ipcRenderer.invoke('runner:setToken', { token, apiUrl }),
+  clearRunnerToken: () => ipcRenderer.invoke('runner:clearToken'),
+  getRunnerStatus: () => ipcRenderer.invoke('runner:status'),
+  // Legacy direct IPC runs (still used internally by the main-process relay).
   startAgentRun: (opts) => ipcRenderer.invoke('agent:start', opts),
   cancelAgentRun: (runId) => ipcRenderer.invoke('agent:cancel', runId),
   onAgentEvent: (callback) => {

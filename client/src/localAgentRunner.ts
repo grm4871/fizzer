@@ -37,9 +37,10 @@ export function isCliAgentId(agent: string): agent is CliAgentId {
   return agent === 'codex' || agent === 'grok' || agent === 'antigravity' || agent === 'copilot' || agent === 'hermes';
 }
 
-/** True when the desktop shell can spawn CLI agents locally. */
+/** True when this shell can host delegated CLI runs (Electron with runner relay). */
 export function canRunCliAgentsLocally(): boolean {
-  return Boolean(electronAgentAPI()?.startAgentRun && electronAgentAPI()?.onAgentEvent);
+  const api = electronAgentAPI();
+  return Boolean(api?.setRunnerToken || (api?.startAgentRun && api?.onAgentEvent));
 }
 
 /** Allocate a negative run id reserved for local (client-side) agent runs. */

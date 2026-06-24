@@ -634,7 +634,17 @@ export default function App() {
   useEffect(() => {
     desktopRunnerStopRef.current?.();
     desktopRunnerStopRef.current = user ? startDesktopRunnerHost() : null;
+    const resyncRunner = () => {
+      if (!user) return;
+      desktopRunnerStopRef.current?.();
+      desktopRunnerStopRef.current = startDesktopRunnerHost();
+    };
+    window.addEventListener('focus', resyncRunner);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') resyncRunner();
+    });
     return () => {
+      window.removeEventListener('focus', resyncRunner);
       desktopRunnerStopRef.current?.();
       desktopRunnerStopRef.current = null;
     };

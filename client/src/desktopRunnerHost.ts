@@ -1,102 +1,52 @@
 /**
- * Desktop runner host — keeps a /runners socket open in the Electron app so
- * CLI agent runs triggered from any client (browser, phone, etc.) execute locally.
+ * Desktop runner host — tells the Electron main process to connect as the
+ * user's /runners relay so CLI agents can be piloted from any client.
  */
 
-import { io, type Socket } from 'socket.io-client';
-import {
-  canRunCliAgentsLocally,
-  cancelLocalAgentRun,
-  isCliAgentId,
-  startLocalAgentRun,
-  type CliAgentId,
-} from './localAgentRunner';
-
-const API_BASE = import.meta.env.VITE_API_URL || '';
-
-type DelegatedRunPayload = {
-  runId: number;
-  vaultId: string;
-  agent: string;
-  prompt: string;
-  cwd?: string;
-  vaultRoot?: string;
-  model?: string;
-  resumeSessionId?: string;
-  images?: Array<{ media_type: string; data: string }>;
+type RunnerElectronAPI = {
+  setRunnerToken?: (opts: { token: string; apiUrl?: string }) => Promise<{ success: boolean; error?: string }>;
+  clearRunnerToken?: () => Promise<{ success: boolean }>;
+  getRunnerStatus?: () => Promise<{ connected: boolean }>;
 };
 
-let socket: Socket | null = null;
-const activeCleanups = new Map<number, () => void>();
-
-function emitRunEvent(runId: number, type: string, payload: unknown) {
-  socket?.emit('runner:runEvent', { runId, type, payload });
+function runnerElectronAPI(): RunnerElectronAPI | undefined {
+  return (window as unknown as { electronAPI?: RunnerElectronAPI }).electronAPI;
 }
 
-async function handleDelegatedRun(payload: DelegatedRunPayload) {
-  const runId = Number(payload.runId);
-  if (!Number.isFinite(runId) || !isCliAgentId(payload.agent)) return;
+export function canHostDesktopRunner(): boolean {
+  return Boolean(runnerElectronAPI()?.setRunnerToken);
+}
 
-  if (activeCleanups.has(runId)) {
-    activeCleanups.get(runId)?.();
-    activeCleanups.delete(runId);
+function resolveApiBase(): string {
+  const configured = import.meta.env.VITE_API_URL || '';
+  if (configured) return configured.replace(/\/$/, '');
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return window.location.origin.replace(/\/$/, '');
   }
-
-  try {
-    const cleanup = await startLocalAgentRun({
-      runId,
-      agent: payload.agent as CliAgentId,
-      prompt: payload.prompt,
-      cwd: payload.cwd,
-      vaultRoot: payload.vaultRoot,
-      model: payload.model,
-      resumeSessionId: payload.resumeSessionId,
-      images: payload.images,
-    }, (event) => {
-      emitRunEvent(runId, event.type, JSON.parse(event.payload_json));
-    });
-    activeCleanups.set(runId, cleanup);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Local agent run failed.';
-    emitRunEvent(runId, 'status', { status: 'failed', summary: message });
-  }
+  return '';
 }
 
 /**
- * Connect to the server as this user's desktop agent runner.
- * No-op outside the Electron shell or when logged out.
+ * Connect the main-process desktop runner relay after login.
+ * No-op in a plain browser.
  */
 export function startDesktopRunnerHost(): () => void {
-  if (!canRunCliAgentsLocally()) return () => {};
+  const api = runnerElectronAPI();
+  if (!api?.setRunnerToken) return () => {};
 
   const token = localStorage.getItem('docs_token');
   if (!token) return () => {};
 
-  socket = io(`${API_BASE}/runners`, {
-    auth: { token },
-    transports: ['websocket', 'polling'],
-  });
-
-  socket.on('connect', () => {
-    socket?.emit('runner:register');
-  });
-
-  socket.on('run:delegate', (payload: DelegatedRunPayload) => {
-    void handleDelegatedRun(payload);
-  });
-
-  socket.on('run:cancel', (data: { runId?: number }) => {
-    const runId = Number(data?.runId);
-    if (!Number.isFinite(runId)) return;
-    activeCleanups.get(runId)?.();
-    activeCleanups.delete(runId);
-    void cancelLocalAgentRun(runId);
-  });
+  void api.setRunnerToken({ token, apiUrl: resolveApiBase() });
 
   return () => {
-    for (const cleanup of activeCleanups.values()) cleanup();
-    activeCleanups.clear();
-    socket?.disconnect();
-    socket = null;
+    void api.clearRunnerToken?.();
   };
+}
+
+export async function getDesktopRunnerStatus(): Promise<{ connected: boolean; available: boolean }> {
+  const api = runnerElectronAPI();
+  if (!api?.getRunnerStatus) return { connected: false, available: false };
+  const status = await api.getRunnerStatus();
+  return { connected: Boolean(status?.connected), available: true };
 }
