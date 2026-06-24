@@ -50,6 +50,9 @@ export interface ChatAgentRegistration {
   cwd: string;
   contextPrompt: string;
   taggableByAgents: boolean;
+  /** Run this agent with permission prompts bypassed ("yolo"). Scoped to this
+   * registration, applied on the machine that runs it. */
+  yolo: boolean;
 }
 
 export function createChatAgentRegistrationId() {
@@ -331,6 +334,7 @@ export function ChatView({
       cwd: '',
       contextPrompt: '',
       taggableByAgents: true,
+      yolo: false,
     };
   }, [availableAgents]);
   const [agentForm, setAgentForm] = useState<ChatAgentRegistration>(() => ({
@@ -342,6 +346,7 @@ export function ChatView({
     cwd: '',
     contextPrompt: '',
     taggableByAgents: true,
+    yolo: false,
   }));
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
   const [replyTarget, setReplyTarget] = useState<ChatReplyRef | null>(null);
@@ -571,7 +576,7 @@ export function ChatView({
             messageGroups.map((group) => {
               const head = group.messages[0];
               const tail = group.messages[group.messages.length - 1];
-              const groupHasRunWidget = group.messages.some((message) => message.status === 'running');
+              const groupHasRunWidget = group.messages.some((message) => message.status === 'running' || (message.blocks || []).some((block) => block.type === 'thinking'));
               const groupSelected = group.messages.some((message) => message.id === selectedMessageId);
               return (
                 <article
@@ -589,13 +594,14 @@ export function ChatView({
                     {group.messages.map((message) => {
                       const hasRunWidget = message.status === 'running';
                       const hasThoughtBlocks = (message.blocks || []).some((block) => block.type === 'thinking');
+                      const isTappable = hasRunWidget || hasThoughtBlocks;
                       const selected = selectedMessageId === message.id;
                       return (
                         <div
                           key={message.id}
-                          className={`chat-message-chunk ${hasRunWidget ? 'has-run-widget' : ''} ${selected ? 'selected' : ''}`}
+                          className={`chat-message-chunk ${isTappable ? 'has-run-widget' : ''} ${selected ? 'selected' : ''}`}
                           onClick={() => {
-                            if (hasRunWidget) setSelectedMessageId((current) => current === message.id ? null : message.id);
+                            if (isTappable) setSelectedMessageId((current) => current === message.id ? null : message.id);
                           }}
                           onContextMenu={(event) => openMessageContextMenu(event, message)}
                         >
@@ -633,7 +639,7 @@ export function ChatView({
                             </div>
                           )}
                           {message.body && <ChatMessageText body={message.body} mentionableAliases={mentionableAliases} />}
-                          {(selected || hasThoughtBlocks) && <ChatRunWidget message={message} onCancelRun={onCancelRun} />}
+                          {(selected || hasRunWidget) && <ChatRunWidget message={message} onCancelRun={onCancelRun} />}
                         </div>
                       );
                     })}
@@ -880,6 +886,7 @@ export function ChatView({
                     cwd: '',
                     contextPrompt: '',
                     taggableByAgents: true,
+                    yolo: false,
                   });
                 }}
               >
@@ -949,6 +956,14 @@ export function ChatView({
                 onChange={(event) => setAgentForm((value) => ({ ...value, taggableByAgents: event.target.checked }))}
               />
               Taggable by other agents
+            </label>
+            <label className="chat-agent-toggle">
+              <input
+                type="checkbox"
+                checked={agentForm.yolo}
+                onChange={(event) => setAgentForm((value) => ({ ...value, yolo: event.target.checked }))}
+              />
+              Yolo mode (skip permission prompts)
             </label>
             {agentFormError && <div className="chat-agent-form-error">{agentFormError}</div>}
             <div className="chat-agent-menu-actions">

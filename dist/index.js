@@ -793,10 +793,11 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req, res) => {
     const vault = getVault(db, req.params.id, req.user.id);
     if (!vault)
         return res.status(404).json({ error: 'Vault not found' });
-    const { prompt, note_id, agent, conversation_id, images, model, cwd } = req.body;
+    const { prompt, note_id, agent, conversation_id, images, model, cwd, yolo } = req.body;
     if (!prompt || !prompt.trim()) {
         return res.status(400).json({ error: 'Prompt is required' });
     }
+    const yoloMode = yolo === true;
     const validAgents = ['claude-code', 'codex', 'grok', 'antigravity', 'copilot', 'hermes'];
     const selectedAgent = validAgents.includes(agent) ? agent : 'claude-code';
     // Every agent — Claude included — executes on the user's own machine via the
@@ -877,6 +878,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req, res) => {
                 model: selectedModel,
                 resumeSessionId: findPriorSession(db, run),
                 images: cleanImages,
+                yolo: yoloMode,
             });
             if (!delegated) {
                 chatRunTargets.delete(run.id);

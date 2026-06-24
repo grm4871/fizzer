@@ -39,7 +39,7 @@ async function loadClaudeSdk() {
 }
 
 // Same mapping the server applied: SDK message type → run_event type expected
-// by the chat/AIPanel renderer.
+// by the chat renderer.
 function classifySdkMessage(message) {
   if (message.type === 'assistant') return 'text';
   if (message.type === 'result') return 'result';
@@ -125,7 +125,11 @@ async function runClaudeLocally(opts, emit) {
       cwd,
       model,
       maxTurns: CLAUDE_MAX_TURNS,
-      permissionMode: 'acceptEdits',
+      // "Yolo" bypasses all permission prompts (requires the explicit
+      // allowDangerouslySkipPermissions acknowledgement); otherwise auto-accept
+      // only file edits.
+      permissionMode: opts.yolo ? 'bypassPermissions' : 'acceptEdits',
+      ...(opts.yolo ? { allowDangerouslySkipPermissions: true } : {}),
       // Electron's main process is not a Node runtime, so spawn a real `node`
       // from PATH to host the bundled Claude Code CLI.
       executable: 'node',
@@ -201,6 +205,7 @@ async function startLocalAgentRun(opts, sendEvent) {
       resumeSessionId: typeof opts.resumeSessionId === 'string' ? opts.resumeSessionId : undefined,
       images: Array.isArray(opts.images) ? opts.images : [],
       model: typeof opts.model === 'string' ? opts.model : undefined,
+      yolo: opts.yolo === true,
       runId,
       emit,
     });

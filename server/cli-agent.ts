@@ -136,6 +136,9 @@ interface CliAgentOpts {
   runId?: number;
   db?: Db;
   model?: string;
+  /** Run with permission prompts bypassed ("yolo"). For Codex this widens the
+   * sandbox from workspace-write to danger-full-access. */
+  yolo?: boolean;
 }
 
 /** Maps MIME types to file extensions for temp image files. */
@@ -173,7 +176,7 @@ export async function runCliAgent(opts: CliAgentOpts): Promise<CliAgentResult> {
     ? `[Context: ${opts.context}]\n\n${opts.userPrompt}`
     : opts.userPrompt;
   if (opts.agent === 'codex') {
-    return runCodex(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.images || [], opts.runId, opts.model);
+    return runCodex(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.images || [], opts.runId, opts.model, opts.yolo);
   } else if (opts.agent === 'grok') {
     return runGrok(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.runId, opts.model);
   } else if (opts.agent === 'copilot') {
@@ -368,6 +371,7 @@ async function runCodex(
   images: CliImage[] = [],
   runId?: number,
   model?: string,
+  yolo?: boolean,
 ): Promise<CliAgentResult> {
   const { paths: imagePaths, cleanup } = writeTempImages(images);
   // `-i/--image` is variadic, so it must come AFTER the positional prompt (and
@@ -375,9 +379,10 @@ async function runCodex(
   // --sandbox, so the sandbox mode is set via -c instead.
   const imageArgs = imagePaths.flatMap((p) => ['-i', p]);
   const modelArgs = model ? ['--model', model] : [];
+  const sandbox = yolo ? 'danger-full-access' : 'workspace-write';
   const args = resumeId
-    ? ['exec', 'resume', '--json', '--skip-git-repo-check', '-c', 'sandbox_mode=workspace-write', ...modelArgs, resumeId, prompt, ...imageArgs]
-    : ['exec', '--json', '--skip-git-repo-check', '--sandbox', 'workspace-write', ...modelArgs, prompt, ...imageArgs];
+    ? ['exec', 'resume', '--json', '--skip-git-repo-check', '-c', `sandbox_mode=${sandbox}`, ...modelArgs, resumeId, prompt, ...imageArgs]
+    : ['exec', '--json', '--skip-git-repo-check', '--sandbox', sandbox, ...modelArgs, prompt, ...imageArgs];
 
   let summary = '';
   let sessionId: string | undefined;

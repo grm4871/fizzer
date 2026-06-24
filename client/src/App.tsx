@@ -168,6 +168,7 @@ function readLegacyLocalChatAgentMembers(): Record<string, ChatAgentRegistration
             cwd: typeof registration.cwd === 'string' ? normalizeChatCwd(registration.cwd) : '',
             contextPrompt: typeof registration.contextPrompt === 'string' ? registration.contextPrompt : '',
             taggableByAgents: typeof registration.taggableByAgents === 'boolean' ? registration.taggableByAgents : true,
+            yolo: typeof registration.yolo === 'boolean' ? registration.yolo : false,
           };
         });
     }
@@ -1244,6 +1245,7 @@ export default function App() {
           conversation_id: resumeSessionId,
           model: registration.model || undefined,
           cwd: normalizeChatCwd(registration.cwd) || undefined,
+          yolo: registration.yolo,
           images: runImages,
           // Link the run to this chat message so the server persists/broadcasts
           // the streamed reply to all clients (see serverOwnedChatMessageIdsRef).

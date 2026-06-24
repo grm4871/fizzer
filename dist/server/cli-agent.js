@@ -125,7 +125,7 @@ export async function runCliAgent(opts) {
         ? `[Context: ${opts.context}]\n\n${opts.userPrompt}`
         : opts.userPrompt;
     if (opts.agent === 'codex') {
-        return runCodex(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.images || [], opts.runId, opts.model);
+        return runCodex(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.images || [], opts.runId, opts.model, opts.yolo);
     }
     else if (opts.agent === 'grok') {
         return runGrok(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.runId, opts.model);
@@ -309,16 +309,17 @@ function extractGrokDiagnostic(debugFile) {
  * @param images     - Optional images to attach via `-i` flags
  * @returns Summary text and optional session id
  */
-async function runCodex(prompt, cwd, emit, resumeId, images = [], runId, model) {
+async function runCodex(prompt, cwd, emit, resumeId, images = [], runId, model, yolo) {
     const { paths: imagePaths, cleanup } = writeTempImages(images);
     // `-i/--image` is variadic, so it must come AFTER the positional prompt (and
     // session id on resume) or it swallows them. `codex exec resume` rejects
     // --sandbox, so the sandbox mode is set via -c instead.
     const imageArgs = imagePaths.flatMap((p) => ['-i', p]);
     const modelArgs = model ? ['--model', model] : [];
+    const sandbox = yolo ? 'danger-full-access' : 'workspace-write';
     const args = resumeId
-        ? ['exec', 'resume', '--json', '--skip-git-repo-check', '-c', 'sandbox_mode=workspace-write', ...modelArgs, resumeId, prompt, ...imageArgs]
-        : ['exec', '--json', '--skip-git-repo-check', '--sandbox', 'workspace-write', ...modelArgs, prompt, ...imageArgs];
+        ? ['exec', 'resume', '--json', '--skip-git-repo-check', '-c', `sandbox_mode=${sandbox}`, ...modelArgs, resumeId, prompt, ...imageArgs]
+        : ['exec', '--json', '--skip-git-repo-check', '--sandbox', sandbox, ...modelArgs, prompt, ...imageArgs];
     let summary = '';
     let sessionId;
     const emittedTool = new Set();

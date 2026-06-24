@@ -26,6 +26,8 @@ export type DelegatedRunPayload = {
   model?: string;
   resumeSessionId?: string;
   images?: RunImage[];
+  /** Run with permission prompts bypassed ("yolo"). */
+  yolo?: boolean;
 };
 
 type RunnerUser = { id: number; username: string };

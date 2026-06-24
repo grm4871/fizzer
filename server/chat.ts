@@ -54,6 +54,9 @@ export type ChatAgentRegistration = {
   cwd: string;
   contextPrompt: string;
   taggableByAgents: boolean;
+  /** Run this agent with permission prompts bypassed ("yolo"). Scoped to this
+   * registration; applied on the machine that executes the run. */
+  yolo: boolean;
 };
 
 type ChatMessageRow = {
@@ -104,11 +107,18 @@ export function ensureChatSchema(db: Db): void {
       cwd TEXT NOT NULL DEFAULT '',
       context_prompt TEXT NOT NULL DEFAULT '',
       taggable_by_agents INTEGER NOT NULL DEFAULT 1,
+      yolo INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS chat_agent_members_channel_idx ON chat_agent_members(channel_id);
   `);
+
+  // Migration: add `yolo` to pre-existing chat_agent_members tables.
+  const memberCols = db.prepare("PRAGMA table_info(chat_agent_members)").all() as Array<{ name: string }>;
+  if (!memberCols.some((col) => col.name === 'yolo')) {
+    db.exec('ALTER TABLE chat_agent_members ADD COLUMN yolo INTEGER NOT NULL DEFAULT 0');
+  }
 }
 
 type ChatAgentMemberRow = {
@@ -122,6 +132,7 @@ type ChatAgentMemberRow = {
   cwd: string;
   context_prompt: string;
   taggable_by_agents: number;
+  yolo: number;
 };
 
 function rowToAgentMember(row: ChatAgentMemberRow): ChatAgentRegistration {
@@ -134,6 +145,7 @@ function rowToAgentMember(row: ChatAgentMemberRow): ChatAgentRegistration {
     cwd: row.cwd,
     contextPrompt: row.context_prompt,
     taggableByAgents: row.taggable_by_agents !== 0,
+    yolo: row.yolo !== 0,
   };
 }
 
@@ -158,6 +170,7 @@ function normalizeAgentRegistration(input: Partial<ChatAgentRegistration>, fallb
     cwd: String(input.cwd || ''),
     contextPrompt: String(input.contextPrompt || ''),
     taggableByAgents: input.taggableByAgents !== false,
+    yolo: input.yolo === true,
   };
 }
 
@@ -534,6 +547,7 @@ export function upsertChatAgentMember(
         cwd = ?,
         context_prompt = ?,
         taggable_by_agents = ?,
+        yolo = ?,
         updated_at = datetime('now')
       WHERE id = ? AND channel_id = ?
     `).run(
@@ -544,6 +558,7 @@ export function upsertChatAgentMember(
       member.cwd,
       member.contextPrompt,
       member.taggableByAgents ? 1 : 0,
+      member.yolo ? 1 : 0,
       member.id,
       channelId,
     );
@@ -551,8 +566,8 @@ export function upsertChatAgentMember(
     db.prepare(`
       INSERT INTO chat_agent_members (
         id, channel_id, vault_id, agent_id, display_name, mention,
-        model, cwd, context_prompt, taggable_by_agents
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        model, cwd, context_prompt, taggable_by_agents, yolo
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       member.id,
       channelId,
@@ -564,6 +579,7 @@ export function upsertChatAgentMember(
       member.cwd,
       member.contextPrompt,
       member.taggableByAgents ? 1 : 0,
+      member.yolo ? 1 : 0,
     );
   }
 
