@@ -60,23 +60,30 @@ type ClientEvents = {
 
 /**
  * Create a new Socket.IO connection to the `/vault` namespace.
- * Callers should `emit('joinVault', vaultId)` after connecting.
+ * Callers should `emit('joinVault', vaultId)` on every `connect` event
+ * (including reconnects) so room membership is restored after backgrounding.
  */
 export function connectVaultSocket(): Socket<ServerEvents, ClientEvents> {
   return io(`${API_BASE}/vault`, {
     auth: { token: localStorage.getItem('docs_token') },
     transports: ['websocket', 'polling'],
+    reconnection: true,
+    reconnectionAttempts: Infinity,
+    reconnectionDelay: 2000,
   });
 }
 
 /**
  * Create a new Socket.IO connection to the `/runs` namespace.
- * Callers should `emit('joinRun', runId)` after connecting to receive
- * streamed agent events (status, text, user/tool_result).
+ * Callers should `emit('joinRun', runId)` on every `connect` event
+ * (including reconnects) to receive streamed agent events.
  */
 export function connectRunsSocket(): Socket {
   return io(`${API_BASE}/runs`, {
     auth: { token: localStorage.getItem('docs_token') },
     transports: ['websocket', 'polling'],
+    reconnection: true,
+    reconnectionAttempts: Infinity,
+    reconnectionDelay: 2000,
   });
 }

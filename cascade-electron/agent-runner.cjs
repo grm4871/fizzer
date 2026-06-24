@@ -134,6 +134,9 @@ async function runClaudeLocally(opts, emit) {
       // from PATH to host the bundled Claude Code CLI.
       executable: 'node',
       ...(resumeSessionId ? { resume: resumeSessionId } : {}),
+      // Stream token-level deltas so thinking renders live in its block rather
+      // than arriving all at once as a finished assistant message.
+      includePartialMessages: true,
       ...(CLAUDE_THINKING_TOKENS > 0
         ? { thinking: { type: 'enabled', budgetTokens: CLAUDE_THINKING_TOKENS } }
         : {}),
@@ -146,8 +149,32 @@ async function runClaudeLocally(opts, emit) {
   let sessionId;
   try {
     for await (const message of stream) {
-      emit(classifySdkMessage(message), message);
       if (message.session_id) sessionId = message.session_id;
+
+      // Partial streaming: translate token-level deltas into the same
+      // { message: { content: [...] } } shape the chat accumulators expect,
+      // routing thinking_delta → a thinking block and text_delta → a text
+      // block. The assembled `assistant` message is skipped below so its
+      // content isn't appended a second time on top of these deltas.
+      if (message.type === 'stream_event') {
+        const ev = message.event;
+        if (ev?.type === 'content_block_start' && ev.content_block?.type === 'redacted_thinking') {
+          emit('text', { message: { content: [{ type: 'redacted_thinking' }] } });
+        } else if (ev?.type === 'content_block_delta') {
+          const delta = ev.delta;
+          if (delta?.type === 'thinking_delta' && delta.thinking) {
+            emit('text', { message: { content: [{ type: 'thinking', thinking: delta.thinking }] } });
+          } else if (delta?.type === 'text_delta' && delta.text) {
+            emit('text', { message: { content: [{ type: 'text', text: delta.text }] } });
+          }
+        }
+        continue;
+      }
+
+      // The complete assistant message duplicates the streamed deltas above.
+      if (message.type === 'assistant') continue;
+
+      emit(classifySdkMessage(message), message);
       if (message.type === 'result') summary = message.result || message.subtype || summary;
     }
   } finally {

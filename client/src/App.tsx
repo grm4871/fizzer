@@ -539,6 +539,7 @@ export default function App() {
   const localAgentUnsubsRef = useRef<Map<number, () => void>>(new Map());
   const desktopRunnerStopRef = useRef<(() => void) | null>(null);
   const chatStateRef = useRef(chatState); chatStateRef.current = chatState;
+  const vaultSocketRef = useRef<ReturnType<typeof connectVaultSocket> | null>(null);
   const runSocketsRef = useRef<Map<number, ReturnType<typeof connectRunsSocket>>>(new Map());
   const streamingChatMessageIdsRef = useRef<Set<string>>(new Set());
   // Agent messages whose persistence is owned by the server (the run is linked to
@@ -685,17 +686,7 @@ export default function App() {
   useEffect(() => {
     desktopRunnerStopRef.current?.();
     desktopRunnerStopRef.current = user ? startDesktopRunnerHost() : null;
-    const resyncRunner = () => {
-      if (!user) return;
-      desktopRunnerStopRef.current?.();
-      desktopRunnerStopRef.current = startDesktopRunnerHost();
-    };
-    window.addEventListener('focus', resyncRunner);
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') resyncRunner();
-    });
     return () => {
-      window.removeEventListener('focus', resyncRunner);
       desktopRunnerStopRef.current?.();
       desktopRunnerStopRef.current = null;
     };
@@ -876,6 +867,43 @@ export default function App() {
       console.error('Error loading vault data:', error);
     }
   }, [loadChatMessages, loadChatAgentMembers]);
+
+  useEffect(() => {
+    const resyncOnResume = () => {
+      if (!user) return;
+      desktopRunnerStopRef.current?.();
+      desktopRunnerStopRef.current = startDesktopRunnerHost();
+
+      const vaultId = activeVaultIdRef.current;
+      const vaultSocket = vaultSocketRef.current;
+      if (vaultSocket && vaultId) {
+        if (vaultSocket.connected) {
+          vaultSocket.emit('joinVault', vaultId);
+        } else {
+          vaultSocket.connect();
+        }
+      }
+      for (const [runId, socket] of runSocketsRef.current) {
+        if (socket.connected) {
+          socket.emit('joinRun', runId);
+        } else {
+          socket.connect();
+        }
+      }
+      if (vaultId) {
+        void loadChatMessages(vaultId, notesRef.current);
+      }
+    };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') resyncOnResume();
+    };
+    window.addEventListener('focus', resyncOnResume);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.removeEventListener('focus', resyncOnResume);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [user, loadChatMessages]);
 
   useEffect(() => {
     if (activeVaultId) {
@@ -1148,10 +1176,15 @@ export default function App() {
           localAgentUnsubsRef.current.delete(runId);
         } else {
           const socket = runSocketsRef.current.get(runId);
-          socket?.disconnect();
+          if (socket) {
+            socket.off('connect', joinRunRoom);
+            socket.disconnect();
+          }
           runSocketsRef.current.delete(runId);
         }
       };
+
+      let joinRunRoom: () => void = () => {};
 
       const processRunEvent = (event: { seq?: number; type: string; payload_json: string }, runId: number, cleanup: () => void) => {
         if (typeof event?.seq === 'number') {
@@ -1274,6 +1307,8 @@ export default function App() {
       }));
 
       runSocketsRef.current.set(res.run.id, runSocket);
+      joinRunRoom = () => runSocket!.emit('joinRun', res.run.id);
+      runSocket.on('connect', joinRunRoom);
       runSocket.emit('joinRun', res.run.id);
       const cleanup = () => {};
       runSocket.on('event', (event) => processRunEvent(event, res.run.id, cleanup));
@@ -1606,7 +1641,12 @@ export default function App() {
   useEffect(() => {
     if (!activeVaultId) return;
     const socket = connectVaultSocket();
-    socket.emit('joinVault', activeVaultId);
+    vaultSocketRef.current = socket;
+    const joinActiveVault = () => {
+      socket.emit('joinVault', activeVaultId);
+    };
+    joinActiveVault();
+    socket.on('connect', joinActiveVault);
 
     const handleNoteChanged = (data: { noteId: string; vaultId: string }) => {
       if (data.vaultId !== activeVaultId) return;
@@ -1714,7 +1754,9 @@ export default function App() {
     socket.on('vault:chatAgentMemberUpserted', handleChatAgentMemberUpserted);
     socket.on('vault:chatAgentMemberRemoved', handleChatAgentMemberRemoved);
     return () => {
+      socket.off('connect', joinActiveVault);
       socket.emit('leaveVault', activeVaultId);
+      vaultSocketRef.current = null;
       socket.off('vault:noteChanged', handleNoteChanged);
       socket.off('vault:noteCreated', handleNoteCreated);
       socket.off('vault:noteDeleted', handleNoteDeleted);
