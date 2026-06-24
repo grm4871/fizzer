@@ -116,6 +116,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('browser:event', listener);
   },
 
+  // ── Local CLI agents ────────────────────────────────────────
+  /** Spawn a CLI agent on this machine (Grok, Codex, etc.). Events stream via onAgentEvent. */
+  startAgentRun: (opts) => ipcRenderer.invoke('agent:start', opts),
+  cancelAgentRun: (runId) => ipcRenderer.invoke('agent:cancel', runId),
+  onAgentEvent: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('agent:event', listener);
+    return () => ipcRenderer.removeListener('agent:event', listener);
+  },
+
   // ── App Update ──────────────────────────────────────────────
   updateAndRestart: () => ipcRenderer.invoke('app:updateAndRestart'),
 });

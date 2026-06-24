@@ -24,6 +24,8 @@ import * as Layout from './layout/tree';
 import type { LayoutNode } from './layout/tree';
 import { api, type User, type Vault, type Folder, type NoteSummary, type Note } from './api';
 import { connectRunsSocket, connectVaultSocket } from './socket';
+import { isLocalRunId, cancelLocalAgentRun } from './localAgentRunner';
+import { startDesktopRunnerHost } from './desktopRunnerHost';
 import { Gem, PanelLeftOpen, SquareTerminal } from 'lucide-react';
 
 /**
@@ -134,6 +136,47 @@ function loadPersistedSession(): PersistedSession {
   }
 }
 
+function readLegacyLocalChatAgentMembers(): Record<string, ChatAgentRegistration[]> {
+  try {
+    const raw = localStorage.getItem(CHAT_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Partial<ChatState>;
+    if (!parsed.registeredAgentsByChannel || typeof parsed.registeredAgentsByChannel !== 'object') return {};
+    const registeredAgentsByChannel: Record<string, ChatAgentRegistration[]> = {};
+    for (const [channelId, registrations] of Object.entries(parsed.registeredAgentsByChannel)) {
+      if (!Array.isArray(registrations)) continue;
+      registeredAgentsByChannel[channelId] = registrations
+        .filter((registration): registration is ChatAgentRegistration =>
+          Boolean(registration) &&
+          typeof registration === 'object' &&
+          typeof registration.agentId === 'string',
+        )
+        .map((registration, index) => {
+          const mention = typeof registration.mention === 'string' && registration.mention.trim()
+            ? registration.mention.replace(/^@+/, '').trim()
+            : registration.agentId;
+          return {
+            id: typeof registration.id === 'string' && registration.id.trim()
+              ? registration.id.trim()
+              : `legacy-${registration.agentId}-${mention}-${index}`,
+            agentId: registration.agentId,
+            displayName: typeof registration.displayName === 'string' && registration.displayName.trim()
+              ? registration.displayName.trim()
+              : agentLabel(registration.agentId as AgentId),
+            mention,
+            model: typeof registration.model === 'string' ? registration.model : '',
+            cwd: typeof registration.cwd === 'string' ? normalizeChatCwd(registration.cwd) : '',
+            contextPrompt: typeof registration.contextPrompt === 'string' ? registration.contextPrompt : '',
+            taggableByAgents: typeof registration.taggableByAgents === 'boolean' ? registration.taggableByAgents : true,
+          };
+        });
+    }
+    return registeredAgentsByChannel;
+  } catch {
+    return {};
+  }
+}
+
 function readLegacyLocalChatMessages(): Record<string, ChatMessage[]> {
   try {
     const raw = localStorage.getItem(CHAT_STORAGE_KEY);
@@ -189,8 +232,6 @@ function loadChatState(): ChatState {
     const parsed = JSON.parse(raw) as Partial<ChatState>;
     const agentConversationsByChannel: Record<string, string> = {};
     const agentModelsByAgent: Record<string, string> = {};
-    const registeredAgentsByChannel: Record<string, ChatAgentRegistration[]> = {};
-
     if (parsed.agentConversationsByChannel && typeof parsed.agentConversationsByChannel === 'object') {
       for (const [key, value] of Object.entries(parsed.agentConversationsByChannel)) {
         if (typeof value === 'string') agentConversationsByChannel[key] = value;
@@ -203,38 +244,7 @@ function loadChatState(): ChatState {
       }
     }
 
-    if (parsed.registeredAgentsByChannel && typeof parsed.registeredAgentsByChannel === 'object') {
-      for (const [channelId, registrations] of Object.entries(parsed.registeredAgentsByChannel)) {
-        if (!Array.isArray(registrations)) continue;
-        registeredAgentsByChannel[channelId] = registrations
-          .filter((registration): registration is ChatAgentRegistration =>
-            Boolean(registration) &&
-            typeof registration === 'object' &&
-            typeof registration.agentId === 'string',
-          )
-          .map((registration, index) => {
-            const mention = typeof registration.mention === 'string' && registration.mention.trim()
-              ? registration.mention.replace(/^@+/, '').trim()
-              : registration.agentId;
-            return {
-              id: typeof registration.id === 'string' && registration.id.trim()
-                ? registration.id.trim()
-                : `legacy-${registration.agentId}-${mention}-${index}`,
-              agentId: registration.agentId,
-              displayName: typeof registration.displayName === 'string' && registration.displayName.trim()
-                ? registration.displayName.trim()
-                : agentLabel(registration.agentId as AgentId),
-              mention,
-              model: typeof registration.model === 'string' ? registration.model : '',
-              cwd: typeof registration.cwd === 'string' ? normalizeChatCwd(registration.cwd) : '',
-              contextPrompt: typeof registration.contextPrompt === 'string' ? registration.contextPrompt : '',
-              taggableByAgents: typeof registration.taggableByAgents === 'boolean' ? registration.taggableByAgents : true,
-            };
-          });
-      }
-    }
-
-    return { messagesByChannel: {}, agentConversationsByChannel, agentModelsByAgent, registeredAgentsByChannel };
+    return { messagesByChannel: {}, agentConversationsByChannel, agentModelsByAgent, registeredAgentsByChannel: {} };
   } catch {
     return emptyChatState();
   }
@@ -487,6 +497,8 @@ export default function App() {
   const noteContentsRef = useRef(noteContents); noteContentsRef.current = noteContents;
   const activeVaultIdRef = useRef(activeVaultId); activeVaultIdRef.current = activeVaultId;
   const notesRef = useRef(notes); notesRef.current = notes;
+  const localAgentUnsubsRef = useRef<Map<number, () => void>>(new Map());
+  const desktopRunnerStopRef = useRef<(() => void) | null>(null);
   const chatStateRef = useRef(chatState); chatStateRef.current = chatState;
   const runSocketsRef = useRef<Map<number, ReturnType<typeof connectRunsSocket>>>(new Map());
   const startAgentChatRunRef = useRef<((channelId: string, registration: ChatAgentRegistration, prompt: string, triggeringMessage: ChatMessage) => void) | null>(null);
@@ -544,7 +556,7 @@ export default function App() {
   }, [activeVaultId, openTabs, layout, focusedPaneId]);
 
   useEffect(() => {
-    const { messagesByChannel: _messages, ...persistedChat } = chatState;
+    const { messagesByChannel: _messages, registeredAgentsByChannel: _agents, ...persistedChat } = chatState;
     localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(persistedChat));
   }, [chatState]);
 
@@ -619,6 +631,56 @@ export default function App() {
       .catch(() => localStorage.removeItem('docs_token'));
   }, [loadVaults]);
 
+  useEffect(() => {
+    desktopRunnerStopRef.current?.();
+    desktopRunnerStopRef.current = user ? startDesktopRunnerHost() : null;
+    return () => {
+      desktopRunnerStopRef.current?.();
+      desktopRunnerStopRef.current = null;
+    };
+  }, [user]);
+
+  const loadChatAgentMembers = useCallback(async (vaultId: string, noteList: NoteSummary[]) => {
+    const channelIds = noteList
+      .filter((note) => note.content_preview.trim().startsWith(CHAT_NOTE_MARKER))
+      .map((note) => note.id);
+    if (channelIds.length === 0) return;
+
+    const legacyAgents = readLegacyLocalChatAgentMembers();
+    const results = await Promise.all(channelIds.map(async (channelId) => {
+      try {
+        const data = await api<{ agents: ChatAgentRegistration[] }>(`/api/vaults/${vaultId}/channels/${channelId}/agents`);
+        let agents = data.agents ?? [];
+        const local = legacyAgents[channelId] ?? [];
+        if (agents.length === 0 && local.length > 0) {
+          for (const registration of local) {
+            try {
+              await api(`/api/vaults/${vaultId}/channels/${channelId}/agents`, {
+                method: 'PUT',
+                body: JSON.stringify(registration),
+              });
+            } catch {
+              // Best-effort migration from pre-network agent member storage.
+            }
+          }
+          const refreshed = await api<{ agents: ChatAgentRegistration[] }>(`/api/vaults/${vaultId}/channels/${channelId}/agents`);
+          agents = refreshed.agents ?? [];
+        }
+        return { channelId, agents };
+      } catch {
+        return { channelId, agents: legacyAgents[channelId] ?? [] };
+      }
+    }));
+
+    setChatState((prev) => {
+      const registeredAgentsByChannel = { ...prev.registeredAgentsByChannel };
+      for (const { channelId, agents } of results) {
+        registeredAgentsByChannel[channelId] = agents;
+      }
+      return { ...prev, registeredAgentsByChannel };
+    });
+  }, []);
+
   const loadChatMessages = useCallback(async (vaultId: string, noteList: NoteSummary[]) => {
     const channelIds = noteList
       .filter((note) => note.content_preview.trim().startsWith(CHAT_NOTE_MARKER))
@@ -688,6 +750,29 @@ export default function App() {
     }
   }, []);
 
+  const persistChatAgentMemberToServer = useCallback(async (vaultId: string, channelId: string, registration: ChatAgentRegistration) => {
+    try {
+      await api(`/api/vaults/${vaultId}/channels/${channelId}/agents`, {
+        method: 'PUT',
+        body: JSON.stringify(registration),
+      });
+    } catch (error) {
+      console.error('Failed to persist chat agent member:', error);
+      setNotice(error instanceof Error ? error.message : 'Could not save agent member');
+    }
+  }, []);
+
+  const removeChatAgentMemberOnServer = useCallback(async (vaultId: string, channelId: string, registrationId: string) => {
+    try {
+      await api(`/api/vaults/${vaultId}/channels/${channelId}/agents/${registrationId}`, {
+        method: 'DELETE',
+      });
+    } catch (error) {
+      console.error('Failed to remove chat agent member:', error);
+      setNotice(error instanceof Error ? error.message : 'Could not remove agent member');
+    }
+  }, []);
+
   const loadVaultData = useCallback(async (vaultId: string) => {
     try {
       const [folderData, noteData] = await Promise.all([
@@ -697,11 +782,14 @@ export default function App() {
       const nextNotes = noteData.notes || [];
       setFolders(folderData.folders || []);
       setNotes(nextNotes);
-      await loadChatMessages(vaultId, nextNotes);
+      await Promise.all([
+        loadChatMessages(vaultId, nextNotes),
+        loadChatAgentMembers(vaultId, nextNotes),
+      ]);
     } catch (error) {
       console.error('Error loading vault data:', error);
     }
-  }, [loadChatMessages]);
+  }, [loadChatMessages, loadChatAgentMembers]);
 
   useEffect(() => {
     if (activeVaultId) {
@@ -901,7 +989,9 @@ export default function App() {
         ],
       },
     }));
-  }, []);
+    const vaultId = activeVaultIdRef.current;
+    if (vaultId) void persistChatAgentMemberToServer(vaultId, channelId, normalized);
+  }, [persistChatAgentMemberToServer]);
 
   const handleRemoveChatAgent = useCallback((channelId: string, registrationId: string) => {
     setChatState((prev) => ({
@@ -911,7 +1001,9 @@ export default function App() {
         [channelId]: (prev.registeredAgentsByChannel[channelId] ?? []).filter((item) => item.id !== registrationId),
       },
     }));
-  }, []);
+    const vaultId = activeVaultIdRef.current;
+    if (vaultId) void removeChatAgentMemberOnServer(vaultId, channelId, registrationId);
+  }, [removeChatAgentMemberOnServer]);
 
   const startAgentChatRun = useCallback(async (
     channelId: string,
@@ -943,46 +1035,22 @@ export default function App() {
 
     try {
       const conversationKey = chatConversationKey(channelId, registration);
-      const res = await api<{ run: { id: number; status: string; conversation_id: string } }>(`/api/vaults/${vaultId}/runs`, {
-        method: 'POST',
-        body: JSON.stringify({
-          prompt: runPrompt,
-          note_id: null,
-          agent: agentId,
-          conversation_id: chatStateRef.current.agentConversationsByChannel[conversationKey],
-          model: registration.model || undefined,
-          cwd: normalizeChatCwd(registration.cwd) || undefined,
-          images: runImages,
-        }),
-      });
-
-      if (res.run.conversation_id) {
-        setChatState((prev) => ({
-          ...prev,
-          agentConversationsByChannel: {
-            ...prev.agentConversationsByChannel,
-            [conversationKey]: res.run.conversation_id,
-          },
-        }));
-      }
-
-      updateChatMessage(channelId, agentMessageId, (message) => ({
-        ...message,
-        runId: res.run.id,
-      }));
-
-      const socket = connectRunsSocket();
-      runSocketsRef.current.set(res.run.id, socket);
-      socket.emit('joinRun', res.run.id);
+      const resumeSessionId = chatStateRef.current.agentConversationsByChannel[conversationKey];
       let assistantText = '';
-      // The run starts streaming events server-side the instant it's created,
-      // but this socket only joins the run room after its handshake completes.
-      // Socket.IO doesn't replay a room's past events to a late joiner, so the
-      // earliest events (notably the first assistant message's thinking blocks)
-      // would be dropped. Dedup by event `seq` and backfill from the persisted
-      // event log below so nothing emitted before the join is lost.
       const processedSeqs = new Set<number>();
-      const processRunEvent = (event: any) => {
+
+      const finishRun = (runId: number, cleanup: () => void) => {
+        cleanup();
+        if (isLocalRunId(runId)) {
+          localAgentUnsubsRef.current.delete(runId);
+        } else {
+          const socket = runSocketsRef.current.get(runId);
+          socket?.disconnect();
+          runSocketsRef.current.delete(runId);
+        }
+      };
+
+      const processRunEvent = (event: { seq?: number; type: string; payload_json: string }, runId: number, cleanup: () => void) => {
         if (typeof event?.seq === 'number') {
           if (processedSeqs.has(event.seq)) return;
           processedSeqs.add(event.seq);
@@ -1014,8 +1082,16 @@ export default function App() {
                   startAgentChatRunRef.current?.(channelId, mentionedRegistration, prompt, triggeringAgentMessage);
                 }
               }
-              socket.disconnect();
-              runSocketsRef.current.delete(res.run.id);
+              if (payload.sessionId) {
+                setChatState((prev) => ({
+                  ...prev,
+                  agentConversationsByChannel: {
+                    ...prev.agentConversationsByChannel,
+                    [conversationKey]: payload.sessionId,
+                  },
+                }));
+              }
+              finishRun(runId, cleanup);
             }
           } else if (event.type === 'text') {
             const payload = JSON.parse(event.payload_json);
@@ -1042,14 +1118,43 @@ export default function App() {
         }
       };
 
-      socket.on('event', processRunEvent);
+      const res = await api<{ run: { id: number; status: string; conversation_id: string } }>(`/api/vaults/${vaultId}/runs`, {
+        method: 'POST',
+        body: JSON.stringify({
+          prompt: runPrompt,
+          note_id: null,
+          agent: agentId,
+          conversation_id: resumeSessionId,
+          model: registration.model || undefined,
+          cwd: normalizeChatCwd(registration.cwd) || undefined,
+          images: runImages,
+        }),
+      });
 
-      // Backfill events that were emitted before this socket joined the room
-      // (e.g. the opening thinking blocks). Deduped by seq against live events,
-      // so overlap is harmless and ordering settles on the persisted log.
+      if (res.run.conversation_id) {
+        setChatState((prev) => ({
+          ...prev,
+          agentConversationsByChannel: {
+            ...prev.agentConversationsByChannel,
+            [conversationKey]: res.run.conversation_id,
+          },
+        }));
+      }
+
+      updateChatMessage(channelId, agentMessageId, (message) => ({
+        ...message,
+        runId: res.run.id,
+      }));
+
+      const socket = connectRunsSocket();
+      runSocketsRef.current.set(res.run.id, socket);
+      socket.emit('joinRun', res.run.id);
+      const cleanup = () => {};
+      socket.on('event', (event) => processRunEvent(event, res.run.id, cleanup));
+
       try {
         const history = await api<{ events: Array<{ seq: number; type: string; payload_json: string }> }>(`/api/runs/${res.run.id}/events`);
-        for (const event of history.events) processRunEvent(event);
+        for (const event of history.events) processRunEvent(event, res.run.id, cleanup);
       } catch {
         // Best-effort backfill; live events will still populate going forward.
       }
@@ -1066,15 +1171,26 @@ export default function App() {
   const handleCancelChatRun = useCallback((runId: number) => {
     void (async () => {
       try {
-        const res = await api<{ success: boolean }>(`/api/runs/${runId}/cancel`, { method: 'POST' });
-        const socket = runSocketsRef.current.get(runId);
-        if (socket) {
-          socket.disconnect();
-          runSocketsRef.current.delete(runId);
-        }
-        if (!res.success) {
-          setNotice('Could not cancel run');
-          return;
+        if (isLocalRunId(runId)) {
+          const cleanup = localAgentUnsubsRef.current.get(runId);
+          cleanup?.();
+          localAgentUnsubsRef.current.delete(runId);
+          const cancelled = await cancelLocalAgentRun(runId);
+          if (!cancelled) {
+            setNotice('Could not cancel run');
+            return;
+          }
+        } else {
+          const res = await api<{ success: boolean }>(`/api/runs/${runId}/cancel`, { method: 'POST' });
+          const socket = runSocketsRef.current.get(runId);
+          if (socket) {
+            socket.disconnect();
+            runSocketsRef.current.delete(runId);
+          }
+          if (!res.success) {
+            setNotice('Could not cancel run');
+            return;
+          }
         }
         setChatState((prev) => ({
           ...prev,
@@ -1424,6 +1540,30 @@ export default function App() {
         };
       });
     };
+    const handleChatAgentMemberUpserted = (data: { vaultId: string; channelId: string; registration: ChatAgentRegistration }) => {
+      if (data.vaultId !== activeVaultId) return;
+      setChatState((prev) => {
+        const existing = prev.registeredAgentsByChannel[data.channelId] ?? [];
+        const filtered = existing.filter((item) => item.id !== data.registration.id);
+        return {
+          ...prev,
+          registeredAgentsByChannel: {
+            ...prev.registeredAgentsByChannel,
+            [data.channelId]: [...filtered, data.registration],
+          },
+        };
+      });
+    };
+    const handleChatAgentMemberRemoved = (data: { vaultId: string; channelId: string; registrationId: string }) => {
+      if (data.vaultId !== activeVaultId) return;
+      setChatState((prev) => ({
+        ...prev,
+        registeredAgentsByChannel: {
+          ...prev.registeredAgentsByChannel,
+          [data.channelId]: (prev.registeredAgentsByChannel[data.channelId] ?? []).filter((item) => item.id !== data.registrationId),
+        },
+      }));
+    };
 
     socket.on('vault:noteChanged', handleNoteChanged);
     socket.on('vault:noteCreated', handleNoteCreated);
@@ -1431,6 +1571,8 @@ export default function App() {
     socket.on('vault:feedNotify', handleFeedNotify);
     socket.on('vault:chatMessageCreated', handleChatMessageCreated);
     socket.on('vault:chatMessageUpdated', handleChatMessageUpdated);
+    socket.on('vault:chatAgentMemberUpserted', handleChatAgentMemberUpserted);
+    socket.on('vault:chatAgentMemberRemoved', handleChatAgentMemberRemoved);
     return () => {
       socket.emit('leaveVault', activeVaultId);
       socket.off('vault:noteChanged', handleNoteChanged);
@@ -1439,6 +1581,8 @@ export default function App() {
       socket.off('vault:feedNotify', handleFeedNotify);
       socket.off('vault:chatMessageCreated', handleChatMessageCreated);
       socket.off('vault:chatMessageUpdated', handleChatMessageUpdated);
+      socket.off('vault:chatAgentMemberUpserted', handleChatAgentMemberUpserted);
+      socket.off('vault:chatAgentMemberRemoved', handleChatAgentMemberRemoved);
       socket.disconnect();
     };
   }, [activeVaultId, loadVaultData, loadNoteContent, openNote]);

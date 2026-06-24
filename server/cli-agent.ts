@@ -26,7 +26,7 @@
  * @module server/cli-agent
  */
 
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import readline from 'node:readline';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -54,6 +54,73 @@ const CLI_TIMEOUT_MS = Number(process.env.RUNNER_CLI_TIMEOUT || 600_000);
 /** Binary names are overridable in case they are not on the server's PATH. */
 const CODEX_BIN = process.env.CODEX_BIN || 'codex';
 const GROK_BIN = process.env.GROK_BIN || 'grok';
+const COPILOT_BIN = process.env.COPILOT_BIN || 'copilot';
+const HERMES_BIN = process.env.HERMES_BIN || 'hermes';
+
+export type CliAgentId = 'codex' | 'grok' | 'antigravity' | 'copilot' | 'hermes';
+
+const CLI_AGENT_LABELS: Record<CliAgentId, string> = {
+  codex: 'Codex',
+  grok: 'Grok',
+  antigravity: 'Antigravity',
+  copilot: 'Copilot',
+  hermes: 'Hermes',
+};
+
+export function isCliAgent(agent: string): agent is CliAgentId {
+  return agent === 'codex' || agent === 'grok' || agent === 'antigravity' || agent === 'copilot' || agent === 'hermes';
+}
+
+export function getCliAgentBin(agent: CliAgentId): string {
+  switch (agent) {
+    case 'codex':
+      return CODEX_BIN;
+    case 'grok':
+      return GROK_BIN;
+    case 'copilot':
+      return COPILOT_BIN;
+    case 'hermes':
+      return HERMES_BIN;
+    case 'antigravity':
+      return process.env.ANTIGRAVITY_BIN || path.join(os.homedir(), '.gemini', 'antigravity', 'bin', 'agentapi');
+  }
+}
+
+function cliBinaryExists(bin: string): boolean {
+  if (path.isAbsolute(bin)) {
+    try {
+      return fs.existsSync(bin) && fs.statSync(bin).isFile();
+    } catch {
+      return false;
+    }
+  }
+  const result = spawnSync('which', [bin], { stdio: 'ignore' });
+  return result.status === 0;
+}
+
+export function getCliAgentAvailability(): Record<CliAgentId, { available: boolean; bin: string; message?: string }> {
+  const availability = {} as Record<CliAgentId, { available: boolean; bin: string; message?: string }>;
+  for (const agent of Object.keys(CLI_AGENT_LABELS) as CliAgentId[]) {
+    const bin = getCliAgentBin(agent);
+    const label = CLI_AGENT_LABELS[agent];
+    const available = cliBinaryExists(bin);
+    availability[agent] = available
+      ? { available: true, bin }
+      : {
+          available: false,
+          bin,
+          message: `${label} ('${bin}') is not installed or not on PATH. CLI agents run on the Cascade server — install the CLI where the server runs, or set ${agent.toUpperCase().replace('-', '_')}_BIN.`,
+        };
+  }
+  return availability;
+}
+
+function assertCliAgentAvailable(agent: CliAgentId): void {
+  const status = getCliAgentAvailability()[agent];
+  if (!status.available) {
+    throw new Error(status.message || `${CLI_AGENT_LABELS[agent]} is not available on this server.`);
+  }
+}
 
 interface CliAgentOpts {
   agent: 'codex' | 'grok' | 'antigravity' | 'copilot' | 'hermes';
@@ -98,6 +165,8 @@ export interface CliAgentResult {
  * @returns Summary text and optional session id for conversation continuity
  */
 export async function runCliAgent(opts: CliAgentOpts): Promise<CliAgentResult> {
+  assertCliAgentAvailable(opts.agent);
+
   // The CLIs are full agents in their own right; we only prepend a short
   // context line (which note is open), then pass the user's prompt verbatim.
   const prompt = opts.context
@@ -751,8 +820,6 @@ async function runAntigravity(
 // COPILOT AGENT
 // ═══════════════════════════════════════════════════════════════
 
-const COPILOT_BIN = process.env.COPILOT_BIN || 'copilot';
-
 /**
  * Runs the Copilot CLI and translates its JSONL event stream into content blocks.
  */
@@ -879,8 +946,6 @@ async function runCopilot(prompt: string, cwd: string, emit: AgentEmit, resumeId
 // ═══════════════════════════════════════════════════════════════
 // HERMES AGENT
 // ═══════════════════════════════════════════════════════════════
-
-const HERMES_BIN = process.env.HERMES_BIN || 'hermes';
 
 /**
  * Runs the Hermes CLI in one-shot mode and streams its text output line by line.

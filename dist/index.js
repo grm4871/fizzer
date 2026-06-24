@@ -22,10 +22,12 @@ import Database from 'better-sqlite3';
 import { Server } from 'socket.io';
 import { addTag, createFolder, createNote, createVault, deleteFolder, deleteNote, deleteNotes, ensureVaultSchema, getBacklinks, getGraph, getNote, getVault, listFolders, listNotes, listTags, linkifyTerm, listVaults, moveNote, removeTag, renameNote, searchNotes, toggleArchive, togglePin, updateFolder, updateNote, } from './server/vault.js';
 import { createNoteVersion, diffNoteVersions, diffText, ensureVersionsSchema, listNoteVersions, } from './server/versions.js';
-import { ensureRunnerSchema, setRunEventSink, setVaultEventSink, listRuns, getRun, listRunEvents, startRun, sendRunMessage, cancelRun, } from './server/runner.js';
+import { ensureRunnerSchema, setRunEventSink, setVaultEventSink, listRuns, getRun, listRunEvents, startRun, sendRunMessage, cancelRun, findPriorSession, publishRunEvent, finishDelegatedRun, } from './server/runner.js';
+import { delegateRunToDesktop, getDesktopRunnerStatus, initDesktopRunners, isDesktopRunnerOnline, } from './server/desktop-runner.js';
 import { ensureFeedSchema, fetchFeed, pollWidgetFeeds, setFeedNotifySink, startFeedPoller, } from './server/feeds.js';
 import { fetchWidgetData } from './server/widgetData.js';
-import { createChatMessage, ensureChatSchema, listChatMessages, updateChatMessage, } from './server/chat.js';
+import { createChatMessage, ensureChatSchema, listChatAgentMembers, listChatMessages, removeChatAgentMember, updateChatMessage, upsertChatAgentMember, } from './server/chat.js';
+import { isCliAgent } from './server/cli-agent.js';
 import { NETWORK_MODE, WIDGET_SHELL_ENABLED, corsOrigin, rateLimit, resolveJwtSecret, } from './server/security.js';
 const PORT = Number(process.env.API_PORT || 3000);
 const HOST = process.env.API_HOST || (NETWORK_MODE ? '0.0.0.0' : '127.0.0.1');
@@ -223,6 +225,7 @@ function emitVaultEvent(vaultId, event, data) {
 // Let the agent runner notify clients (e.g. reload an open note after edits).
 setVaultEventSink(emitVaultEvent);
 setFeedNotifySink(emitVaultEvent);
+initDesktopRunners(io, db, { publishRunEvent, finishDelegatedRun });
 // ── Health ──────────────────────────────────────────────────────────
 app.get('/api/health', (_req, res) => {
     res.json({ status: 'ok' });
@@ -259,7 +262,13 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     res.json({ user: publicUser(user), token: signToken(user) });
 });
 app.get('/api/me', requireAuth, (req, res) => {
-    res.json({ user: req.user });
+    res.json({
+        user: req.user,
+        desktopRunner: getDesktopRunnerStatus(req.user.id),
+    });
+});
+app.get('/api/me/desktop-runner', requireAuth, (req, res) => {
+    res.json(getDesktopRunnerStatus(req.user.id));
 });
 // ── Vault routes ───────────────────────────────────────────────────
 app.get('/api/vaults', requireAuth, (req, res) => {
@@ -668,6 +677,57 @@ app.patch('/api/vaults/:id/channels/:channelId/messages/:messageId', requireAuth
         res.status(msg === 'Chat channel not found' ? 404 : 400).json({ error: msg });
     }
 });
+app.get('/api/vaults/:id/channels/:channelId/agents', requireAuth, (req, res) => {
+    const vault = getVault(db, req.params.id, req.user.id);
+    if (!vault)
+        return res.status(404).json({ error: 'Vault not found' });
+    try {
+        const agents = listChatAgentMembers(db, req.params.channelId, req.user.id);
+        res.json({ agents });
+    }
+    catch (error) {
+        const msg = error instanceof Error ? error.message : 'Could not load chat agent members';
+        res.status(msg === 'Chat channel not found' ? 404 : 400).json({ error: msg });
+    }
+});
+app.put('/api/vaults/:id/channels/:channelId/agents', requireAuth, (req, res) => {
+    const vault = getVault(db, req.params.id, req.user.id);
+    if (!vault)
+        return res.status(404).json({ error: 'Vault not found' });
+    try {
+        const registration = upsertChatAgentMember(db, req.user.id, vault.id, req.params.channelId, req.body);
+        emitVaultEvent(vault.id, 'vault:chatAgentMemberUpserted', {
+            vaultId: vault.id,
+            channelId: req.params.channelId,
+            registration,
+        });
+        res.json({ registration });
+    }
+    catch (error) {
+        const msg = error instanceof Error ? error.message : 'Could not save chat agent member';
+        res.status(msg === 'Chat channel not found' ? 404 : 400).json({ error: msg });
+    }
+});
+app.delete('/api/vaults/:id/channels/:channelId/agents/:registrationId', requireAuth, (req, res) => {
+    const vault = getVault(db, req.params.id, req.user.id);
+    if (!vault)
+        return res.status(404).json({ error: 'Vault not found' });
+    try {
+        const removed = removeChatAgentMember(db, req.user.id, vault.id, req.params.channelId, req.params.registrationId);
+        if (!removed)
+            return res.status(404).json({ error: 'Agent member not found' });
+        emitVaultEvent(vault.id, 'vault:chatAgentMemberRemoved', {
+            vaultId: vault.id,
+            channelId: req.params.channelId,
+            registrationId: req.params.registrationId,
+        });
+        res.json({ ok: true });
+    }
+    catch (error) {
+        const msg = error instanceof Error ? error.message : 'Could not remove chat agent member';
+        res.status(msg === 'Chat channel not found' ? 404 : 400).json({ error: msg });
+    }
+});
 // ── Agent / Run routes ─────────────────────────────────────────────
 app.get('/api/vaults/:id/runs', requireAuth, (req, res) => {
     const vault = getVault(db, req.params.id, req.user.id);
@@ -685,6 +745,12 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req, res) => {
     }
     const validAgents = ['claude-code', 'codex', 'grok', 'antigravity', 'copilot', 'hermes'];
     const selectedAgent = validAgents.includes(agent) ? agent : 'claude-code';
+    const delegateCliToDesktop = isCliAgent(selectedAgent);
+    if (delegateCliToDesktop && !isDesktopRunnerOnline(req.user.id)) {
+        return res.status(503).json({
+            error: 'No desktop agent runner is connected. Open Cascade on your computer (signed in to the same account) to run CLI agents from chat.',
+        });
+    }
     const removedModelPresets = new Set([
         'codex-flash',
         'codex-pro',
@@ -701,16 +767,21 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req, res) => {
     if (typeof cwd === 'string' && cwd.trim()) {
         const rawCwd = cwd.trim();
         if (!/^(vault\s*root|root|\.\/?)$/i.test(rawCwd)) {
-            const expandedCwd = rawCwd === '~'
-                ? os.homedir()
-                : rawCwd.startsWith('~/')
-                    ? path.join(os.homedir(), rawCwd.slice(2))
-                    : rawCwd;
-            const resolvedCwd = path.resolve(path.isAbsolute(expandedCwd) ? expandedCwd : path.join(vault.root_path, expandedCwd));
-            if (!fs.existsSync(resolvedCwd) || !fs.statSync(resolvedCwd).isDirectory()) {
-                return res.status(400).json({ error: 'cwd must be an existing directory' });
+            if (delegateCliToDesktop) {
+                selectedCwd = rawCwd;
             }
-            selectedCwd = resolvedCwd;
+            else {
+                const expandedCwd = rawCwd === '~'
+                    ? os.homedir()
+                    : rawCwd.startsWith('~/')
+                        ? path.join(os.homedir(), rawCwd.slice(2))
+                        : rawCwd;
+                const resolvedCwd = path.resolve(path.isAbsolute(expandedCwd) ? expandedCwd : path.join(vault.root_path, expandedCwd));
+                if (!fs.existsSync(resolvedCwd) || !fs.statSync(resolvedCwd).isDirectory()) {
+                    return res.status(400).json({ error: 'cwd must be an existing directory' });
+                }
+                selectedCwd = resolvedCwd;
+            }
         }
     }
     // Sanitize image attachments to { media_type, data } base64 entries.
@@ -726,7 +797,26 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req, res) => {
             images: cleanImages,
             model: selectedModel,
             cwd: selectedCwd,
+            delegateToDesktop: delegateCliToDesktop,
         });
+        if (delegateCliToDesktop) {
+            const delegated = delegateRunToDesktop(req.user.id, {
+                runId: run.id,
+                vaultId: vault.id,
+                agent: selectedAgent,
+                prompt,
+                cwd: selectedCwd,
+                vaultRoot: vault.root_path,
+                model: selectedModel,
+                resumeSessionId: findPriorSession(db, run),
+                images: cleanImages,
+            });
+            if (!delegated) {
+                return res.status(503).json({
+                    error: 'Desktop agent runner disconnected before the run could start. Open Cascade on your computer and try again.',
+                });
+            }
+        }
         res.json({ run });
     }
     catch (err) {

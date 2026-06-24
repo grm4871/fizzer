@@ -31,6 +31,7 @@ if (explicitUserDataDir) {
 }
 
 const db = require('./database.cjs');
+const { startLocalAgentRun, cancelLocalAgentRun } = require('./agent-runner.cjs');
 
 let nodePty = null;
 try {
@@ -1415,6 +1416,40 @@ ipcMain.handle('terminal:stop', async (_event, id) => {
     return { success: true };
   } catch (error) {
     console.error('[IPC] Failed to stop terminal:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// LOCAL AGENT IPC HANDLERS
+// ═══════════════════════════════════════════════════════════════
+
+/** Run a CLI agent (Grok, Codex, etc.) on this machine instead of the remote server. */
+ipcMain.handle('agent:start', async (event, opts) => {
+  try {
+    const runId = Number(opts?.runId);
+    if (!Number.isFinite(runId)) throw new Error('Invalid run id');
+    const sender = event.sender;
+    const sendEvent = (payload) => {
+      if (!sender.isDestroyed()) sender.send('agent:event', payload);
+    };
+    void startLocalAgentRun(opts, sendEvent).catch((error) => {
+      console.error('[IPC] Local agent run failed:', error);
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('[IPC] Failed to start local agent:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+/** Cancel a locally running CLI agent process. */
+ipcMain.handle('agent:cancel', async (_event, runId) => {
+  try {
+    const cancelled = await cancelLocalAgentRun(runId);
+    return { success: cancelled };
+  } catch (error) {
+    console.error('[IPC] Failed to cancel local agent:', error);
     return { success: false, error: error.message };
   }
 });

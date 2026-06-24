@@ -14,6 +14,12 @@ import type Database from 'better-sqlite3';
 import { query, type Query, type SDKMessage, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { getNote, rescanVault, type Vault } from './vault.js';
 import { runCliAgent, activeCliProcesses } from './cli-agent.js';
+import {
+  cancelDelegatedRun,
+  clearDelegatedRun,
+  getDelegatedRunOwner,
+  isDelegatedRun,
+} from './desktop-runner.js';
 
 export type AgentId = 'claude-code' | 'codex' | 'grok' | 'antigravity' | 'copilot' | 'hermes';
 
@@ -210,7 +216,7 @@ export async function sendRunMessage(db: Db, runId: number, message: string) {
 
   const text = message.trim();
   if (!text) throw new Error('Message cannot be empty');
-  const event = appendRunEvent(db, run.id, 'follow_up', { message: text });
+  const event = publishRunEvent(db, run.id, 'follow_up', { message: text });
   await stream.streamInput(toUserMessage(text));
   return event;
 }
@@ -221,6 +227,21 @@ export async function cancelRun(db: Db, runId: number): Promise<boolean> {
 
   // Already finished — idempotent cancel so stale UI can clear itself.
   if (run.status === 'completed' || run.status === 'failed') {
+    return true;
+  }
+
+  if (isDelegatedRun(runId)) {
+    const ownerId = getDelegatedRunOwner(runId);
+    if (ownerId != null) {
+      cancelDelegatedRun(ownerId, runId);
+    }
+    clearDelegatedRun(runId);
+    db.prepare(`
+      UPDATE runs
+      SET status = 'failed', finished_at = datetime('now'), summary = 'Run canceled by user.'
+      WHERE id = ?
+    `).run(runId);
+    publishRunEvent(db, runId, 'status', { status: 'failed', summary: 'Run canceled by user.' });
     return true;
   }
 
@@ -253,7 +274,7 @@ export async function cancelRun(db: Db, runId: number): Promise<boolean> {
       SET status = 'failed', finished_at = datetime('now'), summary = 'Run canceled by user.'
       WHERE id = ?
     `).run(runId);
-    appendRunEvent(db, runId, 'status', { status: 'failed', summary: 'Run canceled by user.' });
+    publishRunEvent(db, runId, 'status', { status: 'failed', summary: 'Run canceled by user.' });
     return true;
   }
 
@@ -279,7 +300,7 @@ export async function startRun(
   noteId: string | null,
   prompt: string,
   agent: AgentId = 'claude-code',
-  opts: { conversationId?: string; images?: RunImage[]; model?: string; cwd?: string } = {},
+  opts: { conversationId?: string; images?: RunImage[]; model?: string; cwd?: string; delegateToDesktop?: boolean } = {},
 ) {
   const conversationId = opts.conversationId || crypto.randomUUID();
   const model = opts.model || null;
@@ -291,10 +312,14 @@ export async function startRun(
   const runId = Number(result.lastInsertRowid);
   const run = getRun(db, runId)!;
 
+  publishRunEvent(db, run.id, 'status', { status: 'queued' });
+
+  if (opts.delegateToDesktop) {
+    return run;
+  }
+
   if (opts.images && opts.images.length) pendingImages.set(runId, opts.images);
   if (opts.cwd) pendingRunCwds.set(runId, opts.cwd);
-
-  appendRunEvent(db, run.id, 'status', { status: 'queued' });
 
   // Run asynchronously in the background
   queueMicrotask(() => executeRunAsync(db, vault, runId));
@@ -304,7 +329,7 @@ export async function startRun(
 
 // Find the session id of the most recent prior run in the same conversation
 // (same vault + note + agent), so the next turn can resume that session.
-function findPriorSession(db: Db, run: Run): string | undefined {
+export function findPriorSession(db: Db, run: Run): string | undefined {
   const cond = run.note_id
     ? 'vault_id = ? AND note_id = ? AND agent = ? AND conversation_id = ? AND session_id IS NOT NULL AND id < ?'
     : 'vault_id = ? AND note_id IS NULL AND agent = ? AND conversation_id = ? AND session_id IS NOT NULL AND id < ?';
@@ -321,7 +346,7 @@ async function executeRunAsync(db: Db, vault: Vault, runId: number) {
   
   try {
     db.prepare("UPDATE runs SET status = 'running' WHERE id = ?").run(run.id);
-    appendRunEvent(db, run.id, 'status', { status: 'running' });
+    publishRunEvent(db, run.id, 'status', { status: 'running' });
 
     let activeNoteTitle = '';
     if (run.note_id) {
@@ -362,7 +387,7 @@ async function executeRunAsync(db: Db, vault: Vault, runId: number) {
         model: run.model || undefined,
         runId: run.id,
         db,
-        emit: (type, payload) => appendRunEvent(db, run.id, type, payload),
+        emit: (type, payload) => publishRunEvent(db, run.id, type, payload),
       });
       summary = result.summary;
       sessionId = result.sessionId;
@@ -411,7 +436,7 @@ async function executeRunAsync(db: Db, vault: Vault, runId: number) {
 
       try {
         for await (const message of stream) {
-          appendRunEvent(db, run.id, classifySdkMessage(message), message);
+          publishRunEvent(db, run.id, classifySdkMessage(message), message);
           const sid = (message as any).session_id;
           if (sid) sessionId = sid;
           if (message.type === 'result') {
@@ -431,7 +456,7 @@ async function executeRunAsync(db: Db, vault: Vault, runId: number) {
         WHERE id = ?
       `).run(summary || 'Completed note operations successfully.', sessionId ?? run.session_id, run.id);
 
-      appendRunEvent(db, run.id, 'status', { status: 'completed', summary });
+      publishRunEvent(db, run.id, 'status', { status: 'completed', summary });
     }
 
   } catch (error) {
@@ -443,7 +468,7 @@ async function executeRunAsync(db: Db, vault: Vault, runId: number) {
         SET status = 'failed', finished_at = datetime('now'), summary = ?
         WHERE id = ?
       `).run(errMsg, run.id);
-      appendRunEvent(db, run.id, 'status', { status: 'failed', summary: errMsg });
+      publishRunEvent(db, run.id, 'status', { status: 'failed', summary: errMsg });
     }
   } finally {
     // Sync disk changes the agent made to the DB, then notify open clients so
@@ -454,7 +479,7 @@ async function executeRunAsync(db: Db, vault: Vault, runId: number) {
   }
 }
 
-function appendRunEvent(db: Db, runId: number, type: string, payload: unknown) {
+export function publishRunEvent(db: Db, runId: number, type: string, payload: unknown) {
   const latest = db.prepare('SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM run_events WHERE run_id = ?').get(runId) as { next: number };
   const result = db.prepare('INSERT INTO run_events (run_id, seq, type, payload_json) VALUES (?, ?, ?, ?)').run(
     runId,
@@ -465,6 +490,22 @@ function appendRunEvent(db: Db, runId: number, type: string, payload: unknown) {
   const event = db.prepare('SELECT * FROM run_events WHERE id = ?').get(Number(result.lastInsertRowid)) as RunEvent;
   eventSink?.(event);
   return event;
+}
+
+export function finishDelegatedRun(
+  db: Db,
+  runId: number,
+  opts: { status: 'completed' | 'failed'; summary: string; sessionId?: string },
+): void {
+  const run = getRun(db, runId);
+  if (!run) return;
+  if (run.status === 'completed' || run.status === 'failed') return;
+
+  db.prepare(`
+    UPDATE runs
+    SET status = ?, finished_at = datetime('now'), summary = ?, session_id = COALESCE(?, session_id)
+    WHERE id = ?
+  `).run(opts.status, opts.summary, opts.sessionId ?? null, runId);
 }
 
 function classifySdkMessage(message: SDKMessage) {

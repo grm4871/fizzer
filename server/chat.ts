@@ -44,6 +44,18 @@ export type ChatMessage = {
   replyTo?: ChatReplyRef;
 };
 
+/** A registered agent member in a chat channel (shown in the member list, @mentionable). */
+export type ChatAgentRegistration = {
+  id: string;
+  agentId: string;
+  displayName: string;
+  mention: string;
+  model: string;
+  cwd: string;
+  contextPrompt: string;
+  taggableByAgents: boolean;
+};
+
 type ChatMessageRow = {
   id: string;
   channel_id: string;
@@ -80,7 +92,73 @@ export function ensureChatSchema(db: Db): void {
       reply_to_json TEXT
     );
     CREATE INDEX IF NOT EXISTS chat_messages_channel_idx ON chat_messages(channel_id, created_at);
+
+    CREATE TABLE IF NOT EXISTS chat_agent_members (
+      id TEXT PRIMARY KEY,
+      channel_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+      vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
+      agent_id TEXT NOT NULL,
+      display_name TEXT NOT NULL DEFAULT '',
+      mention TEXT NOT NULL DEFAULT '',
+      model TEXT NOT NULL DEFAULT '',
+      cwd TEXT NOT NULL DEFAULT '',
+      context_prompt TEXT NOT NULL DEFAULT '',
+      taggable_by_agents INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS chat_agent_members_channel_idx ON chat_agent_members(channel_id);
   `);
+}
+
+type ChatAgentMemberRow = {
+  id: string;
+  channel_id: string;
+  vault_id: string;
+  agent_id: string;
+  display_name: string;
+  mention: string;
+  model: string;
+  cwd: string;
+  context_prompt: string;
+  taggable_by_agents: number;
+};
+
+function rowToAgentMember(row: ChatAgentMemberRow): ChatAgentRegistration {
+  return {
+    id: row.id,
+    agentId: row.agent_id,
+    displayName: row.display_name,
+    mention: row.mention,
+    model: row.model,
+    cwd: row.cwd,
+    contextPrompt: row.context_prompt,
+    taggableByAgents: row.taggable_by_agents !== 0,
+  };
+}
+
+function normalizeMention(value: string, fallback: string): string {
+  const mention = String(value || fallback).replace(/^@+/, '').trim();
+  return mention || fallback;
+}
+
+function normalizeAgentRegistration(input: Partial<ChatAgentRegistration>, fallbackAgentId?: string): ChatAgentRegistration {
+  const agentId = String(input.agentId || fallbackAgentId || '').trim();
+  if (!agentId) throw new Error('agentId is required');
+
+  const id = String(input.id || '').trim() || crypto.randomUUID();
+  const mention = normalizeMention(input.mention || '', agentId);
+
+  return {
+    id,
+    agentId,
+    displayName: String(input.displayName || '').trim() || agentId,
+    mention,
+    model: String(input.model || ''),
+    cwd: String(input.cwd || ''),
+    contextPrompt: String(input.contextPrompt || ''),
+    taggableByAgents: input.taggableByAgents !== false,
+  };
 }
 
 function parseJson<T>(value: string | null): T | undefined {
@@ -283,4 +361,88 @@ export function updateChatMessage(
   );
 
   return next;
+}
+
+export function listChatAgentMembers(db: Db, channelId: string, userId: number): ChatAgentRegistration[] {
+  assertChatChannel(db, channelId, userId);
+  const rows = db.prepare(`
+    SELECT *
+    FROM chat_agent_members
+    WHERE channel_id = ?
+    ORDER BY created_at ASC, id ASC
+  `).all(channelId) as ChatAgentMemberRow[];
+  return rows.map(rowToAgentMember);
+}
+
+export function upsertChatAgentMember(
+  db: Db,
+  userId: number,
+  vaultId: string,
+  channelId: string,
+  input: Partial<ChatAgentRegistration>,
+): ChatAgentRegistration {
+  const { vault } = assertChatChannel(db, channelId, userId);
+  if (vault.id !== vaultId) throw new Error('Chat channel not found');
+
+  const member = normalizeAgentRegistration(input);
+  const existing = db.prepare('SELECT id FROM chat_agent_members WHERE id = ? AND channel_id = ?').get(member.id, channelId) as { id: string } | undefined;
+
+  if (existing) {
+    db.prepare(`
+      UPDATE chat_agent_members SET
+        agent_id = ?,
+        display_name = ?,
+        mention = ?,
+        model = ?,
+        cwd = ?,
+        context_prompt = ?,
+        taggable_by_agents = ?,
+        updated_at = datetime('now')
+      WHERE id = ? AND channel_id = ?
+    `).run(
+      member.agentId,
+      member.displayName,
+      member.mention,
+      member.model,
+      member.cwd,
+      member.contextPrompt,
+      member.taggableByAgents ? 1 : 0,
+      member.id,
+      channelId,
+    );
+  } else {
+    db.prepare(`
+      INSERT INTO chat_agent_members (
+        id, channel_id, vault_id, agent_id, display_name, mention,
+        model, cwd, context_prompt, taggable_by_agents
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      member.id,
+      channelId,
+      vault.id,
+      member.agentId,
+      member.displayName,
+      member.mention,
+      member.model,
+      member.cwd,
+      member.contextPrompt,
+      member.taggableByAgents ? 1 : 0,
+    );
+  }
+
+  return member;
+}
+
+export function removeChatAgentMember(
+  db: Db,
+  userId: number,
+  vaultId: string,
+  channelId: string,
+  registrationId: string,
+): boolean {
+  const { vault } = assertChatChannel(db, channelId, userId);
+  if (vault.id !== vaultId) throw new Error('Chat channel not found');
+
+  const result = db.prepare('DELETE FROM chat_agent_members WHERE id = ? AND channel_id = ?').run(registrationId, channelId);
+  return result.changes > 0;
 }
