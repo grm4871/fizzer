@@ -102,12 +102,6 @@ function normalizeUrlInput(value: string): string {
   return `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`;
 }
 
-function getBrowserLikeUserAgent(): string {
-  return navigator.userAgent
-    .replace(/\sElectron\/[\d.]+/i, '')
-    .replace(/\sCascade(?:\sBrowser)?\/[\d.]+/i, '');
-}
-
 function normalizeSite(value: string): string {
   try {
     const parsedUrl = /^[a-z][a-z\d+.-]*:/i.test(value)

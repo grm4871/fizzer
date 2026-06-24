@@ -22,11 +22,11 @@ import Database from 'better-sqlite3';
 import { Server } from 'socket.io';
 import { addTag, createFolder, createNote, createVault, deleteFolder, deleteNote, deleteNotes, ensureVaultSchema, getBacklinks, getGraph, getNote, getVault, listFolders, listNotes, listTags, linkifyTerm, listVaults, moveNote, removeTag, renameNote, searchNotes, toggleArchive, togglePin, updateFolder, updateNote, } from './server/vault.js';
 import { createNoteVersion, diffNoteVersions, diffText, ensureVersionsSchema, listNoteVersions, } from './server/versions.js';
-import { ensureRunnerSchema, setRunEventSink, setVaultEventSink, listRuns, getRun, listRunEvents, startRun, sendRunMessage, cancelRun, findPriorSession, publishRunEvent, finishDelegatedRun, } from './server/runner.js';
+import { ensureRunnerSchema, setRunEventSink, setChatSyncSink, setVaultEventSink, listRuns, getRun, listRunEvents, startRun, sendRunMessage, cancelRun, findPriorSession, publishRunEvent, finishDelegatedRun, } from './server/runner.js';
 import { delegateRunToDesktop, getDesktopRunnerStatus, initDesktopRunners, isDesktopRunnerOnline, } from './server/desktop-runner.js';
 import { ensureFeedSchema, fetchFeed, pollWidgetFeeds, setFeedNotifySink, startFeedPoller, } from './server/feeds.js';
 import { fetchWidgetData } from './server/widgetData.js';
-import { createChatMessage, ensureChatSchema, listChatAgentMembers, listChatMessages, removeChatAgentMember, updateChatMessage, upsertChatAgentMember, } from './server/chat.js';
+import { buildAgentChatContentFromRunEvents, createChatMessage, ensureChatSchema, listChatAgentMembers, listChatMessages, removeChatAgentMember, updateChatMessage, upsertChatAgentMember, } from './server/chat.js';
 import { isCliAgent } from './server/cli-agent.js';
 import { NETWORK_MODE, WIDGET_SHELL_ENABLED, corsOrigin, rateLimit, resolveJwtSecret, } from './server/security.js';
 const PORT = Number(process.env.API_PORT || 3000);
@@ -225,6 +225,62 @@ function emitVaultEvent(vaultId, event, data) {
 // Let the agent runner notify clients (e.g. reload an open note after edits).
 setVaultEventSink(emitVaultEvent);
 setFeedNotifySink(emitVaultEvent);
+const chatRunTargets = new Map();
+const chatRunFlushTimers = new Map();
+const CHAT_RUN_THROTTLE_MS = 250;
+function syncRunToChatMessage(runId) {
+    const target = chatRunTargets.get(runId);
+    if (!target)
+        return;
+    const content = buildAgentChatContentFromRunEvents(listRunEvents(db, runId));
+    try {
+        // Update only — the initiating client creates the placeholder message; if it
+        // hasn't landed yet this no-ops and a later event (or the terminal flush) retries.
+        const updated = updateChatMessage(db, target.userId, target.vaultId, target.channelId, target.messageId, {
+            body: content.body,
+            blocks: content.blocks.length ? content.blocks : undefined,
+            status: content.status,
+            runId,
+        });
+        if (updated) {
+            emitVaultEvent(target.vaultId, 'vault:chatMessageUpdated', {
+                vaultId: target.vaultId,
+                channelId: target.channelId,
+                message: updated,
+            });
+        }
+    }
+    catch {
+        // Channel/message vanished (e.g. deleted mid-run) — drop the target below.
+    }
+    if (content.done) {
+        chatRunTargets.delete(runId);
+        const timer = chatRunFlushTimers.get(runId);
+        if (timer)
+            clearTimeout(timer);
+        chatRunFlushTimers.delete(runId);
+    }
+}
+setChatSyncSink((runId, eventType) => {
+    if (!chatRunTargets.has(runId))
+        return;
+    // Flush terminal status immediately; throttle streaming token updates.
+    if (eventType === 'status') {
+        const timer = chatRunFlushTimers.get(runId);
+        if (timer) {
+            clearTimeout(timer);
+            chatRunFlushTimers.delete(runId);
+        }
+        syncRunToChatMessage(runId);
+        return;
+    }
+    if (chatRunFlushTimers.has(runId))
+        return;
+    chatRunFlushTimers.set(runId, setTimeout(() => {
+        chatRunFlushTimers.delete(runId);
+        syncRunToChatMessage(runId);
+    }, CHAT_RUN_THROTTLE_MS));
+});
 initDesktopRunners(io, db, { publishRunEvent, finishDelegatedRun });
 // ── Health ──────────────────────────────────────────────────────────
 app.get('/api/health', (_req, res) => {
@@ -799,6 +855,19 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req, res) => {
             cwd: selectedCwd,
             delegateToDesktop: delegateCliToDesktop,
         });
+        // Link this run to the chat message it's answering so the server can persist
+        // and broadcast the streamed reply itself. Registered before delegation so no
+        // early event is missed.
+        const chatChannelId = typeof req.body?.chat?.channelId === 'string' ? req.body.chat.channelId.trim() : '';
+        const chatMessageId = typeof req.body?.chat?.messageId === 'string' ? req.body.chat.messageId.trim() : '';
+        if (chatChannelId && chatMessageId) {
+            chatRunTargets.set(run.id, {
+                userId: req.user.id,
+                vaultId: vault.id,
+                channelId: chatChannelId,
+                messageId: chatMessageId,
+            });
+        }
         if (delegateCliToDesktop) {
             const delegated = delegateRunToDesktop(req.user.id, {
                 runId: run.id,
@@ -812,6 +881,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req, res) => {
                 images: cleanImages,
             });
             if (!delegated) {
+                chatRunTargets.delete(run.id);
                 return res.status(503).json({
                     error: 'Desktop agent runner disconnected before the run could start. Open Cascade on your computer and try again.',
                 });

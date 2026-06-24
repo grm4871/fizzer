@@ -96,11 +96,6 @@ export function Sidebar({
   // Drop target highlight: a folder id, or ROOT_DROP_ID for the root area.
   const [dragOverId, setDragOverId] = useState<string | null>(null);
 
-  const activeVault = useMemo(
-    () => vaults.find((v) => v.id === activeVaultId) ?? null,
-    [vaults, activeVaultId],
-  );
-
   const rootFolders = useMemo(
     () => folders.filter((f) => f.parent_id === null).sort((a, b) => a.position - b.position),
     [folders],

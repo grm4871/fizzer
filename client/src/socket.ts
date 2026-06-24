@@ -17,6 +17,7 @@
  */
 
 import { io, type Socket } from 'socket.io-client';
+import type { ChatMessage, ChatAgentRegistration } from './components/ChatView';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
@@ -40,34 +41,14 @@ type ServerEvents = {
   'vault:chatAgentMemberRemoved': (data: { vaultId: string; channelId: string; registrationId: string }) => void;
 };
 
-/** Registered agent member in a chat channel. */
-export type ChatAgentMemberPayload = {
-  id: string;
-  agentId: string;
-  displayName: string;
-  mention: string;
-  model: string;
-  cwd: string;
-  contextPrompt: string;
-  taggableByAgents: boolean;
-};
-
-/** Chat message shape delivered over the vault socket. */
-export type ChatMessagePayload = {
-  id: string;
-  channelId: string;
-  author: string;
-  body: string;
-  createdAt: string;
-  status?: 'sending' | 'running' | 'failed';
-  agentId?: string;
-  registrationId?: string;
-  runId?: number;
-  blocks?: Array<{ type: string; text?: string; redacted?: boolean }>;
-  images?: string[];
-  attachments?: Array<{ name: string; media_type: string; url: string }>;
-  replyTo?: { messageId: string; author: string; mention: string; preview: string };
-};
+/**
+ * Wire shapes for vault socket payloads. These mirror the canonical chat types
+ * exactly, so we alias them rather than redefine (a redefinition drifted before:
+ * `blocks[].type` was widened to `string`, which then failed to assign to the
+ * narrow `ChatBlock` union in the event handlers).
+ */
+export type ChatAgentMemberPayload = ChatAgentRegistration;
+export type ChatMessagePayload = ChatMessage;
 
 /** Events emitted by the client on the `/vault` namespace. */
 type ClientEvents = {

@@ -246,6 +246,48 @@ function driveProcess(bin, args, cwd, onLine, getSummary, label, runId) {
 function truncate(s, n) {
     return s.length > n ? s.slice(0, n) + '\n…(truncated)' : s;
 }
+function redactGrokDiagnostic(input) {
+    return input
+        .replace(/"key_prefix":"[^"]*"/g, '"key_prefix":"[redacted]"')
+        .replace(/"rt_prefix":"[^"]*"/g, '"rt_prefix":"[redacted]"')
+        .replace(/key_prefix":"[^"]*"/g, 'key_prefix":"[redacted]"')
+        .replace(/rt_prefix":"[^"]*"/g, 'rt_prefix":"[redacted]"')
+        .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [redacted]');
+}
+function extractGrokDiagnostic(debugFile) {
+    try {
+        if (!fs.existsSync(debugFile))
+            return undefined;
+        const raw = fs.readFileSync(debugFile, 'utf8');
+        const lines = raw.split(/\r?\n/).filter(Boolean).slice(-300);
+        const candidates = [];
+        for (const line of lines) {
+            try {
+                const ev = JSON.parse(line);
+                const status = ev?.ctx?.status_code ?? ev?.ctx?.http_status;
+                const message = ev?.ctx?.message ?? ev?.ctx?.error;
+                if (status || message || ev?.lvl === 'error') {
+                    candidates.push(redactGrokDiagnostic(JSON.stringify({
+                        level: ev?.lvl,
+                        message: ev?.msg,
+                        status,
+                        detail: message,
+                    })));
+                }
+            }
+            catch {
+                if (/api error|forbidden|permission-denied|unauthorized|rate|paywall|subscription/i.test(line)) {
+                    candidates.push(redactGrokDiagnostic(line));
+                }
+            }
+        }
+        const detail = candidates.slice(-3).join('\n');
+        return detail || undefined;
+    }
+    catch {
+        return undefined;
+    }
+}
 // ═══════════════════════════════════════════════════════════════
 // CODEX CLI
 // ═══════════════════════════════════════════════════════════════
@@ -363,7 +405,8 @@ async function runCodex(prompt, cwd, emit, resumeId, images = [], runId, model) 
  */
 async function runGrok(prompt, cwd, emit, resumeId, runId, model) {
     const modelArgs = model ? ['--model', model] : [];
-    const baseArgs = ['--single', prompt, '--output-format', 'streaming-json', '--always-approve', '--cwd', cwd, ...modelArgs];
+    const debugFile = path.join(os.tmpdir(), `cascade-grok-${runId ?? process.pid}-${Date.now()}.jsonl`);
+    const baseArgs = ['--single', prompt, '--output-format', 'streaming-json', '--debug-file', debugFile, '--always-approve', '--cwd', cwd, ...modelArgs];
     const args = resumeId ? ['--resume', resumeId, ...baseArgs] : baseArgs;
     let text = '';
     let sessionId;
@@ -381,8 +424,21 @@ async function runGrok(prompt, cwd, emit, resumeId, runId, model) {
                 sessionId = ev.sessionId;
         }
     };
-    const summaryText = await driveProcess(GROK_BIN, args, cwd, onLine, () => text || 'Completed note operations successfully.', 'Grok', runId);
-    return { summary: summaryText, sessionId };
+    try {
+        const summaryText = await driveProcess(GROK_BIN, args, cwd, onLine, () => text || 'Completed note operations successfully.', 'Grok', runId);
+        return { summary: summaryText, sessionId };
+    }
+    catch (error) {
+        const diagnostic = extractGrokDiagnostic(debugFile);
+        const base = error instanceof Error ? error.message : String(error);
+        throw new Error(diagnostic ? `${base}\n\nGrok diagnostic:\n${diagnostic}` : base);
+    }
+    finally {
+        try {
+            fs.unlinkSync(debugFile);
+        }
+        catch { /* ignore */ }
+    }
 }
 // ═══════════════════════════════════════════════════════════════
 // ANTIGRAVITY AGENT

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef, useLayoutEffect, useMemo, type ReactNode } from 'react';
+import { useEffect, useState, useCallback, useRef, useLayoutEffect, useMemo, type CSSProperties, type ReactNode } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { type Tab } from './components/TabBar';
 import { NoteEditor } from './components/NoteEditor';
@@ -540,6 +540,9 @@ export default function App() {
   const chatStateRef = useRef(chatState); chatStateRef.current = chatState;
   const runSocketsRef = useRef<Map<number, ReturnType<typeof connectRunsSocket>>>(new Map());
   const streamingChatMessageIdsRef = useRef<Set<string>>(new Set());
+  // Agent messages whose persistence is owned by the server (the run is linked to
+  // them server-side). We skip our own PATCH for these to avoid duplicate writes.
+  const serverOwnedChatMessageIdsRef = useRef<Set<string>>(new Set());
   const pendingChatPatchRef = useRef<Map<string, ChatMessage>>(new Map());
   const chatPatchTimerRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const startAgentChatRunRef = useRef<((channelId: string, registration: ChatAgentRegistration, prompt: string, triggeringMessage: ChatMessage) => void) | null>(null);
@@ -589,6 +592,12 @@ export default function App() {
   }, [layout, focusedPaneId]);
 
   useEffect(() => { localStorage.setItem('cascade_sidebar_w', String(sidebarWidth)); }, [sidebarWidth]);
+
+  useEffect(() => {
+    if (window.matchMedia('(max-width: 900px)').matches) {
+      setSidebarOpen(false);
+    }
+  }, []);
 
   // Persist the workspace session.
   useEffect(() => {
@@ -807,13 +816,18 @@ export default function App() {
     immediate = false,
   ) => {
     pendingChatPatchRef.current.set(messageId, message);
-    const existingTimer = chatPatchTimerRef.current.get(messageId);
-    if (existingTimer) clearTimeout(existingTimer);
     if (immediate) {
+      const existingTimer = chatPatchTimerRef.current.get(messageId);
+      if (existingTimer) clearTimeout(existingTimer);
       chatPatchTimerRef.current.delete(messageId);
       void flushChatMessagePatch(vaultId, channelId, messageId);
       return;
     }
+    // Throttle (not debounce): keep an already-scheduled flush so streamed tokens
+    // are broadcast to other clients at most ~300ms apart. A debounce here would
+    // reset on every token and never fire during continuous streaming, so remote
+    // observers would see nothing until the run completed.
+    if (chatPatchTimerRef.current.has(messageId)) return;
     const timer = setTimeout(() => {
       chatPatchTimerRef.current.delete(messageId);
       void flushChatMessagePatch(vaultId, channelId, messageId);
@@ -1026,20 +1040,28 @@ export default function App() {
   }, [persistChatMessageToServer]);
 
   const updateChatMessage = useCallback((channelId: string, messageId: string, updater: (message: ChatMessage) => ChatMessage) => {
-    let patched: ChatMessage | null = null;
+    // Compute the next message synchronously from the freshest known version so
+    // we can both update React state and schedule the server patch. We can't read
+    // a value assigned *inside* the setChatState updater here — React 18 doesn't
+    // run that updater synchronously, so it would still be null when we schedule
+    // the patch, and the streamed/final agent text would never be broadcast to
+    // other clients. The base prefers a pending (not-yet-flushed) patch so a burst
+    // of synchronous stream events (e.g. the history backfill loop) accumulates.
+    const base = pendingChatPatchRef.current.get(messageId)
+      ?? (chatStateRef.current.messagesByChannel[channelId] ?? []).find((message) => message.id === messageId);
+    if (!base) return;
+    const patched = updater(base);
     setChatState((prev) => ({
       ...prev,
       messagesByChannel: {
         ...prev.messagesByChannel,
-        [channelId]: (prev.messagesByChannel[channelId] ?? []).map((message) => {
-          if (message.id !== messageId) return message;
-          patched = updater(message);
-          return patched;
-        }),
+        [channelId]: (prev.messagesByChannel[channelId] ?? []).map((message) => (
+          message.id === messageId ? patched : message
+        )),
       },
     }));
     const vaultId = activeVaultIdRef.current;
-    if (vaultId && patched) {
+    if (vaultId && !serverOwnedChatMessageIdsRef.current.has(messageId)) {
       const immediate = !patched.status || patched.status === 'failed';
       scheduleChatMessagePatch(vaultId, channelId, messageId, patched, immediate);
     }
@@ -1120,6 +1142,7 @@ export default function App() {
       const finishRun = (runId: number, cleanup: () => void) => {
         cleanup();
         streamingChatMessageIdsRef.current.delete(agentMessageId);
+        serverOwnedChatMessageIdsRef.current.delete(agentMessageId);
         if (isLocalRunId(runId)) {
           localAgentUnsubsRef.current.delete(runId);
         } else {
@@ -1222,10 +1245,17 @@ export default function App() {
           model: registration.model || undefined,
           cwd: normalizeChatCwd(registration.cwd) || undefined,
           images: runImages,
+          // Link the run to this chat message so the server persists/broadcasts
+          // the streamed reply to all clients (see serverOwnedChatMessageIdsRef).
+          chat: { channelId, messageId: agentMessageId },
         }),
       });
 
       activeRunId = res.run.id;
+      // The run is registered server-side; the server now owns persistence of this
+      // message's streamed updates. Skip our own debounced PATCH to avoid duplicate
+      // writes — we still update local state for instant display.
+      serverOwnedChatMessageIdsRef.current.add(agentMessageId);
       if (res.run.conversation_id) {
         setChatState((prev) => ({
           ...prev,
@@ -1254,6 +1284,10 @@ export default function App() {
       }
     } catch (error) {
       streamingChatMessageIdsRef.current.delete(agentMessageId);
+      // Release server ownership so this client-side failure is persisted by us.
+      // If the run was actually created and later succeeds, the server's update
+      // (higher stream score) still wins over this 'failed' state.
+      serverOwnedChatMessageIdsRef.current.delete(agentMessageId);
       if (activeRunId != null) {
         runSocketsRef.current.get(activeRunId)?.disconnect();
         runSocketsRef.current.delete(activeRunId);
@@ -2132,15 +2166,14 @@ export default function App() {
 
   return (
     <main
-      className="app-shell"
+      className={`app-shell ${sidebarOpen ? 'sidebar-open' : 'sidebar-closed'}`}
       style={{
         display: 'grid',
-        gridTemplateColumns: `${sidebarOpen ? `${sidebarWidth}px` : '0px'} minmax(0, 1fr)`,
-        height: '100vh',
+        '--sidebar-width': `${sidebarWidth}px`,
         overflow: 'hidden',
         position: 'relative',
         transition: isResizing ? 'none' : undefined,
-      }}
+      } as CSSProperties}
     >
       {sidebarOpen && (
         <div className="resize-handle" style={{ left: sidebarWidth - 3 }} onMouseDown={startResize} role="separator" aria-orientation="vertical" aria-label="Resize sidebar" title="Drag to resize" />
@@ -2155,11 +2188,27 @@ export default function App() {
           notes={notes}
           activeNoteId={activeTabId}
           onSelectVault={setActiveVaultId}
-          onSelectNote={(id) => openNote(id, 'replace')}
-          onOpenNoteInNewTab={(id) => openNote(id)}
-          onNewNote={handleCreateNote}
-          onCreateChannel={handleCreateChannel}
-          onNewNoteInFolder={handleCreateNoteInFolder}
+          onSelectNote={(id) => {
+            openNote(id, 'replace');
+            if (window.matchMedia('(max-width: 900px)').matches) setSidebarOpen(false);
+          }}
+          onOpenNoteInNewTab={(id) => {
+            openNote(id);
+            if (window.matchMedia('(max-width: 900px)').matches) setSidebarOpen(false);
+          }}
+          onNewNote={() => {
+            void handleCreateNote();
+            if (window.matchMedia('(max-width: 900px)').matches) setSidebarOpen(false);
+          }}
+          onCreateChannel={async (folderId) => {
+            const channel = await handleCreateChannel(folderId);
+            if (window.matchMedia('(max-width: 900px)').matches) setSidebarOpen(false);
+            return channel;
+          }}
+          onNewNoteInFolder={(folderId) => {
+            void handleCreateNoteInFolder(folderId);
+            if (window.matchMedia('(max-width: 900px)').matches) setSidebarOpen(false);
+          }}
           onSearch={() => setSearchOpen(true)}
           onCollapse={() => setSidebarOpen(false)}
           onLogout={handleLogout}
@@ -2174,7 +2223,7 @@ export default function App() {
       )}
 
       {/* Workspace */}
-      <div className="flex flex-col flex-1" style={{ height: '100%', overflow: 'hidden', gridColumn: 2 }}>
+      <div className="workspace flex flex-col flex-1" style={{ height: '100%', overflow: 'hidden' }}>
         <div className="workspace-toolbar" style={{ display: 'flex', alignItems: 'center', background: 'var(--bg-surface)', padding: '4px 8px', gap: 4, borderBottom: '1px solid var(--border)' }}>
           {!sidebarOpen && (
             <button id="sidebar-expand-btn" className="btn-icon" onClick={() => setSidebarOpen(true)} title="Expand sidebar">

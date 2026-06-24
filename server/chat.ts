@@ -392,6 +392,114 @@ export function updateChatMessage(
   return next;
 }
 
+/**
+ * Extract the visible assistant text from an agent run event's `message.content`
+ * (Anthropic-style content blocks, or a plain string).
+ */
+function textFromRunContent(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .map((block) => {
+      if (!block || typeof block !== 'object') return '';
+      const b = block as Record<string, unknown>;
+      if (b.type === 'text' && typeof b.text === 'string') return b.text;
+      return '';
+    })
+    .join('');
+}
+
+/** Convert run-event content into the chat block list (text + thinking only). */
+function normalizeChatRunBlocks(content: unknown): ChatBlock[] {
+  if (typeof content === 'string' && content.trim()) {
+    return [{ type: 'text', text: content }];
+  }
+  if (!Array.isArray(content)) return [];
+  const blocks: ChatBlock[] = [];
+  for (const item of content) {
+    if (!item || typeof item !== 'object') continue;
+    const block = item as Record<string, unknown>;
+    if (block.type === 'text' && typeof block.text === 'string') {
+      blocks.push({ type: 'text', text: block.text });
+    } else if (block.type === 'thinking') {
+      blocks.push({ type: 'thinking', text: String(block.thinking || block.text || '') });
+    } else if (block.type === 'redacted_thinking') {
+      blocks.push({ type: 'thinking', text: '', redacted: true });
+    }
+  }
+  return blocks;
+}
+
+/** Append blocks, coalescing consecutive text/thinking blocks (mirrors the client). */
+function appendChatRunBlocks(existing: ChatBlock[], blocks: ChatBlock[]): ChatBlock[] {
+  const next = [...existing];
+  for (const block of blocks) {
+    const last = next[next.length - 1];
+    if (last && last.type === block.type && (block.type === 'text' || block.type === 'thinking')) {
+      next[next.length - 1] = { ...last, text: `${last.text || ''}${block.text || ''}` };
+    } else {
+      next.push({ ...block });
+    }
+  }
+  return next;
+}
+
+export type AgentChatContent = {
+  body: string;
+  blocks: ChatBlock[];
+  status: ChatMessage['status'];
+  done: boolean;
+};
+
+/**
+ * Fold an agent run's event log into the chat message shape (body + blocks +
+ * status). This is the server-authoritative equivalent of the client's stream
+ * accumulation, so the agent reply is persisted and broadcast even if the
+ * client that started the run disconnects mid-stream.
+ */
+export function buildAgentChatContentFromRunEvents(
+  events: Array<{ type: string; payload_json: string }>,
+): AgentChatContent {
+  let assistantText = '';
+  let blocks: ChatBlock[] = [];
+  let status: ChatMessage['status'] = 'running';
+  let terminalSummary = '';
+
+  for (const event of events) {
+    let payload: any;
+    try {
+      payload = JSON.parse(event.payload_json);
+    } catch {
+      continue;
+    }
+    if (event.type === 'text') {
+      assistantText += textFromRunContent(payload?.message?.content);
+      blocks = appendChatRunBlocks(blocks, normalizeChatRunBlocks(payload?.message?.content));
+    } else if (event.type === 'user') {
+      blocks = appendChatRunBlocks(blocks, normalizeChatRunBlocks(payload?.message?.content));
+    } else if (event.type === 'status') {
+      const s = payload?.status;
+      if (s === 'completed') {
+        status = undefined;
+        terminalSummary = String(payload?.summary || 'Done.');
+      } else if (s === 'failed') {
+        status = 'failed';
+        terminalSummary = String(payload?.summary || 'Agent failed.');
+      }
+    }
+  }
+
+  const trimmed = assistantText.trim();
+  const done = status !== 'running';
+  const body = trimmed
+    ? assistantText
+    : done
+      ? terminalSummary
+      : 'Thinking...';
+
+  return { body, blocks, status, done };
+}
+
 export function listChatAgentMembers(db: Db, channelId: string, userId: number): ChatAgentRegistration[] {
   assertChatChannel(db, channelId, userId);
   const rows = db.prepare(`

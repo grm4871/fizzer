@@ -18,6 +18,10 @@ const pendingRunCwds = new Map();
 let eventSink = null;
 // Sink for vault-level events (e.g. notifying open editors to reload agent edits).
 let vaultEventSink = null;
+// Sink that mirrors a run's streamed output into its linked chat message, so the
+// agent reply is persisted/broadcast server-side regardless of which client (if
+// any) is still connected to relay the stream.
+let chatSyncSink = null;
 const RUNNER_MODEL = process.env.RUNNER_MODEL || 'claude-sonnet-4-6';
 const RUNNER_MAX_TURNS = Number(process.env.RUNNER_MAX_TURNS || 30);
 // Thinking budget (tokens). Set RUNNER_THINKING=0 to disable extended thinking.
@@ -146,6 +150,9 @@ export function ensureRunnerSchema(db) {
 }
 export function setRunEventSink(sink) {
     eventSink = sink;
+}
+export function setChatSyncSink(sink) {
+    chatSyncSink = sink;
 }
 export function setVaultEventSink(sink) {
     vaultEventSink = sink;
@@ -412,6 +419,7 @@ export function publishRunEvent(db, runId, type, payload) {
     const result = db.prepare('INSERT INTO run_events (run_id, seq, type, payload_json) VALUES (?, ?, ?, ?)').run(runId, latest.next, type, JSON.stringify(payload));
     const event = db.prepare('SELECT * FROM run_events WHERE id = ?').get(Number(result.lastInsertRowid));
     eventSink?.(event);
+    chatSyncSink?.(runId, type);
     return event;
 }
 export function finishDelegatedRun(db, runId, opts) {

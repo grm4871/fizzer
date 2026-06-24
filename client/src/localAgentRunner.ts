@@ -27,6 +27,7 @@ type ElectronAgentAPI = {
   startAgentRun?: (opts: LocalAgentRunOptions) => Promise<{ success: boolean; error?: string }>;
   cancelAgentRun?: (runId: number) => Promise<{ success: boolean; error?: string }>;
   onAgentEvent?: (callback: (event: LocalAgentRunEvent) => void) => () => void;
+  setRunnerToken?: (opts: { token: string; apiUrl?: string }) => Promise<{ success: boolean; error?: string }>;
 };
 
 function electronAgentAPI(): ElectronAgentAPI | undefined {
