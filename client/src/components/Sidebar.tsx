@@ -21,7 +21,7 @@ import { useState, useMemo, useEffect } from 'react';
 import type { Vault, Folder, NoteSummary } from '../api';
 import {
   Folder as FolderIcon, FolderOpen, FileText, Pin, Gem, Edit2, FolderPlus,
-  Search, ChevronRight, PanelLeftClose, LogOut, Trash2, FilePlus, FolderInput, Pencil,
+  Search, ChevronRight, PanelLeftClose, LogOut, Trash2, FilePlus, FolderInput, Pencil, RefreshCw,
 } from 'lucide-react';
 
 const NOTE_DND_TYPE = 'application/x-cascade-note';
@@ -87,6 +87,7 @@ export function Sidebar({
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [editingValue, setEditingValue] = useState('');
+  const [updating, setUpdating] = useState(false);
   // Drop target highlight: a folder id, or ROOT_DROP_ID for the root area.
   const [dragOverId, setDragOverId] = useState<string | null>(null);
 
@@ -441,6 +442,23 @@ export function Sidebar({
           <div className="user-avatar">{user.username.charAt(0).toUpperCase()}</div>
           <span className="truncate">{user.username}</span>
         </div>
+        <button
+          className="btn-icon"
+          title="Update from git and restart"
+          disabled={updating}
+          onClick={async () => {
+            const api = (window as unknown as { electronAPI?: { updateAndRestart?: () => Promise<{ success: boolean; error?: string }> } }).electronAPI;
+            if (!api?.updateAndRestart) return;
+            setUpdating(true);
+            const result = await api.updateAndRestart();
+            if (!result.success) {
+              alert('Update failed: ' + (result.error || 'Unknown error'));
+              setUpdating(false);
+            }
+          }}
+        >
+          <RefreshCw size={16} className={updating ? 'spin' : ''} />
+        </button>
         <button id="logout-btn" className="btn-icon" onClick={onLogout} title="Log out">
           <LogOut size={16} />
         </button>

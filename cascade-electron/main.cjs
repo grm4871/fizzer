@@ -17,6 +17,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 const { app, BrowserWindow, ipcMain, session, Menu, shell, WebContentsView } = require('electron');
+const { execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const { ElectronBlocker } = require('@ghostery/adblocker-electron');
@@ -886,6 +887,7 @@ ipcMain.handle('browser:createView', async (event, tabId, isChatNote) => {
         entry.view.webContents.reload();
       }
       // Adoption logic
+      entry.isTransitioning = false; // Transition complete
       if (entry.destroyTimeout) {
         clearTimeout(entry.destroyTimeout);
         entry.destroyTimeout = null;
@@ -917,7 +919,7 @@ ipcMain.handle('browser:createView', async (event, tabId, isChatNote) => {
     const browserLikeUserAgent = buildBrowserLikeUserAgent();
     const view = new WebContentsView({
       webPreferences: {
-        partition: WEBVIEW_PARTITION,
+        session: webviewBrowserSession || session.fromPartition(WEBVIEW_PARTITION),
         nodeIntegration: false,
         contextIsolation: true,
       }
@@ -994,7 +996,7 @@ ipcMain.handle('browser:createView', async (event, tabId, isChatNote) => {
     });
 
     win.contentView.addChildView(view);
-    webViews.set(tabId, { view, win, destroyTimeout: null, isChatNote });
+    webViews.set(tabId, { view, win, destroyTimeout: null, isChatNote, isTransitioning: false });
     return { success: true, adopted: false };
   } catch (error) {
     console.error('[WebContentsView] Failed to create view:', error);
@@ -1059,20 +1061,59 @@ ipcMain.handle('browser:destroyView', async (event, tabId) => {
   const entry = webViews.get(tabId);
   if (!entry) return { success: false };
   try {
-    if (entry.destroyTimeout) clearTimeout(entry.destroyTimeout);
-    entry.destroyTimeout = setTimeout(() => {
-      if (webViews.get(tabId) === entry) {
-        if (entry.win && !entry.win.isDestroyed()) {
+    const win = BrowserWindow.fromWebContents(event.sender);
+
+    // If the view has been adopted by another window, ignore this destroy request
+    if (entry.win && entry.win !== win) {
+      console.log('[browser:destroyView] Ignoring destroy request for tabId', tabId, 'because it is owned by a different window');
+      return { success: true };
+    }
+
+    // If the view is transitioning, defer destruction with a 1-second timeout
+    if (entry.isTransitioning) {
+      console.log('[browser:destroyView] Deferring destruction for tabId', tabId, 'due to transition');
+      if (entry.destroyTimeout) clearTimeout(entry.destroyTimeout);
+      entry.destroyTimeout = setTimeout(() => {
+        if (webViews.get(tabId) === entry) {
+          if (entry.win && !entry.win.isDestroyed()) {
+            try {
+              entry.win.contentView.removeChildView(entry.view);
+            } catch (e) {}
+          }
           try {
-            entry.win.contentView.removeChildView(entry.view);
+            entry.view.webContents.close();
           } catch (e) {}
+          webViews.delete(tabId);
         }
-        try {
-          entry.view.webContents.close();
-        } catch (e) {}
-        webViews.delete(tabId);
+      }, 1000);
+      return { success: true };
+    }
+
+    // Normal close: destroy IMMEDIATELY
+    console.log('[browser:destroyView] Destroying tabId', tabId, 'immediately');
+    if (entry.destroyTimeout) clearTimeout(entry.destroyTimeout);
+    if (entry.win && !entry.win.isDestroyed()) {
+      try {
+        entry.win.contentView.removeChildView(entry.view);
+      } catch (e) {}
+    }
+    try {
+      entry.view.webContents.close();
+    } catch (e) {}
+    webViews.delete(tabId);
+
+    // Flush cookies to disk immediately on view destruction to ensure session persistence
+    try {
+      const webviewSession = webviewBrowserSession || session.fromPartition(WEBVIEW_PARTITION);
+      if (webviewSession && webviewSession.cookies) {
+        webviewSession.cookies.flushStore().catch((err) => {
+          console.error('[browser:destroyView] Failed to flush cookies:', err);
+        });
       }
-    }, 1000);
+    } catch (err) {
+      console.error('[browser:destroyView] Error flushing cookies:', err);
+    }
+
     return { success: true };
   } catch (error) {
     return { success: false, error: error.message };
@@ -1140,6 +1181,10 @@ ipcMain.handle('browser:reload', async (event, tabId) => {
 ipcMain.handle('window:popOutTab', async (event, { tab, screenX, screenY }) => {
   try {
     if (!tab || typeof tab.id !== 'string') throw new Error('Missing tab descriptor');
+    const entry = webViews.get(tab.id);
+    if (entry) {
+      entry.isTransitioning = true;
+    }
     const senderWin = BrowserWindow.fromWebContents(event.sender) || mainWindow;
     const b = senderWin ? senderWin.getBounds() : { x: 0, y: 0, width: 0, height: 0 };
     const x = Number(screenX);
@@ -1175,6 +1220,10 @@ ipcMain.handle('window:popOutTab', async (event, { tab, screenX, screenY }) => {
 ipcMain.handle('window:mergeTab', async (event, { tab, screenX, screenY }) => {
   try {
     if (!tab || typeof tab.id !== 'string') throw new Error('Missing tab descriptor');
+    const entry = webViews.get(tab.id);
+    if (entry) {
+      entry.isTransitioning = true;
+    }
     const sender = BrowserWindow.fromWebContents(event.sender);
     const x = Number(screenX);
     const y = Number(screenY);
@@ -1394,6 +1443,22 @@ ipcMain.handle('netdoc:getLatestVersionContent', async (event, netdocId) => {
     return { success: true, content };
   } catch (error) {
     console.error('[IPC] Failed to get latest version content:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// ── Self-update from git ─────────────────────────────────────
+ipcMain.handle('app:updateAndRestart', async () => {
+  const repoRoot = path.resolve(__dirname, '..');
+  try {
+    const output = execSync('git pull --ff-only', { cwd: repoRoot, encoding: 'utf8', timeout: 30000 });
+    execSync('npm install', { cwd: repoRoot, encoding: 'utf8', timeout: 120000 });
+    execSync('npm install', { cwd: path.join(repoRoot, 'cascade-electron'), encoding: 'utf8', timeout: 120000 });
+    app.relaunch();
+    app.exit(0);
+    return { success: true, output };
+  } catch (error) {
+    console.error('[IPC] Update failed:', error);
     return { success: false, error: error.message };
   }
 });

@@ -1782,6 +1782,7 @@ a {
   animation: ai-spin 0.7s linear infinite;
 }
 @keyframes ai-spin { to { transform: rotate(360deg); } }
+.spin { animation: ai-spin 0.7s linear infinite; }
 .ai-typing { display: flex; gap: 4px; padding: 2px 0; }
 .ai-typing span {
   width: 5px;
