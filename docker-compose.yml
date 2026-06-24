@@ -1,0 +1,20 @@
+services:
+  cascade:
+    build: .
+    image: cascade:latest
+    container_name: cascade
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      CASCADE_NETWORK_MODE: "true"
+      API_HOST: "0.0.0.0"
+      API_PORT: "3000"
+      DOCS_DB_PATH: /data/docs.db
+      CASCADE_ENABLE_WIDGET_SHELL: "false"
+      CASCADE_TRUST_PROXY_HOPS: "1"
+    volumes:
+      - /var/lib/cascade:/data
