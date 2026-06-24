@@ -22,7 +22,7 @@ import Database from 'better-sqlite3';
 import { Server } from 'socket.io';
 import { addTag, createFolder, createNote, createVault, deleteFolder, deleteNote, deleteNotes, ensureVaultSchema, getBacklinks, getGraph, getNote, getVault, listFolders, listNotes, listTags, linkifyTerm, listVaults, moveNote, removeTag, renameNote, searchNotes, toggleArchive, togglePin, updateFolder, updateNote, } from './server/vault.js';
 import { createNoteVersion, diffNoteVersions, diffText, ensureVersionsSchema, listNoteVersions, } from './server/versions.js';
-import { ensureRunnerSchema, setRunEventSink, setChatSyncSink, setVaultEventSink, listRuns, getRun, listRunEvents, startRun, sendRunMessage, cancelRun, findPriorSession, publishRunEvent, finishDelegatedRun, } from './server/runner.js';
+import { ensureRunnerSchema, setRunEventSink, setChatSyncSink, listRuns, getRun, listRunEvents, startRun, cancelRun, findPriorSession, publishRunEvent, finishDelegatedRun, } from './server/runner.js';
 import { delegateRunToDesktop, getDesktopRunnerStatus, initDesktopRunners, isDesktopRunnerOnline, } from './server/desktop-runner.js';
 import { ensureFeedSchema, fetchFeed, pollWidgetFeeds, setFeedNotifySink, startFeedPoller, } from './server/feeds.js';
 import { fetchWidgetData } from './server/widgetData.js';
@@ -222,8 +222,6 @@ setRunEventSink((event) => {
 function emitVaultEvent(vaultId, event, data) {
     vaultNamespace.to(`vault:${vaultId}`).emit(event, data);
 }
-// Let the agent runner notify clients (e.g. reload an open note after edits).
-setVaultEventSink(emitVaultEvent);
 setFeedNotifySink(emitVaultEvent);
 const chatRunTargets = new Map();
 const chatRunFlushTimers = new Map();
@@ -801,10 +799,13 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req, res) => {
     }
     const validAgents = ['claude-code', 'codex', 'grok', 'antigravity', 'copilot', 'hermes'];
     const selectedAgent = validAgents.includes(agent) ? agent : 'claude-code';
-    const delegateCliToDesktop = isCliAgent(selectedAgent);
-    if (delegateCliToDesktop && !isDesktopRunnerOnline(req.user.id)) {
+    // Every agent — Claude included — executes on the user's own machine via the
+    // desktop runner relay. The server never runs an LLM itself (no API keys / no
+    // Claude login on the server), it only relays runs to a connected desktop.
+    const delegateToDesktop = isCliAgent(selectedAgent) || selectedAgent === 'claude-code';
+    if (delegateToDesktop && !isDesktopRunnerOnline(req.user.id)) {
         return res.status(503).json({
-            error: 'No desktop agent runner is connected. Open Cascade on your computer (signed in to the same account) to run CLI agents from chat.',
+            error: 'No desktop agent runner is connected. Open Cascade on your computer (signed in to the same account) to run agents from chat.',
         });
     }
     const removedModelPresets = new Set([
@@ -823,7 +824,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req, res) => {
     if (typeof cwd === 'string' && cwd.trim()) {
         const rawCwd = cwd.trim();
         if (!/^(vault\s*root|root|\.\/?)$/i.test(rawCwd)) {
-            if (delegateCliToDesktop) {
+            if (delegateToDesktop) {
                 selectedCwd = rawCwd;
             }
             else {
@@ -850,10 +851,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req, res) => {
     try {
         const run = await startRun(db, vault, note_id || null, prompt, selectedAgent, {
             conversationId: typeof conversation_id === 'string' && conversation_id ? conversation_id : undefined,
-            images: cleanImages,
             model: selectedModel,
-            cwd: selectedCwd,
-            delegateToDesktop: delegateCliToDesktop,
         });
         // Link this run to the chat message it's answering so the server can persist
         // and broadcast the streamed reply itself. Registered before delegation so no
@@ -868,7 +866,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req, res) => {
                 messageId: chatMessageId,
             });
         }
-        if (delegateCliToDesktop) {
+        if (delegateToDesktop) {
             const delegated = delegateRunToDesktop(req.user.id, {
                 runId: run.id,
                 vaultId: vault.id,
@@ -971,22 +969,6 @@ app.get('/api/runs/:id/events', requireAuth, (req, res) => {
     if (!vault)
         return res.status(403).json({ error: 'Access denied' });
     res.json({ events: listRunEvents(db, run.id) });
-});
-app.post('/api/runs/:id/messages', requireAuth, async (req, res) => {
-    const run = getRun(db, Number(req.params.id));
-    if (!run)
-        return res.status(404).json({ error: 'Run not found' });
-    const vault = getVault(db, run.vault_id, req.user.id);
-    if (!vault)
-        return res.status(403).json({ error: 'Access denied' });
-    const { message } = req.body;
-    try {
-        const event = await sendRunMessage(db, run.id, message);
-        res.json({ event });
-    }
-    catch (err) {
-        res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
-    }
 });
 app.post('/api/runs/:id/cancel', requireAuth, async (req, res) => {
     const run = getRun(db, Number(req.params.id));
