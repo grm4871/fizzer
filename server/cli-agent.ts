@@ -51,7 +51,7 @@ export type CliImage = { media_type: string; data: string };
 /** Maximum time (ms) a CLI agent process may run before being killed. */
 const CLI_TIMEOUT_MS = Number(process.env.RUNNER_CLI_TIMEOUT || 600_000);
 
-/** Binary names are overridable in case they are not on the server's PATH. */
+/** Binary names are overridable in case they are not on the runner machine's PATH. */
 const CODEX_BIN = process.env.CODEX_BIN || 'codex';
 const GROK_BIN = process.env.GROK_BIN || 'grok';
 const COPILOT_BIN = process.env.COPILOT_BIN || 'copilot';
@@ -109,7 +109,7 @@ export function getCliAgentAvailability(): Record<CliAgentId, { available: boole
       : {
           available: false,
           bin,
-          message: `${label} ('${bin}') is not installed or not on PATH. CLI agents run on the Cascade server — install the CLI where the server runs, or set ${agent.toUpperCase().replace('-', '_')}_BIN.`,
+          message: `${label} ('${bin}') is not installed or not on PATH. CLI agents run in the Cascade desktop app on this computer — install the CLI locally, or set ${agent.toUpperCase().replace('-', '_')}_BIN for the desktop app.`,
         };
   }
   return availability;
@@ -118,7 +118,7 @@ export function getCliAgentAvailability(): Record<CliAgentId, { available: boole
 function assertCliAgentAvailable(agent: CliAgentId): void {
   const status = getCliAgentAvailability()[agent];
   if (!status.available) {
-    throw new Error(status.message || `${CLI_AGENT_LABELS[agent]} is not available on this server.`);
+    throw new Error(status.message || `${CLI_AGENT_LABELS[agent]} is not available on this computer.`);
   }
 }
 
