@@ -1,10 +1,22 @@
-import { useEffect, useState, useCallback, useRef, useLayoutEffect, type ReactNode } from 'react';
+import { useEffect, useState, useCallback, useRef, useLayoutEffect, useMemo, type ReactNode } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { type Tab } from './components/TabBar';
 import { NoteEditor } from './components/NoteEditor';
 import { WebView } from './components/WebView';
 import { TerminalWindow } from './components/TerminalWindow';
-import { CHAT_NOTE_MARKER, ChatView, type ChatMessage } from './components/ChatView';
+import {
+  canMergeChatMessages,
+  CHAT_NOTE_MARKER,
+  ChatView,
+  createChatAgentRegistrationId,
+  mediaToRunImages,
+  type ChatAgentRegistration,
+  type ChatBlock,
+  type ChatMediaAttachment,
+  type ChatMessage,
+  type ChatReplyRef,
+  type RunningChatAgent,
+} from './components/ChatView';
 import { SearchOverlay } from './components/SearchOverlay';
 import { CommandPalette } from './components/CommandPalette';
 import { PaneGrid, type TabDragPayload } from './components/PaneGrid';
@@ -78,7 +90,15 @@ interface ChatState {
   messagesByChannel: Record<string, ChatMessage[]>;
   agentConversationsByChannel: Record<string, string>;
   agentModelsByAgent: Record<string, string>;
+  registeredAgentsByChannel: Record<string, ChatAgentRegistration[]>;
 }
+
+const emptyChatState = (): ChatState => ({
+  messagesByChannel: {},
+  agentConversationsByChannel: {},
+  agentModelsByAgent: {},
+  registeredAgentsByChannel: {},
+});
 
 function emptySession(): PersistedSession {
   const pane = Layout.createPane();
@@ -117,11 +137,12 @@ function loadPersistedSession(): PersistedSession {
 function loadChatState(): ChatState {
   try {
     const raw = localStorage.getItem(CHAT_STORAGE_KEY);
-    if (!raw) return { messagesByChannel: {}, agentConversationsByChannel: {}, agentModelsByAgent: {} };
+    if (!raw) return emptyChatState();
     const parsed = JSON.parse(raw) as Partial<ChatState>;
     const messagesByChannel: Record<string, ChatMessage[]> = {};
     const agentConversationsByChannel: Record<string, string> = {};
     const agentModelsByAgent: Record<string, string> = {};
+    const registeredAgentsByChannel: Record<string, ChatAgentRegistration[]> = {};
 
     if (parsed.messagesByChannel && typeof parsed.messagesByChannel === 'object') {
       for (const [channelId, messages] of Object.entries(parsed.messagesByChannel)) {
@@ -134,7 +155,30 @@ function loadChatState(): ChatState {
             typeof message.author === 'string' &&
             typeof message.body === 'string' &&
             typeof message.createdAt === 'string',
-          );
+          )
+          .map((message) => ({
+            ...message,
+            images: Array.isArray(message.images)
+              ? message.images.filter((item): item is string => typeof item === 'string')
+              : undefined,
+            attachments: Array.isArray(message.attachments)
+              ? message.attachments.filter((item): item is { name: string; media_type: string; url: string } =>
+                Boolean(item) &&
+                typeof item === 'object' &&
+                typeof item.name === 'string' &&
+                typeof item.media_type === 'string' &&
+                typeof item.url === 'string',
+              )
+              : undefined,
+            replyTo: message.replyTo &&
+              typeof message.replyTo === 'object' &&
+              typeof message.replyTo.messageId === 'string' &&
+              typeof message.replyTo.author === 'string' &&
+              typeof message.replyTo.mention === 'string' &&
+              typeof message.replyTo.preview === 'string'
+              ? message.replyTo
+              : undefined,
+          }));
       }
     }
 
@@ -150,9 +194,40 @@ function loadChatState(): ChatState {
       }
     }
 
-    return { messagesByChannel, agentConversationsByChannel, agentModelsByAgent };
+    if (parsed.registeredAgentsByChannel && typeof parsed.registeredAgentsByChannel === 'object') {
+      for (const [channelId, registrations] of Object.entries(parsed.registeredAgentsByChannel)) {
+        if (!Array.isArray(registrations)) continue;
+        registeredAgentsByChannel[channelId] = registrations
+          .filter((registration): registration is ChatAgentRegistration =>
+            Boolean(registration) &&
+            typeof registration === 'object' &&
+            typeof registration.agentId === 'string',
+          )
+          .map((registration, index) => {
+            const mention = typeof registration.mention === 'string' && registration.mention.trim()
+              ? registration.mention.replace(/^@+/, '').trim()
+              : registration.agentId;
+            return {
+              id: typeof registration.id === 'string' && registration.id.trim()
+                ? registration.id.trim()
+                : `legacy-${registration.agentId}-${mention}-${index}`,
+              agentId: registration.agentId,
+              displayName: typeof registration.displayName === 'string' && registration.displayName.trim()
+                ? registration.displayName.trim()
+                : agentLabel(registration.agentId as AgentId),
+              mention,
+              model: typeof registration.model === 'string' ? registration.model : '',
+              cwd: typeof registration.cwd === 'string' ? normalizeChatCwd(registration.cwd) : '',
+              contextPrompt: typeof registration.contextPrompt === 'string' ? registration.contextPrompt : '',
+              taggableByAgents: typeof registration.taggableByAgents === 'boolean' ? registration.taggableByAgents : true,
+            };
+          });
+      }
+    }
+
+    return { messagesByChannel, agentConversationsByChannel, agentModelsByAgent, registeredAgentsByChannel };
   } catch {
-    return { messagesByChannel: {}, agentConversationsByChannel: {}, agentModelsByAgent: {} };
+    return emptyChatState();
   }
 }
 
@@ -160,13 +235,13 @@ type PaneRect = { left: number; top: number; width: number; height: number };
 type NoteEntry = { note: Note; draft: string };
 type AgentId = 'claude-code' | 'codex' | 'grok' | 'antigravity' | 'copilot' | 'hermes';
 
-const CHAT_AGENTS: Array<{ id: AgentId; label: string; aliases: string[] }> = [
-  { id: 'claude-code', label: 'Claude', aliases: ['claude', 'claude code', 'claude-code', 'claudecode'] },
-  { id: 'codex', label: 'Codex', aliases: ['codex'] },
-  { id: 'grok', label: 'Grok', aliases: ['grok'] },
-  { id: 'antigravity', label: 'Antigravity', aliases: ['antigravity', 'anti gravity', 'anti-gravity'] },
-  { id: 'copilot', label: 'Copilot', aliases: ['copilot'] },
-  { id: 'hermes', label: 'Hermes', aliases: ['hermes'] },
+const CHAT_AGENTS: Array<{ id: AgentId; label: string }> = [
+  { id: 'claude-code', label: 'Claude' },
+  { id: 'codex', label: 'Codex' },
+  { id: 'grok', label: 'Grok' },
+  { id: 'antigravity', label: 'Antigravity' },
+  { id: 'copilot', label: 'Copilot' },
+  { id: 'hermes', label: 'Hermes' },
 ];
 
 const CHAT_AGENT_MODEL_PRESETS: Record<AgentId, { id: string; label: string }[]> = {
@@ -184,9 +259,9 @@ const CHAT_AGENT_MODEL_PRESETS: Record<AgentId, { id: string; label: string }[]>
     { id: 'grok-build', label: 'Grok Build' },
   ],
   antigravity: [
-    { id: 'flash_lite', label: 'Gemini Flash Lite' },
-    { id: 'flash', label: 'Gemini Flash' },
-    { id: 'pro', label: 'Gemini Pro' },
+    { id: 'flash_lite', label: 'Gemini 3.5 Flash (Low)' },
+    { id: 'flash', label: 'Gemini 3.5 Flash (Medium)' },
+    { id: 'pro', label: 'Gemini 3.1 Pro (Low)' },
   ],
   copilot: [
     { id: 'auto', label: 'Auto' },
@@ -195,14 +270,6 @@ const CHAT_AGENT_MODEL_PRESETS: Record<AgentId, { id: string; label: string }[]>
   ],
   hermes: [],
 };
-
-function defaultAgentModel(agentId: AgentId) {
-  return CHAT_AGENT_MODEL_PRESETS[agentId][0]?.id ?? '';
-}
-
-function selectedAgentModel(agentId: AgentId, state: ChatState) {
-  return state.agentModelsByAgent[agentId] ?? defaultAgentModel(agentId);
-}
 
 function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -213,18 +280,31 @@ function mentionPattern(alias: string) {
   return new RegExp(`@\\s*${escaped}(?=$|[\\s.,:;!?\\])}])`, 'gi');
 }
 
-function getMentionedAgents(text: string): AgentId[] {
-  const mentioned: AgentId[] = [];
-  for (const agent of CHAT_AGENTS) {
-    if (agent.aliases.some((alias) => mentionPattern(alias).test(text))) mentioned.push(agent.id);
+function normalizeMention(value: string) {
+  return value.replace(/^@+/, '').trim();
+}
+
+function normalizeChatCwd(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed || /^(vault\s*root|root|\.\/?)$/i.test(trimmed)) return '';
+  return trimmed;
+}
+
+function getMentionedRegistrations(text: string, registrations: ChatAgentRegistration[], fromAgent: boolean) {
+  const mentioned: ChatAgentRegistration[] = [];
+  for (const registration of registrations) {
+    if (fromAgent && !registration.taggableByAgents) continue;
+    const mention = normalizeMention(registration.mention || registration.agentId);
+    if (mention && mentionPattern(mention).test(text)) mentioned.push(registration);
   }
   return mentioned;
 }
 
-function stripAgentMentions(text: string) {
+function stripRegisteredAgentMentions(text: string, registrations: ChatAgentRegistration[]) {
   let next = text;
-  for (const agent of CHAT_AGENTS) {
-    for (const alias of agent.aliases) next = next.replace(mentionPattern(alias), ' ');
+  for (const registration of registrations) {
+    const mention = normalizeMention(registration.mention || registration.agentId);
+    if (mention) next = next.replace(mentionPattern(mention), ' ');
   }
   return next.replace(/\s+/g, ' ').trim();
 }
@@ -233,8 +313,14 @@ function agentLabel(agentId: AgentId) {
   return CHAT_AGENTS.find((agent) => agent.id === agentId)?.label ?? agentId;
 }
 
-function chatConversationKey(channelId: string, agentId: AgentId) {
-  return `${channelId}:${agentId}`;
+function chatConversationKey(channelId: string, registration: ChatAgentRegistration) {
+  return [
+    channelId,
+    registration.id,
+    registration.agentId,
+    registration.model || '',
+    normalizeChatCwd(registration.cwd),
+  ].join(':');
 }
 
 function textFromRunContent(content: unknown): string {
@@ -246,6 +332,77 @@ function textFromRunContent(content: unknown): string {
       return '';
     })
     .join('');
+}
+
+function normalizeChatRunBlocks(content: unknown): ChatBlock[] {
+  if (!Array.isArray(content)) return [];
+  const blocks: ChatBlock[] = [];
+  for (const item of content) {
+    if (!item || typeof item !== 'object') continue;
+    const block = item as Record<string, any>;
+    if (block.type === 'text' && typeof block.text === 'string') {
+      blocks.push({ type: 'text', text: block.text });
+    } else if (block.type === 'thinking') {
+      blocks.push({ type: 'thinking', text: String(block.thinking || block.text || '') });
+    } else if (block.type === 'redacted_thinking') {
+      blocks.push({ type: 'thinking', text: '', redacted: true });
+    }
+  }
+  return blocks;
+}
+
+function appendChatRunBlocks(existing: ChatBlock[] | undefined, blocks: ChatBlock[]) {
+  const next = [...(existing ?? [])];
+  for (const block of blocks) {
+    const last = next[next.length - 1];
+    if (last && last.type === block.type && (block.type === 'text' || block.type === 'thinking')) {
+      next[next.length - 1] = {
+        ...last,
+        text: `${last.text || ''}${block.text || ''}`,
+      };
+    } else {
+      next.push({ ...block });
+    }
+  }
+  return next;
+}
+
+function formatAgentChatPrompt(channelName: string, registrations: ChatAgentRegistration[], registration: ChatAgentRegistration, history: ChatMessage[], request: string) {
+  const recentHistory = history
+    .filter((message) => message.body.trim() || (message.images?.length ?? 0) > 0 || (message.attachments?.length ?? 0) > 0)
+    .slice(-40)
+    .map((message) => {
+      const body = message.body.length > 1200 ? `${message.body.slice(0, 1199)}…` : message.body;
+      const mediaNote = [
+        message.images?.length ? `[${message.images.length} image${message.images.length === 1 ? '' : 's'} attached]` : '',
+        message.attachments?.length ? `[${message.attachments.length} file${message.attachments.length === 1 ? '' : 's'} attached]` : '',
+      ].filter(Boolean).join(' ');
+      const suffix = mediaNote ? (body ? ` ${mediaNote}` : mediaNote) : '';
+      const replyNote = message.replyTo ? `[reply to @${message.replyTo.mention}] ` : '';
+      return `${message.author}: ${replyNote}${body || '(media)'}${suffix}`;
+    })
+    .join('\n');
+
+  return [
+    `You are responding in the Cascade chat channel #${channelName}.`,
+    'You can access and use the chat history below as context for your reply.',
+    registration.contextPrompt ? `Your channel-specific context: ${registration.contextPrompt}` : '',
+    '',
+    'Registered agents in this channel:',
+    registrations.length
+      ? registrations.map((item) => {
+          const agent = CHAT_AGENTS.find((candidate) => candidate.id === item.agentId);
+          const taggable = item.taggableByAgents ? 'taggable by agents' : 'not taggable by agents';
+          return `- @${item.mention || item.agentId}: ${item.displayName || agent?.label || item.agentId} (${taggable})`;
+        }).join('\n')
+      : '(none)',
+    '',
+    'Chat history:',
+    recentHistory || '(no prior messages)',
+    '',
+    'Current user request:',
+    request,
+  ].join('\n');
 }
 
 export default function App() {
@@ -294,6 +451,25 @@ export default function App() {
   const activeTab = openTabs.find((t) => t.id === activeTabId);
   const currentUsername = user?.username ?? '';
 
+  const runningChatAgents = useMemo(() => {
+    const entries: RunningChatAgent[] = [];
+    for (const [channelId, messages] of Object.entries(chatState.messagesByChannel)) {
+      const channelName = notes.find((note) => note.id === channelId)?.title || 'channel';
+      for (const message of messages) {
+        if (message.status !== 'running') continue;
+        entries.push({
+          runId: message.runId,
+          channelId,
+          channelName,
+          author: message.author,
+          messageId: message.id,
+          preview: message.body === 'Thinking...' ? 'Starting…' : message.body.slice(0, 120),
+        });
+      }
+    }
+    return entries;
+  }, [chatState.messagesByChannel, notes]);
+
   // Refs mirror the latest state so event handlers stay stable (no dep churn)
   // and never read a stale closure during drags / async work.
   const layoutRef = useRef(layout); layoutRef.current = layout;
@@ -304,6 +480,7 @@ export default function App() {
   const notesRef = useRef(notes); notesRef.current = notes;
   const chatStateRef = useRef(chatState); chatStateRef.current = chatState;
   const runSocketsRef = useRef<Map<number, ReturnType<typeof connectRunsSocket>>>(new Map());
+  const startAgentChatRunRef = useRef<((channelId: string, registration: ChatAgentRegistration, prompt: string, triggeringMessage: ChatMessage) => void) | null>(null);
 
   // ─── Persistent web-tab geometry ────────────────────────────────
   // Each pane registers its content element so we can position the persistent
@@ -618,42 +795,76 @@ export default function App() {
     }));
   }, []);
 
-  const handleSetAgentModel = useCallback((agentId: string, model: string) => {
+  const handleRegisterChatAgent = useCallback((channelId: string, registration: ChatAgentRegistration) => {
+    const normalized = {
+      ...registration,
+      id: registration.id || createChatAgentRegistrationId(),
+      displayName: registration.displayName.trim() || agentLabel(registration.agentId as AgentId),
+      mention: normalizeMention(registration.mention || registration.agentId),
+      cwd: normalizeChatCwd(registration.cwd),
+    };
     setChatState((prev) => ({
       ...prev,
-      agentModelsByAgent: {
-        ...prev.agentModelsByAgent,
-        [agentId]: model,
+      registeredAgentsByChannel: {
+        ...prev.registeredAgentsByChannel,
+        [channelId]: [
+          ...(prev.registeredAgentsByChannel[channelId] ?? []).filter((item) => item.id !== normalized.id),
+          normalized,
+        ],
       },
     }));
   }, []);
 
-  const startAgentChatRun = useCallback(async (channelId: string, agentId: AgentId, prompt: string) => {
+  const handleRemoveChatAgent = useCallback((channelId: string, registrationId: string) => {
+    setChatState((prev) => ({
+      ...prev,
+      registeredAgentsByChannel: {
+        ...prev.registeredAgentsByChannel,
+        [channelId]: (prev.registeredAgentsByChannel[channelId] ?? []).filter((item) => item.id !== registrationId),
+      },
+    }));
+  }, []);
+
+  const startAgentChatRun = useCallback(async (
+    channelId: string,
+    registration: ChatAgentRegistration,
+    prompt: string,
+    triggeringMessage: ChatMessage,
+    runImages: Array<{ media_type: string; data: string }> = [],
+  ) => {
     const vaultId = activeVaultIdRef.current;
     if (!vaultId) return;
 
+    const agentId = registration.agentId as AgentId;
+    if (!CHAT_AGENTS.some((agent) => agent.id === agentId)) return;
+    const channelName = notesRef.current.find((note) => note.id === channelId)?.title || 'chat';
+    const registrations = chatStateRef.current.registeredAgentsByChannel[channelId] ?? [];
+    const chatHistory = [...(chatStateRef.current.messagesByChannel[channelId] ?? []), triggeringMessage];
+    const runPrompt = formatAgentChatPrompt(channelName, registrations, registration, chatHistory, prompt);
     const agentMessageId = `agent-${agentId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     appendChatMessage(channelId, {
       id: agentMessageId,
       channelId,
-      author: agentLabel(agentId),
+      author: registration.displayName || agentLabel(agentId),
       body: 'Thinking...',
       createdAt: new Date().toISOString(),
       status: 'running',
       agentId,
+      registrationId: registration.id,
     });
 
     try {
-      const conversationKey = chatConversationKey(channelId, agentId);
-      const model = selectedAgentModel(agentId, chatStateRef.current);
+      const conversationKey = chatConversationKey(channelId, registration);
       const res = await api<{ run: { id: number; status: string; conversation_id: string } }>(`/api/vaults/${vaultId}/runs`, {
         method: 'POST',
         body: JSON.stringify({
-          prompt,
+          prompt: runPrompt,
           note_id: null,
           agent: agentId,
           conversation_id: chatStateRef.current.agentConversationsByChannel[conversationKey],
-          model: model || undefined,
+          model: registration.model || undefined,
+          cwd: normalizeChatCwd(registration.cwd) || undefined,
+          images: runImages,
         }),
       });
 
@@ -667,35 +878,93 @@ export default function App() {
         }));
       }
 
+      updateChatMessage(channelId, agentMessageId, (message) => ({
+        ...message,
+        runId: res.run.id,
+      }));
+
       const socket = connectRunsSocket();
       runSocketsRef.current.set(res.run.id, socket);
       socket.emit('joinRun', res.run.id);
-      socket.on('event', (event: any) => {
+      let assistantText = '';
+      // The run starts streaming events server-side the instant it's created,
+      // but this socket only joins the run room after its handshake completes.
+      // Socket.IO doesn't replay a room's past events to a late joiner, so the
+      // earliest events (notably the first assistant message's thinking blocks)
+      // would be dropped. Dedup by event `seq` and backfill from the persisted
+      // event log below so nothing emitted before the join is lost.
+      const processedSeqs = new Set<number>();
+      const processRunEvent = (event: any) => {
+        if (typeof event?.seq === 'number') {
+          if (processedSeqs.has(event.seq)) return;
+          processedSeqs.add(event.seq);
+        }
         try {
           if (event.type === 'status') {
             const payload = JSON.parse(event.payload_json);
             if (payload.status === 'completed' || payload.status === 'failed') {
               updateChatMessage(channelId, agentMessageId, (message) => ({
                 ...message,
-                body: message.body === 'Thinking...' ? (payload.status === 'completed' ? 'Done.' : 'Agent failed.') : message.body,
+                body: message.body === 'Thinking...' ? (payload.status === 'completed' ? 'Done.' : payload.summary || 'Agent failed.') : message.body,
                 status: payload.status === 'failed' ? 'failed' : undefined,
               }));
+              if (payload.status === 'completed' && assistantText.trim()) {
+                const registrations = (chatStateRef.current.registeredAgentsByChannel[channelId] ?? [])
+                  .filter((item) => item.id !== registration.id);
+                const mentionedAgents = getMentionedRegistrations(assistantText, registrations, true);
+                const prompt = stripRegisteredAgentMentions(assistantText, registrations) || assistantText;
+                const triggeringAgentMessage: ChatMessage = {
+                  id: agentMessageId,
+                  channelId,
+                  author: registration.displayName || agentLabel(agentId),
+                  body: assistantText,
+                  createdAt: new Date().toISOString(),
+                  agentId,
+                  registrationId: registration.id,
+                };
+                for (const mentionedRegistration of mentionedAgents) {
+                  startAgentChatRunRef.current?.(channelId, mentionedRegistration, prompt, triggeringAgentMessage);
+                }
+              }
               socket.disconnect();
               runSocketsRef.current.delete(res.run.id);
             }
           } else if (event.type === 'text') {
             const payload = JSON.parse(event.payload_json);
+            const blocks = normalizeChatRunBlocks(payload.message?.content);
             const text = textFromRunContent(payload.message?.content);
-            if (!text) return;
+            if (!text && blocks.length === 0) return;
+            if (text) assistantText += text;
             updateChatMessage(channelId, agentMessageId, (message) => ({
               ...message,
-              body: message.body === 'Thinking...' ? text : message.body + text,
+              body: text ? (message.body === 'Thinking...' ? text : message.body + text) : message.body,
+              blocks: appendChatRunBlocks(message.blocks, blocks),
+            }));
+          } else if (event.type === 'user') {
+            const payload = JSON.parse(event.payload_json);
+            const blocks = normalizeChatRunBlocks(payload.message?.content);
+            if (blocks.length === 0) return;
+            updateChatMessage(channelId, agentMessageId, (message) => ({
+              ...message,
+              blocks: appendChatRunBlocks(message.blocks, blocks),
             }));
           }
         } catch {
           // Ignore one malformed stream event; the run status will still settle.
         }
-      });
+      };
+
+      socket.on('event', processRunEvent);
+
+      // Backfill events that were emitted before this socket joined the room
+      // (e.g. the opening thinking blocks). Deduped by seq against live events,
+      // so overlap is harmless and ordering settles on the persisted log.
+      try {
+        const history = await api<{ events: Array<{ seq: number; type: string; payload_json: string }> }>(`/api/runs/${res.run.id}/events`);
+        for (const event of history.events) processRunEvent(event);
+      } catch {
+        // Best-effort backfill; live events will still populate going forward.
+      }
     } catch (error) {
       updateChatMessage(channelId, agentMessageId, (message) => ({
         ...message,
@@ -704,26 +973,110 @@ export default function App() {
       }));
     }
   }, [appendChatMessage, updateChatMessage]);
+  startAgentChatRunRef.current = startAgentChatRun;
 
-  const handleSendChatMessage = useCallback((channelId: string, body: string) => {
+  const handleCancelChatRun = useCallback((runId: number) => {
+    void (async () => {
+      try {
+        const res = await api<{ success: boolean }>(`/api/runs/${runId}/cancel`, { method: 'POST' });
+        const socket = runSocketsRef.current.get(runId);
+        if (socket) {
+          socket.disconnect();
+          runSocketsRef.current.delete(runId);
+        }
+        if (!res.success) {
+          setNotice('Could not cancel run');
+          return;
+        }
+        setChatState((prev) => ({
+          ...prev,
+          messagesByChannel: Object.fromEntries(
+            Object.entries(prev.messagesByChannel).map(([channelId, messages]) => [
+              channelId,
+              messages.map((message) => (
+                message.runId === runId && message.status === 'running'
+                  ? {
+                      ...message,
+                      body: message.body === 'Thinking...' ? 'Run canceled by user.' : message.body,
+                      status: 'failed',
+                    }
+                  : message
+              )),
+            ]),
+          ),
+        }));
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : 'Could not cancel run');
+      }
+    })();
+  }, []);
+
+  const handleSendChatMessage = useCallback((
+    channelId: string,
+    body: string,
+    media: ChatMediaAttachment[] = [],
+    replyTo?: ChatReplyRef,
+  ) => {
     const trimmed = body.trim();
-    if (!trimmed || !user) return;
-    const message: ChatMessage = {
+    if ((!trimmed && media.length === 0) || !user) return;
+
+    const images = media.filter((item) => item.media_type.startsWith('image/')).map((item) => item.url);
+    const attachments = media
+      .filter((item) => !item.media_type.startsWith('image/'))
+      .map((item) => ({ name: item.name || 'attachment', media_type: item.media_type, url: item.url }));
+
+    const candidate: ChatMessage = {
       id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       channelId,
       author: user.username,
       body: trimmed,
       createdAt: new Date().toISOString(),
+      ...(images.length > 0 ? { images } : {}),
+      ...(attachments.length > 0 ? { attachments } : {}),
+      ...(replyTo ? { replyTo } : {}),
     };
-    appendChatMessage(channelId, message);
 
-    const mentionedAgents = getMentionedAgents(trimmed);
+    let outgoingMessage = candidate;
+    setChatState((prev) => {
+      const messages = prev.messagesByChannel[channelId] ?? [];
+      const last = messages[messages.length - 1];
+      if (last && canMergeChatMessages(last, candidate)) {
+        const merged: ChatMessage = {
+          ...last,
+          body: `${last.body}\n${trimmed}`,
+          createdAt: candidate.createdAt,
+        };
+        outgoingMessage = merged;
+        return {
+          ...prev,
+          messagesByChannel: {
+            ...prev.messagesByChannel,
+            [channelId]: [...messages.slice(0, -1), merged],
+          },
+        };
+      }
+      return {
+        ...prev,
+        messagesByChannel: {
+          ...prev.messagesByChannel,
+          [channelId]: [...messages, candidate],
+        },
+      };
+    });
+
+    const registrations = chatStateRef.current.registeredAgentsByChannel[channelId] ?? [];
+    const implicitMention = replyTo?.mention ? `@${replyTo.mention}` : '';
+    const mentionSource = [implicitMention, trimmed, attachments.map((item) => item.name).join(' ')].filter(Boolean).join(' ');
+    const mentionedAgents = getMentionedRegistrations(mentionSource, registrations, false);
     if (mentionedAgents.length === 0) return;
-    const prompt = stripAgentMentions(trimmed) || trimmed;
-    for (const agentId of mentionedAgents) {
-      void startAgentChatRun(channelId, agentId, prompt);
+    const prompt = stripRegisteredAgentMentions(mentionSource, registrations) || mentionSource || 'Please review the attached media.';
+    const runImages = mediaToRunImages(media);
+    const agentsWithoutImages = new Set<AgentId>(['grok', 'antigravity', 'copilot', 'hermes']);
+    for (const registration of mentionedAgents) {
+      const imagesForRun = agentsWithoutImages.has(registration.agentId as AgentId) ? [] : runImages;
+      void startAgentChatRun(channelId, registration, prompt, outgoingMessage, imagesForRun);
     }
-  }, [appendChatMessage, startAgentChatRun, user]);
+  }, [startAgentChatRun, user]);
 
   // ═══════════════════════════════════════════════════════════════
   // TERMINAL HELPERS
@@ -1319,14 +1672,17 @@ export default function App() {
           channelName={channel.title}
           messages={chatState.messagesByChannel[channel.id] ?? []}
           currentUser={currentUsername}
-          agents={CHAT_AGENTS.map((agent) => ({
+          availableAgents={CHAT_AGENTS.map((agent) => ({
             id: agent.id,
             label: agent.label,
             models: CHAT_AGENT_MODEL_PRESETS[agent.id],
           }))}
-          selectedModels={chatState.agentModelsByAgent}
-          onSetAgentModel={handleSetAgentModel}
+          registeredAgents={chatState.registeredAgentsByChannel[channel.id] ?? []}
+          runningAgents={runningChatAgents}
+          onRegisterAgent={handleRegisterChatAgent}
+          onRemoveAgent={handleRemoveChatAgent}
           onSendMessage={handleSendChatMessage}
+          onCancelRun={handleCancelChatRun}
         />
       );
     }
@@ -1347,7 +1703,7 @@ export default function App() {
         onLinkifySelection={(term, context) => handleLinkifyTerm(term, context, entry?.note?.title)}
       />
     );
-  }, [chatState.agentModelsByAgent, chatState.messagesByChannel, currentUsername, handleSendChatMessage, handleSetAgentModel, noteContents, notes, updateTerminalHistory, updateTabTitle, handleNoteChange, saveNoteTab, renameNoteTab, handleExecuteDirective, handleOpenWebView, handleLinkifyTerm, openNote]);
+  }, [chatState.messagesByChannel, chatState.registeredAgentsByChannel, currentUsername, runningChatAgents, handleCancelChatRun, handleRegisterChatAgent, handleRemoveChatAgent, handleSendChatMessage, noteContents, notes, updateTerminalHistory, updateTabTitle, handleNoteChange, saveNoteTab, renameNoteTab, handleExecuteDirective, handleOpenWebView, handleLinkifyTerm, openNote]);
 
   if (!user) {
     return (

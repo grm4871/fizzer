@@ -470,7 +470,7 @@ export function Sidebar({
         </div>
         <button
           className="btn-icon"
-          title="Update from git and restart"
+          title="Refresh frontend"
           disabled={updating}
           onClick={async () => {
             const api = (window as unknown as { electronAPI?: { updateAndRestart?: () => Promise<{ success: boolean; error?: string }> } }).electronAPI;
@@ -478,7 +478,7 @@ export function Sidebar({
             setUpdating(true);
             const result = await api.updateAndRestart();
             if (!result.success) {
-              alert('Update failed: ' + (result.error || 'Unknown error'));
+              alert('Refresh failed: ' + (result.error || 'Unknown error'));
               setUpdating(false);
             }
           }}

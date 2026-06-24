@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:no-refresh": "VITE_DISABLE_AUTO_REFRESH=true CASCADE_DISABLE_AUTO_REFRESH=true vite",
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",

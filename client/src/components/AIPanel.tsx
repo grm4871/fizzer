@@ -40,9 +40,9 @@ const AGENT_MODEL_PRESETS: Record<AgentId, { id: string; label: string }[]> = {
     { id: 'grok-build', label: 'Grok Build' },
   ],
   'antigravity': [
-    { id: 'flash_lite', label: 'Gemini Flash Lite' },
-    { id: 'flash', label: 'Gemini Flash' },
-    { id: 'pro', label: 'Gemini Pro' },
+    { id: 'flash_lite', label: 'Gemini 3.5 Flash (Low)' },
+    { id: 'flash', label: 'Gemini 3.5 Flash (Medium)' },
+    { id: 'pro', label: 'Gemini 3.1 Pro (Low)' },
   ],
   'copilot': [
     { id: 'auto', label: 'Auto' },

@@ -9,6 +9,15 @@
  */
 
 (function() {
+  if (
+    window.__CASCADE_DISABLE_AUTO_REFRESH__ === true ||
+    localStorage.getItem('cascade_disable_auto_refresh') === 'true' ||
+    new URLSearchParams(window.location.search).get('noAutoRefresh') === '1'
+  ) {
+    console.log('[VersionCheck] Auto-refresh disabled.');
+    return;
+  }
+
   // Get the last known version from localStorage
   var lastVersion = localStorage.getItem('app_version');
   

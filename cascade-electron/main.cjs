@@ -17,10 +17,19 @@
 // ═══════════════════════════════════════════════════════════════
 
 const { app, BrowserWindow, ipcMain, session, Menu, shell, WebContentsView } = require('electron');
-const { execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const http = require('http');
+const https = require('https');
 const { ElectronBlocker } = require('@ghostery/adblocker-electron');
+
+const explicitUserDataDir = process.env.CASCADE_USER_DATA_DIR || process.env.CASCADE_ELECTRON_DATA_DIR;
+if (explicitUserDataDir) {
+  const userDataDir = path.resolve(explicitUserDataDir);
+  fs.mkdirSync(userDataDir, { recursive: true });
+  app.setPath('userData', userDataDir);
+}
+
 const db = require('./database.cjs');
 
 let nodePty = null;
@@ -533,6 +542,9 @@ async function configureWebviewSession() {
 /** Resolve the base URL the app loads from (prod vs dev `--APP_URL=`). */
 function getAppBaseUrl() {
   if (app.isPackaged) return 'https://netar.is';
+  if (process.env.APP_URL || process.env.CASCADE_APP_URL) {
+    return process.env.APP_URL || process.env.CASCADE_APP_URL;
+  }
   const parsedArgs = {};
   process.argv.slice(2).forEach((arg) => {
     if (arg.startsWith('--')) {
@@ -558,6 +570,46 @@ function isAllowedNavHost(hostname) {
     hostname === 'localhost' ||
     hostname === '127.0.0.1'
   );
+}
+
+function canReachUrl(url) {
+  return new Promise((resolve) => {
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch {
+      resolve(false);
+      return;
+    }
+
+    const transport = parsed.protocol === 'https:' ? https : http;
+    const req = transport.request(
+      parsed,
+      { method: 'HEAD', timeout: 1000 },
+      (res) => {
+        res.resume();
+        resolve(true);
+      }
+    );
+    req.on('timeout', () => {
+      req.destroy();
+      resolve(false);
+    });
+    req.on('error', () => resolve(false));
+    req.end();
+  });
+}
+
+async function waitForAppUrl(url, timeoutMs = 30000) {
+  if (app.isPackaged) return;
+
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (await canReachUrl(url)) return;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+
+  console.error(`[Main] Timed out waiting for app URL: ${url}`);
 }
 
 /**
@@ -676,7 +728,7 @@ function configureWindow(win) {
  * Creates the main application window with security-hardened webPreferences.
  * In production it loads https://netar.is; in development the `--APP_URL=` URL.
  */
-function createWindow() {
+async function createWindow() {
   Menu.setApplicationMenu(buildApplicationMenu());
 
   mainWindow = new BrowserWindow({
@@ -694,8 +746,18 @@ function createWindow() {
   configureWindow(mainWindow);
 
   const baseUrl = getAppBaseUrl();
+  await waitForAppUrl(baseUrl);
   console.log('[Main] Loading app URL:', baseUrl);
   mainWindow.loadURL(baseUrl);
+
+  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    if (!isMainFrame || app.isPackaged) return;
+    console.error('[Main] Failed to load app URL:', errorCode, errorDescription, validatedURL);
+    setTimeout(() => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      mainWindow.loadURL(getAppBaseUrl());
+    }, 1000);
+  });
 
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -1447,18 +1509,15 @@ ipcMain.handle('netdoc:getLatestVersionContent', async (event, netdocId) => {
   }
 });
 
-// ── Self-update from git ─────────────────────────────────────
+// ── Frontend refresh ─────────────────────────────────────────
 ipcMain.handle('app:updateAndRestart', async () => {
-  const repoRoot = path.resolve(__dirname, '..');
   try {
-    const output = execSync('git pull --ff-only', { cwd: repoRoot, encoding: 'utf8', timeout: 30000 });
-    execSync('npm install', { cwd: repoRoot, encoding: 'utf8', timeout: 120000 });
-    execSync('npm install', { cwd: path.join(repoRoot, 'cascade-electron'), encoding: 'utf8', timeout: 120000 });
-    app.relaunch();
-    app.exit(0);
-    return { success: true, output };
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.reloadIgnoringCache();
+    }
+    return { success: true };
   } catch (error) {
-    console.error('[IPC] Update failed:', error);
+    console.error('[IPC] Frontend refresh failed:', error);
     return { success: false, error: error.message };
   }
 });
@@ -1486,7 +1545,9 @@ ipcMain.handle('app:updateAndRestart', async () => {
   });
 
   // Brief delay to ensure database initialization completes
-  setTimeout(createWindow, 1000);
+  setTimeout(() => {
+    void createWindow();
+  }, 1000);
 });
 
 app.on('window-all-closed', () => {

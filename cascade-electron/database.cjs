@@ -34,6 +34,11 @@ let config = null;
  * @returns {string} Absolute path to the app data directory.
  */
 function getAppDataPath() {
+  const explicitDataDir = process.env.CASCADE_ELECTRON_DATA_DIR || process.env.CASCADE_USER_DATA_DIR;
+  if (explicitDataDir) {
+    return path.resolve(explicitDataDir);
+  }
+
   const platform = os.platform();
 
   if (platform === 'win32') {

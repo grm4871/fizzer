@@ -13,6 +13,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import { getNote, rescanVault } from './vault.js';
 import { runCliAgent, activeCliProcesses } from './cli-agent.js';
 const liveQueries = new Map();
+const pendingRunCwds = new Map();
 let eventSink = null;
 // Sink for vault-level events (e.g. notifying open editors to reload agent edits).
 let vaultEventSink = null;
@@ -174,7 +175,13 @@ export async function sendRunMessage(db, runId, message) {
     return event;
 }
 export async function cancelRun(db, runId) {
-    let canceled = false;
+    const run = getRun(db, runId);
+    if (!run)
+        return false;
+    // Already finished — idempotent cancel so stale UI can clear itself.
+    if (run.status === 'completed' || run.status === 'failed') {
+        return true;
+    }
     // 1. Claude SDK
     const stream = liveQueries.get(runId);
     if (stream) {
@@ -185,7 +192,6 @@ export async function cancelRun(db, runId) {
             console.error('Error closing Claude stream:', err);
         }
         liveQueries.delete(runId);
-        canceled = true;
     }
     // 2. CLI process
     const child = activeCliProcesses.get(runId);
@@ -197,20 +203,18 @@ export async function cancelRun(db, runId) {
             console.error('Error killing CLI process:', err);
         }
         activeCliProcesses.delete(runId);
-        canceled = true;
     }
-    // Update DB status to failed
-    const run = getRun(db, runId);
-    if (run && (run.status === 'running' || run.status === 'queued')) {
+    // Mark orphaned DB rows as canceled even when no live process exists (e.g. after restart).
+    if (run.status === 'running' || run.status === 'queued') {
         db.prepare(`
       UPDATE runs
       SET status = 'failed', finished_at = datetime('now'), summary = 'Run canceled by user.'
       WHERE id = ?
     `).run(runId);
         appendRunEvent(db, runId, 'status', { status: 'failed', summary: 'Run canceled by user.' });
-        canceled = true;
+        return true;
     }
-    return canceled;
+    return false;
 }
 // Images attached to a run, held in memory between startRun and the async
 // executor (kept out of the DB to avoid bloating it with base64 blobs).
@@ -232,6 +236,8 @@ export async function startRun(db, vault, noteId, prompt, agent = 'claude-code',
     const run = getRun(db, runId);
     if (opts.images && opts.images.length)
         pendingImages.set(runId, opts.images);
+    if (opts.cwd)
+        pendingRunCwds.set(runId, opts.cwd);
     appendRunEvent(db, run.id, 'status', { status: 'queued' });
     // Run asynchronously in the background
     queueMicrotask(() => executeRunAsync(db, vault, runId));
@@ -274,6 +280,8 @@ async function executeRunAsync(db, vault, runId) {
         ].filter(Boolean).join(' ');
         const images = pendingImages.get(runId) || [];
         pendingImages.delete(runId);
+        const runCwd = pendingRunCwds.get(runId) || vault.root_path;
+        pendingRunCwds.delete(runId);
         let summary = '';
         let sessionId;
         // Resume the conversation's prior session for this agent, if any.
@@ -284,10 +292,12 @@ async function executeRunAsync(db, vault, runId) {
                 agent: run.agent,
                 context,
                 userPrompt: run.prompt,
-                cwd: vault.root_path,
+                cwd: runCwd,
                 resumeSessionId,
                 images,
                 model: run.model || undefined,
+                runId: run.id,
+                db,
                 emit: (type, payload) => appendRunEvent(db, run.id, type, payload),
             });
             summary = result.summary;
@@ -318,7 +328,7 @@ async function executeRunAsync(db, vault, runId) {
             const stream = query({
                 prompt: claudePrompt,
                 options: {
-                    cwd: vault.root_path,
+                    cwd: runCwd,
                     model: run.model || RUNNER_MODEL,
                     maxTurns: RUNNER_MAX_TURNS,
                     permissionMode: 'acceptEdits',

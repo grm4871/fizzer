@@ -13,19 +13,23 @@ import fs from 'node:fs';
 import os from 'node:os';
 import http from 'node:http';
 import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import express from 'express';
 import cors from 'cors';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import Database from 'better-sqlite3';
 import { Server } from 'socket.io';
-import { addTag, createFolder, createNote, createVault, deleteFolder, deleteNote, ensureVaultSchema, getBacklinks, getGraph, getNote, getVault, listFolders, listNotes, listTags, linkifyTerm, listVaults, moveNote, removeTag, renameNote, searchNotes, toggleArchive, togglePin, updateFolder, updateNote, } from './server/vault.js';
+import { addTag, createFolder, createNote, createVault, deleteFolder, deleteNote, deleteNotes, ensureVaultSchema, getBacklinks, getGraph, getNote, getVault, listFolders, listNotes, listTags, linkifyTerm, listVaults, moveNote, removeTag, renameNote, searchNotes, toggleArchive, togglePin, updateFolder, updateNote, } from './server/vault.js';
 import { createNoteVersion, diffNoteVersions, diffText, ensureVersionsSchema, listNoteVersions, } from './server/versions.js';
 import { ensureRunnerSchema, setRunEventSink, setVaultEventSink, listRuns, getRun, listRunEvents, startRun, sendRunMessage, cancelRun, } from './server/runner.js';
 import { ensureFeedSchema, fetchFeed, pollWidgetFeeds, setFeedNotifySink, startFeedPoller, } from './server/feeds.js';
 import { fetchWidgetData } from './server/widgetData.js';
+import { NETWORK_MODE, WIDGET_SHELL_ENABLED, corsOrigin, rateLimit, resolveJwtSecret, } from './server/security.js';
 const PORT = Number(process.env.API_PORT || 3000);
-const JWT_SECRET = process.env.JWT_SECRET || 'cascade-dev-secret';
+const HOST = process.env.API_HOST || (NETWORK_MODE ? '0.0.0.0' : '127.0.0.1');
+const JWT_SECRET = resolveJwtSecret();
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 function getDefaultDbPath() {
     const dataDir = path.join(os.homedir(), '.cascade');
     fs.mkdirSync(dataDir, { recursive: true });
@@ -144,10 +148,12 @@ ensureRunnerSchema(db);
 ensureFeedSchema(db);
 // ── Express & Socket.io setup ──────────────────────────────────────
 const app = express();
-app.use(cors({ origin: true, credentials: true }));
+if (NETWORK_MODE)
+    app.set('trust proxy', Number(process.env.CASCADE_TRUST_PROXY_HOPS || 1));
+app.use(cors({ origin: corsOrigin(), credentials: true }));
 app.use(express.json({ limit: '2mb' }));
 const httpServer = http.createServer(app);
-const io = new Server(httpServer, { cors: { origin: true, credentials: true } });
+const io = new Server(httpServer, { cors: { origin: corsOrigin(), credentials: true } });
 const runsNamespace = io.of('/runs');
 const vaultNamespace = io.of('/vault');
 // ── Auth helpers ───────────────────────────────────────────────────
@@ -220,7 +226,9 @@ app.get('/api/health', (_req, res) => {
     res.json({ status: 'ok' });
 });
 // ── Auth routes ────────────────────────────────────────────────────
-app.post('/api/auth/register', async (req, res) => {
+// Blunt credential stuffing / abuse on the unauthenticated auth routes.
+const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 30 });
+app.post('/api/auth/register', authLimiter, async (req, res) => {
     const username = String(req.body.username || '').trim().toLowerCase();
     const password = String(req.body.password || '');
     if (!/^[a-z0-9_]{3,32}$/.test(username)) {
@@ -239,7 +247,7 @@ app.post('/api/auth/register', async (req, res) => {
         res.status(409).json({ error: 'Username is already taken' });
     }
 });
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', authLimiter, async (req, res) => {
     const username = String(req.body.username || '').trim().toLowerCase();
     const password = String(req.body.password || '');
     const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
@@ -416,6 +424,34 @@ app.delete('/api/notes/:id', requireAuth, (req, res) => {
     emitVaultEvent(vault.id, 'vault:noteDeleted', { noteId: req.params.id, title: existing.title });
     res.json({ ok: true });
 });
+app.post('/api/notes/bulk-delete', requireAuth, (req, res) => {
+    const rawIds = req.body?.noteIds;
+    if (!Array.isArray(rawIds) || rawIds.length === 0) {
+        return res.status(400).json({ error: 'noteIds array is required' });
+    }
+    const noteIds = rawIds.map((id) => String(id));
+    const authorized = [];
+    for (const noteId of noteIds) {
+        const existing = getNote(db, noteId);
+        if (!existing)
+            continue;
+        const vault = getVault(db, existing.vault_id, req.user.id);
+        if (!vault)
+            continue;
+        authorized.push({ noteId, title: existing.title, vaultId: vault.id });
+    }
+    if (authorized.length === 0) {
+        return res.status(404).json({ error: 'No notes found' });
+    }
+    const deleted = deleteNotes(db, authorized.map((entry) => entry.noteId));
+    const deletedSet = new Set(deleted);
+    for (const entry of authorized) {
+        if (!deletedSet.has(entry.noteId))
+            continue;
+        emitVaultEvent(entry.vaultId, 'vault:noteDeleted', { noteId: entry.noteId, title: entry.title });
+    }
+    res.json({ ok: true, deleted });
+});
 app.post('/api/notes/:id/move', requireAuth, (req, res) => {
     const existing = getNote(db, req.params.id);
     if (!existing)
@@ -589,7 +625,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req, res) => {
     const vault = getVault(db, req.params.id, req.user.id);
     if (!vault)
         return res.status(404).json({ error: 'Vault not found' });
-    const { prompt, note_id, agent, conversation_id, images, model } = req.body;
+    const { prompt, note_id, agent, conversation_id, images, model, cwd } = req.body;
     if (!prompt || !prompt.trim()) {
         return res.status(400).json({ error: 'Prompt is required' });
     }
@@ -607,6 +643,22 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req, res) => {
     const selectedModel = typeof model === 'string' && model.trim() && !removedModelPresets.has(model.trim())
         ? model.trim()
         : undefined;
+    let selectedCwd;
+    if (typeof cwd === 'string' && cwd.trim()) {
+        const rawCwd = cwd.trim();
+        if (!/^(vault\s*root|root|\.\/?)$/i.test(rawCwd)) {
+            const expandedCwd = rawCwd === '~'
+                ? os.homedir()
+                : rawCwd.startsWith('~/')
+                    ? path.join(os.homedir(), rawCwd.slice(2))
+                    : rawCwd;
+            const resolvedCwd = path.resolve(path.isAbsolute(expandedCwd) ? expandedCwd : path.join(vault.root_path, expandedCwd));
+            if (!fs.existsSync(resolvedCwd) || !fs.statSync(resolvedCwd).isDirectory()) {
+                return res.status(400).json({ error: 'cwd must be an existing directory' });
+            }
+            selectedCwd = resolvedCwd;
+        }
+    }
     // Sanitize image attachments to { media_type, data } base64 entries.
     const cleanImages = Array.isArray(images)
         ? images
@@ -619,6 +671,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req, res) => {
             conversationId: typeof conversation_id === 'string' && conversation_id ? conversation_id : undefined,
             images: cleanImages,
             model: selectedModel,
+            cwd: selectedCwd,
         });
         res.json({ run });
     }
@@ -644,6 +697,11 @@ app.get('/api/vaults/:id/widget-data/:key', requireAuth, async (req, res) => {
     }
 });
 app.post('/api/vaults/:id/widget-command', requireAuth, async (req, res) => {
+    if (!WIDGET_SHELL_ENABLED) {
+        return res.status(403).json({
+            error: 'Widget terminal commands are disabled on this server',
+        });
+    }
     const vault = getVault(db, req.params.id, req.user.id);
     if (!vault)
         return res.status(404).json({ error: 'Vault not found' });
@@ -731,13 +789,36 @@ app.post('/api/runs/:id/cancel', requireAuth, async (req, res) => {
         res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
     }
 });
+// -- Static client ---------------------------------------------------
+const clientDistPath = process.env.CASCADE_CLIENT_DIST
+    ? path.resolve(process.env.CASCADE_CLIENT_DIST)
+    : path.resolve(__dirname, '..', 'client', 'dist');
+if (fs.existsSync(clientDistPath)) {
+    app.use(express.static(clientDistPath, {
+        index: false,
+        setHeaders(res, filePath) {
+            if (filePath.endsWith('app.html') || filePath.endsWith('index.html')) {
+                res.setHeader('Cache-Control', 'no-cache');
+            }
+        },
+    }));
+    app.get('*', (req, res, next) => {
+        if (req.path.startsWith('/api') || req.path.startsWith('/socket.io'))
+            return next();
+        const appHtml = path.join(clientDistPath, 'app.html');
+        const indexHtml = path.join(clientDistPath, 'index.html');
+        res.sendFile(fs.existsSync(appHtml) ? appHtml : indexHtml);
+    });
+}
 // ── 404 fallback ───────────────────────────────────────────────────
 app.use((_req, res) => {
     res.status(404).json({ error: 'Not found' });
 });
 // ── Start server ───────────────────────────────────────────────────
-httpServer.listen(PORT, () => {
-    console.log(`Cascade Notes API running on http://localhost:${PORT}`);
+httpServer.listen(PORT, HOST, () => {
+    console.log(`Cascade Notes API running on http://${HOST}:${PORT}`);
     console.log(`SQLite database: ${DB_PATH}`);
+    if (fs.existsSync(clientDistPath))
+        console.log(`Serving client from ${clientDistPath}`);
     startFeedPoller(db);
 });

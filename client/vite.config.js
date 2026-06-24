@@ -21,12 +21,12 @@ function botProxyPlugin() {
           const http = await import('http');
           const proxyReq = http.request({
             hostname: 'localhost',
-            port: 3000,
+            port: Number(process.env.API_PORT || 3000),
             path: req.url,
             method: req.method,
             headers: {
               ...req.headers,
-              host: 'localhost:3000'
+              host: `localhost:${process.env.API_PORT || 3000}`
             }
           }, (proxyRes) => {
             res.writeHead(proxyRes.statusCode, proxyRes.headers);
@@ -115,6 +115,21 @@ function htmlFallbackPlugin() {
 }
 
 const isCapacitorBuild = process.env.CAPACITOR === 'true';
+const disableAutoRefresh =
+  process.env.CASCADE_DISABLE_AUTO_REFRESH === 'true' ||
+  process.env.VITE_DISABLE_AUTO_REFRESH === 'true';
+
+function autoRefreshFlagPlugin() {
+  return {
+    name: 'auto-refresh-flag',
+    transformIndexHtml(html) {
+      return html.replace(
+        'window.__CASCADE_DISABLE_AUTO_REFRESH__ = false;',
+        `window.__CASCADE_DISABLE_AUTO_REFRESH__ = ${disableAutoRefresh ? 'true' : 'false'};`
+      );
+    }
+  };
+}
 
 export default defineConfig({
   base: isCapacitorBuild ? './' : '/',
@@ -128,9 +143,10 @@ export default defineConfig({
       }
     }
   },
-  plugins: [botProxyPlugin(), versionGenerationPlugin(), htmlFallbackPlugin(), react()],
+  plugins: [botProxyPlugin(), autoRefreshFlagPlugin(), versionGenerationPlugin(), htmlFallbackPlugin(), react()],
   server: {
     port: parseInt(process.env.VITE_PORT) || 5173,
+    hmr: disableAutoRefresh ? false : undefined,
     proxy: {
       '/api': {
         target: `http://localhost:${process.env.API_PORT || 3000}`,

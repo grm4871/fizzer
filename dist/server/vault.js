@@ -409,6 +409,21 @@ export function deleteNote(db, noteId) {
     }
     db.prepare('DELETE FROM notes WHERE id = ?').run(noteId);
 }
+export function deleteNotes(db, noteIds) {
+    const unique = [...new Set(noteIds.map((id) => id.trim()).filter(Boolean))];
+    const deleted = [];
+    const run = db.transaction((ids) => {
+        for (const noteId of ids) {
+            const exists = db.prepare('SELECT id FROM notes WHERE id = ?').get(noteId);
+            if (!exists)
+                continue;
+            deleteNote(db, noteId);
+            deleted.push(noteId);
+        }
+    });
+    run(unique);
+    return deleted;
+}
 export function moveNote(db, noteId, folderId) {
     const note = db.prepare('SELECT * FROM notes WHERE id = ?').get(noteId);
     if (!note)
