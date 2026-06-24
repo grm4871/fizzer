@@ -1,5 +1,5 @@
 /**
- * @file cli-agent.ts — Codex & Grok CLI wrappers
+ * @file cli-agent.ts — local Codex/Grok/Antigravity/Copilot CLI wrappers
  *
  * Drives the locally-installed Codex and Grok agent CLIs as alternate
  * backends for AI-powered note editing. Both agents authenticate via the
@@ -23,7 +23,7 @@
  *   - `text` tokens      → accumulated into the answer text
  *   - `end`              → emits final `text` block, captures session id
  *
- * @module server/cli-agent
+ * @module cli-agents/cli-agent
  */
 
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';

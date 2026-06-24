@@ -2,7 +2,7 @@
  * @file agent-runner.cjs — Local CLI agent execution for the Electron main process
  *
  * Spawns Codex/Grok/etc. on the user's machine (where CLIs are installed) instead
- * of relying on a remote Cascade server. Reuses the compiled server/cli-agent module.
+ * of relying on a remote Cascade server. Reuses the compiled local CLI module.
  */
 
 const path = require('path');
@@ -79,7 +79,7 @@ function resolveAgentCwd(inputCwd, vaultRoot) {
 
 async function loadCliAgentModule() {
   if (!cliAgentModulePromise) {
-    const modPath = path.join(__dirname, '..', 'dist', 'server', 'cli-agent.js');
+    const modPath = path.join(__dirname, '..', 'dist', 'cli-agents', 'cli-agent.js');
     cliAgentModulePromise = import(pathToFileURL(modPath).href);
   }
   return cliAgentModulePromise;
