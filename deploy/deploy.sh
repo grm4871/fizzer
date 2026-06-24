@@ -71,7 +71,16 @@ else
 fi
 
 echo "==> Building and starting the app container"
-docker compose build --pull
+# BuildKit enables the cache mounts in the Dockerfile (apt + npm caches persist
+# across builds). Skip --pull by default so we don't re-fetch the base image
+# every deploy; run with REFRESH_BASE=1 to pull the latest base image.
+export DOCKER_BUILDKIT=1
+export COMPOSE_DOCKER_CLI_BUILD=1
+if [[ "${REFRESH_BASE:-0}" == "1" ]]; then
+  docker compose build --pull
+else
+  docker compose build
+fi
 docker compose up -d
 
 echo "==> Waiting for the app to respond on localhost:3000"

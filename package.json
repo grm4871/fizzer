@@ -31,6 +31,7 @@
     "start:vps": "node dist/index.js",
     "test": "npm --workspace=client run test",
     "test:desktop-runner": "node scripts/test-desktop-runner-e2e.mjs",
+    "verify:client-runtime": "node scripts/verify-client-runtime.mjs",
     "start": "electron-forge start",
     "migrate:legacy": "tsx scripts/migrate-legacy-posts.ts",
     "package": "electron-forge package",
@@ -100,6 +101,7 @@
     "electron": "39.2.7",
     "electron-rebuild": "^3.2.9",
     "nodemon": "^3.1.10",
+    "playwright": "^1.61.1",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3"
   }

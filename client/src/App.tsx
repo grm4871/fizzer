@@ -1377,10 +1377,7 @@ export default function App() {
     const vaultId = activeVaultIdRef.current;
     if (vaultId) {
       if (mergeTargetId) {
-        void patchChatMessageOnServer(vaultId, channelId, mergeTargetId, {
-          body: outgoingMessage.body,
-          createdAt: outgoingMessage.createdAt,
-        });
+        scheduleChatMessagePatch(vaultId, channelId, mergeTargetId, outgoingMessage, true);
       } else {
         void persistChatMessageToServer(vaultId, channelId, candidate);
       }
@@ -1398,7 +1395,7 @@ export default function App() {
       const imagesForRun = agentsWithoutImages.has(registration.agentId as AgentId) ? [] : runImages;
       void startAgentChatRun(channelId, registration, prompt, outgoingMessage, imagesForRun);
     }
-  }, [patchChatMessageOnServer, persistChatMessageToServer, startAgentChatRun, user]);
+  }, [scheduleChatMessagePatch, persistChatMessageToServer, startAgentChatRun, user]);
 
   // ═══════════════════════════════════════════════════════════════
   // TERMINAL HELPERS
