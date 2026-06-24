@@ -319,15 +319,44 @@ export function updateChatMessage(
   if (!existing) return undefined;
 
   const current = rowToMessage(existing);
+  const patchRecord = patch as Partial<ChatMessage> & Record<string, unknown>;
   const next: ChatMessage = {
     ...current,
-    ...patch,
     id: current.id,
     channelId: current.channelId,
-    author: patch.author ?? current.author,
-    body: patch.body ?? current.body,
-    createdAt: patch.createdAt ?? current.createdAt,
+    author: typeof patch.author === 'string' ? patch.author : current.author,
+    body: typeof patch.body === 'string' ? patch.body : current.body,
+    createdAt: typeof patch.createdAt === 'string' ? patch.createdAt : current.createdAt,
   };
+
+  if ('status' in patchRecord) {
+    next.status = patch.status === null || patch.status === undefined
+      ? undefined
+      : patch.status;
+  }
+  if ('agentId' in patchRecord) {
+    next.agentId = patch.agentId === null || patch.agentId === undefined ? undefined : patch.agentId;
+  }
+  if ('registrationId' in patchRecord) {
+    next.registrationId = patch.registrationId === null || patch.registrationId === undefined
+      ? undefined
+      : patch.registrationId;
+  }
+  if ('runId' in patchRecord) {
+    next.runId = patch.runId === null || patch.runId === undefined ? undefined : patch.runId;
+  }
+  if ('blocks' in patchRecord) {
+    next.blocks = patch.blocks === null || patch.blocks === undefined ? undefined : patch.blocks;
+  }
+  if ('images' in patchRecord) {
+    next.images = patch.images === null || patch.images === undefined ? undefined : patch.images;
+  }
+  if ('attachments' in patchRecord) {
+    next.attachments = patch.attachments === null || patch.attachments === undefined ? undefined : patch.attachments;
+  }
+  if ('replyTo' in patchRecord) {
+    next.replyTo = patch.replyTo === null || patch.replyTo === undefined ? undefined : patch.replyTo;
+  }
 
   const row = messageToRow(vault.id, channelId, next);
   db.prepare(`

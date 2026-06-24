@@ -343,6 +343,7 @@ function chatConversationKey(channelId: string, registration: ChatAgentRegistrat
 }
 
 function textFromRunContent(content: unknown): string {
+  if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return '';
   return content
     .map((block: any) => {
@@ -354,6 +355,9 @@ function textFromRunContent(content: unknown): string {
 }
 
 function normalizeChatRunBlocks(content: unknown): ChatBlock[] {
+  if (typeof content === 'string' && content.trim()) {
+    return [{ type: 'text', text: content }];
+  }
   if (!Array.isArray(content)) return [];
   const blocks: ChatBlock[] = [];
   for (const item of content) {
@@ -384,6 +388,40 @@ function appendChatRunBlocks(existing: ChatBlock[] | undefined, blocks: ChatBloc
     }
   }
   return next;
+}
+
+function chatMessageStreamScore(message: ChatMessage): number {
+  const bodyScore = message.body?.length ?? 0;
+  const blockScore = (message.blocks ?? []).reduce((sum, block) => sum + (block.text?.length ?? 0), 0);
+  const statusScore = message.status === 'running' ? 1 : message.status === 'failed' ? 2 : 10;
+  return statusScore * 1_000_000 + bodyScore + blockScore;
+}
+
+function mergeRemoteChatMessage(local: ChatMessage, remote: ChatMessage): ChatMessage {
+  const localScore = chatMessageStreamScore(local);
+  const remoteScore = chatMessageStreamScore(remote);
+  if (remoteScore >= localScore) return remote;
+  if (local.status === 'running' && !remote.status && remote.body.length >= local.body.length) {
+    return { ...remote, blocks: remote.blocks?.length ? remote.blocks : local.blocks };
+  }
+  return local;
+}
+
+/** JSON patch body with explicit nulls so the server can clear status/blocks. */
+function toChatMessagePatch(message: ChatMessage): Record<string, unknown> {
+  return {
+    author: message.author,
+    body: message.body,
+    createdAt: message.createdAt,
+    status: message.status ?? null,
+    agentId: message.agentId ?? null,
+    registrationId: message.registrationId ?? null,
+    runId: message.runId ?? null,
+    blocks: message.blocks ?? null,
+    images: message.images ?? null,
+    attachments: message.attachments ?? null,
+    replyTo: message.replyTo ?? null,
+  };
 }
 
 function formatAgentChatPrompt(channelName: string, registrations: ChatAgentRegistration[], registration: ChatAgentRegistration, history: ChatMessage[], request: string) {
@@ -501,6 +539,9 @@ export default function App() {
   const desktopRunnerStopRef = useRef<(() => void) | null>(null);
   const chatStateRef = useRef(chatState); chatStateRef.current = chatState;
   const runSocketsRef = useRef<Map<number, ReturnType<typeof connectRunsSocket>>>(new Map());
+  const streamingChatMessageIdsRef = useRef<Set<string>>(new Set());
+  const pendingChatPatchRef = useRef<Map<string, ChatMessage>>(new Map());
+  const chatPatchTimerRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const startAgentChatRunRef = useRef<((channelId: string, registration: ChatAgentRegistration, prompt: string, triggeringMessage: ChatMessage) => void) | null>(null);
 
   // ─── Persistent web-tab geometry ────────────────────────────────
@@ -744,21 +785,41 @@ export default function App() {
     }
   }, []);
 
-  const patchChatMessageOnServer = useCallback(async (
-    vaultId: string,
-    channelId: string,
-    messageId: string,
-    patch: Partial<ChatMessage>,
-  ) => {
+  const flushChatMessagePatch = useCallback(async (vaultId: string, channelId: string, messageId: string) => {
+    const message = pendingChatPatchRef.current.get(messageId);
+    if (!message) return;
+    pendingChatPatchRef.current.delete(messageId);
     try {
       await api(`/api/vaults/${vaultId}/channels/${channelId}/messages/${messageId}`, {
         method: 'PATCH',
-        body: JSON.stringify(patch),
+        body: JSON.stringify(toChatMessagePatch(message)),
       });
     } catch (error) {
       console.error('Failed to update chat message:', error);
     }
   }, []);
+
+  const scheduleChatMessagePatch = useCallback((
+    vaultId: string,
+    channelId: string,
+    messageId: string,
+    message: ChatMessage,
+    immediate = false,
+  ) => {
+    pendingChatPatchRef.current.set(messageId, message);
+    const existingTimer = chatPatchTimerRef.current.get(messageId);
+    if (existingTimer) clearTimeout(existingTimer);
+    if (immediate) {
+      chatPatchTimerRef.current.delete(messageId);
+      void flushChatMessagePatch(vaultId, channelId, messageId);
+      return;
+    }
+    const timer = setTimeout(() => {
+      chatPatchTimerRef.current.delete(messageId);
+      void flushChatMessagePatch(vaultId, channelId, messageId);
+    }, 300);
+    chatPatchTimerRef.current.set(messageId, timer);
+  }, [flushChatMessagePatch]);
 
   const persistChatAgentMemberToServer = useCallback(async (vaultId: string, channelId: string, registration: ChatAgentRegistration) => {
     try {
@@ -978,8 +1039,11 @@ export default function App() {
       },
     }));
     const vaultId = activeVaultIdRef.current;
-    if (vaultId && patched) void patchChatMessageOnServer(vaultId, channelId, messageId, patched);
-  }, [patchChatMessageOnServer]);
+    if (vaultId && patched) {
+      const immediate = !patched.status || patched.status === 'failed';
+      scheduleChatMessagePatch(vaultId, channelId, messageId, patched, immediate);
+    }
+  }, [scheduleChatMessagePatch]);
 
   const handleRegisterChatAgent = useCallback((channelId: string, registration: ChatAgentRegistration) => {
     const normalized = {
@@ -1032,6 +1096,7 @@ export default function App() {
     const chatHistory = [...(chatStateRef.current.messagesByChannel[channelId] ?? []), triggeringMessage];
     const runPrompt = formatAgentChatPrompt(channelName, registrations, registration, chatHistory, prompt);
     const agentMessageId = `agent-${agentId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    streamingChatMessageIdsRef.current.add(agentMessageId);
     appendChatMessage(channelId, {
       id: agentMessageId,
       channelId,
@@ -1043,6 +1108,9 @@ export default function App() {
       registrationId: registration.id,
     });
 
+    let runSocket: ReturnType<typeof connectRunsSocket> | null = null;
+    let activeRunId: number | null = null;
+
     try {
       const conversationKey = chatConversationKey(channelId, registration);
       const resumeSessionId = chatStateRef.current.agentConversationsByChannel[conversationKey];
@@ -1051,6 +1119,7 @@ export default function App() {
 
       const finishRun = (runId: number, cleanup: () => void) => {
         cleanup();
+        streamingChatMessageIdsRef.current.delete(agentMessageId);
         if (isLocalRunId(runId)) {
           localAgentUnsubsRef.current.delete(runId);
         } else {
@@ -1069,9 +1138,11 @@ export default function App() {
           if (event.type === 'status') {
             const payload = JSON.parse(event.payload_json);
             if (payload.status === 'completed' || payload.status === 'failed') {
+              const finalBody = assistantText.trim()
+                || (payload.status === 'failed' ? (payload.summary || 'Agent failed.') : 'Done.');
               updateChatMessage(channelId, agentMessageId, (message) => ({
                 ...message,
-                body: message.body === 'Thinking...' ? (payload.status === 'completed' ? 'Done.' : payload.summary || 'Agent failed.') : message.body,
+                body: message.body === 'Thinking...' || !assistantText.trim() ? finalBody : message.body,
                 status: payload.status === 'failed' ? 'failed' : undefined,
               }));
               if (payload.status === 'completed' && assistantText.trim()) {
@@ -1128,6 +1199,19 @@ export default function App() {
         }
       };
 
+      runSocket = connectRunsSocket();
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('Runs socket connect timeout')), 10000);
+        runSocket!.on('connect', () => {
+          clearTimeout(timer);
+          resolve();
+        });
+        runSocket!.on('connect_error', (error) => {
+          clearTimeout(timer);
+          reject(error);
+        });
+      });
+
       const res = await api<{ run: { id: number; status: string; conversation_id: string } }>(`/api/vaults/${vaultId}/runs`, {
         method: 'POST',
         body: JSON.stringify({
@@ -1141,6 +1225,7 @@ export default function App() {
         }),
       });
 
+      activeRunId = res.run.id;
       if (res.run.conversation_id) {
         setChatState((prev) => ({
           ...prev,
@@ -1156,11 +1241,10 @@ export default function App() {
         runId: res.run.id,
       }));
 
-      const socket = connectRunsSocket();
-      runSocketsRef.current.set(res.run.id, socket);
-      socket.emit('joinRun', res.run.id);
+      runSocketsRef.current.set(res.run.id, runSocket);
+      runSocket.emit('joinRun', res.run.id);
       const cleanup = () => {};
-      socket.on('event', (event) => processRunEvent(event, res.run.id, cleanup));
+      runSocket.on('event', (event) => processRunEvent(event, res.run.id, cleanup));
 
       try {
         const history = await api<{ events: Array<{ seq: number; type: string; payload_json: string }> }>(`/api/runs/${res.run.id}/events`);
@@ -1169,6 +1253,13 @@ export default function App() {
         // Best-effort backfill; live events will still populate going forward.
       }
     } catch (error) {
+      streamingChatMessageIdsRef.current.delete(agentMessageId);
+      if (activeRunId != null) {
+        runSocketsRef.current.get(activeRunId)?.disconnect();
+        runSocketsRef.current.delete(activeRunId);
+      } else {
+        runSocket?.disconnect();
+      }
       updateChatMessage(channelId, agentMessageId, (message) => ({
         ...message,
         body: error instanceof Error ? error.message : 'Failed to start agent.',
@@ -1540,7 +1631,13 @@ export default function App() {
           };
         }
         const next = [...existing];
-        next[index] = data.message;
+        const local = existing[index];
+        if (streamingChatMessageIdsRef.current.has(data.message.id)) {
+          if (data.message.status === 'running') return prev;
+          next[index] = mergeRemoteChatMessage(local, data.message);
+        } else {
+          next[index] = mergeRemoteChatMessage(local, data.message);
+        }
         return {
           ...prev,
           messagesByChannel: {

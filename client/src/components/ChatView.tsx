@@ -571,9 +571,7 @@ export function ChatView({
             messageGroups.map((group) => {
               const head = group.messages[0];
               const tail = group.messages[group.messages.length - 1];
-              const groupHasRunWidget = group.messages.some((message) =>
-                message.status === 'running' || (message.blocks || []).some((block) => block.type === 'thinking'),
-              );
+              const groupHasRunWidget = group.messages.some((message) => message.status === 'running');
               const groupSelected = group.messages.some((message) => message.id === selectedMessageId);
               return (
                 <article
@@ -589,7 +587,8 @@ export function ChatView({
                       {tail.status === 'failed' && <span className="chat-message-status is-error">failed</span>}
                     </div>
                     {group.messages.map((message) => {
-                      const hasRunWidget = message.status === 'running' || (message.blocks || []).some((block) => block.type === 'thinking');
+                      const hasRunWidget = message.status === 'running';
+                      const hasThoughtBlocks = (message.blocks || []).some((block) => block.type === 'thinking');
                       const selected = selectedMessageId === message.id;
                       return (
                         <div
@@ -634,7 +633,7 @@ export function ChatView({
                             </div>
                           )}
                           {message.body && <ChatMessageText body={message.body} mentionableAliases={mentionableAliases} />}
-                          {selected && <ChatRunWidget message={message} onCancelRun={onCancelRun} />}
+                          {(selected || hasThoughtBlocks) && <ChatRunWidget message={message} onCancelRun={onCancelRun} />}
                         </div>
                       );
                     })}
