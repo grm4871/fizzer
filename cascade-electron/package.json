@@ -7,7 +7,7 @@
   "type": "module",
   "scripts": {
     "start": "electron .",
-    "start:watch": "nodemon --watch main.cjs --watch preload.cjs --exec \"electron .\"",
+    "start:watch": "nodemon --watch main.cjs --watch preload.cjs --watch agent-runner.cjs --watch desktop-runner-host.cjs --exec \"electron .\"",
     "package": "electron-forge package",
     "make": "electron-forge make",
     "postinstall": "electron-rebuild -f -w better-sqlite3"
