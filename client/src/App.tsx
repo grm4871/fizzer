@@ -1709,17 +1709,17 @@ export default function App() {
     return (
       <main className="auth-shell">
         <form className="auth-panel" id="auth-panel" onSubmit={submitAuth}>
-          <h1 style={{ display: 'flex', alignItems: 'center', gap: '8px', justifyContent: 'center' }}>
-            <Gem size={28} /> Cascade Notes
-          </h1>
-          <p>An intelligent Obsidian-style editor with an AI agent assistant.</p>
+          <div className="auth-brand" aria-label="Cascade Notes">
+            <Gem size={24} aria-hidden="true" />
+            <h1>Cascade</h1>
+          </div>
           <label htmlFor="username">
             Username
-            <input id="username" value={username} onChange={(e) => setUsername(e.target.value)} autoFocus />
+            <input id="username" value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" autoFocus />
           </label>
           <label htmlFor="password">
             Password
-            <input id="password" value={password} onChange={(e) => setPassword(e.target.value)} type="password" />
+            <input id="password" value={password} onChange={(e) => setPassword(e.target.value)} type="password" autoComplete={authMode === 'login' ? 'current-password' : 'new-password'} />
           </label>
           {authError && <div className="error">{authError}</div>}
           <button id="auth-submit" type="submit">{authMode === 'login' ? 'Log in' : 'Create account'}</button>

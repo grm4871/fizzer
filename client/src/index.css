@@ -311,66 +311,33 @@ a {
   min-height: 100vh;
   display: grid;
   place-items: center;
-  padding: 1rem;
-  background:
-    radial-gradient(ellipse at 15% 85%, hsla(33, 68%, 32%, 0.2) 0%, transparent 55%),
-    radial-gradient(ellipse at 85% 15%, hsla(22, 30%, 12%, 0.6) 0%, transparent 50%),
-    var(--bg-base);
+  padding: 24px;
+  background: var(--bg-base);
 }
 
 .auth-panel {
-  width: min(400px, 100%);
+  width: min(340px, 100%);
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  padding: 32px;
-  background: hsla(22, 7%, 10%, 0.92);
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-lg), var(--shadow-glow);
-  position: relative;
-  overflow: hidden;
+  gap: 14px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
 }
-.auth-panel::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 1px;
-  background: linear-gradient(90deg,
-    hsl(22, 8%, 22%) 0%,
-    var(--accent) 30%,
-    var(--accent-hover) 50%,
-    var(--accent) 70%,
-    hsl(22, 8%, 22%) 100%
-  );
-}
-.auth-panel::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 20%;
-  right: 20%;
-  height: 40px;
-  background: linear-gradient(180deg, var(--accent-glow), transparent);
-  pointer-events: none;
+
+.auth-brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  color: var(--text-primary);
 }
 .auth-panel h1 {
-  font-size: 1.625rem;
-  font-weight: 600;
-  background: linear-gradient(135deg, var(--text-primary) 40%, var(--accent-hover));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  letter-spacing: -0.025em;
-}
-.auth-panel p {
-  color: var(--text-secondary);
-  font-size: 0.875rem;
-  line-height: 1.6;
+  font-size: 1.25rem;
+  font-weight: 500;
+  line-height: 1;
 }
 .auth-panel label {
   display: flex;
@@ -382,17 +349,17 @@ a {
 }
 .auth-panel input {
   width: 100%;
-  padding: 10px 13px;
+  padding: 10px 0;
   border: 1px solid var(--border);
-  background: var(--bg-base);
+  border-width: 0 0 1px;
+  background: transparent;
   color: var(--text-primary);
-  border-radius: var(--radius-md);
+  border-radius: 0;
   font-size: 0.875rem;
-  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  transition: border-color var(--transition-fast);
 }
 .auth-panel input:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-glow);
 }
 .auth-panel button[type="submit"] {
   width: 100%;
@@ -404,8 +371,7 @@ a {
   font-size: 0.875rem;
   font-weight: 600;
   cursor: pointer;
-  transition: all var(--transition-fast);
-  letter-spacing: 0.01em;
+  transition: background var(--transition-fast);
 }
 .auth-panel button[type="submit"]:hover {
   background: var(--accent-hover);
