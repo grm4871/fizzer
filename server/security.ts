@@ -32,6 +32,12 @@ function persistedSecretPath(): string {
   return path.join(dir, 'secret');
 }
 
+function persistedDeploySecretPath(): string {
+  const dir = path.join(os.homedir(), '.cascade');
+  fs.mkdirSync(dir, { recursive: true });
+  return path.join(dir, 'deploy-secret');
+}
+
 /**
  * Resolve the JWT signing secret.
  *
@@ -53,6 +59,22 @@ export function resolveJwtSecret(): string {
   }
 
   const secretFile = persistedSecretPath();
+  try {
+    const existing = fs.readFileSync(secretFile, 'utf8').trim();
+    if (existing) return existing;
+  } catch {
+    // not created yet
+  }
+  const generated = crypto.randomBytes(32).toString('hex');
+  fs.writeFileSync(secretFile, generated, { mode: 0o600 });
+  return generated;
+}
+
+export function resolveDeploySecret(): string {
+  const fromEnv = process.env.CASCADE_DEPLOY_TOKEN;
+  if (fromEnv) return fromEnv;
+
+  const secretFile = persistedDeploySecretPath();
   try {
     const existing = fs.readFileSync(secretFile, 'utf8').trim();
     if (existing) return existing;

@@ -12,8 +12,8 @@ import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
 // Persistent base directory for vaults that don't specify their own root_path.
-// Lives under the user's home dir so notes survive reboots (unlike /tmp).
-export const VAULTS_BASE_DIR = path.join(os.homedir(), '.cascade', 'vaults');
+// Set CASCADE_DATA_DIR to override the default ~/.cascade (e.g. for Docker deployments).
+export const VAULTS_BASE_DIR = path.join(process.env.CASCADE_DATA_DIR ?? path.join(os.homedir(), '.cascade'), 'vaults');
 // ── Helpers ────────────────────────────────────────────────────────
 function sanitizeFilename(title) {
     return title

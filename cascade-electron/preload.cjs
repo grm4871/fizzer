@@ -132,4 +132,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // ── App Update ──────────────────────────────────────────────
   updateAndRestart: () => ipcRenderer.invoke('app:updateAndRestart'),
+  onUpdateFailed: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('app:updateFailed', listener);
+    return () => ipcRenderer.removeListener('app:updateFailed', listener);
+  },
 });

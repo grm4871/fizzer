@@ -21,6 +21,7 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const https = require('https');
+const { spawn } = require('child_process');
 const { ElectronBlocker } = require('@ghostery/adblocker-electron');
 
 const explicitUserDataDir = process.env.CASCADE_USER_DATA_DIR || process.env.CASCADE_ELECTRON_DATA_DIR;
@@ -60,6 +61,7 @@ let activeWebviewSite = '';
 const webContentsSites = new Map();
 const terminalProcesses = new Map();
 const webViews = new Map();
+let desktopUpdateInProgress = false;
 // Removed: dead `serverProcess` variable — it was declared but never assigned,
 // and the corresponding `if (serverProcess) serverProcess.kill()` in the
 // 'closed' handler was therefore unreachable.
@@ -555,6 +557,60 @@ function getAppBaseUrl() {
     }
   });
   return parsedArgs['APP_URL'] || 'http://localhost:5173';
+}
+
+function getProjectRoot() {
+  return path.resolve(__dirname, '..');
+}
+
+function getDesktopDownloadUrl() {
+  return process.env.CASCADE_DESKTOP_DOWNLOAD_URL || 'https://cscd.online/download';
+}
+
+function canSelfUpdateFromSource() {
+  if (app.isPackaged) return false;
+  return fs.existsSync(path.join(getProjectRoot(), '.git'));
+}
+
+function runUpdateCommand(command, args, cwd) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd,
+      shell: false,
+      windowsHide: true,
+      env: process.env,
+    });
+    let output = '';
+    const appendOutput = (chunk) => {
+      output = (output + chunk.toString()).slice(-16_000);
+    };
+    child.stdout.on('data', appendOutput);
+    child.stderr.on('data', appendOutput);
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve(output);
+      } else {
+        const rendered = [command, ...args].join(' ');
+        reject(new Error(`${rendered} failed with exit code ${code}.\n${output}`.trim()));
+      }
+    });
+  });
+}
+
+async function updateDesktopFromSource() {
+  const root = getProjectRoot();
+  const npmBin = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+  const gitBin = process.platform === 'win32' ? 'git.exe' : 'git';
+
+  await runUpdateCommand(gitBin, ['pull', '--ff-only'], root);
+  await runUpdateCommand(npmBin, ['install'], root);
+  await runUpdateCommand(npmBin, ['install'], path.join(root, 'cascade-electron'));
+  await runUpdateCommand(npmBin, ['run', 'build'], root);
+  await runUpdateCommand(npmBin, ['run', 'build:client'], root);
+
+  app.relaunch();
+  app.exit(0);
 }
 
 /** Send an IPC message to every live window (terminal output may belong to the
@@ -1572,15 +1628,35 @@ ipcMain.handle('netdoc:getLatestVersionContent', async (event, netdocId) => {
   }
 });
 
-// ── Frontend refresh ─────────────────────────────────────────
+// ── Desktop app update ───────────────────────────────────────
 ipcMain.handle('app:updateAndRestart', async () => {
   try {
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) win.webContents.reloadIgnoringCache();
+    if (desktopUpdateInProgress) {
+      return { success: false, error: 'A desktop update is already running.' };
     }
-    return { success: true };
+
+    if (!canSelfUpdateFromSource()) {
+      const downloadUrl = getDesktopDownloadUrl();
+      await shell.openExternal(downloadUrl);
+      return {
+        success: false,
+        error: `This installed build cannot update itself yet. Opened ${downloadUrl} to download the latest desktop app.`,
+      };
+    }
+
+    desktopUpdateInProgress = true;
+    void updateDesktopFromSource().catch((error) => {
+      desktopUpdateInProgress = false;
+      console.error('[IPC] Desktop update failed:', error);
+      broadcastToWindows('app:updateFailed', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+
+    return { success: true, relaunching: true };
   } catch (error) {
-    console.error('[IPC] Frontend refresh failed:', error);
+    desktopUpdateInProgress = false;
+    console.error('[IPC] Desktop update failed:', error);
     return { success: false, error: error.message };
   }
 });

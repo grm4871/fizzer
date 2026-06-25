@@ -12,6 +12,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
 import http from 'node:http';
+import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
@@ -20,20 +21,21 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import Database from 'better-sqlite3';
 import { Server } from 'socket.io';
-import { addTag, createFolder, createNote, createVault, deleteFolder, deleteNote, deleteNotes, ensureVaultSchema, getBacklinks, getGraph, getNote, getVault, listFolders, listNotes, listTags, linkifyTerm, listVaults, moveNote, removeTag, renameNote, searchNotes, toggleArchive, togglePin, updateFolder, updateNote, } from './server/vault.js';
+import { addTag, createFolder, createNote, createVault, deleteFolder, deleteNote, deleteNotes, ensureVaultSchema, getBacklinks, getGraph, getNote, getVault, listFolders, listNotes, listTags, linkifyTerm, listVaults, moveNote, removeTag, renameNote, rescanVault, searchNotes, toggleArchive, togglePin, updateFolder, updateNote, } from './server/vault.js';
 import { createNoteVersion, diffNoteVersions, diffText, ensureVersionsSchema, listNoteVersions, } from './server/versions.js';
 import { ensureRunnerSchema, setRunEventSink, setChatSyncSink, listRuns, getRun, listRunEvents, startRun, cancelRun, findPriorSession, publishRunEvent, finishDelegatedRun, } from './server/runner.js';
 import { delegateRunToDesktop, getDesktopRunnerStatus, initDesktopRunners, isDesktopRunnerOnline, } from './server/desktop-runner.js';
 import { ensureFeedSchema, fetchFeed, pollWidgetFeeds, setFeedNotifySink, startFeedPoller, } from './server/feeds.js';
 import { fetchWidgetData } from './server/widgetData.js';
 import { buildAgentChatContentFromRunEvents, createChatMessage, ensureChatSchema, listChatAgentMembers, listChatMessages, removeChatAgentMember, updateChatMessage, upsertChatAgentMember, } from './server/chat.js';
-import { NETWORK_MODE, WIDGET_SHELL_ENABLED, corsOrigin, rateLimit, resolveJwtSecret, } from './server/security.js';
+import { NETWORK_MODE, WIDGET_SHELL_ENABLED, corsOrigin, rateLimit, resolveDeploySecret, resolveJwtSecret, } from './server/security.js';
 const PORT = Number(process.env.API_PORT || 3000);
 const HOST = process.env.API_HOST || (NETWORK_MODE ? '0.0.0.0' : '127.0.0.1');
 const JWT_SECRET = resolveJwtSecret();
+const DEPLOY_SECRET = resolveDeploySecret();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 function getDefaultDbPath() {
-    const dataDir = path.join(os.homedir(), '.cascade');
+    const dataDir = process.env.CASCADE_DATA_DIR ?? path.join(os.homedir(), '.cascade');
     fs.mkdirSync(dataDir, { recursive: true });
     return path.join(dataDir, 'docs.db');
 }
@@ -159,6 +161,67 @@ const httpServer = http.createServer(app);
 const io = new Server(httpServer, { cors: { origin: corsOrigin(), credentials: true } });
 const runsNamespace = io.of('/runs');
 const vaultNamespace = io.of('/vault');
+const deployLimiter = rateLimit({ windowMs: 60 * 1000, max: 3 });
+const deployStatus = {
+    running: false,
+    startedAt: null,
+    finishedAt: null,
+    exitCode: null,
+    error: null,
+    output: '',
+};
+function getRepoRoot() {
+    if (fs.existsSync(path.join(__dirname, 'deploy', 'deploy.sh')))
+        return __dirname;
+    return path.resolve(__dirname, '..');
+}
+function appendDeployOutput(chunk) {
+    deployStatus.output = (deployStatus.output + chunk).slice(-64_000);
+}
+function runDeployStep(command, args, cwd) {
+    return new Promise((resolve, reject) => {
+        appendDeployOutput(`\n$ ${[command, ...args].join(' ')}\n`);
+        const child = spawn(command, args, {
+            cwd,
+            env: process.env,
+            stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        child.stdout.on('data', (chunk) => appendDeployOutput(chunk.toString()));
+        child.stderr.on('data', (chunk) => appendDeployOutput(chunk.toString()));
+        child.on('error', reject);
+        child.on('close', (code) => {
+            if (code === 0) {
+                resolve();
+            }
+            else {
+                reject(new Error(`${command} ${args.join(' ')} exited with code ${code}`));
+            }
+        });
+    });
+}
+async function runDeploy() {
+    const repoRoot = getRepoRoot();
+    deployStatus.running = true;
+    deployStatus.startedAt = new Date().toISOString();
+    deployStatus.finishedAt = null;
+    deployStatus.exitCode = null;
+    deployStatus.error = null;
+    deployStatus.output = '';
+    try {
+        await runDeployStep('git', ['pull'], repoRoot);
+        await runDeployStep('./deploy/deploy.sh', ['cscd.online'], repoRoot);
+        deployStatus.exitCode = 0;
+    }
+    catch (error) {
+        deployStatus.exitCode = 1;
+        deployStatus.error = error instanceof Error ? error.message : String(error);
+        appendDeployOutput(`\nERROR: ${deployStatus.error}\n`);
+    }
+    finally {
+        deployStatus.running = false;
+        deployStatus.finishedAt = new Date().toISOString();
+    }
+}
 // ── Auth helpers ───────────────────────────────────────────────────
 function signToken(user) {
     return jwt.sign(user, JWT_SECRET, { expiresIn: '30d' });
@@ -179,6 +242,18 @@ function requireAuth(req, res, next) {
     catch {
         res.status(401).json({ error: 'Invalid or expired token' });
     }
+}
+function requireDeployToken(req, res, next) {
+    const token = typeof req.headers['x-deploy-token'] === 'string' ? req.headers['x-deploy-token'].trim() : '';
+    const expected = DEPLOY_SECRET.trim();
+    if (!token || !expected)
+        return res.status(401).json({ error: 'Deploy token required' });
+    const tokenBytes = Buffer.from(token);
+    const expectedBytes = Buffer.from(expected);
+    if (tokenBytes.length !== expectedBytes.length || !crypto.timingSafeEqual(tokenBytes, expectedBytes)) {
+        return res.status(403).json({ error: 'Invalid deploy token' });
+    }
+    next();
 }
 // ── Socket.io auth & namespaces ────────────────────────────────────
 function socketAuth(socket, next) {
@@ -322,6 +397,16 @@ app.get('/api/me', requireAuth, (req, res) => {
 });
 app.get('/api/me/desktop-runner', requireAuth, (req, res) => {
     res.json(getDesktopRunnerStatus(req.user.id));
+});
+app.get('/api/admin/deploy', requireDeployToken, (_req, res) => {
+    res.json({ deploy: deployStatus });
+});
+app.post('/api/admin/deploy', requireDeployToken, deployLimiter, (_req, res) => {
+    if (deployStatus.running) {
+        return res.status(409).json({ error: 'Deploy is already running', deploy: deployStatus });
+    }
+    void runDeploy();
+    res.status(202).json({ deploy: deployStatus });
 });
 // ── Vault routes ───────────────────────────────────────────────────
 app.get('/api/vaults', requireAuth, (req, res) => {
@@ -995,10 +1080,24 @@ app.use((_req, res) => {
     res.status(404).json({ error: 'Not found' });
 });
 // ── Start server ───────────────────────────────────────────────────
-httpServer.listen(PORT, HOST, () => {
+httpServer.listen(PORT, HOST, async () => {
     console.log(`Cascade Notes API running on http://${HOST}:${PORT}`);
     console.log(`SQLite database: ${DB_PATH}`);
     if (fs.existsSync(clientDistPath))
         console.log(`Serving client from ${clientDistPath}`);
     startFeedPoller(db);
+    // Watch vault directories for external file changes (e.g. agent edits on disk)
+    // so the SQLite index stays in sync without requiring a manual rescan.
+    const { default: chokidar } = await import('chokidar');
+    const vaultRows = db.prepare('SELECT id, root_path, created_by FROM vaults').all();
+    for (const vault of vaultRows) {
+        if (!fs.existsSync(vault.root_path))
+            continue;
+        chokidar
+            .watch(vault.root_path, { ignoreInitial: true, awaitWriteFinish: { stabilityThreshold: 300 } })
+            .on('add', () => rescanVault(db, vault.id, vault.created_by))
+            .on('change', () => rescanVault(db, vault.id, vault.created_by))
+            .on('unlink', () => rescanVault(db, vault.id, vault.created_by));
+        console.log(`Watching vault ${vault.id} at ${vault.root_path}`);
+    }
 });

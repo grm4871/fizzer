@@ -60,6 +60,11 @@ type ContextMenu =
   | { x: number; y: number; kind: 'folder'; id: string }
   | { x: number; y: number; kind: 'root' };
 
+type ElectronUpdateAPI = {
+  updateAndRestart?: () => Promise<{ success: boolean; relaunching?: boolean; error?: string }>;
+  onUpdateFailed?: (callback: (payload: { error?: string }) => void) => () => void;
+};
+
 export function Sidebar({
   user,
   vaults,
@@ -155,6 +160,15 @@ export function Sidebar({
       window.removeEventListener('keydown', onKey);
     };
   }, [contextMenu]);
+
+  useEffect(() => {
+    const api = (window as unknown as { electronAPI?: ElectronUpdateAPI }).electronAPI;
+    if (!api?.onUpdateFailed) return;
+    return api.onUpdateFailed((payload) => {
+      setUpdating(false);
+      alert('Desktop update failed: ' + (payload?.error || 'Unknown error'));
+    });
+  }, []);
 
   function toggleFolder(folderId: string) {
     setExpandedFolders((prev) => {
@@ -465,15 +479,17 @@ export function Sidebar({
         </div>
         <button
           className="btn-icon"
-          title="Refresh frontend"
+          title="Update desktop app"
           disabled={updating}
           onClick={async () => {
-            const api = (window as unknown as { electronAPI?: { updateAndRestart?: () => Promise<{ success: boolean; error?: string }> } }).electronAPI;
+            const api = (window as unknown as { electronAPI?: ElectronUpdateAPI }).electronAPI;
             if (!api?.updateAndRestart) return;
             setUpdating(true);
             const result = await api.updateAndRestart();
             if (!result.success) {
-              alert('Refresh failed: ' + (result.error || 'Unknown error'));
+              alert('Desktop update failed: ' + (result.error || 'Unknown error'));
+              setUpdating(false);
+            } else if (!result.relaunching) {
               setUpdating(false);
             }
           }}

@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Activity, Bot, Brain, ChevronRight, Hash, ImagePlus, Paperclip, Plus, Reply, Send, Square, X } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
 
 export const CHAT_NOTE_MARKER = 'cascade://chat-channel';
 export const CHAT_MEDIA_LIMIT = 8;
@@ -204,8 +207,26 @@ function ChatMessageText({
   body: string;
   mentionableAliases: string[];
 }) {
-  const content = useMemo(() => formatChatMentions(body, mentionableAliases), [body, mentionableAliases]);
-  return <p>{content}</p>;
+  const withMentions = useCallback((children: ReactNode): ReactNode => {
+    if (Array.isArray(children)) {
+      return children.flatMap((child) =>
+        typeof child === 'string' ? formatChatMentions(child, mentionableAliases) : [child]
+      );
+    }
+    if (typeof children === 'string') return formatChatMentions(children, mentionableAliases);
+    return children;
+  }, [mentionableAliases]);
+
+  const components = useMemo(() => ({
+    p: ({ children }: { children?: ReactNode }) => <p>{withMentions(children)}</p>,
+    li: ({ children }: { children?: ReactNode }) => <li>{withMentions(children)}</li>,
+  }), [withMentions]);
+
+  return (
+    <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={components}>
+      {body}
+    </ReactMarkdown>
+  );
 }
 
 export function canGroupChatMessages(a: ChatMessage, b: ChatMessage) {

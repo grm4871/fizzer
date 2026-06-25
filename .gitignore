@@ -25,3 +25,9 @@ debug.log
 .env
 .env.*
 !.env.example
+
+# Local-only operational scripts and secrets.
+.private/
+.cascade/
+deploy-secret
+*.secret
