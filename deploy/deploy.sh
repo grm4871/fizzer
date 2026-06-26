@@ -83,9 +83,9 @@ else
 fi
 docker compose up -d
 
-echo "==> Waiting for the app to respond on localhost:3000"
+echo "==> Waiting for the app health check on localhost:3000"
 for i in $(seq 1 30); do
-  if curl -sf http://127.0.0.1:3000/ >/dev/null 2>&1; then
+  if curl -sf http://127.0.0.1:3000/api/health >/dev/null 2>&1; then
     break
   fi
   if [[ "$i" -eq 30 ]]; then
