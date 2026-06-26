@@ -14,6 +14,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+# systemd runs this unit as root, but the checkout is usually owned by the
+# deploying user. Without this, git aborts with "detected dubious ownership in
+# repository", which silently kills every automated deploy.
+git config --global --add safe.directory "$ROOT" 2>/dev/null || true
+
 DOMAIN="${CASCADE_DEPLOY_DOMAIN:-cscd.online}"
 DATA_DIR="${CASCADE_DATA_DIR:-/var/lib/cascade}"
 REQUEST_FILE="$DATA_DIR/deploy.request"
