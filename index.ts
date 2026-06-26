@@ -55,14 +55,23 @@ import {
 import {
   ensureRunnerSchema,
   setRunEventSink,
-  setVaultEventSink,
+  setChatSyncSink,
   listRuns,
   getRun,
   listRunEvents,
   startRun,
-  sendRunMessage,
   cancelRun,
+  findPriorSession,
+  publishRunEvent,
+  finishDelegatedRun,
+  type AgentId,
 } from './server/runner.js';
+import {
+  delegateRunToDesktop,
+  getDesktopRunnerStatus,
+  initDesktopRunners,
+  isDesktopRunnerOnline,
+} from './server/desktop-runner.js';
 import {
   ensureFeedSchema,
   fetchFeed,
@@ -73,6 +82,7 @@ import {
 import { fetchWidgetData } from './server/widgetData.js';
 import { resolveDeploySecret } from './server/security.js';
 import {
+  buildAgentChatContentFromRunEvents,
   ensureChatSchema,
   listChatMessages,
   createChatMessage,
@@ -279,9 +289,73 @@ function emitVaultEvent(vaultId: string, event: string, data: unknown) {
   vaultNamespace.to(`vault:${vaultId}`).emit(event, data);
 }
 
-// Let the agent runner notify clients (e.g. reload an open note after edits).
-setVaultEventSink(emitVaultEvent);
 setFeedNotifySink(emitVaultEvent);
+
+// ── Server-authoritative chat streaming ─────────────────────────────
+// A chat-originated run is linked to the agent's chat message. As the run
+// streams, the server folds its events into that message and broadcasts the
+// update, so every client (including ones that never started the run, or after
+// the initiator disconnects) sees the reply. Targets live in memory for the
+// run's lifetime, mirroring the in-memory desktop-runner delegation model.
+type ChatRunTarget = { userId: number; vaultId: string; channelId: string; messageId: string };
+const chatRunTargets = new Map<number, ChatRunTarget>();
+const chatRunFlushTimers = new Map<number, NodeJS.Timeout>();
+const CHAT_RUN_THROTTLE_MS = 250;
+
+function syncRunToChatMessage(runId: number) {
+  const target = chatRunTargets.get(runId);
+  if (!target) return;
+  const content = buildAgentChatContentFromRunEvents(listRunEvents(db, runId));
+  try {
+    // Update only — the initiating client creates the placeholder message; if it
+    // hasn't landed yet this no-ops and a later event (or the terminal flush) retries.
+    const updated = updateChatMessage(db, target.userId, target.vaultId, target.channelId, target.messageId, {
+      body: content.body,
+      blocks: content.blocks.length ? content.blocks : undefined,
+      status: content.status,
+      runId,
+    });
+    if (updated) {
+      emitVaultEvent(target.vaultId, 'vault:chatMessageUpdated', {
+        vaultId: target.vaultId,
+        channelId: target.channelId,
+        message: updated,
+      });
+    }
+  } catch {
+    // Channel/message vanished (e.g. deleted mid-run) — drop the target below.
+  }
+  if (content.done) {
+    chatRunTargets.delete(runId);
+    const timer = chatRunFlushTimers.get(runId);
+    if (timer) clearTimeout(timer);
+    chatRunFlushTimers.delete(runId);
+  }
+}
+
+setChatSyncSink((runId, eventType) => {
+  if (!chatRunTargets.has(runId)) return;
+  // Flush terminal status immediately; throttle streaming token updates.
+  if (eventType === 'status') {
+    const timer = chatRunFlushTimers.get(runId);
+    if (timer) {
+      clearTimeout(timer);
+      chatRunFlushTimers.delete(runId);
+    }
+    syncRunToChatMessage(runId);
+    return;
+  }
+  if (chatRunFlushTimers.has(runId)) return;
+  chatRunFlushTimers.set(runId, setTimeout(() => {
+    chatRunFlushTimers.delete(runId);
+    syncRunToChatMessage(runId);
+  }, CHAT_RUN_THROTTLE_MS));
+});
+
+// Wire the desktop-runner relay: a user's signed-in desktop app registers here
+// and executes delegated runs locally, streaming events back through the server.
+// The server never runs an agent itself.
+initDesktopRunners(io, db, { publishRunEvent, finishDelegatedRun });
 
 // ── Health ──────────────────────────────────────────────────────────
 
@@ -699,13 +773,22 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
   const vault = getVault(db, req.params.id, req.user!.id);
   if (!vault) return res.status(404).json({ error: 'Vault not found' });
 
-  const { prompt, note_id, agent, conversation_id, images, model } = req.body;
+  const { prompt, note_id, agent, conversation_id, images, model, cwd, yolo } = req.body;
   if (!prompt || !prompt.trim()) {
     return res.status(400).json({ error: 'Prompt is required' });
   }
+  const yoloMode = yolo === true;
 
-  const validAgents = ['claude-code', 'codex', 'grok', 'antigravity', 'copilot', 'hermes'];
-  const selectedAgent = validAgents.includes(agent) ? agent : 'claude-code';
+  const validAgents = ['claude-code', 'codex', 'grok', 'antigravity', 'copilot', 'hermes'] as const satisfies readonly AgentId[];
+  const selectedAgent: AgentId = validAgents.includes(agent) ? agent : 'claude-code';
+  // Every agent — Claude included — executes on the user's own machine via the
+  // desktop runner relay. The server never runs an LLM itself (no API keys / no
+  // Claude login on the server); it only relays runs to a connected desktop.
+  if (!isDesktopRunnerOnline(req.user!.id)) {
+    return res.status(503).json({
+      error: 'No desktop agent runner is connected. Open Cascade on your computer (signed in to the same account) to run agents from chat.',
+    });
+  }
   const removedModelPresets = new Set([
     'codex-flash',
     'codex-pro',
@@ -718,6 +801,13 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
   const selectedModel = typeof model === 'string' && model.trim() && !removedModelPresets.has(model.trim())
     ? model.trim()
     : undefined;
+  let selectedCwd: string | undefined;
+  if (typeof cwd === 'string' && cwd.trim()) {
+    const rawCwd = cwd.trim();
+    if (!/^(vault\s*root|root|\.\/?)$/i.test(rawCwd)) {
+      selectedCwd = rawCwd;
+    }
+  }
 
   // Sanitize image attachments to { media_type, data } base64 entries.
   const cleanImages = Array.isArray(images)
@@ -730,9 +820,42 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
   try {
     const run = await startRun(db, vault, note_id || null, prompt, selectedAgent, {
       conversationId: typeof conversation_id === 'string' && conversation_id ? conversation_id : undefined,
-      images: cleanImages,
       model: selectedModel,
     });
+
+    // Link this run to the chat message it's answering so the server can persist
+    // and broadcast the streamed reply itself. Registered before delegation so no
+    // early event is missed.
+    const chatChannelId = typeof req.body?.chat?.channelId === 'string' ? req.body.chat.channelId.trim() : '';
+    const chatMessageId = typeof req.body?.chat?.messageId === 'string' ? req.body.chat.messageId.trim() : '';
+    if (chatChannelId && chatMessageId) {
+      chatRunTargets.set(run.id, {
+        userId: req.user!.id,
+        vaultId: vault.id,
+        channelId: chatChannelId,
+        messageId: chatMessageId,
+      });
+    }
+
+    const delegated = delegateRunToDesktop(req.user!.id, {
+      runId: run.id,
+      vaultId: vault.id,
+      agent: selectedAgent,
+      prompt,
+      cwd: selectedCwd,
+      vaultRoot: vault.root_path,
+      model: selectedModel,
+      resumeSessionId: findPriorSession(db, run),
+      images: cleanImages,
+      yolo: yoloMode,
+    });
+    if (!delegated) {
+      chatRunTargets.delete(run.id);
+      return res.status(503).json({
+        error: 'Desktop agent runner disconnected before the run could start. Open Cascade on your computer and try again.',
+      });
+    }
+
     res.json({ run });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
@@ -821,20 +944,9 @@ app.get('/api/runs/:id/events', requireAuth, (req: AuthedRequest, res) => {
   res.json({ events: listRunEvents(db, run.id) });
 });
 
-app.post('/api/runs/:id/messages', requireAuth, async (req: AuthedRequest, res) => {
-  const run = getRun(db, Number(req.params.id));
-  if (!run) return res.status(404).json({ error: 'Run not found' });
-
-  const vault = getVault(db, run.vault_id, req.user!.id);
-  if (!vault) return res.status(403).json({ error: 'Access denied' });
-
-  const { message } = req.body;
-  try {
-    const event = await sendRunMessage(db, run.id, message);
-    res.json({ event });
-  } catch (err) {
-    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
-  }
+// Whether this user's desktop app is connected and able to host agent runs.
+app.get('/api/me/desktop-runner', requireAuth, (req: AuthedRequest, res) => {
+  res.json(getDesktopRunnerStatus(req.user!.id));
 });
 
 app.post('/api/runs/:id/cancel', requireAuth, async (req: AuthedRequest, res) => {
