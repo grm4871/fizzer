@@ -57,6 +57,9 @@ export type ChatAgentRegistration = {
   /** Run this agent with permission prompts bypassed ("yolo"). Scoped to this
    * registration; applied on the machine that executes the run. */
   yolo: boolean;
+  /** Conversation id linking this member's runs into one resumable session. A
+   * `/clear` command rotates this to start a fresh session. */
+  conversationId: string;
 };
 
 type ChatMessageRow = {
@@ -108,16 +111,20 @@ export function ensureChatSchema(db: Db): void {
       context_prompt TEXT NOT NULL DEFAULT '',
       taggable_by_agents INTEGER NOT NULL DEFAULT 1,
       yolo INTEGER NOT NULL DEFAULT 0,
+      conversation_id TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS chat_agent_members_channel_idx ON chat_agent_members(channel_id);
   `);
 
-  // Migration: add `yolo` to pre-existing chat_agent_members tables.
+  // Migrations: add columns to pre-existing chat_agent_members tables.
   const memberCols = db.prepare("PRAGMA table_info(chat_agent_members)").all() as Array<{ name: string }>;
   if (!memberCols.some((col) => col.name === 'yolo')) {
     db.exec('ALTER TABLE chat_agent_members ADD COLUMN yolo INTEGER NOT NULL DEFAULT 0');
+  }
+  if (!memberCols.some((col) => col.name === 'conversation_id')) {
+    db.exec("ALTER TABLE chat_agent_members ADD COLUMN conversation_id TEXT NOT NULL DEFAULT ''");
   }
 }
 
@@ -133,6 +140,7 @@ type ChatAgentMemberRow = {
   context_prompt: string;
   taggable_by_agents: number;
   yolo: number;
+  conversation_id: string;
 };
 
 function rowToAgentMember(row: ChatAgentMemberRow): ChatAgentRegistration {
@@ -146,6 +154,7 @@ function rowToAgentMember(row: ChatAgentMemberRow): ChatAgentRegistration {
     contextPrompt: row.context_prompt,
     taggableByAgents: row.taggable_by_agents !== 0,
     yolo: row.yolo !== 0,
+    conversationId: row.conversation_id,
   };
 }
 
@@ -171,6 +180,8 @@ function normalizeAgentRegistration(input: Partial<ChatAgentRegistration>, fallb
     contextPrompt: String(input.contextPrompt || ''),
     taggableByAgents: input.taggableByAgents !== false,
     yolo: input.yolo === true,
+    // May be empty here; upsert preserves the existing session or mints a new one.
+    conversationId: String(input.conversationId || '').trim(),
   };
 }
 
@@ -535,7 +546,11 @@ export function upsertChatAgentMember(
   if (vault.id !== vaultId) throw new Error('Chat channel not found');
 
   const member = normalizeAgentRegistration(input);
-  const existing = db.prepare('SELECT id FROM chat_agent_members WHERE id = ? AND channel_id = ?').get(member.id, channelId) as { id: string } | undefined;
+  const existing = db.prepare('SELECT id, conversation_id FROM chat_agent_members WHERE id = ? AND channel_id = ?').get(member.id, channelId) as { id: string; conversation_id: string } | undefined;
+
+  // The session id is sticky: an explicit value (e.g. a `/clear` rotation) wins,
+  // otherwise keep the member's existing session, otherwise mint a fresh one.
+  member.conversationId = member.conversationId || existing?.conversation_id || crypto.randomUUID();
 
   if (existing) {
     db.prepare(`
@@ -548,6 +563,7 @@ export function upsertChatAgentMember(
         context_prompt = ?,
         taggable_by_agents = ?,
         yolo = ?,
+        conversation_id = ?,
         updated_at = datetime('now')
       WHERE id = ? AND channel_id = ?
     `).run(
@@ -559,6 +575,7 @@ export function upsertChatAgentMember(
       member.contextPrompt,
       member.taggableByAgents ? 1 : 0,
       member.yolo ? 1 : 0,
+      member.conversationId,
       member.id,
       channelId,
     );
@@ -566,8 +583,8 @@ export function upsertChatAgentMember(
     db.prepare(`
       INSERT INTO chat_agent_members (
         id, channel_id, vault_id, agent_id, display_name, mention,
-        model, cwd, context_prompt, taggable_by_agents, yolo
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        model, cwd, context_prompt, taggable_by_agents, yolo, conversation_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       member.id,
       channelId,
@@ -580,6 +597,7 @@ export function upsertChatAgentMember(
       member.contextPrompt,
       member.taggableByAgents ? 1 : 0,
       member.yolo ? 1 : 0,
+      member.conversationId,
     );
   }
 

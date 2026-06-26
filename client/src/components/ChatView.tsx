@@ -56,6 +56,9 @@ export interface ChatAgentRegistration {
   /** Run this agent with permission prompts bypassed ("yolo"). Scoped to this
    * registration, applied on the machine that runs it. */
   yolo: boolean;
+  /** Conversation id linking this member's runs into one resumable session.
+   * Empty for a not-yet-persisted member; the server assigns/preserves it. */
+  conversationId: string;
 }
 
 export function createChatAgentRegistrationId() {
@@ -356,6 +359,7 @@ export function ChatView({
       contextPrompt: '',
       taggableByAgents: true,
       yolo: false,
+      conversationId: '',
     };
   }, [availableAgents]);
   const [agentForm, setAgentForm] = useState<ChatAgentRegistration>(() => ({
@@ -368,6 +372,7 @@ export function ChatView({
     contextPrompt: '',
     taggableByAgents: true,
     yolo: false,
+    conversationId: '',
   }));
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
   const [replyTarget, setReplyTarget] = useState<ChatReplyRef | null>(null);
@@ -908,6 +913,7 @@ export function ChatView({
                     contextPrompt: '',
                     taggableByAgents: true,
                     yolo: false,
+                    conversationId: '',
                   });
                 }}
               >

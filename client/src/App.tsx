@@ -90,14 +90,12 @@ const CHAT_STORAGE_KEY = 'cascade_chat_state';
 
 interface ChatState {
   messagesByChannel: Record<string, ChatMessage[]>;
-  agentConversationsByChannel: Record<string, string>;
   agentModelsByAgent: Record<string, string>;
   registeredAgentsByChannel: Record<string, ChatAgentRegistration[]>;
 }
 
 const emptyChatState = (): ChatState => ({
   messagesByChannel: {},
-  agentConversationsByChannel: {},
   agentModelsByAgent: {},
   registeredAgentsByChannel: {},
 });
@@ -169,6 +167,7 @@ function readLegacyLocalChatAgentMembers(): Record<string, ChatAgentRegistration
             contextPrompt: typeof registration.contextPrompt === 'string' ? registration.contextPrompt : '',
             taggableByAgents: typeof registration.taggableByAgents === 'boolean' ? registration.taggableByAgents : true,
             yolo: typeof registration.yolo === 'boolean' ? registration.yolo : false,
+            conversationId: typeof registration.conversationId === 'string' ? registration.conversationId : '',
           };
         });
     }
@@ -231,13 +230,7 @@ function loadChatState(): ChatState {
     const raw = localStorage.getItem(CHAT_STORAGE_KEY);
     if (!raw) return emptyChatState();
     const parsed = JSON.parse(raw) as Partial<ChatState>;
-    const agentConversationsByChannel: Record<string, string> = {};
     const agentModelsByAgent: Record<string, string> = {};
-    if (parsed.agentConversationsByChannel && typeof parsed.agentConversationsByChannel === 'object') {
-      for (const [key, value] of Object.entries(parsed.agentConversationsByChannel)) {
-        if (typeof value === 'string') agentConversationsByChannel[key] = value;
-      }
-    }
 
     if (parsed.agentModelsByAgent && typeof parsed.agentModelsByAgent === 'object') {
       for (const [key, value] of Object.entries(parsed.agentModelsByAgent)) {
@@ -245,7 +238,7 @@ function loadChatState(): ChatState {
       }
     }
 
-    return { messagesByChannel: {}, agentConversationsByChannel, agentModelsByAgent, registeredAgentsByChannel: {} };
+    return { messagesByChannel: {}, agentModelsByAgent, registeredAgentsByChannel: {} };
   } catch {
     return emptyChatState();
   }
@@ -333,14 +326,11 @@ function agentLabel(agentId: AgentId) {
   return CHAT_AGENTS.find((agent) => agent.id === agentId)?.label ?? agentId;
 }
 
-function chatConversationKey(channelId: string, registration: ChatAgentRegistration) {
-  return [
-    channelId,
-    registration.id,
-    registration.agentId,
-    registration.model || '',
-    normalizeChatCwd(registration.cwd),
-  ].join(':');
+function newId(prefix: string) {
+  const uuid = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  return `${prefix}-${uuid}`;
 }
 
 function textFromRunContent(content: unknown): string {
@@ -1103,6 +1093,7 @@ export default function App() {
       displayName: registration.displayName.trim() || agentLabel(registration.agentId as AgentId),
       mention: normalizeMention(registration.mention || registration.agentId),
       cwd: normalizeChatCwd(registration.cwd),
+      conversationId: registration.conversationId || newId('conv'),
     };
     setChatState((prev) => ({
       ...prev,
@@ -1163,8 +1154,9 @@ export default function App() {
     let activeRunId: number | null = null;
 
     try {
-      const conversationKey = chatConversationKey(channelId, registration);
-      const resumeSessionId = chatStateRef.current.agentConversationsByChannel[conversationKey];
+      // One sticky session per member: the run resumes (and extends) the
+      // member's conversation. A `/clear` rotates conversationId to start fresh.
+      const resumeSessionId = registration.conversationId || undefined;
       let assistantText = '';
       const processedSeqs = new Set<number>();
 
@@ -1219,15 +1211,6 @@ export default function App() {
                 for (const mentionedRegistration of mentionedAgents) {
                   startAgentChatRunRef.current?.(channelId, mentionedRegistration, prompt, triggeringAgentMessage);
                 }
-              }
-              if (payload.sessionId) {
-                setChatState((prev) => ({
-                  ...prev,
-                  agentConversationsByChannel: {
-                    ...prev.agentConversationsByChannel,
-                    [conversationKey]: payload.sessionId,
-                  },
-                }));
               }
               finishRun(runId, cleanup);
             }
@@ -1291,14 +1274,10 @@ export default function App() {
       // message's streamed updates. Skip our own debounced PATCH to avoid duplicate
       // writes — we still update local state for instant display.
       serverOwnedChatMessageIdsRef.current.add(agentMessageId);
-      if (res.run.conversation_id) {
-        setChatState((prev) => ({
-          ...prev,
-          agentConversationsByChannel: {
-            ...prev.agentConversationsByChannel,
-            [conversationKey]: res.run.conversation_id,
-          },
-        }));
+      // Legacy members predate per-member sessions: adopt the conversation the
+      // server just minted and persist it so later turns resume the same session.
+      if (!registration.conversationId && res.run.conversation_id) {
+        handleRegisterChatAgent(channelId, { ...registration, conversationId: res.run.conversation_id });
       }
 
       updateChatMessage(channelId, agentMessageId, (message) => ({
@@ -1337,7 +1316,7 @@ export default function App() {
         status: 'failed',
       }));
     }
-  }, [appendChatMessage, updateChatMessage]);
+  }, [appendChatMessage, updateChatMessage, handleRegisterChatAgent]);
   startAgentChatRunRef.current = startAgentChatRun;
 
   const handleCancelChatRun = useCallback((runId: number) => {
@@ -1395,6 +1374,31 @@ export default function App() {
   ) => {
     const trimmed = body.trim();
     if ((!trimmed && media.length === 0) || !user) return;
+
+    // `/clear` (optionally targeting @mentions) rotates the session for the
+    // channel's agents so the next message starts fresh, without deleting history.
+    const channelRegistrations = chatStateRef.current.registeredAgentsByChannel[channelId] ?? [];
+    const clearCommand = stripRegisteredAgentMentions(trimmed, channelRegistrations).trim();
+    if (/^\/(clear|reset)$/i.test(clearCommand)) {
+      const mentioned = getMentionedRegistrations(trimmed, channelRegistrations, false);
+      const targets = mentioned.length > 0 ? mentioned : channelRegistrations;
+      if (targets.length === 0) {
+        setNotice('No agents in this channel to clear.');
+        return;
+      }
+      for (const registration of targets) {
+        handleRegisterChatAgent(channelId, { ...registration, conversationId: newId('conv') });
+      }
+      const names = targets.map((item) => `@${normalizeMention(item.mention || item.agentId)}`).join(', ');
+      appendChatMessage(channelId, {
+        id: newId('sys'),
+        channelId,
+        author: 'Cascade',
+        body: `🧹 Cleared the session for ${names}. The next message starts a fresh conversation.`,
+        createdAt: new Date().toISOString(),
+      });
+      return;
+    }
 
     const images = media.filter((item) => item.media_type.startsWith('image/')).map((item) => item.url);
     const attachments = media
@@ -1466,7 +1470,7 @@ export default function App() {
       const imagesForRun = agentsWithoutImages.has(registration.agentId as AgentId) ? [] : runImages;
       void startAgentChatRun(channelId, registration, prompt, outgoingMessage, imagesForRun);
     }
-  }, [scheduleChatMessagePatch, persistChatMessageToServer, startAgentChatRun, user]);
+  }, [scheduleChatMessagePatch, persistChatMessageToServer, startAgentChatRun, user, handleRegisterChatAgent, appendChatMessage]);
 
   // ═══════════════════════════════════════════════════════════════
   // TERMINAL HELPERS
@@ -1797,11 +1801,7 @@ export default function App() {
         setChatState((prev) => {
           const messagesByChannel = { ...prev.messagesByChannel };
           delete messagesByChannel[noteId];
-          const agentConversationsByChannel = { ...prev.agentConversationsByChannel };
-          for (const key of Object.keys(agentConversationsByChannel)) {
-            if (key.startsWith(`${noteId}:`)) delete agentConversationsByChannel[key];
-          }
-          return { ...prev, messagesByChannel, agentConversationsByChannel };
+          return { ...prev, messagesByChannel };
         });
       }
       if (activeVaultIdRef.current) await loadVaultData(activeVaultIdRef.current);

@@ -72,6 +72,15 @@ import {
 } from './server/feeds.js';
 import { fetchWidgetData } from './server/widgetData.js';
 import { resolveDeploySecret } from './server/security.js';
+import {
+  ensureChatSchema,
+  listChatMessages,
+  createChatMessage,
+  updateChatMessage,
+  listChatAgentMembers,
+  upsertChatAgentMember,
+  removeChatAgentMember,
+} from './server/chat.js';
 
 const PORT = Number(process.env.API_PORT || 3000);
 const JWT_SECRET = process.env.JWT_SECRET || 'cascade-dev-secret';
@@ -189,6 +198,7 @@ ensureVaultSchema(db);
 ensureVersionsSchema(db);
 ensureRunnerSchema(db);
 ensureFeedSchema(db);
+ensureChatSchema(db);
 
 // ── Express & Socket.io setup ──────────────────────────────────────
 
@@ -839,6 +849,68 @@ app.post('/api/runs/:id/cancel', requireAuth, async (req: AuthedRequest, res) =>
     res.json({ success });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+// ── Chat channels ──────────────────────────────────────────────────
+
+app.get('/api/vaults/:vaultId/channels/:channelId/messages', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const messages = listChatMessages(db, req.params.channelId, req.user!.id);
+    res.json({ messages });
+  } catch {
+    res.status(404).json({ error: 'Chat channel not found' });
+  }
+});
+
+app.post('/api/vaults/:vaultId/channels/:channelId/messages', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const message = createChatMessage(db, req.user!.id, req.params.vaultId, req.params.channelId, req.body);
+    emitVaultEvent(req.params.vaultId, 'vault:chatMessageCreated', { vaultId: req.params.vaultId, channelId: req.params.channelId, message });
+    res.status(201).json({ message });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+app.patch('/api/vaults/:vaultId/channels/:channelId/messages/:messageId', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const message = updateChatMessage(db, req.user!.id, req.params.vaultId, req.params.channelId, req.params.messageId, req.body);
+    if (!message) return res.status(404).json({ error: 'Message not found' });
+    emitVaultEvent(req.params.vaultId, 'vault:chatMessageUpdated', { vaultId: req.params.vaultId, channelId: req.params.channelId, message });
+    res.json({ message });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+app.get('/api/vaults/:vaultId/channels/:channelId/agents', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const agents = listChatAgentMembers(db, req.params.channelId, req.user!.id);
+    res.json({ agents });
+  } catch {
+    res.status(404).json({ error: 'Chat channel not found' });
+  }
+});
+
+app.put('/api/vaults/:vaultId/channels/:channelId/agents', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const registration = upsertChatAgentMember(db, req.user!.id, req.params.vaultId, req.params.channelId, req.body);
+    emitVaultEvent(req.params.vaultId, 'vault:chatAgentMemberUpserted', { vaultId: req.params.vaultId, channelId: req.params.channelId, registration });
+    res.json({ registration });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+app.delete('/api/vaults/:vaultId/channels/:channelId/agents/:registrationId', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const removed = removeChatAgentMember(db, req.user!.id, req.params.vaultId, req.params.channelId, req.params.registrationId);
+    if (!removed) return res.status(404).json({ error: 'Agent member not found' });
+    emitVaultEvent(req.params.vaultId, 'vault:chatAgentMemberRemoved', { vaultId: req.params.vaultId, channelId: req.params.channelId, registrationId: req.params.registrationId });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
 
