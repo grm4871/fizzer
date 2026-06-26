@@ -9,3 +9,10 @@ Do **not** treat TypeScript or `vite build` success as done. Before finishing an
 3. **Prefer automation**: `node scripts/verify-client-runtime.mjs` (headless Playwright against the built client). For chat/send flows, also exercise the changed UI manually or with a targeted script.
 4. After **renaming or removing** a function/hook, grep the repo and `client/dist` for stale references before deploy.
 5. If runtime verification is not possible, say so explicitly and list the exact checks you ran instead (build output, grep, tests).
+
+## Deploying changes
+
+When asked to deploy changes, always:
+
+1. **Commit and push** your working tree.
+2. **Run the deploy script** (`./deploy/deploy.sh cscd.online`).

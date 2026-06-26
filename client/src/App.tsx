@@ -426,6 +426,9 @@ function formatAgentChatPrompt(
   // reply) instead of re-dumping the whole history and burning tokens every turn.
   continuation = false,
 ) {
+  const selfAgent = CHAT_AGENTS.find((candidate) => candidate.id === registration.agentId);
+  const selfHandle = registration.mention || registration.agentId;
+  const selfName = registration.displayName || selfAgent?.label || registration.agentId;
   const recentHistory = history
     .filter((message) => message.body.trim() || (message.images?.length ?? 0) > 0 || (message.attachments?.length ?? 0) > 0)
     .slice(-40)
@@ -443,7 +446,7 @@ function formatAgentChatPrompt(
 
   if (continuation) {
     const parts = [
-      `You are continuing in the Cascade chat channel #${channelName}. Your earlier turns in this conversation are already in your context — only new activity since your last reply is shown below.`,
+      `You are ${selfName} (@${selfHandle}), continuing in the Cascade chat channel #${channelName}. Your earlier turns in this conversation are already in your context — only new activity since your last reply is shown below.`,
     ];
     if (recentHistory) parts.push('', 'New messages since your last reply:', recentHistory);
     parts.push('', 'Current user request:', request);
@@ -451,7 +454,7 @@ function formatAgentChatPrompt(
   }
 
   return [
-    `You are responding in the Cascade chat channel #${channelName}.`,
+    `You are ${selfName} (@${selfHandle}), responding in the Cascade chat channel #${channelName}.`,
     'You can access and use the chat history below as context for your reply.',
     registration.contextPrompt ? `Your channel-specific context: ${registration.contextPrompt}` : '',
     '',
