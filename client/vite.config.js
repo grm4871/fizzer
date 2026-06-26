@@ -160,7 +160,7 @@ export default defineConfig({
         ws: true,  // Enable WebSocket proxying
       },
     },
-    // Allow nip.io and netar.is subdomains for staging access
-    allowedHosts: ['.nip.io', '.netar.is', 'localhost']
+    // Allow nip.io and cscd.online subdomains for staging access
+    allowedHosts: ['.nip.io', '.cscd.online', 'localhost']
   },
 });

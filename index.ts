@@ -10,12 +10,8 @@
  */
 
 import path from 'node:path';
-import fs from 'node:fs';
-import os from 'node:os';
 import http from 'node:http';
-import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import bcrypt from 'bcrypt';
@@ -29,7 +25,6 @@ import {
   createVault,
   deleteFolder,
   deleteNote,
-  deleteNotes,
   ensureVaultSchema,
   getBacklinks,
   getGraph,
@@ -38,12 +33,10 @@ import {
   listFolders,
   listNotes,
   listTags,
-  linkifyTerm,
   listVaults,
   moveNote,
   removeTag,
   renameNote,
-  rescanVault,
   searchNotes,
   toggleArchive,
   togglePin,
@@ -60,23 +53,14 @@ import {
 import {
   ensureRunnerSchema,
   setRunEventSink,
-  setChatSyncSink,
+  setVaultEventSink,
   listRuns,
   getRun,
   listRunEvents,
   startRun,
+  sendRunMessage,
   cancelRun,
-  findPriorSession,
-  publishRunEvent,
-  finishDelegatedRun,
-  type AgentId,
 } from './server/runner.js';
-import {
-  delegateRunToDesktop,
-  getDesktopRunnerStatus,
-  initDesktopRunners,
-  isDesktopRunnerOnline,
-} from './server/desktop-runner.js';
 import {
   ensureFeedSchema,
   fetchFeed,
@@ -85,67 +69,13 @@ import {
   startFeedPoller,
 } from './server/feeds.js';
 import { fetchWidgetData } from './server/widgetData.js';
-import {
-  buildAgentChatContentFromRunEvents,
-  createChatMessage,
-  ensureChatSchema,
-  listChatAgentMembers,
-  listChatMessages,
-  removeChatAgentMember,
-  updateChatMessage,
-  upsertChatAgentMember,
-  type ChatAgentRegistration,
-  type ChatMessage,
-} from './server/chat.js';
-import {
-  NETWORK_MODE,
-  WIDGET_SHELL_ENABLED,
-  corsOrigin,
-  rateLimit,
-  resolveDeploySecret,
-  resolveJwtSecret,
-} from './server/security.js';
 
 const PORT = Number(process.env.API_PORT || 3000);
-const HOST = process.env.API_HOST || (NETWORK_MODE ? '0.0.0.0' : '127.0.0.1');
-const JWT_SECRET = resolveJwtSecret();
-const DEPLOY_SECRET = resolveDeploySecret();
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-function getDefaultDbPath(): string {
-  const dataDir = process.env.CASCADE_DATA_DIR ?? path.join(os.homedir(), '.cascade');
-  fs.mkdirSync(dataDir, { recursive: true });
-  return path.join(dataDir, 'docs.db');
-}
-
-function migrateLegacyDbIfNeeded(nextPath: string): void {
-  if (process.env.DOCS_DB_PATH) return;
-
-  const legacyPath = path.join(process.cwd(), 'docs.db');
-  if (path.resolve(legacyPath) === path.resolve(nextPath)) return;
-  if (fs.existsSync(nextPath) || !fs.existsSync(legacyPath)) return;
-
-  fs.mkdirSync(path.dirname(nextPath), { recursive: true });
-  for (const suffix of ['', '-shm', '-wal']) {
-    const from = `${legacyPath}${suffix}`;
-    if (fs.existsSync(from)) fs.copyFileSync(from, `${nextPath}${suffix}`);
-  }
-  console.log(`Migrated SQLite database from ${legacyPath} to ${nextPath}`);
-}
-
-const DB_PATH = process.env.DOCS_DB_PATH || getDefaultDbPath();
-migrateLegacyDbIfNeeded(DB_PATH);
+const JWT_SECRET = process.env.JWT_SECRET || 'cascade-dev-secret';
+const DB_PATH = process.env.DOCS_DB_PATH || path.join(process.cwd(), 'docs.db');
 
 type User = { id: number; username: string; password_hash: string; created_at: string };
 type AuthedRequest = Request & { user?: { id: number; username: string } };
-type DeployStatus = {
-  running: boolean;
-  startedAt: string | null;
-  finishedAt: string | null;
-  exitCode: number | null;
-  error: string | null;
-  output: string;
-};
 
 // ── Database ───────────────────────────────────────────────────────
 
@@ -245,80 +175,16 @@ ensureVaultSchema(db);
 ensureVersionsSchema(db);
 ensureRunnerSchema(db);
 ensureFeedSchema(db);
-ensureChatSchema(db);
 
 // ── Express & Socket.io setup ──────────────────────────────────────
 
 const app = express();
-if (NETWORK_MODE) app.set('trust proxy', Number(process.env.CASCADE_TRUST_PROXY_HOPS || 1));
-app.use(cors({ origin: corsOrigin(), credentials: true }));
+app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: '2mb' }));
 const httpServer = http.createServer(app);
-const io = new Server(httpServer, { cors: { origin: corsOrigin(), credentials: true } });
+const io = new Server(httpServer, { cors: { origin: true, credentials: true } });
 const runsNamespace = io.of('/runs');
 const vaultNamespace = io.of('/vault');
-const deployLimiter = rateLimit({ windowMs: 60 * 1000, max: 3 });
-const deployStatus: DeployStatus = {
-  running: false,
-  startedAt: null,
-  finishedAt: null,
-  exitCode: null,
-  error: null,
-  output: '',
-};
-
-function getRepoRoot(): string {
-  if (fs.existsSync(path.join(__dirname, 'deploy', 'deploy.sh'))) return __dirname;
-  return path.resolve(__dirname, '..');
-}
-
-function appendDeployOutput(chunk: string): void {
-  deployStatus.output = (deployStatus.output + chunk).slice(-64_000);
-}
-
-function runDeployStep(command: string, args: string[], cwd: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    appendDeployOutput(`\n$ ${[command, ...args].join(' ')}\n`);
-    const child = spawn(command, args, {
-      cwd,
-      env: process.env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    child.stdout.on('data', (chunk) => appendDeployOutput(chunk.toString()));
-    child.stderr.on('data', (chunk) => appendDeployOutput(chunk.toString()));
-    child.on('error', reject);
-    child.on('close', (code) => {
-      if (code === 0) {
-        resolve();
-      } else {
-        reject(new Error(`${command} ${args.join(' ')} exited with code ${code}`));
-      }
-    });
-  });
-}
-
-async function runDeploy(): Promise<void> {
-  const repoRoot = getRepoRoot();
-  deployStatus.running = true;
-  deployStatus.startedAt = new Date().toISOString();
-  deployStatus.finishedAt = null;
-  deployStatus.exitCode = null;
-  deployStatus.error = null;
-  deployStatus.output = '';
-
-  try {
-    await runDeployStep('git', ['pull'], repoRoot);
-    await runDeployStep('./deploy/deploy.sh', ['cscd.online'], repoRoot);
-    deployStatus.exitCode = 0;
-  } catch (error) {
-    deployStatus.exitCode = 1;
-    deployStatus.error = error instanceof Error ? error.message : String(error);
-    appendDeployOutput(`\nERROR: ${deployStatus.error}\n`);
-  } finally {
-    deployStatus.running = false;
-    deployStatus.finishedAt = new Date().toISOString();
-  }
-}
 
 // ── Auth helpers ───────────────────────────────────────────────────
 
@@ -342,20 +208,6 @@ function requireAuth(req: AuthedRequest, res: Response, next: NextFunction) {
   } catch {
     res.status(401).json({ error: 'Invalid or expired token' });
   }
-}
-
-function requireDeployToken(req: Request, res: Response, next: NextFunction) {
-  const token = typeof req.headers['x-deploy-token'] === 'string' ? req.headers['x-deploy-token'].trim() : '';
-  const expected = DEPLOY_SECRET.trim();
-  if (!token || !expected) return res.status(401).json({ error: 'Deploy token required' });
-
-  const tokenBytes = Buffer.from(token);
-  const expectedBytes = Buffer.from(expected);
-  if (tokenBytes.length !== expectedBytes.length || !crypto.timingSafeEqual(tokenBytes, expectedBytes)) {
-    return res.status(403).json({ error: 'Invalid deploy token' });
-  }
-
-  next();
 }
 
 // ── Socket.io auth & namespaces ────────────────────────────────────
@@ -403,70 +255,9 @@ function emitVaultEvent(vaultId: string, event: string, data: unknown) {
   vaultNamespace.to(`vault:${vaultId}`).emit(event, data);
 }
 
+// Let the agent runner notify clients (e.g. reload an open note after edits).
+setVaultEventSink(emitVaultEvent);
 setFeedNotifySink(emitVaultEvent);
-
-// ── Server-authoritative chat streaming ─────────────────────────────
-// A chat-originated run is linked to the agent's chat message. As the run
-// streams, the server folds its events into that message and broadcasts the
-// update, so every client (including ones that never started the run, or after
-// the initiator disconnects) sees the reply. Targets live in memory for the
-// run's lifetime, mirroring the in-memory desktop-runner delegation model.
-type ChatRunTarget = { userId: number; vaultId: string; channelId: string; messageId: string };
-const chatRunTargets = new Map<number, ChatRunTarget>();
-const chatRunFlushTimers = new Map<number, NodeJS.Timeout>();
-const CHAT_RUN_THROTTLE_MS = 250;
-
-function syncRunToChatMessage(runId: number) {
-  const target = chatRunTargets.get(runId);
-  if (!target) return;
-  const content = buildAgentChatContentFromRunEvents(listRunEvents(db, runId));
-  try {
-    // Update only — the initiating client creates the placeholder message; if it
-    // hasn't landed yet this no-ops and a later event (or the terminal flush) retries.
-    const updated = updateChatMessage(db, target.userId, target.vaultId, target.channelId, target.messageId, {
-      body: content.body,
-      blocks: content.blocks.length ? content.blocks : undefined,
-      status: content.status,
-      runId,
-    });
-    if (updated) {
-      emitVaultEvent(target.vaultId, 'vault:chatMessageUpdated', {
-        vaultId: target.vaultId,
-        channelId: target.channelId,
-        message: updated,
-      });
-    }
-  } catch {
-    // Channel/message vanished (e.g. deleted mid-run) — drop the target below.
-  }
-  if (content.done) {
-    chatRunTargets.delete(runId);
-    const timer = chatRunFlushTimers.get(runId);
-    if (timer) clearTimeout(timer);
-    chatRunFlushTimers.delete(runId);
-  }
-}
-
-setChatSyncSink((runId, eventType) => {
-  if (!chatRunTargets.has(runId)) return;
-  // Flush terminal status immediately; throttle streaming token updates.
-  if (eventType === 'status') {
-    const timer = chatRunFlushTimers.get(runId);
-    if (timer) {
-      clearTimeout(timer);
-      chatRunFlushTimers.delete(runId);
-    }
-    syncRunToChatMessage(runId);
-    return;
-  }
-  if (chatRunFlushTimers.has(runId)) return;
-  chatRunFlushTimers.set(runId, setTimeout(() => {
-    chatRunFlushTimers.delete(runId);
-    syncRunToChatMessage(runId);
-  }, CHAT_RUN_THROTTLE_MS));
-});
-
-initDesktopRunners(io, db, { publishRunEvent, finishDelegatedRun });
 
 // ── Health ──────────────────────────────────────────────────────────
 
@@ -476,10 +267,7 @@ app.get('/api/health', (_req, res) => {
 
 // ── Auth routes ────────────────────────────────────────────────────
 
-// Blunt credential stuffing / abuse on the unauthenticated auth routes.
-const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 30 });
-
-app.post('/api/auth/register', authLimiter, async (req, res) => {
+app.post('/api/auth/register', async (req, res) => {
   const username = String(req.body.username || '').trim().toLowerCase();
   const password = String(req.body.password || '');
 
@@ -500,7 +288,7 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
   }
 });
 
-app.post('/api/auth/login', authLimiter, async (req, res) => {
+app.post('/api/auth/login', async (req, res) => {
   const username = String(req.body.username || '').trim().toLowerCase();
   const password = String(req.body.password || '');
   const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username) as User | undefined;
@@ -513,27 +301,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
 });
 
 app.get('/api/me', requireAuth, (req: AuthedRequest, res) => {
-  res.json({
-    user: req.user,
-    desktopRunner: getDesktopRunnerStatus(req.user!.id),
-  });
-});
-
-app.get('/api/me/desktop-runner', requireAuth, (req: AuthedRequest, res) => {
-  res.json(getDesktopRunnerStatus(req.user!.id));
-});
-
-app.get('/api/admin/deploy', requireDeployToken, (_req: Request, res) => {
-  res.json({ deploy: deployStatus });
-});
-
-app.post('/api/admin/deploy', requireDeployToken, deployLimiter, (_req: Request, res) => {
-  if (deployStatus.running) {
-    return res.status(409).json({ error: 'Deploy is already running', deploy: deployStatus });
-  }
-
-  void runDeploy();
-  res.status(202).json({ deploy: deployStatus });
+  res.json({ user: req.user });
 });
 
 // ── Vault routes ───────────────────────────────────────────────────
@@ -626,25 +394,6 @@ app.post('/api/vaults/:id/notes', requireAuth, (req: AuthedRequest, res) => {
   }
 });
 
-// Resolve a selected term to a note to link to: an existing fuzzy match, or a
-// freshly created minimal stub. The agent fills in / files the note afterwards.
-app.post('/api/vaults/:id/notes/linkify', requireAuth, (req: AuthedRequest, res) => {
-  const vault = getVault(db, req.params.id, req.user!.id);
-  if (!vault) return res.status(404).json({ error: 'Vault not found' });
-  try {
-    const { note, matched, score } = linkifyTerm(db, vault.id, req.user!.id, {
-      term: String(req.body?.term ?? ''),
-    });
-    if (!matched) {
-      createNoteVersion(db, note.id, note.content, 'created');
-      emitVaultEvent(vault.id, 'vault:noteCreated', { noteId: note.id, vaultId: vault.id, title: note.title });
-    }
-    res.status(matched ? 200 : 201).json({ note, matched, score });
-  } catch (error) {
-    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not link term' });
-  }
-});
-
 app.get('/api/notes/:id', requireAuth, (req: AuthedRequest, res) => {
   const note = getNote(db, req.params.id);
   if (!note) return res.status(404).json({ error: 'Note not found' });
@@ -695,37 +444,6 @@ app.delete('/api/notes/:id', requireAuth, (req: AuthedRequest, res) => {
   deleteNote(db, req.params.id);
   emitVaultEvent(vault.id, 'vault:noteDeleted', { noteId: req.params.id, title: existing.title });
   res.json({ ok: true });
-});
-
-app.post('/api/notes/bulk-delete', requireAuth, (req: AuthedRequest, res) => {
-  const rawIds = req.body?.noteIds;
-  if (!Array.isArray(rawIds) || rawIds.length === 0) {
-    return res.status(400).json({ error: 'noteIds array is required' });
-  }
-
-  const noteIds = rawIds.map((id: unknown) => String(id));
-  const authorized: { noteId: string; title: string; vaultId: string }[] = [];
-
-  for (const noteId of noteIds) {
-    const existing = getNote(db, noteId);
-    if (!existing) continue;
-    const vault = getVault(db, existing.vault_id, req.user!.id);
-    if (!vault) continue;
-    authorized.push({ noteId, title: existing.title, vaultId: vault.id });
-  }
-
-  if (authorized.length === 0) {
-    return res.status(404).json({ error: 'No notes found' });
-  }
-
-  const deleted = deleteNotes(db, authorized.map((entry) => entry.noteId));
-  const deletedSet = new Set(deleted);
-  for (const entry of authorized) {
-    if (!deletedSet.has(entry.noteId)) continue;
-    emitVaultEvent(entry.vaultId, 'vault:noteDeleted', { noteId: entry.noteId, title: entry.title });
-  }
-
-  res.json({ ok: true, deleted });
 });
 
 app.post('/api/notes/:id/move', requireAuth, (req: AuthedRequest, res) => {
@@ -896,127 +614,6 @@ app.post('/api/vaults/:id/feed/poll', requireAuth, async (req: AuthedRequest, re
   res.json({ ok: true });
 });
 
-// ── Chat routes ────────────────────────────────────────────────────
-
-app.get('/api/vaults/:id/channels/:channelId/messages', requireAuth, (req: AuthedRequest, res) => {
-  const vault = getVault(db, req.params.id, req.user!.id);
-  if (!vault) return res.status(404).json({ error: 'Vault not found' });
-
-  try {
-    const messages = listChatMessages(db, req.params.channelId, req.user!.id);
-    res.json({ messages });
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : 'Could not load chat messages';
-    res.status(msg === 'Chat channel not found' ? 404 : 400).json({ error: msg });
-  }
-});
-
-app.post('/api/vaults/:id/channels/:channelId/messages', requireAuth, (req: AuthedRequest, res) => {
-  const vault = getVault(db, req.params.id, req.user!.id);
-  if (!vault) return res.status(404).json({ error: 'Vault not found' });
-
-  try {
-    const message = createChatMessage(db, req.user!.id, vault.id, req.params.channelId, req.body as ChatMessage);
-    emitVaultEvent(vault.id, 'vault:chatMessageCreated', {
-      vaultId: vault.id,
-      channelId: req.params.channelId,
-      message,
-    });
-    res.status(201).json({ message });
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : 'Could not create chat message';
-    res.status(msg === 'Chat channel not found' ? 404 : 400).json({ error: msg });
-  }
-});
-
-app.patch('/api/vaults/:id/channels/:channelId/messages/:messageId', requireAuth, (req: AuthedRequest, res) => {
-  const vault = getVault(db, req.params.id, req.user!.id);
-  if (!vault) return res.status(404).json({ error: 'Vault not found' });
-
-  try {
-    const message = updateChatMessage(
-      db,
-      req.user!.id,
-      vault.id,
-      req.params.channelId,
-      req.params.messageId,
-      req.body as Partial<ChatMessage>,
-    );
-    if (!message) return res.status(404).json({ error: 'Message not found' });
-    emitVaultEvent(vault.id, 'vault:chatMessageUpdated', {
-      vaultId: vault.id,
-      channelId: req.params.channelId,
-      message,
-    });
-    res.json({ message });
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : 'Could not update chat message';
-    res.status(msg === 'Chat channel not found' ? 404 : 400).json({ error: msg });
-  }
-});
-
-app.get('/api/vaults/:id/channels/:channelId/agents', requireAuth, (req: AuthedRequest, res) => {
-  const vault = getVault(db, req.params.id, req.user!.id);
-  if (!vault) return res.status(404).json({ error: 'Vault not found' });
-
-  try {
-    const agents = listChatAgentMembers(db, req.params.channelId, req.user!.id);
-    res.json({ agents });
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : 'Could not load chat agent members';
-    res.status(msg === 'Chat channel not found' ? 404 : 400).json({ error: msg });
-  }
-});
-
-app.put('/api/vaults/:id/channels/:channelId/agents', requireAuth, (req: AuthedRequest, res) => {
-  const vault = getVault(db, req.params.id, req.user!.id);
-  if (!vault) return res.status(404).json({ error: 'Vault not found' });
-
-  try {
-    const registration = upsertChatAgentMember(
-      db,
-      req.user!.id,
-      vault.id,
-      req.params.channelId,
-      req.body as Partial<ChatAgentRegistration>,
-    );
-    emitVaultEvent(vault.id, 'vault:chatAgentMemberUpserted', {
-      vaultId: vault.id,
-      channelId: req.params.channelId,
-      registration,
-    });
-    res.json({ registration });
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : 'Could not save chat agent member';
-    res.status(msg === 'Chat channel not found' ? 404 : 400).json({ error: msg });
-  }
-});
-
-app.delete('/api/vaults/:id/channels/:channelId/agents/:registrationId', requireAuth, (req: AuthedRequest, res) => {
-  const vault = getVault(db, req.params.id, req.user!.id);
-  if (!vault) return res.status(404).json({ error: 'Vault not found' });
-
-  try {
-    const removed = removeChatAgentMember(
-      db,
-      req.user!.id,
-      vault.id,
-      req.params.channelId,
-      req.params.registrationId,
-    );
-    if (!removed) return res.status(404).json({ error: 'Agent member not found' });
-    emitVaultEvent(vault.id, 'vault:chatAgentMemberRemoved', {
-      vaultId: vault.id,
-      channelId: req.params.channelId,
-      registrationId: req.params.registrationId,
-    });
-    res.json({ ok: true });
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : 'Could not remove chat agent member';
-    res.status(msg === 'Chat channel not found' ? 404 : 400).json({ error: msg });
-  }
-});
-
 // ── Agent / Run routes ─────────────────────────────────────────────
 
 app.get('/api/vaults/:id/runs', requireAuth, (req: AuthedRequest, res) => {
@@ -1029,22 +626,13 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
   const vault = getVault(db, req.params.id, req.user!.id);
   if (!vault) return res.status(404).json({ error: 'Vault not found' });
 
-  const { prompt, note_id, agent, conversation_id, images, model, cwd, yolo } = req.body;
+  const { prompt, note_id, agent, conversation_id, images, model } = req.body;
   if (!prompt || !prompt.trim()) {
     return res.status(400).json({ error: 'Prompt is required' });
   }
-  const yoloMode = yolo === true;
 
-  const validAgents = ['claude-code', 'codex', 'grok', 'antigravity', 'copilot', 'hermes'] as const satisfies readonly AgentId[];
-  const selectedAgent: AgentId = validAgents.includes(agent) ? agent : 'claude-code';
-  // Every agent — Claude included — executes on the user's own machine via the
-  // desktop runner relay. The server never runs an LLM itself (no API keys / no
-  // Claude login on the server), it only relays runs to a connected desktop.
-  if (!isDesktopRunnerOnline(req.user!.id)) {
-    return res.status(503).json({
-      error: 'No desktop agent runner is connected. Open Cascade on your computer (signed in to the same account) to run agents from chat.',
-    });
-  }
+  const validAgents = ['claude-code', 'codex', 'grok', 'antigravity', 'copilot', 'hermes'];
+  const selectedAgent = validAgents.includes(agent) ? agent : 'claude-code';
   const removedModelPresets = new Set([
     'codex-flash',
     'codex-pro',
@@ -1057,13 +645,6 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
   const selectedModel = typeof model === 'string' && model.trim() && !removedModelPresets.has(model.trim())
     ? model.trim()
     : undefined;
-  let selectedCwd: string | undefined;
-  if (typeof cwd === 'string' && cwd.trim()) {
-    const rawCwd = cwd.trim();
-    if (!/^(vault\s*root|root|\.\/?)$/i.test(rawCwd)) {
-      selectedCwd = rawCwd;
-    }
-  }
 
   // Sanitize image attachments to { media_type, data } base64 entries.
   const cleanImages = Array.isArray(images)
@@ -1076,42 +657,9 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
   try {
     const run = await startRun(db, vault, note_id || null, prompt, selectedAgent, {
       conversationId: typeof conversation_id === 'string' && conversation_id ? conversation_id : undefined,
-      model: selectedModel,
-    });
-
-    // Link this run to the chat message it's answering so the server can persist
-    // and broadcast the streamed reply itself. Registered before delegation so no
-    // early event is missed.
-    const chatChannelId = typeof req.body?.chat?.channelId === 'string' ? req.body.chat.channelId.trim() : '';
-    const chatMessageId = typeof req.body?.chat?.messageId === 'string' ? req.body.chat.messageId.trim() : '';
-    if (chatChannelId && chatMessageId) {
-      chatRunTargets.set(run.id, {
-        userId: req.user!.id,
-        vaultId: vault.id,
-        channelId: chatChannelId,
-        messageId: chatMessageId,
-      });
-    }
-
-    const delegated = delegateRunToDesktop(req.user!.id, {
-      runId: run.id,
-      vaultId: vault.id,
-      agent: selectedAgent,
-      prompt,
-      cwd: selectedCwd,
-      vaultRoot: vault.root_path,
-      model: selectedModel,
-      resumeSessionId: findPriorSession(db, run),
       images: cleanImages,
-      yolo: yoloMode,
+      model: selectedModel,
     });
-    if (!delegated) {
-      chatRunTargets.delete(run.id);
-      return res.status(503).json({
-        error: 'Desktop agent runner disconnected before the run could start. Open Cascade on your computer and try again.',
-      });
-    }
-
     res.json({ run });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
@@ -1136,12 +684,6 @@ app.get('/api/vaults/:id/widget-data/:key', requireAuth, async (req: AuthedReque
 });
 
 app.post('/api/vaults/:id/widget-command', requireAuth, async (req: AuthedRequest, res) => {
-  if (!WIDGET_SHELL_ENABLED) {
-    return res.status(403).json({
-      error: 'Widget terminal commands are disabled on this server',
-    });
-  }
-
   const vault = getVault(db, req.params.id, req.user!.id);
   if (!vault) return res.status(404).json({ error: 'Vault not found' });
 
@@ -1206,6 +748,22 @@ app.get('/api/runs/:id/events', requireAuth, (req: AuthedRequest, res) => {
   res.json({ events: listRunEvents(db, run.id) });
 });
 
+app.post('/api/runs/:id/messages', requireAuth, async (req: AuthedRequest, res) => {
+  const run = getRun(db, Number(req.params.id));
+  if (!run) return res.status(404).json({ error: 'Run not found' });
+
+  const vault = getVault(db, run.vault_id, req.user!.id);
+  if (!vault) return res.status(403).json({ error: 'Access denied' });
+
+  const { message } = req.body;
+  try {
+    const event = await sendRunMessage(db, run.id, message);
+    res.json({ event });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
 app.post('/api/runs/:id/cancel', requireAuth, async (req: AuthedRequest, res) => {
   const run = getRun(db, Number(req.params.id));
   if (!run) return res.status(404).json({ error: 'Run not found' });
@@ -1221,29 +779,6 @@ app.post('/api/runs/:id/cancel', requireAuth, async (req: AuthedRequest, res) =>
   }
 });
 
-
-// -- Static client ---------------------------------------------------
-
-const clientDistPath = process.env.CASCADE_CLIENT_DIST
-  ? path.resolve(process.env.CASCADE_CLIENT_DIST)
-  : path.resolve(__dirname, '..', 'client', 'dist');
-if (fs.existsSync(clientDistPath)) {
-  app.use(express.static(clientDistPath, {
-    index: false,
-    setHeaders(res, filePath) {
-      if (filePath.endsWith('app.html') || filePath.endsWith('index.html')) {
-        res.setHeader('Cache-Control', 'no-cache');
-      }
-    },
-  }));
-  app.get('*', (req, res, next) => {
-    if (req.path.startsWith('/api') || req.path.startsWith('/socket.io')) return next();
-    const appHtml = path.join(clientDistPath, 'app.html');
-    const indexHtml = path.join(clientDistPath, 'index.html');
-    res.sendFile(fs.existsSync(appHtml) ? appHtml : indexHtml);
-  });
-}
-
 // ── 404 fallback ───────────────────────────────────────────────────
 
 app.use((_req, res) => {
@@ -1252,25 +787,8 @@ app.use((_req, res) => {
 
 // ── Start server ───────────────────────────────────────────────────
 
-httpServer.listen(PORT, HOST, async () => {
-  console.log(`Cascade Notes API running on http://${HOST}:${PORT}`);
+httpServer.listen(PORT, () => {
+  console.log(`Cascade Notes API running on http://localhost:${PORT}`);
   console.log(`SQLite database: ${DB_PATH}`);
-  if (fs.existsSync(clientDistPath)) console.log(`Serving client from ${clientDistPath}`);
   startFeedPoller(db);
-
-  // Watch vault directories for external file changes (e.g. agent edits on disk)
-  // so the SQLite index stays in sync without requiring a manual rescan.
-  const { default: chokidar } = await import('chokidar');
-  const vaultRows = db.prepare('SELECT id, root_path, created_by FROM vaults').all() as {
-    id: string; root_path: string; created_by: number;
-  }[];
-  for (const vault of vaultRows) {
-    if (!fs.existsSync(vault.root_path)) continue;
-    chokidar
-      .watch(vault.root_path, { ignoreInitial: true, awaitWriteFinish: { stabilityThreshold: 300 } })
-      .on('add', () => rescanVault(db, vault.id, vault.created_by))
-      .on('change', () => rescanVault(db, vault.id, vault.created_by))
-      .on('unlink', () => rescanVault(db, vault.id, vault.created_by));
-    console.log(`Watching vault ${vault.id} at ${vault.root_path}`);
-  }
 });

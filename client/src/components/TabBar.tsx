@@ -12,16 +12,14 @@
  */
 
 import { useState, useEffect } from 'react';
-import { Globe, FileText, Columns, X, Plus, Terminal, Hash } from 'lucide-react';
+import { Globe, FileText, Columns, X, Plus } from 'lucide-react';
 
 export interface Tab {
   id: string;
   title: string;
-  type: 'note' | 'web' | 'terminal' | 'chat';
+  type: 'note' | 'web';
   dirty?: boolean;
   url?: string;
-  terminalHistory?: string;
-  isChatNote?: boolean;
 }
 
 interface TabBarProps {
@@ -105,10 +103,6 @@ export function TabBar({
             <span className="tab-icon">
               {tab.type === 'web' ? (
                 <Globe size={13} className="text-secondary" style={{ marginRight: '6px' }} />
-              ) : tab.type === 'terminal' ? (
-                <Terminal size={13} className="text-secondary" style={{ marginRight: '6px' }} />
-              ) : tab.type === 'chat' ? (
-                <Hash size={13} className="text-secondary" style={{ marginRight: '6px' }} />
               ) : (
                 <FileText size={13} className="text-tertiary" style={{ marginRight: '6px' }} />
               )}

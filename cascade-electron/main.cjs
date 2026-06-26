@@ -539,7 +539,7 @@ async function configureWebviewSession() {
 /**
  * Creates the main application window with security-hardened webPreferences.
  * Sets up navigation guards, keyboard shortcuts, and window lifecycle
- * handlers. In production the window loads https://netar.is; in development
+ * handlers. In production the window loads https://cscd.online; in development
  * it loads the URL specified by the `--APP_URL=` CLI flag (defaults to
  * http://localhost:5173).
  */
@@ -600,14 +600,21 @@ function runUpdateCommand(command, args, cwd) {
 
 async function updateDesktopFromSource() {
   const root = getProjectRoot();
-  const npmBin = process.platform === 'win32' ? 'npm.cmd' : 'npm';
   const gitBin = process.platform === 'win32' ? 'git.exe' : 'git';
 
+  // The desktop shell loads its UI from the remote server (cscd.online), and
+  // client/dist is committed, so an update only needs the latest source +
+  // a restart — no local npm install or build is required. Stash any local
+  // changes first so a dirty working tree can't abort the fast-forward pull,
+  // then restore them afterward.
+  const stashOut = await runUpdateCommand(gitBin, ['stash', '--include-untracked'], root);
+  const didStash = !/No local changes to save/i.test(stashOut);
+
   await runUpdateCommand(gitBin, ['pull', '--ff-only'], root);
-  await runUpdateCommand(npmBin, ['install'], root);
-  await runUpdateCommand(npmBin, ['install'], path.join(root, 'cascade-electron'));
-  await runUpdateCommand(npmBin, ['run', 'build'], root);
-  await runUpdateCommand(npmBin, ['run', 'build:client'], root);
+
+  if (didStash) {
+    await runUpdateCommand(gitBin, ['stash', 'pop'], root);
+  }
 
   app.relaunch();
   app.exit(0);
@@ -625,8 +632,6 @@ function isAllowedNavHost(hostname) {
   return (
     hostname === 'cscd.online' ||
     hostname.endsWith('.cscd.online') ||
-    hostname === 'netar.is' ||
-    hostname.endsWith('.netar.is') ||
     hostname === 'localhost' ||
     hostname === '127.0.0.1'
   );
@@ -727,7 +732,7 @@ function configureWindow(win) {
     });
   });
 
-  // Block navigation to sites outside netar.is / local dev.
+  // Block navigation to sites outside cscd.online / local dev.
   win.webContents.on('will-navigate', (event, url) => {
     try {
       if (!isAllowedNavHost(new URL(url).hostname)) {
@@ -786,7 +791,7 @@ function configureWindow(win) {
 
 /**
  * Creates the main application window with security-hardened webPreferences.
- * In production it loads https://netar.is; in development the `--APP_URL=` URL.
+ * In production it loads https://cscd.online; in development the `--APP_URL=` URL.
  */
 async function createWindow() {
   Menu.setApplicationMenu(buildApplicationMenu());

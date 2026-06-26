@@ -1,7 +1,7 @@
 /**
  * @file WebView.tsx — Embedded web browser component
  *
- * Renders a website inside the app using Electron's native WebContentsView when running
+ * Renders a website inside the app using Electron's <webview> tag when running
  * in Electron, or an <iframe> fallback when running in a regular browser (dev mode).
  *
  * Features:
@@ -10,77 +10,35 @@
  * - Error state with retry button
  * - Title change tracking (reported to parent for tab title updates)
  *
- * WebContentsView is preferred over <webview> or <iframe> because it is a native
- * Chromium child window managed directly by the main process, providing complete compatibility
- * with complex sites like Discord and high performance.
+ * Electron's <webview> is preferred over <iframe> because it works with any URL
+ * (no X-Frame-Options / CSP restrictions), runs in a separate process (security),
+ * and provides navigation APIs (canGoBack, goBack, etc.).
  *
  * @component
  */
 
 import { useEffect, useRef, useState, useCallback, type FormEvent } from 'react';
-import { ArrowLeft, ArrowRight, RotateCw, ExternalLink, Globe, AlertTriangle, Shield, ShieldOff } from 'lucide-react';
+import { ArrowLeft, ArrowRight, RotateCw, ExternalLink, Globe, AlertTriangle } from 'lucide-react';
 
 // ═══════════════════════════════════════════════════════════════
 // TYPES
 // ═══════════════════════════════════════════════════════════════
 
 interface WebViewProps {
-  /** Unique ID for the tab session */
-  tabId: string;
   /** The URL to load in the web view */
   url: string;
-  /**
-   * Whether this tab is currently visible/focused.
-   */
-  active?: boolean;
   /** Called when the page navigates to a new URL */
   onNavigate?: (url: string) => void;
   /** Called when the page title changes (used to update tab title) */
   onTitleChange?: (title: string) => void;
-  /** Whether the tab is a chat note and should hide UI elements */
-  isChatNote?: boolean;
-}
-
-type ElectronApi = {
-  openExternal?: (url: string) => Promise<{ success: boolean; error?: string }>;
-  getAdBlockState?: (url: string) => Promise<AdBlockStateResult>;
-  setAdBlockSiteEnabled?: (input: { url: string; enabled: boolean }) => Promise<AdBlockStateResult>;
-  createView?: (tabId: string, isChatNote?: boolean) => Promise<{ success: boolean; adopted?: boolean; error?: string }>;
-  setChatNote?: (tabId: string, isChatNote: boolean) => Promise<{ success: boolean; error?: string }>;
-  setViewBounds?: (tabId: string, bounds: { x: number; y: number; width: number; height: number }) => Promise<{ success: boolean; error?: string }>;
-  setViewVisible?: (tabId: string, visible: boolean) => Promise<{ success: boolean; error?: string }>;
-  destroyView?: (tabId: string) => Promise<{ success: boolean; error?: string }>;
-  loadURL?: (tabId: string, url: string) => Promise<{ success: boolean; error?: string }>;
-  goBack?: (tabId: string) => Promise<{ success: boolean; error?: string }>;
-  goForward?: (tabId: string) => Promise<{ success: boolean; error?: string }>;
-  reload?: (tabId: string) => Promise<{ success: boolean; error?: string }>;
-  onBrowserEvent?: (callback: (payload: any) => void) => () => void;
-};
-
-type AdBlockStateResult = {
-  success: boolean;
-  site?: string;
-  enabled?: boolean;
-  blockerReady?: boolean;
-  error?: string;
-};
-
-type AdBlockState = {
-  site: string;
-  enabled: boolean;
-  blockerReady: boolean;
-  unavailable?: boolean;
-};
-
-function getElectronApi(): ElectronApi | undefined {
-  return (window as unknown as { electronAPI?: ElectronApi }).electronAPI;
 }
 
 /**
- * Checks if the app is running inside Electron.
+ * Checks if the app is running inside Electron (webview tag available).
+ * We detect this by checking for the electronAPI exposed via preload.
  */
 function isElectron(): boolean {
-  return !!getElectronApi();
+  return !!(window as unknown as { electronAPI?: unknown }).electronAPI;
 }
 
 /**
@@ -102,23 +60,12 @@ function normalizeUrlInput(value: string): string {
   return `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`;
 }
 
-function normalizeSite(value: string): string {
-  try {
-    const parsedUrl = /^[a-z][a-z\d+.-]*:/i.test(value)
-      ? new URL(value)
-      : new URL(`https://${value}`);
-    return parsedUrl.hostname.toLowerCase().replace(/^www\./, '');
-  } catch {
-    return '';
-  }
-}
-
 // ═══════════════════════════════════════════════════════════════
 // COMPONENT
 // ═══════════════════════════════════════════════════════════════
 
-export function WebView({ tabId, url, active = true, onNavigate, onTitleChange, isChatNote }: WebViewProps) {
-  const placeholderRef = useRef<HTMLDivElement | null>(null);
+export function WebView({ url, onNavigate, onTitleChange }: WebViewProps) {
+  const webviewRef = useRef<HTMLElement | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
 
   const [currentUrl, setCurrentUrl] = useState(url);
@@ -129,14 +76,11 @@ export function WebView({ tabId, url, active = true, onNavigate, onTitleChange, 
   const [canGoForward, setCanGoForward] = useState(false);
   const [hasError, setHasError] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
-  const [adBlockState, setAdBlockState] = useState<AdBlockState | null>(null);
 
   const useWebview = isElectron();
 
   const currentUrlRef = useRef(currentUrl);
   currentUrlRef.current = currentUrl;
-  const activeRef = useRef(active);
-  activeRef.current = active;
   const lastInternalNavigationUrlRef = useRef<string | null>(null);
   const didAutoEditBlankRef = useRef(false);
 
@@ -150,251 +94,79 @@ export function WebView({ tabId, url, active = true, onNavigate, onTitleChange, 
     setIsEditingUrl(true);
   }, [currentUrl]);
 
-  useEffect(() => {
-    const electronApi = getElectronApi();
-    const site = normalizeSite(currentUrl);
-
-    if (!useWebview || currentUrl === 'about:blank' || !site) {
-      setAdBlockState(null);
-      return;
+  const safeGetWebviewUrl = useCallback((wv: HTMLElement & { getURL?: () => string }) => {
+    try {
+      return typeof wv.getURL === 'function' ? wv.getURL() : '';
+    } catch {
+      return '';
     }
+  }, []);
 
-    if (!electronApi?.getAdBlockState) {
-      setAdBlockState({ site, enabled: false, blockerReady: false, unavailable: true });
-      return;
-    }
-
-    let cancelled = false;
-    void electronApi.getAdBlockState(currentUrl)
-      .then((result) => {
-        if (cancelled) return;
-        if (result.success && result.site && typeof result.enabled === 'boolean') {
-          setAdBlockState({
-            site: result.site,
-            enabled: result.enabled,
-            blockerReady: Boolean(result.blockerReady),
-          });
-        } else {
-          setAdBlockState({ site, enabled: false, blockerReady: false, unavailable: true });
-        }
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        console.error('[WebView] Failed to read adblock state:', error);
-        setAdBlockState({ site, enabled: false, blockerReady: false, unavailable: true });
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [useWebview, currentUrl]);
-
-  // 1. Lifecycle and Visibility
-  useEffect(() => {
-    if (!useWebview) return;
-    const electronApi = getElectronApi();
-    if (!electronApi?.createView || !electronApi?.destroyView || !electronApi?.setViewVisible) return;
-
-    void electronApi.createView(tabId, isChatNote).then((res) => {
-      if (res && res.adopted) {
-        return;
-      }
-      if (url && url !== 'about:blank') {
-        void electronApi.loadURL?.(tabId, url);
-      }
+  const logWebview = useCallback((eventName: string, detail: Record<string, unknown> = {}) => {
+    console.log('[WebView]', eventName, {
+      propUrl: url,
+      currentUrl: currentUrlRef.current,
+      ...detail,
     });
+  }, [url]);
 
-    return () => {
-      void electronApi.destroyView?.(tabId);
-    };
-  }, [useWebview, tabId]);
-
-  // Propagate isChatNote changes to Electron
+  // Load the URL by imperatively setting the `src` attribute. Keeping `src` in
+  // JSX lets React mutate the custom element after internal webview navigations,
+  // which reloads login flows such as x.com's username/password steps.
   useEffect(() => {
-    if (!useWebview) return;
-    const electronApi = getElectronApi();
-    if (electronApi?.setChatNote) {
-      void electronApi.setChatNote(tabId, !!isChatNote);
-    }
-  }, [useWebview, tabId, isChatNote]);
+    if (!useWebview || !webviewRef.current) return;
+    const wv = webviewRef.current as HTMLElement & { getURL?: () => string };
+    const loadedUrl = safeGetWebviewUrl(wv);
+    const attrUrl = wv.getAttribute('src') || '';
 
-  // Sync active visibility state
-  useEffect(() => {
-    if (!useWebview) return;
-    const electronApi = getElectronApi();
-    void electronApi?.setViewVisible?.(tabId, active);
-  }, [useWebview, tabId, active]);
-
-  // 2. Bounds Synchronization
-  useEffect(() => {
-    if (!useWebview) return;
-    const electronApi = getElectronApi();
-    if (!electronApi?.setViewBounds) return;
-
-    let lastBounds = { x: 0, y: 0, width: 0, height: 0 };
-
-    const updateBounds = () => {
-      const el = placeholderRef.current;
-      if (!el) return;
-      const rect = el.getBoundingClientRect();
-      const nextBounds = {
-        x: rect.left,
-        y: rect.top,
-        width: rect.width,
-        height: rect.height
-      };
-
-      if (
-        nextBounds.x !== lastBounds.x ||
-        nextBounds.y !== lastBounds.y ||
-        nextBounds.width !== lastBounds.width ||
-        nextBounds.height !== lastBounds.height
-      ) {
-        lastBounds = nextBounds;
-        void electronApi.setViewBounds?.(tabId, nextBounds);
-      }
-    };
-
-    updateBounds();
-
-    window.addEventListener('resize', updateBounds);
-    const observer = new ResizeObserver(() => updateBounds());
-    const el = placeholderRef.current;
-    if (el) observer.observe(el);
-
-    let pollTimer: any;
-    if (active) {
-      pollTimer = setInterval(updateBounds, 100);
-    }
-
-    return () => {
-      window.removeEventListener('resize', updateBounds);
-      observer.disconnect();
-      if (pollTimer) clearInterval(pollTimer);
-    };
-  }, [useWebview, tabId, active]);
-
-  // 3. Prop URL Changes (excluding internal navigations)
-  useEffect(() => {
-    if (!useWebview) return;
-    const electronApi = getElectronApi();
-
+    // The `src` attribute does not track same-tab navigations. Comparing
+    // against it after `did-navigate` causes SPA/login redirects to be loaded
+    // again from scratch, which breaks flows such as x.com's username submit.
     if (lastInternalNavigationUrlRef.current === url) {
+      logWebview('skip-prop-load-internal-navigation', { loadedUrl, attrUrl });
       lastInternalNavigationUrlRef.current = null;
       return;
     }
 
-    if (currentUrl !== url) {
-      setCurrentUrl(url);
-      void electronApi?.loadURL?.(tabId, url);
+    if (loadedUrl === url || attrUrl === url) {
+      logWebview('skip-prop-load-same-url', { loadedUrl, attrUrl });
+      return;
     }
-  }, [useWebview, tabId, url]);
 
-  // 4. Browser Event Listener
-  useEffect(() => {
-    if (!useWebview) return;
-    const electronApi = getElectronApi();
-    if (!electronApi?.onBrowserEvent) return;
-
-    const unsubscribe = electronApi.onBrowserEvent((payload) => {
-      if (payload.tabId !== tabId) return;
-
-      switch (payload.type) {
-        case 'navigate':
-          lastInternalNavigationUrlRef.current = payload.url;
-          setCurrentUrl(payload.url);
-          onNavigate?.(payload.url);
-          setHasError(false);
-          break;
-        case 'title':
-          onTitleChange?.(payload.title);
-          break;
-        case 'loading':
-          setIsLoading(payload.isLoading);
-          if (payload.isLoading) setHasError(false);
-          break;
-        case 'backforward':
-          setCanGoBack(payload.canGoBack);
-          setCanGoForward(payload.canGoForward);
-          break;
-        case 'fail':
-          setHasError(true);
-          setErrorMessage(payload.errorDescription);
-          setIsLoading(false);
-          break;
-      }
-    });
-
-    return () => {
-      unsubscribe();
-    };
-  }, [useWebview, tabId, onNavigate, onTitleChange]);
+    logWebview('set-src-from-prop', { loadedUrl, attrUrl, nextUrl: url });
+    setCurrentUrl(url);
+    wv.setAttribute('src', url);
+  }, [useWebview, url, safeGetWebviewUrl, logWebview]);
 
   // ─── Navigation Controls ────────────────────────────────
   const goBack = useCallback(() => {
-    if (useWebview) {
-      void getElectronApi()?.goBack?.(tabId);
+    const wv = webviewRef.current as any;
+    if (useWebview && wv && typeof wv.goBack === 'function') {
+      wv.goBack();
     }
-  }, [useWebview, tabId]);
+  }, [useWebview]);
 
   const goForward = useCallback(() => {
-    if (useWebview) {
-      void getElectronApi()?.goForward?.(tabId);
+    const wv = webviewRef.current as any;
+    if (useWebview && wv && typeof wv.goForward === 'function') {
+      wv.goForward();
     }
-  }, [useWebview, tabId]);
+  }, [useWebview]);
 
   const reload = useCallback(() => {
     setHasError(false);
     setIsLoading(true);
-    if (useWebview) {
-      void getElectronApi()?.reload?.(tabId);
+    const wv = webviewRef.current as any;
+    if (useWebview && wv && typeof wv.reload === 'function') {
+      wv.reload();
     } else if (iframeRef.current) {
       iframeRef.current.src = currentUrl;
     }
-  }, [useWebview, currentUrl, tabId]);
-
-  const reloadIgnoringCache = useCallback(() => {
-    setHasError(false);
-    setIsLoading(true);
-    reload();
-  }, [reload]);
+  }, [useWebview, currentUrl]);
 
   const openExternal = useCallback(() => {
-    const electronApi = getElectronApi();
-
-    if (electronApi?.openExternal) {
-      void electronApi.openExternal(currentUrl).then((result) => {
-        if (!result.success) console.error('[WebView] Failed to open external URL:', result.error);
-      });
-      return;
-    }
-
-    window.open(currentUrl, '_blank', 'noopener,noreferrer');
+    window.open(currentUrl, '_blank');
   }, [currentUrl]);
-
-  const toggleAdBlockForSite = useCallback(() => {
-    const electronApi = getElectronApi();
-    if (!electronApi?.setAdBlockSiteEnabled || !adBlockState || adBlockState.unavailable) return;
-
-    const nextEnabled = !adBlockState.enabled;
-    void electronApi.setAdBlockSiteEnabled({ url: currentUrl, enabled: nextEnabled })
-      .then((result) => {
-        if (!result.success || !result.site || typeof result.enabled !== 'boolean') {
-          console.error('[WebView] Failed to update adblock state:', result.error);
-          return;
-        }
-
-        setAdBlockState({
-          site: result.site,
-          enabled: result.enabled,
-          blockerReady: Boolean(result.blockerReady),
-        });
-        reloadIgnoringCache();
-      })
-      .catch((error) => {
-        console.error('[WebView] Failed to update adblock state:', error);
-      });
-  }, [adBlockState, currentUrl, reloadIgnoringCache]);
 
   const beginUrlEdit = useCallback(() => {
     setUrlDraft(currentUrl);
@@ -417,10 +189,112 @@ export function WebView({ tabId, url, active = true, onNavigate, onTitleChange, 
     setIsEditingUrl(false);
     setCurrentUrl(nextUrl);
     onNavigate?.(nextUrl);
-    if (useWebview) {
-      void getElectronApi()?.loadURL?.(tabId, nextUrl);
-    }
-  }, [urlDraft, cancelUrlEdit, onNavigate, useWebview, tabId]);
+  }, [urlDraft, cancelUrlEdit, onNavigate]);
+
+  // ─── Webview Event Listeners ────────────────────────────
+  useEffect(() => {
+    if (!useWebview || !webviewRef.current) return;
+    const wv = webviewRef.current as any;
+
+    const handleStartLoading = () => {
+      logWebview('did-start-loading', { loadedUrl: safeGetWebviewUrl(wv) });
+      setIsLoading(true);
+      setHasError(false);
+    };
+
+    const handleStopLoading = () => {
+      logWebview('did-stop-loading', { loadedUrl: safeGetWebviewUrl(wv) });
+      setIsLoading(false);
+    };
+
+    const handleNavigate = (event: any) => {
+      const newUrl = event.url || safeGetWebviewUrl(wv) || currentUrlRef.current;
+      lastInternalNavigationUrlRef.current = newUrl;
+      logWebview(event.type || 'navigate', {
+        eventUrl: event.url,
+        loadedUrl: safeGetWebviewUrl(wv),
+        isMainFrame: event.isMainFrame,
+      });
+      setCurrentUrl(newUrl);
+      setCanGoBack(typeof wv.canGoBack === 'function' ? wv.canGoBack() : false);
+      setCanGoForward(typeof wv.canGoForward === 'function' ? wv.canGoForward() : false);
+      onNavigate?.(newUrl);
+    };
+
+    const handleNavigationDetail = (event: any) => {
+      logWebview(event.type || 'navigation-detail', {
+        eventUrl: event.url,
+        loadedUrl: safeGetWebviewUrl(wv),
+        isMainFrame: event.isMainFrame,
+        isInPlace: event.isInPlace,
+        isSameDocument: event.isSameDocument,
+        httpResponseCode: event.httpResponseCode,
+      });
+    };
+
+    const handleTitleUpdate = (event: any) => {
+      logWebview('page-title-updated', { title: event.title, loadedUrl: safeGetWebviewUrl(wv) });
+      if (event.title) {
+        onTitleChange?.(event.title);
+      }
+    };
+
+    const handleFailLoad = (event: any) => {
+      if (event.errorCode === -3) return; // ERR_ABORTED
+      if (event.isMainFrame === false) return; // ignore subframe/subresource failures
+      logWebview('did-fail-load', {
+        eventUrl: event.validatedURL || event.url,
+        loadedUrl: safeGetWebviewUrl(wv),
+        errorCode: event.errorCode,
+        errorDescription: event.errorDescription,
+        isMainFrame: event.isMainFrame,
+      });
+      setHasError(true);
+      setIsLoading(false);
+      setErrorMessage(`${event.errorDescription || 'Failed to load page'} (Error: ${event.errorCode})`);
+      console.error('[WebView Load Failure]', event);
+    };
+
+    const handleConsoleMessage = (event: any) => {
+      console.log('[WebView Console]', {
+        level: event.level,
+        line: event.line,
+        sourceId: event.sourceId,
+        message: event.message,
+        loadedUrl: safeGetWebviewUrl(wv),
+      });
+    };
+
+    // Diagnostics — visible in the main window's DevTools (Debug → Toggle DevTools).
+    const handleDomReady = () => logWebview('dom-ready', { loadedUrl: safeGetWebviewUrl(wv) });
+    const handleFinishLoad = () => logWebview('did-finish-load', { loadedUrl: safeGetWebviewUrl(wv) });
+
+    wv.addEventListener('did-start-loading', handleStartLoading);
+    wv.addEventListener('did-stop-loading', handleStopLoading);
+    wv.addEventListener('did-start-navigation', handleNavigationDetail);
+    wv.addEventListener('did-redirect-navigation', handleNavigationDetail);
+    wv.addEventListener('did-navigate', handleNavigate);
+    wv.addEventListener('did-navigate-in-page', handleNavigate);
+    wv.addEventListener('page-title-updated', handleTitleUpdate);
+    wv.addEventListener('did-fail-load', handleFailLoad);
+    wv.addEventListener('console-message', handleConsoleMessage);
+    wv.addEventListener('dom-ready', handleDomReady);
+    wv.addEventListener('did-finish-load', handleFinishLoad);
+
+    return () => {
+      wv.removeEventListener('did-start-loading', handleStartLoading);
+      wv.removeEventListener('did-stop-loading', handleStopLoading);
+      wv.removeEventListener('did-start-navigation', handleNavigationDetail);
+      wv.removeEventListener('did-redirect-navigation', handleNavigationDetail);
+      wv.removeEventListener('did-navigate', handleNavigate);
+      wv.removeEventListener('did-navigate-in-page', handleNavigate);
+      wv.removeEventListener('page-title-updated', handleTitleUpdate);
+      wv.removeEventListener('did-fail-load', handleFailLoad);
+      wv.removeEventListener('console-message', handleConsoleMessage);
+      wv.removeEventListener('dom-ready', handleDomReady);
+      wv.removeEventListener('did-finish-load', handleFinishLoad);
+    };
+  }, [useWebview, onNavigate, onTitleChange]);
 
   // ─── Iframe fallback: handle load/error ─────────────────
   const handleIframeLoad = useCallback(() => {
@@ -433,6 +307,8 @@ export function WebView({ tabId, url, active = true, onNavigate, onTitleChange, 
     setHasError(true);
     setErrorMessage('This site may not allow embedding in iframes. Try opening externally.');
   }, []);
+
+  // ─── Render ─────────────────────────────────────────────
 
   return (
     <div className="webview-container" id="webview-container">
@@ -484,20 +360,6 @@ export function WebView({ tabId, url, active = true, onNavigate, onTitleChange, 
           />
         </form>
 
-        {useWebview && adBlockState && (
-          <button
-            className={`btn-icon webview-nav-btn webview-adblock-btn${adBlockState.enabled ? ' is-active' : ''}`}
-            onClick={toggleAdBlockForSite}
-            disabled={adBlockState.unavailable}
-            title={adBlockState.unavailable
-              ? 'Ad blocking controls require restarting Cascade'
-              : `${adBlockState.enabled ? 'Disable' : 'Enable'} ad blocking for ${adBlockState.site}`}
-            aria-pressed={adBlockState.enabled}
-          >
-            {adBlockState.enabled ? <Shield size={14} /> : <ShieldOff size={14} />}
-          </button>
-        )}
-
         <button
           className="btn-icon webview-nav-btn"
           onClick={openExternal}
@@ -530,11 +392,15 @@ export function WebView({ tabId, url, active = true, onNavigate, onTitleChange, 
       {/* Web Content */}
       {!hasError && (
         useWebview ? (
-          /* WebContentsView placeholder wrapper */
-          <div
-            ref={placeholderRef}
+          /* Electron webview — src present at attach (most reliable first load),
+             with the effect above as a safety net for URL changes. */
+          <webview
+            ref={webviewRef as any}
             className="webview-frame"
-            style={{ width: '100%', height: '100%', display: 'flex' }}
+            allowpopups="true"
+            {...{
+              partition: 'persist:webview',
+            } as any}
           />
         ) : (
           /* Iframe fallback for browser-based development */

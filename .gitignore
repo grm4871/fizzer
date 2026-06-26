@@ -6,11 +6,6 @@ dist/
 client/dist/
 build/
 out/
-android/.gradle/
-android/app/build/
-android/build/
-android/local.properties
-android/capacitor-cordova-android-plugins/build/
 coverage/
 .vite/
 
