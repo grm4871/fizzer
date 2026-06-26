@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Activity, Bot, Brain, ChevronRight, Hash, ImagePlus, Paperclip, Plus, Reply, Send, Square, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -177,6 +177,8 @@ export function buildReplyRef(message: ChatMessage, registeredAgents: ChatAgentR
   };
 }
 
+const CHAT_MARKDOWN_PLUGINS = [remarkGfm, remarkBreaks];
+
 function formatChatMentions(text: string, aliases: string[]): ReactNode[] {
   const mentionable = [...new Set(
     aliases.map((alias) => normalizeMention(alias)).filter(Boolean),
@@ -203,7 +205,11 @@ function formatChatMentions(text: string, aliases: string[]): ReactNode[] {
   return nodes.length > 0 ? nodes : [text];
 }
 
-function ChatMessageText({
+function aliasesEqual(a: string[], b: string[]) {
+  return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
+const ChatMessageText = memo(function ChatMessageText({
   body,
   mentionableAliases,
 }: {
@@ -226,11 +232,11 @@ function ChatMessageText({
   }), [withMentions]);
 
   return (
-    <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={components}>
+    <ReactMarkdown remarkPlugins={CHAT_MARKDOWN_PLUGINS} components={components}>
       {body}
     </ReactMarkdown>
   );
-}
+}, (prev, next) => prev.body === next.body && aliasesEqual(prev.mentionableAliases, next.mentionableAliases));
 
 export function canGroupChatMessages(a: ChatMessage, b: ChatMessage) {
   if (a.author.trim() !== b.author.trim()) return false;

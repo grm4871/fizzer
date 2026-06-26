@@ -16,3 +16,5 @@ When asked to deploy changes, always:
 
 1. **Commit and push** your working tree.
 2. **Run the private deploy script**: `./.private/deploy-cscd-online.sh` (untracked, in `.private/`). It POSTs to the server's `/api/deploy` endpoint with the deploy token; the host watcher then fast-forwards to the pushed commit and runs `deploy/deploy.sh`. (`deploy/deploy.sh` itself needs root and is not run directly.)
+
+Once the script returns `queued`, the deploy is handed off — **do not poll the deploy status or the live bundle**. Consider the task done after queuing.

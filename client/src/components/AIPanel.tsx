@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { memo, useState, useCallback, useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import type { Note } from '../api';
@@ -262,7 +262,7 @@ function ToolView({ block, result }: { block: ChatBlock; result?: ChatBlock }) {
   );
 }
 
-function MessageBlocks({ msg }: { msg: ChatMessage }) {
+const MessageBlocks = memo(function MessageBlocks({ msg }: { msg: ChatMessage }) {
   // Build a lookup of tool results by tool_use id so each tool card can show its output.
   const resultMap = new Map<string, ChatBlock>();
   for (const b of msg.blocks || []) {
@@ -298,7 +298,7 @@ function MessageBlocks({ msg }: { msg: ChatMessage }) {
       })}
     </>
   );
-}
+});
 
 // ---------------------------------------------------------------------------
 // Main panel

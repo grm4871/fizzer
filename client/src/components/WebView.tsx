@@ -60,6 +60,8 @@ function normalizeUrlInput(value: string): string {
   return `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`;
 }
 
+const BROWSER_DEBUG = import.meta.env.VITE_CASCADE_BROWSER_DEBUG === 'true';
+
 // ═══════════════════════════════════════════════════════════════
 // COMPONENT
 // ═══════════════════════════════════════════════════════════════
@@ -103,6 +105,7 @@ export function WebView({ url, onNavigate, onTitleChange }: WebViewProps) {
   }, []);
 
   const logWebview = useCallback((eventName: string, detail: Record<string, unknown> = {}) => {
+    if (!BROWSER_DEBUG) return;
     console.log('[WebView]', eventName, {
       propUrl: url,
       currentUrl: currentUrlRef.current,
@@ -252,10 +255,11 @@ export function WebView({ url, onNavigate, onTitleChange }: WebViewProps) {
       setHasError(true);
       setIsLoading(false);
       setErrorMessage(`${event.errorDescription || 'Failed to load page'} (Error: ${event.errorCode})`);
-      console.error('[WebView Load Failure]', event);
+      if (BROWSER_DEBUG) console.error('[WebView Load Failure]', event);
     };
 
     const handleConsoleMessage = (event: any) => {
+      if (!BROWSER_DEBUG) return;
       console.log('[WebView Console]', {
         level: event.level,
         line: event.line,
@@ -277,7 +281,7 @@ export function WebView({ url, onNavigate, onTitleChange }: WebViewProps) {
     wv.addEventListener('did-navigate-in-page', handleNavigate);
     wv.addEventListener('page-title-updated', handleTitleUpdate);
     wv.addEventListener('did-fail-load', handleFailLoad);
-    wv.addEventListener('console-message', handleConsoleMessage);
+    if (BROWSER_DEBUG) wv.addEventListener('console-message', handleConsoleMessage);
     wv.addEventListener('dom-ready', handleDomReady);
     wv.addEventListener('did-finish-load', handleFinishLoad);
 
@@ -290,11 +294,11 @@ export function WebView({ url, onNavigate, onTitleChange }: WebViewProps) {
       wv.removeEventListener('did-navigate-in-page', handleNavigate);
       wv.removeEventListener('page-title-updated', handleTitleUpdate);
       wv.removeEventListener('did-fail-load', handleFailLoad);
-      wv.removeEventListener('console-message', handleConsoleMessage);
+      if (BROWSER_DEBUG) wv.removeEventListener('console-message', handleConsoleMessage);
       wv.removeEventListener('dom-ready', handleDomReady);
       wv.removeEventListener('did-finish-load', handleFinishLoad);
     };
-  }, [useWebview, onNavigate, onTitleChange]);
+  }, [useWebview, onNavigate, onTitleChange, logWebview, safeGetWebviewUrl]);
 
   // ─── Iframe fallback: handle load/error ─────────────────
   const handleIframeLoad = useCallback(() => {

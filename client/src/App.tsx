@@ -248,6 +248,21 @@ type PaneRect = { left: number; top: number; width: number; height: number };
 type NoteEntry = { note: Note; draft: string };
 type AgentId = 'claude-code' | 'codex' | 'grok' | 'antigravity' | 'copilot' | 'hermes';
 
+function paneRectsEqual(a: Record<string, PaneRect>, b: Record<string, PaneRect>) {
+  const aKeys = Object.keys(a);
+  const bKeys = Object.keys(b);
+  if (aKeys.length !== bKeys.length) return false;
+  return aKeys.every((key) => {
+    const left = a[key];
+    const right = b[key];
+    return Boolean(right)
+      && left.left === right.left
+      && left.top === right.top
+      && left.width === right.width
+      && left.height === right.height;
+  });
+}
+
 const CHAT_AGENTS: Array<{ id: AgentId; label: string }> = [
   { id: 'claude-code', label: 'Claude' },
   { id: 'codex', label: 'Codex' },
@@ -520,11 +535,12 @@ export default function App() {
   const activeTabId = focusedPane.activeTabId;
   const activeTab = openTabs.find((t) => t.id === activeTabId);
   const currentUsername = user?.username ?? '';
+  const noteTitleById = useMemo(() => new Map(notes.map((note) => [note.id, note.title])), [notes]);
 
   const runningChatAgents = useMemo(() => {
     const entries: RunningChatAgent[] = [];
     for (const [channelId, messages] of Object.entries(chatState.messagesByChannel)) {
-      const channelName = notes.find((note) => note.id === channelId)?.title || 'channel';
+      const channelName = noteTitleById.get(channelId) || 'channel';
       for (const message of messages) {
         if (message.status !== 'running') continue;
         entries.push({
@@ -538,7 +554,7 @@ export default function App() {
       }
     }
     return entries;
-  }, [chatState.messagesByChannel, notes]);
+  }, [chatState.messagesByChannel, noteTitleById]);
 
   // Refs mirror the latest state so event handlers stay stable (no dep churn)
   // and never read a stale closure during drags / async work.
@@ -574,6 +590,7 @@ export default function App() {
   const editorAreaRef = useRef<HTMLDivElement>(null);
   const paneElsRef = useRef<Map<string, HTMLDivElement>>(new Map());
   const [paneRects, setPaneRects] = useState<Record<string, PaneRect>>({});
+  const measureFrameRef = useRef<number | null>(null);
 
   const registerPaneContent = useCallback((paneId: string, el: HTMLDivElement | null) => {
     if (el) paneElsRef.current.set(paneId, el);
@@ -581,6 +598,28 @@ export default function App() {
   }, []);
 
   const measurePanes = useCallback(() => {
+    if (measureFrameRef.current != null) cancelAnimationFrame(measureFrameRef.current);
+    measureFrameRef.current = requestAnimationFrame(() => {
+      measureFrameRef.current = null;
+      const area = editorAreaRef.current;
+      if (!area) return;
+      const areaRect = area.getBoundingClientRect();
+      const next: Record<string, PaneRect> = {};
+      paneElsRef.current.forEach((el, id) => {
+        if (!el.isConnected) return;
+        const r = el.getBoundingClientRect();
+        next[id] = {
+          left: Math.round(r.left - areaRect.left),
+          top: Math.round(r.top - areaRect.top),
+          width: Math.round(r.width),
+          height: Math.round(r.height),
+        };
+      });
+      setPaneRects((prev) => (paneRectsEqual(prev, next) ? prev : next));
+    });
+  }, []);
+
+  const measurePanesNow = useCallback(() => {
     const area = editorAreaRef.current;
     if (!area) return;
     const areaRect = area.getBoundingClientRect();
@@ -588,13 +627,18 @@ export default function App() {
     paneElsRef.current.forEach((el, id) => {
       if (!el.isConnected) return;
       const r = el.getBoundingClientRect();
-      next[id] = { left: r.left - areaRect.left, top: r.top - areaRect.top, width: r.width, height: r.height };
+      next[id] = {
+        left: Math.round(r.left - areaRect.left),
+        top: Math.round(r.top - areaRect.top),
+        width: Math.round(r.width),
+        height: Math.round(r.height),
+      };
     });
-    setPaneRects(next);
+    setPaneRects((prev) => (paneRectsEqual(prev, next) ? prev : next));
   }, []);
 
   useLayoutEffect(() => {
-    measurePanes();
+    measurePanesNow();
     const observer = new ResizeObserver(() => measurePanes());
     if (editorAreaRef.current) observer.observe(editorAreaRef.current);
     paneElsRef.current.forEach((el) => observer.observe(el));
@@ -602,8 +646,12 @@ export default function App() {
     return () => {
       observer.disconnect();
       window.removeEventListener('resize', measurePanes);
+      if (measureFrameRef.current != null) {
+        cancelAnimationFrame(measureFrameRef.current);
+        measureFrameRef.current = null;
+      }
     };
-  }, [measurePanes, layout, sidebarOpen, sidebarWidth, openTabs]);
+  }, [measurePanes, measurePanesNow, layout, sidebarOpen, sidebarWidth, openTabs]);
 
   // Repair focus if the focused pane disappears (e.g. after collapsing a split).
   useEffect(() => {
@@ -612,7 +660,10 @@ export default function App() {
     }
   }, [layout, focusedPaneId]);
 
-  useEffect(() => { localStorage.setItem('cascade_sidebar_w', String(sidebarWidth)); }, [sidebarWidth]);
+  useEffect(() => {
+    const id = window.setTimeout(() => localStorage.setItem('cascade_sidebar_w', String(sidebarWidth)), 150);
+    return () => clearTimeout(id);
+  }, [sidebarWidth]);
 
   useEffect(() => {
     if (window.matchMedia('(max-width: 900px)').matches) {
@@ -622,13 +673,19 @@ export default function App() {
 
   // Persist the workspace session.
   useEffect(() => {
+    const id = window.setTimeout(() => {
     const session: PersistedSession = { activeVaultId, openTabs, layout, focusedPaneId };
     localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
+    }, 250);
+    return () => clearTimeout(id);
   }, [activeVaultId, openTabs, layout, focusedPaneId]);
 
   useEffect(() => {
+    const id = window.setTimeout(() => {
     const { messagesByChannel: _messages, registeredAgentsByChannel: _agents, ...persistedChat } = chatState;
     localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(persistedChat));
+    }, 250);
+    return () => clearTimeout(id);
   }, [chatState]);
 
   useEffect(() => {
@@ -1983,15 +2040,24 @@ export default function App() {
   // ═══════════════════════════════════════════════════════════════
 
   const updateTabUrl = useCallback((tabId: string, url: string) => {
-    setOpenTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, url, title: extractDomain(url) } : t)));
+    setOpenTabs((prev) => prev.map((t) => {
+      if (t.id !== tabId) return t;
+      const title = extractDomain(url);
+      if (t.url === url && t.title === title) return t;
+      return { ...t, url, title };
+    }));
   }, []);
 
   const updateTabTitle = useCallback((tabId: string, title: string) => {
-    setOpenTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, title } : t)));
+    setOpenTabs((prev) => prev.map((t) => (t.id === tabId && t.title !== title ? { ...t, title } : t)));
   }, []);
 
   const updateTerminalHistory = useCallback((tabId: string, terminalHistory: string) => {
-    setOpenTabs((prev) => prev.map((t) => (t.id === tabId && t.type === 'terminal' ? { ...t, terminalHistory } : t)));
+    setOpenTabs((prev) => prev.map((t) => (
+      t.id === tabId && t.type === 'terminal' && t.terminalHistory !== terminalHistory
+        ? { ...t, terminalHistory }
+        : t
+    )));
   }, []);
 
   /** Turn the focused pane's active tab into a terminal (or open a new one). */

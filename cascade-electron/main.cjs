@@ -62,6 +62,7 @@ const webContentsSites = new Map();
 const terminalProcesses = new Map();
 const webViews = new Map();
 let desktopUpdateInProgress = false;
+const BROWSER_DEBUG = process.env.CASCADE_BROWSER_DEBUG === '1';
 // Removed: dead `serverProcess` variable — it was declared but never assigned,
 // and the corresponding `if (serverProcess) serverProcess.kill()` in the
 // 'closed' handler was therefore unreachable.
@@ -209,15 +210,24 @@ const ANTI_ADBLOCK_DEFUSER = `
   }
 
   function run() { try { sweep(); } catch (e) {} }
+  var scheduled = false;
+  function scheduleRun() {
+    if (scheduled) return;
+    scheduled = true;
+    setTimeout(function () {
+      scheduled = false;
+      run();
+    }, 250);
+  }
 
   run();
-  var observer = new MutationObserver(run);
+  var observer = new MutationObserver(scheduleRun);
   function observe() {
     if (document.body) observer.observe(document.body, { childList: true, subtree: true });
   }
   observe();
   document.addEventListener('DOMContentLoaded', function () { run(); observe(); });
-  setInterval(run, 1000);
+  setInterval(run, 5000);
 })();
 `;
 
@@ -1118,9 +1128,11 @@ ipcMain.handle('browser:createView', async (event, tabId, isChatNote) => {
       }
     });
 
-    view.webContents.on('console-message', (evt, level, message, line, sourceId) => {
-      console.log('[WebContentsView Console]', { tabId, level, message, line, sourceId });
-    });
+    if (BROWSER_DEBUG) {
+      view.webContents.on('console-message', (evt, level, message, line, sourceId) => {
+        console.log('[WebContentsView Console]', { tabId, level, message, line, sourceId });
+      });
+    }
 
     win.contentView.addChildView(view);
     webViews.set(tabId, { view, win, destroyTimeout: null, isChatNote, isTransitioning: false });
