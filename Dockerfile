@@ -1,10 +1,13 @@
 # syntax=docker/dockerfile:1
 
 # Client bundle: isolated install avoids hoisting Electron/Playwright from the monorepo root.
+# Uses a standalone client/package-lock.json (generated outside the npm workspace) so
+# `npm ci` pins exact versions — builds are reproducible and bundle hashes are stable
+# across machines instead of drifting with every `npm install`.
 FROM node:22-bookworm-slim AS client-build
 WORKDIR /client
-COPY client/package.json ./
-RUN --mount=type=cache,target=/root/.npm npm install
+COPY client/package.json client/package-lock.json ./
+RUN --mount=type=cache,target=/root/.npm npm ci
 COPY client/ ./
 RUN npm run build
 
