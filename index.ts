@@ -11,6 +11,8 @@
 
 import path from 'node:path';
 import http from 'node:http';
+import fs from 'node:fs';
+import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
@@ -69,10 +71,20 @@ import {
   startFeedPoller,
 } from './server/feeds.js';
 import { fetchWidgetData } from './server/widgetData.js';
+import { resolveDeploySecret } from './server/security.js';
 
 const PORT = Number(process.env.API_PORT || 3000);
 const JWT_SECRET = process.env.JWT_SECRET || 'cascade-dev-secret';
 const DB_PATH = process.env.DOCS_DB_PATH || path.join(process.cwd(), 'docs.db');
+
+// Deploy trigger: the server runs inside the container and cannot run docker /
+// nginx / certbot itself, so the endpoint only drops a request file into the
+// shared data volume. A host-side watcher (deploy/deploy-watcher.sh) picks it up
+// and runs deploy/deploy.sh. See deploy/install-deploy-watcher.sh.
+const DEPLOY_SECRET = resolveDeploySecret();
+const DATA_DIR = process.env.CASCADE_DATA_DIR || path.dirname(DB_PATH);
+const DEPLOY_REQUEST_FILE = path.join(DATA_DIR, 'deploy.request');
+const DEPLOY_RESULT_FILE = path.join(DATA_DIR, 'deploy.result');
 
 type User = { id: number; username: string; password_hash: string; created_at: string };
 type AuthedRequest = Request & { user?: { id: number; username: string } };
@@ -263,6 +275,55 @@ setFeedNotifySink(emitVaultEvent);
 
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok' });
+});
+
+// ── Deploy trigger ─────────────────────────────────────────────────
+
+/** Bearer-token auth for the deploy routes, using the persisted deploy secret. */
+function requireDeployAuth(req: Request, res: Response, next: NextFunction) {
+  const header = req.headers.authorization;
+  const bearerToken = header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : null;
+  const headerToken = typeof req.headers['x-deploy-token'] === 'string' ? req.headers['x-deploy-token'] : null;
+  const token = bearerToken || headerToken;
+  if (!token) return res.status(401).json({ error: 'Deploy token required' });
+  const got = Buffer.from(token);
+  const expected = Buffer.from(DEPLOY_SECRET);
+  if (got.length !== expected.length || !crypto.timingSafeEqual(got, expected)) {
+    return res.status(401).json({ error: 'Invalid deploy token' });
+  }
+  next();
+}
+
+// Queue a redeploy. Writes a request file the host watcher consumes; it does not
+// (and cannot, from inside the container) run docker/deploy.sh directly.
+app.post(['/api/deploy', '/api/admin/deploy'], requireDeployAuth, (req, res) => {
+  const ref = typeof req.body?.ref === 'string' && req.body.ref.trim() ? req.body.ref.trim() : null;
+  const payload = JSON.stringify({ requestedAt: new Date().toISOString(), ref });
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(DEPLOY_REQUEST_FILE, payload + '\n');
+    res.status(202).json({ status: 'queued', ref });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Could not queue deploy' });
+  }
+});
+
+// Report whether a deploy is pending and the result of the last one.
+app.get(['/api/deploy/status', '/api/admin/deploy/status'], requireDeployAuth, (_req, res) => {
+  let pending = false;
+  try {
+    fs.accessSync(DEPLOY_REQUEST_FILE);
+    pending = true;
+  } catch {
+    // no request queued
+  }
+  let last: unknown = null;
+  try {
+    last = JSON.parse(fs.readFileSync(DEPLOY_RESULT_FILE, 'utf8'));
+  } catch {
+    // no deploy has completed yet
+  }
+  res.json({ pending, last });
 });
 
 // ── Auth routes ────────────────────────────────────────────────────
