@@ -85,6 +85,8 @@ const DEPLOY_SECRET = resolveDeploySecret();
 const DATA_DIR = process.env.CASCADE_DATA_DIR || path.dirname(DB_PATH);
 const DEPLOY_REQUEST_FILE = path.join(DATA_DIR, 'deploy.request');
 const DEPLOY_RESULT_FILE = path.join(DATA_DIR, 'deploy.result');
+const CLIENT_DIST_DIR = path.join(process.cwd(), 'client', 'dist');
+const CLIENT_APP_HTML = path.join(CLIENT_DIST_DIR, 'app.html');
 
 type User = { id: number; username: string; password_hash: string; created_at: string };
 type AuthedRequest = Request & { user?: { id: number; username: string } };
@@ -839,6 +841,16 @@ app.post('/api/runs/:id/cancel', requireAuth, async (req: AuthedRequest, res) =>
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
+
+// ── Static client ──────────────────────────────────────────────────
+
+if (fs.existsSync(CLIENT_APP_HTML)) {
+  app.use(express.static(CLIENT_DIST_DIR));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api/') || req.path.startsWith('/socket.io/')) return next();
+    res.sendFile(CLIENT_APP_HTML);
+  });
+}
 
 // ── 404 fallback ───────────────────────────────────────────────────
 
