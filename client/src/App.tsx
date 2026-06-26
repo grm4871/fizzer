@@ -415,7 +415,17 @@ function toChatMessagePatch(message: ChatMessage): Record<string, unknown> {
   };
 }
 
-function formatAgentChatPrompt(channelName: string, registrations: ChatAgentRegistration[], registration: ChatAgentRegistration, history: ChatMessage[], request: string) {
+function formatAgentChatPrompt(
+  channelName: string,
+  registrations: ChatAgentRegistration[],
+  registration: ChatAgentRegistration,
+  history: ChatMessage[],
+  request: string,
+  // True when the agent's CLI session is being resumed, so it already holds the
+  // earlier conversation. We then send only the delta (messages since its last
+  // reply) instead of re-dumping the whole history and burning tokens every turn.
+  continuation = false,
+) {
   const recentHistory = history
     .filter((message) => message.body.trim() || (message.images?.length ?? 0) > 0 || (message.attachments?.length ?? 0) > 0)
     .slice(-40)
@@ -430,6 +440,15 @@ function formatAgentChatPrompt(channelName: string, registrations: ChatAgentRegi
       return `${message.author}: ${replyNote}${body || '(media)'}${suffix}`;
     })
     .join('\n');
+
+  if (continuation) {
+    const parts = [
+      `You are continuing in the Cascade chat channel #${channelName}. Your earlier turns in this conversation are already in your context — only new activity since your last reply is shown below.`,
+    ];
+    if (recentHistory) parts.push('', 'New messages since your last reply:', recentHistory);
+    parts.push('', 'Current user request:', request);
+    return parts.join('\n');
+  }
 
   return [
     `You are responding in the Cascade chat channel #${channelName}.`,
@@ -535,6 +554,13 @@ export default function App() {
   // Agent messages whose persistence is owned by the server (the run is linked to
   // them server-side). We skip our own PATCH for these to avoid duplicate writes.
   const serverOwnedChatMessageIdsRef = useRef<Set<string>>(new Set());
+  // Per agent session (keyed by registration id + conversationId), the id of the
+  // last chat message already folded into the agent's resumed CLI session. The
+  // next turn feeds only messages after this watermark instead of the whole
+  // history — the resumed session already holds everything up to it. A `/clear`
+  // rotates the conversationId, so the new key has no watermark and the agent
+  // gets a fresh full-context priming.
+  const agentContextWatermarkRef = useRef<Map<string, string>>(new Map());
   const pendingChatPatchRef = useRef<Map<string, ChatMessage>>(new Map());
   const chatPatchTimerRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const startAgentChatRunRef = useRef<((channelId: string, registration: ChatAgentRegistration, prompt: string, triggeringMessage: ChatMessage) => void) | null>(null);
@@ -1135,8 +1161,28 @@ export default function App() {
     if (!CHAT_AGENTS.some((agent) => agent.id === agentId)) return;
     const channelName = notesRef.current.find((note) => note.id === channelId)?.title || 'chat';
     const registrations = chatStateRef.current.registeredAgentsByChannel[channelId] ?? [];
-    const chatHistory = [...(chatStateRef.current.messagesByChannel[channelId] ?? []), triggeringMessage];
-    const runPrompt = formatAgentChatPrompt(channelName, registrations, registration, chatHistory, prompt);
+
+    // One sticky session per agent: the run resumes (and extends) the member's
+    // conversation, so its earlier turns are already in context. Feed only the
+    // delta — messages posted since this agent's last reply — rather than the
+    // whole history. A `/clear` rotates conversationId, so a fresh key here has
+    // no watermark and the agent gets a full-context priming again.
+    const watermarkKey = `${registration.id}:${registration.conversationId || ''}`;
+    const watermark = agentContextWatermarkRef.current.get(watermarkKey);
+    const stored = chatStateRef.current.messagesByChannel[channelId] ?? [];
+    // The triggering message may not be in state yet (setChatState is async), and
+    // it's sent separately as the request, so exclude it from the history block.
+    const priorMessages = stored.filter((message) => message.id !== triggeringMessage.id);
+    let continuation = false;
+    let contextMessages = priorMessages;
+    if (watermark) {
+      const idx = priorMessages.findIndex((message) => message.id === watermark);
+      if (idx >= 0) {
+        continuation = true;
+        contextMessages = priorMessages.slice(idx + 1);
+      }
+    }
+    const runPrompt = formatAgentChatPrompt(channelName, registrations, registration, contextMessages, prompt, continuation);
     const agentMessageId = `agent-${agentId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     streamingChatMessageIdsRef.current.add(agentMessageId);
     appendChatMessage(channelId, {
@@ -1194,6 +1240,12 @@ export default function App() {
                 body: message.body === 'Thinking...' || !assistantText.trim() ? finalBody : message.body,
                 status: payload.status === 'failed' ? 'failed' : undefined,
               }));
+              if (payload.status === 'completed') {
+                // The agent's session now holds everything through this reply, so
+                // the next turn only needs messages posted after it. Left untouched
+                // on failure so the next turn re-feeds the context this run missed.
+                agentContextWatermarkRef.current.set(watermarkKey, agentMessageId);
+              }
               if (payload.status === 'completed' && assistantText.trim()) {
                 const registrations = (chatStateRef.current.registeredAgentsByChannel[channelId] ?? [])
                   .filter((item) => item.id !== registration.id);
