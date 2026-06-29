@@ -284,11 +284,19 @@ export function listChatMessages(db: Db, channelId: string, userId: number): Cha
   return rows.map((row) => reconcileChatMessageRunStatus(db, row));
 }
 
-function terminalRunPatch(run: RunStatusRow): Pick<ChatMessage, 'body' | 'status'> | null {
+function hasRunOutput(message: ChatMessage): boolean {
+  const body = message.body.trim();
+  return body.length > 0 && body !== 'Thinking...';
+}
+
+function terminalRunPatch(run: RunStatusRow, message?: ChatMessage): Pick<ChatMessage, 'body' | 'status'> | null {
   if (run.status === 'completed') {
     return { body: run.summary?.trim() || 'Done.', status: undefined };
   }
   if (run.status === 'failed') {
+    if (run.summary?.trim() === 'Run canceled by user.' && message && hasRunOutput(message)) {
+      return { body: message.body, status: 'failed' };
+    }
     return { body: run.summary?.trim() || 'Agent failed.', status: 'failed' };
   }
   return null;
@@ -334,7 +342,7 @@ function reconcileChatMessageRunStatus(db: Db, row: ChatMessageRow): ChatMessage
 
   const run = db.prepare('SELECT id, status, summary FROM runs WHERE id = ?').get(row.run_id) as RunStatusRow | undefined;
   if (!run) return message;
-  const patch = terminalRunPatch(run);
+  const patch = terminalRunPatch(run, message);
   if (!patch) return message;
 
   return persistChatMessageRow(db, row.vault_id, row.channel_id, {
@@ -347,13 +355,15 @@ function reconcileChatMessageRunStatus(db: Db, row: ChatMessageRow): ChatMessage
 export function settleChatMessagesForRun(db: Db, runId: number): Array<{ vaultId: string; channelId: string; message: ChatMessage }> {
   const run = db.prepare('SELECT id, status, summary FROM runs WHERE id = ?').get(runId) as RunStatusRow | undefined;
   if (!run) return [];
-  const patch = terminalRunPatch(run);
-  if (!patch) return [];
-
   const rows = db.prepare('SELECT * FROM chat_messages WHERE run_id = ?').all(runId) as ChatMessageRow[];
   return rows.map((row) => {
+    const current = rowToMessage(row);
+    const patch = terminalRunPatch(run, current);
+    if (!patch) {
+      return { vaultId: row.vault_id, channelId: row.channel_id, message: current };
+    }
     const message = persistChatMessageRow(db, row.vault_id, row.channel_id, {
-      ...rowToMessage(row),
+      ...current,
       body: patch.body,
       status: patch.status,
     });

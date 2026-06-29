@@ -1615,8 +1615,11 @@ a {
   line-height: 1.35;
 }
 .chat-composer textarea:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-glow);
+  border-color: var(--border);
+  box-shadow: none;
+}
+.chat-composer textarea:focus-visible {
+  outline: none;
 }
 .chat-composer .btn-icon {
   border: 1px solid var(--border);
