@@ -534,7 +534,7 @@ app.post('/api/vaults/:id/notes', requireAuth, (req: AuthedRequest, res) => {
   try {
     const note = createNote(db, vault.id, req.user!.id, req.body || {});
     createNoteVersion(db, note.id, note.content, 'created');
-    emitVaultEvent(vault.id, 'vault:noteCreated', { noteId: note.id, title: note.title });
+    emitVaultEvent(vault.id, 'vault:noteCreated', { noteId: note.id, vaultId: vault.id, title: note.title });
     res.status(201).json({ note });
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : 'Could not create note' });
@@ -560,7 +560,7 @@ app.put('/api/notes/:id', requireAuth, (req: AuthedRequest, res) => {
     const content = String(req.body.content ?? existing.content);
     const note = updateNote(db, req.params.id, content);
     createNoteVersion(db, note.id, content, 'auto');
-    emitVaultEvent(vault.id, 'vault:noteChanged', { noteId: note.id, title: note.title });
+    emitVaultEvent(vault.id, 'vault:noteChanged', { noteId: note.id, vaultId: vault.id, title: note.title });
     res.json({ note });
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : 'Could not update note' });
@@ -589,7 +589,7 @@ app.delete('/api/notes/:id', requireAuth, (req: AuthedRequest, res) => {
   if (!vault) return res.status(404).json({ error: 'Note not found' });
 
   deleteNote(db, req.params.id);
-  emitVaultEvent(vault.id, 'vault:noteDeleted', { noteId: req.params.id, title: existing.title });
+  emitVaultEvent(vault.id, 'vault:noteDeleted', { noteId: req.params.id, vaultId: vault.id, title: existing.title });
   res.json({ ok: true });
 });
 
@@ -603,7 +603,7 @@ app.post('/api/notes/:id/move', requireAuth, (req: AuthedRequest, res) => {
     const folderId = req.body.folder_id !== undefined ? (req.body.folder_id || null) : null;
     moveNote(db, req.params.id, folderId);
     const note = getNote(db, req.params.id);
-    emitVaultEvent(vault.id, 'vault:noteChanged', { noteId: req.params.id, title: existing.title });
+    emitVaultEvent(vault.id, 'vault:noteChanged', { noteId: req.params.id, vaultId: vault.id, title: note?.title ?? existing.title });
     res.json({ note });
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : 'Could not move note' });
@@ -618,6 +618,7 @@ app.post('/api/notes/:id/pin', requireAuth, (req: AuthedRequest, res) => {
 
   togglePin(db, req.params.id);
   const note = getNote(db, req.params.id);
+  emitVaultEvent(vault.id, 'vault:noteChanged', { noteId: req.params.id, vaultId: vault.id, title: note?.title ?? existing.title });
   res.json({ note });
 });
 
@@ -629,6 +630,7 @@ app.post('/api/notes/:id/archive', requireAuth, (req: AuthedRequest, res) => {
 
   toggleArchive(db, req.params.id);
   const note = getNote(db, req.params.id);
+  emitVaultEvent(vault.id, 'vault:noteChanged', { noteId: req.params.id, vaultId: vault.id, title: note?.title ?? existing.title });
   res.json({ note });
 });
 

@@ -967,7 +967,7 @@ export default function App() {
         }
       }
       if (vaultId) {
-        void loadChatMessages(vaultId, notesRef.current);
+        void loadVaultData(vaultId);
       }
     };
     const onVisible = () => {
@@ -979,7 +979,7 @@ export default function App() {
       window.removeEventListener('focus', resyncOnResume);
       document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [user, loadChatMessages]);
+  }, [user, loadVaultData]);
 
   useEffect(() => {
     if (activeVaultId) {

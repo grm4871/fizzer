@@ -23,9 +23,9 @@ const API_BASE = import.meta.env.VITE_API_URL || '';
 
 /** Events emitted by the server on the `/vault` namespace. */
 type ServerEvents = {
-  'vault:noteChanged': (data: { noteId: string; vaultId: string }) => void;
-  'vault:noteCreated': (data: { noteId: string; vaultId: string }) => void;
-  'vault:noteDeleted': (data: { noteId: string; vaultId: string }) => void;
+  'vault:noteChanged': (data: { noteId: string; vaultId: string; title?: string }) => void;
+  'vault:noteCreated': (data: { noteId: string; vaultId: string; title?: string }) => void;
+  'vault:noteDeleted': (data: { noteId: string; vaultId: string; title?: string }) => void;
   'vault:feedNotify': (data: { noteId: string; feedTitle: string; item?: { title?: string } }) => void;
   /** Streamed chunk of an AI directive response. */
   'directive:chunk': (data: { noteId: string; content: string }) => void;
