@@ -171,6 +171,39 @@ const cascadeTheme = EditorView.theme({
     borderLeft: '2px solid hsl(25, 7%, 20%)',
     paddingLeft: '12px',
   },
+  /* GFM tables (rendered live-preview widget) */
+  '.cm-md-table-wrap': {
+    margin: '10px 0',
+    overflowX: 'auto',
+  },
+  '.cm-md-table': {
+    borderCollapse: 'collapse',
+    width: '100%',
+    fontSize: '0.9em',
+    lineHeight: '1.5',
+  },
+  '.cm-md-table th, .cm-md-table td': {
+    border: '1px solid hsl(25, 7%, 20%)',
+    padding: '5px 11px',
+    textAlign: 'left',
+    verticalAlign: 'top',
+  },
+  '.cm-md-table th': {
+    background: 'hsl(22, 8%, 12%)',
+    color: 'hsl(35, 12%, 92%)',
+    fontWeight: '600',
+  },
+  '.cm-md-table tbody tr:nth-child(even) td, .cm-md-table tbody tr:nth-child(even) td': {
+    background: 'hsla(22, 8%, 14%, 0.4)',
+  },
+  '.cm-md-table code': {
+    fontFamily: "'JetBrains Mono', ui-monospace, monospace",
+    fontSize: '0.85em',
+    background: 'hsl(22, 8%, 13%)',
+    padding: '1px 5px',
+    borderRadius: '3px',
+    color: 'hsl(38, 75%, 65%)',
+  },
 }, { dark: true });
 
 /* ─── Syntax Highlighting ────────────────────────────────── */
@@ -222,6 +255,99 @@ class HRWidget extends WidgetType {
     const hr = document.createElement('hr');
     hr.className = 'cm-hr-widget';
     return hr;
+  }
+}
+
+/* ─── GFM Table support ──────────────────────────────────── */
+type CellAlign = 'left' | 'center' | 'right' | null;
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/** Minimal inline markdown → HTML for table cells (escape first, then format). */
+function renderCellInline(raw: string): string {
+  let s = escapeHtml(raw.trim());
+  s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
+  s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  s = s.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+  s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g,
+    '<span class="cm-external-link" data-url="$2">$1</span>');
+  s = s.replace(/\[\[([^\]]+)\]\]/g, '<span class="cm-wikilink">$1</span>');
+  return s;
+}
+
+/** Split a `| a | b |` row into trimmed cells, dropping the outer pipes. */
+function splitTableRow(text: string): string[] {
+  let t = text.trim();
+  if (t.startsWith('|')) t = t.slice(1);
+  if (t.endsWith('|')) t = t.slice(0, -1);
+  return t.split('|').map((c) => c.trim());
+}
+
+/** True if the line is a GFM delimiter row, e.g. `|---|:--:|` (must have a pipe,
+ * so a bare `---` horizontal rule isn't mistaken for a 1-column table). */
+function isTableDelimiter(text: string): boolean {
+  if (!text.includes('|')) return false;
+  const cells = splitTableRow(text);
+  return cells.length > 0 && cells.every((c) => /^:?-{1,}:?$/.test(c));
+}
+
+function cellAlign(delimCell: string): CellAlign {
+  const c = delimCell.trim();
+  const l = c.startsWith(':');
+  const r = c.endsWith(':');
+  if (l && r) return 'center';
+  if (r) return 'right';
+  if (l) return 'left';
+  return null;
+}
+
+class TableWidget extends WidgetType {
+  constructor(
+    private header: string[],
+    private align: CellAlign[],
+    private rows: string[][],
+    private key: string,
+  ) {
+    super();
+  }
+  eq(other: TableWidget) {
+    return this.key === other.key;
+  }
+  toDOM() {
+    const wrap = document.createElement('div');
+    wrap.className = 'cm-md-table-wrap';
+    const table = document.createElement('table');
+    table.className = 'cm-md-table';
+
+    const thead = document.createElement('thead');
+    const htr = document.createElement('tr');
+    this.header.forEach((cell, i) => {
+      const th = document.createElement('th');
+      th.innerHTML = renderCellInline(cell);
+      const a = this.align[i];
+      if (a) th.style.textAlign = a;
+      htr.appendChild(th);
+    });
+    thead.appendChild(htr);
+    table.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+    for (const row of this.rows) {
+      const tr = document.createElement('tr');
+      for (let i = 0; i < this.header.length; i++) {
+        const td = document.createElement('td');
+        td.innerHTML = renderCellInline(row[i] ?? '');
+        const a = this.align[i];
+        if (a) td.style.textAlign = a;
+        tr.appendChild(td);
+      }
+      tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+    return wrap;
   }
 }
 
@@ -599,11 +725,54 @@ export function buildDecorations(
     }
   }
 
+  // GFM tables: a header row, a delimiter row, then 0+ body rows. Rendered as a
+  // block widget when the cursor is outside (raw source stays editable inside).
+  const inWidgetBlock = (from: number, to: number) =>
+    widgetBlocks.some((b) => from >= b.from && to <= b.to);
+  const tableBlocks: { from: number; to: number }[] = [];
+  for (let i = 1; i + 1 <= doc.lines; i++) {
+    const headerLine = doc.line(i);
+    const delimLine = doc.line(i + 1);
+    if (inWidgetBlock(headerLine.from, headerLine.to)) continue;
+    if (!headerLine.text.includes('|')) continue;
+    if (!isTableDelimiter(delimLine.text)) continue;
+
+    const header = splitTableRow(headerLine.text);
+    const align = splitTableRow(delimLine.text).map(cellAlign);
+    if (header.length !== align.length) continue; // not a real table
+    const rows: string[][] = [];
+    let lastLine = i + 1;
+    for (let j = i + 2; j <= doc.lines; j++) {
+      const bl = doc.line(j);
+      if (!bl.text.trim() || !bl.text.includes('|') || inWidgetBlock(bl.from, bl.to)) break;
+      rows.push(splitTableRow(bl.text));
+      lastLine = j;
+    }
+
+    const from = headerLine.from;
+    const to = doc.line(lastLine).to;
+    tableBlocks.push({ from, to });
+    if (cursorLine < doc.lineAt(from).number || cursorLine > doc.lineAt(to).number) {
+      decos.push({
+        from,
+        to,
+        deco: Decoration.replace({
+          block: true,
+          widget: new TableWidget(header, align, rows, doc.sliceString(from, to)),
+        }),
+      });
+    }
+    i = lastLine; // skip past the consumed table
+  }
+  const inTableBlock = (from: number, to: number) =>
+    tableBlocks.some((b) => from >= b.from && to <= b.to);
+
   for (let i = 1; i <= doc.lines; i++) {
     const line = doc.line(i);
     const text = line.text;
     const isActive = i === activeLine;
     if (widgetBlocks.some((block) => line.from >= block.from && line.to <= block.to)) continue;
+    if (inTableBlock(line.from, line.to)) continue;
 
     // Headings: Apply class and optionally hide markers
     const headingMatch = text.match(/^(#{1,6})\s/);
