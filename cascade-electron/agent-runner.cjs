@@ -72,7 +72,7 @@ function noteCapabilityContext(opts) {
   const target = noteApi.url || 'https://cscd.online';
   const vaultId = String(opts && opts.vaultId || '').trim();
   const vaultLine = vaultId ? ` Current vault id: ${vaultId} (pass --vault ${vaultId}).` : '';
-  return `Notes live in the running Cascade app at ${target}. Create or modify notes with the \`cascade-note\` CLI (run \`cascade-note --help\`), not by writing .md files — file edits only touch this local checkout and never reach the app.${vaultLine}`;
+  return `Notes live in the running Cascade app at ${target}. Create or modify notes with the \`cascade-note\` CLI (run \`cascade-note --help\`), not by writing .md files — file edits only touch this local checkout and never reach the app. Pass the note body via stdin (a heredoc) or --content-file, never --content, since the shell corrupts backticks/markdown in --content.${vaultLine}`;
 }
 
 // Live Claude SDK query streams, keyed by runId, so cancellation can close them.

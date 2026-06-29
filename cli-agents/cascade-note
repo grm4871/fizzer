@@ -45,18 +45,25 @@ Usage:
   cascade-note list                      vaults, or notes with --vault
   cascade-note search <query>            search notes in a vault
   cascade-note get <id|title>            print a note's content
-  cascade-note create --title T          content from --content or stdin
-  cascade-note edit <id|title>           replace content (--content/stdin)
-  cascade-note append <id|title>         append content (--content/stdin)
+  cascade-note create --title T          body via stdin (recommended) / --content-file / --content
+  cascade-note edit <id|title>           replace body (stdin / --content-file / --content)
+  cascade-note append <id|title>         append body  (stdin / --content-file / --content)
+
+Body input (pick one):
+  stdin             pipe it, e.g.  cascade-note create --title T <<'EOF' ... EOF
+  --content-file P  read body from file P   (safe for any content)
+  --content C       inline — AVOID for markdown: the shell eats backticks/quotes
 
 Options:
   --vault <id>     vault id   (default $CASCADE_NOTE_VAULT, else sole vault)
   --title <t>      note title (create)
-  --content <c>    inline body (else read stdin)
   --folder <id>    folder id  (create)
+  --allow-empty    permit an empty body (otherwise empty is rejected)
   --url <base>     API base   (default $CASCADE_NOTE_URL, else cscd.online)
   --token <jwt>    bearer token (default $CASCADE_NOTE_TOKEN)
   --json           machine-readable output
+
+Prefer stdin or --content-file; --content is unsafe for backticks/markdown.
 
 Env: CASCADE_NOTE_URL, CASCADE_NOTE_TOKEN, CASCADE_NOTE_USER,
      CASCADE_NOTE_PASS, CASCADE_NOTE_VAULT`;
@@ -158,8 +165,27 @@ async function resolveNote(url, token, vaultId, ref) {
 }
 
 async function bodyContent(args) {
-  if (typeof args.content === 'string') return args.content;
-  return readStdin();
+  let content;
+  if (args['content-file'] !== undefined) {
+    if (typeof args['content-file'] !== 'string') fail('--content-file needs a file path.');
+    const { readFileSync } = await import('node:fs');
+    try { content = readFileSync(args['content-file'], 'utf8'); }
+    catch (e) { fail(`cannot read --content-file "${args['content-file']}": ${e.message}`); }
+  } else if (args.content !== undefined) {
+    // A bare `--content` (no value) parses as boolean — that's a silent
+    // empty-body trap, so reject it instead of writing nothing.
+    if (typeof args.content !== 'string') {
+      fail('--content needs a value. For markdown/multiline bodies pipe via stdin or use --content-file (the shell corrupts backticks/quotes in --content).');
+    }
+    content = args.content;
+  } else {
+    content = await readStdin();
+  }
+  if (!content && !args['allow-empty']) {
+    fail('empty body. Pipe content via stdin (e.g. a heredoc), use --content-file <path>, '
+      + 'or pass --content "..."; use --allow-empty to write an empty note on purpose.');
+  }
+  return content;
 }
 
 function out(args, human, obj) {
@@ -211,6 +237,7 @@ async function main() {
       break;
     }
     case 'create': {
+      if (args.title !== undefined && typeof args.title !== 'string') fail('--title needs a value.');
       const title = String(args.title || '').trim();
       if (!title) fail('create needs --title.');
       const vaultId = await resolveVault(url, token, args);
