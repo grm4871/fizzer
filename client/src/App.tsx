@@ -1695,6 +1695,50 @@ export default function App() {
     }
   }, [loadVaultData, openNote]);
 
+  const handleCreateNoteInPane = useCallback(async (paneId: string) => {
+    const vaultId = activeVaultIdRef.current;
+    if (!vaultId) return;
+    try {
+      const data = await api<{ note: Note }>(`/api/vaults/${vaultId}/notes`, {
+        method: 'POST',
+        body: JSON.stringify({ title: 'Untitled Note', content: '' }),
+      });
+      await loadVaultData(vaultId);
+      setOpenTabs((prev) =>
+        prev.some((t) => t.id === data.note.id)
+          ? prev
+          : [...prev, { id: data.note.id, title: data.note.title || 'Untitled Note', type: 'note', dirty: false }],
+      );
+      setLayout(Layout.simplify(Layout.addTabToPane(Layout.removeTab(layoutRef.current, data.note.id), paneId, data.note.id)));
+      setFocusedPaneId(paneId);
+      void loadNoteContent(data.note.id);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not create note');
+    }
+  }, [loadNoteContent, loadVaultData]);
+
+  const handleCreateChatInPane = useCallback(async (paneId: string) => {
+    const vaultId = activeVaultIdRef.current;
+    if (!vaultId) return;
+    try {
+      const data = await api<{ note: Note }>(`/api/vaults/${vaultId}/notes`, {
+        method: 'POST',
+        body: JSON.stringify({ title: 'new-channel', content: CHAT_NOTE_MARKER }),
+      });
+      await loadVaultData(vaultId);
+      const tab: Tab = { id: data.note.id, title: `#${data.note.title || 'new-channel'}`, type: 'chat', dirty: false };
+      setOpenTabs((prev) =>
+        prev.some((t) => t.id === tab.id)
+          ? prev.map((t) => (t.id === tab.id ? { ...t, ...tab } : t))
+          : [...prev, tab],
+      );
+      setLayout(Layout.simplify(Layout.addTabToPane(Layout.removeTab(layoutRef.current, tab.id), paneId, tab.id)));
+      setFocusedPaneId(paneId);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not create channel');
+    }
+  }, [loadVaultData]);
+
   const handleDeleteNote = useCallback(async (noteId: string) => {
     if (!window.confirm('Delete this note? This cannot be undone.')) return;
     try {
@@ -2137,6 +2181,8 @@ export default function App() {
             onCloseTab={closeTab}
             onDropTab={handleDropTab}
             onResize={handleResizeSplit}
+            onCreateNote={handleCreateNoteInPane}
+            onCreateChat={handleCreateChatInPane}
             onDetachTab={handleDetachTab}
             renderContent={renderTabContent}
           />

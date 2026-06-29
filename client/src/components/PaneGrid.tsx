@@ -11,7 +11,7 @@
  */
 
 import { Fragment, useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react';
-import { FileText, ExternalLink, X, Hash } from 'lucide-react';
+import { FileText, ExternalLink, X, Hash, Plus } from 'lucide-react';
 import type { Tab } from './TabBar';
 import { isPane, type DropSide, type LayoutNode, type PaneNode, type SplitNode } from '../layout/tree';
 
@@ -32,6 +32,8 @@ interface PaneGridProps {
   /** A tab was dropped onto a pane; `index` only applies to `center` drops. */
   onDropTab: (payload: TabDragPayload, targetPaneId: string, side: DropSide, index?: number) => void;
   onResize: (splitId: string, sizes: number[]) => void;
+  onCreateNote?: (paneId: string) => void;
+  onCreateChat?: (paneId: string) => void;
   onPopOut?: (tabId: string) => void;
   /** A tab was dragged and released outside any pane; `screenX/screenY` are the
    *  drop point in screen pixels so the parent can pop it out at the cursor. */
@@ -84,6 +86,8 @@ function PaneTabStrip({
   onSelectTab,
   onCloseTab,
   onDropTab,
+  onCreateNote,
+  onCreateChat,
   onPopOut,
   onDetachTab,
 }: {
@@ -93,6 +97,8 @@ function PaneTabStrip({
   onSelectTab: (paneId: string, tabId: string) => void;
   onCloseTab: (tabId: string) => void;
   onDropTab: PaneGridProps['onDropTab'];
+  onCreateNote?: (paneId: string) => void;
+  onCreateChat?: (paneId: string) => void;
   onPopOut?: (tabId: string) => void;
   onDetachTab?: (tabId: string, screenX: number, screenY: number) => void;
 }) {
@@ -200,6 +206,20 @@ function PaneTabStrip({
           </span>
         </button>
       ))}
+      {onCreateNote && (
+        <button
+          className="tab-new-btn"
+          onClick={() => onCreateNote(pane.id)}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            if (onCreateChat) onCreateChat(pane.id);
+          }}
+          title="New note (right-click for chat)"
+          aria-label="New note"
+        >
+          <Plus size={14} />
+        </button>
+      )}
       {/* Right-click Context Menu */}
       {contextMenu && (
         <div
@@ -242,6 +262,8 @@ function Pane({
   onSelectTab,
   onCloseTab,
   onDropTab,
+  onCreateNote,
+  onCreateChat,
   onPopOut,
   onDetachTab,
   renderContent,
@@ -284,6 +306,8 @@ function Pane({
         onSelectTab={onSelectTab}
         onCloseTab={onCloseTab}
         onDropTab={onDropTab}
+        onCreateNote={onCreateNote}
+        onCreateChat={onCreateChat}
         onPopOut={onPopOut}
         onDetachTab={onDetachTab}
       />
