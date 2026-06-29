@@ -79,6 +79,12 @@ type ChatMessageRow = {
   reply_to_json: string | null;
 };
 
+type RunStatusRow = {
+  id: number;
+  status: string;
+  summary: string | null;
+};
+
 export function ensureChatSchema(db: Db): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS chat_messages (
@@ -275,7 +281,84 @@ export function listChatMessages(db: Db, channelId: string, userId: number): Cha
     WHERE channel_id = ?
     ORDER BY created_at ASC, id ASC
   `).all(channelId) as ChatMessageRow[];
-  return rows.map(rowToMessage);
+  return rows.map((row) => reconcileChatMessageRunStatus(db, row));
+}
+
+function terminalRunPatch(run: RunStatusRow): Pick<ChatMessage, 'body' | 'status'> | null {
+  if (run.status === 'completed') {
+    return { body: run.summary?.trim() || 'Done.', status: undefined };
+  }
+  if (run.status === 'failed') {
+    return { body: run.summary?.trim() || 'Agent failed.', status: 'failed' };
+  }
+  return null;
+}
+
+function persistChatMessageRow(db: Db, vaultId: string, channelId: string, message: ChatMessage): ChatMessage {
+  const row = messageToRow(vaultId, channelId, message);
+  db.prepare(`
+    UPDATE chat_messages SET
+      author = ?,
+      body = ?,
+      created_at = ?,
+      status = ?,
+      agent_id = ?,
+      registration_id = ?,
+      run_id = ?,
+      blocks_json = ?,
+      images_json = ?,
+      attachments_json = ?,
+      reply_to_json = ?
+    WHERE id = ? AND channel_id = ?
+  `).run(
+    row.author,
+    row.body,
+    row.created_at,
+    row.status,
+    row.agent_id,
+    row.registration_id,
+    row.run_id,
+    row.blocks_json,
+    row.images_json,
+    row.attachments_json,
+    row.reply_to_json,
+    message.id,
+    channelId,
+  );
+  return message;
+}
+
+function reconcileChatMessageRunStatus(db: Db, row: ChatMessageRow): ChatMessage {
+  const message = rowToMessage(row);
+  if (message.status !== 'running' || row.run_id == null) return message;
+
+  const run = db.prepare('SELECT id, status, summary FROM runs WHERE id = ?').get(row.run_id) as RunStatusRow | undefined;
+  if (!run) return message;
+  const patch = terminalRunPatch(run);
+  if (!patch) return message;
+
+  return persistChatMessageRow(db, row.vault_id, row.channel_id, {
+    ...message,
+    body: patch.body,
+    status: patch.status,
+  });
+}
+
+export function settleChatMessagesForRun(db: Db, runId: number): Array<{ vaultId: string; channelId: string; message: ChatMessage }> {
+  const run = db.prepare('SELECT id, status, summary FROM runs WHERE id = ?').get(runId) as RunStatusRow | undefined;
+  if (!run) return [];
+  const patch = terminalRunPatch(run);
+  if (!patch) return [];
+
+  const rows = db.prepare('SELECT * FROM chat_messages WHERE run_id = ?').all(runId) as ChatMessageRow[];
+  return rows.map((row) => {
+    const message = persistChatMessageRow(db, row.vault_id, row.channel_id, {
+      ...rowToMessage(row),
+      body: patch.body,
+      status: patch.status,
+    });
+    return { vaultId: row.vault_id, channelId: row.channel_id, message };
+  });
 }
 
 export function createChatMessage(
@@ -382,38 +465,7 @@ export function updateChatMessage(
     next.replyTo = patch.replyTo === null || patch.replyTo === undefined ? undefined : patch.replyTo;
   }
 
-  const row = messageToRow(vault.id, channelId, next);
-  db.prepare(`
-    UPDATE chat_messages SET
-      author = ?,
-      body = ?,
-      created_at = ?,
-      status = ?,
-      agent_id = ?,
-      registration_id = ?,
-      run_id = ?,
-      blocks_json = ?,
-      images_json = ?,
-      attachments_json = ?,
-      reply_to_json = ?
-    WHERE id = ? AND channel_id = ?
-  `).run(
-    row.author,
-    row.body,
-    row.created_at,
-    row.status,
-    row.agent_id,
-    row.registration_id,
-    row.run_id,
-    row.blocks_json,
-    row.images_json,
-    row.attachments_json,
-    row.reply_to_json,
-    messageId,
-    channelId,
-  );
-
-  return next;
+  return persistChatMessageRow(db, vault.id, channelId, next);
 }
 
 /**

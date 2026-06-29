@@ -86,6 +86,7 @@ import {
   listChatMessages,
   createChatMessage,
   updateChatMessage,
+  settleChatMessagesForRun,
   listChatAgentMembers,
   upsertChatAgentMember,
   removeChatAgentMember,
@@ -914,6 +915,15 @@ app.post('/api/runs/:id/cancel', requireAuth, async (req: AuthedRequest, res) =>
 
   try {
     const success = await cancelRun(db, run.id);
+    if (success) {
+      for (const update of settleChatMessagesForRun(db, run.id)) {
+        emitVaultEvent(update.vaultId, 'vault:chatMessageUpdated', {
+          vaultId: update.vaultId,
+          channelId: update.channelId,
+          message: update.message,
+        });
+      }
+    }
     res.json({ success });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
