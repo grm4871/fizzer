@@ -24,7 +24,6 @@ interface NoteEditorProps {
   onRename?: (title: string) => Promise<void>;
   onExecuteDirective?: (prompt: string) => void;
   onOpenWikilink?: (title: string) => void;
-  onOpenWebView?: (url: string) => void;
 }
 
 /* ─── Custom Dark Theme ──────────────────────────────────── */
@@ -357,8 +356,6 @@ type CascadeWidgetMeta = {
   autorun?: boolean;
 };
 
-const TERMINAL_TRUST_PREFIX = 'cascade_widget_terminal_trust:';
-
 function parseCascadeWidget(source: string): { meta: CascadeWidgetMeta; body: string } {
   const trimmedStart = source.replace(/^\s*\n/, '');
   if (!trimmedStart.startsWith('---\n')) return { meta: {}, body: source };
@@ -411,11 +408,6 @@ function buildWidgetSrcDoc(body: string): string {
       const url = typeof payload === 'string' ? payload : payload && payload.url;
       const force = Boolean(payload && payload.force);
       return requestHost('feed', { url: String(url || ''), force });
-    },
-    terminal(payload) {
-      const command = typeof payload === 'string' ? payload : payload && payload.command;
-      const timeoutMs = payload && payload.timeout_ms;
-      return requestHost('terminal', { command: String(command || ''), timeout_ms: timeoutMs });
     },
     setHeight(height) {
       send({ type: 'height', height: Number(height) || 0 });
@@ -470,7 +462,6 @@ class CascadeHtmlWidget extends WidgetType {
     private from: number,
     private to: number,
     private requestAgent: (prompt: string) => void,
-    private runTerminal: (command: string, timeoutMs?: number, trustKey?: string, label?: string) => Promise<unknown>,
     private fetchFeed: (url: string, force?: boolean) => Promise<unknown>,
     private enableAutorun: (from: number, to: number, source: string) => void,
   ) {
@@ -483,7 +474,6 @@ class CascadeHtmlWidget extends WidgetType {
 
   toDOM() {
     const { meta, body } = parseCascadeWidget(this.source);
-    const terminalTrustKey = widgetTrustKey(this.source);
     const root = document.createElement('div');
     root.className = 'cm-cascade-widget';
 
@@ -553,22 +543,6 @@ class CascadeHtmlWidget extends WidgetType {
           '',
           'Update only this widget block unless I explicitly ask for broader note changes. Keep it as valid cascade-widget HTML.',
         ].join('\n'));
-      }
-      if (event.data.type === 'terminal') {
-        const requestId = String(event.data.requestId || '');
-        const command = String(event.data.command || '').trim();
-        const timeoutMs = Number(event.data.timeout_ms) || undefined;
-        const respond = (payload: Record<string, unknown>) => {
-          frame?.contentWindow?.postMessage({ __cascadeWidget: true, type: 'terminal-result', requestId, ...payload }, '*');
-        };
-        if (!requestId || !command) {
-          respond({ error: 'Command is required.' });
-          return;
-        }
-        this.runTerminal(command, timeoutMs, terminalTrustKey, meta.title || 'Widget').then(
-          (result) => respond({ result }),
-          (error) => respond({ error: error instanceof Error ? error.message : String(error) }),
-        );
       }
       if (event.data.type === 'feed') {
         const requestId = String(event.data.requestId || '');
@@ -656,7 +630,6 @@ class CascadeHtmlWidget extends WidgetType {
 export function buildDecorations(
   state: EditorState,
   requestWidgetAgent?: (prompt: string) => void,
-  runWidgetTerminal?: (command: string, timeoutMs?: number, trustKey?: string, label?: string) => Promise<unknown>,
   fetchWidgetFeed?: (url: string, force?: boolean) => Promise<unknown>,
   enableWidgetAutorun?: (from: number, to: number, source: string) => void,
 ): DecorationSet {
@@ -716,7 +689,6 @@ export function buildDecorations(
             block.from,
             block.to,
             (prompt) => requestWidgetAgent?.(prompt),
-            (command, timeoutMs, trustKey, label) => runWidgetTerminal?.(command, timeoutMs, trustKey, label) ?? Promise.reject(new Error('Terminal is not available.')),
             (url, force) => fetchWidgetFeed?.(url, force) ?? Promise.reject(new Error('Feed API is not available.')),
             (from, to, source) => enableWidgetAutorun?.(from, to, source),
           ),
@@ -940,17 +912,16 @@ export function buildDecorations(
 
 function createWysiwygDecorations(
   requestWidgetAgent?: (prompt: string) => void,
-  runWidgetTerminal?: (command: string, timeoutMs?: number, trustKey?: string, label?: string) => Promise<unknown>,
   fetchWidgetFeed?: (url: string, force?: boolean) => Promise<unknown>,
   enableWidgetAutorun?: (from: number, to: number, source: string) => void,
 ) {
   const field = StateField.define<DecorationSet>({
     create(state) {
-      return buildDecorations(state, requestWidgetAgent, runWidgetTerminal, fetchWidgetFeed, enableWidgetAutorun);
+      return buildDecorations(state, requestWidgetAgent, fetchWidgetFeed, enableWidgetAutorun);
     },
     update(decorations, transaction) {
       if (transaction.docChanged || transaction.selection) {
-        return buildDecorations(transaction.state, requestWidgetAgent, runWidgetTerminal, fetchWidgetFeed, enableWidgetAutorun);
+        return buildDecorations(transaction.state, requestWidgetAgent, fetchWidgetFeed, enableWidgetAutorun);
       }
       return decorations;
     },
@@ -986,7 +957,7 @@ const checkboxClickHandler = EditorView.domEventHandlers({
 });
 
 /* ─── Component ──────────────────────────────────────────── */
-export function NoteEditor({ note, content, onContentChange, onSave, onRename, onExecuteDirective, onOpenWikilink, onOpenWebView }: NoteEditorProps) {
+export function NoteEditor({ note, content, onContentChange, onSave, onRename, onExecuteDirective, onOpenWikilink }: NoteEditorProps) {
   const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const contentRef = useRef(content);
@@ -994,7 +965,6 @@ export function NoteEditor({ note, content, onContentChange, onSave, onRename, o
   const onSaveRef = useRef(onSave);
   const onExecuteDirectiveRef = useRef(onExecuteDirective);
   const onOpenWikilinkRef = useRef(onOpenWikilink);
-  const onOpenWebViewRef = useRef(onOpenWebView);
 
   // Inline, editable note title (Obsidian-style). Synced from the note.
   const [titleDraft, setTitleDraft] = useState(note?.title ?? '');
@@ -1012,28 +982,6 @@ export function NoteEditor({ note, content, onContentChange, onSave, onRename, o
   const requestWidgetAgent = useCallback((prompt: string) => {
     onExecuteDirectiveRef.current?.(prompt);
   }, []);
-
-  const runWidgetTerminal = useCallback(async (command: string, timeoutMs?: number, trustKey?: string, label?: string) => {
-    if (!note?.vault_id) throw new Error('No active vault for widget command.');
-    const storageKey = trustKey ? `${TERMINAL_TRUST_PREFIX}${note.vault_id}:${trustKey}` : '';
-    const trusted = storageKey ? localStorage.getItem(storageKey) === '1' : false;
-    if (!trusted) {
-      const ok = window.confirm([
-        `Allow ${label || 'this widget'} to run terminal commands in this vault?`,
-        '',
-        'This enables repeated calls from this exact widget source, which is needed for live polling. If the widget source changes, Cascade will ask again.',
-        '',
-        'First command:',
-        command,
-      ].join('\n'));
-      if (!ok) throw new Error('Command denied by user.');
-      if (storageKey) localStorage.setItem(storageKey, '1');
-    }
-    return api(`/api/vaults/${note.vault_id}/widget-command`, {
-      method: 'POST',
-      body: JSON.stringify({ command, timeout_ms: timeoutMs }),
-    });
-  }, [note?.vault_id]);
 
   const fetchWidgetFeed = useCallback(async (url: string, force?: boolean) => {
     if (!note?.vault_id) throw new Error('No active vault for widget feed.');
@@ -1065,7 +1013,6 @@ export function NoteEditor({ note, content, onContentChange, onSave, onRename, o
   onSaveRef.current = onSave;
   onExecuteDirectiveRef.current = onExecuteDirective;
   onOpenWikilinkRef.current = onOpenWikilink;
-  onOpenWebViewRef.current = onOpenWebView;
 
   // Word count and stats
   const stats = useMemo(() => {
@@ -1093,7 +1040,7 @@ export function NoteEditor({ note, content, onContentChange, onSave, onRename, o
       history(),
       EditorView.lineWrapping,
       cmPlaceholder('Start writing...'),
-      createWysiwygDecorations(requestWidgetAgent, runWidgetTerminal, fetchWidgetFeed, enableWidgetAutorun),
+      createWysiwygDecorations(requestWidgetAgent, fetchWidgetFeed, enableWidgetAutorun),
       checkboxClickHandler,
       EditorView.domEventHandlers({
         mousedown(event) {
@@ -1112,7 +1059,7 @@ export function NoteEditor({ note, content, onContentChange, onSave, onRename, o
             const url = extLink.getAttribute('data-url');
             if (url) {
               event.preventDefault();
-              onOpenWebViewRef.current?.(url);
+              window.open(url, '_blank', 'noopener,noreferrer');
               return true;
             }
           }
@@ -1176,7 +1123,7 @@ export function NoteEditor({ note, content, onContentChange, onSave, onRename, o
         }
       }),
     ],
-    [requestWidgetAgent, runWidgetTerminal, fetchWidgetFeed, enableWidgetAutorun],
+    [requestWidgetAgent, fetchWidgetFeed, enableWidgetAutorun],
   );
 
   // Create/destroy editor
@@ -1400,15 +1347,6 @@ function insertAtCursor(view: EditorView, text: string) {
     changes: { from, insert: text },
     selection: { anchor: from + text.length },
   });
-}
-
-function widgetTrustKey(source: string) {
-  let hash = 2166136261;
-  for (let i = 0; i < source.length; i++) {
-    hash ^= source.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash >>> 0).toString(36);
 }
 
 function sampleWidgetBlock() {

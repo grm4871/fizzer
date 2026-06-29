@@ -2,7 +2,7 @@
  * @file TabBar.tsx — Tabbed navigation bar component
  *
  * Renders the top tab bar showing all open tabs. Supports:
- * - Icon differentiation (note vs web tab)
+ * - Icon differentiation (note vs chat tab)
  * - Active tab highlight (both main active tab and split active tab)
  * - Close button on hover
  * - Middle-click to close
@@ -12,14 +12,13 @@
  */
 
 import { useState, useEffect } from 'react';
-import { Globe, FileText, Columns, X, Plus } from 'lucide-react';
+import { FileText, Columns, X, Plus, Hash } from 'lucide-react';
 
 export interface Tab {
   id: string;
   title: string;
-  type: 'note' | 'web';
+  type: 'note' | 'chat';
   dirty?: boolean;
-  url?: string;
 }
 
 interface TabBarProps {
@@ -95,14 +94,14 @@ export function TabBar({
                 onCloseTab(tab.id);
               }
             }}
-            title={tab.url || tab.title}
+            title={tab.title}
           >
             {tab.dirty && <span className="tab-dirty" />}
             
             {/* Tab Icon */}
             <span className="tab-icon">
-              {tab.type === 'web' ? (
-                <Globe size={13} className="text-secondary" style={{ marginRight: '6px' }} />
+              {tab.type === 'chat' ? (
+                <Hash size={13} className="text-secondary" style={{ marginRight: '6px' }} />
               ) : (
                 <FileText size={13} className="text-tertiary" style={{ marginRight: '6px' }} />
               )}

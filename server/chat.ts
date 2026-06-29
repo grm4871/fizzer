@@ -515,11 +515,13 @@ export function buildAgentChatContentFromRunEvents(
 
   const trimmed = assistantText.trim();
   const done = status !== 'running';
-  const body = trimmed
-    ? assistantText
-    : done
-      ? terminalSummary
-      : 'Thinking...';
+  // Once the run finishes, the chat body collapses to the final answer (the run
+  // summary) so the chat stays readable; the full step-by-step narration is kept
+  // in `blocks` for the trace disclosure. While running we still show live text
+  // so there's visible progress.
+  const body = done
+    ? (terminalSummary.trim() || trimmed || 'Done.')
+    : (trimmed || 'Thinking...');
 
   return { body, blocks, status, done };
 }

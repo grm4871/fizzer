@@ -1,9 +1,7 @@
-import { useEffect, useState, useCallback, useRef, useLayoutEffect, useMemo, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo, type CSSProperties, type ReactNode } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { type Tab } from './components/TabBar';
 import { NoteEditor } from './components/NoteEditor';
-import { WebView } from './components/WebView';
-import { TerminalWindow } from './components/TerminalWindow';
 import {
   canMergeChatMessages,
   CHAT_NOTE_MARKER,
@@ -26,19 +24,16 @@ import { api, type User, type Vault, type Folder, type NoteSummary, type Note } 
 import { connectRunsSocket, connectVaultSocket } from './socket';
 import { isLocalRunId, cancelLocalAgentRun } from './localAgentRunner';
 import { startDesktopRunnerHost } from './desktopRunnerHost';
-import { Gem, PanelLeftOpen, SquareTerminal } from 'lucide-react';
+import { Gem, PanelLeftOpen } from 'lucide-react';
 
 /**
  * @file App.tsx — Root component for Cascade
  *
  * Orchestrates application state and the tiling workspace. `openTabs` is the
- * global registry of tab content (notes, web views, terminals); a recursive
+ * global registry of tab content (notes and chat channels); a recursive
  * {@link LayoutNode} tree (see `layout/tree.ts`) describes how those tabs are
  * arranged into draggable, resizable panes. Note bodies are held per-tab in
  * `noteContents` so any number of note panes can be edited independently.
- *
- * Web tabs render once into a persistent overlay positioned over whichever pane
- * currently shows them, so switching/tiling never reloads them.
  *
  * @component
  */
@@ -49,19 +44,6 @@ function sanitizeRestoredTabs(value: unknown): Tab[] {
     .filter((tab): tab is Partial<Tab> => Boolean(tab) && typeof tab === 'object')
     .map((tab): Tab | null => {
       if (typeof tab.id !== 'string' || typeof tab.title !== 'string') return null;
-      if (tab.type === 'web') {
-        return {
-          id: tab.id,
-          title: tab.title,
-          type: 'web',
-          dirty: false,
-          url: typeof tab.url === 'string' ? tab.url : 'about:blank',
-          isChatNote: typeof tab.isChatNote === 'boolean' ? tab.isChatNote : undefined
-        };
-      }
-      if (tab.type === 'terminal') {
-        return { id: tab.id, title: tab.title || 'Terminal', type: 'terminal', dirty: false, terminalHistory: typeof tab.terminalHistory === 'string' ? tab.terminalHistory : '' };
-      }
       if (tab.type === 'chat') {
         return { id: tab.id, title: tab.title || 'Channel', type: 'chat', dirty: false };
       }
@@ -76,7 +58,7 @@ function sanitizeRestoredTabs(value: unknown): Tab[] {
 /**
  * Session persisted to localStorage so a reload restores the workspace: the open
  * tabs, the pane layout tree, and which pane was focused. Note bodies are
- * re-fetched on restore; web tabs reload from their persisted URL.
+ * re-fetched on restore.
  */
 interface PersistedSession {
   activeVaultId: string | null;
@@ -244,24 +226,8 @@ function loadChatState(): ChatState {
   }
 }
 
-type PaneRect = { left: number; top: number; width: number; height: number };
 type NoteEntry = { note: Note; draft: string };
 type AgentId = 'claude-code' | 'codex' | 'grok' | 'antigravity' | 'copilot' | 'hermes';
-
-function paneRectsEqual(a: Record<string, PaneRect>, b: Record<string, PaneRect>) {
-  const aKeys = Object.keys(a);
-  const bKeys = Object.keys(b);
-  if (aKeys.length !== bKeys.length) return false;
-  return aKeys.every((key) => {
-    const left = a[key];
-    const right = b[key];
-    return Boolean(right)
-      && left.left === right.left
-      && left.top === right.top
-      && left.width === right.width
-      && left.height === right.height;
-  });
-}
 
 const CHAT_AGENTS: Array<{ id: AgentId; label: string }> = [
   { id: 'claude-code', label: 'Claude' },
@@ -526,14 +492,9 @@ export default function App() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  // True while a tab is being dragged, so the <webview> overlay lets drops
-  // fall through to the panes underneath it.
-  const [isDraggingTab, setIsDraggingTab] = useState(false);
-
   // ─── Derived focus state ────────────────────────────────────────
   const focusedPane = Layout.findPane(layout, focusedPaneId) ?? Layout.getFirstPane(layout);
   const activeTabId = focusedPane.activeTabId;
-  const activeTab = openTabs.find((t) => t.id === activeTabId);
   const currentUsername = user?.username ?? '';
   const noteTitleById = useMemo(() => new Map(notes.map((note) => [note.id, note.title])), [notes]);
 
@@ -583,75 +544,6 @@ export default function App() {
   const pendingChatPatchRef = useRef<Map<string, ChatMessage>>(new Map());
   const chatPatchTimerRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const startAgentChatRunRef = useRef<((channelId: string, registration: ChatAgentRegistration, prompt: string, triggeringMessage: ChatMessage) => void) | null>(null);
-
-  // ─── Persistent web-tab geometry ────────────────────────────────
-  // Each pane registers its content element so we can position the persistent
-  // <webview> overlay over the pane that currently shows a given web tab.
-  const editorAreaRef = useRef<HTMLDivElement>(null);
-  const paneElsRef = useRef<Map<string, HTMLDivElement>>(new Map());
-  const [paneRects, setPaneRects] = useState<Record<string, PaneRect>>({});
-  const measureFrameRef = useRef<number | null>(null);
-
-  const registerPaneContent = useCallback((paneId: string, el: HTMLDivElement | null) => {
-    if (el) paneElsRef.current.set(paneId, el);
-    else paneElsRef.current.delete(paneId);
-  }, []);
-
-  const measurePanes = useCallback(() => {
-    if (measureFrameRef.current != null) cancelAnimationFrame(measureFrameRef.current);
-    measureFrameRef.current = requestAnimationFrame(() => {
-      measureFrameRef.current = null;
-      const area = editorAreaRef.current;
-      if (!area) return;
-      const areaRect = area.getBoundingClientRect();
-      const next: Record<string, PaneRect> = {};
-      paneElsRef.current.forEach((el, id) => {
-        if (!el.isConnected) return;
-        const r = el.getBoundingClientRect();
-        next[id] = {
-          left: Math.round(r.left - areaRect.left),
-          top: Math.round(r.top - areaRect.top),
-          width: Math.round(r.width),
-          height: Math.round(r.height),
-        };
-      });
-      setPaneRects((prev) => (paneRectsEqual(prev, next) ? prev : next));
-    });
-  }, []);
-
-  const measurePanesNow = useCallback(() => {
-    const area = editorAreaRef.current;
-    if (!area) return;
-    const areaRect = area.getBoundingClientRect();
-    const next: Record<string, PaneRect> = {};
-    paneElsRef.current.forEach((el, id) => {
-      if (!el.isConnected) return;
-      const r = el.getBoundingClientRect();
-      next[id] = {
-        left: Math.round(r.left - areaRect.left),
-        top: Math.round(r.top - areaRect.top),
-        width: Math.round(r.width),
-        height: Math.round(r.height),
-      };
-    });
-    setPaneRects((prev) => (paneRectsEqual(prev, next) ? prev : next));
-  }, []);
-
-  useLayoutEffect(() => {
-    measurePanesNow();
-    const observer = new ResizeObserver(() => measurePanes());
-    if (editorAreaRef.current) observer.observe(editorAreaRef.current);
-    paneElsRef.current.forEach((el) => observer.observe(el));
-    window.addEventListener('resize', measurePanes);
-    return () => {
-      observer.disconnect();
-      window.removeEventListener('resize', measurePanes);
-      if (measureFrameRef.current != null) {
-        cancelAnimationFrame(measureFrameRef.current);
-        measureFrameRef.current = null;
-      }
-    };
-  }, [measurePanes, measurePanesNow, layout, sidebarOpen, sidebarWidth, openTabs]);
 
   // Repair focus if the focused pane disappears (e.g. after collapsing a split).
   useEffect(() => {
@@ -995,84 +887,12 @@ export default function App() {
     }
   }, [activeVaultId, loadVaultData]);
 
-  // ═══════════════════════════════════════════════════════════════
-  // WEB / TERMINAL TAB OPERATIONS
-  // ═══════════════════════════════════════════════════════════════
-
-  function extractDomain(url: string): string {
-    try { return new URL(url).hostname; } catch { return url; }
-  }
-
   /** Add a tab to the registry and place it (active) into a pane. */
   const addTabToPane = useCallback((tab: Tab, paneId: string) => {
     setOpenTabs((prev) => [...prev, tab]);
     setLayout(Layout.simplify(Layout.addTabToPane(layoutRef.current, paneId, tab.id)));
     setFocusedPaneId(paneId);
   }, []);
-
-  /** Create a fresh browser tab in the given (or focused) pane. */
-  const handleCreateWebTab = useCallback((paneId?: string) => {
-    const id = `web-${Date.now()}`;
-    addTabToPane({ id, title: 'New Tab', type: 'web', dirty: false, url: 'about:blank' }, paneId ?? focusedPaneRef.current.id);
-  }, [addTabToPane]);
-
-  /** Open a URL: focus an existing matching web tab, else open a new one. */
-  const handleOpenWebView = useCallback((url: string, isChatNote?: boolean) => {
-    const shouldBeChatNote = isChatNote || url.includes('#chatNote') || url.includes('chatNote=true');
-    const cleanUrl = url.replace('#chatNote', '').replace(/[?&]chatNote=true/, '');
-
-    const existing = openTabsRef.current.find((t) => t.type === 'web' && (t.url === cleanUrl || t.url === url));
-    if (existing) {
-      if (shouldBeChatNote && !existing.isChatNote) {
-        setOpenTabs((prev) => prev.map((t) => (t.id === existing.id ? { ...t, isChatNote: true } : t)));
-      }
-      const pane = Layout.findPaneByTab(layoutRef.current, existing.id);
-      if (pane) { setLayout(Layout.setActiveTab(layoutRef.current, pane.id, existing.id)); setFocusedPaneId(pane.id); }
-      return;
-    }
-    const id = `web-${Date.now()}`;
-    addTabToPane({
-      id,
-      title: extractDomain(cleanUrl) || cleanUrl,
-      type: 'web',
-      dirty: false,
-      url: cleanUrl,
-      isChatNote: shouldBeChatNote,
-    }, focusedPaneRef.current.id);
-  }, [addTabToPane]);
-
-  const handleCreateChatNote = useCallback(async (tabId: string) => {
-    const tab = openTabsRef.current.find((t) => t.id === tabId);
-    if (!tab || tab.type !== 'web') return;
-
-    // Promote the tab locally to be a chat note
-    setOpenTabs((prev) =>
-      prev.map((t) => (t.id === tabId ? { ...t, isChatNote: true } : t))
-    );
-
-    // Call electron to update its chat note state
-    const electronAPI = (window as unknown as {
-      electronAPI?: { setChatNote?: (id: string, isChatNote: boolean) => Promise<{ success: boolean }> };
-    }).electronAPI;
-    if (electronAPI?.setChatNote) {
-      void electronAPI.setChatNote(tabId, true);
-    }
-
-    // Create the shortcut note in the vault
-    if (!activeVaultIdRef.current) return;
-    try {
-      const urlWithHash = `${tab.url || 'about:blank'}#chatNote`;
-      const title = tab.title || 'Chat Note';
-      await api<{ note: Note }>(`/api/vaults/${activeVaultIdRef.current}/notes`, {
-        method: 'POST',
-        body: JSON.stringify({ title, content: urlWithHash }),
-      });
-      setNotice(`Created chat note shortcut: ${title}`);
-      await loadVaultData(activeVaultIdRef.current);
-    } catch (error) {
-      console.error('Error creating chat note shortcut:', error);
-    }
-  }, [loadVaultData]);
 
   // ═══════════════════════════════════════════════════════════════
   // CHAT CHANNEL OPERATIONS
@@ -1104,12 +924,6 @@ export default function App() {
       next = Layout.removeTab(next, oldId);
       setOpenTabs((p) => p.filter((t) => t.id !== oldId || t.id === channelId));
       setNoteContents((p) => { const copy = { ...p }; delete copy[oldId]; return copy; });
-      if (openTabsRef.current.find((t) => t.id === oldId)?.type === 'terminal') {
-        const electronAPI = (window as unknown as {
-          electronAPI?: { stopTerminal?: (id: string) => Promise<{ success: boolean; error?: string }> };
-        }).electronAPI;
-        void electronAPI?.stopTerminal?.(oldId);
-      }
     }
     setLayout(Layout.simplify(next));
     setFocusedPaneId(focused.id);
@@ -1293,11 +1107,15 @@ export default function App() {
           if (event.type === 'status') {
             const payload = JSON.parse(event.payload_json);
             if (payload.status === 'completed' || payload.status === 'failed') {
-              const finalBody = assistantText.trim()
-                || (payload.status === 'failed' ? (payload.summary || 'Agent failed.') : 'Done.');
+              // Collapse the chat body to the final answer (run summary); the full
+              // narration stays in `blocks` for the trace disclosure.
+              const summaryText = typeof payload.summary === 'string' ? payload.summary.trim() : '';
+              const finalBody = summaryText
+                || assistantText.trim()
+                || (payload.status === 'failed' ? 'Agent failed.' : 'Done.');
               updateChatMessage(channelId, agentMessageId, (message) => ({
                 ...message,
-                body: message.body === 'Thinking...' || !assistantText.trim() ? finalBody : message.body,
+                body: finalBody,
                 status: payload.status === 'failed' ? 'failed' : undefined,
               }));
               if (payload.status === 'completed') {
@@ -1584,25 +1402,12 @@ export default function App() {
     }
   }, [scheduleChatMessagePatch, persistChatMessageToServer, startAgentChatRun, user, handleRegisterChatAgent, appendChatMessage]);
 
-  // ═══════════════════════════════════════════════════════════════
-  // TERMINAL HELPERS
-  // ═══════════════════════════════════════════════════════════════
-
-  const stopTerminalTab = useCallback((tabId: string) => {
-    const electronAPI = (window as unknown as {
-      electronAPI?: { stopTerminal?: (id: string) => Promise<{ success: boolean; error?: string }> };
-    }).electronAPI;
-    void electronAPI?.stopTerminal?.(tabId);
-  }, []);
-
   /** Close a tab from anywhere: drop it from the registry, content, and tree. */
   const closeTab = useCallback((tabId: string) => {
-    const tab = openTabsRef.current.find((t) => t.id === tabId);
-    if (tab?.type === 'terminal') stopTerminalTab(tabId);
     setOpenTabs((prev) => prev.filter((t) => t.id !== tabId));
     setNoteContents((prev) => { const next = { ...prev }; delete next[tabId]; return next; });
     setLayout(Layout.simplify(Layout.removeTab(layoutRef.current, tabId)));
-  }, [stopTerminalTab]);
+  }, []);
 
   // Stable handle so socket/delete callbacks can close tabs without re-subscribing.
   const closeTabRef = useRef(closeTab); closeTabRef.current = closeTab;
@@ -1623,13 +1428,6 @@ export default function App() {
         openChatChannel(noteId, data.note.title);
         return;
       }
-      const match = content.match(/^(https?:\/\/[^\s]+)$/);
-      if (match) {
-        const url = match[1];
-        closeTab(noteId);
-        handleOpenWebView(url);
-        return;
-      }
 
       setNoteContents((prev) => {
         const existing = prev[noteId];
@@ -1645,7 +1443,7 @@ export default function App() {
       setNotice('That note could not be opened — it may have been moved or deleted. Refreshing the list.');
       if (activeVaultIdRef.current) void loadVaultData(activeVaultIdRef.current);
     }
-  }, [loadVaultData, closeTab, handleOpenWebView, openChatChannel]);
+  }, [loadVaultData, closeTab, openChatChannel]);
 
   /**
    * Open a note: ensure it has a tab, place it in the focused pane (or focus the
@@ -1659,11 +1457,6 @@ export default function App() {
       const preview = summary.content_preview.trim();
       if (preview.startsWith(CHAT_NOTE_MARKER)) {
         openChatChannel(noteId, summary.title, mode);
-        return;
-      }
-      const match = preview.match(/^(https?:\/\/[^\s]+)$/);
-      if (match) {
-        handleOpenWebView(match[1]);
         return;
       }
     }
@@ -1686,14 +1479,13 @@ export default function App() {
         next = Layout.removeTab(next, oldId);
         setOpenTabs((p) => p.filter((t) => t.id !== oldId));
         setNoteContents((p) => { const copy = { ...p }; delete copy[oldId]; return copy; });
-        if (openTabsRef.current.find((t) => t.id === oldId)?.type === 'terminal') stopTerminalTab(oldId);
       }
       setLayout(Layout.simplify(next));
       setFocusedPaneId(focused.id);
     }
 
     void loadNoteContent(noteId);
-  }, [loadNoteContent, stopTerminalTab, handleOpenWebView, openChatChannel]);
+  }, [loadNoteContent, openChatChannel]);
 
   /** Save a specific note tab's draft. */
   const saveNoteTab = useCallback(async (tabId: string) => {
@@ -2036,42 +1828,6 @@ export default function App() {
   }, [loadVaultData, handleExecuteDirective]);
 
   // ═══════════════════════════════════════════════════════════════
-  // WEB / TERMINAL TAB STATE UPDATES
-  // ═══════════════════════════════════════════════════════════════
-
-  const updateTabUrl = useCallback((tabId: string, url: string) => {
-    setOpenTabs((prev) => prev.map((t) => {
-      if (t.id !== tabId) return t;
-      const title = extractDomain(url);
-      if (t.url === url && t.title === title) return t;
-      return { ...t, url, title };
-    }));
-  }, []);
-
-  const updateTabTitle = useCallback((tabId: string, title: string) => {
-    setOpenTabs((prev) => prev.map((t) => (t.id === tabId && t.title !== title ? { ...t, title } : t)));
-  }, []);
-
-  const updateTerminalHistory = useCallback((tabId: string, terminalHistory: string) => {
-    setOpenTabs((prev) => prev.map((t) => (
-      t.id === tabId && t.type === 'terminal' && t.terminalHistory !== terminalHistory
-        ? { ...t, terminalHistory }
-        : t
-    )));
-  }, []);
-
-  /** Turn the focused pane's active tab into a terminal (or open a new one). */
-  const handleUpgradeActiveTabToTerminal = useCallback(() => {
-    const focused = focusedPaneRef.current;
-    const activeId = focused.activeTabId;
-    const termId = activeId ?? `terminal-${Date.now()}`;
-    const termTab: Tab = { id: termId, title: 'Terminal', type: 'terminal', dirty: false, terminalHistory: '' };
-    setOpenTabs((prev) => (activeId ? prev.map((t) => (t.id === activeId ? termTab : t)) : [...prev, termTab]));
-    setNoteContents((prev) => { const next = { ...prev }; delete next[termId]; return next; });
-    if (!activeId) setLayout(Layout.simplify(Layout.addTabToPane(layoutRef.current, focused.id, termId)));
-  }, []);
-
-  // ═══════════════════════════════════════════════════════════════
   // TAB / PANE MANAGEMENT
   // ═══════════════════════════════════════════════════════════════
 
@@ -2092,10 +1848,6 @@ export default function App() {
     setLayout(next);
     const landed = Layout.findPaneByTab(next, payload.tabId);
     setFocusedPaneId(landed?.id ?? targetPaneId);
-    // The dropped tab's button unmounts as the layout rebuilds, so its
-    // onDragEnd never fires. Clear the drag flag here, otherwise the webview
-    // wrapper stays at pointer-events:none and the page becomes unclickable.
-    setIsDraggingTab(false);
   }, []);
 
   const handleResizeSplit = useCallback((splitId: string, sizes: number[]) => {
@@ -2114,11 +1866,9 @@ export default function App() {
     if (!electronAPI?.popOutTab) return;
     const tab = openTabsRef.current.find((t) => t.id === tabId);
     if (!tab) return;
-    if (tab.type === 'chat') return;
+    if (tab.type !== 'note') return;
     void electronAPI.popOutTab({ tab, screenX, screenY }).then((res) => {
       if (!res?.popped) return;
-      // Remove from this window but DON'T stop a terminal's PTY — the popped-out
-      // window reconnects to the same live shell by id (terminal:start reuses it).
       setOpenTabs((prev) => prev.filter((t) => t.id !== tabId));
       setNoteContents((prev) => { const next = { ...prev }; delete next[tabId]; return next; });
       setLayout(Layout.simplify(Layout.removeTab(layoutRef.current, tabId)));
@@ -2134,6 +1884,7 @@ export default function App() {
     if (!electronAPI?.onAdoptTab) return;
     return electronAPI.onAdoptTab((tab) => {
       if (!tab || typeof tab.id !== 'string') return;
+      if (tab.type !== 'note') return;
       setOpenTabs((prev) =>
         prev.some((t) => t.id === tab.id) ? prev.map((t) => (t.id === tab.id ? { ...t, ...tab } : t)) : [...prev, tab],
       );
@@ -2147,19 +1898,11 @@ export default function App() {
   /** Split the focused pane to the right (Ctrl/Cmd+Shift+\). */
   const splitFocusedPane = useCallback(() => {
     const focused = focusedPaneRef.current;
-    if (focused.tabIds.length >= 2 && focused.activeTabId) {
-      const next = Layout.splitPaneWithTab(layoutRef.current, focused.id, 'right', focused.activeTabId);
-      setLayout(next);
-      const landed = Layout.findPaneByTab(next, focused.activeTabId);
-      if (landed) setFocusedPaneId(landed.id);
-    } else {
-      const id = `web-${Date.now()}`;
-      setOpenTabs((prev) => [...prev, { id, title: 'New Tab', type: 'web', dirty: false, url: 'about:blank' }]);
-      const next = Layout.splitPaneWithTab(layoutRef.current, focused.id, 'right', id);
-      setLayout(next);
-      const landed = Layout.findPaneByTab(next, id);
-      if (landed) setFocusedPaneId(landed.id);
-    }
+    if (!focused.activeTabId) return;
+    const next = Layout.splitPaneWithTab(layoutRef.current, focused.id, 'right', focused.activeTabId);
+    setLayout(next);
+    const landed = Layout.findPaneByTab(next, focused.activeTabId);
+    if (landed) setFocusedPaneId(landed.id);
   }, []);
 
   // After login/reload, fetch bodies for the note tabs that are visible in panes.
@@ -2246,19 +1989,8 @@ export default function App() {
   // RENDER
   // ═══════════════════════════════════════════════════════════════
 
-  /** Render the content of a tab inside its pane (web tabs draw via the overlay). */
+  /** Render the content of a tab inside its pane. */
   const renderTabContent = useCallback((tab: Tab): ReactNode => {
-    if (tab.type === 'web') return null;
-    if (tab.type === 'terminal') {
-      return (
-        <TerminalWindow
-          id={tab.id}
-          history={tab.terminalHistory || ''}
-          onHistoryChange={(history) => updateTerminalHistory(tab.id, history)}
-          onTitleChange={(title) => updateTabTitle(tab.id, title)}
-        />
-      );
-    }
     if (tab.type === 'chat') {
       const channel = notes.find((note) => note.id === tab.id && note.content_preview.trim().startsWith(CHAT_NOTE_MARKER));
       if (!channel) return <div className="pane-empty">Channel not found</div>;
@@ -2295,11 +2027,10 @@ export default function App() {
           const target = notes.find((n) => n.title.toLowerCase() === title.toLowerCase());
           if (target) openNote(target.id);
         }}
-        onOpenWebView={handleOpenWebView}
         onLinkifySelection={(term, context) => handleLinkifyTerm(term, context, entry?.note?.title)}
       />
     );
-  }, [chatState.messagesByChannel, chatState.registeredAgentsByChannel, currentUsername, runningChatAgents, handleCancelChatRun, handleRegisterChatAgent, handleRemoveChatAgent, handleSendChatMessage, noteContents, notes, updateTerminalHistory, updateTabTitle, handleNoteChange, saveNoteTab, renameNoteTab, handleExecuteDirective, handleOpenWebView, handleLinkifyTerm, openNote]);
+  }, [chatState.messagesByChannel, chatState.registeredAgentsByChannel, currentUsername, runningChatAgents, handleCancelChatRun, handleRegisterChatAgent, handleRemoveChatAgent, handleSendChatMessage, noteContents, notes, handleNoteChange, saveNoteTab, renameNoteTab, handleExecuteDirective, handleLinkifyTerm, openNote]);
 
   if (!user) {
     return (
@@ -2326,8 +2057,6 @@ export default function App() {
       </main>
     );
   }
-
-  const webTabs = openTabs.filter((t) => t.type === 'web');
 
   return (
     <main
@@ -2396,14 +2125,9 @@ export default function App() {
             </button>
           )}
           <div style={{ flex: 1, minWidth: 0 }} />
-          {activeTab?.type !== 'terminal' && (
-            <button className="btn-icon" onClick={handleUpgradeActiveTabToTerminal} title={activeTab ? 'Turn current tab into a terminal' : 'Open terminal'}>
-              <SquareTerminal size={16} />
-            </button>
-          )}
         </div>
 
-        <div ref={editorAreaRef} className="flex-1" style={{ position: 'relative', display: 'flex', overflow: 'hidden' }}>
+        <div className="flex-1" style={{ position: 'relative', display: 'flex', overflow: 'hidden' }}>
           <PaneGrid
             node={layout}
             openTabs={openTabs}
@@ -2411,54 +2135,11 @@ export default function App() {
             onFocusPane={setFocusedPaneId}
             onSelectTab={selectTabInPane}
             onCloseTab={closeTab}
-            onNewTab={handleCreateWebTab}
             onDropTab={handleDropTab}
             onResize={handleResizeSplit}
             onDetachTab={handleDetachTab}
-            onDragStateChange={setIsDraggingTab}
-            registerPaneContent={registerPaneContent}
             renderContent={renderTabContent}
-            onCreateChatNote={handleCreateChatNote}
           />
-
-          {/* Persistent web tabs: every web tab stays mounted and is positioned
-              over whichever pane currently shows it, so switching or tiling never
-              reloads it. Hidden tabs sleep (muted, display:none). These render as
-              direct children of the (position:relative) editor area rather than
-              inside a pointer-events:none layer — Electron's <webview> guest does
-              not receive mouse input when any ancestor has pointer-events:none,
-              which made the page render but ignore every click. Each wrapper only
-              covers its own pane, so empty regions fall through to PaneGrid. */}
-          {webTabs.map((tab) => {
-            const pane = Layout.findPaneByTab(layout, tab.id);
-            const visible = Boolean(pane && pane.activeTabId === tab.id && paneRects[pane.id]);
-            const rect = visible && pane ? paneRects[pane.id] : null;
-            return (
-              <div
-                key={tab.id}
-                style={{
-                  position: 'absolute',
-                  left: rect?.left ?? 0,
-                  top: rect?.top ?? 0,
-                  width: rect?.width ?? 0,
-                  height: rect?.height ?? 0,
-                  display: visible ? 'flex' : 'none',
-                  flexDirection: 'column',
-                  // During a tab drag, let drops pass through to the pane beneath.
-                  pointerEvents: isDraggingTab ? 'none' : 'auto',
-                }}
-              >
-                <WebView
-                  tabId={tab.id}
-                  url={tab.url || ''}
-                  active={visible}
-                  onNavigate={(url) => updateTabUrl(tab.id, url)}
-                  onTitleChange={(title) => updateTabTitle(tab.id, title)}
-                  isChatNote={tab.isChatNote}
-                />
-              </div>
-            );
-          })}
         </div>
       </div>
 

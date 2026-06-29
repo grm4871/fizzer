@@ -7,14 +7,11 @@
  * `renderContent`). Tabs can be dragged between panes; dropping near a pane edge
  * splits it, dropping in the centre (or on the strip) docks the tab into it.
  *
- * Pane content elements are registered with the parent (`registerPaneContent`)
- * so App can position the persistent <webview> overlay over the right pane.
- *
  * @component
  */
 
 import { Fragment, useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react';
-import { Globe, FileText, Terminal, Plus, ExternalLink, MessageSquare, X, Hash } from 'lucide-react';
+import { FileText, ExternalLink, X, Hash } from 'lucide-react';
 import type { Tab } from './TabBar';
 import { isPane, type DropSide, type LayoutNode, type PaneNode, type SplitNode } from '../layout/tree';
 
@@ -32,7 +29,6 @@ interface PaneGridProps {
   onFocusPane: (paneId: string) => void;
   onSelectTab: (paneId: string, tabId: string) => void;
   onCloseTab: (tabId: string) => void;
-  onNewTab: (paneId: string) => void;
   /** A tab was dropped onto a pane; `index` only applies to `center` drops. */
   onDropTab: (payload: TabDragPayload, targetPaneId: string, side: DropSide, index?: number) => void;
   onResize: (splitId: string, sizes: number[]) => void;
@@ -40,12 +36,7 @@ interface PaneGridProps {
   /** A tab was dragged and released outside any pane; `screenX/screenY` are the
    *  drop point in screen pixels so the parent can pop it out at the cursor. */
   onDetachTab?: (tabId: string, screenX: number, screenY: number) => void;
-  /** Notifies when a tab drag begins/ends so the parent can let drops pass
-   *  through the persistent <webview> overlay (which otherwise eats them). */
-  onDragStateChange?: (dragging: boolean) => void;
-  registerPaneContent: (paneId: string, el: HTMLDivElement | null) => void;
   renderContent: (tab: Tab, paneId: string) => ReactNode;
-  onCreateChatNote?: (tabId: string) => void;
 }
 
 const MIN_FRACTION = 0.12;
@@ -81,8 +72,6 @@ function sideFromPosition(rect: DOMRect, clientX: number, clientY: number): Drop
 }
 
 function TabIcon({ type }: { type: Tab['type'] }) {
-  if (type === 'web') return <Globe size={13} className="text-secondary" style={{ marginRight: 6 }} />;
-  if (type === 'terminal') return <Terminal size={13} className="text-secondary" style={{ marginRight: 6 }} />;
   if (type === 'chat') return <Hash size={13} className="text-secondary" style={{ marginRight: 6 }} />;
   return <FileText size={13} className="text-tertiary" style={{ marginRight: 6 }} />;
 }
@@ -94,24 +83,18 @@ function PaneTabStrip({
   isFocused,
   onSelectTab,
   onCloseTab,
-  onNewTab,
   onDropTab,
   onPopOut,
   onDetachTab,
-  onDragStateChange,
-  onCreateChatNote,
 }: {
   pane: PaneNode;
   openTabs: Tab[];
   isFocused: boolean;
   onSelectTab: (paneId: string, tabId: string) => void;
   onCloseTab: (tabId: string) => void;
-  onNewTab: (paneId: string) => void;
   onDropTab: PaneGridProps['onDropTab'];
   onPopOut?: (tabId: string) => void;
   onDetachTab?: (tabId: string, screenX: number, screenY: number) => void;
-  onDragStateChange?: (dragging: boolean) => void;
-  onCreateChatNote?: (tabId: string) => void;
 }) {
   const tabs = pane.tabIds
     .map((id) => openTabs.find((t) => t.id === id))
@@ -138,7 +121,6 @@ function PaneTabStrip({
     const payload: TabDragPayload = { tabId, fromPaneId: pane.id };
     event.dataTransfer.setData(DRAG_MIME, JSON.stringify(payload));
     event.dataTransfer.effectAllowed = 'move';
-    onDragStateChange?.(true);
   };
 
   const handleStripDrop = (event: DragEvent, index?: number) => {
@@ -169,7 +151,6 @@ function PaneTabStrip({
           draggable
           onDragStart={(e) => handleDragStart(e, tab.id)}
           onDragEnd={(e) => {
-            onDragStateChange?.(false);
             // dropEffect 'none' = released outside any pane drop target → detach
             // into its own window (the main process ignores in-window releases).
             if (e.dataTransfer.dropEffect === 'none') {
@@ -186,7 +167,7 @@ function PaneTabStrip({
               onCloseTab(tab.id);
             }
           }}
-          title={tab.url || tab.title}
+          title={tab.title}
         >
           {tab.dirty && <span className="tab-dirty" />}
           <span className="tab-icon"><TabIcon type={tab.type} /></span>
@@ -219,10 +200,6 @@ function PaneTabStrip({
           </span>
         </button>
       ))}
-      <button className="tab-new-btn" onClick={() => onNewTab(pane.id)} title="New tab">
-        <Plus size={15} />
-      </button>
-
       {/* Right-click Context Menu */}
       {contextMenu && (
         <div
@@ -250,23 +227,6 @@ function PaneTabStrip({
             <X size={13} />
             Close tab
           </button>
-          {(() => {
-            const tab = tabs.find((t) => t.id === contextMenu.tabId);
-            const isWeb = tab && tab.type === 'web';
-            if (isWeb && onCreateChatNote) {
-              return (
-                <button
-                  onClick={() => {
-                    onCreateChatNote(contextMenu.tabId);
-                  }}
-                >
-                  <MessageSquare size={13} />
-                  Create Chat Note
-                </button>
-              );
-            }
-            return null;
-          })()}
         </div>
       )}
     </div>
@@ -281,14 +241,10 @@ function Pane({
   onFocusPane,
   onSelectTab,
   onCloseTab,
-  onNewTab,
   onDropTab,
   onPopOut,
   onDetachTab,
-  onDragStateChange,
-  registerPaneContent,
   renderContent,
-  onCreateChatNote,
 }: { pane: PaneNode } & Omit<PaneGridProps, 'node' | 'onResize'>) {
   const contentRef = useRef<HTMLDivElement | null>(null);
   const [dropSide, setDropSide] = useState<DropSide | null>(null);
@@ -327,17 +283,13 @@ function Pane({
         isFocused={pane.id === focusedPaneId}
         onSelectTab={onSelectTab}
         onCloseTab={onCloseTab}
-        onNewTab={onNewTab}
         onDropTab={onDropTab}
         onPopOut={onPopOut}
         onDetachTab={onDetachTab}
-        onDragStateChange={onDragStateChange}
-        onCreateChatNote={onCreateChatNote}
       />
       <div
         ref={(el) => {
           contentRef.current = el;
-          registerPaneContent(pane.id, el);
         }}
         className="pane-content"
         style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}

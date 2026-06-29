@@ -13,7 +13,6 @@ import path from 'node:path';
 import http from 'node:http';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
-import { spawn } from 'node:child_process';
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import bcrypt from 'bcrypt';
@@ -308,7 +307,7 @@ function syncRunToChatMessage(runId: number) {
   const content = buildAgentChatContentFromRunEvents(listRunEvents(db, runId));
   try {
     // Update only — the initiating client creates the placeholder message; if it
-    // hasn't landed yet this no-ops and a later event (or the terminal flush) retries.
+    // hasn't landed yet this no-ops and a later status event retries.
     const updated = updateChatMessage(db, target.userId, target.vaultId, target.channelId, target.messageId, {
       body: content.body,
       blocks: content.blocks.length ? content.blocks : undefined,
@@ -335,7 +334,7 @@ function syncRunToChatMessage(runId: number) {
 
 setChatSyncSink((runId, eventType) => {
   if (!chatRunTargets.has(runId)) return;
-  // Flush terminal status immediately; throttle streaming token updates.
+  // Flush final run status immediately; throttle streaming token updates.
   if (eventType === 'status') {
     const timer = chatRunFlushTimers.get(runId);
     if (timer) {
@@ -878,51 +877,6 @@ app.get('/api/vaults/:id/widget-data/:key', requireAuth, async (req: AuthedReque
     res.json(result);
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : 'Could not fetch widget data' });
-  }
-});
-
-app.post('/api/vaults/:id/widget-command', requireAuth, async (req: AuthedRequest, res) => {
-  const vault = getVault(db, req.params.id, req.user!.id);
-  if (!vault) return res.status(404).json({ error: 'Vault not found' });
-
-  const command = typeof req.body?.command === 'string' ? req.body.command.trim() : '';
-  if (!command) return res.status(400).json({ error: 'Command is required' });
-  if (command.length > 4000) return res.status(400).json({ error: 'Command is too long' });
-
-  const timeoutMs = Math.min(Math.max(Number(req.body?.timeout_ms) || 10000, 1000), 30000);
-
-  try {
-    const result = await new Promise<{
-      stdout: string;
-      stderr: string;
-      exit_code: number | null;
-      timed_out: boolean;
-    }>((resolve, reject) => {
-      const child = spawn('/bin/bash', ['-lc', command], {
-        cwd: vault.root_path,
-        env: process.env,
-      });
-      let stdout = '';
-      let stderr = '';
-      let timedOut = false;
-      const limit = 64 * 1024;
-      const appendCapped = (current: string, chunk: Buffer) => (current + chunk.toString()).slice(-limit);
-      const timer = setTimeout(() => {
-        timedOut = true;
-        child.kill('SIGKILL');
-      }, timeoutMs);
-
-      child.stdout.on('data', (chunk) => { stdout = appendCapped(stdout, chunk); });
-      child.stderr.on('data', (chunk) => { stderr = appendCapped(stderr, chunk); });
-      child.on('error', reject);
-      child.on('close', (code) => {
-        clearTimeout(timer);
-        resolve({ stdout, stderr, exit_code: code, timed_out: timedOut });
-      });
-    });
-    res.json(result);
-  } catch (err) {
-    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
 

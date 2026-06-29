@@ -2,10 +2,9 @@
  * @file PopoutApp.tsx — Standalone single-tab window
  *
  * Rendered (instead of the full workspace) when a tab has been dragged out of
- * the main window into its own OS window. It hosts exactly one tab full-bleed:
- * a note editor, a web view, or a terminal. Notes are re-fetched from the server
- * (the auth token is shared across windows via the same Electron session); web
- * views load fresh from their URL; terminals reconnect to their PTY by id.
+ * the main window into its own OS window. It hosts exactly one note tab
+ * full-bleed. Notes are re-fetched from the server (the auth token is shared
+ * across windows via the same Electron session).
  *
  * A slim header doubles as a drag handle: dragging it out of this window and
  * releasing over the main window merges the tab back (the main process closes
@@ -14,10 +13,8 @@
  * @component
  */
 
-import { useEffect, useRef, useState, type DragEvent } from 'react';
+import { useEffect, useState, type DragEvent } from 'react';
 import type { Tab } from './components/TabBar';
-import { WebView } from './components/WebView';
-import { TerminalWindow } from './components/TerminalWindow';
 import { NoteEditor } from './components/NoteEditor';
 import { api, type Note } from './api';
 
@@ -34,9 +31,6 @@ export function PopoutApp({ descriptor }: { descriptor: Tab }) {
   const [draft, setDraft] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [title, setTitle] = useState(descriptor.title);
-  // Web tabs can navigate inside the popout; track the live URL so merging back
-  // returns the page the user is actually looking at.
-  const liveUrlRef = useRef(descriptor.url);
 
   useEffect(() => { document.title = title || 'Cascade'; }, [title]);
 
@@ -74,34 +68,13 @@ export function PopoutApp({ descriptor }: { descriptor: Tab }) {
     if (event.dataTransfer.dropEffect !== 'none') return;
     const mergeApi = getMergeApi();
     if (!mergeApi?.mergeTab) return;
-    const tab: Tab = {
-      ...descriptor,
-      title,
-      url: descriptor.type === 'web' ? liveUrlRef.current : descriptor.url,
-    };
+    const tab: Tab = { ...descriptor, title };
     void mergeApi.mergeTab({ tab, screenX: event.screenX, screenY: event.screenY });
   };
 
   let body;
-  if (descriptor.type === 'web') {
-    body = (
-      <WebView
-        tabId={descriptor.id}
-        url={descriptor.url || 'about:blank'}
-        active
-        onNavigate={(u) => { liveUrlRef.current = u; }}
-        onTitleChange={(t) => setTitle(t)}
-      />
-    );
-  } else if (descriptor.type === 'terminal') {
-    body = (
-      <TerminalWindow
-        id={descriptor.id}
-        history={descriptor.terminalHistory || ''}
-        onHistoryChange={() => {}}
-        onTitleChange={(t) => setTitle(t)}
-      />
-    );
+  if (descriptor.type !== 'note') {
+    body = <div className="pane-empty">This tab type can no longer be popped out.</div>;
   } else if (error) {
     body = <div className="pane-empty">{error}</div>;
   } else {

@@ -7,10 +7,8 @@
  * panes are arranged on screen. A `PaneNode` is a leaf that hosts a set of tabs
  * (with one active); a `SplitNode` lays its children out in a row or column.
  *
- * Every tab id lives in exactly one pane — moving a tab between panes removes it
- * from the source. This keeps a 1:1 mapping between a tab and the single live
- * <webview>/editor that renders it, so dragging a web tab between panes never
- * spawns a duplicate or reloads the page.
+ * Every tab id lives in exactly one pane; moving a tab between panes removes it
+ * from the source, so a note or chat tab cannot be duplicated across panes.
  *
  * All operations are pure and return a new tree (no mutation), which makes them
  * trivial to unit-test and safe to drop into React state.

@@ -294,14 +294,31 @@ function ChatAvatar({
   );
 }
 
+// The trace disclosure holds the agent's full play-by-play (reasoning + the
+// step narration) so the chat body itself can stay short. Show it only when
+// there's something beyond the final answer already shown as the body.
+const TRACE_REVEAL_MARGIN = 24;
+function traceTextOf(message: ChatMessage): string {
+  return (message.blocks || [])
+    .filter((block) => block.type === 'thinking' || block.type === 'text')
+    .map((block) => (block.redacted ? '[redacted]' : block.text || ''))
+    .filter(Boolean)
+    .join('\n\n');
+}
+function hasExpandableTrace(message: ChatMessage): boolean {
+  const blocks = message.blocks || [];
+  if (blocks.some((block) => block.type === 'thinking')) return true;
+  const traceLen = traceTextOf(message).trim().length;
+  return traceLen > (message.body || '').trim().length + TRACE_REVEAL_MARGIN;
+}
+
 function ChatRunWidget({ message, onCancelRun }: { message: ChatMessage; onCancelRun: (runId: number) => void }) {
   const [open, setOpen] = useState(false);
-  const thinking = (message.blocks || []).filter((block) => block.type === 'thinking');
-  const thoughtText = thinking.map((block) => block.redacted ? '[redacted]' : block.text || '').filter(Boolean).join('\n\n');
+  const traceText = traceTextOf(message);
   const isRunning = message.status === 'running';
-  const canExpand = thoughtText.length > 0;
+  const canExpand = hasExpandableTrace(message);
 
-  if (!isRunning && thinking.length === 0) return null;
+  if (!isRunning && !canExpand) return null;
 
   return (
     <div className={`chat-run-widget ${open ? 'open' : ''}`} onClick={(event) => event.stopPropagation()}>
@@ -312,7 +329,7 @@ function ChatRunWidget({ message, onCancelRun }: { message: ChatMessage; onCance
         disabled={!canExpand}
       >
         <Brain size={13} />
-        <span>{canExpand ? 'Thought process' : 'Waiting for thought process'}</span>
+        <span>{canExpand ? 'Details' : 'Working…'}</span>
         {isRunning && <span className="ai-spinner" />}
         {canExpand && <ChevronRight size={13} className="ai-chevron" />}
       </button>
@@ -330,7 +347,7 @@ function ChatRunWidget({ message, onCancelRun }: { message: ChatMessage; onCance
           Stop
         </button>
       )}
-      {open && canExpand && <div className="chat-run-body">{thoughtText}</div>}
+      {open && canExpand && <div className="chat-run-body">{traceText}</div>}
     </div>
   );
 }
@@ -608,7 +625,7 @@ export function ChatView({
             messageGroups.map((group) => {
               const head = group.messages[0];
               const tail = group.messages[group.messages.length - 1];
-              const groupHasRunWidget = group.messages.some((message) => message.status === 'running' || (message.blocks || []).some((block) => block.type === 'thinking'));
+              const groupHasRunWidget = group.messages.some((message) => message.status === 'running' || hasExpandableTrace(message));
               const groupSelected = group.messages.some((message) => message.id === selectedMessageId);
               return (
                 <article
@@ -625,7 +642,7 @@ export function ChatView({
                     </div>
                     {group.messages.map((message) => {
                       const hasRunWidget = message.status === 'running';
-                      const hasThoughtBlocks = (message.blocks || []).some((block) => block.type === 'thinking');
+                      const hasThoughtBlocks = hasExpandableTrace(message);
                       const isTappable = hasRunWidget || hasThoughtBlocks;
                       const selected = selectedMessageId === message.id;
                       return (

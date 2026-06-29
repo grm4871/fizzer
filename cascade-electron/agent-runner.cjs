@@ -21,6 +21,11 @@ const CLAUDE_MAX_TURNS = Number(process.env.RUNNER_MAX_TURNS || 30);
 const CLAUDE_THINKING_TOKENS = Number(process.env.RUNNER_THINKING ?? 4000);
 const CLAUDE_AGENT_CONTEXT = 'Operate as a user-authorized local workspace assistant. This working directory is a LOCAL checkout of a Cascade vault (interlinked markdown .md notes) — it is NOT the running app: editing files here does not reach the live Cascade instance and bypasses its search/backlink index. To create or modify notes in the running app, use the `cascade-note` CLI (run `cascade-note --help`); it writes through the app API so changes appear live and stay indexed. Use raw file operations only for scratch or non-note work. Respect service terms, authentication boundaries, and rate limits, and do not handle secrets except when the user explicitly provides them for this local task.';
 
+// Nudge agents to behave like chat participants, not verbose coding CLIs: the
+// chat collapses step narration into a trace disclosure, so the actual message
+// should be short. Detailed reasoning belongs in thinking, not the reply.
+const CHAT_BREVITY_CONTEXT = "You are usually replying in a shared, multi-user chat channel. Write like a participant: concise and conversational. Don't narrate each step or tool call, and don't restate your plan — just do the work and give a short, direct reply. Keep detailed reasoning and play-by-play in your thinking, not in the chat message.";
+
 // Live Cascade API config for the `cascade-note` wrapper, populated by the
 // desktop runner host once it knows the server URL + the user's auth token.
 // Children inherit these via process.env, so the wrapper authenticates against
@@ -195,7 +200,7 @@ async function runClaudeLocally(opts, emit) {
       ...(CLAUDE_THINKING_TOKENS > 0
         ? { thinking: { type: 'enabled', budgetTokens: CLAUDE_THINKING_TOKENS } }
         : {}),
-      systemPrompt: { type: 'preset', preset: 'claude_code', append: `${CLAUDE_AGENT_CONTEXT} ${noteCapabilityContext(opts)}` },
+      systemPrompt: { type: 'preset', preset: 'claude_code', append: `${CLAUDE_AGENT_CONTEXT} ${CHAT_BREVITY_CONTEXT} ${noteCapabilityContext(opts)}` },
     },
   });
 
@@ -295,7 +300,7 @@ async function startLocalAgentRun(opts, sendEvent) {
   try {
     const result = await runCliAgent({
       agent,
-      context: noteCapabilityContext(opts),
+      context: `${CHAT_BREVITY_CONTEXT} ${noteCapabilityContext(opts)}`,
       userPrompt: prompt,
       cwd,
       resumeSessionId: typeof opts.resumeSessionId === 'string' ? opts.resumeSessionId : undefined,
