@@ -13,17 +13,17 @@
   --bg-deep: hsl(22, 8%, 5%);
 
   --border: hsl(25, 8%, 19%);
-  --border-active: hsl(33, 65%, 50%);
+  --border-active: hsl(31, 28%, 43%);
   --border-subtle: hsl(22, 7%, 13%);
 
   --text-primary: hsl(35, 12%, 88%);
   --text-secondary: hsl(30, 7%, 57%);
   --text-tertiary: hsl(25, 5%, 38%);
 
-  --accent: hsl(33, 68%, 52%);
-  --accent-hover: hsl(33, 72%, 63%);
-  --accent-subtle: hsla(33, 68%, 52%, 0.12);
-  --accent-glow: hsla(33, 68%, 52%, 0.28);
+  --accent: hsl(31, 36%, 48%);
+  --accent-hover: hsl(32, 38%, 58%);
+  --accent-subtle: hsla(31, 36%, 48%, 0.10);
+  --accent-glow: hsla(31, 36%, 48%, 0.18);
 
   --success: hsl(150, 45%, 48%);
   --success-subtle: hsla(150, 45%, 48%, 0.12);
@@ -47,7 +47,7 @@
   --shadow-sm: 0 1px 3px hsla(0, 0%, 0%, 0.4);
   --shadow-md: 0 4px 14px hsla(0, 0%, 0%, 0.5);
   --shadow-lg: 0 10px 40px hsla(0, 0%, 0%, 0.6);
-  --shadow-glow: 0 0 28px hsla(33, 68%, 40%, 0.12);
+  --shadow-glow: 0 0 28px hsla(31, 36%, 38%, 0.10);
 }
 
 /* ─── Global Reset ───────────────────────────────────────── */
@@ -115,7 +115,7 @@ a {
 
 /* ─── Selection ──────────────────────────────────────────── */
 ::selection {
-  background: hsla(33, 65%, 50%, 0.28);
+  background: hsla(31, 36%, 48%, 0.20);
   color: var(--text-primary);
 }
 
@@ -550,13 +550,13 @@ a {
   min-height: 30px;
 }
 .tree-item:hover {
-  background: linear-gradient(90deg, hsla(33, 68%, 52%, 0.07) 0%, transparent 100%);
+  background: linear-gradient(90deg, hsla(31, 36%, 48%, 0.06) 0%, transparent 100%);
   color: var(--text-primary);
 }
 
 /* Signature element — the cascade: copper glow fades right from the active bar */
 .tree-item.active {
-  background: linear-gradient(90deg, hsla(33, 68%, 52%, 0.18) 0%, hsla(33, 68%, 52%, 0.04) 55%, transparent 100%);
+  background: linear-gradient(90deg, hsla(31, 36%, 48%, 0.12) 0%, hsla(31, 36%, 48%, 0.03) 55%, transparent 100%);
   color: var(--text-primary);
 }
 .tree-item.active::before {
@@ -642,7 +642,7 @@ a {
 /* Drop target highlight while dragging a note */
 .tree-item.drag-over {
   background: var(--accent-subtle);
-  box-shadow: inset 0 0 0 1px hsla(33, 68%, 52%, 0.45);
+  box-shadow: inset 0 0 0 1px var(--accent-glow);
   color: var(--text-primary);
 }
 .sidebar-section-label.drag-over {
@@ -853,7 +853,7 @@ a {
   border-radius: 50%;
   background: var(--accent-subtle);
   color: var(--accent);
-  border: 1px solid hsla(33, 68%, 52%, 0.3);
+  border: 1px solid var(--accent-glow);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -900,7 +900,7 @@ a {
 .tab-item.active {
   color: var(--text-primary);
   border-bottom-color: var(--accent);
-  background: hsla(33, 60%, 45%, 0.06);
+  background: var(--accent-subtle);
 }
 .tab-item .tab-title {
   max-width: 160px;
@@ -974,7 +974,7 @@ a {
   min-height: 0;
   overflow: hidden;
   background:
-    radial-gradient(ellipse at 50% 25%, hsla(33, 50%, 20%, 0.05) 0%, transparent 65%),
+    radial-gradient(ellipse at 50% 25%, hsla(31, 28%, 18%, 0.04) 0%, transparent 65%),
     var(--bg-base);
 }
 
@@ -1218,7 +1218,7 @@ a {
   flex-basis: 30px;
 }
 .chat-avatar-agent {
-  background: hsl(33, 35%, 22%);
+  background: hsl(31, 22%, 20%);
   color: var(--accent-hover);
 }
 .chat-avatar-human {
@@ -1339,8 +1339,8 @@ a {
 .chat-message-chunk strong { color: var(--text-primary); }
 .chat-message-chunk a { color: var(--accent); text-decoration: underline; }
 .chat-mention {
-  color: hsl(33, 90%, 68%);
-  background: hsla(33, 68%, 52%, 0.22);
+  color: var(--accent-hover);
+  background: var(--accent-subtle);
   border-radius: var(--radius-sm);
   padding: 0 2px;
   font-weight: 500;
@@ -1394,7 +1394,7 @@ a {
   font-size: 0.6875rem;
 }
 .chat-reply-bar-label strong {
-  color: hsl(33, 90%, 68%);
+  color: var(--accent-hover);
   font-weight: 600;
 }
 .chat-reply-bar-preview {
@@ -2465,7 +2465,7 @@ a {
   font-weight: 600;
   color: var(--accent);
   background: var(--accent-subtle);
-  border: 1px solid hsla(33, 68%, 52%, 0.3);
+  border: 1px solid var(--accent-glow);
   border-radius: 999px;
   padding: 1px 7px;
   margin-left: 4px;
@@ -3202,7 +3202,7 @@ a {
   font-size: 0.78rem;
   font-weight: 600;
   line-height: 1;
-  color: hsl(33, 80%, 72%);
+  color: var(--accent-hover);
   background: hsl(22, 9%, 12%);
   border: 1px solid var(--accent-glow);
   border-radius: 999px;

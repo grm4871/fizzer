@@ -37,14 +37,14 @@ const cascadeTheme = EditorView.theme({
     padding: '16px 26px 80px',
     fontFamily: "'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif",
     lineHeight: '1.8',
-    caretColor: 'hsl(33, 68%, 55%)',
+    caretColor: 'hsl(31, 36%, 52%)',
   },
   '&.cm-focused .cm-cursor': {
-    borderLeftColor: 'hsl(33, 68%, 55%)',
+    borderLeftColor: 'hsl(31, 36%, 52%)',
     borderLeftWidth: '2px',
   },
   '&.cm-focused .cm-selectionBackground, .cm-selectionBackground': {
-    background: 'hsla(33, 65%, 50%, 0.22) !important',
+    background: 'hsla(31, 36%, 48%, 0.18) !important',
   },
   '.cm-activeLine': {
     background: 'hsla(22, 8%, 14%, 0.45)',
@@ -124,15 +124,15 @@ const cascadeTheme = EditorView.theme({
   },
   /* Wiki-link chip — copper */
   '.cm-wikilink': {
-    color: 'hsl(33, 72%, 65%)',
-    background: 'hsla(33, 68%, 52%, 0.13)',
+    color: 'hsl(32, 38%, 62%)',
+    background: 'hsla(31, 36%, 48%, 0.11)',
     padding: '1px 6px',
     borderRadius: '3px',
     cursor: 'pointer',
     fontWeight: '500',
   },
   '.cm-wikilink:hover': {
-    background: 'hsla(33, 68%, 52%, 0.22)',
+    background: 'hsla(31, 36%, 48%, 0.18)',
   },
   /* External Link — cool blue for contrast in the warm world */
   '.cm-external-link': {
@@ -216,10 +216,10 @@ const cascadeHighlightStyle = HighlightStyle.define([
   { tag: tags.strong, fontWeight: '700', color: 'hsl(35, 14%, 95%)' },
   { tag: tags.emphasis, fontStyle: 'italic', color: 'hsl(35, 10%, 85%)' },
   { tag: tags.strikethrough, textDecoration: 'line-through', color: 'hsl(25, 5%, 45%)' },
-  { tag: tags.link, color: 'hsl(33, 72%, 65%)', textDecoration: 'underline' },
-  { tag: tags.url, color: 'hsl(33, 60%, 55%)' },
+  { tag: tags.link, color: 'hsl(32, 38%, 62%)', textDecoration: 'underline' },
+  { tag: tags.url, color: 'hsl(31, 36%, 55%)' },
   { tag: tags.monospace, fontFamily: "'JetBrains Mono', ui-monospace, monospace", color: 'hsl(38, 75%, 65%)', fontSize: '0.875em' },
-  { tag: tags.processingInstruction, color: 'hsl(33, 68%, 58%)' },
+  { tag: tags.processingInstruction, color: 'hsl(31, 36%, 56%)' },
   { tag: tags.quote, color: 'hsl(25, 6%, 55%)', fontStyle: 'italic' },
   { tag: tags.keyword, color: 'hsl(195, 65%, 62%)' },
   { tag: tags.string, color: 'hsl(150, 45%, 62%)' },
