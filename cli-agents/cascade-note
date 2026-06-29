@@ -1,0 +1,246 @@
+#!/usr/bin/env node
+/**
+ * @file cascade-note — Note CRUD against a live Cascade instance, for agents.
+ *
+ * In-program agents (claude-code, codex, …) run on the user's machine and edit
+ * files in a LOCAL vault checkout. Those edits never reach the running app —
+ * production lives in a remote container (cscd.online) reachable only through
+ * the HTTP API, and even locally a raw .md write bypasses the SQLite index
+ * (search / backlinks / word count). This CLI is the one note path that works
+ * for both: it calls the same API the UI uses, so changes show up in the
+ * running app and stay indexed.
+ *
+ * Auth and target are resolved from the environment the desktop runner injects
+ * (CASCADE_NOTE_URL / CASCADE_NOTE_TOKEN / CASCADE_NOTE_VAULT), so agents
+ * normally need no flags. Everything is overridable for manual use.
+ *
+ * Usage:
+ *   cascade-note list                      # vaults, or notes with --vault
+ *   cascade-note search <query>            # search notes in a vault
+ *   cascade-note get <id|title>            # print a note's content
+ *   cascade-note create --title T          # content from --content or stdin
+ *   cascade-note edit <id|title>           # replace content (--content/stdin)
+ *   cascade-note append <id|title>         # append content (--content/stdin)
+ *
+ * Options:
+ *   --vault <id>     vault id      (default $CASCADE_NOTE_VAULT, else sole vault)
+ *   --title <t>      note title    (create)
+ *   --content <c>    inline body   (else read stdin)
+ *   --folder <id>    folder id     (create)
+ *   --url <base>     API base      (default $CASCADE_NOTE_URL, else cscd.online)
+ *   --token <jwt>    bearer token  (default $CASCADE_NOTE_TOKEN)
+ *   --json           machine-readable output
+ *
+ * Env: CASCADE_NOTE_URL, CASCADE_NOTE_TOKEN, CASCADE_NOTE_USER,
+ *      CASCADE_NOTE_PASS, CASCADE_NOTE_VAULT
+ */
+
+'use strict';
+
+const DEFAULT_URL = 'https://cscd.online';
+
+const USAGE = `cascade-note — note CRUD against a live Cascade instance
+
+Usage:
+  cascade-note list                      vaults, or notes with --vault
+  cascade-note search <query>            search notes in a vault
+  cascade-note get <id|title>            print a note's content
+  cascade-note create --title T          content from --content or stdin
+  cascade-note edit <id|title>           replace content (--content/stdin)
+  cascade-note append <id|title>         append content (--content/stdin)
+
+Options:
+  --vault <id>     vault id   (default $CASCADE_NOTE_VAULT, else sole vault)
+  --title <t>      note title (create)
+  --content <c>    inline body (else read stdin)
+  --folder <id>    folder id  (create)
+  --url <base>     API base   (default $CASCADE_NOTE_URL, else cscd.online)
+  --token <jwt>    bearer token (default $CASCADE_NOTE_TOKEN)
+  --json           machine-readable output
+
+Env: CASCADE_NOTE_URL, CASCADE_NOTE_TOKEN, CASCADE_NOTE_USER,
+     CASCADE_NOTE_PASS, CASCADE_NOTE_VAULT`;
+
+function parseArgs(argv) {
+  const args = { _: [] };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--json') args.json = true;
+    else if (a === '-h' || a === '--help') args.help = true;
+    else if (a.startsWith('--')) {
+      const key = a.slice(2);
+      const next = argv[i + 1];
+      if (next === undefined || next.startsWith('--')) args[key] = true;
+      else { args[key] = next; i++; }
+    } else {
+      args._.push(a);
+    }
+  }
+  return args;
+}
+
+function fail(msg, code = 1) {
+  process.stderr.write(`cascade-note: ${msg}\n`);
+  process.exit(code);
+}
+
+function readStdin() {
+  return new Promise((resolve) => {
+    if (process.stdin.isTTY) return resolve('');
+    let data = '';
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', (chunk) => { data += chunk; });
+    process.stdin.on('end', () => resolve(data));
+  });
+}
+
+function baseUrl(args) {
+  const raw = String(args.url || process.env.CASCADE_NOTE_URL || DEFAULT_URL).trim();
+  return raw.replace(/\/$/, '');
+}
+
+async function getToken(url, args) {
+  const explicit = String(args.token || process.env.CASCADE_NOTE_TOKEN || '').trim();
+  if (explicit) return explicit;
+  const user = String(process.env.CASCADE_NOTE_USER || '').trim();
+  const pass = String(process.env.CASCADE_NOTE_PASS || '');
+  if (!user || !pass) {
+    fail('no credentials. Set CASCADE_NOTE_TOKEN, or CASCADE_NOTE_USER + CASCADE_NOTE_PASS.');
+  }
+  const res = await fetch(`${url}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ username: user, password: pass }),
+  });
+  if (!res.ok) fail(`login failed (${res.status}): ${await res.text()}`);
+  const body = await res.json();
+  if (!body.token) fail('login response had no token');
+  return body.token;
+}
+
+async function api(url, token, method, path, body) {
+  const res = await fetch(`${url}${path}`, {
+    method,
+    headers: {
+      authorization: `Bearer ${token}`,
+      ...(body ? { 'content-type': 'application/json' } : {}),
+    },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  const text = await res.text();
+  let json;
+  try { json = text ? JSON.parse(text) : {}; } catch { json = { raw: text }; }
+  if (!res.ok) fail(`${method} ${path} → ${res.status}: ${json.error || text}`);
+  return json;
+}
+
+async function resolveVault(url, token, args) {
+  const explicit = String(args.vault || process.env.CASCADE_NOTE_VAULT || '').trim();
+  if (explicit) return explicit;
+  const { vaults = [] } = await api(url, token, 'GET', '/api/vaults');
+  if (vaults.length === 0) fail('no vaults found for this account.');
+  if (vaults.length === 1) return vaults[0].id;
+  const list = vaults.map((v) => `  ${v.id}  ${v.name}`).join('\n');
+  fail(`multiple vaults — pass --vault <id> (or set CASCADE_NOTE_VAULT):\n${list}`);
+}
+
+/** Resolve a note by exact id, else unique title match within the vault. */
+async function resolveNote(url, token, vaultId, ref) {
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(ref)) return ref;
+  const { notes = [] } = await api(url, token, 'GET', `/api/vaults/${vaultId}/notes`);
+  const exact = notes.filter((n) => n.title.toLowerCase() === ref.toLowerCase());
+  if (exact.length === 1) return exact[0].id;
+  if (exact.length > 1) fail(`title "${ref}" is ambiguous (${exact.length} notes); pass the note id.`);
+  const partial = notes.filter((n) => n.title.toLowerCase().includes(ref.toLowerCase()));
+  if (partial.length === 1) return partial[0].id;
+  if (partial.length > 1) fail(`"${ref}" matches ${partial.length} notes; pass the note id.`);
+  fail(`no note matching "${ref}" in vault ${vaultId}.`);
+}
+
+async function bodyContent(args) {
+  if (typeof args.content === 'string') return args.content;
+  return readStdin();
+}
+
+function out(args, human, obj) {
+  if (args.json) process.stdout.write(JSON.stringify(obj) + '\n');
+  else process.stdout.write(human + '\n');
+}
+
+async function main() {
+  const args = parseArgs(process.argv.slice(2));
+  const cmd = args._[0];
+
+  if (!cmd || args.help) {
+    process.stdout.write(USAGE + '\n');
+    process.exit(cmd ? 0 : 1);
+  }
+
+  const url = baseUrl(args);
+  const token = await getToken(url, args);
+
+  switch (cmd) {
+    case 'list': {
+      const v = String(args.vault || process.env.CASCADE_NOTE_VAULT || '').trim();
+      if (!v) {
+        const { vaults = [] } = await api(url, token, 'GET', '/api/vaults');
+        out(args, vaults.map((x) => `${x.id}  ${x.name}`).join('\n') || '(no vaults)', vaults);
+      } else {
+        const { notes = [] } = await api(url, token, 'GET', `/api/vaults/${v}/notes`);
+        out(args, notes.map((n) => `${n.id}  ${n.title}`).join('\n') || '(no notes)', notes);
+      }
+      break;
+    }
+    case 'search': {
+      const q = args._.slice(1).join(' ');
+      if (!q) fail('search needs a query.');
+      const vaultId = await resolveVault(url, token, args);
+      const { results = [] } = await api(url, token, 'GET',
+        `/api/vaults/${vaultId}/search?q=${encodeURIComponent(q)}`);
+      out(args, results.map((r) => `${r.id}  ${r.title}\n    ${r.snippet || ''}`).join('\n')
+        || '(no matches)', results);
+      break;
+    }
+    case 'get': {
+      const ref = args._[1];
+      if (!ref) fail('get needs a note id or title.');
+      const vaultId = await resolveVault(url, token, args);
+      const id = await resolveNote(url, token, vaultId, ref);
+      const { note } = await api(url, token, 'GET', `/api/notes/${id}`);
+      out(args, note.content, note);
+      break;
+    }
+    case 'create': {
+      const title = String(args.title || '').trim();
+      if (!title) fail('create needs --title.');
+      const vaultId = await resolveVault(url, token, args);
+      const content = await bodyContent(args);
+      const payload = { title, content };
+      if (args.folder) payload.folder_id = String(args.folder);
+      const { note } = await api(url, token, 'POST', `/api/vaults/${vaultId}/notes`, payload);
+      out(args, `created ${note.id}  ${note.title}`, note);
+      break;
+    }
+    case 'edit':
+    case 'append': {
+      const ref = args._[1];
+      if (!ref) fail(`${cmd} needs a note id or title.`);
+      const vaultId = await resolveVault(url, token, args);
+      const id = await resolveNote(url, token, vaultId, ref);
+      const incoming = await bodyContent(args);
+      let content = incoming;
+      if (cmd === 'append') {
+        const { note: existing } = await api(url, token, 'GET', `/api/notes/${id}`);
+        const sep = existing.content.endsWith('\n') ? '' : '\n';
+        content = existing.content + sep + incoming;
+      }
+      const { note } = await api(url, token, 'PUT', `/api/notes/${id}`, { content });
+      out(args, `${cmd === 'append' ? 'appended to' : 'updated'} ${note.id}  ${note.title}`, note);
+      break;
+    }
+    default:
+      fail(`unknown command "${cmd}". Run with --help.`);
+  }
+}
+
+main().catch((err) => fail(err instanceof Error ? err.message : String(err)));

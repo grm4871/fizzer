@@ -7,7 +7,7 @@
  */
 
 const path = require('path');
-const { startLocalAgentRun, cancelLocalAgentRun } = require('./agent-runner.cjs');
+const { startLocalAgentRun, cancelLocalAgentRun, setNoteApiConfig } = require('./agent-runner.cjs');
 
 function loadSocketIoClient() {
   try {
@@ -72,6 +72,11 @@ function connectDesktopRunner(token, nextApiBase) {
 
   apiBase = normalizeApiBase(nextApiBase);
   disconnectDesktopRunner();
+
+  // Let the `cascade-note` wrapper auth against the same live instance the
+  // desktop is connected to, reusing this session's token — so agents create
+  // notes in the running app (cscd.online) rather than a local file copy.
+  setNoteApiConfig({ url: apiBase, token: authToken });
 
   socket = io(`${apiBase}/runners`, {
     auth: { token: authToken },

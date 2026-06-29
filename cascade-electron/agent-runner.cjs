@@ -19,7 +19,61 @@ let claudeSdkPromise = null;
 const CLAUDE_DEFAULT_MODEL = process.env.RUNNER_MODEL || 'claude-sonnet-4-6';
 const CLAUDE_MAX_TURNS = Number(process.env.RUNNER_MAX_TURNS || 30);
 const CLAUDE_THINKING_TOKENS = Number(process.env.RUNNER_THINKING ?? 4000);
-const CLAUDE_AGENT_CONTEXT = 'Operate as a user-authorized local workspace assistant. Use normal local file operations in this vault, respect service terms, authentication boundaries, and rate limits, and do not handle secrets except when the user explicitly provides them for this local task. This working directory is a vault of interlinked markdown (.md) notes.';
+const CLAUDE_AGENT_CONTEXT = 'Operate as a user-authorized local workspace assistant. This working directory is a LOCAL checkout of a Cascade vault (interlinked markdown .md notes) — it is NOT the running app: editing files here does not reach the live Cascade instance and bypasses its search/backlink index. To create or modify notes in the running app, use the `cascade-note` CLI (run `cascade-note --help`); it writes through the app API so changes appear live and stay indexed. Use raw file operations only for scratch or non-note work. Respect service terms, authentication boundaries, and rate limits, and do not handle secrets except when the user explicitly provides them for this local task.';
+
+// Live Cascade API config for the `cascade-note` wrapper, populated by the
+// desktop runner host once it knows the server URL + the user's auth token.
+// Children inherit these via process.env, so the wrapper authenticates against
+// the same live instance the desktop is connected to (cscd.online by default).
+const noteApi = { url: '', token: '' };
+
+/** Directory holding the `cascade-note` wrapper; prefer source, fall back to dist. */
+function resolveWrapperDir() {
+  const candidates = [
+    path.join(__dirname, '..', 'cli-agents'),
+    path.join(__dirname, '..', 'dist', 'cli-agents'),
+  ];
+  for (const dir of candidates) {
+    try {
+      if (fs.existsSync(path.join(dir, 'cascade-note'))) return dir;
+    } catch { /* ignore */ }
+  }
+  return candidates[0];
+}
+
+/** Put the wrapper on PATH (once) so agents can invoke `cascade-note` by name. */
+function ensureWrapperOnPath() {
+  const dir = resolveWrapperDir();
+  const parts = (process.env.PATH || '').split(path.delimiter);
+  if (!parts.includes(dir)) process.env.PATH = [dir, ...parts].join(path.delimiter);
+}
+
+/** Set the live API target/token the wrapper should use (call on runner connect). */
+function setNoteApiConfig({ url, token } = {}) {
+  if (typeof url === 'string' && url.trim()) noteApi.url = url.trim().replace(/\/$/, '');
+  if (typeof token === 'string' && token.trim()) noteApi.token = token.trim();
+}
+
+/**
+ * Inject the wrapper's env (target URL, token, current vault) for a run, and
+ * ensure it's on PATH. Vault is also stated in the prompt context, so the env
+ * value is just a default the agent can override with --vault.
+ */
+function applyNoteEnv(opts) {
+  ensureWrapperOnPath();
+  if (noteApi.url) process.env.CASCADE_NOTE_URL = noteApi.url;
+  if (noteApi.token) process.env.CASCADE_NOTE_TOKEN = noteApi.token;
+  const vaultId = String(opts && opts.vaultId || '').trim();
+  if (vaultId) process.env.CASCADE_NOTE_VAULT = vaultId;
+}
+
+/** One-line capability note appended to the agent's prompt context. */
+function noteCapabilityContext(opts) {
+  const target = noteApi.url || 'https://cscd.online';
+  const vaultId = String(opts && opts.vaultId || '').trim();
+  const vaultLine = vaultId ? ` Current vault id: ${vaultId} (pass --vault ${vaultId}).` : '';
+  return `Notes live in the running Cascade app at ${target}. Create or modify notes with the \`cascade-note\` CLI (run \`cascade-note --help\`), not by writing .md files — file edits only touch this local checkout and never reach the app.${vaultLine}`;
+}
 
 // Live Claude SDK query streams, keyed by runId, so cancellation can close them.
 const activeClaudeQueries = new Map();
@@ -93,6 +147,7 @@ async function loadCliAgentModule() {
 async function runClaudeLocally(opts, emit) {
   const { query } = await loadClaudeSdk();
   const runId = Number(opts.runId);
+  applyNoteEnv(opts);
   const cwd = resolveAgentCwd(opts.cwd, opts.vaultRoot);
   const model = (typeof opts.model === 'string' && opts.model.trim()) ? opts.model.trim() : CLAUDE_DEFAULT_MODEL;
   const resumeSessionId = (typeof opts.resumeSessionId === 'string' && opts.resumeSessionId) ? opts.resumeSessionId : undefined;
@@ -140,13 +195,17 @@ async function runClaudeLocally(opts, emit) {
       ...(CLAUDE_THINKING_TOKENS > 0
         ? { thinking: { type: 'enabled', budgetTokens: CLAUDE_THINKING_TOKENS } }
         : {}),
-      systemPrompt: { type: 'preset', preset: 'claude_code', append: CLAUDE_AGENT_CONTEXT },
+      systemPrompt: { type: 'preset', preset: 'claude_code', append: `${CLAUDE_AGENT_CONTEXT} ${noteCapabilityContext(opts)}` },
     },
   });
 
   activeClaudeQueries.set(runId, stream);
   let summary = '';
   let sessionId;
+  // Tracks whether the previous streamed block was text, so a new text block
+  // (a fresh turn, typically split off by a tool call in between) gets a
+  // paragraph break instead of being glued onto the prior turn's text.
+  let lastBlockWasText = false;
   try {
     for await (const message of stream) {
       if (message.session_id) sessionId = message.session_id;
@@ -158,14 +217,23 @@ async function runClaudeLocally(opts, emit) {
       // content isn't appended a second time on top of these deltas.
       if (message.type === 'stream_event') {
         const ev = message.event;
-        if (ev?.type === 'content_block_start' && ev.content_block?.type === 'redacted_thinking') {
-          emit('text', { message: { content: [{ type: 'redacted_thinking' }] } });
+        if (ev?.type === 'content_block_start') {
+          const blockType = ev.content_block?.type;
+          if (blockType === 'redacted_thinking') {
+            emit('text', { message: { content: [{ type: 'redacted_thinking' }] } });
+            lastBlockWasText = false;
+          } else if (blockType === 'text' && lastBlockWasText) {
+            // Separate this turn's text from the previous one.
+            emit('text', { message: { content: [{ type: 'text', text: '\n\n' }] } });
+          }
         } else if (ev?.type === 'content_block_delta') {
           const delta = ev.delta;
           if (delta?.type === 'thinking_delta' && delta.thinking) {
             emit('text', { message: { content: [{ type: 'thinking', thinking: delta.thinking }] } });
+            lastBlockWasText = false;
           } else if (delta?.type === 'text_delta' && delta.text) {
             emit('text', { message: { content: [{ type: 'text', text: delta.text }] } });
+            lastBlockWasText = true;
           }
         }
         continue;
@@ -221,12 +289,13 @@ async function startLocalAgentRun(opts, sendEvent) {
   }
 
   const { runCliAgent } = await loadCliAgentModule();
+  applyNoteEnv(opts);
   const cwd = resolveAgentCwd(opts.cwd, opts.vaultRoot);
 
   try {
     const result = await runCliAgent({
       agent,
-      context: '',
+      context: noteCapabilityContext(opts),
       userPrompt: prompt,
       cwd,
       resumeSessionId: typeof opts.resumeSessionId === 'string' ? opts.resumeSessionId : undefined,
@@ -272,4 +341,5 @@ module.exports = {
   startLocalAgentRun,
   cancelLocalAgentRun,
   resolveAgentCwd,
+  setNoteApiConfig,
 };

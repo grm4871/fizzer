@@ -386,6 +386,7 @@ async function runCodex(
 
   let summary = '';
   let sessionId: string | undefined;
+  let emittedText = false; // prefix a paragraph break before later turns' text
   const emittedTool = new Set<string>();
   const isToolItem = (type: string) => type !== 'agent_message' && type !== 'reasoning';
 
@@ -421,7 +422,9 @@ async function runCodex(
         if (!item) break;
         if (item.type === 'agent_message') {
           summary = item.text || summary;
-          emit('text', { message: { content: [{ type: 'text', text: item.text || '' }] } });
+          const text = item.text || '';
+          emit('text', { message: { content: [{ type: 'text', text: (emittedText ? '\n\n' : '') + text }] } });
+          if (text) emittedText = true;
         } else if (item.type === 'reasoning') {
           emit('text', { message: { content: [{ type: 'thinking', text: item.text || '' }] } });
         } else {
@@ -482,14 +485,22 @@ async function runGrok(
 
   let text = '';
   let sessionId: string | undefined;
+  // Separate a turn's answer from the previous one. Grok tools run silently, so
+  // a `thought` (or any non-text event) between answers marks the boundary.
+  let emittedText = false;
+  let lastWasText = false;
 
   const onLine = (line: string) => {
     const ev = JSON.parse(line);
     if (ev.type === 'thought') {
       emit('text', { message: { content: [{ type: 'thinking', thinking: ev.data || '' }] } });
+      lastWasText = false;
     } else if (ev.type === 'text') {
-      emit('text', { message: { content: [{ type: 'text', text: ev.data || '' }] } });
-      text += ev.data || '';
+      const chunk = ev.data || '';
+      const sep = (!lastWasText && emittedText) ? '\n\n' : '';
+      emit('text', { message: { content: [{ type: 'text', text: sep + chunk }] } });
+      text += sep + chunk;
+      if (chunk) { emittedText = true; lastWasText = true; }
     } else if (ev.type === 'end') {
       if (ev.sessionId) sessionId = ev.sessionId;
     }
@@ -775,6 +786,7 @@ async function runAntigravity(
   };
 
   const emittedTools = new Set<string>();
+  let emittedText = false; // prefix a paragraph break before later turns' text
 
   const checkTranscript = async () => {
     if (isChecking) return;
@@ -796,7 +808,8 @@ async function runAntigravity(
             
             if (text) {
               summary = text;
-              emit('text', { message: { content: [{ type: 'text', text }] } });
+              emit('text', { message: { content: [{ type: 'text', text: (emittedText ? '\n\n' : '') + text }] } });
+              emittedText = true;
             }
 
             for (const tc of toolCalls) {
@@ -887,6 +900,10 @@ async function runCopilot(prompt: string, cwd: string, emit: AgentEmit, resumeId
   let reasoningText = '';
   let sessionId: string | undefined;
   const emittedTool = new Set<string>();
+  // Separate each answer turn from the previous one; reasoning/tool events
+  // between turns reset the flag so the next text starts a new paragraph.
+  let emittedText = false;
+  let lastWasText = false;
 
   const getToolFriendlyName = (name: string) => {
     if (name === 'read' || name === 'view_file') return 'View File';
@@ -906,6 +923,7 @@ async function runCopilot(prompt: string, cwd: string, emit: AgentEmit, resumeId
             if (ev.data?.deltaContent) {
               reasoningText += ev.data.deltaContent;
               emit('text', { message: { content: [{ type: 'thinking', thinking: ev.data.deltaContent }] } });
+              lastWasText = false;
             }
             break;
           case 'assistant.reasoning':
@@ -915,12 +933,16 @@ async function runCopilot(prompt: string, cwd: string, emit: AgentEmit, resumeId
               if (!hadDeltas) {
                 emit('text', { message: { content: [{ type: 'thinking', thinking: ev.data.content }] } });
               }
+              lastWasText = false;
             }
             break;
           case 'assistant.message_delta':
             if (ev.data?.deltaContent) {
-              summary += ev.data.deltaContent;
-              emit('text', { message: { content: [{ type: 'text', text: ev.data.deltaContent }] } });
+              const sep = (!lastWasText && emittedText) ? '\n\n' : '';
+              summary += sep + ev.data.deltaContent;
+              emit('text', { message: { content: [{ type: 'text', text: sep + ev.data.deltaContent }] } });
+              emittedText = true;
+              lastWasText = true;
             }
             break;
           case 'assistant.message':
@@ -929,7 +951,10 @@ async function runCopilot(prompt: string, cwd: string, emit: AgentEmit, resumeId
                 const hadDeltas = summary.length > 0;
                 summary = ev.data.content;
                 if (!hadDeltas) {
-                  emit('text', { message: { content: [{ type: 'text', text: ev.data.content }] } });
+                  const sep = (!lastWasText && emittedText) ? '\n\n' : '';
+                  emit('text', { message: { content: [{ type: 'text', text: sep + ev.data.content }] } });
+                  emittedText = true;
+                  lastWasText = true;
                 }
               }
               for (const req of ev.data.toolRequests || []) {
@@ -945,6 +970,7 @@ async function runCopilot(prompt: string, cwd: string, emit: AgentEmit, resumeId
                       }]
                     }
                   });
+                  lastWasText = false;
                 }
               }
             }
@@ -962,6 +988,7 @@ async function runCopilot(prompt: string, cwd: string, emit: AgentEmit, resumeId
                   }]
                 }
               });
+              lastWasText = false;
             }
             break;
           case 'tool.execution_complete':
@@ -978,6 +1005,7 @@ async function runCopilot(prompt: string, cwd: string, emit: AgentEmit, resumeId
                   }]
                 }
               });
+              lastWasText = false;
             }
             break;
           case 'result':
@@ -986,11 +1014,11 @@ async function runCopilot(prompt: string, cwd: string, emit: AgentEmit, resumeId
         }
       } else {
         summary = line;
-        emit('text', { message: { content: [{ type: 'text', text: line }] } });
+        emit('text', { message: { content: [{ type: 'text', text: line + '\n' }] } });
       }
     } catch {
       summary = line;
-      emit('text', { message: { content: [{ type: 'text', text: line }] } });
+      emit('text', { message: { content: [{ type: 'text', text: line + '\n' }] } });
     }
   };
 
@@ -1012,7 +1040,8 @@ async function runHermes(prompt: string, cwd: string, emit: AgentEmit, resumeId?
   let text = '';
   const onLine = (line: string) => {
     text += line + '\n';
-    emit('text', { message: { content: [{ type: 'text', text: line }] } });
+    // Keep the line break so multi-line output doesn't collapse onto one line.
+    emit('text', { message: { content: [{ type: 'text', text: line + '\n' }] } });
   };
 
   const summaryText = await driveProcess(HERMES_BIN, args, cwd, onLine, () => text.trim() || 'Completed note operations successfully.', 'Hermes', runId);
