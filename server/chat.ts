@@ -279,7 +279,7 @@ export function listChatMessages(db: Db, channelId: string, userId: number): Cha
     SELECT *
     FROM chat_messages
     WHERE channel_id = ?
-    ORDER BY created_at ASC, id ASC
+    ORDER BY created_at ASC, rowid ASC
   `).all(channelId) as ChatMessageRow[];
   return rows.map((row) => reconcileChatMessageRunStatus(db, row));
 }

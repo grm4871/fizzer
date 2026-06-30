@@ -17,7 +17,7 @@ let claudeSdkPromise = null;
 // by THIS machine's `claude` login / ANTHROPIC_API_KEY — never the server's.
 // Mirrors the run options the server used to apply in server/runner.ts.
 const CLAUDE_DEFAULT_MODEL = process.env.RUNNER_MODEL || 'claude-sonnet-5';
-const CLAUDE_MAX_TURNS = Number(process.env.RUNNER_MAX_TURNS || 30);
+const CLAUDE_MAX_TURNS = Number(process.env.RUNNER_MAX_TURNS || 100);
 const CLAUDE_THINKING_TOKENS = Number(process.env.RUNNER_THINKING ?? 4000);
 const CLAUDE_AGENT_CONTEXT = 'Operate as a user-authorized local workspace assistant. This working directory is a LOCAL checkout of a Cascade vault (interlinked markdown .md notes) — it is NOT the running app: editing files here does not reach the live Cascade instance and bypasses its search/backlink index. To create or modify notes in the running app, use the `cascade-note` CLI (run `cascade-note --help`); it writes through the app API so changes appear live and stay indexed. Use raw file operations only for scratch or non-note work. Respect service terms, authentication boundaries, and rate limits, and do not handle secrets except when the user explicitly provides them for this local task.';
 
