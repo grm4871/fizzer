@@ -240,9 +240,9 @@ const CHAT_AGENTS: Array<{ id: AgentId; label: string }> = [
 
 const CHAT_AGENT_MODEL_PRESETS: Record<AgentId, { id: string; label: string }[]> = {
   'claude-code': [
-    { id: 'claude-sonnet-4-6', label: 'Claude 4.6 Sonnet' },
-    { id: 'claude-haiku-4-5-20251001', label: 'Claude 4.5 Haiku' },
-    { id: 'claude-opus-4-8', label: 'Claude 4.8 Opus' },
+    { id: 'claude-sonnet-5', label: 'Claude Sonnet 5' },
+    { id: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5' },
+    { id: 'claude-opus-4-8', label: 'Claude Opus 4.8' },
   ],
   codex: [
     { id: 'gpt-5.5', label: 'GPT-5.5' },
@@ -259,7 +259,7 @@ const CHAT_AGENT_MODEL_PRESETS: Record<AgentId, { id: string; label: string }[]>
   ],
   copilot: [
     { id: 'auto', label: 'Auto' },
-    { id: 'claude-haiku-4.5', label: 'Claude 4.5 Haiku' },
+    { id: 'claude-haiku-4.5', label: 'Claude Haiku 4.5' },
     { id: 'gpt-5.2', label: 'GPT-5.2' },
   ],
   hermes: [],

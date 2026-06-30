@@ -25,9 +25,9 @@ const CUSTOM_MODEL_VALUE = '__custom__';
 
 const AGENT_MODEL_PRESETS: Record<AgentId, { id: string; label: string }[]> = {
   'claude-code': [
-    { id: 'claude-sonnet-4-6', label: 'Claude 4.6 Sonnet' },
-    { id: 'claude-haiku-4-5-20251001', label: 'Claude 4.5 Haiku' },
-    { id: 'claude-opus-4-7', label: 'Claude 4.7 Opus' },
+    { id: 'claude-sonnet-5', label: 'Claude Sonnet 5' },
+    { id: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5' },
+    { id: 'claude-opus-4-7', label: 'Claude Opus 4.7' },
   ],
   'codex': [
     { id: 'gpt-5.5', label: 'GPT-5.5' },
@@ -44,7 +44,7 @@ const AGENT_MODEL_PRESETS: Record<AgentId, { id: string; label: string }[]> = {
   ],
   'copilot': [
     { id: 'auto', label: 'Auto' },
-    { id: 'claude-haiku-4.5', label: 'Claude 4.5 Haiku' },
+    { id: 'claude-haiku-4.5', label: 'Claude Haiku 4.5' },
     { id: 'gpt-5.2', label: 'GPT-5.2' },
   ],
   'hermes': [],
