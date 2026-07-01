@@ -397,12 +397,40 @@ function toChatMessagePatch(message: ChatMessage): Record<string, unknown> {
   };
 }
 
+function formatHistoryMessage(message: ChatMessage, maxChars: number) {
+  const body = message.body.length > maxChars ? `${message.body.slice(0, maxChars - 1)}…` : message.body;
+  const mediaNote = [
+    message.images?.length ? `[${message.images.length} image${message.images.length === 1 ? '' : 's'} attached]` : '',
+    message.attachments?.length ? `[${message.attachments.length} file${message.attachments.length === 1 ? '' : 's'} attached]` : '',
+  ].filter(Boolean).join(' ');
+  const suffix = mediaNote ? (body ? ` ${mediaNote}` : mediaNote) : '';
+  const replyNote = message.replyTo ? `[reply to @${message.replyTo.mention}] ` : '';
+  const metadata = message.replyTo ? `[message_id=${message.id} reply_to=${message.replyTo.messageId}] ` : `[message_id=${message.id}] `;
+  return `${message.author}: ${metadata}${replyNote}${body || '(media)'}${suffix}`;
+}
+
+function buildReplyThreadContext(triggeringMessage: ChatMessage, messages: ChatMessage[], maxDepth = 4) {
+  const byId = new Map(messages.map((message) => [message.id, message]));
+  const thread: ChatMessage[] = [];
+  let current: ChatMessage | undefined = triggeringMessage;
+  for (let depth = 0; depth < maxDepth; depth++) {
+    const parentId = current?.replyTo?.messageId;
+    if (!parentId) break;
+    const parent = byId.get(parentId);
+    if (!parent || thread.some((message) => message.id === parent.id)) break;
+    thread.push(parent);
+    current = parent;
+  }
+  return thread.reverse();
+}
+
 function formatAgentChatPrompt(
   channelName: string,
   registrations: ChatAgentRegistration[],
   registration: ChatAgentRegistration,
   history: ChatMessage[],
   request: string,
+  replyThread: ChatMessage[] = [],
   // True when the agent's CLI session is being resumed, so it already holds the
   // earlier conversation. We then send only the delta (messages since its last
   // reply) instead of re-dumping the whole history and burning tokens every turn.
@@ -416,30 +444,24 @@ function formatAgentChatPrompt(
   const recentHistory = history
     .filter((message) => message.body.trim() || (message.images?.length ?? 0) > 0 || (message.attachments?.length ?? 0) > 0)
     .slice(-MAX_HISTORY_MESSAGES)
-    .map((message) => {
-      const body = message.body.length > MAX_MESSAGE_CHARS ? `${message.body.slice(0, MAX_MESSAGE_CHARS - 1)}…` : message.body;
-      const mediaNote = [
-        message.images?.length ? `[${message.images.length} image${message.images.length === 1 ? '' : 's'} attached]` : '',
-        message.attachments?.length ? `[${message.attachments.length} file${message.attachments.length === 1 ? '' : 's'} attached]` : '',
-      ].filter(Boolean).join(' ');
-      const suffix = mediaNote ? (body ? ` ${mediaNote}` : mediaNote) : '';
-    const replyNote = message.replyTo ? `[reply to @${message.replyTo.mention}] ` : '';
-      const metadata = message.replyTo ? `[message_id=${message.id} reply_to=${message.replyTo.messageId}] ` : `[message_id=${message.id}] `;
-      return `${message.author}: ${metadata}${replyNote}${body || '(media)'}${suffix}`;
-    })
+    .map((message) => formatHistoryMessage(message, MAX_MESSAGE_CHARS))
+    .join('\n');
+  const replyThreadText = replyThread
+    .filter((message) => message.body.trim() || (message.images?.length ?? 0) > 0 || (message.attachments?.length ?? 0) > 0)
+    .map((message) => formatHistoryMessage(message, 700))
     .join('\n');
 
   if (continuation) {
     const parts = [
       `You are ${selfName} (@${selfHandle}) in #${channelName}. Earlier turns are already in context. Only new messages since your last reply are below.`,
     ];
+    if (replyThreadText) parts.push('', 'Reply thread context:', replyThreadText);
     if (recentHistory) parts.push('', 'New messages since your last reply:', recentHistory);
-    parts.push('', 'For more chat context, run: cascade-chat history --include-reply-context');
     parts.push('', 'Current user request:', request);
     return parts.join('\n');
   }
 
-  return [
+  const parts = [
     `You are ${selfName} (@${selfHandle}) in #${channelName}.`,
     registration.contextPrompt ? `Your channel-specific context: ${registration.contextPrompt}` : '',
     '',
@@ -455,12 +477,10 @@ function formatAgentChatPrompt(
     '',
     'Chat history:',
     recentHistory || '(no prior messages)',
-    '',
-    'For more chat context, run: cascade-chat history --include-reply-context',
-    '',
-    'Current user request:',
-    request,
-  ].join('\n');
+  ];
+  if (replyThreadText) parts.push('', 'Reply thread context:', replyThreadText);
+  parts.push('', 'Current user request:', request);
+  return parts.join('\n');
 }
 
 export default function App() {
@@ -1055,6 +1075,7 @@ export default function App() {
     // The triggering message may not be in state yet (setChatState is async), and
     // it's sent separately as the request, so exclude it from the history block.
     const priorMessages = stored.filter((message) => message.id !== triggeringMessage.id);
+    const replyThread = buildReplyThreadContext(triggeringMessage, stored);
     let continuation = false;
     let contextMessages = priorMessages;
     if (watermark) {
@@ -1064,7 +1085,7 @@ export default function App() {
         contextMessages = priorMessages.slice(idx + 1);
       }
     }
-    const runPrompt = formatAgentChatPrompt(channelName, registrations, registration, contextMessages, prompt, continuation);
+    const runPrompt = formatAgentChatPrompt(channelName, registrations, registration, contextMessages, prompt, replyThread, continuation);
     const agentMessageId = `agent-${agentId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     streamingChatMessageIdsRef.current.add(agentMessageId);
     appendChatMessage(channelId, {
