@@ -502,7 +502,9 @@ export function ChatView({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const draftRef = useRef<HTMLTextAreaElement | null>(null);
   const sortedMessages = useMemo(
-    () => [...messages].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()),
+    () => [...messages]
+      .filter((message) => message.author !== 'Cascade')
+      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()),
     [messages],
   );
   const messageGroups = useMemo(() => groupChatMessages(sortedMessages), [sortedMessages]);
@@ -519,6 +521,7 @@ export function ChatView({
     const names = new Set<string>();
     if (currentUser) names.add(currentUser);
     for (const message of messages) {
+      if (message.author === 'Cascade') continue;
       if (message.agentId || agentAuthors.has(message.author)) continue;
       if (message.author) names.add(message.author);
     }
