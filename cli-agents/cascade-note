@@ -271,7 +271,8 @@ async function main() {
       const title = String(args.title || '').trim();
       if (!title) fail('create needs --title.');
       const vaultId = await resolveVault(url, token, args, config);
-      const content = await bodyContent(args);
+      const rawContent = await bodyContent(args);
+      const content = rawContent.replace(/\\+`/g, '`');
       const payload = { title, content };
       if (args.folder) payload.folder_id = String(args.folder);
       const { note } = await api(url, token, 'POST', `/api/vaults/${vaultId}/notes`, payload);
@@ -291,7 +292,8 @@ async function main() {
         const sep = existing.content.endsWith('\n') ? '' : '\n';
         content = existing.content + sep + incoming;
       }
-      const { note } = await api(url, token, 'PUT', `/api/notes/${id}`, { content });
+      const normalizedContent = content.replace(/\\+`/g, '`');
+      const { note } = await api(url, token, 'PUT', `/api/notes/${id}`, { content: normalizedContent });
       out(args, `${cmd === 'append' ? 'appended to' : 'updated'} ${note.id}  ${note.title}`, note);
       break;
     }

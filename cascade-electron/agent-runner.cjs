@@ -24,9 +24,7 @@ const CLAUDE_AGENT_CONTEXT = 'You are a local workspace assistant. This checkout
 // Nudge agents to behave like chat participants, not verbose coding CLIs: the
 // chat collapses step narration into a trace disclosure, so the actual message
 // should be short. Detailed reasoning belongs in thinking, not the reply.
-const CHAT_BREVITY_CONTEXT = "Shared chat. Reply briefly and naturally. Don't narrate tool use or restate your plan.";
-
-const DOC_EMBED_CONTEXT = "Use `![[Note Title]]` embeds. If you create durable notes, write them with `cascade-note` and link them in chat.";
+const CHAT_BREVITY_CONTEXT = "Shared chat — reply briefly and naturally.";
 
 // Live Cascade API config for the `cascade-note` wrapper, populated by the
 // desktop runner host once it knows the server URL + the user's auth token.
@@ -101,15 +99,20 @@ function writeHelperConfig({ vaultId, channelId, messageId } = {}) {
   }
 }
 
-/** One-line capability note appended to the agent's prompt context. */
+/** True when this run was triggered from a chat channel (vs a note pane). */
+function isChatRun(opts) {
+  return Boolean(String(opts && opts.chatChannelId || opts?.chat?.channelId || '').trim());
+}
+
+/** One-line capability note for non-chat runs. Chat runs carry this in the user prompt. */
 function noteCapabilityContext(opts) {
   const helperDir = resolveWrapperDir();
   const vaultId = String(opts && opts.vaultId || '').trim();
   const vaultLine = vaultId ? ` Vault: ${vaultId}.` : '';
-  const channelId = String(opts && opts.chatChannelId || opts?.chat?.channelId || '').trim();
-  const channelLine = channelId ? ` Current chat channel: ${channelId}.` : '';
-  return `Live notes go through \`cascade-note\`, not local .md files.${vaultLine}${channelLine} Helper CLIs are on PATH and also in ${helperDir}; if chat context is missing or ambiguous, run \`cascade-chat history --include-reply-context\` or \`${helperDir}/cascade-chat history --include-reply-context\`.`;
+  return `Live notes: \`cascade-note\` (not local .md).${vaultLine} Helpers on PATH and in ${helperDir}.`;
 }
+
+
 
 // Live Claude SDK query streams, keyed by runId, so cancellation can close them.
 const activeClaudeQueries = new Map();
@@ -231,7 +234,11 @@ async function runClaudeLocally(opts, emit) {
       ...(CLAUDE_THINKING_TOKENS > 0
         ? { thinking: { type: 'enabled', budgetTokens: CLAUDE_THINKING_TOKENS } }
         : {}),
-      systemPrompt: { type: 'preset', preset: 'claude_code', append: `${CLAUDE_AGENT_CONTEXT} ${CHAT_BREVITY_CONTEXT} ${DOC_EMBED_CONTEXT} ${noteCapabilityContext(opts)}` },
+      systemPrompt: {
+        type: 'preset',
+        preset: 'claude_code',
+        append: isChatRun(opts) ? CHAT_BREVITY_CONTEXT : `${CLAUDE_AGENT_CONTEXT} ${noteCapabilityContext(opts)}`,
+      },
     },
   });
 
@@ -331,7 +338,7 @@ async function startLocalAgentRun(opts, sendEvent) {
   try {
     const result = await runCliAgent({
       agent,
-      context: `${CHAT_BREVITY_CONTEXT} ${DOC_EMBED_CONTEXT} ${noteCapabilityContext(opts)}`,
+      context: isChatRun(opts) ? '' : `${CLAUDE_AGENT_CONTEXT} ${noteCapabilityContext(opts)}`,
       userPrompt: prompt,
       cwd,
       resumeSessionId: typeof opts.resumeSessionId === 'string' ? opts.resumeSessionId : undefined,

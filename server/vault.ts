@@ -99,7 +99,8 @@ function sanitizeFilename(title: string): string {
 }
 
 function stripMarkdown(content: string): string {
-  return content
+  const normalized = content.replace(/\\+`/g, '`');
+  return normalized
     .replace(/^#{1,6}\s+/gm, '')         // headings
     .replace(/\*\*([^*]+)\*\*/g, '$1')     // bold
     .replace(/\*([^*]+)\*/g, '$1')         // italic
@@ -439,7 +440,8 @@ export function getNote(db: Db, noteId: string): Note | undefined {
 export function createNote(db: Db, vaultId: string, userId: number, opts: { title?: string; content?: string; folder_id?: string }): Note {
   const id = crypto.randomUUID();
   const title = String(opts.title || 'Untitled').trim() || 'Untitled';
-  const content = String(opts.content || '');
+  const rawContent = String(opts.content || '');
+  const content = rawContent.replace(/\\+`/g, '`');
   const folderId = opts.folder_id || null;
   const preview = makePreview(content);
   const wc = wordCount(content);
@@ -479,24 +481,25 @@ export function updateNote(db: Db, noteId: string, content: string): Note {
   } | undefined;
   if (!existing) throw new Error('Note not found');
 
-  const preview = makePreview(content);
-  const wc = wordCount(content);
+  const normalized = content.replace(/\\+`/g, '`');
+  const preview = makePreview(normalized);
+  const wc = wordCount(normalized);
 
   // Write to .md file
   const filePath = resolveNotePath(db, noteId);
   if (filePath) {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.writeFileSync(filePath, content, 'utf8');
+    fs.writeFileSync(filePath, normalized, 'utf8');
   }
 
   // Update DB
   db.prepare(`
     UPDATE notes SET content = ?, content_preview = ?, word_count = ?, updated_at = datetime('now')
     WHERE id = ?
-  `).run(content, preview, wc, noteId);
+  `).run(normalized, preview, wc, noteId);
 
   // Re-index links
-  reIndexLinks(db, noteId, existing.vault_id, content);
+  reIndexLinks(db, noteId, existing.vault_id, normalized);
 
   return getNote(db, noteId)!;
 }
