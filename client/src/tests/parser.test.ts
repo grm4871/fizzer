@@ -113,4 +113,29 @@ describe('Markdown Decoration Parser Tests', () => {
       }
     }
   });
+
+  it('should parse code blocks, hide fences when cursor is not on them, and apply cm-code-block-line', () => {
+    const text = '```json\n{\n  "key": "value"\n}\n```';
+    const decos = getParsedDecorations(text);
+
+    // Fences should be hidden (since cursor is at the end, not on them)
+    expect(decos).toContainEqual(expect.objectContaining({
+      type: 'cm-md-hidden',
+      from: 0,
+      to: 7
+    }));
+    expect(decos).toContainEqual(expect.objectContaining({
+      type: 'cm-md-hidden',
+      from: 29,
+      to: 32
+    }));
+
+    // Body lines should have cm-code-block-line line decorations
+    // Line 2 starts at 8
+    expect(decos).toContainEqual(expect.objectContaining({
+      type: 'cm-code-block-line',
+      from: 8,
+      to: 8
+    }));
+  });
 });

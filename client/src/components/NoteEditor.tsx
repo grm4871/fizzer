@@ -809,12 +809,45 @@ export function buildDecorations(
   const inTableBlock = (from: number, to: number) =>
     tableBlocks.some((b) => from >= b.from && to <= b.to);
 
+  let inCodeBlock = false;
+  let codeBlockFenceChar = '';
+  let codeBlockFenceLength = 0;
+
   for (let i = 1; i <= doc.lines; i++) {
     const line = doc.line(i);
     const text = line.text;
     const isActive = i === activeLine;
     if (widgetBlocks.some((block) => line.from >= block.from && line.to <= block.to)) continue;
     if (inTableBlock(line.from, line.to)) continue;
+
+    if (inCodeBlock) {
+      const endFenceMatch = text.match(/^(\s*)(`{3,}|~{3,})\s*$/);
+      if (endFenceMatch && endFenceMatch[2][0] === codeBlockFenceChar && endFenceMatch[2].length >= codeBlockFenceLength) {
+        inCodeBlock = false;
+        if (!isActive) {
+          collectDeco(line.from, line.to, hidden);
+        } else {
+          decos.push({ from: line.from, to: line.from, deco: Decoration.line({ class: 'cm-code-block-line' }) });
+        }
+        continue;
+      }
+
+      decos.push({ from: line.from, to: line.from, deco: Decoration.line({ class: 'cm-code-block-line' }) });
+      continue;
+    }
+
+    const startFenceMatch = text.match(/^(\s*)(`{3,}|~{3,})([^\s`~]*)\s*$/);
+    if (startFenceMatch) {
+      inCodeBlock = true;
+      codeBlockFenceChar = startFenceMatch[2][0];
+      codeBlockFenceLength = startFenceMatch[2].length;
+      if (!isActive) {
+        collectDeco(line.from, line.to, hidden);
+      } else {
+        decos.push({ from: line.from, to: line.from, deco: Decoration.line({ class: 'cm-code-block-line' }) });
+      }
+      continue;
+    }
 
     // Headings: Apply class and optionally hide markers
     const headingMatch = text.match(/^(#{1,6})\s/);
@@ -977,11 +1010,16 @@ export function buildDecorations(
     }
   }
 
-  // Sort decorations by start position ascending, then end position descending
+  // Sort decorations by start position ascending, then end position descending.
+  // Line decorations (from === to) must always precede mark decorations (from < to) starting at the same position.
   decos.sort((a, b) => {
     if (a.from !== b.from) {
       return a.from - b.from;
     }
+    const aIsLine = a.from === a.to;
+    const bIsLine = b.from === b.to;
+    if (aIsLine && !bIsLine) return -1;
+    if (!aIsLine && bIsLine) return 1;
     return b.to - a.to;
   });
 
