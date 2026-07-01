@@ -237,7 +237,8 @@ const ChatMessageText = memo(function ChatMessageText({
   }, [mentionableAliases]);
 
   const formattedBody = useMemo(() => {
-    const trimmed = body.trim();
+    const processed = body.replace(/\\+`/g, '`');
+    const trimmed = processed.trim();
     if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
       try {
         const parsed = JSON.parse(trimmed);
@@ -248,7 +249,7 @@ const ChatMessageText = memo(function ChatMessageText({
         // ignore
       }
     }
-    return body;
+    return processed;
   }, [body]);
 
   const components = useMemo(() => ({

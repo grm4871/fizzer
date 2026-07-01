@@ -297,7 +297,8 @@ const markdownComponents = {
 };
 
 function formatRawJSON(content: string): string {
-  const trimmed = content.trim();
+  const processed = content.replace(/\\+`/g, '`');
+  const trimmed = processed.trim();
   if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
     try {
       const parsed = JSON.parse(trimmed);
@@ -308,7 +309,7 @@ function formatRawJSON(content: string): string {
       // ignore
     }
   }
-  return content;
+  return processed;
 }
 
 const MessageBlocks = memo(function MessageBlocks({ msg }: { msg: ChatMessage }) {

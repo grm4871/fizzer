@@ -37,4 +37,14 @@ describe('JSON Syntax Highlighter', () => {
     // Verify punctuation highlight
     expect(html).toContain('class="json-token-punctuation"');
   });
+
+  it('should unescape escaped backticks and render them as a code block', () => {
+    const md1 = '\\`\\`\\`json\n{\n  "key": "value"\n}\n\\`\\`\\`';
+    const processed1 = md1.replace(/\\+`/g, '`');
+    expect(processed1).toBe('```json\n{\n  "key": "value"\n}\n```');
+
+    const md2 = '\\\\`\\\\`\\\\`json\n{\n  "key": "value"\n}\n\\\\`\\\\`\\\\`';
+    const processed2 = md2.replace(/\\+`/g, '`');
+    expect(processed2).toBe('```json\n{\n  "key": "value"\n}\n```');
+  });
 });
