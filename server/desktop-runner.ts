@@ -25,6 +25,8 @@ export type DelegatedRunPayload = {
   vaultRoot?: string;
   model?: string;
   resumeSessionId?: string;
+  chatChannelId?: string;
+  chatMessageId?: string;
   images?: RunImage[];
   /** Run with permission prompts bypassed ("yolo"). */
   yolo?: boolean;

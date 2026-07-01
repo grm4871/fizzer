@@ -708,7 +708,30 @@ async function runAntigravity(
   model?: string,
 ): Promise<CliAgentResult> {
   const bin = process.env.ANTIGRAVITY_BIN || path.join(os.homedir(), '.gemini', 'antigravity', 'bin', 'agentapi');
-  
+
+  const transcriptPathFor = (conversationId: string) => path.join(
+    os.homedir(),
+    '.gemini',
+    'antigravity',
+    'brain',
+    conversationId,
+    '.system_generated',
+    'logs',
+    'transcript.jsonl',
+  );
+
+  // On resume the transcript already holds the full prior conversation. Snapshot
+  // the line count *before* send-message so we only stream new turns — otherwise
+  // we replay the last reply and exit early on an old DONE step.
+  let processedLines = 0;
+  if (resumeId) {
+    const priorTranscript = transcriptPathFor(resumeId);
+    if (fs.existsSync(priorTranscript)) {
+      const content = fs.readFileSync(priorTranscript, 'utf-8');
+      processedLines = content.split('\n').filter((line) => line.trim()).length;
+    }
+  }
+
   let args: string[] = [];
   if (resumeId) {
     args = ['send-message', resumeId, prompt];
@@ -743,18 +766,8 @@ async function runAntigravity(
     throw new Error(`No conversationId returned by agentapi: ${stdoutStr}`);
   }
 
-  const transcriptPath = path.join(
-    os.homedir(),
-    '.gemini',
-    'antigravity',
-    'brain',
-    conversationId,
-    '.system_generated',
-    'logs',
-    'transcript.jsonl'
-  );
+  const transcriptPath = transcriptPathFor(conversationId);
 
-  let processedLines = 0;
   let summary = 'Completed note operations successfully.';
   let done = false;
   let isChecking = false;
@@ -773,6 +786,8 @@ async function runAntigravity(
   if (!exists) {
     throw new Error(`Transcript file was not created at ${transcriptPath}`);
   }
+
+  const transcriptBaseline = processedLines;
 
   const getToolFriendlyName = (name: string) => {
     if (name === 'list_dir') return 'List Directory';
@@ -854,7 +869,7 @@ async function runAntigravity(
         noNewLinesCount++;
       }
 
-      if (done || (processedLines > 2 && noNewLinesCount >= 20)) {
+      if (done || (processedLines > transcriptBaseline && noNewLinesCount >= 20)) {
         done = true;
       }
     } catch (err) {

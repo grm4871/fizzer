@@ -19,14 +19,14 @@ let claudeSdkPromise = null;
 const CLAUDE_DEFAULT_MODEL = process.env.RUNNER_MODEL || 'claude-sonnet-5';
 const CLAUDE_MAX_TURNS = Number(process.env.RUNNER_MAX_TURNS || 100);
 const CLAUDE_THINKING_TOKENS = Number(process.env.RUNNER_THINKING ?? 4000);
-const CLAUDE_AGENT_CONTEXT = 'Operate as a user-authorized local workspace assistant. This working directory is a LOCAL checkout of a Cascade vault (interlinked markdown .md notes) — it is NOT the running app: editing files here does not reach the live Cascade instance and bypasses its search/backlink index. To create or modify notes in the running app, use the `cascade-note` CLI (run `cascade-note --help`); it writes through the app API so changes appear live and stay indexed. Use raw file operations only for scratch or non-note work. Respect service terms, authentication boundaries, and rate limits, and do not handle secrets except when the user explicitly provides them for this local task.';
+const CLAUDE_AGENT_CONTEXT = 'You are a local workspace assistant. This checkout is not the live Cascade app: use `cascade-note` for live notes, and use normal file edits only for local scratch or non-note work. Respect auth boundaries and only handle secrets the user explicitly provides for this task.';
 
 // Nudge agents to behave like chat participants, not verbose coding CLIs: the
 // chat collapses step narration into a trace disclosure, so the actual message
 // should be short. Detailed reasoning belongs in thinking, not the reply.
-const CHAT_BREVITY_CONTEXT = "You are usually replying in a shared, multi-user chat channel. Write like a participant: concise and conversational. Don't narrate each step or tool call, and don't restate your plan — just do the work and give a short, direct reply. Keep detailed reasoning and play-by-play in your thinking, not in the chat message.";
+const CHAT_BREVITY_CONTEXT = "Shared chat. Reply briefly and naturally. Don't narrate tool use or restate your plan.";
 
-const DOC_EMBED_CONTEXT = "Cascade supports note embeds with `![[Exact Note Title]]`. When a conversation produces durable reference material like a plan, roadmap, briefing, decision log, or implementation notes, proactively create or update a note with `cascade-note`, then reference it with a `![[...]]` embed in chat or related notes. Agents may write these embeds directly; do not use local .md files for live notes.";
+const DOC_EMBED_CONTEXT = "Use `![[Note Title]]` embeds. If you create durable notes, write them with `cascade-note` and link them in chat.";
 
 // Live Cascade API config for the `cascade-note` wrapper, populated by the
 // desktop runner host once it knows the server URL + the user's auth token.
@@ -34,7 +34,7 @@ const DOC_EMBED_CONTEXT = "Cascade supports note embeds with `![[Exact Note Titl
 // the same live instance the desktop is connected to (cscd.online by default).
 const noteApi = { url: '', token: '' };
 
-/** Directory holding the `cascade-note` wrapper; prefer source, fall back to dist. */
+/** Directory holding the agent helper CLIs; prefer source, fall back to dist. */
 function resolveWrapperDir() {
   const candidates = [
     path.join(__dirname, '..', 'cli-agents'),
@@ -48,7 +48,7 @@ function resolveWrapperDir() {
   return candidates[0];
 }
 
-/** Put the wrapper on PATH (once) so agents can invoke `cascade-note` by name. */
+/** Put wrappers on PATH (once) so agents can invoke `cascade-note`/`cascade-chat`. */
 function ensureWrapperOnPath() {
   const dir = resolveWrapperDir();
   const parts = (process.env.PATH || '').split(path.delimiter);
@@ -62,7 +62,7 @@ function setNoteApiConfig({ url, token } = {}) {
 }
 
 /**
- * Inject the wrapper's env (target URL, token, current vault) for a run, and
+ * Inject helper env (target URL, token, current vault/channel) for a run, and
  * ensure it's on PATH. Vault is also stated in the prompt context, so the env
  * value is just a default the agent can override with --vault.
  */
@@ -72,14 +72,19 @@ function applyNoteEnv(opts) {
   if (noteApi.token) process.env.CASCADE_NOTE_TOKEN = noteApi.token;
   const vaultId = String(opts && opts.vaultId || '').trim();
   if (vaultId) process.env.CASCADE_NOTE_VAULT = vaultId;
+  const channelId = String(opts && opts.chatChannelId || opts?.chat?.channelId || '').trim();
+  if (channelId) process.env.CASCADE_CHAT_CHANNEL = channelId;
+  const messageId = String(opts && opts.chatMessageId || opts?.chat?.messageId || '').trim();
+  if (messageId) process.env.CASCADE_CHAT_MESSAGE = messageId;
 }
 
 /** One-line capability note appended to the agent's prompt context. */
 function noteCapabilityContext(opts) {
-  const target = noteApi.url || 'https://cscd.online';
   const vaultId = String(opts && opts.vaultId || '').trim();
-  const vaultLine = vaultId ? ` Current vault id: ${vaultId} (pass --vault ${vaultId}).` : '';
-  return `Notes live in the running Cascade app at ${target}. Create or modify notes with the \`cascade-note\` CLI (run \`cascade-note --help\`), not by writing .md files — file edits only touch this local checkout and never reach the app. Pass the note body via stdin (a heredoc) or --content-file, never --content, since the shell corrupts backticks/markdown in --content.${vaultLine}`;
+  const vaultLine = vaultId ? ` Vault: ${vaultId}.` : '';
+  const channelId = String(opts && opts.chatChannelId || opts?.chat?.channelId || '').trim();
+  const channelLine = channelId ? ` Current chat channel: ${channelId}.` : '';
+  return `Live notes go through \`cascade-note\`, not local .md files.${vaultLine}${channelLine} If chat context is missing or ambiguous, run \`cascade-chat history --include-reply-context\`.`;
 }
 
 // Live Claude SDK query streams, keyed by runId, so cancellation can close them.

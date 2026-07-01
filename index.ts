@@ -848,6 +848,8 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
       vaultRoot: vault.root_path,
       model: selectedModel,
       resumeSessionId: findPriorSession(db, run),
+      chatChannelId,
+      chatMessageId,
       images: cleanImages,
       yolo: yoloMode,
     });

@@ -408,36 +408,39 @@ function formatAgentChatPrompt(
   // reply) instead of re-dumping the whole history and burning tokens every turn.
   continuation = false,
 ) {
+  const MAX_HISTORY_MESSAGES = continuation ? 12 : 16;
+  const MAX_MESSAGE_CHARS = continuation ? 400 : 600;
   const selfAgent = CHAT_AGENTS.find((candidate) => candidate.id === registration.agentId);
   const selfHandle = registration.mention || registration.agentId;
   const selfName = registration.displayName || selfAgent?.label || registration.agentId;
   const recentHistory = history
     .filter((message) => message.body.trim() || (message.images?.length ?? 0) > 0 || (message.attachments?.length ?? 0) > 0)
-    .slice(-40)
+    .slice(-MAX_HISTORY_MESSAGES)
     .map((message) => {
-      const body = message.body.length > 1200 ? `${message.body.slice(0, 1199)}…` : message.body;
+      const body = message.body.length > MAX_MESSAGE_CHARS ? `${message.body.slice(0, MAX_MESSAGE_CHARS - 1)}…` : message.body;
       const mediaNote = [
         message.images?.length ? `[${message.images.length} image${message.images.length === 1 ? '' : 's'} attached]` : '',
         message.attachments?.length ? `[${message.attachments.length} file${message.attachments.length === 1 ? '' : 's'} attached]` : '',
       ].filter(Boolean).join(' ');
       const suffix = mediaNote ? (body ? ` ${mediaNote}` : mediaNote) : '';
-      const replyNote = message.replyTo ? `[reply to @${message.replyTo.mention}] ` : '';
-      return `${message.author}: ${replyNote}${body || '(media)'}${suffix}`;
+    const replyNote = message.replyTo ? `[reply to @${message.replyTo.mention}] ` : '';
+      const metadata = message.replyTo ? `[message_id=${message.id} reply_to=${message.replyTo.messageId}] ` : `[message_id=${message.id}] `;
+      return `${message.author}: ${metadata}${replyNote}${body || '(media)'}${suffix}`;
     })
     .join('\n');
 
   if (continuation) {
     const parts = [
-      `You are ${selfName} (@${selfHandle}), continuing in the Cascade chat channel #${channelName}. Your earlier turns in this conversation are already in your context — only new activity since your last reply is shown below.`,
+      `You are ${selfName} (@${selfHandle}) in #${channelName}. Earlier turns are already in context. Only new messages since your last reply are below.`,
     ];
     if (recentHistory) parts.push('', 'New messages since your last reply:', recentHistory);
+    parts.push('', 'For more chat context, run: cascade-chat history --include-reply-context');
     parts.push('', 'Current user request:', request);
     return parts.join('\n');
   }
 
   return [
-    `You are ${selfName} (@${selfHandle}), responding in the Cascade chat channel #${channelName}.`,
-    'You can access and use the chat history below as context for your reply.',
+    `You are ${selfName} (@${selfHandle}) in #${channelName}.`,
     registration.contextPrompt ? `Your channel-specific context: ${registration.contextPrompt}` : '',
     '',
     'Registered agents in this channel:',
@@ -452,6 +455,8 @@ function formatAgentChatPrompt(
     '',
     'Chat history:',
     recentHistory || '(no prior messages)',
+    '',
+    'For more chat context, run: cascade-chat history --include-reply-context',
     '',
     'Current user request:',
     request,
