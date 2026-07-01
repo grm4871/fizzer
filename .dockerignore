@@ -12,4 +12,5 @@ android
 .env.*
 !deploy/.env.example
 docs
-scripts
+scripts/*
+!scripts/copy-cli-agent-wrappers.cjs

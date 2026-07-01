@@ -23,6 +23,8 @@ RUN --mount=type=cache,target=/root/.npm npm ci --omit=dev
 RUN --mount=type=cache,target=/root/.npm npm install --no-save -D typescript
 COPY tsconfig.json index.ts ./
 COPY server ./server
+COPY cli-agents ./cli-agents
+COPY scripts/copy-cli-agent-wrappers.cjs ./scripts/copy-cli-agent-wrappers.cjs
 RUN npm run build
 
 FROM node:22-bookworm-slim AS runner
