@@ -53,6 +53,7 @@ function ensureWrapperOnPath() {
   const dir = resolveWrapperDir();
   const parts = (process.env.PATH || '').split(path.delimiter);
   if (!parts.includes(dir)) process.env.PATH = [dir, ...parts].join(path.delimiter);
+  process.env.CASCADE_HELPER_DIR = dir;
 }
 
 /** Set the live API target/token the wrapper should use (call on runner connect). */
@@ -80,11 +81,12 @@ function applyNoteEnv(opts) {
 
 /** One-line capability note appended to the agent's prompt context. */
 function noteCapabilityContext(opts) {
+  const helperDir = resolveWrapperDir();
   const vaultId = String(opts && opts.vaultId || '').trim();
   const vaultLine = vaultId ? ` Vault: ${vaultId}.` : '';
   const channelId = String(opts && opts.chatChannelId || opts?.chat?.channelId || '').trim();
   const channelLine = channelId ? ` Current chat channel: ${channelId}.` : '';
-  return `Live notes go through \`cascade-note\`, not local .md files.${vaultLine}${channelLine} If chat context is missing or ambiguous, run \`cascade-chat history --include-reply-context\`.`;
+  return `Live notes go through \`cascade-note\`, not local .md files.${vaultLine}${channelLine} Helper CLIs are on PATH and also in ${helperDir}; if chat context is missing or ambiguous, run \`cascade-chat history --include-reply-context\` or \`${helperDir}/cascade-chat history --include-reply-context\`.`;
 }
 
 // Live Claude SDK query streams, keyed by runId, so cancellation can close them.

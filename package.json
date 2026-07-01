@@ -26,7 +26,7 @@
     "dev-staging-headless": "concurrently \"npm run dev-backend-staging\" \"npm run dev-client-staging\"",
     "sub:electron": "cd cascade-electron && npm run start:watch",
     "live": "cd cascade-electron && npm run start-live-instance",
-    "build": "tsc",
+    "build": "tsc && node scripts/copy-cli-agent-wrappers.cjs",
     "build:vps": "npm run build && npm run build:client",
     "start:vps": "node dist/index.js",
     "test": "npm --workspace=client run test",
