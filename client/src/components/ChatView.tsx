@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Activity, Bot, Brain, ChevronRight, Hash, ImagePlus, Paperclip, Plus, Reply, Send, Square, X } from 'lucide-react';
+import { Activity, Bot, Brain, ChevronLeft, ChevronRight, Hash, ImagePlus, Paperclip, Plus, Reply, Send, Square, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
@@ -411,6 +411,9 @@ export function ChatView({
 }: ChatViewProps) {
   const [draft, setDraft] = useState('');
   const [sidebarMode, setSidebarMode] = useState<'users' | 'runs'>('users');
+  const [usersCollapsed, setUsersCollapsed] = useState(() =>
+    typeof localStorage !== 'undefined' && localStorage.getItem('cascade_chat_users_collapsed') === '1'
+  );
   const [agentMenuOpen, setAgentMenuOpen] = useState(false);
   const [editingRegistrationId, setEditingRegistrationId] = useState<string | null>(null);
   const [agentFormError, setAgentFormError] = useState('');
@@ -486,6 +489,15 @@ export function ChatView({
     return Array.from(aliases);
   }, [humanUsers, registeredAgents]);
   const activeFormAgent = availableAgents.find((agent) => agent.id === agentForm.agentId);
+
+  useEffect(() => {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.setItem('cascade_chat_users_collapsed', usersCollapsed ? '1' : '0');
+    if (usersCollapsed) {
+      setAgentMenuOpen(false);
+      setEditingRegistrationId(null);
+    }
+  }, [usersCollapsed]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: 'end' });
@@ -894,8 +906,20 @@ export function ChatView({
         </div>
       )}
 
-      <aside className="chat-users" aria-label={sidebarMode === 'runs' ? 'Running agents' : 'Chat users'}>
+      <aside
+        className={`chat-users${usersCollapsed ? ' is-collapsed' : ''}`}
+        aria-label={sidebarMode === 'runs' ? 'Running agents' : 'Chat users'}
+      >
         <div className="chat-users-header">
+          <button
+            type="button"
+            className="chat-users-collapse-btn"
+            onClick={() => setUsersCollapsed((value) => !value)}
+            title={usersCollapsed ? 'Expand users' : 'Minimize users'}
+            aria-label={usersCollapsed ? 'Expand chat users' : 'Minimize chat users'}
+          >
+            {usersCollapsed ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
+          </button>
           <button type="button" className="chat-add-agent-btn" onClick={openAgentMenu} title="Add agent">
             <Bot size={14} />
             <Plus size={12} />
@@ -918,7 +942,7 @@ export function ChatView({
           </button>
         </div>
 
-        {sidebarMode === 'runs' ? (
+        {!usersCollapsed && (sidebarMode === 'runs' ? (
           <>
             <div className="chat-users-title">Running agents</div>
             {runningAgents.length === 0 ? (
@@ -1131,7 +1155,7 @@ export function ChatView({
           </form>
         )}
           </>
-        )}
+        ))}
       </aside>
     </section>
   );

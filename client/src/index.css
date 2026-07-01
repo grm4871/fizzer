@@ -1722,6 +1722,12 @@ a {
   background: transparent;
   padding: 14px 8px;
 }
+.chat-users.is-collapsed {
+  width: 42px;
+  flex-basis: 42px;
+  overflow: visible;
+  padding: 14px 6px;
+}
 .chat-users-title {
   padding: 10px 8px 5px;
   color: var(--text-tertiary);
@@ -1809,7 +1815,13 @@ a {
   gap: 4px;
   padding: 0 4px 6px;
 }
-.chat-runs-toggle-btn {
+.chat-users.is-collapsed .chat-users-header {
+  flex-direction: column;
+  align-items: center;
+  padding: 0;
+}
+.chat-runs-toggle-btn,
+.chat-users-collapse-btn {
   position: relative;
   width: auto;
   min-height: 24px;
@@ -1824,10 +1836,14 @@ a {
   cursor: pointer;
 }
 .chat-runs-toggle-btn:hover,
+.chat-users-collapse-btn:hover,
 .chat-runs-toggle-btn.active {
   border-color: var(--border-active);
   background: var(--bg-raised);
   color: var(--text-primary);
+}
+.chat-users-collapse-btn {
+  width: 28px;
 }
 .chat-runs-toggle-btn.active {
   color: var(--accent-hover);
@@ -1930,6 +1946,11 @@ a {
   background: var(--bg-surface);
   color: var(--text-secondary);
   cursor: pointer;
+}
+.chat-users.is-collapsed .chat-add-agent-btn,
+.chat-users.is-collapsed .chat-runs-toggle-btn {
+  width: 28px;
+  padding: 3px;
 }
 .chat-add-agent-btn svg:first-child {
   color: var(--accent-hover);
