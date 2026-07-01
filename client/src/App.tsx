@@ -2055,6 +2055,8 @@ export default function App() {
           onRemoveAgent={handleRemoveChatAgent}
           onSendMessage={handleSendChatMessage}
           onCancelRun={handleCancelChatRun}
+          notes={notes}
+          onOpenNote={openNote}
         />
       );
     }
@@ -2071,6 +2073,8 @@ export default function App() {
           const target = notes.find((n) => n.title.toLowerCase() === title.toLowerCase());
           if (target) openNote(target.id);
         }}
+        notes={notes}
+        onOpenNote={openNote}
         onLinkifySelection={(term, context) => handleLinkifyTerm(term, context, entry?.note?.title)}
       />
     );

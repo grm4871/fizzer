@@ -3,6 +3,8 @@ import { Activity, Bot, Brain, ChevronRight, Hash, ImagePlus, Paperclip, Plus, R
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
+import type { NoteSummary } from '../api';
+import { findEmbeddedNote, splitDocEmbeds } from '../docEmbeds';
 
 export const CHAT_NOTE_MARKER = 'cascade://chat-channel';
 export const CHAT_MEDIA_LIMIT = 8;
@@ -92,6 +94,8 @@ interface ChatViewProps {
   onRemoveAgent: (channelId: string, registrationId: string) => void;
   onSendMessage: (channelId: string, body: string, media?: ChatMediaAttachment[], replyTo?: ChatReplyRef) => void;
   onCancelRun: (runId: number) => void;
+  notes?: NoteSummary[];
+  onOpenNote?: (id: string) => void;
 }
 
 function isImageMediaType(mediaType: string) {
@@ -212,9 +216,13 @@ function aliasesEqual(a: string[], b: string[]) {
 const ChatMessageText = memo(function ChatMessageText({
   body,
   mentionableAliases,
+  notes = [],
+  onOpenNote,
 }: {
   body: string;
   mentionableAliases: string[];
+  notes?: NoteSummary[];
+  onOpenNote?: (id: string) => void;
 }) {
   const withMentions = useCallback((children: ReactNode): ReactNode => {
     if (Array.isArray(children)) {
@@ -232,11 +240,44 @@ const ChatMessageText = memo(function ChatMessageText({
   }), [withMentions]);
 
   return (
-    <ReactMarkdown remarkPlugins={CHAT_MARKDOWN_PLUGINS} components={components}>
-      {body}
-    </ReactMarkdown>
+    <>
+      {splitDocEmbeds(body).map((part, index) => {
+        if (part.type === 'text') {
+          if (!part.value) return null;
+          return (
+            <ReactMarkdown key={index} remarkPlugins={CHAT_MARKDOWN_PLUGINS} components={components}>
+              {part.value}
+            </ReactMarkdown>
+          );
+        }
+        const embedded = findEmbeddedNote(notes, part.value);
+        return (
+          <button
+            key={index}
+            type="button"
+            className={`chat-doc-embed${embedded ? '' : ' is-missing'}`}
+            onClick={() => embedded && onOpenNote?.(embedded.id)}
+            disabled={!embedded}
+            title={embedded ? `Open ${embedded.title}` : undefined}
+          >
+            <span className="chat-doc-embed-title">{embedded?.title ?? `Missing note: ${part.value}`}</span>
+            {embedded?.content_preview?.trim() && (
+              <span className="chat-doc-embed-preview">
+                {embedded.content_preview.trim().length > 180
+                  ? `${embedded.content_preview.trim().slice(0, 179)}…`
+                  : embedded.content_preview.trim()}
+              </span>
+            )}
+          </button>
+        );
+      })}
+    </>
   );
-}, (prev, next) => prev.body === next.body && aliasesEqual(prev.mentionableAliases, next.mentionableAliases));
+}, (prev, next) =>
+  prev.body === next.body
+  && aliasesEqual(prev.mentionableAliases, next.mentionableAliases)
+  && prev.notes === next.notes
+);
 
 export function canGroupChatMessages(a: ChatMessage, b: ChatMessage) {
   if (a.author.trim() !== b.author.trim()) return false;
@@ -364,6 +405,8 @@ export function ChatView({
   onRemoveAgent,
   onSendMessage,
   onCancelRun,
+  notes = [],
+  onOpenNote,
 }: ChatViewProps) {
   const [draft, setDraft] = useState('');
   const [sidebarMode, setSidebarMode] = useState<'users' | 'runs'>('users');
@@ -687,7 +730,7 @@ export function ChatView({
                               ))}
                             </div>
                           )}
-                          {message.body && <ChatMessageText body={message.body} mentionableAliases={mentionableAliases} />}
+                          {message.body && <ChatMessageText body={message.body} mentionableAliases={mentionableAliases} notes={notes} onOpenNote={onOpenNote} />}
                           {(selected || hasRunWidget) && <ChatRunWidget message={message} onCancelRun={onCancelRun} />}
                         </div>
                       );

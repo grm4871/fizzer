@@ -1,6 +1,7 @@
 import { useEffect, useRef, useMemo, useCallback, useState } from 'react';
-import type { Note } from '../api';
+import type { Note, NoteSummary } from '../api';
 import { api, formatRelativeDate } from '../api';
+import { findEmbeddedNote, normalizeDocEmbedTarget } from '../docEmbeds';
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, placeholder as cmPlaceholder, Decoration, type DecorationSet, WidgetType, drawSelection } from '@codemirror/view';
 import { EditorState, type Extension, RangeSetBuilder, Prec, StateField } from '@codemirror/state';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
@@ -24,6 +25,9 @@ interface NoteEditorProps {
   onRename?: (title: string) => Promise<void>;
   onExecuteDirective?: (prompt: string) => void;
   onOpenWikilink?: (title: string) => void;
+  notes?: NoteSummary[];
+  onOpenNote?: (id: string) => void;
+  onLinkifySelection?: (term: string, context: string) => void;
 }
 
 /* ─── Custom Dark Theme ──────────────────────────────────── */
@@ -203,6 +207,40 @@ const cascadeTheme = EditorView.theme({
     borderRadius: '3px',
     color: 'hsl(38, 75%, 65%)',
   },
+  '.cm-doc-embed': {
+    display: 'block',
+    margin: '10px 0',
+    padding: '10px 12px',
+    border: '1px solid hsl(25, 7%, 20%)',
+    borderRadius: '6px',
+    background: 'hsl(22, 8%, 10%)',
+    color: 'hsl(35, 10%, 86%)',
+    cursor: 'pointer',
+  },
+  '.cm-doc-embed:hover': {
+    borderColor: 'hsl(33, 38%, 36%)',
+    background: 'hsl(22, 8%, 12%)',
+  },
+  '.cm-doc-embed.is-missing': {
+    cursor: 'default',
+    color: 'hsl(25, 5%, 55%)',
+    borderStyle: 'dashed',
+  },
+  '.cm-doc-embed-title': {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    color: 'hsl(35, 12%, 92%)',
+    fontWeight: '600',
+    fontSize: '0.92rem',
+    lineHeight: '1.3',
+  },
+  '.cm-doc-embed-preview': {
+    marginTop: '6px',
+    color: 'hsl(25, 6%, 62%)',
+    fontSize: '0.85rem',
+    lineHeight: '1.45',
+  },
 }, { dark: true });
 
 /* ─── Syntax Highlighting ────────────────────────────────── */
@@ -347,6 +385,37 @@ class TableWidget extends WidgetType {
     table.appendChild(tbody);
     wrap.appendChild(table);
     return wrap;
+  }
+}
+
+class DocEmbedWidget extends WidgetType {
+  constructor(
+    private target: string,
+    private note: NoteSummary | null,
+  ) {
+    super();
+  }
+  eq(other: DocEmbedWidget) {
+    return this.target === other.target && this.note?.id === other.note?.id && this.note?.content_preview === other.note?.content_preview;
+  }
+  toDOM() {
+    const root = document.createElement('div');
+    root.className = `cm-doc-embed${this.note ? '' : ' is-missing'}`;
+    root.setAttribute('data-note-id', this.note?.id ?? '');
+
+    const title = document.createElement('div');
+    title.className = 'cm-doc-embed-title';
+    title.textContent = this.note?.title ?? `Missing note: ${this.target}`;
+    root.appendChild(title);
+
+    const previewText = this.note?.content_preview?.trim();
+    if (previewText) {
+      const preview = document.createElement('div');
+      preview.className = 'cm-doc-embed-preview';
+      preview.textContent = previewText.length > 220 ? `${previewText.slice(0, 219)}…` : previewText;
+      root.appendChild(preview);
+    }
+    return root;
   }
 }
 
@@ -632,6 +701,7 @@ export function buildDecorations(
   requestWidgetAgent?: (prompt: string) => void,
   fetchWidgetFeed?: (url: string, force?: boolean) => Promise<unknown>,
   enableWidgetAutorun?: (from: number, to: number, source: string) => void,
+  notes: NoteSummary[] = [],
 ): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
   const doc = state.doc;
@@ -787,6 +857,19 @@ export function buildDecorations(
 
     if (isActive) continue; // Don't hide/decorate formatting markers on the active line
 
+    const embedMatch = text.trim().match(/^!\[\[([^\]]+)\]\]$/);
+    if (embedMatch) {
+      const target = normalizeDocEmbedTarget(embedMatch[1]);
+      decos.push({
+        from: line.from,
+        to: line.to,
+        deco: Decoration.replace({
+          widget: new DocEmbedWidget(target, findEmbeddedNote(notes, target)),
+        }),
+      });
+      continue;
+    }
+
     // Determine starting index for inline pattern scanning to avoid matching block prefixes
     let inlineStart = 0;
     const listMatch = text.match(/^(\s*[-*+]|\d+\.)\s/);
@@ -914,14 +997,15 @@ function createWysiwygDecorations(
   requestWidgetAgent?: (prompt: string) => void,
   fetchWidgetFeed?: (url: string, force?: boolean) => Promise<unknown>,
   enableWidgetAutorun?: (from: number, to: number, source: string) => void,
+  notes: NoteSummary[] = [],
 ) {
   const field = StateField.define<DecorationSet>({
     create(state) {
-      return buildDecorations(state, requestWidgetAgent, fetchWidgetFeed, enableWidgetAutorun);
+      return buildDecorations(state, requestWidgetAgent, fetchWidgetFeed, enableWidgetAutorun, notes);
     },
     update(decorations, transaction) {
       if (transaction.docChanged || transaction.selection) {
-        return buildDecorations(transaction.state, requestWidgetAgent, fetchWidgetFeed, enableWidgetAutorun);
+        return buildDecorations(transaction.state, requestWidgetAgent, fetchWidgetFeed, enableWidgetAutorun, notes);
       }
       return decorations;
     },
@@ -957,7 +1041,7 @@ const checkboxClickHandler = EditorView.domEventHandlers({
 });
 
 /* ─── Component ──────────────────────────────────────────── */
-export function NoteEditor({ note, content, onContentChange, onSave, onRename, onExecuteDirective, onOpenWikilink }: NoteEditorProps) {
+export function NoteEditor({ note, content, onContentChange, onSave, onRename, onExecuteDirective, onOpenWikilink, notes = [], onOpenNote }: NoteEditorProps) {
   const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const contentRef = useRef(content);
@@ -965,6 +1049,7 @@ export function NoteEditor({ note, content, onContentChange, onSave, onRename, o
   const onSaveRef = useRef(onSave);
   const onExecuteDirectiveRef = useRef(onExecuteDirective);
   const onOpenWikilinkRef = useRef(onOpenWikilink);
+  const onOpenNoteRef = useRef(onOpenNote);
 
   // Inline, editable note title (Obsidian-style). Synced from the note.
   const [titleDraft, setTitleDraft] = useState(note?.title ?? '');
@@ -1013,6 +1098,7 @@ export function NoteEditor({ note, content, onContentChange, onSave, onRename, o
   onSaveRef.current = onSave;
   onExecuteDirectiveRef.current = onExecuteDirective;
   onOpenWikilinkRef.current = onOpenWikilink;
+  onOpenNoteRef.current = onOpenNote;
 
   // Word count and stats
   const stats = useMemo(() => {
@@ -1040,11 +1126,20 @@ export function NoteEditor({ note, content, onContentChange, onSave, onRename, o
       history(),
       EditorView.lineWrapping,
       cmPlaceholder('Start writing...'),
-      createWysiwygDecorations(requestWidgetAgent, fetchWidgetFeed, enableWidgetAutorun),
+      createWysiwygDecorations(requestWidgetAgent, fetchWidgetFeed, enableWidgetAutorun, notes),
       checkboxClickHandler,
       EditorView.domEventHandlers({
         mousedown(event) {
           const target = event.target as HTMLElement;
+          const docEmbed = target.closest('.cm-doc-embed');
+          if (docEmbed) {
+            const noteId = docEmbed.getAttribute('data-note-id');
+            if (noteId) {
+              event.preventDefault();
+              onOpenNoteRef.current?.(noteId);
+              return true;
+            }
+          }
           const wikilink = target.closest('.cm-wikilink');
           if (wikilink) {
             const title = wikilink.textContent?.trim();
@@ -1123,7 +1218,7 @@ export function NoteEditor({ note, content, onContentChange, onSave, onRename, o
         }
       }),
     ],
-    [requestWidgetAgent, fetchWidgetFeed, enableWidgetAutorun],
+    [requestWidgetAgent, fetchWidgetFeed, enableWidgetAutorun, notes],
   );
 
   // Create/destroy editor

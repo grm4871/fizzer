@@ -26,6 +26,8 @@ const CLAUDE_AGENT_CONTEXT = 'Operate as a user-authorized local workspace assis
 // should be short. Detailed reasoning belongs in thinking, not the reply.
 const CHAT_BREVITY_CONTEXT = "You are usually replying in a shared, multi-user chat channel. Write like a participant: concise and conversational. Don't narrate each step or tool call, and don't restate your plan — just do the work and give a short, direct reply. Keep detailed reasoning and play-by-play in your thinking, not in the chat message.";
 
+const DOC_EMBED_CONTEXT = "Cascade supports note embeds with `![[Exact Note Title]]`. When a conversation produces durable reference material like a plan, roadmap, briefing, decision log, or implementation notes, proactively create or update a note with `cascade-note`, then reference it with a `![[...]]` embed in chat or related notes. Agents may write these embeds directly; do not use local .md files for live notes.";
+
 // Live Cascade API config for the `cascade-note` wrapper, populated by the
 // desktop runner host once it knows the server URL + the user's auth token.
 // Children inherit these via process.env, so the wrapper authenticates against
@@ -200,7 +202,7 @@ async function runClaudeLocally(opts, emit) {
       ...(CLAUDE_THINKING_TOKENS > 0
         ? { thinking: { type: 'enabled', budgetTokens: CLAUDE_THINKING_TOKENS } }
         : {}),
-      systemPrompt: { type: 'preset', preset: 'claude_code', append: `${CLAUDE_AGENT_CONTEXT} ${CHAT_BREVITY_CONTEXT} ${noteCapabilityContext(opts)}` },
+      systemPrompt: { type: 'preset', preset: 'claude_code', append: `${CLAUDE_AGENT_CONTEXT} ${CHAT_BREVITY_CONTEXT} ${DOC_EMBED_CONTEXT} ${noteCapabilityContext(opts)}` },
     },
   });
 
@@ -300,7 +302,7 @@ async function startLocalAgentRun(opts, sendEvent) {
   try {
     const result = await runCliAgent({
       agent,
-      context: `${CHAT_BREVITY_CONTEXT} ${noteCapabilityContext(opts)}`,
+      context: `${CHAT_BREVITY_CONTEXT} ${DOC_EMBED_CONTEXT} ${noteCapabilityContext(opts)}`,
       userPrompt: prompt,
       cwd,
       resumeSessionId: typeof opts.resumeSessionId === 'string' ? opts.resumeSessionId : undefined,
