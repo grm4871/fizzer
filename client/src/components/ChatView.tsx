@@ -5,6 +5,7 @@ import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import type { NoteSummary } from '../api';
 import { findEmbeddedNote, NOTE_DND_TYPE, noteEmbedMarkdown, splitDocEmbeds } from '../docEmbeds';
+import { highlightJSON } from './jsonHighlighter';
 
 export const CHAT_NOTE_MARKER = 'cascade://chat-channel';
 export const CHAT_MEDIA_LIMIT = 8;
@@ -235,14 +236,59 @@ const ChatMessageText = memo(function ChatMessageText({
     return children;
   }, [mentionableAliases]);
 
+  const formattedBody = useMemo(() => {
+    const trimmed = body.trim();
+    if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (parsed && typeof parsed === 'object') {
+          return '```json\n' + JSON.stringify(parsed, null, 2) + '\n```';
+        }
+      } catch {
+        // ignore
+      }
+    }
+    return body;
+  }, [body]);
+
   const components = useMemo(() => ({
     p: ({ children }: { children?: ReactNode }) => <p>{withMentions(children)}</p>,
     li: ({ children }: { children?: ReactNode }) => <li>{withMentions(children)}</li>,
+    code({ node, className, children, ...props }: any) {
+      const match = /language-(\w+)/.exec(className || '');
+      const isInline = !className;
+      const value = String(children).replace(/\n$/, '');
+
+      if (!isInline && (!match || match[1] === 'json')) {
+        const trimmed = value.trim();
+        if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+          try {
+            JSON.parse(trimmed);
+            return (
+              <code className={className || 'language-json'} {...props}>
+                {highlightJSON(value)}
+              </code>
+            );
+          } catch {
+            // ignore
+          }
+        }
+      }
+
+      if (!isInline && match && match[1] === 'json') {
+        return (
+          <code className={className} {...props}>
+            {highlightJSON(value)}
+          </code>
+        );
+      }
+      return <code className={className} {...props}>{children}</code>;
+    }
   }), [withMentions]);
 
   return (
     <>
-      {splitDocEmbeds(body).map((part, index) => {
+      {splitDocEmbeds(formattedBody).map((part, index) => {
         if (part.type === 'text') {
           if (!part.value) return null;
           return (

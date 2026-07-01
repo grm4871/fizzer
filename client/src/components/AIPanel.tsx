@@ -1,6 +1,7 @@
 import { memo, useState, useCallback, useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
+import { highlightJSON } from './jsonHighlighter';
 import type { Note } from '../api';
 import { api } from '../api';
 import { connectRunsSocket, connectVaultSocket } from '../socket';
@@ -262,6 +263,54 @@ function ToolView({ block, result }: { block: ChatBlock; result?: ChatBlock }) {
   );
 }
 
+const markdownComponents = {
+  code({ node, className, children, ...props }: any) {
+    const match = /language-(\w+)/.exec(className || '');
+    const isInline = !className;
+    const value = String(children).replace(/\n$/, '');
+
+    if (!isInline && (!match || match[1] === 'json')) {
+      const trimmed = value.trim();
+      if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+        try {
+          JSON.parse(trimmed);
+          return (
+            <code className={className || 'language-json'} {...props}>
+              {highlightJSON(value)}
+            </code>
+          );
+        } catch {
+          // ignore
+        }
+      }
+    }
+
+    if (!isInline && match && match[1] === 'json') {
+      return (
+        <code className={className} {...props}>
+          {highlightJSON(value)}
+        </code>
+      );
+    }
+    return <code className={className} {...props}>{children}</code>;
+  }
+};
+
+function formatRawJSON(content: string): string {
+  const trimmed = content.trim();
+  if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed && typeof parsed === 'object') {
+        return '```json\n' + JSON.stringify(parsed, null, 2) + '\n```';
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return content;
+}
+
 const MessageBlocks = memo(function MessageBlocks({ msg }: { msg: ChatMessage }) {
   // Build a lookup of tool results by tool_use id so each tool card can show its output.
   const resultMap = new Map<string, ChatBlock>();
@@ -272,7 +321,7 @@ const MessageBlocks = memo(function MessageBlocks({ msg }: { msg: ChatMessage })
     <>
       {msg.content && (
         <div className="ai-markdown">
-          <ReactMarkdown>{msg.content}</ReactMarkdown>
+          <ReactMarkdown components={markdownComponents}>{formatRawJSON(msg.content)}</ReactMarkdown>
         </div>
       )}
       {(msg.blocks || []).map((block, i) => {
@@ -280,7 +329,7 @@ const MessageBlocks = memo(function MessageBlocks({ msg }: { msg: ChatMessage })
         if (block.type === 'text') {
           return (
             <div key={i} className="ai-markdown">
-              <ReactMarkdown>{block.text || ''}</ReactMarkdown>
+              <ReactMarkdown components={markdownComponents}>{formatRawJSON(block.text || '')}</ReactMarkdown>
             </div>
           );
         }

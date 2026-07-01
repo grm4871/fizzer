@@ -1307,6 +1307,7 @@ a {
   padding: 1px 4px;
 }
 .chat-message-chunk pre {
+  font-family: var(--font-mono, monospace);
   background: var(--surface-2, hsla(0,0%,100%,0.07));
   border-radius: var(--radius-sm);
   padding: 10px 12px;
@@ -2548,6 +2549,7 @@ a {
   color: hsl(38, 75%, 65%);
 }
 .ai-markdown pre {
+  font-family: var(--font-mono, monospace);
   background: var(--bg-deep);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -3299,4 +3301,23 @@ a {
     cursor: row-resize;
   }
 
+}
+
+/* JSON syntax highlighting */
+.json-token-key {
+  color: hsl(28, 90%, 60%);
+  font-weight: 600;
+}
+.json-token-string {
+  color: hsl(95, 45%, 60%);
+}
+.json-token-number {
+  color: hsl(38, 80%, 65%);
+}
+.json-token-boolean,
+.json-token-null {
+  color: hsl(196, 75%, 65%);
+}
+.json-token-punctuation {
+  color: var(--text-tertiary);
 }
