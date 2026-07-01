@@ -33,6 +33,7 @@ const DOC_EMBED_CONTEXT = "Use `![[Note Title]]` embeds. If you create durable n
 // Children inherit these via process.env, so the wrapper authenticates against
 // the same live instance the desktop is connected to (cscd.online by default).
 const noteApi = { url: '', token: '' };
+const HELPER_CONFIG_PATH = path.join(os.homedir(), '.cascade', 'agent-helper-context.json');
 
 /** Directory holding the agent helper CLIs; prefer source, fall back to dist. */
 function resolveWrapperDir() {
@@ -54,6 +55,7 @@ function ensureWrapperOnPath() {
   const parts = (process.env.PATH || '').split(path.delimiter);
   if (!parts.includes(dir)) process.env.PATH = [dir, ...parts].join(path.delimiter);
   process.env.CASCADE_HELPER_DIR = dir;
+  process.env.CASCADE_HELPER_CONFIG = HELPER_CONFIG_PATH;
 }
 
 /** Set the live API target/token the wrapper should use (call on runner connect). */
@@ -77,6 +79,26 @@ function applyNoteEnv(opts) {
   if (channelId) process.env.CASCADE_CHAT_CHANNEL = channelId;
   const messageId = String(opts && opts.chatMessageId || opts?.chat?.messageId || '').trim();
   if (messageId) process.env.CASCADE_CHAT_MESSAGE = messageId;
+  writeHelperConfig({ vaultId, channelId, messageId });
+}
+
+function writeHelperConfig({ vaultId, channelId, messageId } = {}) {
+  const payload = {
+    url: noteApi.url || process.env.CASCADE_NOTE_URL || 'https://cscd.online',
+    token: noteApi.token || process.env.CASCADE_NOTE_TOKEN || '',
+    vaultId: vaultId || process.env.CASCADE_NOTE_VAULT || '',
+    chatChannelId: channelId || process.env.CASCADE_CHAT_CHANNEL || '',
+    chatMessageId: messageId || process.env.CASCADE_CHAT_MESSAGE || '',
+    helperDir: resolveWrapperDir(),
+    updatedAt: new Date().toISOString(),
+  };
+  try {
+    fs.mkdirSync(path.dirname(HELPER_CONFIG_PATH), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(HELPER_CONFIG_PATH, JSON.stringify(payload, null, 2), { mode: 0o600 });
+    fs.chmodSync(HELPER_CONFIG_PATH, 0o600);
+  } catch (err) {
+    console.warn('[agent-runner] failed to write helper context:', err?.message || err);
+  }
 }
 
 /** One-line capability note appended to the agent's prompt context. */

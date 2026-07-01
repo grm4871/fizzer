@@ -9,6 +9,10 @@
 
 'use strict';
 
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
 const DEFAULT_URL = 'https://cscd.online';
 
 const USAGE = `cascade-chat — read live Cascade chat history
@@ -29,7 +33,7 @@ Options:
   --json                    machine-readable output
 
 Env: CASCADE_NOTE_URL, CASCADE_NOTE_TOKEN, CASCADE_NOTE_VAULT,
-     CASCADE_CHAT_CHANNEL, CASCADE_CHAT_MESSAGE`;
+     CASCADE_CHAT_CHANNEL, CASCADE_CHAT_MESSAGE, CASCADE_HELPER_CONFIG`;
 
 function parseArgs(argv) {
   const args = { _: [] };
@@ -55,13 +59,32 @@ function fail(msg, code = 1) {
   process.exit(code);
 }
 
-function baseUrl(args) {
-  const raw = String(args.url || process.env.CASCADE_NOTE_URL || DEFAULT_URL).trim();
+function helperConfigPath() {
+  return process.env.CASCADE_HELPER_CONFIG
+    || path.join(os.homedir(), '.cascade', 'agent-helper-context.json');
+}
+
+function readHelperConfig() {
+  try {
+    const raw = fs.readFileSync(helperConfigPath(), 'utf8');
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function configString(config, key) {
+  return String(config && config[key] || '').trim();
+}
+
+function baseUrl(args, config) {
+  const raw = String(args.url || process.env.CASCADE_NOTE_URL || configString(config, 'url') || DEFAULT_URL).trim();
   return raw.replace(/\/$/, '');
 }
 
-async function getToken(url, args) {
-  const explicit = String(args.token || process.env.CASCADE_NOTE_TOKEN || '').trim();
+async function getToken(url, args, config) {
+  const explicit = String(args.token || process.env.CASCADE_NOTE_TOKEN || configString(config, 'token') || '').trim();
   if (explicit) return explicit;
   const user = String(process.env.CASCADE_NOTE_USER || '').trim();
   const pass = String(process.env.CASCADE_NOTE_PASS || '');
@@ -91,8 +114,8 @@ async function api(url, token, method, path) {
   return json;
 }
 
-function optionString(args, key, envKey) {
-  return String(args[key] || (envKey ? process.env[envKey] : '') || '').trim();
+function optionString(args, key, envKey, config, configKey) {
+  return String(args[key] || (envKey ? process.env[envKey] : '') || configString(config, configKey) || '').trim();
 }
 
 function optionInt(args, key, fallback) {
@@ -196,13 +219,14 @@ async function main() {
   }
   if (cmd !== 'history') fail(`unknown command "${cmd}". Run with --help.`);
 
-  const vaultId = optionString(args, 'vault', 'CASCADE_NOTE_VAULT');
-  const channelId = optionString(args, 'channel', 'CASCADE_CHAT_CHANNEL');
+  const config = readHelperConfig();
+  const vaultId = optionString(args, 'vault', 'CASCADE_NOTE_VAULT', config, 'vaultId');
+  const channelId = optionString(args, 'channel', 'CASCADE_CHAT_CHANNEL', config, 'chatChannelId');
   if (!vaultId) fail('missing vault. Pass --vault or set CASCADE_NOTE_VAULT.');
   if (!channelId) fail('missing channel. Pass --channel or set CASCADE_CHAT_CHANNEL.');
 
-  const url = baseUrl(args);
-  const token = await getToken(url, args);
+  const url = baseUrl(args, config);
+  const token = await getToken(url, args, config);
   const { messages = [] } = await api(url, token, 'GET', `/api/vaults/${vaultId}/channels/${channelId}/messages`);
   const selected = selectWindow(messages, args);
   const output = decorateMessages(messages, selected, args);
