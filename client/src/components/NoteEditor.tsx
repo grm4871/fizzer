@@ -1,7 +1,7 @@
 import { useEffect, useRef, useMemo, useCallback, useState } from 'react';
 import type { Note, NoteSummary } from '../api';
 import { api, formatRelativeDate } from '../api';
-import { findEmbeddedNote, normalizeDocEmbedTarget } from '../docEmbeds';
+import { findEmbeddedNote, normalizeDocEmbedTarget, NOTE_DND_TYPE, noteEmbedMarkdown } from '../docEmbeds';
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, placeholder as cmPlaceholder, Decoration, type DecorationSet, WidgetType, drawSelection } from '@codemirror/view';
 import { EditorState, type Extension, RangeSetBuilder, Prec, StateField } from '@codemirror/state';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
@@ -1092,6 +1092,27 @@ export function NoteEditor({ note, content, onContentChange, onSave, onRename, o
     });
   }, []);
 
+  const insertNoteEmbed = useCallback((noteId: string, coords?: { x: number; y: number }) => {
+    const view = viewRef.current;
+    if (!view) return false;
+    const embedded = notes.find((item) => item.id === noteId);
+    if (!embedded) return false;
+    const insert = noteEmbedMarkdown(embedded);
+    const pos = coords ? view.posAtCoords(coords) : null;
+    const from = pos ?? view.state.selection.main.from;
+    const to = pos ?? view.state.selection.main.to;
+    const needsPrefix = from > 0 && !/\s/.test(view.state.doc.sliceString(from - 1, from)) ? ' ' : '';
+    const needsSuffix = to < view.state.doc.length && !/\s/.test(view.state.doc.sliceString(to, to + 1)) ? ' ' : '';
+    const text = `${needsPrefix}${insert}${needsSuffix}`;
+    view.dispatch({
+      changes: { from, to, insert: text },
+      selection: { anchor: from + text.length },
+      scrollIntoView: true,
+    });
+    view.focus();
+    return true;
+  }, [notes]);
+
   // Keep refs updated
   contentRef.current = content;
   onContentChangeRef.current = onContentChange;
@@ -1129,6 +1150,18 @@ export function NoteEditor({ note, content, onContentChange, onSave, onRename, o
       createWysiwygDecorations(requestWidgetAgent, fetchWidgetFeed, enableWidgetAutorun, notes),
       checkboxClickHandler,
       EditorView.domEventHandlers({
+        dragover(event) {
+          if (!event.dataTransfer?.types.includes(NOTE_DND_TYPE)) return false;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = 'copy';
+          return true;
+        },
+        drop(event) {
+          const noteId = event.dataTransfer?.getData(NOTE_DND_TYPE);
+          if (!noteId) return false;
+          event.preventDefault();
+          return insertNoteEmbed(noteId, { x: event.clientX, y: event.clientY });
+        },
         mousedown(event) {
           const target = event.target as HTMLElement;
           const docEmbed = target.closest('.cm-doc-embed');
@@ -1218,7 +1251,7 @@ export function NoteEditor({ note, content, onContentChange, onSave, onRename, o
         }
       }),
     ],
-    [requestWidgetAgent, fetchWidgetFeed, enableWidgetAutorun, notes],
+    [requestWidgetAgent, fetchWidgetFeed, enableWidgetAutorun, notes, insertNoteEmbed],
   );
 
   // Create/destroy editor

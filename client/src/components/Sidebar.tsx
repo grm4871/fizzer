@@ -19,6 +19,7 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import type { Vault, Folder, NoteSummary } from '../api';
+import { NOTE_DND_TYPE, noteEmbedMarkdown } from '../docEmbeds';
 import { CHAT_NOTE_MARKER } from './ChatView';
 import {
   Folder as FolderIcon, FolderOpen, FileText, Pin, Gem, Edit2, FolderPlus,
@@ -26,7 +27,6 @@ import {
   Hash,
 } from 'lucide-react';
 
-const NOTE_DND_TYPE = 'application/x-cascade-note';
 const FOLDER_DND_TYPE = 'application/x-cascade-folder';
 const ROOT_DROP_ID = '__root__';
 
@@ -237,8 +237,10 @@ export function Sidebar({
     return {
       draggable: true,
       onDragStart: (e: React.DragEvent) => {
+        const note = notes.find((item) => item.id === noteId);
         e.dataTransfer.setData(NOTE_DND_TYPE, noteId);
-        e.dataTransfer.effectAllowed = 'move';
+        if (note) e.dataTransfer.setData('text/plain', noteEmbedMarkdown(note));
+        e.dataTransfer.effectAllowed = 'copyMove';
       },
       onDragEnd: () => setDragOverId(null),
     };

@@ -4,6 +4,7 @@ export type DocEmbedPart =
   | { type: 'text'; value: string }
   | { type: 'embed'; value: string };
 
+export const NOTE_DND_TYPE = 'application/x-cascade-note';
 export const DOC_EMBED_REGEX = /!\[\[([^\]\n]+)\]\]/g;
 
 export function normalizeDocEmbedTarget(raw: string) {
@@ -37,4 +38,8 @@ export function findEmbeddedNote(notes: NoteSummary[], target: string) {
   return notes.find((note) => note.id.toLowerCase() === normalized)
     ?? notes.find((note) => note.title.toLowerCase() === normalized)
     ?? null;
+}
+
+export function noteEmbedMarkdown(note: NoteSummary) {
+  return `![[${note.title.replace(/\]/g, '')}]]`;
 }

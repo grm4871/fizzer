@@ -4,7 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import type { NoteSummary } from '../api';
-import { findEmbeddedNote, splitDocEmbeds } from '../docEmbeds';
+import { findEmbeddedNote, NOTE_DND_TYPE, noteEmbedMarkdown, splitDocEmbeds } from '../docEmbeds';
 
 export const CHAT_NOTE_MARKER = 'cascade://chat-channel';
 export const CHAT_MEDIA_LIMIT = 8;
@@ -635,6 +635,24 @@ export function ChatView({
     void addMediaFiles(files);
   }, [addMediaFiles]);
 
+  const insertEmbedInDraft = useCallback((noteId: string, textarea: HTMLTextAreaElement) => {
+    const embedded = notes.find((note) => note.id === noteId);
+    if (!embedded) return false;
+    const insert = noteEmbedMarkdown(embedded);
+    const start = textarea.selectionStart ?? draft.length;
+    const end = textarea.selectionEnd ?? start;
+    const needsPrefix = start > 0 && !/\s/.test(draft.slice(start - 1, start)) ? ' ' : '';
+    const needsSuffix = end < draft.length && !/\s/.test(draft.slice(end, end + 1)) ? ' ' : '';
+    const text = `${needsPrefix}${insert}${needsSuffix}`;
+    setDraft(`${draft.slice(0, start)}${text}${draft.slice(end)}`);
+    requestAnimationFrame(() => {
+      textarea.focus();
+      const cursor = start + text.length;
+      textarea.setSelectionRange(cursor, cursor);
+    });
+    return true;
+  }, [draft, notes]);
+
   function submit() {
     const body = draft.trim();
     if (!body && pendingMedia.length === 0) return;
@@ -743,7 +761,21 @@ export function ChatView({
           <div ref={endRef} />
         </div>
 
-        <footer className="chat-composer">
+        <footer
+          className="chat-composer"
+          onDragOver={(e) => {
+            if (!e.dataTransfer.types.includes(NOTE_DND_TYPE)) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'copy';
+          }}
+          onDrop={(e) => {
+            const noteId = e.dataTransfer.getData(NOTE_DND_TYPE);
+            const textarea = draftRef.current;
+            if (!noteId || !textarea) return;
+            e.preventDefault();
+            insertEmbedInDraft(noteId, textarea);
+          }}
+        >
           <input
             ref={fileInputRef}
             type="file"
@@ -811,6 +843,18 @@ export function ChatView({
               rows={1}
               onChange={(e) => setDraft(e.target.value)}
               onPaste={handlePaste}
+              onDragOver={(e) => {
+                if (!e.dataTransfer.types.includes(NOTE_DND_TYPE)) return;
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'copy';
+              }}
+              onDrop={(e) => {
+                const noteId = e.dataTransfer.getData(NOTE_DND_TYPE);
+                if (!noteId) return;
+                e.preventDefault();
+                e.stopPropagation();
+                insertEmbedInDraft(noteId, e.currentTarget);
+              }}
               onKeyDown={(e) => {
                 if (e.key === 'Escape' && replyTarget) {
                   e.preventDefault();
