@@ -148,6 +148,7 @@ function readLegacyLocalChatAgentMembers(): Record<string, ChatAgentRegistration
             cwd: typeof registration.cwd === 'string' ? normalizeChatCwd(registration.cwd) : '',
             contextPrompt: typeof registration.contextPrompt === 'string' ? registration.contextPrompt : '',
             taggableByAgents: typeof registration.taggableByAgents === 'boolean' ? registration.taggableByAgents : true,
+            replyToEveryMessage: typeof registration.replyToEveryMessage === 'boolean' ? registration.replyToEveryMessage : false,
             yolo: typeof registration.yolo === 'boolean' ? registration.yolo : false,
             conversationId: typeof registration.conversationId === 'string' ? registration.conversationId : '',
           };
@@ -444,7 +445,8 @@ function formatAgentChatPrompt(
       ? registrations.map((item) => {
           const agent = CHAT_AGENTS.find((candidate) => candidate.id === item.agentId);
           const taggable = item.taggableByAgents ? 'taggable by agents' : 'not taggable by agents';
-          return `- @${item.mention || item.agentId}: ${item.displayName || agent?.label || item.agentId} (${taggable})`;
+          const autoReply = item.replyToEveryMessage ? ', replies to every human message' : '';
+          return `- @${item.mention || item.agentId}: ${item.displayName || agent?.label || item.agentId} (${taggable}${autoReply})`;
         }).join('\n')
       : '(none)',
     '',
@@ -993,6 +995,7 @@ export default function App() {
       displayName: registration.displayName.trim() || agentLabel(registration.agentId as AgentId),
       mention: normalizeMention(registration.mention || registration.agentId),
       cwd: normalizeChatCwd(registration.cwd),
+      replyToEveryMessage: registration.replyToEveryMessage === true,
       conversationId: registration.conversationId || newId('conv'),
     };
     setChatState((prev) => ({
@@ -1392,11 +1395,18 @@ export default function App() {
     const implicitMention = replyTo?.mention ? `@${replyTo.mention}` : '';
     const mentionSource = [implicitMention, trimmed, attachments.map((item) => item.name).join(' ')].filter(Boolean).join(' ');
     const mentionedAgents = getMentionedRegistrations(mentionSource, registrations, false);
-    if (mentionedAgents.length === 0) return;
+    const targetAgents = [
+      ...mentionedAgents,
+      ...registrations.filter((registration) =>
+        registration.replyToEveryMessage
+        && !mentionedAgents.some((mentioned) => mentioned.id === registration.id)
+      ),
+    ];
+    if (targetAgents.length === 0) return;
     const prompt = stripRegisteredAgentMentions(mentionSource, registrations) || mentionSource || 'Please review the attached media.';
     const runImages = mediaToRunImages(media);
     const agentsWithoutImages = new Set<AgentId>(['grok', 'antigravity', 'copilot', 'hermes']);
-    for (const registration of mentionedAgents) {
+    for (const registration of targetAgents) {
       const imagesForRun = agentsWithoutImages.has(registration.agentId as AgentId) ? [] : runImages;
       void startAgentChatRun(channelId, registration, prompt, outgoingMessage, imagesForRun);
     }

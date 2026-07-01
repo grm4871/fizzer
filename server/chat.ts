@@ -54,6 +54,7 @@ export type ChatAgentRegistration = {
   cwd: string;
   contextPrompt: string;
   taggableByAgents: boolean;
+  replyToEveryMessage: boolean;
   /** Run this agent with permission prompts bypassed ("yolo"). Scoped to this
    * registration; applied on the machine that executes the run. */
   yolo: boolean;
@@ -116,6 +117,7 @@ export function ensureChatSchema(db: Db): void {
       cwd TEXT NOT NULL DEFAULT '',
       context_prompt TEXT NOT NULL DEFAULT '',
       taggable_by_agents INTEGER NOT NULL DEFAULT 1,
+      reply_to_every_message INTEGER NOT NULL DEFAULT 0,
       yolo INTEGER NOT NULL DEFAULT 0,
       conversation_id TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -132,6 +134,9 @@ export function ensureChatSchema(db: Db): void {
   if (!memberCols.some((col) => col.name === 'conversation_id')) {
     db.exec("ALTER TABLE chat_agent_members ADD COLUMN conversation_id TEXT NOT NULL DEFAULT ''");
   }
+  if (!memberCols.some((col) => col.name === 'reply_to_every_message')) {
+    db.exec('ALTER TABLE chat_agent_members ADD COLUMN reply_to_every_message INTEGER NOT NULL DEFAULT 0');
+  }
 }
 
 type ChatAgentMemberRow = {
@@ -145,6 +150,7 @@ type ChatAgentMemberRow = {
   cwd: string;
   context_prompt: string;
   taggable_by_agents: number;
+  reply_to_every_message: number;
   yolo: number;
   conversation_id: string;
 };
@@ -159,6 +165,7 @@ function rowToAgentMember(row: ChatAgentMemberRow): ChatAgentRegistration {
     cwd: row.cwd,
     contextPrompt: row.context_prompt,
     taggableByAgents: row.taggable_by_agents !== 0,
+    replyToEveryMessage: row.reply_to_every_message !== 0,
     yolo: row.yolo !== 0,
     conversationId: row.conversation_id,
   };
@@ -185,6 +192,7 @@ function normalizeAgentRegistration(input: Partial<ChatAgentRegistration>, fallb
     cwd: String(input.cwd || ''),
     contextPrompt: String(input.contextPrompt || ''),
     taggableByAgents: input.taggableByAgents !== false,
+    replyToEveryMessage: input.replyToEveryMessage === true,
     yolo: input.yolo === true,
     // May be empty here; upsert preserves the existing session or mints a new one.
     conversationId: String(input.conversationId || '').trim(),
@@ -626,6 +634,7 @@ export function upsertChatAgentMember(
         cwd = ?,
         context_prompt = ?,
         taggable_by_agents = ?,
+        reply_to_every_message = ?,
         yolo = ?,
         conversation_id = ?,
         updated_at = datetime('now')
@@ -638,6 +647,7 @@ export function upsertChatAgentMember(
       member.cwd,
       member.contextPrompt,
       member.taggableByAgents ? 1 : 0,
+      member.replyToEveryMessage ? 1 : 0,
       member.yolo ? 1 : 0,
       member.conversationId,
       member.id,
@@ -647,8 +657,8 @@ export function upsertChatAgentMember(
     db.prepare(`
       INSERT INTO chat_agent_members (
         id, channel_id, vault_id, agent_id, display_name, mention,
-        model, cwd, context_prompt, taggable_by_agents, yolo, conversation_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        model, cwd, context_prompt, taggable_by_agents, reply_to_every_message, yolo, conversation_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       member.id,
       channelId,
@@ -660,6 +670,7 @@ export function upsertChatAgentMember(
       member.cwd,
       member.contextPrompt,
       member.taggableByAgents ? 1 : 0,
+      member.replyToEveryMessage ? 1 : 0,
       member.yolo ? 1 : 0,
       member.conversationId,
     );

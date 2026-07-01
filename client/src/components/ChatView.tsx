@@ -55,6 +55,7 @@ export interface ChatAgentRegistration {
   cwd: string;
   contextPrompt: string;
   taggableByAgents: boolean;
+  replyToEveryMessage: boolean;
   /** Run this agent with permission prompts bypassed ("yolo"). Scoped to this
    * registration, applied on the machine that runs it. */
   yolo: boolean;
@@ -424,6 +425,7 @@ export function ChatView({
       cwd: '',
       contextPrompt: '',
       taggableByAgents: true,
+      replyToEveryMessage: false,
       yolo: false,
       conversationId: '',
     };
@@ -437,6 +439,7 @@ export function ChatView({
     cwd: '',
     contextPrompt: '',
     taggableByAgents: true,
+    replyToEveryMessage: false,
     yolo: false,
     conversationId: '',
   }));
@@ -1022,6 +1025,7 @@ export function ChatView({
                     cwd: '',
                     contextPrompt: '',
                     taggableByAgents: true,
+                    replyToEveryMessage: false,
                     yolo: false,
                     conversationId: '',
                   });
@@ -1093,6 +1097,14 @@ export function ChatView({
                 onChange={(event) => setAgentForm((value) => ({ ...value, taggableByAgents: event.target.checked }))}
               />
               Taggable by other agents
+            </label>
+            <label className="chat-agent-toggle">
+              <input
+                type="checkbox"
+                checked={agentForm.replyToEveryMessage}
+                onChange={(event) => setAgentForm((value) => ({ ...value, replyToEveryMessage: event.target.checked }))}
+              />
+              Reply to every human message
             </label>
             <label className="chat-agent-toggle">
               <input
