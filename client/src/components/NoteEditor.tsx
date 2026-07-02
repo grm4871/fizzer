@@ -241,6 +241,28 @@ const cascadeTheme = EditorView.theme({
     fontSize: '0.85rem',
     lineHeight: '1.45',
   },
+  '.cm-md-image-wrap': {
+    display: 'block',
+    margin: '12px 0',
+    maxWidth: '100%',
+  },
+  '.cm-md-image': {
+    display: 'block',
+    maxWidth: '100%',
+    height: 'auto',
+    borderRadius: '8px',
+    border: '1px solid hsl(22, 7%, 18%)',
+    background: 'hsl(22, 8%, 10%)',
+  },
+  '.cm-md-image.is-loading': {
+    minHeight: '120px',
+  },
+  '.cm-md-image.is-error': {
+    minHeight: '48px',
+    padding: '12px',
+    color: 'hsl(25, 6%, 55%)',
+    fontSize: '0.85rem',
+  },
 }, { dark: true });
 
 /* ─── Syntax Highlighting ────────────────────────────────── */
@@ -292,6 +314,93 @@ class HRWidget extends WidgetType {
     const hr = document.createElement('hr');
     hr.className = 'cm-hr-widget';
     return hr;
+  }
+}
+
+const NOTE_IMAGE_MAX_BYTES = 8 * 1024 * 1024;
+
+function imageFileFromDataTransfer(dataTransfer: DataTransfer | null): File | null {
+  if (!dataTransfer) return null;
+  const fromFiles = Array.from(dataTransfer.files || []).find((file) => file.type.startsWith('image/'));
+  if (fromFiles) return fromFiles;
+  for (const item of Array.from(dataTransfer.items || [])) {
+    if (item.kind === 'file' && item.type.startsWith('image/')) {
+      const file = item.getAsFile();
+      if (file) return file;
+    }
+  }
+  return null;
+}
+
+function readFileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || '');
+      resolve(result.split(',')[1] || '');
+    };
+    reader.onerror = () => reject(reader.error ?? new Error('Could not read image'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function resolveAssetUrl(url: string): string {
+  if (/^https?:\/\//i.test(url)) return url;
+  const apiBase = import.meta.env.VITE_API_URL || '';
+  return `${apiBase}${url.startsWith('/') ? url : `/${url}`}`;
+}
+
+/* ─── Image Widget ───────────────────────────────────────── */
+class ImageWidget extends WidgetType {
+  constructor(private alt: string, private url: string) {
+    super();
+  }
+
+  toDOM() {
+    const wrap = document.createElement('span');
+    wrap.className = 'cm-md-image-wrap';
+
+    const img = document.createElement('img');
+    img.className = 'cm-md-image is-loading';
+    img.alt = this.alt || 'image';
+
+    const resolved = resolveAssetUrl(this.url);
+    if (/^https?:\/\//i.test(resolved) && !resolved.includes('/api/notes/')) {
+      img.src = resolved;
+      img.onload = () => img.classList.remove('is-loading');
+      img.onerror = () => {
+        img.classList.remove('is-loading');
+        img.classList.add('is-error');
+        img.alt = 'Failed to load image';
+      };
+      wrap.appendChild(img);
+      return wrap;
+    }
+
+    const token = localStorage.getItem('docs_token');
+    fetch(resolved, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error('load failed');
+        return res.blob();
+      })
+      .then((blob) => {
+        img.src = URL.createObjectURL(blob);
+        img.onload = () => img.classList.remove('is-loading');
+      })
+      .catch(() => {
+        img.classList.remove('is-loading');
+        img.classList.add('is-error');
+        img.alt = 'Failed to load image';
+      });
+
+    wrap.appendChild(img);
+    return wrap;
+  }
+
+  eq(other: ImageWidget) {
+    return this.alt === other.alt && this.url === other.url;
   }
 }
 
@@ -890,6 +999,19 @@ export function buildDecorations(
 
     if (isActive) continue; // Don't hide/decorate formatting markers on the active line
 
+    const imageMatch = text.trim().match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
+    if (imageMatch) {
+      decos.push({
+        from: line.from,
+        to: line.to,
+        deco: Decoration.replace({
+          block: true,
+          widget: new ImageWidget(imageMatch[1], imageMatch[2]),
+        }),
+      });
+      continue;
+    }
+
     const embedMatch = text.trim().match(/^!\[\[([^\]]+)\]\]$/);
     if (embedMatch) {
       const target = normalizeDocEmbedTarget(embedMatch[1]);
@@ -1091,6 +1213,8 @@ export function NoteEditor({ note, content, onContentChange, onSave, onRename, o
   const onExecuteDirectiveRef = useRef(onExecuteDirective);
   const onOpenWikilinkRef = useRef(onOpenWikilink);
   const onOpenNoteRef = useRef(onOpenNote);
+  const insertImageFromFileRef = useRef<(file: File, view?: EditorView, coords?: { x: number; y: number }) => Promise<boolean>>(async () => false);
+  const imageInputRef = useRef<HTMLInputElement>(null);
 
   // Inline, editable note title (Obsidian-style). Synced from the note.
   const [titleDraft, setTitleDraft] = useState(note?.title ?? '');
@@ -1196,6 +1320,50 @@ export function NoteEditor({ note, content, onContentChange, onSave, onRename, o
     });
   }, []);
 
+  const insertImageFromFile = useCallback(async (file: File, view?: EditorView, coords?: { x: number; y: number }) => {
+    const editorView = view ?? viewRef.current;
+    if (!note?.id || !editorView) return false;
+    if (!file.type.startsWith('image/')) return false;
+    if (file.size > NOTE_IMAGE_MAX_BYTES) {
+      flashPublishNotice(`Image is too large (max ${NOTE_IMAGE_MAX_BYTES / (1024 * 1024)}MB)`);
+      return false;
+    }
+
+    flashPublishNotice('Uploading image...');
+    try {
+      const data = await readFileAsBase64(file);
+      const result = await api<{ url: string }>(`/api/notes/${note.id}/assets`, {
+        method: 'POST',
+        body: JSON.stringify({
+          media_type: file.type,
+          data,
+          filename: file.name,
+        }),
+      });
+      const alt = (file.name || 'image').replace(/\.[^.]+$/, '') || 'image';
+      const markdown = `![${alt}](${result.url})`;
+      const pos = coords ? editorView.posAtCoords(coords) : null;
+      const from = pos ?? editorView.state.selection.main.from;
+      const to = pos ?? editorView.state.selection.main.to;
+      const line = editorView.state.doc.lineAt(from);
+      const prefix = line.text.trim() ? '\n\n' : '';
+      const insert = `${prefix}${markdown}\n`;
+      editorView.dispatch({
+        changes: { from, to, insert },
+        selection: { anchor: from + insert.length },
+        scrollIntoView: true,
+      });
+      editorView.focus();
+      flashPublishNotice('Image pasted');
+      return true;
+    } catch (err) {
+      flashPublishNotice(err instanceof Error ? err.message : 'Image upload failed');
+      return false;
+    }
+  }, [note, flashPublishNotice]);
+
+  insertImageFromFileRef.current = insertImageFromFile;
+
   const insertNoteEmbed = useCallback((noteId: string, coords?: { x: number; y: number }) => {
     const view = viewRef.current;
     if (!view) return false;
@@ -1255,16 +1423,34 @@ export function NoteEditor({ note, content, onContentChange, onSave, onRename, o
       checkboxClickHandler,
       EditorView.domEventHandlers({
         dragover(event) {
-          if (!event.dataTransfer?.types.includes(NOTE_DND_TYPE)) return false;
+          const hasNote = event.dataTransfer?.types.includes(NOTE_DND_TYPE);
+          const hasImage = Array.from(event.dataTransfer?.items || [])
+            .some((item) => item.kind === 'file' && item.type.startsWith('image/'));
+          if (!hasNote && !hasImage) return false;
           event.preventDefault();
-          event.dataTransfer.dropEffect = 'copy';
+          event.dataTransfer!.dropEffect = 'copy';
           return true;
         },
         drop(event) {
           const noteId = event.dataTransfer?.getData(NOTE_DND_TYPE);
-          if (!noteId) return false;
+          if (noteId) {
+            event.preventDefault();
+            return insertNoteEmbed(noteId, { x: event.clientX, y: event.clientY });
+          }
+          const image = imageFileFromDataTransfer(event.dataTransfer);
+          if (image) {
+            event.preventDefault();
+            void insertImageFromFileRef.current(image, undefined, { x: event.clientX, y: event.clientY });
+            return true;
+          }
+          return false;
+        },
+        paste(event, view) {
+          const image = imageFileFromDataTransfer(event.clipboardData);
+          if (!image) return false;
           event.preventDefault();
-          return insertNoteEmbed(noteId, { x: event.clientX, y: event.clientY });
+          void insertImageFromFileRef.current(image, view);
+          return true;
         },
         mousedown(event) {
           const target = event.target as HTMLElement;
@@ -1415,7 +1601,7 @@ export function NoteEditor({ note, content, onContentChange, onSave, onRename, o
         insertLink(view);
         break;
       case 'image':
-        insertAtCursor(view, '![alt](url)');
+        imageInputRef.current?.click();
         break;
       case 'h1':
         toggleLinePrefix(view, '# ');
@@ -1467,7 +1653,18 @@ export function NoteEditor({ note, content, onContentChange, onSave, onRename, o
         <button id="toolbar-strike" className="toolbar-btn" onClick={() => toolbarAction('strikethrough')} title="Strikethrough"><s>S</s></button>
         <button id="toolbar-code" className="toolbar-btn mono" onClick={() => toolbarAction('code')} title="Inline Code">&lt;/&gt;</button>
         <button id="toolbar-link" className="toolbar-btn" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => toolbarAction('link')} title="Insert Link (Ctrl+K)"><Link2 size={16} /></button>
-        <button id="toolbar-image" className="toolbar-btn" onClick={() => toolbarAction('image')} title="Insert Image">🖼</button>
+        <button id="toolbar-image" className="toolbar-btn" onClick={() => toolbarAction('image')} title="Insert image (paste or drop also works)">🖼</button>
+        <input
+          ref={imageInputRef}
+          type="file"
+          accept="image/*"
+          hidden
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.target.value = '';
+            if (file) void insertImageFromFile(file);
+          }}
+        />
 
         <div className="toolbar-divider" />
 

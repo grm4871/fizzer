@@ -101,6 +101,7 @@ import {
   servePublicNoteJson,
   servePublicNotePage,
 } from './server/publish.js';
+import { deleteNoteAssets, serveNoteAsset, uploadNoteAsset } from './server/noteAssets.js';
 
 const PORT = Number(process.env.API_PORT || 3000);
 const JWT_SECRET = process.env.JWT_SECRET || 'cascade-dev-secret';
@@ -599,6 +600,7 @@ app.delete('/api/notes/:id', requireAuth, (req: AuthedRequest, res) => {
   const vault = getVault(db, existing.vault_id, req.user!.id);
   if (!vault) return res.status(404).json({ error: 'Note not found' });
 
+  deleteNoteAssets(db, req.params.id);
   deleteNote(db, req.params.id);
   emitVaultEvent(vault.id, 'vault:noteDeleted', { noteId: req.params.id, vaultId: vault.id, title: existing.title });
   res.json({ ok: true });
@@ -632,6 +634,18 @@ app.post('/api/notes/:id/pin', requireAuth, (req: AuthedRequest, res) => {
   emitVaultEvent(vault.id, 'vault:noteChanged', { noteId: req.params.id, vaultId: vault.id, title: note?.title ?? existing.title });
   res.json({ note });
 });
+
+app.post('/api/notes/:id/assets', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const result = uploadNoteAsset(db, req.params.id, req.user!.id, req.body || {});
+    res.status(201).json(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(message === 'Note not found' ? 404 : 400).json({ error: message });
+  }
+});
+
+app.get('/api/notes/:id/assets/:assetId', requireAuth, serveNoteAsset(db));
 
 app.post('/api/notes/:id/archive', requireAuth, (req: AuthedRequest, res) => {
   const existing = getNote(db, req.params.id);
