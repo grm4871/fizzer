@@ -503,7 +503,6 @@ export function ChatView({
   const draftRef = useRef<HTMLTextAreaElement | null>(null);
   const sortedMessages = useMemo(
     () => [...messages]
-      .filter((message) => message.author !== 'Cascade')
       .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()),
     [messages],
   );
