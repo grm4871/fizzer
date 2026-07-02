@@ -51,6 +51,7 @@
     "cors": "^2.8.5",
     "express": "^4.18.2",
     "jsonwebtoken": "^9.0.3",
+    "marked": "^15.0.12",
     "socket.io": "^4.8.1"
   },
   "devDependencies": {
@@ -82,7 +83,6 @@
     "electron": "39.2.7",
     "electron-rebuild": "^3.2.9",
     "electron-squirrel-startup": "^1.0.1",
-    "marked": "^15.0.12",
     "nodemon": "^3.1.10",
     "overlayscrollbars": "^2.12.0",
     "pg": "^8.16.3",

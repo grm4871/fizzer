@@ -59,6 +59,15 @@ export type Note = NoteSummary & {
   file_path: string;
 };
 
+/** Public publish metadata for a note. */
+export type NotePublishInfo = {
+  published: boolean;
+  slug?: string;
+  url?: string;
+  published_at?: string;
+  updated_at?: string;
+};
+
 /** A tag with an optional color and usage count. */
 export type Tag = {
   id: string;

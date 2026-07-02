@@ -91,6 +91,16 @@ import {
   upsertChatAgentMember,
   removeChatAgentMember,
 } from './server/chat.js';
+import {
+  ensurePublishSchema,
+  getPublishInfo,
+  publishNote,
+  unpublishNote,
+  publicBaseUrl,
+  serveOembed,
+  servePublicNoteJson,
+  servePublicNotePage,
+} from './server/publish.js';
 
 const PORT = Number(process.env.API_PORT || 3000);
 const JWT_SECRET = process.env.JWT_SECRET || 'cascade-dev-secret';
@@ -209,6 +219,7 @@ ensureVersionsSchema(db);
 ensureRunnerSchema(db);
 ensureFeedSchema(db);
 ensureChatSchema(db);
+ensurePublishSchema(db);
 
 // ── Express & Socket.io setup ──────────────────────────────────────
 
@@ -994,12 +1005,71 @@ app.delete('/api/vaults/:vaultId/channels/:channelId/agents/:registrationId', re
   }
 });
 
+// ── Public note publishing ─────────────────────────────────────────
+
+app.get('/p/:slug', servePublicNotePage(db));
+app.get('/p/:slug.json', servePublicNoteJson(db));
+app.get('/oembed', serveOembed(db));
+
+app.get('/api/notes/:id/publish', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const note = getNote(db, req.params.id);
+    if (!note || !getVault(db, note.vault_id, req.user!.id)) return res.status(404).json({ error: 'Note not found' });
+    const info = getPublishInfo(db, req.params.id);
+    if (!info) return res.json({ published: false });
+    const url = `${publicBaseUrl(req)}/p/${info.slug}`;
+    res.json({
+      published: true,
+      slug: info.slug,
+      url,
+      published_at: info.published_at,
+      updated_at: info.updated_at,
+    });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+app.post('/api/notes/:id/publish', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const snapshot = req.body && typeof req.body === 'object'
+      ? { title: typeof req.body.title === 'string' ? req.body.title : undefined, content: typeof req.body.content === 'string' ? req.body.content : undefined }
+      : undefined;
+    const result = publishNote(db, req.params.id, req.user!.id, req.user!.username, snapshot);
+    const url = `${publicBaseUrl(req)}/p/${result.slug}`;
+    res.json({
+      slug: result.slug,
+      url,
+      published_at: result.published_at,
+      updated_at: result.updated_at,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(message === 'Note not found' ? 404 : 400).json({ error: message });
+  }
+});
+
+app.delete('/api/notes/:id/publish', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const removed = unpublishNote(db, req.params.id, req.user!.id);
+    if (!removed) return res.status(404).json({ error: 'Note is not published' });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
 // ── Static client ──────────────────────────────────────────────────
 
 if (fs.existsSync(CLIENT_APP_HTML)) {
   app.use(express.static(CLIENT_DIST_DIR));
   app.get('*', (req, res, next) => {
-    if (req.path.startsWith('/api/') || req.path.startsWith('/socket.io/')) return next();
+    if (
+      req.path.startsWith('/api/')
+      || req.path.startsWith('/socket.io/')
+      || req.path.startsWith('/p/')
+      || req.path === '/oembed'
+    ) return next();
     res.sendFile(CLIENT_APP_HTML);
   });
 }

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useMemo, useCallback, useState } from 'react';
 import type { Note, NoteSummary } from '../api';
-import { api, formatRelativeDate } from '../api';
+import { api, formatRelativeDate, type NotePublishInfo } from '../api';
 import { findEmbeddedNote, normalizeDocEmbedTarget, NOTE_DND_TYPE, noteEmbedMarkdown } from '../docEmbeds';
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, placeholder as cmPlaceholder, Decoration, type DecorationSet, WidgetType, drawSelection } from '@codemirror/view';
 import { EditorState, type Extension, RangeSetBuilder, Prec, StateField } from '@codemirror/state';
@@ -11,7 +11,7 @@ import { closeBrackets } from '@codemirror/autocomplete';
 import { languages } from '@codemirror/language-data';
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
 import { tags } from '@lezer/highlight';
-import { FileText, Link2, Box } from 'lucide-react';
+import { FileText, Link2, Box, Globe, ExternalLink } from 'lucide-react';
 
 /* ═══════════════════════════════════════════════════════════
    NoteEditor — CodeMirror 6 Live Preview Markdown Editor
@@ -1080,6 +1080,9 @@ const checkboxClickHandler = EditorView.domEventHandlers({
 
 /* ─── Component ──────────────────────────────────────────── */
 export function NoteEditor({ note, content, onContentChange, onSave, onRename, onExecuteDirective, onOpenWikilink, notes = [], onOpenNote }: NoteEditorProps) {
+  const [publishInfo, setPublishInfo] = useState<NotePublishInfo>({ published: false });
+  const [publishBusy, setPublishBusy] = useState(false);
+  const [publishNotice, setPublishNotice] = useState('');
   const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const contentRef = useRef(content);
@@ -1101,6 +1104,69 @@ export function NoteEditor({ note, content, onContentChange, onSave, onRename, o
     }
     onRename?.(next)?.catch(() => setTitleDraft(note.title));
   }, [titleDraft, note, onRename]);
+
+  useEffect(() => {
+    if (!note?.id) {
+      setPublishInfo({ published: false });
+      return;
+    }
+    let cancelled = false;
+    api<NotePublishInfo>(`/api/notes/${note.id}/publish`)
+      .then((info) => { if (!cancelled) setPublishInfo(info); })
+      .catch(() => { if (!cancelled) setPublishInfo({ published: false }); });
+    return () => { cancelled = true; };
+  }, [note?.id, note?.updated_at]);
+
+  const flashPublishNotice = useCallback((message: string) => {
+    setPublishNotice(message);
+    window.setTimeout(() => setPublishNotice(''), 2400);
+  }, []);
+
+  const copyPublicUrl = useCallback(async (url: string) => {
+    await navigator.clipboard.writeText(url);
+    flashPublishNotice('Copied public link');
+  }, [flashPublishNotice]);
+
+  const handlePublish = useCallback(async () => {
+    if (!note || publishBusy) return;
+    setPublishBusy(true);
+    try {
+      const result = await api<{ slug: string; url: string; published_at: string; updated_at: string }>(
+        `/api/notes/${note.id}/publish`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ title: titleDraft.trim() || note.title, content }),
+        },
+      );
+      setPublishInfo({
+        published: true,
+        slug: result.slug,
+        url: result.url,
+        published_at: result.published_at,
+        updated_at: result.updated_at,
+      });
+      await copyPublicUrl(result.url);
+    } catch (err) {
+      flashPublishNotice(err instanceof Error ? err.message : 'Publish failed');
+    } finally {
+      setPublishBusy(false);
+    }
+  }, [note, publishBusy, titleDraft, content, copyPublicUrl, flashPublishNotice]);
+
+  const handleUnpublish = useCallback(async () => {
+    if (!note || publishBusy || !publishInfo.published) return;
+    if (!window.confirm('Unpublish this note? The public link will stop working.')) return;
+    setPublishBusy(true);
+    try {
+      await api(`/api/notes/${note.id}/publish`, { method: 'DELETE' });
+      setPublishInfo({ published: false });
+      flashPublishNotice('Unpublished');
+    } catch (err) {
+      flashPublishNotice(err instanceof Error ? err.message : 'Unpublish failed');
+    } finally {
+      setPublishBusy(false);
+    }
+  }, [note, publishBusy, publishInfo.published, flashPublishNotice]);
 
   const requestWidgetAgent = useCallback((prompt: string) => {
     onExecuteDirectiveRef.current?.(prompt);
@@ -1419,6 +1485,41 @@ export function NoteEditor({ note, content, onContentChange, onSave, onRename, o
 
         <button id="toolbar-hr" className="toolbar-btn" onClick={() => toolbarAction('hr')} title="Horizontal Rule">―</button>
         <button id="toolbar-widget" className="toolbar-btn" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => toolbarAction('widget')} title="Insert widget"><Box size={15} /></button>
+
+        <div className="toolbar-divider" />
+
+        <button
+          id="toolbar-publish"
+          className={`toolbar-btn${publishInfo.published ? ' active' : ''}`}
+          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={() => { void handlePublish(); }}
+          disabled={publishBusy}
+          title={publishInfo.published ? 'Republish snapshot & copy link' : 'Publish to public view'}
+        >
+          <Globe size={15} />
+        </button>
+        {publishInfo.published && publishInfo.url && (
+          <>
+            <button
+              id="toolbar-copy-public-link"
+              className="toolbar-btn"
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              onClick={() => { void copyPublicUrl(publishInfo.url!); }}
+              title="Copy public link"
+            >
+              <Link2 size={15} />
+            </button>
+            <button
+              id="toolbar-open-public"
+              className="toolbar-btn"
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              onClick={() => window.open(publishInfo.url, '_blank', 'noopener,noreferrer')}
+              title="Open public view"
+            >
+              <ExternalLink size={15} />
+            </button>
+          </>
+        )}
       </div>
 
       {/* Inline editable title */}
@@ -1449,6 +1550,17 @@ export function NoteEditor({ note, content, onContentChange, onSave, onRename, o
             Saved {formatRelativeDate(note.updated_at)}
           </span>
         )}
+        {publishInfo.published && publishInfo.updated_at && (
+          <button
+            type="button"
+            className="status-item status-public"
+            onClick={() => { void handleUnpublish(); }}
+            title="Click to unpublish"
+          >
+            Public · {formatRelativeDate(publishInfo.updated_at)}
+          </button>
+        )}
+        {publishNotice && <span className="status-item status-notice">{publishNotice}</span>}
       </div>
     </div>
   );

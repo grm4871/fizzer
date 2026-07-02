@@ -1111,6 +1111,20 @@ a {
   color: var(--success);
   opacity: 0.8;
 }
+.editor-status-bar .status-public {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+}
+.editor-status-bar .status-public:hover {
+  text-decoration: underline;
+}
+.editor-status-bar .status-notice {
+  color: var(--accent);
+}
 
 /* ═══════════════════════════════════════════════════════════
    CHAT
