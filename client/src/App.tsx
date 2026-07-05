@@ -704,9 +704,24 @@ export default function App() {
 
   const persistChatMessageToServer = useCallback(async (vaultId: string, channelId: string, message: ChatMessage) => {
     try {
-      await api(`/api/vaults/${vaultId}/channels/${channelId}/messages`, {
+      const data = await api<{ message: ChatMessage }>(`/api/vaults/${vaultId}/channels/${channelId}/messages`, {
         method: 'POST',
         body: JSON.stringify(message),
+      });
+      if (!data.message) return;
+      setChatState((prev) => {
+        const existing = prev.messagesByChannel[channelId] ?? [];
+        const index = existing.findIndex((item) => item.id === data.message.id);
+        if (index === -1) return prev;
+        const next = [...existing];
+        next[index] = mergeRemoteChatMessage(existing[index], data.message);
+        return {
+          ...prev,
+          messagesByChannel: {
+            ...prev.messagesByChannel,
+            [channelId]: next,
+          },
+        };
       });
     } catch (error) {
       console.error('Failed to persist chat message:', error);

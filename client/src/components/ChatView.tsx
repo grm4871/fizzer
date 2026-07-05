@@ -31,6 +31,10 @@ export interface ChatMessage {
   author: string;
   body: string;
   createdAt: string;
+  /** Server persistence order (DB rowid); tiebreaks same-millisecond messages
+   * so the client orders them exactly as the server does. Absent until the
+   * message is persisted — optimistic messages sort last within a tie. */
+  seq?: number;
   status?: 'sending' | 'running' | 'failed';
   agentId?: string;
   registrationId?: string;
@@ -502,8 +506,16 @@ export function ChatView({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const draftRef = useRef<HTMLTextAreaElement | null>(null);
   const sortedMessages = useMemo(
-    () => [...messages]
-      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()),
+    () => [...messages].sort((a, b) => {
+      const byTime = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      if (byTime !== 0) return byTime;
+      // Same millisecond: order by server persistence order (rowid) so a user
+      // message and the agent placeholder it triggers never flip. Not-yet-
+      // persisted messages (no seq) sort last within the tie — they're newest.
+      const seqA = a.seq ?? Number.MAX_SAFE_INTEGER;
+      const seqB = b.seq ?? Number.MAX_SAFE_INTEGER;
+      return seqA - seqB;
+    }),
     [messages],
   );
   const messageGroups = useMemo(() => groupChatMessages(sortedMessages), [sortedMessages]);

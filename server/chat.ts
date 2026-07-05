@@ -34,6 +34,11 @@ export type ChatMessage = {
   author: string;
   body: string;
   createdAt: string;
+  /** Monotonic persistence order (DB rowid). Tiebreaks messages that share a
+   * millisecond `createdAt` so clients order them exactly as the server does
+   * (see listChatMessages' `ORDER BY created_at ASC, rowid ASC`). Absent on
+   * optimistic messages not yet persisted; those sort last among a tie (newest). */
+  seq?: number;
   status?: 'sending' | 'running' | 'failed';
   agentId?: string;
   registrationId?: string;
@@ -64,6 +69,7 @@ export type ChatAgentRegistration = {
 };
 
 type ChatMessageRow = {
+  rowid?: number;
   id: string;
   channel_id: string;
   vault_id: string;
@@ -221,6 +227,7 @@ function rowToMessage(row: ChatMessageRow): ChatMessage {
     author: row.author,
     body: row.body,
     createdAt: row.created_at,
+    ...(typeof row.rowid === 'number' ? { seq: row.rowid } : {}),
     ...(status ? { status } : {}),
     ...(row.agent_id ? { agentId: row.agent_id } : {}),
     ...(row.registration_id ? { registrationId: row.registration_id } : {}),
@@ -284,7 +291,7 @@ export function assertChatChannel(db: Db, channelId: string, userId: number) {
 export function listChatMessages(db: Db, channelId: string, userId: number): ChatMessage[] {
   assertChatChannel(db, channelId, userId);
   const rows = db.prepare(`
-    SELECT *
+    SELECT *, rowid
     FROM chat_messages
     WHERE channel_id = ?
     ORDER BY created_at ASC, rowid ASC
@@ -363,7 +370,7 @@ function reconcileChatMessageRunStatus(db: Db, row: ChatMessageRow): ChatMessage
 export function settleChatMessagesForRun(db: Db, runId: number): Array<{ vaultId: string; channelId: string; message: ChatMessage }> {
   const run = db.prepare('SELECT id, status, summary FROM runs WHERE id = ?').get(runId) as RunStatusRow | undefined;
   if (!run) return [];
-  const rows = db.prepare('SELECT * FROM chat_messages WHERE run_id = ?').all(runId) as ChatMessageRow[];
+  const rows = db.prepare('SELECT *, rowid FROM chat_messages WHERE run_id = ?').all(runId) as ChatMessageRow[];
   return rows.map((row) => {
     const current = rowToMessage(row);
     const patch = terminalRunPatch(run, current);
@@ -403,7 +410,7 @@ export function createChatMessage(
   };
 
   const row = messageToRow(vault.id, channelId, message);
-  db.prepare(`
+  const info = db.prepare(`
     INSERT INTO chat_messages (
       id, channel_id, vault_id, author, body, created_at,
       status, agent_id, registration_id, run_id,
@@ -426,6 +433,9 @@ export function createChatMessage(
     row.reply_to_json,
   );
 
+  // Carry the persistence order so the create broadcast orders identically to a
+  // later reload (which reads rowid) even for same-millisecond messages.
+  message.seq = Number(info.lastInsertRowid);
   return message;
 }
 
@@ -440,7 +450,7 @@ export function updateChatMessage(
   const { vault } = assertChatChannel(db, channelId, userId);
   if (vault.id !== vaultId) throw new Error('Chat channel not found');
 
-  const existing = db.prepare('SELECT * FROM chat_messages WHERE id = ? AND channel_id = ?').get(messageId, channelId) as ChatMessageRow | undefined;
+  const existing = db.prepare('SELECT *, rowid FROM chat_messages WHERE id = ? AND channel_id = ?').get(messageId, channelId) as ChatMessageRow | undefined;
   if (!existing) return undefined;
 
   const current = rowToMessage(existing);
