@@ -871,7 +871,7 @@ export default function App() {
     const focused = focusedPaneRef.current;
     const existingPane = Layout.findPaneByTab(prev, channelId);
 
-    if (mode !== 'replace' && existingPane) {
+    if (existingPane) {
       setLayout(Layout.setActiveTab(prev, existingPane.id, channelId));
       setFocusedPaneId(existingPane.id);
       return;
@@ -1397,9 +1397,9 @@ export default function App() {
   }, [loadVaultData, closeTab, openChatChannel]);
 
   /**
-   * Open a note: ensure it has a tab, place it in the focused pane (or focus the
-   * pane that already shows it), then load its body. `replace` swaps the focused
-   * pane's active tab for this note (used by single-click in the sidebar).
+   * Open a note: ensure it has a tab, focus the pane that already shows it, or
+   * place it in the focused pane. `replace` swaps the focused pane's active tab
+   * only when the note is not already open (used by single-click in the sidebar).
    */
   const openNote = useCallback((noteId: string, mode: 'open' | 'replace' = 'open') => {
     // Check if the note is a shortcut URL in the summary list
@@ -1420,7 +1420,7 @@ export default function App() {
     const focused = focusedPaneRef.current;
     const existingPane = Layout.findPaneByTab(prev, noteId);
 
-    if (mode !== 'replace' && existingPane) {
+    if (existingPane) {
       setLayout(Layout.setActiveTab(prev, existingPane.id, noteId));
       setFocusedPaneId(existingPane.id);
     } else {
