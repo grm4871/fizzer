@@ -69,7 +69,7 @@ import {
   delegateRunToDesktop,
   getDesktopRunnerStatus,
   initDesktopRunners,
-  isDesktopRunnerOnline,
+  waitForDesktopRunner,
 } from './server/desktop-runner.js';
 import {
   ensureFeedSchema,
@@ -228,7 +228,15 @@ const app = express();
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: '2mb' }));
 const httpServer = http.createServer(app);
-const io = new Server(httpServer, { cors: { origin: true, credentials: true } });
+const io = new Server(httpServer, {
+  cors: { origin: true, credentials: true },
+  // The desktop runner shares the Electron main-process event loop with the
+  // agent it's running; a busy stream can delay heartbeat pongs. Give the
+  // heartbeat generous slack so a working local runner isn't falsely declared
+  // dead (which would 503 the next chat message) mid-run.
+  pingInterval: 25000,
+  pingTimeout: 60000,
+});
 const runsNamespace = io.of('/runs');
 const vaultNamespace = io.of('/vault');
 
@@ -811,7 +819,11 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
   // Every agent — Claude included — executes on the user's own machine via the
   // desktop runner relay. The server never runs an LLM itself (no API keys / no
   // Claude login on the server); it only relays runs to a connected desktop.
-  if (!isDesktopRunnerOnline(req.user!.id)) {
+  // Poll briefly rather than checking once: a busy or reconnecting local runner
+  // can be absent for a moment (a lapsed heartbeat, a socket.io reconnect) even
+  // though it's about to be dispatchable. Hard-failing here is what surfaces the
+  // spurious "no runner connected" mid-run.
+  if (!(await waitForDesktopRunner(req.user!.id))) {
     return res.status(503).json({
       error: 'No desktop agent runner is connected. Open Cascade on your computer (signed in to the same account) to run agents from chat.',
     });

@@ -119,6 +119,22 @@ export function getDesktopRunnerStatus(userId: number) {
   return { online: isDesktopRunnerOnline(userId) };
 }
 
+/**
+ * Resolve once the user's desktop runner is online, polling briefly so a
+ * momentary gap (socket.io reconnect, or a heartbeat that lapsed while the
+ * runner was busy streaming) doesn't hard-fail a run that's about to be
+ * dispatchable. Returns false only if still offline after `timeoutMs`.
+ */
+export async function waitForDesktopRunner(userId: number, timeoutMs = 6000): Promise<boolean> {
+  if (isDesktopRunnerOnline(userId)) return true;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    if (isDesktopRunnerOnline(userId)) return true;
+  }
+  return false;
+}
+
 export function delegateRunToDesktop(userId: number, payload: DelegatedRunPayload): boolean {
   const socket = runnersByUser.get(userId);
   if (!socket?.connected) return false;

@@ -1046,19 +1046,130 @@ async function runCopilot(prompt: string, cwd: string, emit: AgentEmit, resumeId
 // ═══════════════════════════════════════════════════════════════
 
 /**
- * Runs the Hermes CLI in one-shot mode and streams its text output line by line.
+ * Runs the Hermes CLI (`hermes -z`) and translates its output into content blocks.
+ *
+ * Hermes oneshot keeps stdout machine-readable (final answer only). With
+ * `HERMES_CASCADE_EVENTS=1` it also streams reasoning deltas as NDJSON on stderr:
+ *   - `reasoning.delta` → `{ type: 'thinking', thinking }`
+ *   - `session_id`      → captured for conversation resume
  */
 async function runHermes(prompt: string, cwd: string, emit: AgentEmit, resumeId?: string, runId?: number): Promise<CliAgentResult> {
   const baseArgs = ['-z', prompt, '--yolo'];
   const args = resumeId ? ['-r', resumeId, ...baseArgs] : baseArgs;
 
   let text = '';
-  const onLine = (line: string) => {
+  let sessionId: string | undefined = resumeId;
+
+  const onStdoutLine = (line: string) => {
     text += line + '\n';
     // Keep the line break so multi-line output doesn't collapse onto one line.
     emit('text', { message: { content: [{ type: 'text', text: line + '\n' }] } });
   };
 
-  const summaryText = await driveProcess(HERMES_BIN, args, cwd, onLine, () => text.trim() || 'Completed note operations successfully.', 'Hermes', runId);
-  return { summary: summaryText, sessionId: resumeId };
+  const onStderrLine = (line: string) => {
+    if (!line.startsWith('{')) return;
+    const ev = JSON.parse(line) as { type?: string; text?: string; id?: string };
+    if (ev.type === 'reasoning.delta' && ev.text) {
+      emit('text', { message: { content: [{ type: 'thinking', thinking: ev.text }] } });
+    } else if (ev.type === 'session_id' && ev.id) {
+      sessionId = ev.id;
+    }
+  };
+
+  const summaryText = await driveHermesProcess(
+    HERMES_BIN,
+    args,
+    cwd,
+    onStdoutLine,
+    onStderrLine,
+    () => text.trim() || 'Completed note operations successfully.',
+    'Hermes',
+    runId,
+  );
+  return { summary: summaryText, sessionId };
+}
+
+/** Like driveProcess, but also parses Hermes cascade NDJSON events from stderr. */
+function driveHermesProcess(
+  bin: string,
+  args: string[],
+  cwd: string,
+  onStdoutLine: (line: string) => void,
+  onStderrLine: (line: string) => void,
+  getSummary: () => string,
+  label: string,
+  runId?: number,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let child;
+    try {
+      child = spawn(bin, args, {
+        cwd,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env, HERMES_CASCADE_EVENTS: '1' },
+      });
+      if (runId !== undefined) {
+        activeCliProcesses.set(runId, child);
+      }
+    } catch (err) {
+      reject(new Error(`Failed to launch ${label} ('${bin}'): ${err instanceof Error ? err.message : String(err)}`));
+      return;
+    }
+
+    const cleanUpProcess = () => {
+      if (runId !== undefined) {
+        activeCliProcesses.delete(runId);
+      }
+    };
+
+    let stderr = '';
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        cleanUpProcess();
+        child.kill('SIGTERM');
+        reject(new Error(`${label} timed out after ${CLI_TIMEOUT_MS}ms`));
+      }
+    }, CLI_TIMEOUT_MS);
+
+    const stdoutRl = readline.createInterface({ input: child.stdout });
+    stdoutRl.on('line', (line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      try { onStdoutLine(trimmed); } catch { /* ignore a single malformed line */ }
+    });
+
+    const stderrRl = readline.createInterface({ input: child.stderr });
+    stderrRl.on('line', (line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      if (trimmed.startsWith('{')) {
+        try { onStderrLine(trimmed); } catch { /* ignore a single malformed event */ }
+      } else {
+        stderr += trimmed + '\n';
+      }
+    });
+
+    child.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      cleanUpProcess();
+      reject(new Error(`${label} ('${bin}') could not be started: ${err.message}. Is it installed and on PATH?`));
+    });
+
+    child.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      cleanUpProcess();
+      if (code === 0) {
+        resolve(getSummary());
+      } else {
+        const detail = stderr.trim().split('\n').slice(-5).join('\n');
+        reject(new Error(`${label} exited with code ${code}.${detail ? `\n${detail}` : ''}`));
+      }
+    });
+  });
 }
