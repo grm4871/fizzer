@@ -224,6 +224,10 @@ async function runClaudeLocally(opts, emit) {
       // only file edits.
       permissionMode: opts.yolo ? 'bypassPermissions' : 'acceptEdits',
       ...(opts.yolo ? { allowDangerouslySkipPermissions: true } : {}),
+      // Even without yolo, let agents run the read-only wrapper commands
+      // (`cascade-chat`, `cascade-note`) unprompted so they can pull channel
+      // history/notes for context. Everything else still respects acceptEdits.
+      allowedTools: ['Bash(cascade-chat:*)', 'Bash(cascade-note:*)'],
       // Electron's main process is not a Node runtime, so spawn a real `node`
       // from PATH to host the bundled Claude Code CLI.
       executable: 'node',
