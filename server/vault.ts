@@ -216,18 +216,40 @@ function reIndexLinks(db: Db, noteId: string, vaultId: string, content: string):
 
 // ── Schema ─────────────────────────────────────────────────────────
 
-export function ensureVaultSchema(_db: Db): void {
-  // Schema is created in index.ts — this is a hook for future migrations
+export function ensureVaultSchema(db: Db): void {
+  // Core vault tables are created in index.ts; shared-vault membership lives
+  // here so existing databases get the table before listVaults/getVault join it.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS vault_members (
+      vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (vault_id, user_id)
+    );
+    CREATE INDEX IF NOT EXISTS vault_members_user_idx ON vault_members(user_id);
+  `);
 }
 
 // ── Vaults ─────────────────────────────────────────────────────────
 
 export function listVaults(db: Db, userId: number): Vault[] {
-  return db.prepare('SELECT * FROM vaults WHERE created_by = ? ORDER BY created_at DESC').all(userId) as Vault[];
+  return db.prepare(`
+    SELECT DISTINCT v.*
+    FROM vaults v
+    LEFT JOIN vault_members vm ON vm.vault_id = v.id
+    WHERE v.created_by = ? OR vm.user_id = ?
+    ORDER BY v.created_at DESC
+  `).all(userId, userId) as Vault[];
 }
 
 export function getVault(db: Db, vaultId: string, userId: number): Vault | undefined {
-  return db.prepare('SELECT * FROM vaults WHERE id = ? AND created_by = ?').get(vaultId, userId) as Vault | undefined;
+  return db.prepare(`
+    SELECT v.*
+    FROM vaults v
+    LEFT JOIN vault_members vm ON vm.vault_id = v.id
+    WHERE v.id = ? AND (v.created_by = ? OR vm.user_id = ?)
+    LIMIT 1
+  `).get(vaultId, userId, userId) as Vault | undefined;
 }
 
 function prepopulateWalkthrough(vault: Vault): void {

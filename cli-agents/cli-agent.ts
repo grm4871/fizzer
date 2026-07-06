@@ -380,9 +380,12 @@ async function runCodex(
   const imageArgs = imagePaths.flatMap((p) => ['-i', p]);
   const modelArgs = model ? ['--model', model] : [];
   const sandbox = yolo ? 'danger-full-access' : 'workspace-write';
+  const sandboxConfigArgs = yolo
+    ? []
+    : ['-c', 'sandbox_workspace_write.network_access=true'];
   const args = resumeId
-    ? ['exec', 'resume', '--json', '--skip-git-repo-check', '-c', `sandbox_mode=${sandbox}`, ...modelArgs, resumeId, prompt, ...imageArgs]
-    : ['exec', '--json', '--skip-git-repo-check', '--sandbox', sandbox, ...modelArgs, prompt, ...imageArgs];
+    ? ['exec', 'resume', '--json', '--skip-git-repo-check', '-c', `sandbox_mode=${sandbox}`, ...sandboxConfigArgs, ...modelArgs, resumeId, prompt, ...imageArgs]
+    : ['exec', '--json', '--skip-git-repo-check', '--sandbox', sandbox, ...sandboxConfigArgs, ...modelArgs, prompt, ...imageArgs];
 
   let summary = '';
   let sessionId: string | undefined;
