@@ -879,7 +879,7 @@ export function ChatView({
                             </div>
                           )}
                           {message.body && <ChatMessageText body={message.body} mentionableAliases={mentionableAliases} notes={notes} onOpenNote={onOpenNote} />}
-                          {(selected || hasRunWidget) && <ChatRunWidget message={message} onCancelRun={onCancelRun} />}
+                          {(selected || hasRunWidget || hasThoughtBlocks) && <ChatRunWidget message={message} onCancelRun={onCancelRun} />}
                         </div>
                       );
                     })}
