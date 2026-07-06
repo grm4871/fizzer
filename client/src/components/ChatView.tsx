@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Activity, Bot, Brain, ChevronLeft, ChevronRight, Copy, Hash, ImagePlus, Paperclip, Plus, Reply, Send, Square, UserPlus, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -17,6 +17,10 @@ export interface ChatMediaAttachment {
   url: string;
   name?: string;
 }
+
+type ElectronClipboardAPI = {
+  readClipboardImage?: () => Promise<ChatMediaAttachment | null>;
+};
 
 export interface ChatReplyRef {
   messageId: string;
@@ -130,6 +134,14 @@ function readMediaFile(file: File): Promise<ChatMediaAttachment | null> {
     reader.onerror = () => resolve(null);
     reader.readAsDataURL(file);
   });
+}
+
+function getElectronClipboardAPI(): ElectronClipboardAPI | undefined {
+  return (window as unknown as { electronAPI?: ElectronClipboardAPI }).electronAPI;
+}
+
+function isAtScrollBottom(element: HTMLElement, threshold = 24) {
+  return element.scrollHeight - element.scrollTop - element.clientHeight <= threshold;
 }
 
 function formatTime(value: string) {
@@ -511,7 +523,10 @@ export function ChatView({
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; message: ChatMessage } | null>(null);
   const [pendingMedia, setPendingMedia] = useState<ChatMediaAttachment[]>([]);
   const [mediaError, setMediaError] = useState('');
+  const messagesRef = useRef<HTMLDivElement | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
+  const wasAtBottomRef = useRef(true);
+  const previousChannelIdRef = useRef(channelId);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const draftRef = useRef<HTMLTextAreaElement | null>(null);
   const sortedMessages = useMemo(
@@ -570,9 +585,25 @@ export function ChatView({
     }
   }, [usersCollapsed]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    if (previousChannelIdRef.current !== channelId) {
+      previousChannelIdRef.current = channelId;
+      wasAtBottomRef.current = true;
+    }
+    if (!wasAtBottomRef.current) return;
     endRef.current?.scrollIntoView({ block: 'end' });
   }, [sortedMessages.length, channelId]);
+
+  const updateBottomStickiness = useCallback(() => {
+    const element = messagesRef.current;
+    if (!element) return;
+    wasAtBottomRef.current = isAtScrollBottom(element);
+  }, []);
+
+  const scrollToBottomIfSticky = useCallback(() => {
+    if (!wasAtBottomRef.current) return;
+    endRef.current?.scrollIntoView({ block: 'end' });
+  }, []);
 
   useEffect(() => {
     setReplyTarget(null);
@@ -749,15 +780,28 @@ export function ChatView({
     setPendingMedia((prev) => [...prev, ...next].slice(0, CHAT_MEDIA_LIMIT));
   }, []);
 
+  const addDesktopClipboardImage = useCallback(async () => {
+    const image = await getElectronClipboardAPI()?.readClipboardImage?.();
+    if (!image?.data || !isImageMediaType(image.media_type)) return false;
+    setMediaError('');
+    setPendingMedia((prev) => [...prev, image].slice(0, CHAT_MEDIA_LIMIT));
+    return true;
+  }, []);
+
   const handlePaste = useCallback((event: React.ClipboardEvent) => {
     const files = Array.from(event.clipboardData?.items || [])
       .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
       .map((item) => item.getAsFile())
       .filter((file): file is File => Boolean(file));
-    if (files.length === 0) return;
+    if (files.length === 0) {
+      const types = Array.from(event.clipboardData?.types || []);
+      if (types.some((type) => type === 'text/plain' || type === 'text/html' || type === 'text/uri-list')) return;
+      void addDesktopClipboardImage();
+      return;
+    }
     event.preventDefault();
     void addMediaFiles(files);
-  }, [addMediaFiles]);
+  }, [addDesktopClipboardImage, addMediaFiles]);
 
   const handleUpload = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files || []);
@@ -806,7 +850,13 @@ export function ChatView({
           </div>
         </header>
 
-        <div className="chat-messages" role="log" aria-label={`${channelName} messages`}>
+        <div
+          ref={messagesRef}
+          className="chat-messages"
+          role="log"
+          aria-label={`${channelName} messages`}
+          onScroll={updateBottomStickiness}
+        >
           {sortedMessages.length === 0 ? (
             <div className="chat-empty">
               <Hash size={24} />
@@ -856,7 +906,7 @@ export function ChatView({
                             <div className="chat-msg-images">
                               {message.images.map((src, imageIndex) => (
                                 <a key={imageIndex} href={src} target="_blank" rel="noreferrer">
-                                  <img src={src} alt="" className="chat-msg-image" />
+                                  <img src={src} alt="" className="chat-msg-image" onLoad={scrollToBottomIfSticky} />
                                 </a>
                               ))}
                             </div>

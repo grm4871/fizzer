@@ -16,7 +16,7 @@
 // IMPORTS & CONFIG
 // ═══════════════════════════════════════════════════════════════
 
-const { app, BrowserWindow, ipcMain, session, Menu, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, session, Menu, shell, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -542,6 +542,20 @@ ipcMain.handle('runner:clearToken', async () => {
 ipcMain.handle('runner:status', async () => ({
   connected: isDesktopRunnerConnected(),
 }));
+
+ipcMain.handle('clipboard:readImage', async () => {
+  const image = clipboard.readImage();
+  if (image.isEmpty()) return null;
+  const url = image.toDataURL();
+  const match = /^data:([^;,]+);base64,(.*)$/s.exec(url);
+  if (!match) return null;
+  return {
+    media_type: match[1],
+    data: match[2],
+    url,
+    name: 'clipboard-image.png',
+  };
+});
 
 // ═══════════════════════════════════════════════════════════════
 // NETDOC IPC HANDLERS

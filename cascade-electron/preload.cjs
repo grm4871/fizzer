@@ -82,6 +82,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setRunnerToken: ({ token, apiUrl }) => ipcRenderer.invoke('runner:setToken', { token, apiUrl }),
   clearRunnerToken: () => ipcRenderer.invoke('runner:clearToken'),
   getRunnerStatus: () => ipcRenderer.invoke('runner:status'),
+  readClipboardImage: () => ipcRenderer.invoke('clipboard:readImage'),
   // Legacy direct IPC runs (still used internally by the main-process relay).
   startAgentRun: (opts) => ipcRenderer.invoke('agent:start', opts),
   cancelAgentRun: (runId) => ipcRenderer.invoke('agent:cancel', runId),
