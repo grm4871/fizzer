@@ -523,6 +523,7 @@ export function ChatView({
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; message: ChatMessage } | null>(null);
   const [pendingMedia, setPendingMedia] = useState<ChatMediaAttachment[]>([]);
   const [mediaError, setMediaError] = useState('');
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const messagesRef = useRef<HTMLDivElement | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
   const wasAtBottomRef = useRef(true);
@@ -609,6 +610,15 @@ export function ChatView({
     setReplyTarget(null);
     setContextMenu(null);
   }, [channelId]);
+
+  useEffect(() => {
+    if (!lightboxSrc) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setLightboxSrc(null);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [lightboxSrc]);
 
   useEffect(() => {
     if (!contextMenu) return;
@@ -905,7 +915,16 @@ export function ChatView({
                           {message.images && message.images.length > 0 && (
                             <div className="chat-msg-images">
                               {message.images.map((src, imageIndex) => (
-                                <a key={imageIndex} href={src} target="_blank" rel="noreferrer">
+                                <a
+                                  key={imageIndex}
+                                  href={src}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  onClick={(event) => {
+                                    event.preventDefault();
+                                    setLightboxSrc(src);
+                                  }}
+                                >
                                   <img src={src} alt="" className="chat-msg-image" onLoad={scrollToBottomIfSticky} />
                                 </a>
                               ))}
@@ -1352,6 +1371,30 @@ export function ChatView({
           </>
         ))}
       </aside>
+
+      {lightboxSrc && (
+        <div
+          className="chat-lightbox"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setLightboxSrc(null)}
+        >
+          <button
+            type="button"
+            className="chat-lightbox-close"
+            title="Close"
+            onClick={() => setLightboxSrc(null)}
+          >
+            <X size={20} />
+          </button>
+          <img
+            src={lightboxSrc}
+            alt=""
+            className="chat-lightbox-image"
+            onClick={(event) => event.stopPropagation()}
+          />
+        </div>
+      )}
     </section>
   );
 }
