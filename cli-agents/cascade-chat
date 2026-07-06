@@ -28,7 +28,7 @@ Options:
   --author <name>           author for send (default current agent/user)
   --before-message-id <id>  only messages before this message
   --around-message-id <id>  window centered around this message
-  --limit <n>               max messages (default 40)
+  --limit <n>               max messages (default 12)
   --include-reply-context   include parent reply snippets
   --reply-depth <n>         parent chain depth with --include-reply-context (default 1)
   --url <base>              API base (default $CASCADE_NOTE_URL, else cscd.online)
@@ -177,7 +177,7 @@ function replyChain(message, byId, depth) {
 }
 
 function selectWindow(messages, args) {
-  const limit = optionInt(args, 'limit', 40);
+  const limit = optionInt(args, 'limit', 12);
   const beforeId = optionString(args, 'before-message-id');
   const aroundId = optionString(args, 'around-message-id');
   let pool = messages;

@@ -6,7 +6,7 @@ const path = require('path');
 const root = path.resolve(__dirname, '..');
 const sourceDir = path.join(root, 'cli-agents');
 const targetDir = path.join(root, 'dist', 'cli-agents');
-const wrappers = ['cascade-note', 'cascade-chat'];
+const wrappers = ['cascade-note', 'cascade-chat', 'cascade-memory'];
 
 fs.mkdirSync(targetDir, { recursive: true });
 

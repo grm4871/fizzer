@@ -111,6 +111,12 @@ import {
   servePublicNotePage,
 } from './server/publish.js';
 import { deleteNoteAssets, serveNoteAsset, uploadNoteAsset } from './server/noteAssets.js';
+import {
+  buildRecallContext,
+  createMemoryNote,
+  getMemoryNote,
+  recallExocortex,
+} from './server/exocortex.js';
 
 const PORT = Number(process.env.API_PORT || 3000);
 const JWT_SECRET = process.env.JWT_SECRET || 'cascade-dev-secret';
@@ -806,6 +812,42 @@ app.get('/api/vaults/:id/search', requireAuth, (req: AuthedRequest, res) => {
   }
 });
 
+app.get('/api/vaults/:id/exocortex/recall', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    const channelId = typeof req.query.channel === 'string' ? req.query.channel.trim() : undefined;
+    const limit = Number(req.query.limit || 8);
+    const results = recallExocortex(db, req.user!.id, req.params.id, q, { channelId, limit });
+    res.json({ results });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Recall failed' });
+  }
+});
+
+app.post('/api/vaults/:id/exocortex/memories', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const note = createMemoryNote(db, req.user!.id, req.params.id, {
+      body: String(req.body?.body || ''),
+      type: req.body?.type,
+      scope: req.body?.scope,
+      source: req.body?.source,
+      title: req.body?.title,
+      createdBy: req.user!.username,
+    });
+    res.status(201).json({ note });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not create memory' });
+  }
+});
+
+app.delete('/api/exocortex/memories/:id', requireAuth, (req: AuthedRequest, res) => {
+  const note = getMemoryNote(db, req.user!.id, req.params.id);
+  if (!note) return res.status(404).json({ error: 'Memory not found' });
+  deleteNoteAssets(db, note.id);
+  deleteNote(db, note.id);
+  res.json({ ok: true });
+});
+
 // ── Backlinks routes ───────────────────────────────────────────────
 
 app.get('/api/notes/:id/backlinks', requireAuth, (req: AuthedRequest, res) => {
@@ -1031,7 +1073,26 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     : [];
 
   try {
-    const run = await startRun(db, runVault, note_id || null, prompt, selectedAgent, {
+    let effectivePrompt = prompt;
+    try {
+      const recentMessages = targetChannelId
+        ? listChatMessages(db, targetChannelId, runnerUserId).slice(-8).map((message) => `${message.author}: ${message.body}`).join('\n')
+        : '';
+      const recallQuery = [prompt, recentMessages].filter(Boolean).join('\n');
+      const recall = buildRecallContext(
+        recallExocortex(db, runnerUserId, runVault.id, recallQuery, {
+          channelId: targetChannelId || undefined,
+          limit: 6,
+        }),
+      );
+      if (recall) {
+        effectivePrompt = `${prompt}\n\n[Context: ${recall}]`;
+      }
+    } catch (error) {
+      console.warn('Exocortex recall skipped:', error instanceof Error ? error.message : error);
+    }
+
+    const run = await startRun(db, runVault, note_id || null, effectivePrompt, selectedAgent, {
       conversationId: typeof conversation_id === 'string' && conversation_id ? conversation_id : undefined,
       model: selectedModel,
     });
@@ -1053,7 +1114,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
       runId: run.id,
       vaultId: runVault.id,
       agent: selectedAgent,
-      prompt,
+      prompt: effectivePrompt,
       cwd: selectedCwd,
       vaultRoot: runVault.root_path,
       model: selectedModel,

@@ -1,0 +1,227 @@
+#!/usr/bin/env node
+/**
+ * @file cascade-memory - Exocortex memory helper for local agents.
+ *
+ * Uses the live Cascade API, like cascade-note and cascade-chat, so memories are
+ * indexed and visible in the running app instead of being raw local file edits.
+ */
+
+'use strict';
+
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+const DEFAULT_URL = 'https://cscd.online';
+
+const USAGE = `cascade-memory - read/write Cascade Exocortex memories
+
+Usage:
+  cascade-memory recall <query>                recall memories, notes, and chat
+  cascade-memory remember [--title T]          create a memory from stdin or --content
+  cascade-memory forget <note-id>              delete a memory note
+
+Options:
+  --vault <id>       vault id (default $CASCADE_NOTE_VAULT)
+  --channel <id>     channel scope/filter (default $CASCADE_CHAT_CHANNEL)
+  --type <kind>      fact | decision | preference | reference (default fact)
+  --scope <scope>    vault | global | channel:<id> (default channel:<current> if available, else vault)
+  --source <id>      source chat message id or note id
+  --title <title>    memory note title
+  --limit <n>        recall limit (default 8)
+  --content <text>   inline body (stdin is safer for markdown)
+  --content-file <p> read body from a file
+  --url <base>       API base (default $CASCADE_NOTE_URL, else cscd.online)
+  --token <jwt>      bearer token (default $CASCADE_NOTE_TOKEN)
+  --json             machine-readable output
+
+Env: CASCADE_NOTE_URL, CASCADE_NOTE_TOKEN, CASCADE_NOTE_USER,
+     CASCADE_NOTE_PASS, CASCADE_NOTE_VAULT, CASCADE_CHAT_CHANNEL,
+     CASCADE_HELPER_CONFIG`;
+
+function parseArgs(argv) {
+  const args = { _: [] };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--json') args.json = true;
+    else if (a === '-h' || a === '--help') args.help = true;
+    else if (a.startsWith('--')) {
+      const key = a.slice(2);
+      const next = argv[i + 1];
+      if (next === undefined || next.startsWith('--')) args[key] = true;
+      else { args[key] = next; i++; }
+    } else {
+      args._.push(a);
+    }
+  }
+  return args;
+}
+
+function fail(msg, code = 1) {
+  process.stderr.write(`cascade-memory: ${msg}\n`);
+  process.exit(code);
+}
+
+function errorMessage(err) {
+  if (!(err instanceof Error)) return String(err);
+  const cause = err.cause instanceof Error ? ` (${err.cause.message})` : '';
+  return `${err.message}${cause}`;
+}
+
+function helperConfigPath() {
+  return process.env.CASCADE_HELPER_CONFIG
+    || path.join(os.homedir(), '.cascade', 'agent-helper-context.json');
+}
+
+function readHelperConfig() {
+  try {
+    const raw = fs.readFileSync(helperConfigPath(), 'utf8');
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function configString(config, key) {
+  return String(config && config[key] || '').trim();
+}
+
+function optionString(args, key, envKey, config, configKey) {
+  return String(args[key] || configString(config, configKey) || (envKey ? process.env[envKey] : '') || '').trim();
+}
+
+function optionInt(args, key, fallback) {
+  const raw = args[key];
+  if (raw === undefined || raw === true || raw === '') return fallback;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 1) fail(`--${key} must be a positive number.`);
+  return Math.floor(value);
+}
+
+function baseUrl(args, config) {
+  const raw = String(args.url || configString(config, 'url') || process.env.CASCADE_NOTE_URL || DEFAULT_URL).trim();
+  return raw.replace(/\/$/, '');
+}
+
+async function getToken(url, args, config) {
+  const explicit = String(args.token || configString(config, 'token') || process.env.CASCADE_NOTE_TOKEN || '').trim();
+  if (explicit) return explicit;
+  const user = String(process.env.CASCADE_NOTE_USER || '').trim();
+  const pass = String(process.env.CASCADE_NOTE_PASS || '');
+  if (!user || !pass) {
+    fail('no credentials. Set CASCADE_NOTE_TOKEN, or CASCADE_NOTE_USER + CASCADE_NOTE_PASS.');
+  }
+  const res = await fetch(`${url}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ username: user, password: pass }),
+  });
+  if (!res.ok) fail(`login failed (${res.status}): ${await res.text()}`);
+  const body = await res.json();
+  if (!body.token) fail('login response had no token');
+  return body.token;
+}
+
+async function api(url, token, method, requestPath, body) {
+  const headers = { authorization: `Bearer ${token}` };
+  if (body !== undefined) headers['content-type'] = 'application/json';
+  const res = await fetch(`${url}${requestPath}`, {
+    method,
+    headers,
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+  });
+  const text = await res.text();
+  let json;
+  try { json = text ? JSON.parse(text) : {}; } catch { json = { raw: text }; }
+  if (!res.ok) fail(`${method} ${requestPath} -> ${res.status}: ${json.error || text}`);
+  return json;
+}
+
+async function resolveVault(url, token, args, config) {
+  const explicit = optionString(args, 'vault', 'CASCADE_NOTE_VAULT', config, 'vaultId');
+  if (explicit) return explicit;
+  const { vaults = [] } = await api(url, token, 'GET', '/api/vaults');
+  if (vaults.length === 0) fail('no vaults found for this account.');
+  if (vaults.length === 1) return vaults[0].id;
+  const list = vaults.map((v) => `  ${v.id}  ${v.name}`).join('\n');
+  fail(`multiple vaults - pass --vault <id>:\n${list}`);
+}
+
+async function readStdin() {
+  if (process.stdin.isTTY) return '';
+  return new Promise((resolve, reject) => {
+    let data = '';
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', (chunk) => { data += chunk; });
+    process.stdin.on('end', () => resolve(data));
+    process.stdin.on('error', reject);
+  });
+}
+
+async function bodyContent(args) {
+  if (args['content-file'] !== undefined) {
+    if (typeof args['content-file'] !== 'string') fail('--content-file needs a file path.');
+    try { return fs.readFileSync(args['content-file'], 'utf8'); }
+    catch (err) { fail(`cannot read --content-file: ${errorMessage(err)}`); }
+  }
+  if (args.content !== undefined) {
+    if (typeof args.content !== 'string') fail('--content needs a value.');
+    return args.content;
+  }
+  return readStdin();
+}
+
+function print(args, human, obj) {
+  if (args.json) process.stdout.write(JSON.stringify(obj) + '\n');
+  else process.stdout.write(human + '\n');
+}
+
+async function main() {
+  const args = parseArgs(process.argv.slice(2));
+  const cmd = args._[0];
+  if (!cmd || args.help) {
+    process.stdout.write(USAGE + '\n');
+    process.exit(cmd ? 0 : 1);
+  }
+  if (!['recall', 'remember', 'forget'].includes(cmd)) fail(`unknown command "${cmd}". Run with --help.`);
+
+  const config = readHelperConfig();
+  const url = baseUrl(args, config);
+  const token = await getToken(url, args, config);
+  const vaultId = await resolveVault(url, token, args, config);
+  const channelId = optionString(args, 'channel', 'CASCADE_CHAT_CHANNEL', config, 'chatChannelId');
+
+  if (cmd === 'recall') {
+    const query = args._.slice(1).join(' ').trim();
+    if (!query) fail('recall needs a query.');
+    const params = new URLSearchParams({ q: query, limit: String(optionInt(args, 'limit', 8)) });
+    if (channelId) params.set('channel', channelId);
+    const { results = [] } = await api(url, token, 'GET', `/api/vaults/${vaultId}/exocortex/recall?${params}`);
+    print(args, results.map((hit) => `${hit.kind}: ${hit.title}\n    ${hit.snippet || ''}`).join('\n') || '(no matches)', results);
+    return;
+  }
+
+  if (cmd === 'remember') {
+    const body = String(await bodyContent(args)).trim();
+    if (!body) fail('remember needs a body via stdin, --content-file, or --content.');
+    const scope = String(args.scope || (channelId ? `channel:${channelId}` : 'vault')).trim();
+    const payload = {
+      body,
+      type: String(args.type || 'fact'),
+      scope,
+      ...(args.source && typeof args.source === 'string' ? { source: args.source } : {}),
+      ...(args.title && typeof args.title === 'string' ? { title: args.title } : {}),
+    };
+    const { note } = await api(url, token, 'POST', `/api/vaults/${vaultId}/exocortex/memories`, payload);
+    print(args, `remembered ${note.id}  ${note.title}`, note);
+    return;
+  }
+
+  const id = String(args._[1] || '').trim();
+  if (!id) fail('forget needs a memory note id.');
+  await api(url, token, 'DELETE', `/api/exocortex/memories/${encodeURIComponent(id)}`);
+  print(args, `forgot ${id}`, { ok: true, id });
+}
+
+main().catch((err) => fail(errorMessage(err)));

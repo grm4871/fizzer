@@ -1158,9 +1158,15 @@ export default function App() {
               // Collapse the chat body to the final answer (run summary); the full
               // narration stays in `blocks` for the trace disclosure.
               const summaryText = typeof payload.summary === 'string' ? payload.summary.trim() : '';
-              const finalBody = summaryText
-                || assistantText.trim()
-                || (payload.status === 'failed' ? 'Agent failed.' : 'Done.');
+              // On failure (e.g. usage limits), keep the agent's accumulated
+              // output — it's the scratchpad a resuming agent needs — and append
+              // the reason instead of overwriting the work with a bare error.
+              const streamed = assistantText.trim();
+              const finalBody = payload.status === 'failed'
+                ? (streamed
+                    ? `${streamed}\n\n> ⚠️ ${summaryText || 'Agent failed.'}`
+                    : (summaryText || 'Agent failed.'))
+                : (summaryText || streamed || 'Done.');
               ensureAgentMessage(runId, {
                 body: finalBody,
                 status: payload.status === 'failed' ? 'failed' : undefined,

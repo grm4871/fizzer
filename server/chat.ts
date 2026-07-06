@@ -121,6 +121,17 @@ export function ensureChatSchema(db: Db): void {
       reply_to_json TEXT
     );
     CREATE INDEX IF NOT EXISTS chat_messages_channel_idx ON chat_messages(channel_id, created_at);
+    CREATE VIRTUAL TABLE IF NOT EXISTS chat_messages_fts USING fts5(author, body, content='chat_messages', content_rowid='rowid');
+    CREATE TRIGGER IF NOT EXISTS chat_messages_ai AFTER INSERT ON chat_messages BEGIN
+      INSERT INTO chat_messages_fts(rowid, author, body) VALUES (NEW.rowid, NEW.author, NEW.body);
+    END;
+    CREATE TRIGGER IF NOT EXISTS chat_messages_ad AFTER DELETE ON chat_messages BEGIN
+      INSERT INTO chat_messages_fts(chat_messages_fts, rowid, author, body) VALUES('delete', OLD.rowid, OLD.author, OLD.body);
+    END;
+    CREATE TRIGGER IF NOT EXISTS chat_messages_au AFTER UPDATE ON chat_messages BEGIN
+      INSERT INTO chat_messages_fts(chat_messages_fts, rowid, author, body) VALUES('delete', OLD.rowid, OLD.author, OLD.body);
+      INSERT INTO chat_messages_fts(rowid, author, body) VALUES (NEW.rowid, NEW.author, NEW.body);
+    END;
 
     CREATE TABLE IF NOT EXISTS chat_agent_members (
       id TEXT PRIMARY KEY,
@@ -168,6 +179,14 @@ export function ensureChatSchema(db: Db): void {
   if (!memberCols.some((col) => col.name === 'pingable_by_others')) {
     db.exec('ALTER TABLE chat_agent_members ADD COLUMN pingable_by_others INTEGER NOT NULL DEFAULT 0');
   }
+  db.exec(`
+    INSERT INTO chat_messages_fts(rowid, author, body)
+    SELECT cm.rowid, cm.author, cm.body
+    FROM chat_messages cm
+    WHERE NOT EXISTS (
+      SELECT 1 FROM chat_messages_fts fts WHERE fts.rowid = cm.rowid
+    );
+  `);
 }
 
 type ChatAgentMemberRow = {
@@ -429,10 +448,17 @@ function terminalRunPatch(run: RunStatusRow, message?: ChatMessage): Pick<ChatMe
     return { body: run.summary?.trim() || 'Done.', status: undefined };
   }
   if (run.status === 'failed') {
-    if (run.summary?.trim() === 'Run canceled by user.' && message && hasRunOutput(message)) {
-      return { body: message.body, status: 'failed' };
+    const reason = run.summary?.trim() || 'Agent failed.';
+    // Preserve any accumulated output so a failed run (usage limits, cancel, …)
+    // keeps its scratchpad for a resuming agent; annotate with the reason rather
+    // than erasing the work. Guard against re-appending if the streaming path
+    // already annotated this body.
+    if (message && hasRunOutput(message)) {
+      const annotation = `> ⚠️ ${reason}`;
+      const body = message.body.includes(annotation) ? message.body : `${message.body}\n\n${annotation}`;
+      return { body, status: 'failed' };
     }
-    return { body: run.summary?.trim() || 'Agent failed.', status: 'failed' };
+    return { body: reason, status: 'failed' };
   }
   return null;
 }
@@ -718,13 +744,21 @@ export function buildAgentChatContentFromRunEvents(
 
   const trimmed = assistantText.trim();
   const done = status !== 'running';
-  // Once the run finishes, the chat body collapses to the final answer (the run
-  // summary) so the chat stays readable; the full step-by-step narration is kept
-  // in `blocks` for the trace disclosure. While running we still show live text
-  // so there's visible progress.
-  const body = done
-    ? (terminalSummary.trim() || trimmed || 'Done.')
-    : (trimmed || 'Thinking...');
+  // Once the run finishes, a *successful* chat body collapses to the final answer
+  // (the run summary) so the chat stays readable; the full step-by-step narration
+  // is kept in `blocks` for the trace disclosure. On *failure* (e.g. usage
+  // limits) we instead preserve the agent's accumulated output — it's the
+  // scratchpad a resuming agent needs — and append the reason rather than
+  // erasing the work. While running we still show live text for visible progress.
+  let body: string;
+  if (!done) {
+    body = trimmed || 'Thinking...';
+  } else if (status === 'failed') {
+    const reason = terminalSummary.trim() || 'Agent failed.';
+    body = trimmed ? `${trimmed}\n\n> ⚠️ ${reason}` : reason;
+  } else {
+    body = terminalSummary.trim() || trimmed || 'Done.';
+  }
 
   return { body, blocks, status, done };
 }

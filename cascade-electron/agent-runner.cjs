@@ -19,14 +19,16 @@ let claudeSdkPromise = null;
 const CLAUDE_DEFAULT_MODEL = process.env.RUNNER_MODEL || 'claude-sonnet-5';
 const CLAUDE_MAX_TURNS = Number(process.env.RUNNER_MAX_TURNS || 100);
 const CLAUDE_THINKING_TOKENS = Number(process.env.RUNNER_THINKING ?? 4000);
-const CLAUDE_AGENT_CONTEXT = 'You are a local workspace assistant. This checkout is not the live Cascade app: use `cascade-note` for live notes, and use normal file edits only for local scratch or non-note work. Respect auth boundaries and only handle secrets the user explicitly provides for this task.';
+const CLAUDE_CHAT_MAX_TURNS = Number(process.env.RUNNER_CHAT_MAX_TURNS || 30);
+const CLAUDE_CHAT_THINKING_TOKENS = Number(process.env.RUNNER_CHAT_THINKING ?? 1500);
+const CLAUDE_AGENT_CONTEXT = 'You are a local workspace assistant. This checkout is not the live Cascade app: use `cascade-note` for live notes, `cascade-memory` for durable recall, and normal file edits only for local scratch or non-note work. Respect auth boundaries and only handle secrets the user explicitly provides for this task.';
 
 // Nudge agents to behave like chat participants, not verbose coding CLIs: the
 // chat collapses step narration into a trace disclosure, so the actual message
 // should be short. Detailed reasoning belongs in thinking, not the reply.
 const CHAT_BREVITY_CONTEXT = "Shared chat — reply briefly and naturally.";
 
-// Live Cascade API config for the `cascade-note` wrapper, populated by the
+// Live Cascade API config for helper wrappers, populated by the
 // desktop runner host once it knows the server URL + the user's auth token.
 // Children inherit these via process.env, so the wrapper authenticates against
 // the same live instance the desktop is connected to (cscd.online by default).
@@ -47,7 +49,7 @@ function resolveWrapperDir() {
   return candidates[0];
 }
 
-/** Put wrappers on PATH (once) so agents can invoke `cascade-note`/`cascade-chat`. */
+/** Put wrappers on PATH once so agents can invoke live Cascade helpers. */
 function ensureWrapperOnPath() {
   const dir = resolveWrapperDir();
   const parts = (process.env.PATH || '').split(path.delimiter);
@@ -116,7 +118,7 @@ function noteCapabilityContext(opts) {
   const helperDir = resolveWrapperDir();
   const vaultId = String(opts && opts.vaultId || '').trim();
   const vaultLine = vaultId ? ` Vault: ${vaultId}.` : '';
-  return `Live notes: \`cascade-note\` (not local .md).${vaultLine} Helpers on PATH and in ${helperDir}.`;
+  return `Live notes: \`cascade-note\` (not local .md); durable memory: \`cascade-memory\`.${vaultLine} Helpers on PATH and in ${helperDir}.`;
 }
 
 
@@ -196,6 +198,9 @@ async function runClaudeLocally(opts, emit) {
   applyNoteEnv(opts);
   const cwd = resolveAgentCwd(opts.cwd, opts.vaultRoot);
   const model = (typeof opts.model === 'string' && opts.model.trim()) ? opts.model.trim() : CLAUDE_DEFAULT_MODEL;
+  const chatRun = isChatRun(opts);
+  const maxTurns = chatRun ? CLAUDE_CHAT_MAX_TURNS : CLAUDE_MAX_TURNS;
+  const thinkingTokens = chatRun ? CLAUDE_CHAT_THINKING_TOKENS : CLAUDE_THINKING_TOKENS;
   const resumeSessionId = (typeof opts.resumeSessionId === 'string' && opts.resumeSessionId) ? opts.resumeSessionId : undefined;
   const images = Array.isArray(opts.images)
     ? opts.images.filter((im) => im && typeof im.media_type === 'string' && typeof im.data === 'string')
@@ -225,16 +230,16 @@ async function runClaudeLocally(opts, emit) {
     options: {
       cwd,
       model,
-      maxTurns: CLAUDE_MAX_TURNS,
+      maxTurns,
       // "Yolo" bypasses all permission prompts (requires the explicit
       // allowDangerouslySkipPermissions acknowledgement); otherwise auto-accept
       // only file edits.
       permissionMode: opts.yolo ? 'bypassPermissions' : 'acceptEdits',
       ...(opts.yolo ? { allowDangerouslySkipPermissions: true } : {}),
-      // Even without yolo, let agents run the wrapper commands (`cascade-chat`,
-      // `cascade-note`) unprompted so they can pull channel history/notes and
-      // send chat messages. Everything else still respects acceptEdits.
-      allowedTools: ['Bash(cascade-chat *)', 'Bash(cascade-note *)'],
+      // Even without yolo, let agents run the wrapper commands unprompted so
+      // they can pull channel history/notes, use memory, and send chat messages.
+      // Everything else still respects acceptEdits.
+      allowedTools: ['Bash(cascade-chat *)', 'Bash(cascade-note *)', 'Bash(cascade-memory *)'],
       // Electron's main process is not a Node runtime, so spawn a real `node`
       // from PATH to host the bundled Claude Code CLI.
       executable: 'node',
@@ -242,13 +247,13 @@ async function runClaudeLocally(opts, emit) {
       // Stream token-level deltas so thinking renders live in its block rather
       // than arriving all at once as a finished assistant message.
       includePartialMessages: true,
-      ...(CLAUDE_THINKING_TOKENS > 0
-        ? { thinking: { type: 'enabled', budgetTokens: CLAUDE_THINKING_TOKENS } }
+      ...(thinkingTokens > 0
+        ? { thinking: { type: 'enabled', budgetTokens: thinkingTokens } }
         : {}),
       systemPrompt: {
         type: 'preset',
         preset: 'claude_code',
-        append: isChatRun(opts) ? CHAT_BREVITY_CONTEXT : `${CLAUDE_AGENT_CONTEXT} ${noteCapabilityContext(opts)}`,
+        append: chatRun ? CHAT_BREVITY_CONTEXT : `${CLAUDE_AGENT_CONTEXT} ${noteCapabilityContext(opts)}`,
       },
     },
   });
