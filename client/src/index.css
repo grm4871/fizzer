@@ -2083,6 +2083,9 @@ a {
   resize: vertical;
   line-height: 1.35;
 }
+.chat-agent-menu .chat-model-custom-input {
+  margin-top: 6px;
+}
 .chat-agent-toggle {
   flex-direction: row !important;
   align-items: center;

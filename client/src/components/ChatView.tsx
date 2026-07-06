@@ -11,6 +11,27 @@ export const CHAT_NOTE_MARKER = 'cascade://chat-channel';
 export const CHAT_MEDIA_LIMIT = 8;
 export const CHAT_MEDIA_MAX_BYTES = 8 * 1024 * 1024;
 
+const CUSTOM_MODEL_VALUE = '__custom__';
+
+function resolveModelPicker(
+  agent: ChatAgentOption | undefined,
+  model: string,
+): { choice: string; custom: string } {
+  const trimmed = model.trim();
+  if (!agent || agent.models.length === 0) {
+    return { choice: CUSTOM_MODEL_VALUE, custom: trimmed };
+  }
+  if (!trimmed) return { choice: agent.models[0]?.id ?? '', custom: '' };
+  if (agent.models.some((preset) => preset.id === trimmed)) {
+    return { choice: trimmed, custom: '' };
+  }
+  return { choice: CUSTOM_MODEL_VALUE, custom: trimmed };
+}
+
+function modelFromPicker(choice: string, custom: string) {
+  return (choice === CUSTOM_MODEL_VALUE ? custom : choice).trim();
+}
+
 export interface ChatMediaAttachment {
   media_type: string;
   data: string;
@@ -499,6 +520,8 @@ export function ChatView({
   const [inviteLinkBusy, setInviteLinkBusy] = useState(false);
   const [editingRegistrationId, setEditingRegistrationId] = useState<string | null>(null);
   const [agentFormError, setAgentFormError] = useState('');
+  const [modelChoice, setModelChoice] = useState('');
+  const [customModel, setCustomModel] = useState('');
   const createDefaultAgentForm = useCallback((): ChatAgentRegistration => {
     const agent = availableAgents[0];
     return {
@@ -671,15 +694,18 @@ export function ChatView({
     setAgentFormError('');
     if (registration) {
       const agent = availableAgents.find((option) => option.id === registration.agentId);
-      const defaultModel = agent?.models[0]?.id ?? '';
-      const modelIsValid = agent ? agent.models.some((m) => m.id === registration.model) : false;
-      setAgentForm({
-        ...registration,
-        model: modelIsValid ? registration.model : defaultModel,
-      });
+      const { choice, custom } = resolveModelPicker(agent, registration.model);
+      setModelChoice(choice);
+      setCustomModel(custom);
+      setAgentForm({ ...registration, model: modelFromPicker(choice, custom) });
       setEditingRegistrationId(registration.id);
     } else {
-      setAgentForm(createDefaultAgentForm());
+      const form = createDefaultAgentForm();
+      const agent = availableAgents.find((option) => option.id === form.agentId);
+      const { choice, custom } = resolveModelPicker(agent, form.model);
+      setModelChoice(choice);
+      setCustomModel(custom);
+      setAgentForm(form);
       setEditingRegistrationId(null);
     }
     setAgentMenuOpen(true);
@@ -739,12 +765,17 @@ export function ChatView({
       setAgentFormError(`@${mention} is already used in this channel.`);
       return;
     }
+    const model = modelFromPicker(modelChoice, customModel);
+    if (!model) {
+      setAgentFormError('Choose a model or enter a custom model ID.');
+      return;
+    }
     onRegisterAgent(channelId, {
       ...agentForm,
       id: agentForm.id || createChatAgentRegistrationId(),
       displayName: agentForm.displayName.trim(),
       mention,
-      model: agentForm.model.trim(),
+      model,
       cwd: agentForm.cwd.trim(),
       contextPrompt: agentForm.contextPrompt.trim(),
     });
@@ -1258,25 +1289,28 @@ export function ChatView({
                 onChange={(event) => {
                   const agent = availableAgents.find((option) => option.id === event.target.value);
                   setAgentFormError('');
+                  const nextPreset = agent?.models[0]?.id ?? '';
                   if (editingRegistrationId) {
-                    setAgentForm((value) => {
-                      const modelIsValid = agent ? agent.models.some((m) => m.id === value.model) : false;
-                      const nextModel = modelIsValid ? value.model : (agent?.models[0]?.id ?? '');
-                      return {
-                        ...value,
-                        agentId: event.target.value,
-                        displayName: value.displayName || agent?.label || event.target.value,
-                        model: nextModel,
-                      };
-                    });
+                    const { choice, custom } = resolveModelPicker(agent, nextPreset);
+                    setModelChoice(choice);
+                    setCustomModel(custom);
+                    setAgentForm((value) => ({
+                      ...value,
+                      agentId: event.target.value,
+                      displayName: value.displayName || agent?.label || event.target.value,
+                      model: modelFromPicker(choice, custom),
+                    }));
                     return;
                   }
+                  const { choice, custom } = resolveModelPicker(agent, nextPreset);
+                  setModelChoice(choice);
+                  setCustomModel(custom);
                   setAgentForm({
                     id: createChatAgentRegistrationId(),
                     agentId: event.target.value,
                     displayName: agent?.label ?? event.target.value,
                     mention: agent?.label.toLowerCase().replace(/\s+/g, '-') ?? event.target.value,
-                    model: agent?.models[0]?.id ?? '',
+                    model: modelFromPicker(choice, custom),
                     cwd: '',
                     contextPrompt: '',
                     taggableByAgents: true,
@@ -1312,19 +1346,49 @@ export function ChatView({
             <label>
               Model
               {activeFormAgent && activeFormAgent.models.length > 0 ? (
-                <select
-                  value={agentForm.model}
-                  onChange={(event) => setAgentForm((value) => ({ ...value, model: event.target.value }))}
-                >
-                  {activeFormAgent.models.map((model) => (
-                    <option key={model.id} value={model.id}>{model.label}</option>
-                  ))}
-                </select>
+                <>
+                  <select
+                    value={modelChoice}
+                    onChange={(event) => {
+                      const choice = event.target.value;
+                      setModelChoice(choice);
+                      if (choice !== CUSTOM_MODEL_VALUE) setCustomModel('');
+                      setAgentForm((value) => ({
+                        ...value,
+                        model: modelFromPicker(choice, choice === CUSTOM_MODEL_VALUE ? customModel : ''),
+                      }));
+                    }}
+                  >
+                    {activeFormAgent.models.map((model) => (
+                      <option key={model.id} value={model.id}>{model.label}</option>
+                    ))}
+                    <option value={CUSTOM_MODEL_VALUE}>Custom model ID…</option>
+                  </select>
+                  {modelChoice === CUSTOM_MODEL_VALUE && (
+                    <input
+                      className="chat-model-custom-input"
+                      value={customModel}
+                      placeholder="e.g. sonnet-4-6"
+                      spellCheck={false}
+                      onChange={(event) => {
+                        const next = event.target.value;
+                        setCustomModel(next);
+                        setAgentForm((value) => ({ ...value, model: next.trim() }));
+                      }}
+                    />
+                  )}
+                </>
               ) : (
                 <input
-                  value={agentForm.model}
+                  value={customModel}
                   placeholder="Model ID"
-                  onChange={(event) => setAgentForm((value) => ({ ...value, model: event.target.value }))}
+                  spellCheck={false}
+                  onChange={(event) => {
+                    const next = event.target.value;
+                    setCustomModel(next);
+                    setModelChoice(CUSTOM_MODEL_VALUE);
+                    setAgentForm((value) => ({ ...value, model: next.trim() }));
+                  }}
                 />
               )}
             </label>
