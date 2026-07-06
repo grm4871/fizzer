@@ -92,6 +92,13 @@ type RunStatusRow = {
   summary: string | null;
 };
 
+export type ChatChannelRoute = {
+  localVaultId: string;
+  localChannelId: string;
+  sourceVaultId: string;
+  sourceChannelId: string;
+};
+
 export function ensureChatSchema(db: Db): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS chat_messages (
@@ -130,6 +137,17 @@ export function ensureChatSchema(db: Db): void {
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS chat_agent_members_channel_idx ON chat_agent_members(channel_id);
+
+    CREATE TABLE IF NOT EXISTS chat_channel_links (
+      local_channel_id TEXT PRIMARY KEY REFERENCES notes(id) ON DELETE CASCADE,
+      local_vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
+      source_channel_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+      source_vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
+      created_by INTEGER NOT NULL REFERENCES users(id),
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(local_vault_id, source_channel_id)
+    );
+    CREATE INDEX IF NOT EXISTS chat_channel_links_source_idx ON chat_channel_links(source_channel_id);
   `);
 
   // Migrations: add columns to pre-existing chat_agent_members tables.
@@ -285,18 +303,81 @@ export function assertChatChannel(db: Db, channelId: string, userId: number) {
   if (!vault) {
     throw new Error('Chat channel not found');
   }
-  return { note, vault };
+
+  const link = db.prepare(`
+    SELECT local_channel_id AS localChannelId,
+           local_vault_id AS localVaultId,
+           source_channel_id AS sourceChannelId,
+           source_vault_id AS sourceVaultId
+    FROM chat_channel_links
+    WHERE local_channel_id = ?
+  `).get(channelId) as ChatChannelRoute | undefined;
+  if (!link) {
+    return {
+      note,
+      vault,
+      route: {
+        localVaultId: vault.id,
+        localChannelId: note.id,
+        sourceVaultId: vault.id,
+        sourceChannelId: note.id,
+      },
+    };
+  }
+
+  const sourceNote = getNote(db, link.sourceChannelId);
+  if (!sourceNote || sourceNote.vault_id !== link.sourceVaultId || !isChatChannelNote(sourceNote)) {
+    throw new Error('Chat channel not found');
+  }
+  const sourceVault = db.prepare('SELECT * FROM vaults WHERE id = ?').get(link.sourceVaultId);
+  if (!sourceVault) throw new Error('Chat channel not found');
+  return { note: sourceNote, vault: sourceVault, route: link };
+}
+
+export function linkChatChannel(
+  db: Db,
+  input: {
+    localVaultId: string;
+    localChannelId: string;
+    sourceVaultId: string;
+    sourceChannelId: string;
+    createdBy: number;
+  },
+): void {
+  db.prepare(`
+    INSERT OR IGNORE INTO chat_channel_links (
+      local_channel_id, local_vault_id, source_channel_id, source_vault_id, created_by
+    ) VALUES (?, ?, ?, ?, ?)
+  `).run(input.localChannelId, input.localVaultId, input.sourceChannelId, input.sourceVaultId, input.createdBy);
+}
+
+export function listChatChannelRoutes(db: Db, sourceVaultId: string, sourceChannelId: string): ChatChannelRoute[] {
+  const linked = db.prepare(`
+    SELECT local_vault_id AS localVaultId,
+           local_channel_id AS localChannelId,
+           source_vault_id AS sourceVaultId,
+           source_channel_id AS sourceChannelId
+    FROM chat_channel_links
+    WHERE source_vault_id = ? AND source_channel_id = ?
+  `).all(sourceVaultId, sourceChannelId) as ChatChannelRoute[];
+  return [
+    { localVaultId: sourceVaultId, localChannelId: sourceChannelId, sourceVaultId, sourceChannelId },
+    ...linked,
+  ];
 }
 
 export function listChatMessages(db: Db, channelId: string, userId: number): ChatMessage[] {
-  assertChatChannel(db, channelId, userId);
+  const { route } = assertChatChannel(db, channelId, userId);
   const rows = db.prepare(`
     SELECT *, rowid
     FROM chat_messages
     WHERE channel_id = ?
     ORDER BY created_at ASC, rowid ASC
-  `).all(channelId) as ChatMessageRow[];
-  return rows.map((row) => reconcileChatMessageRunStatus(db, row));
+  `).all(route.sourceChannelId) as ChatMessageRow[];
+  return rows.map((row) => ({
+    ...reconcileChatMessageRunStatus(db, row),
+    channelId: route.localChannelId,
+  }));
 }
 
 function hasRunOutput(message: ChatMessage): boolean {
@@ -393,8 +474,8 @@ export function createChatMessage(
   channelId: string,
   input: ChatMessage,
 ): ChatMessage {
-  const { vault } = assertChatChannel(db, channelId, userId);
-  if (vault.id !== vaultId) throw new Error('Chat channel not found');
+  const { route } = assertChatChannel(db, channelId, userId);
+  if (route.localVaultId !== vaultId) throw new Error('Chat channel not found');
 
   const id = String(input.id || '').trim() || crypto.randomUUID();
   const author = String(input.author || '').trim();
@@ -403,13 +484,13 @@ export function createChatMessage(
   const message: ChatMessage = {
     ...input,
     id,
-    channelId,
+    channelId: route.sourceChannelId,
     author,
     body: String(input.body ?? ''),
     createdAt: input.createdAt || new Date().toISOString(),
   };
 
-  const row = messageToRow(vault.id, channelId, message);
+  const row = messageToRow(route.sourceVaultId, route.sourceChannelId, message);
   const info = db.prepare(`
     INSERT INTO chat_messages (
       id, channel_id, vault_id, author, body, created_at,
@@ -436,7 +517,7 @@ export function createChatMessage(
   // Carry the persistence order so the create broadcast orders identically to a
   // later reload (which reads rowid) even for same-millisecond messages.
   message.seq = Number(info.lastInsertRowid);
-  return message;
+  return { ...message, channelId: route.localChannelId };
 }
 
 export function updateChatMessage(
@@ -447,10 +528,10 @@ export function updateChatMessage(
   messageId: string,
   patch: Partial<ChatMessage>,
 ): ChatMessage | undefined {
-  const { vault } = assertChatChannel(db, channelId, userId);
-  if (vault.id !== vaultId) throw new Error('Chat channel not found');
+  const { route } = assertChatChannel(db, channelId, userId);
+  if (route.localVaultId !== vaultId) throw new Error('Chat channel not found');
 
-  const existing = db.prepare('SELECT *, rowid FROM chat_messages WHERE id = ? AND channel_id = ?').get(messageId, channelId) as ChatMessageRow | undefined;
+  const existing = db.prepare('SELECT *, rowid FROM chat_messages WHERE id = ? AND channel_id = ?').get(messageId, route.sourceChannelId) as ChatMessageRow | undefined;
   if (!existing) return undefined;
 
   const current = rowToMessage(existing);
@@ -493,7 +574,10 @@ export function updateChatMessage(
     next.replyTo = patch.replyTo === null || patch.replyTo === undefined ? undefined : patch.replyTo;
   }
 
-  return persistChatMessageRow(db, vault.id, channelId, next);
+  return {
+    ...persistChatMessageRow(db, route.sourceVaultId, route.sourceChannelId, next),
+    channelId: route.localChannelId,
+  };
 }
 
 /**
@@ -607,13 +691,13 @@ export function buildAgentChatContentFromRunEvents(
 }
 
 export function listChatAgentMembers(db: Db, channelId: string, userId: number): ChatAgentRegistration[] {
-  assertChatChannel(db, channelId, userId);
+  const { route } = assertChatChannel(db, channelId, userId);
   const rows = db.prepare(`
     SELECT *
     FROM chat_agent_members
     WHERE channel_id = ?
     ORDER BY created_at ASC, id ASC
-  `).all(channelId) as ChatAgentMemberRow[];
+  `).all(route.sourceChannelId) as ChatAgentMemberRow[];
   return rows.map(rowToAgentMember);
 }
 
@@ -624,11 +708,11 @@ export function upsertChatAgentMember(
   channelId: string,
   input: Partial<ChatAgentRegistration>,
 ): ChatAgentRegistration {
-  const { vault } = assertChatChannel(db, channelId, userId);
-  if (vault.id !== vaultId) throw new Error('Chat channel not found');
+  const { route } = assertChatChannel(db, channelId, userId);
+  if (route.localVaultId !== vaultId) throw new Error('Chat channel not found');
 
   const member = normalizeAgentRegistration(input);
-  const existing = db.prepare('SELECT id, conversation_id FROM chat_agent_members WHERE id = ? AND channel_id = ?').get(member.id, channelId) as { id: string; conversation_id: string } | undefined;
+  const existing = db.prepare('SELECT id, conversation_id FROM chat_agent_members WHERE id = ? AND channel_id = ?').get(member.id, route.sourceChannelId) as { id: string; conversation_id: string } | undefined;
 
   // The session id is sticky: an explicit value (e.g. a `/clear` rotation) wins,
   // otherwise keep the member's existing session, otherwise mint a fresh one.
@@ -661,7 +745,7 @@ export function upsertChatAgentMember(
       member.yolo ? 1 : 0,
       member.conversationId,
       member.id,
-      channelId,
+      route.sourceChannelId,
     );
   } else {
     db.prepare(`
@@ -671,8 +755,8 @@ export function upsertChatAgentMember(
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       member.id,
-      channelId,
-      vault.id,
+      route.sourceChannelId,
+      route.sourceVaultId,
       member.agentId,
       member.displayName,
       member.mention,
@@ -696,9 +780,9 @@ export function removeChatAgentMember(
   channelId: string,
   registrationId: string,
 ): boolean {
-  const { vault } = assertChatChannel(db, channelId, userId);
-  if (vault.id !== vaultId) throw new Error('Chat channel not found');
+  const { route } = assertChatChannel(db, channelId, userId);
+  if (route.localVaultId !== vaultId) throw new Error('Chat channel not found');
 
-  const result = db.prepare('DELETE FROM chat_agent_members WHERE id = ? AND channel_id = ?').run(registrationId, channelId);
+  const result = db.prepare('DELETE FROM chat_agent_members WHERE id = ? AND channel_id = ?').run(registrationId, route.sourceChannelId);
   return result.changes > 0;
 }

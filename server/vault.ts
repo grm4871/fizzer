@@ -30,11 +30,6 @@ export type Vault = {
   created_at: string;
 };
 
-export type VaultMember = {
-  id: number;
-  username: string;
-};
-
 export type Folder = {
   id: string;
   vault_id: string;
@@ -221,57 +216,18 @@ function reIndexLinks(db: Db, noteId: string, vaultId: string, content: string):
 
 // ── Schema ─────────────────────────────────────────────────────────
 
-export function ensureVaultSchema(db: Db): void {
-  // Core vault tables are created in index.ts; shared-vault membership lives
-  // here so existing databases get the table before listVaults/getVault join it.
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS vault_members (
-      vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
-      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      PRIMARY KEY (vault_id, user_id)
-    );
-    CREATE INDEX IF NOT EXISTS vault_members_user_idx ON vault_members(user_id);
-  `);
+export function ensureVaultSchema(_db: Db): void {
+  // Schema is created in index.ts — this is a hook for future migrations
 }
 
 // ── Vaults ─────────────────────────────────────────────────────────
 
 export function listVaults(db: Db, userId: number): Vault[] {
-  return db.prepare(`
-    SELECT DISTINCT v.*
-    FROM vaults v
-    LEFT JOIN vault_members vm ON vm.vault_id = v.id
-    WHERE v.created_by = ? OR vm.user_id = ?
-    ORDER BY v.created_at DESC
-  `).all(userId, userId) as Vault[];
+  return db.prepare('SELECT * FROM vaults WHERE created_by = ? ORDER BY created_at DESC').all(userId) as Vault[];
 }
 
 export function getVault(db: Db, vaultId: string, userId: number): Vault | undefined {
-  return db.prepare(`
-    SELECT v.*
-    FROM vaults v
-    LEFT JOIN vault_members vm ON vm.vault_id = v.id
-    WHERE v.id = ? AND (v.created_by = ? OR vm.user_id = ?)
-    LIMIT 1
-  `).get(vaultId, userId, userId) as Vault | undefined;
-}
-
-export function addVaultMemberByUsername(db: Db, vaultId: string, ownerId: number, rawUsername: string): VaultMember {
-  const username = String(rawUsername || '').trim().toLowerCase();
-  if (!/^[a-z0-9_]{3,32}$/.test(username)) {
-    throw new Error('Username must be 3-32 lowercase letters, numbers, or underscores');
-  }
-
-  const vault = db.prepare('SELECT id, created_by FROM vaults WHERE id = ?').get(vaultId) as { id: string; created_by: number } | undefined;
-  if (!vault || vault.created_by !== ownerId) throw new Error('Only the vault owner can invite users');
-
-  const user = db.prepare('SELECT id, username FROM users WHERE username = ?').get(username) as VaultMember | undefined;
-  if (!user) throw new Error('User not found');
-  if (user.id === ownerId) throw new Error('You already own this vault');
-
-  db.prepare('INSERT OR IGNORE INTO vault_members (vault_id, user_id) VALUES (?, ?)').run(vaultId, user.id);
-  return user;
+  return db.prepare('SELECT * FROM vaults WHERE id = ? AND created_by = ?').get(vaultId, userId) as Vault | undefined;
 }
 
 function prepopulateWalkthrough(vault: Vault): void {

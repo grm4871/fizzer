@@ -20,7 +20,6 @@ import jwt from 'jsonwebtoken';
 import Database from 'better-sqlite3';
 import { Server } from 'socket.io';
 import {
-  addVaultMemberByUsername,
   addTag,
   createFolder,
   createNote,
@@ -82,9 +81,12 @@ import {
 import { fetchWidgetData } from './server/widgetData.js';
 import { resolveDeploySecret } from './server/security.js';
 import {
+  assertChatChannel,
   buildAgentChatContentFromRunEvents,
   CHAT_NOTE_MARKER,
   ensureChatSchema,
+  linkChatChannel,
+  listChatChannelRoutes,
   listChatMessages,
   createChatMessage,
   updateChatMessage,
@@ -92,6 +94,7 @@ import {
   listChatAgentMembers,
   upsertChatAgentMember,
   removeChatAgentMember,
+  type ChatMessage,
 } from './server/chat.js';
 import {
   ensurePublishSchema,
@@ -313,6 +316,26 @@ function emitVaultEvent(vaultId: string, event: string, data: unknown) {
 
 setFeedNotifySink(emitVaultEvent);
 
+function emitChatMessageEvent(sourceVaultId: string, sourceChannelId: string, event: 'vault:chatMessageCreated' | 'vault:chatMessageUpdated', message: ChatMessage) {
+  for (const route of listChatChannelRoutes(db, sourceVaultId, sourceChannelId)) {
+    emitVaultEvent(route.localVaultId, event, {
+      vaultId: route.localVaultId,
+      channelId: route.localChannelId,
+      message: { ...message, channelId: route.localChannelId },
+    });
+  }
+}
+
+function emitChatAgentEvent(sourceVaultId: string, sourceChannelId: string, event: 'vault:chatAgentMemberUpserted' | 'vault:chatAgentMemberRemoved', payload: Record<string, unknown>) {
+  for (const route of listChatChannelRoutes(db, sourceVaultId, sourceChannelId)) {
+    emitVaultEvent(route.localVaultId, event, {
+      ...payload,
+      vaultId: route.localVaultId,
+      channelId: route.localChannelId,
+    });
+  }
+}
+
 // ── Server-authoritative chat streaming ─────────────────────────────
 // A chat-originated run is linked to the agent's chat message. As the run
 // streams, the server folds its events into that message and broadcasts the
@@ -338,11 +361,8 @@ function syncRunToChatMessage(runId: number) {
       runId,
     });
     if (updated) {
-      emitVaultEvent(target.vaultId, 'vault:chatMessageUpdated', {
-        vaultId: target.vaultId,
-        channelId: target.channelId,
-        message: updated,
-      });
+      const { route } = assertChatChannel(db, target.channelId, target.userId);
+      emitChatMessageEvent(route.sourceVaultId, route.sourceChannelId, 'vault:chatMessageUpdated', updated);
     }
   } catch {
     // Channel/message vanished (e.g. deleted mid-run) — drop the target below.
@@ -958,11 +978,7 @@ app.post('/api/runs/:id/cancel', requireAuth, async (req: AuthedRequest, res) =>
     const success = await cancelRun(db, run.id);
     if (success) {
       for (const update of settleChatMessagesForRun(db, run.id)) {
-        emitVaultEvent(update.vaultId, 'vault:chatMessageUpdated', {
-          vaultId: update.vaultId,
-          channelId: update.channelId,
-          message: update.message,
-        });
+        emitChatMessageEvent(update.vaultId, update.channelId, 'vault:chatMessageUpdated', update.message);
       }
     }
     res.json({ success });
@@ -984,8 +1000,9 @@ app.get('/api/vaults/:vaultId/channels/:channelId/messages', requireAuth, (req: 
 
 app.post('/api/vaults/:vaultId/channels/:channelId/messages', requireAuth, (req: AuthedRequest, res) => {
   try {
+    const { route } = assertChatChannel(db, req.params.channelId, req.user!.id);
     const message = createChatMessage(db, req.user!.id, req.params.vaultId, req.params.channelId, req.body);
-    emitVaultEvent(req.params.vaultId, 'vault:chatMessageCreated', { vaultId: req.params.vaultId, channelId: req.params.channelId, message });
+    emitChatMessageEvent(route.sourceVaultId, route.sourceChannelId, 'vault:chatMessageCreated', message);
     res.status(201).json({ message });
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
@@ -994,9 +1011,10 @@ app.post('/api/vaults/:vaultId/channels/:channelId/messages', requireAuth, (req:
 
 app.patch('/api/vaults/:vaultId/channels/:channelId/messages/:messageId', requireAuth, (req: AuthedRequest, res) => {
   try {
+    const { route } = assertChatChannel(db, req.params.channelId, req.user!.id);
     const message = updateChatMessage(db, req.user!.id, req.params.vaultId, req.params.channelId, req.params.messageId, req.body);
     if (!message) return res.status(404).json({ error: 'Message not found' });
-    emitVaultEvent(req.params.vaultId, 'vault:chatMessageUpdated', { vaultId: req.params.vaultId, channelId: req.params.channelId, message });
+    emitChatMessageEvent(route.sourceVaultId, route.sourceChannelId, 'vault:chatMessageUpdated', message);
     res.json({ message });
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
@@ -1014,8 +1032,9 @@ app.get('/api/vaults/:vaultId/channels/:channelId/agents', requireAuth, (req: Au
 
 app.put('/api/vaults/:vaultId/channels/:channelId/agents', requireAuth, (req: AuthedRequest, res) => {
   try {
+    const { route } = assertChatChannel(db, req.params.channelId, req.user!.id);
     const registration = upsertChatAgentMember(db, req.user!.id, req.params.vaultId, req.params.channelId, req.body);
-    emitVaultEvent(req.params.vaultId, 'vault:chatAgentMemberUpserted', { vaultId: req.params.vaultId, channelId: req.params.channelId, registration });
+    emitChatAgentEvent(route.sourceVaultId, route.sourceChannelId, 'vault:chatAgentMemberUpserted', { registration });
     res.json({ registration });
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
@@ -1024,14 +1043,29 @@ app.put('/api/vaults/:vaultId/channels/:channelId/agents', requireAuth, (req: Au
 
 app.delete('/api/vaults/:vaultId/channels/:channelId/agents/:registrationId', requireAuth, (req: AuthedRequest, res) => {
   try {
+    const { route } = assertChatChannel(db, req.params.channelId, req.user!.id);
     const removed = removeChatAgentMember(db, req.user!.id, req.params.vaultId, req.params.channelId, req.params.registrationId);
     if (!removed) return res.status(404).json({ error: 'Agent member not found' });
-    emitVaultEvent(req.params.vaultId, 'vault:chatAgentMemberRemoved', { vaultId: req.params.vaultId, channelId: req.params.channelId, registrationId: req.params.registrationId });
+    emitChatAgentEvent(route.sourceVaultId, route.sourceChannelId, 'vault:chatAgentMemberRemoved', { registrationId: req.params.registrationId });
     res.json({ success: true });
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
+
+function firstOwnedVault(userId: number) {
+  return db.prepare('SELECT * FROM vaults WHERE created_by = ? ORDER BY created_at ASC LIMIT 1').get(userId) as ReturnType<typeof createVault> | undefined;
+}
+
+function uniqueSharedChatTitle(vaultId: string, baseTitle: string): string {
+  const base = String(baseTitle || 'shared-chat').trim() || 'shared-chat';
+  for (let i = 0; i < 50; i++) {
+    const title = i === 0 ? base : `${base} ${i + 1}`;
+    const existing = db.prepare('SELECT id FROM notes WHERE vault_id = ? AND title = ? COLLATE NOCASE').get(vaultId, title);
+    if (!existing) return title;
+  }
+  return `${base} ${Date.now()}`;
+}
 
 app.post('/api/vaults/:vaultId/channels/:channelId/invites', requireAuth, (req: AuthedRequest, res) => {
   const vault = getVault(db, req.params.vaultId, req.user!.id);
@@ -1040,22 +1074,63 @@ app.post('/api/vaults/:vaultId/channels/:channelId/invites', requireAuth, (req: 
   if (!channel || channel.vault_id !== vault.id || !channel.content.trim().startsWith(CHAT_NOTE_MARKER)) {
     return res.status(404).json({ error: 'Chat channel not found' });
   }
+  if (vault.created_by !== req.user!.id) {
+    return res.status(403).json({ error: 'Only the chat owner can invite users' });
+  }
 
   try {
-    const invitedUser = addVaultMemberByUsername(db, vault.id, req.user!.id, String(req.body?.username || ''));
+    const username = String(req.body?.username || '').trim().toLowerCase();
+    if (!/^[a-z0-9_]{3,32}$/.test(username)) {
+      return res.status(400).json({ error: 'Username must be 3-32 lowercase letters, numbers, or underscores' });
+    }
+    const invitedUser = db.prepare('SELECT id, username FROM users WHERE username = ?').get(username) as { id: number; username: string } | undefined;
+    if (!invitedUser) return res.status(404).json({ error: 'User not found' });
+    if (invitedUser.id === req.user!.id) return res.status(400).json({ error: 'You already have this chat' });
+
+    let targetVault = firstOwnedVault(invitedUser.id);
+    if (!targetVault) targetVault = createVault(db, invitedUser.id, { name: 'My Vault' });
+
+    const existingLink = db.prepare(`
+      SELECT local_channel_id AS localChannelId, local_vault_id AS localVaultId
+      FROM chat_channel_links
+      WHERE source_channel_id = ?
+        AND local_vault_id IN (SELECT id FROM vaults WHERE created_by = ?)
+      ORDER BY created_at ASC
+      LIMIT 1
+    `).get(channel.id, invitedUser.id) as { localChannelId: string; localVaultId: string } | undefined;
+
+    let localChannelId = existingLink?.localChannelId;
+    let localVaultId = existingLink?.localVaultId || targetVault.id;
+    if (!localChannelId) {
+      const title = uniqueSharedChatTitle(targetVault.id, channel.title);
+      const localChannel = createNote(db, targetVault.id, invitedUser.id, {
+        title,
+        content: `${CHAT_NOTE_MARKER}\nshared_from=${channel.id}`,
+      });
+      localChannelId = localChannel.id;
+      localVaultId = targetVault.id;
+      linkChatChannel(db, {
+        localVaultId,
+        localChannelId,
+        sourceVaultId: vault.id,
+        sourceChannelId: channel.id,
+        createdBy: req.user!.id,
+      });
+      emitVaultEvent(localVaultId, 'vault:noteCreated', { noteId: localChannelId, vaultId: localVaultId, title: localChannel.title });
+    }
+
     const message = createChatMessage(db, req.user!.id, vault.id, channel.id, {
       id: crypto.randomUUID(),
       channelId: channel.id,
       author: 'Cascade',
-      body: `@${req.user!.username} invited @${invitedUser.username} to this chat.`,
+      body: `@${req.user!.username} invited @${invitedUser.username} to add this chat to their vault.`,
       createdAt: new Date().toISOString(),
     });
-    emitVaultEvent(vault.id, 'vault:chatMessageCreated', { vaultId: vault.id, channelId: channel.id, message });
-    res.status(201).json({ user: publicUser(invitedUser), message });
+    emitChatMessageEvent(vault.id, channel.id, 'vault:chatMessageCreated', message);
+    res.status(201).json({ user: publicUser(invitedUser), vaultId: localVaultId, channelId: localChannelId, message });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    const status = message === 'User not found' ? 404 : message.includes('Only the vault owner') ? 403 : 400;
-    res.status(status).json({ error: message });
+    res.status(400).json({ error: message });
   }
 });
 
