@@ -34,6 +34,7 @@ const CHAT_BREVITY_CONTEXT = "Shared chat — reply briefly and naturally.";
 // the same live instance the desktop is connected to (cscd.online by default).
 const noteApi = { url: '', token: '' };
 const HELPER_CONFIG_PATH = path.join(os.homedir(), '.cascade', 'agent-helper-context.json');
+const RUN_CONTEXT_DIR = path.join(os.homedir(), '.cascade', 'run-contexts');
 
 /** Directory holding the agent helper CLIs; prefer source, fall back to dist. */
 function resolveWrapperDir() {
@@ -69,24 +70,13 @@ function setNoteApiConfig({ url, token } = {}) {
  * ensure it's on PATH. Vault is also stated in the prompt context, so the env
  * value is just a default the agent can override with --vault.
  */
-function applyNoteEnv(opts) {
-  ensureWrapperOnPath();
-  if (noteApi.url) process.env.CASCADE_NOTE_URL = noteApi.url;
-  if (noteApi.token) process.env.CASCADE_NOTE_TOKEN = noteApi.token;
-  const vaultId = String(opts && opts.vaultId || '').trim();
-  if (vaultId) process.env.CASCADE_NOTE_VAULT = vaultId;
-  const channelId = String(opts && opts.chatChannelId || opts?.chat?.channelId || '').trim();
-  if (channelId) process.env.CASCADE_CHAT_CHANNEL = channelId;
-  const messageId = String(opts && opts.chatMessageId || opts?.chat?.messageId || '').trim();
-  if (messageId) process.env.CASCADE_CHAT_MESSAGE = messageId;
-  const chatAuthor = String(opts && opts.chatAuthor || '').trim();
-  if (chatAuthor) process.env.CASCADE_CHAT_AUTHOR = chatAuthor;
-  const agentId = String(opts && opts.agent || '').trim();
-  const registrationId = String(opts && opts.chatRegistrationId || '').trim();
-  writeHelperConfig({ vaultId, channelId, messageId, chatAuthor, agentId, registrationId });
+function helperConfigPathForRun(runId) {
+  const id = Number(runId);
+  if (Number.isFinite(id) && id > 0) return path.join(RUN_CONTEXT_DIR, `${id}.json`);
+  return HELPER_CONFIG_PATH;
 }
 
-function writeHelperConfig({ vaultId, channelId, messageId, chatAuthor, agentId, registrationId } = {}) {
+function writeHelperConfig({ runId, vaultId, channelId, messageId, chatAuthor, agentId, registrationId } = {}) {
   const payload = {
     url: noteApi.url || process.env.CASCADE_NOTE_URL || 'https://cscd.online',
     token: noteApi.token || process.env.CASCADE_NOTE_TOKEN || '',
@@ -96,16 +86,60 @@ function writeHelperConfig({ vaultId, channelId, messageId, chatAuthor, agentId,
     chatAuthor: chatAuthor || process.env.CASCADE_CHAT_AUTHOR || '',
     agentId: agentId || '',
     registrationId: registrationId || '',
+    runId: Number.isFinite(Number(runId)) ? Number(runId) : undefined,
     helperDir: resolveWrapperDir(),
     updatedAt: new Date().toISOString(),
   };
+  const configPath = helperConfigPathForRun(runId);
   try {
-    fs.mkdirSync(path.dirname(HELPER_CONFIG_PATH), { recursive: true, mode: 0o700 });
-    fs.writeFileSync(HELPER_CONFIG_PATH, JSON.stringify(payload, null, 2), { mode: 0o600 });
-    fs.chmodSync(HELPER_CONFIG_PATH, 0o600);
+    fs.mkdirSync(path.dirname(configPath), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(configPath, JSON.stringify(payload, null, 2), { mode: 0o600 });
+    fs.chmodSync(configPath, 0o600);
   } catch (err) {
     console.warn('[agent-runner] failed to write helper context:', err?.message || err);
   }
+  return configPath;
+}
+
+/** Per-run env for helper CLIs so concurrent agents don't stomp each other's author. */
+function buildRunHelperEnv(opts) {
+  ensureWrapperOnPath();
+  const runId = Number(opts?.runId);
+  const vaultId = String(opts && opts.vaultId || '').trim();
+  const channelId = String(opts && opts.chatChannelId || opts?.chat?.channelId || '').trim();
+  const messageId = String(opts && opts.chatMessageId || opts?.chat?.messageId || '').trim();
+  const chatAuthor = String(opts && opts.chatAuthor || '').trim();
+  const agentId = String(opts && opts.agent || '').trim();
+  const registrationId = String(opts && opts.chatRegistrationId || '').trim();
+  const configPath = writeHelperConfig({
+    runId,
+    vaultId,
+    channelId,
+    messageId,
+    chatAuthor,
+    agentId,
+    registrationId,
+  });
+  const env = {
+    CASCADE_NOTE_URL: noteApi.url || process.env.CASCADE_NOTE_URL || 'https://cscd.online',
+    CASCADE_NOTE_TOKEN: noteApi.token || process.env.CASCADE_NOTE_TOKEN || '',
+    CASCADE_HELPER_CONFIG: configPath,
+    CASCADE_HELPER_DIR: resolveWrapperDir(),
+  };
+  if (vaultId) env.CASCADE_NOTE_VAULT = vaultId;
+  if (channelId) env.CASCADE_CHAT_CHANNEL = channelId;
+  if (messageId) env.CASCADE_CHAT_MESSAGE = messageId;
+  if (chatAuthor) env.CASCADE_CHAT_AUTHOR = chatAuthor;
+  if (Number.isFinite(runId) && runId > 0) env.CASCADE_RUN_ID = String(runId);
+  return env;
+}
+
+function cleanupRunHelperConfig(runId) {
+  const id = Number(runId);
+  if (!Number.isFinite(id) || id <= 0) return;
+  try {
+    fs.unlinkSync(helperConfigPathForRun(id));
+  } catch { /* ignore */ }
 }
 
 /** True when this run was triggered from a chat channel (vs a note pane). */
@@ -195,7 +229,7 @@ async function loadCliAgentModule() {
 async function runClaudeLocally(opts, emit) {
   const { query } = await loadClaudeSdk();
   const runId = Number(opts.runId);
-  applyNoteEnv(opts);
+  const helperEnv = buildRunHelperEnv(opts);
   const cwd = resolveAgentCwd(opts.cwd, opts.vaultRoot);
   const model = (typeof opts.model === 'string' && opts.model.trim()) ? opts.model.trim() : CLAUDE_DEFAULT_MODEL;
   const chatRun = isChatRun(opts);
@@ -231,6 +265,7 @@ async function runClaudeLocally(opts, emit) {
       cwd,
       model,
       maxTurns,
+      env: { ...process.env, ...helperEnv },
       // "Yolo" bypasses all permission prompts (requires the explicit
       // allowDangerouslySkipPermissions acknowledgement); otherwise auto-accept
       // only file edits.
@@ -344,11 +379,14 @@ async function startLocalAgentRun(opts, sendEvent) {
       const message = error instanceof Error ? error.message : String(error);
       emit('status', { status: 'failed', summary: message });
       throw error;
+    } finally {
+      cleanupRunHelperConfig(runId);
     }
   }
 
-  const { runCliAgent } = await loadCliAgentModule();
-  applyNoteEnv(opts);
+  const { runCliAgent, setRunHelperEnv, clearRunHelperEnv } = await loadCliAgentModule();
+  const helperEnv = buildRunHelperEnv(opts);
+  setRunHelperEnv(runId, helperEnv);
   const cwd = resolveAgentCwd(opts.cwd, opts.vaultRoot);
 
   try {
@@ -374,6 +412,9 @@ async function startLocalAgentRun(opts, sendEvent) {
     const message = error instanceof Error ? error.message : String(error);
     emit('status', { status: 'failed', summary: message });
     throw error;
+  } finally {
+    clearRunHelperEnv(runId);
+    cleanupRunHelperConfig(runId);
   }
 }
 

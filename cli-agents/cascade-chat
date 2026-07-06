@@ -70,6 +70,10 @@ function errorMessage(err) {
 }
 
 function helperConfigPath() {
+  const runId = String(process.env.CASCADE_RUN_ID || '').trim();
+  if (runId) {
+    return path.join(os.homedir(), '.cascade', 'run-contexts', `${runId}.json`);
+  }
   return process.env.CASCADE_HELPER_CONFIG
     || path.join(os.homedir(), '.cascade', 'agent-helper-context.json');
 }
@@ -254,15 +258,19 @@ async function main() {
   if (cmd === 'send') {
     const body = String(args.message === true || args.message === undefined ? await readStdin() : args.message).trim();
     if (!body) fail('missing message. Pass --message <text> or pipe text on stdin.');
-    const author = optionString(args, 'author', 'CASCADE_CHAT_AUTHOR', config, 'chatAuthor') || 'Agent';
+    const registrationId = configString(config, 'registrationId');
+    const agentId = configString(config, 'agentId');
+    const author = optionString(args, 'author', 'CASCADE_CHAT_AUTHOR', config, 'chatAuthor')
+      || (registrationId ? '' : 'Agent');
+    const idPrefix = agentId || (author && author !== 'Agent' ? author.toLowerCase().replace(/\s+/g, '-') : 'msg');
     const message = {
-      id: `agent-msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      id: `agent-${idPrefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       channelId,
       author,
       body,
       createdAt: new Date().toISOString(),
-      ...(configString(config, 'agentId') ? { agentId: configString(config, 'agentId') } : {}),
-      ...(configString(config, 'registrationId') ? { registrationId: configString(config, 'registrationId') } : {}),
+      ...(agentId ? { agentId } : {}),
+      ...(registrationId ? { registrationId } : {}),
     };
     const result = await api(url, token, 'POST', `/api/vaults/${vaultId}/channels/${channelId}/messages`, message);
     const sent = result.message || message;

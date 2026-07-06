@@ -69,6 +69,10 @@ function errorMessage(err) {
 }
 
 function helperConfigPath() {
+  const runId = String(process.env.CASCADE_RUN_ID || '').trim();
+  if (runId) {
+    return path.join(os.homedir(), '.cascade', 'run-contexts', `${runId}.json`);
+  }
   return process.env.CASCADE_HELPER_CONFIG
     || path.join(os.homedir(), '.cascade', 'agent-helper-context.json');
 }

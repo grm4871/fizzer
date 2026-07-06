@@ -543,7 +543,21 @@ export function createChatMessage(
   if (route.localVaultId !== vaultId) throw new Error('Chat channel not found');
 
   const id = String(input.id || '').trim() || crypto.randomUUID();
-  const author = String(input.author || '').trim();
+  const registrationId = String(input.registrationId || '').trim();
+  let author = String(input.author || '').trim();
+  let agentId = input.agentId;
+
+  // Agent helper sends include registrationId; treat it as authoritative so
+  // concurrent runs can't mis-attribute messages when helper context races.
+  if (registrationId) {
+    const row = db
+      .prepare('SELECT display_name, agent_id FROM chat_agent_members WHERE id = ? AND channel_id = ?')
+      .get(registrationId, route.sourceChannelId) as { display_name: string; agent_id: string } | undefined;
+    if (row) {
+      author = row.display_name?.trim() || row.agent_id;
+      agentId = row.agent_id;
+    }
+  }
   if (!author) throw new Error('Author is required');
 
   const message: ChatMessage = {
@@ -551,6 +565,8 @@ export function createChatMessage(
     id,
     channelId: route.sourceChannelId,
     author,
+    ...(agentId ? { agentId } : {}),
+    ...(registrationId ? { registrationId } : {}),
     body: String(input.body ?? ''),
     createdAt: input.createdAt || new Date().toISOString(),
   };

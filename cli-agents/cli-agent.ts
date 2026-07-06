@@ -36,6 +36,23 @@ import type Database from 'better-sqlite3';
 type Db = Database.Database;
 
 export const activeCliProcesses = new Map<number, ChildProcess>();
+const runHelperEnvByRunId = new Map<number, NodeJS.ProcessEnv>();
+
+export function setRunHelperEnv(runId: number, env: NodeJS.ProcessEnv): void {
+  runHelperEnvByRunId.set(runId, env);
+}
+
+export function clearRunHelperEnv(runId: number): void {
+  runHelperEnvByRunId.delete(runId);
+}
+
+function spawnEnv(runId?: number): NodeJS.ProcessEnv {
+  if (runId !== undefined) {
+    const runEnv = runHelperEnvByRunId.get(runId);
+    if (runEnv) return { ...process.env, ...runEnv };
+  }
+  return process.env;
+}
 
 // ═══════════════════════════════════════════════════════════════
 // TYPES
@@ -237,7 +254,7 @@ function driveProcess(
   return new Promise((resolve, reject) => {
     let child;
     try {
-      child = spawn(bin, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+      child = spawn(bin, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: spawnEnv(runId) });
       if (runId !== undefined) {
         activeCliProcesses.set(runId, child);
       }
@@ -659,10 +676,10 @@ function discoverAntigravityEnv(): Record<string, string> {
 /**
  * Helper to run a command and return stdout as string.
  */
-function runCommand(bin: string, args: string[], cwd: string): Promise<string> {
+function runCommand(bin: string, args: string[], cwd: string, runId?: number): Promise<string> {
   return new Promise((resolve, reject) => {
     const discoveredEnv = discoverAntigravityEnv();
-    const env = { ...process.env, ...discoveredEnv };
+    const env = { ...spawnEnv(runId), ...discoveredEnv };
 
     const logFile = '/home/jt/Desktop/cascade/debug.log';
     fs.appendFileSync(logFile, `[${new Date().toISOString()}] In-App Executing: ${bin} ${args.join(' ')}\n`);
@@ -748,7 +765,7 @@ async function runAntigravity(
 
   let stdoutStr: string;
   try {
-    stdoutStr = await runCommand(bin, args, cwd);
+    stdoutStr = await runCommand(bin, args, cwd, runId);
   } catch (err) {
     throw new Error(`Failed to run agentapi: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -1109,7 +1126,7 @@ function driveHermesProcess(
       child = spawn(bin, args, {
         cwd,
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...process.env, HERMES_CASCADE_EVENTS: '1' },
+        env: { ...spawnEnv(runId), HERMES_CASCADE_EVENTS: '1' },
       });
       if (runId !== undefined) {
         activeCliProcesses.set(runId, child);
