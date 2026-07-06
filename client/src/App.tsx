@@ -149,6 +149,7 @@ function readLegacyLocalChatAgentMembers(): Record<string, ChatAgentRegistration
             contextPrompt: typeof registration.contextPrompt === 'string' ? registration.contextPrompt : '',
             taggableByAgents: typeof registration.taggableByAgents === 'boolean' ? registration.taggableByAgents : true,
             replyToEveryMessage: typeof registration.replyToEveryMessage === 'boolean' ? registration.replyToEveryMessage : false,
+            pingableByOthers: typeof registration.pingableByOthers === 'boolean' ? registration.pingableByOthers : false,
             yolo: typeof registration.yolo === 'boolean' ? registration.yolo : false,
             conversationId: typeof registration.conversationId === 'string' ? registration.conversationId : '',
           };
@@ -348,6 +349,14 @@ function normalizeChatRunBlocks(content: unknown): ChatBlock[] {
   return blocks;
 }
 
+function hasChatRunToolBlock(content: unknown): boolean {
+  return Array.isArray(content) && content.some((item) => {
+    if (!item || typeof item !== 'object') return false;
+    const type = (item as Record<string, unknown>).type;
+    return type === 'tool_use' || type === 'tool_result';
+  });
+}
+
 function appendChatRunBlocks(existing: ChatBlock[] | undefined, blocks: ChatBlock[]) {
   const next = [...(existing ?? [])];
   for (const block of blocks) {
@@ -412,7 +421,7 @@ function formatAgentChatPrompt(
   const selfName = registration.displayName || selfAgent?.label || registration.agentId;
   const sessionNote = continuation ? ' Your session already has earlier turns.' : '';
   const channelNote = registration.contextPrompt ? ` Channel note: ${registration.contextPrompt}` : '';
-  const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, responding to ${triggeringAuthor}.${sessionNote} Reply briefly. Run \`cascade-chat history --include-reply-context\` for full channel context. Notes: \`cascade-note\` + \`![[Title]]\` embeds.${channelNote}`;
+  const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, responding to ${triggeringAuthor}.${sessionNote} Reply briefly. Run \`cascade-chat history --include-reply-context\` for full channel context. Use \`cascade-chat send --message "text"\` to send a standalone message in chat during your run, especially after tool calls. Notes: \`cascade-note\` + \`![[Title]]\` embeds.${channelNote}`;
   return `${header}\n\n${request}`;
 }
 
@@ -1059,27 +1068,37 @@ export default function App() {
     const continuation = Boolean(watermark);
     const runPrompt = formatAgentChatPrompt(channelName, registration, prompt, triggeringMessage.author, continuation);
     const agentMessageId = `agent-${agentId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    streamingChatMessageIdsRef.current.add(agentMessageId);
-    appendChatMessage(channelId, {
-      id: agentMessageId,
-      channelId,
-      author: registration.displayName || agentLabel(agentId),
-      body: 'Thinking...',
-      createdAt: new Date().toISOString(),
-      status: 'running',
-      agentId,
-      registrationId: registration.id,
-    });
 
     let runSocket: ReturnType<typeof connectRunsSocket> | null = null;
     let activeRunId: number | null = null;
+    let agentMessageCreated = false;
 
     try {
       // One sticky session per member: the run resumes (and extends) the
       // member's conversation. A `/clear` rotates conversationId to start fresh.
       const resumeSessionId = registration.conversationId || undefined;
       let assistantText = '';
+      let bufferedBlocks: ChatBlock[] = [];
       const processedSeqs = new Set<number>();
+
+      const ensureAgentMessage = (runId?: number, patch: Partial<ChatMessage> = {}) => {
+        if (agentMessageCreated) return;
+        agentMessageCreated = true;
+        streamingChatMessageIdsRef.current.add(agentMessageId);
+        appendChatMessage(channelId, {
+          id: agentMessageId,
+          channelId,
+          author: registration.displayName || agentLabel(agentId),
+          body: assistantText.trim() || 'Thinking...',
+          createdAt: new Date().toISOString(),
+          status: 'running',
+          agentId,
+          registrationId: registration.id,
+          ...(runId ? { runId } : {}),
+          ...(bufferedBlocks.length ? { blocks: bufferedBlocks } : {}),
+          ...patch,
+        });
+      };
 
       const finishRun = (runId: number, cleanup: () => void) => {
         cleanup();
@@ -1114,6 +1133,10 @@ export default function App() {
               const finalBody = summaryText
                 || assistantText.trim()
                 || (payload.status === 'failed' ? 'Agent failed.' : 'Done.');
+              ensureAgentMessage(runId, {
+                body: finalBody,
+                status: payload.status === 'failed' ? 'failed' : undefined,
+              });
               updateChatMessage(channelId, agentMessageId, (message) => ({
                 ...message,
                 body: finalBody,
@@ -1149,8 +1172,13 @@ export default function App() {
             const payload = JSON.parse(event.payload_json);
             const blocks = normalizeChatRunBlocks(payload.message?.content);
             const text = textFromRunContent(payload.message?.content);
-            if (!text && blocks.length === 0) return;
+            const hasToolBlock = hasChatRunToolBlock(payload.message?.content);
+            if (!text && blocks.length === 0 && !hasToolBlock) return;
             if (text) assistantText += text;
+            bufferedBlocks = appendChatRunBlocks(bufferedBlocks, blocks);
+            const createdByThisEvent = hasToolBlock && !agentMessageCreated;
+            if (hasToolBlock) ensureAgentMessage(runId);
+            if (!agentMessageCreated || createdByThisEvent) return;
             updateChatMessage(channelId, agentMessageId, (message) => ({
               ...message,
               body: text ? (message.body === 'Thinking...' ? text : message.body + text) : message.body,
@@ -1159,7 +1187,11 @@ export default function App() {
           } else if (event.type === 'user') {
             const payload = JSON.parse(event.payload_json);
             const blocks = normalizeChatRunBlocks(payload.message?.content);
-            if (blocks.length === 0) return;
+            const hasToolBlock = hasChatRunToolBlock(payload.message?.content);
+            bufferedBlocks = appendChatRunBlocks(bufferedBlocks, blocks);
+            const createdByThisEvent = hasToolBlock && !agentMessageCreated;
+            if (hasToolBlock) ensureAgentMessage(runId);
+            if (blocks.length === 0 || !agentMessageCreated || createdByThisEvent) return;
             updateChatMessage(channelId, agentMessageId, (message) => ({
               ...message,
               blocks: appendChatRunBlocks(message.blocks, blocks),
@@ -1194,9 +1226,13 @@ export default function App() {
           cwd: normalizeChatCwd(registration.cwd) || undefined,
           yolo: registration.yolo,
           images: runImages,
+          // Identifies the registered agent so the server can route the run to the
+          // agent owner's desktop runner (cross-user pings) and enforce its
+          // pingable-by-others setting, rather than trusting these client values.
+          registrationId: registration.id,
           // Link the run to this chat message so the server persists/broadcasts
           // the streamed reply to all clients (see serverOwnedChatMessageIdsRef).
-          chat: { channelId, messageId: agentMessageId },
+          chat: { channelId, messageId: agentMessageId, author: registration.displayName || agentLabel(agentId) },
         }),
       });
 
@@ -1230,7 +1266,6 @@ export default function App() {
         // Best-effort backfill; live events will still populate going forward.
       }
     } catch (error) {
-      streamingChatMessageIdsRef.current.delete(agentMessageId);
       // Release server ownership so this client-side failure is persisted by us.
       // If the run was actually created and later succeeds, the server's update
       // (higher stream score) still wins over this 'failed' state.
@@ -1241,6 +1276,20 @@ export default function App() {
       } else {
         runSocket?.disconnect();
       }
+      if (!agentMessageCreated) {
+        appendChatMessage(channelId, {
+          id: agentMessageId,
+          channelId,
+          author: registration.displayName || agentLabel(agentId),
+          body: 'Failed to start agent.',
+          createdAt: new Date().toISOString(),
+          status: 'failed',
+          agentId,
+          registrationId: registration.id,
+          ...(activeRunId != null ? { runId: activeRunId } : {}),
+        });
+      }
+      streamingChatMessageIdsRef.current.delete(agentMessageId);
       updateChatMessage(channelId, agentMessageId, (message) => ({
         ...message,
         body: error instanceof Error ? error.message : 'Failed to start agent.',

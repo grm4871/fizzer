@@ -77,16 +77,23 @@ function applyNoteEnv(opts) {
   if (channelId) process.env.CASCADE_CHAT_CHANNEL = channelId;
   const messageId = String(opts && opts.chatMessageId || opts?.chat?.messageId || '').trim();
   if (messageId) process.env.CASCADE_CHAT_MESSAGE = messageId;
-  writeHelperConfig({ vaultId, channelId, messageId });
+  const chatAuthor = String(opts && opts.chatAuthor || '').trim();
+  if (chatAuthor) process.env.CASCADE_CHAT_AUTHOR = chatAuthor;
+  const agentId = String(opts && opts.agent || '').trim();
+  const registrationId = String(opts && opts.chatRegistrationId || '').trim();
+  writeHelperConfig({ vaultId, channelId, messageId, chatAuthor, agentId, registrationId });
 }
 
-function writeHelperConfig({ vaultId, channelId, messageId } = {}) {
+function writeHelperConfig({ vaultId, channelId, messageId, chatAuthor, agentId, registrationId } = {}) {
   const payload = {
     url: noteApi.url || process.env.CASCADE_NOTE_URL || 'https://cscd.online',
     token: noteApi.token || process.env.CASCADE_NOTE_TOKEN || '',
     vaultId: vaultId || process.env.CASCADE_NOTE_VAULT || '',
     chatChannelId: channelId || process.env.CASCADE_CHAT_CHANNEL || '',
     chatMessageId: messageId || process.env.CASCADE_CHAT_MESSAGE || '',
+    chatAuthor: chatAuthor || process.env.CASCADE_CHAT_AUTHOR || '',
+    agentId: agentId || '',
+    registrationId: registrationId || '',
     helperDir: resolveWrapperDir(),
     updatedAt: new Date().toISOString(),
   };
@@ -224,9 +231,9 @@ async function runClaudeLocally(opts, emit) {
       // only file edits.
       permissionMode: opts.yolo ? 'bypassPermissions' : 'acceptEdits',
       ...(opts.yolo ? { allowDangerouslySkipPermissions: true } : {}),
-      // Even without yolo, let agents run the read-only wrapper commands
-      // (`cascade-chat`, `cascade-note`) unprompted so they can pull channel
-      // history/notes for context. Everything else still respects acceptEdits.
+      // Even without yolo, let agents run the wrapper commands (`cascade-chat`,
+      // `cascade-note`) unprompted so they can pull channel history/notes and
+      // send chat messages. Everything else still respects acceptEdits.
       allowedTools: ['Bash(cascade-chat *)', 'Bash(cascade-note *)'],
       // Electron's main process is not a Node runtime, so spawn a real `node`
       // from PATH to host the bundled Claude Code CLI.

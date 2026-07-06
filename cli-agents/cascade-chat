@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
- * @file cascade-chat — Chat history lookup against a live Cascade instance.
+ * @file cascade-chat — Chat history/send helper against a live Cascade instance.
  *
  * Agents usually receive a short injected chat window. When that is ambiguous,
  * this CLI lets them fetch the authoritative channel history, including reply
- * metadata, from the running app.
+ * metadata, and send standalone messages into the running chat.
  */
 
 'use strict';
@@ -15,14 +15,17 @@ import path from 'node:path';
 
 const DEFAULT_URL = 'https://cscd.online';
 
-const USAGE = `cascade-chat — read live Cascade chat history
+const USAGE = `cascade-chat — read/send live Cascade chat
 
 Usage:
   cascade-chat history                 recent messages for the current channel
+  cascade-chat send --message <text>    send a standalone message to the channel
 
 Options:
   --vault <id>              vault id (default $CASCADE_NOTE_VAULT)
   --channel <id>            channel id (default $CASCADE_CHAT_CHANNEL)
+  --message <text>          message body for send (default: stdin)
+  --author <name>           author for send (default current agent/user)
   --before-message-id <id>  only messages before this message
   --around-message-id <id>  window centered around this message
   --limit <n>               max messages (default 40)
@@ -33,7 +36,8 @@ Options:
   --json                    machine-readable output
 
 Env: CASCADE_NOTE_URL, CASCADE_NOTE_TOKEN, CASCADE_NOTE_VAULT,
-     CASCADE_CHAT_CHANNEL, CASCADE_CHAT_MESSAGE, CASCADE_HELPER_CONFIG`;
+     CASCADE_CHAT_CHANNEL, CASCADE_CHAT_MESSAGE, CASCADE_CHAT_AUTHOR,
+     CASCADE_HELPER_CONFIG`;
 
 function parseArgs(argv) {
   const args = { _: [] };
@@ -108,16 +112,30 @@ async function getToken(url, args, config) {
   return body.token;
 }
 
-async function api(url, token, method, path) {
+async function api(url, token, method, path, body) {
+  const headers = { authorization: `Bearer ${token}` };
+  if (body !== undefined) headers['content-type'] = 'application/json';
   const res = await fetch(`${url}${path}`, {
     method,
-    headers: { authorization: `Bearer ${token}` },
+    headers,
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
   });
   const text = await res.text();
   let json;
   try { json = text ? JSON.parse(text) : {}; } catch { json = { raw: text }; }
   if (!res.ok) fail(`${method} ${path} -> ${res.status}: ${json.error || text}`);
   return json;
+}
+
+async function readStdin() {
+  if (process.stdin.isTTY) return '';
+  return new Promise((resolve, reject) => {
+    let data = '';
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', (chunk) => { data += chunk; });
+    process.stdin.on('end', () => resolve(data));
+    process.stdin.on('error', reject);
+  });
 }
 
 function optionString(args, key, envKey, config, configKey) {
@@ -223,7 +241,7 @@ async function main() {
     process.stdout.write(USAGE + '\n');
     process.exit(cmd ? 0 : 1);
   }
-  if (cmd !== 'history') fail(`unknown command "${cmd}". Run with --help.`);
+  if (cmd !== 'history' && cmd !== 'send') fail(`unknown command "${cmd}". Run with --help.`);
 
   const config = readHelperConfig();
   const vaultId = optionString(args, 'vault', 'CASCADE_NOTE_VAULT', config, 'vaultId');
@@ -233,6 +251,25 @@ async function main() {
 
   const url = baseUrl(args, config);
   const token = await getToken(url, args, config);
+  if (cmd === 'send') {
+    const body = String(args.message === true || args.message === undefined ? await readStdin() : args.message).trim();
+    if (!body) fail('missing message. Pass --message <text> or pipe text on stdin.');
+    const author = optionString(args, 'author', 'CASCADE_CHAT_AUTHOR', config, 'chatAuthor') || 'Agent';
+    const message = {
+      id: `agent-msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      channelId,
+      author,
+      body,
+      createdAt: new Date().toISOString(),
+      ...(configString(config, 'agentId') ? { agentId: configString(config, 'agentId') } : {}),
+      ...(configString(config, 'registrationId') ? { registrationId: configString(config, 'registrationId') } : {}),
+    };
+    const result = await api(url, token, 'POST', `/api/vaults/${vaultId}/channels/${channelId}/messages`, message);
+    const sent = result.message || message;
+    process.stdout.write(`sent ${sent.id || message.id}\n`);
+    return;
+  }
+
   const { messages = [] } = await api(url, token, 'GET', `/api/vaults/${vaultId}/channels/${channelId}/messages`);
   const selected = selectWindow(messages, args);
   const output = decorateMessages(messages, selected, args);

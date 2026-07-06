@@ -9,7 +9,7 @@
 
 import crypto from 'node:crypto';
 import type Database from 'better-sqlite3';
-import { getNote, getVault } from './vault.js';
+import { getNote, getVault, type Vault } from './vault.js';
 
 type Db = Database.Database;
 
@@ -60,6 +60,9 @@ export type ChatAgentRegistration = {
   contextPrompt: string;
   taggableByAgents: boolean;
   replyToEveryMessage: boolean;
+  /** Allow users other than the agent owner to @mention/trigger it in a shared
+   * (linked) channel. Opt-in; the run still executes on the owner's runner. */
+  pingableByOthers: boolean;
   /** Run this agent with permission prompts bypassed ("yolo"). Scoped to this
    * registration; applied on the machine that executes the run. */
   yolo: boolean;
@@ -131,6 +134,7 @@ export function ensureChatSchema(db: Db): void {
       context_prompt TEXT NOT NULL DEFAULT '',
       taggable_by_agents INTEGER NOT NULL DEFAULT 1,
       reply_to_every_message INTEGER NOT NULL DEFAULT 0,
+      pingable_by_others INTEGER NOT NULL DEFAULT 0,
       yolo INTEGER NOT NULL DEFAULT 0,
       conversation_id TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -161,6 +165,9 @@ export function ensureChatSchema(db: Db): void {
   if (!memberCols.some((col) => col.name === 'reply_to_every_message')) {
     db.exec('ALTER TABLE chat_agent_members ADD COLUMN reply_to_every_message INTEGER NOT NULL DEFAULT 0');
   }
+  if (!memberCols.some((col) => col.name === 'pingable_by_others')) {
+    db.exec('ALTER TABLE chat_agent_members ADD COLUMN pingable_by_others INTEGER NOT NULL DEFAULT 0');
+  }
 }
 
 type ChatAgentMemberRow = {
@@ -175,6 +182,7 @@ type ChatAgentMemberRow = {
   context_prompt: string;
   taggable_by_agents: number;
   reply_to_every_message: number;
+  pingable_by_others: number;
   yolo: number;
   conversation_id: string;
 };
@@ -190,6 +198,7 @@ function rowToAgentMember(row: ChatAgentMemberRow): ChatAgentRegistration {
     contextPrompt: row.context_prompt,
     taggableByAgents: row.taggable_by_agents !== 0,
     replyToEveryMessage: row.reply_to_every_message !== 0,
+    pingableByOthers: row.pingable_by_others !== 0,
     yolo: row.yolo !== 0,
     conversationId: row.conversation_id,
   };
@@ -217,6 +226,7 @@ function normalizeAgentRegistration(input: Partial<ChatAgentRegistration>, fallb
     contextPrompt: String(input.contextPrompt || ''),
     taggableByAgents: input.taggableByAgents !== false,
     replyToEveryMessage: input.replyToEveryMessage === true,
+    pingableByOthers: input.pingableByOthers === true,
     yolo: input.yolo === true,
     // May be empty here; upsert preserves the existing session or mints a new one.
     conversationId: String(input.conversationId || '').trim(),
@@ -701,6 +711,46 @@ export function listChatAgentMembers(db: Db, channelId: string, userId: number):
   return rows.map(rowToAgentMember);
 }
 
+export type ResolvedChatAgentRun = {
+  registration: ChatAgentRegistration;
+  /** The agent owner's vault (the machine that must execute the run). */
+  sourceVault: Vault;
+  route: ChatChannelRoute;
+  /** User id of the agent owner — the desktop runner the run delegates to. */
+  ownerId: number;
+};
+
+/**
+ * Resolve a registered chat agent for a run request. `assertChatChannel`
+ * authorizes that `userId` can reach this (possibly linked) channel; the member
+ * and owner are then read from the canonical *source* channel/vault, so a
+ * cross-user ping executes with the owner's registration on the owner's runner.
+ */
+export function resolveChatAgentRun(
+  db: Db,
+  userId: number,
+  channelId: string,
+  registrationId: string,
+): ResolvedChatAgentRun {
+  const { route } = assertChatChannel(db, channelId, userId);
+  const row = db
+    .prepare('SELECT * FROM chat_agent_members WHERE id = ? AND channel_id = ?')
+    .get(registrationId, route.sourceChannelId) as ChatAgentMemberRow | undefined;
+  if (!row) throw new Error('Agent not found');
+
+  const sourceVault = db
+    .prepare('SELECT * FROM vaults WHERE id = ?')
+    .get(route.sourceVaultId) as Vault | undefined;
+  if (!sourceVault) throw new Error('Agent not found');
+
+  return {
+    registration: rowToAgentMember(row),
+    sourceVault,
+    route,
+    ownerId: sourceVault.created_by,
+  };
+}
+
 export function upsertChatAgentMember(
   db: Db,
   userId: number,
@@ -729,6 +779,7 @@ export function upsertChatAgentMember(
         context_prompt = ?,
         taggable_by_agents = ?,
         reply_to_every_message = ?,
+        pingable_by_others = ?,
         yolo = ?,
         conversation_id = ?,
         updated_at = datetime('now')
@@ -742,6 +793,7 @@ export function upsertChatAgentMember(
       member.contextPrompt,
       member.taggableByAgents ? 1 : 0,
       member.replyToEveryMessage ? 1 : 0,
+      member.pingableByOthers ? 1 : 0,
       member.yolo ? 1 : 0,
       member.conversationId,
       member.id,
@@ -751,8 +803,8 @@ export function upsertChatAgentMember(
     db.prepare(`
       INSERT INTO chat_agent_members (
         id, channel_id, vault_id, agent_id, display_name, mention,
-        model, cwd, context_prompt, taggable_by_agents, reply_to_every_message, yolo, conversation_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        model, cwd, context_prompt, taggable_by_agents, reply_to_every_message, pingable_by_others, yolo, conversation_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       member.id,
       route.sourceChannelId,
@@ -765,6 +817,7 @@ export function upsertChatAgentMember(
       member.contextPrompt,
       member.taggableByAgents ? 1 : 0,
       member.replyToEveryMessage ? 1 : 0,
+      member.pingableByOthers ? 1 : 0,
       member.yolo ? 1 : 0,
       member.conversationId,
     );

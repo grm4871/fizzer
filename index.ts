@@ -43,6 +43,7 @@ import {
   togglePin,
   updateFolder,
   updateNote,
+  type Vault,
 } from './server/vault.js';
 import {
   createNoteVersion,
@@ -94,6 +95,7 @@ import {
   listChatAgentMembers,
   upsertChatAgentMember,
   removeChatAgentMember,
+  resolveChatAgentRun,
   type ChatMessage,
 } from './server/chat.js';
 import {
@@ -852,29 +854,12 @@ app.get('/api/vaults/:id/runs', requireAuth, (req: AuthedRequest, res) => {
 });
 
 app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) => {
-  const vault = getVault(db, req.params.id, req.user!.id);
-  if (!vault) return res.status(404).json({ error: 'Vault not found' });
-
   const { prompt, note_id, agent, conversation_id, images, model, cwd, yolo } = req.body;
   if (!prompt || !prompt.trim()) {
     return res.status(400).json({ error: 'Prompt is required' });
   }
-  const yoloMode = yolo === true;
 
   const validAgents = ['claude-code', 'codex', 'grok', 'antigravity', 'copilot', 'hermes'] as const satisfies readonly AgentId[];
-  const selectedAgent: AgentId = validAgents.includes(agent) ? agent : 'claude-code';
-  // Every agent — Claude included — executes on the user's own machine via the
-  // desktop runner relay. The server never runs an LLM itself (no API keys / no
-  // Claude login on the server); it only relays runs to a connected desktop.
-  // Poll briefly rather than checking once: a busy or reconnecting local runner
-  // can be absent for a moment (a lapsed heartbeat, a socket.io reconnect) even
-  // though it's about to be dispatchable. Hard-failing here is what surfaces the
-  // spurious "no runner connected" mid-run.
-  if (!(await waitForDesktopRunner(req.user!.id))) {
-    return res.status(503).json({
-      error: 'No desktop agent runner is connected. Open Cascade on your computer (signed in to the same account) to run agents from chat.',
-    });
-  }
   const removedModelPresets = new Set([
     'codex-flash',
     'codex-pro',
@@ -884,15 +869,83 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     'claude-3.5-sonnet',
     'o1-mini',
   ]);
-  const selectedModel = typeof model === 'string' && model.trim() && !removedModelPresets.has(model.trim())
-    ? model.trim()
-    : undefined;
+  const normalizeRunModel = (value: unknown): string | undefined =>
+    typeof value === 'string' && value.trim() && !removedModelPresets.has(value.trim()) ? value.trim() : undefined;
+  const normalizeRunCwd = (value: unknown): string | undefined => {
+    if (typeof value !== 'string' || !value.trim()) return undefined;
+    const rawCwd = value.trim();
+    return /^(vault\s*root|root|\.\/?)$/i.test(rawCwd) ? undefined : rawCwd;
+  };
+  const pickAgent = (value: unknown): AgentId => (validAgents.includes(value as AgentId) ? (value as AgentId) : 'claude-code');
+
+  const chatChannelId = typeof req.body?.chat?.channelId === 'string' ? req.body.chat.channelId.trim() : '';
+  const chatMessageId = typeof req.body?.chat?.messageId === 'string' ? req.body.chat.messageId.trim() : '';
+  const registrationId = typeof req.body?.registrationId === 'string' ? req.body.registrationId.trim() : '';
+
+  // Resolve the run's execution context. A chat-agent ping always executes on the
+  // *agent owner's* desktop runner using the owner's stored registration — never
+  // the pinger's machine or client-supplied cwd/model/yolo. Non-chat runs (note
+  // panes) and legacy chat runs execute on the requesting user's own runner.
+  let runVault: Vault;
+  let runnerUserId: number;
+  let selectedAgent: AgentId;
+  let selectedModel: string | undefined;
   let selectedCwd: string | undefined;
-  if (typeof cwd === 'string' && cwd.trim()) {
-    const rawCwd = cwd.trim();
-    if (!/^(vault\s*root|root|\.\/?)$/i.test(rawCwd)) {
-      selectedCwd = rawCwd;
+  let yoloMode: boolean;
+  let targetChannelId = chatChannelId;
+  let requesterIsOwner = true;
+  let chatAuthor = '';
+  let chatRegistrationId = '';
+
+  if (chatChannelId && registrationId) {
+    let resolved: ReturnType<typeof resolveChatAgentRun>;
+    try {
+      resolved = resolveChatAgentRun(db, req.user!.id, chatChannelId, registrationId);
+    } catch {
+      return res.status(404).json({ error: 'Agent not found' });
     }
+    const { registration, sourceVault, route, ownerId } = resolved;
+    requesterIsOwner = req.user!.id === ownerId;
+    if (!requesterIsOwner && !registration.pingableByOthers) {
+      return res.status(403).json({ error: "This agent isn't accepting pings from other users." });
+    }
+    // Owner's registration is authoritative — the pinger's request body can't
+    // override the agent, model, cwd, or yolo it runs with on the owner's box.
+    runVault = sourceVault;
+    runnerUserId = ownerId;
+    selectedAgent = pickAgent(registration.agentId);
+    selectedModel = normalizeRunModel(registration.model);
+    selectedCwd = normalizeRunCwd(registration.cwd);
+    yoloMode = registration.yolo;
+    targetChannelId = route.sourceChannelId;
+    chatAuthor = registration.displayName || registration.agentId;
+    chatRegistrationId = registration.id;
+  } else {
+    const vault = getVault(db, req.params.id, req.user!.id);
+    if (!vault) return res.status(404).json({ error: 'Vault not found' });
+    runVault = vault;
+    runnerUserId = req.user!.id;
+    selectedAgent = pickAgent(agent);
+    selectedModel = normalizeRunModel(model);
+    selectedCwd = normalizeRunCwd(cwd);
+    yoloMode = yolo === true;
+    chatAuthor = typeof req.body?.chat?.author === 'string' ? req.body.chat.author.trim() : '';
+    chatRegistrationId = registrationId;
+  }
+
+  // Every agent — Claude included — executes on a user's own machine via the
+  // desktop runner relay. The server never runs an LLM itself (no API keys / no
+  // Claude login on the server); it only relays runs to a connected desktop.
+  // Poll briefly rather than checking once: a busy or reconnecting local runner
+  // can be absent for a moment (a lapsed heartbeat, a socket.io reconnect) even
+  // though it's about to be dispatchable. Hard-failing here is what surfaces the
+  // spurious "no runner connected" mid-run.
+  if (!(await waitForDesktopRunner(runnerUserId))) {
+    return res.status(503).json({
+      error: requesterIsOwner
+        ? 'No desktop agent runner is connected. Open Cascade on your computer (signed in to the same account) to run agents from chat.'
+        : "This agent's owner is offline — their desktop runner isn't connected, so the agent can't run right now.",
+    });
   }
 
   // Sanitize image attachments to { media_type, data } base64 entries.
@@ -904,36 +957,37 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     : [];
 
   try {
-    const run = await startRun(db, vault, note_id || null, prompt, selectedAgent, {
+    const run = await startRun(db, runVault, note_id || null, prompt, selectedAgent, {
       conversationId: typeof conversation_id === 'string' && conversation_id ? conversation_id : undefined,
       model: selectedModel,
     });
 
     // Link this run to the chat message it's answering so the server can persist
-    // and broadcast the streamed reply itself. Registered before delegation so no
-    // early event is missed.
-    const chatChannelId = typeof req.body?.chat?.channelId === 'string' ? req.body.chat.channelId.trim() : '';
-    const chatMessageId = typeof req.body?.chat?.messageId === 'string' ? req.body.chat.messageId.trim() : '';
-    if (chatChannelId && chatMessageId) {
+    // and broadcast the streamed reply itself. Keyed to the runner user (agent
+    // owner for cross-user pings) and the source channel, so the fan-out reaches
+    // every linked channel. Registered before delegation so no early event is missed.
+    if (targetChannelId && chatMessageId) {
       chatRunTargets.set(run.id, {
-        userId: req.user!.id,
-        vaultId: vault.id,
-        channelId: chatChannelId,
+        userId: runnerUserId,
+        vaultId: runVault.id,
+        channelId: targetChannelId,
         messageId: chatMessageId,
       });
     }
 
-    const delegated = delegateRunToDesktop(req.user!.id, {
+    const delegated = delegateRunToDesktop(runnerUserId, {
       runId: run.id,
-      vaultId: vault.id,
+      vaultId: runVault.id,
       agent: selectedAgent,
       prompt,
       cwd: selectedCwd,
-      vaultRoot: vault.root_path,
+      vaultRoot: runVault.root_path,
       model: selectedModel,
       resumeSessionId: findPriorSession(db, run),
-      chatChannelId,
+      chatChannelId: targetChannelId,
       chatMessageId,
+      chatAuthor,
+      chatRegistrationId,
       images: cleanImages,
       yolo: yoloMode,
     });

@@ -65,6 +65,9 @@ export interface ChatAgentRegistration {
   contextPrompt: string;
   taggableByAgents: boolean;
   replyToEveryMessage: boolean;
+  /** Allow users other than the owner to @mention/trigger this agent in a
+   * shared channel. The run still executes on the owner's desktop runner. */
+  pingableByOthers: boolean;
   /** Run this agent with permission prompts bypassed ("yolo"). Scoped to this
    * registration, applied on the machine that runs it. */
   yolo: boolean;
@@ -501,6 +504,7 @@ export function ChatView({
       contextPrompt: '',
       taggableByAgents: true,
       replyToEveryMessage: false,
+      pingableByOthers: false,
       yolo: false,
       conversationId: '',
     };
@@ -515,6 +519,7 @@ export function ChatView({
     contextPrompt: '',
     taggableByAgents: true,
     replyToEveryMessage: false,
+    pingableByOthers: false,
     yolo: false,
     conversationId: '',
   }));
@@ -1264,6 +1269,7 @@ export function ChatView({
                     contextPrompt: '',
                     taggableByAgents: true,
                     replyToEveryMessage: false,
+                    pingableByOthers: false,
                     yolo: false,
                     conversationId: '',
                   });
@@ -1343,6 +1349,14 @@ export function ChatView({
                 onChange={(event) => setAgentForm((value) => ({ ...value, replyToEveryMessage: event.target.checked }))}
               />
               Reply to every human message
+            </label>
+            <label className="chat-agent-toggle">
+              <input
+                type="checkbox"
+                checked={agentForm.pingableByOthers}
+                onChange={(event) => setAgentForm((value) => ({ ...value, pingableByOthers: event.target.checked }))}
+              />
+              Allow other users to ping this agent
             </label>
             <label className="chat-agent-toggle">
               <input
