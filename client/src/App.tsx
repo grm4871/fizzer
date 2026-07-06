@@ -997,6 +997,15 @@ export default function App() {
     if (vaultId) void removeChatAgentMemberOnServer(vaultId, channelId, registrationId);
   }, [removeChatAgentMemberOnServer]);
 
+  const handleInviteChatUser = useCallback(async (channelId: string, username: string) => {
+    const vaultId = activeVaultIdRef.current;
+    if (!vaultId) throw new Error('No active vault');
+    await api(`/api/vaults/${vaultId}/channels/${channelId}/invites`, {
+      method: 'POST',
+      body: JSON.stringify({ username }),
+    });
+  }, []);
+
   const startAgentChatRun = useCallback(async (
     channelId: string,
     registration: ChatAgentRegistration,
@@ -2020,6 +2029,7 @@ export default function App() {
           runningAgents={runningChatAgents}
           onRegisterAgent={handleRegisterChatAgent}
           onRemoveAgent={handleRemoveChatAgent}
+          onInviteUser={handleInviteChatUser}
           onSendMessage={handleSendChatMessage}
           onCancelRun={handleCancelChatRun}
           notes={notes}
@@ -2045,7 +2055,7 @@ export default function App() {
         onLinkifySelection={(term, context) => handleLinkifyTerm(term, context, entry?.note?.title)}
       />
     );
-  }, [chatState.messagesByChannel, chatState.registeredAgentsByChannel, currentUsername, runningChatAgents, handleCancelChatRun, handleRegisterChatAgent, handleRemoveChatAgent, handleSendChatMessage, noteContents, notes, handleNoteChange, saveNoteTab, renameNoteTab, handleExecuteDirective, handleLinkifyTerm, openNote]);
+  }, [chatState.messagesByChannel, chatState.registeredAgentsByChannel, currentUsername, runningChatAgents, handleCancelChatRun, handleInviteChatUser, handleRegisterChatAgent, handleRemoveChatAgent, handleSendChatMessage, noteContents, notes, handleNoteChange, saveNoteTab, renameNoteTab, handleExecuteDirective, handleLinkifyTerm, openNote]);
 
   if (!user) {
     return (

@@ -1836,6 +1836,7 @@ a {
   padding: 0;
 }
 .chat-runs-toggle-btn,
+.chat-invite-btn,
 .chat-users-collapse-btn {
   position: relative;
   width: auto;
@@ -1851,7 +1852,9 @@ a {
   cursor: pointer;
 }
 .chat-runs-toggle-btn:hover,
+.chat-invite-btn:hover,
 .chat-users-collapse-btn:hover,
+.chat-invite-btn.active,
 .chat-runs-toggle-btn.active {
   border-color: var(--border-active);
   background: var(--bg-raised);
@@ -1859,6 +1862,9 @@ a {
 }
 .chat-users-collapse-btn {
   width: 28px;
+}
+.chat-invite-btn.active {
+  color: var(--accent-hover);
 }
 .chat-runs-toggle-btn.active {
   color: var(--accent-hover);
@@ -1963,6 +1969,7 @@ a {
   cursor: pointer;
 }
 .chat-users.is-collapsed .chat-add-agent-btn,
+.chat-users.is-collapsed .chat-invite-btn,
 .chat-users.is-collapsed .chat-runs-toggle-btn {
   width: 28px;
   padding: 3px;
@@ -1996,7 +2003,8 @@ a {
   background: var(--danger-subtle);
   color: var(--danger);
 }
-.chat-agent-menu {
+.chat-agent-menu,
+.chat-invite-menu {
   margin: 6px 8px 10px;
   padding: 10px;
   border: 1px solid var(--border);
@@ -2004,7 +2012,8 @@ a {
   background: var(--bg-surface);
   box-shadow: var(--shadow-sm);
 }
-.chat-agent-menu label {
+.chat-agent-menu label,
+.chat-invite-menu label {
   display: flex;
   flex-direction: column;
   gap: 5px;
@@ -2015,7 +2024,8 @@ a {
 }
 .chat-agent-menu input,
 .chat-agent-menu select,
-.chat-agent-menu textarea {
+.chat-agent-menu textarea,
+.chat-invite-menu input {
   width: 100%;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -2042,6 +2052,12 @@ a {
   font-size: 0.6875rem;
   line-height: 1.35;
 }
+.chat-invite-status {
+  margin-bottom: 8px;
+  color: var(--text-tertiary);
+  font-size: 0.6875rem;
+  line-height: 1.35;
+}
 .chat-agent-menu-actions {
   display: flex;
   justify-content: flex-end;
@@ -2058,6 +2074,10 @@ a {
 .chat-agent-menu-actions button[type="submit"] {
   background: var(--accent);
   color: hsl(22, 15%, 8%);
+}
+.chat-agent-menu-actions button:disabled {
+  opacity: 0.55;
+  cursor: default;
 }
 
 /* ═══════════════════════════════════════════════════════════

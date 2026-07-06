@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Activity, Bot, Brain, ChevronLeft, ChevronRight, Hash, ImagePlus, Paperclip, Plus, Reply, Send, Square, X } from 'lucide-react';
+import { Activity, Bot, Brain, ChevronLeft, ChevronRight, Hash, ImagePlus, Paperclip, Plus, Reply, Send, Square, UserPlus, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
@@ -98,6 +98,7 @@ interface ChatViewProps {
   runningAgents: RunningChatAgent[];
   onRegisterAgent: (channelId: string, registration: ChatAgentRegistration) => void;
   onRemoveAgent: (channelId: string, registrationId: string) => void;
+  onInviteUser: (channelId: string, username: string) => Promise<void>;
   onSendMessage: (channelId: string, body: string, media?: ChatMediaAttachment[], replyTo?: ChatReplyRef) => void;
   onCancelRun: (runId: number) => void;
   notes?: NoteSummary[];
@@ -455,6 +456,7 @@ export function ChatView({
   runningAgents,
   onRegisterAgent,
   onRemoveAgent,
+  onInviteUser,
   onSendMessage,
   onCancelRun,
   notes = [],
@@ -466,6 +468,10 @@ export function ChatView({
     typeof localStorage !== 'undefined' && localStorage.getItem('cascade_chat_users_collapsed') === '1'
   );
   const [agentMenuOpen, setAgentMenuOpen] = useState(false);
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [inviteUsername, setInviteUsername] = useState('');
+  const [inviteStatus, setInviteStatus] = useState('');
+  const [inviteBusy, setInviteBusy] = useState(false);
   const [editingRegistrationId, setEditingRegistrationId] = useState<string | null>(null);
   const [agentFormError, setAgentFormError] = useState('');
   const createDefaultAgentForm = useCallback((): ChatAgentRegistration => {
@@ -556,6 +562,7 @@ export function ChatView({
     localStorage.setItem('cascade_chat_users_collapsed', usersCollapsed ? '1' : '0');
     if (usersCollapsed) {
       setAgentMenuOpen(false);
+      setInviteOpen(false);
       setEditingRegistrationId(null);
     }
   }, [usersCollapsed]);
@@ -623,6 +630,7 @@ export function ChatView({
 
   function openAgentMenu(event: React.MouseEvent) {
     event.stopPropagation();
+    setInviteOpen(false);
     if (agentMenuOpen) {
       setAgentMenuOpen(false);
       setEditingRegistrationId(null);
@@ -630,6 +638,15 @@ export function ChatView({
       return;
     }
     openAgentEditor();
+  }
+
+  function toggleInvite(event: React.MouseEvent) {
+    event.stopPropagation();
+    setAgentMenuOpen(false);
+    setEditingRegistrationId(null);
+    setAgentFormError('');
+    setInviteStatus('');
+    setInviteOpen((value) => !value);
   }
 
   function editRegisteredAgent(event: React.MouseEvent, registration: ChatAgentRegistration) {
@@ -677,6 +694,26 @@ export function ChatView({
     setAgentMenuOpen(false);
     setEditingRegistrationId(null);
     setAgentFormError('');
+  }
+
+  async function submitInvite(event: React.FormEvent) {
+    event.preventDefault();
+    const username = inviteUsername.trim().replace(/^@+/, '').toLowerCase();
+    if (!username) {
+      setInviteStatus('Enter a username.');
+      return;
+    }
+    setInviteBusy(true);
+    setInviteStatus('');
+    try {
+      await onInviteUser(channelId, username);
+      setInviteUsername('');
+      setInviteStatus(`Invited @${username}.`);
+    } catch (error) {
+      setInviteStatus(error instanceof Error ? error.message : 'Could not invite user');
+    } finally {
+      setInviteBusy(false);
+    }
   }
 
   const addMediaFiles = useCallback(async (files: File[]) => {
@@ -981,6 +1018,9 @@ export function ChatView({
           >
             {usersCollapsed ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
           </button>
+          <button type="button" className={`chat-invite-btn${inviteOpen ? ' active' : ''}`} onClick={toggleInvite} title="Invite user">
+            <UserPlus size={14} />
+          </button>
           <button type="button" className="chat-add-agent-btn" onClick={openAgentMenu} title="Add agent">
             <Bot size={14} />
             <Plus size={12} />
@@ -1032,6 +1072,29 @@ export function ChatView({
           </>
         ) : (
           <>
+        {inviteOpen && (
+          <form className="chat-invite-menu" onSubmit={submitInvite} onClick={(event) => event.stopPropagation()}>
+            <label>
+              Username
+              <input
+                value={inviteUsername}
+                placeholder="username"
+                autoFocus
+                spellCheck={false}
+                onChange={(event) => {
+                  setInviteStatus('');
+                  setInviteUsername(event.target.value.replace(/^@+/, ''));
+                }}
+              />
+            </label>
+            {inviteStatus && <div className="chat-invite-status">{inviteStatus}</div>}
+            <div className="chat-agent-menu-actions">
+              <button type="button" onClick={() => setInviteOpen(false)}>Cancel</button>
+              <button type="submit" disabled={inviteBusy}>{inviteBusy ? 'Inviting' : 'Invite'}</button>
+            </div>
+          </form>
+        )}
+
         {humanUsers.map((name) => (
           <div className="chat-user chat-human" key={name}>
             <div className="chat-user-row">

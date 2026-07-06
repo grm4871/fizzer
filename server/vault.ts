@@ -30,6 +30,11 @@ export type Vault = {
   created_at: string;
 };
 
+export type VaultMember = {
+  id: number;
+  username: string;
+};
+
 export type Folder = {
   id: string;
   vault_id: string;
@@ -250,6 +255,23 @@ export function getVault(db: Db, vaultId: string, userId: number): Vault | undef
     WHERE v.id = ? AND (v.created_by = ? OR vm.user_id = ?)
     LIMIT 1
   `).get(vaultId, userId, userId) as Vault | undefined;
+}
+
+export function addVaultMemberByUsername(db: Db, vaultId: string, ownerId: number, rawUsername: string): VaultMember {
+  const username = String(rawUsername || '').trim().toLowerCase();
+  if (!/^[a-z0-9_]{3,32}$/.test(username)) {
+    throw new Error('Username must be 3-32 lowercase letters, numbers, or underscores');
+  }
+
+  const vault = db.prepare('SELECT id, created_by FROM vaults WHERE id = ?').get(vaultId) as { id: string; created_by: number } | undefined;
+  if (!vault || vault.created_by !== ownerId) throw new Error('Only the vault owner can invite users');
+
+  const user = db.prepare('SELECT id, username FROM users WHERE username = ?').get(username) as VaultMember | undefined;
+  if (!user) throw new Error('User not found');
+  if (user.id === ownerId) throw new Error('You already own this vault');
+
+  db.prepare('INSERT OR IGNORE INTO vault_members (vault_id, user_id) VALUES (?, ?)').run(vaultId, user.id);
+  return user;
 }
 
 function prepopulateWalkthrough(vault: Vault): void {

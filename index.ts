@@ -20,6 +20,7 @@ import jwt from 'jsonwebtoken';
 import Database from 'better-sqlite3';
 import { Server } from 'socket.io';
 import {
+  addVaultMemberByUsername,
   addTag,
   createFolder,
   createNote,
@@ -82,6 +83,7 @@ import { fetchWidgetData } from './server/widgetData.js';
 import { resolveDeploySecret } from './server/security.js';
 import {
   buildAgentChatContentFromRunEvents,
+  CHAT_NOTE_MARKER,
   ensureChatSchema,
   listChatMessages,
   createChatMessage,
@@ -1028,6 +1030,32 @@ app.delete('/api/vaults/:vaultId/channels/:channelId/agents/:registrationId', re
     res.json({ success: true });
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+app.post('/api/vaults/:vaultId/channels/:channelId/invites', requireAuth, (req: AuthedRequest, res) => {
+  const vault = getVault(db, req.params.vaultId, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Vault not found' });
+  const channel = getNote(db, req.params.channelId);
+  if (!channel || channel.vault_id !== vault.id || !channel.content.trim().startsWith(CHAT_NOTE_MARKER)) {
+    return res.status(404).json({ error: 'Chat channel not found' });
+  }
+
+  try {
+    const invitedUser = addVaultMemberByUsername(db, vault.id, req.user!.id, String(req.body?.username || ''));
+    const message = createChatMessage(db, req.user!.id, vault.id, channel.id, {
+      id: crypto.randomUUID(),
+      channelId: channel.id,
+      author: 'Cascade',
+      body: `@${req.user!.username} invited @${invitedUser.username} to this chat.`,
+      createdAt: new Date().toISOString(),
+    });
+    emitVaultEvent(vault.id, 'vault:chatMessageCreated', { vaultId: vault.id, channelId: channel.id, message });
+    res.status(201).json({ user: publicUser(invitedUser), message });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const status = message === 'User not found' ? 404 : message.includes('Only the vault owner') ? 403 : 400;
+    res.status(status).json({ error: message });
   }
 });
 
