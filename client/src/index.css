@@ -1821,6 +1821,9 @@ a {
   border-radius: 50%;
   background: var(--success);
 }
+.chat-user.is-offline .chat-user-row .chat-avatar::after {
+  background: var(--text-tertiary);
+}
 .chat-user-copy {
   min-width: 0;
   flex: 1;

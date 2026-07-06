@@ -376,6 +376,35 @@ export function listChatChannelRoutes(db: Db, sourceVaultId: string, sourceChann
   ];
 }
 
+/** Usernames of everyone with access to a shared chat (source owner + linked vault owners). */
+export function listChatChannelParticipantUsernames(db: Db, sourceVaultId: string, sourceChannelId: string): string[] {
+  const usernames = new Set<string>();
+  const sourceOwner = db.prepare(`
+    SELECT u.username
+    FROM users u
+    JOIN vaults v ON v.created_by = u.id
+    WHERE v.id = ?
+  `).get(sourceVaultId) as { username: string } | undefined;
+  if (sourceOwner?.username) usernames.add(sourceOwner.username);
+
+  const linkedOwners = db.prepare(`
+    SELECT DISTINCT u.username
+    FROM chat_channel_links l
+    JOIN vaults v ON v.id = l.local_vault_id
+    JOIN users u ON u.id = v.created_by
+    WHERE l.source_channel_id = ?
+  `).all(sourceChannelId) as Array<{ username: string }>;
+  for (const row of linkedOwners) {
+    if (row.username) usernames.add(row.username);
+  }
+  return Array.from(usernames).sort((a, b) => a.localeCompare(b));
+}
+
+export function listChatChannelParticipants(db: Db, channelId: string, userId: number): string[] {
+  const { route } = assertChatChannel(db, channelId, userId);
+  return listChatChannelParticipantUsernames(db, route.sourceVaultId, route.sourceChannelId);
+}
+
 export function listChatMessages(db: Db, channelId: string, userId: number): ChatMessage[] {
   const { route } = assertChatChannel(db, channelId, userId);
   const rows = db.prepare(`

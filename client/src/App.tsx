@@ -10,6 +10,7 @@ import {
   mediaToRunImages,
   type ChatAgentRegistration,
   type ChatBlock,
+  type ChatChannelPresence,
   type ChatMediaAttachment,
   type ChatMessage,
   type ChatReplyRef,
@@ -445,6 +446,7 @@ export default function App() {
   const [folders, setFolders] = useState<Folder[]>([]);
   const [notes, setNotes] = useState<NoteSummary[]>([]);
   const [chatState, setChatState] = useState<ChatState>(loadChatState);
+  const [chatPresenceByChannel, setChatPresenceByChannel] = useState<Record<string, ChatChannelPresence>>({});
 
   // Tabs + tiling layout
   const [openTabs, setOpenTabs] = useState<Tab[]>(persistedSessionRef.current.openTabs);
@@ -498,6 +500,7 @@ export default function App() {
   const desktopRunnerStopRef = useRef<(() => void) | null>(null);
   const chatStateRef = useRef(chatState); chatStateRef.current = chatState;
   const vaultSocketRef = useRef<ReturnType<typeof connectVaultSocket> | null>(null);
+  const joinedChatChannelsRef = useRef<Set<string>>(new Set());
   const runSocketsRef = useRef<Map<number, ReturnType<typeof connectRunsSocket>>>(new Map());
   const streamingChatMessageIdsRef = useRef<Set<string>>(new Set());
   const acceptedInviteTokenRef = useRef<string | null>(null);
@@ -671,6 +674,30 @@ export default function App() {
     });
   }, []);
 
+  const loadChatPresence = useCallback(async (vaultId: string, noteList: NoteSummary[]) => {
+    const channelIds = noteList
+      .filter((note) => note.content_preview.trim().startsWith(CHAT_NOTE_MARKER))
+      .map((note) => note.id);
+    if (channelIds.length === 0) return;
+
+    const results = await Promise.all(channelIds.map(async (channelId) => {
+      try {
+        const data = await api<ChatChannelPresence>(`/api/vaults/${vaultId}/channels/${channelId}/presence`);
+        return { channelId, participants: data.participants ?? [], online: data.online ?? [] };
+      } catch {
+        return { channelId, participants: [], online: [] };
+      }
+    }));
+
+    setChatPresenceByChannel((prev) => {
+      const next = { ...prev };
+      for (const { channelId, participants, online } of results) {
+        next[channelId] = { participants, online };
+      }
+      return next;
+    });
+  }, []);
+
   const loadChatMessages = useCallback(async (vaultId: string, noteList: NoteSummary[]) => {
     const channelIds = noteList
       .filter((note) => note.content_preview.trim().startsWith(CHAT_NOTE_MARKER))
@@ -815,11 +842,12 @@ export default function App() {
       await Promise.all([
         loadChatMessages(vaultId, nextNotes),
         loadChatAgentMembers(vaultId, nextNotes),
+        loadChatPresence(vaultId, nextNotes),
       ]);
     } catch (error) {
       console.error('Error loading vault data:', error);
     }
-  }, [loadChatMessages, loadChatAgentMembers]);
+  }, [loadChatMessages, loadChatAgentMembers, loadChatPresence]);
 
   useEffect(() => {
     const resyncOnResume = () => {
@@ -1599,6 +1627,28 @@ export default function App() {
     }
   }, [loadVaultData]);
 
+  const visibleChatChannelIds = useMemo(() => {
+    const tabIds = Layout.getActiveTabIds(layout);
+    return tabIds.filter((tabId) => openTabs.some((tab) => tab.id === tabId && tab.type === 'chat'));
+  }, [layout, openTabs]);
+
+  const syncChatPresenceRooms = useCallback((socket: ReturnType<typeof connectVaultSocket>) => {
+    const joined = joinedChatChannelsRef.current;
+    const visible = new Set(visibleChatChannelIds);
+    for (const channelId of [...joined]) {
+      if (!visible.has(channelId)) {
+        socket.emit('leaveChatChannel', channelId);
+        joined.delete(channelId);
+      }
+    }
+    for (const channelId of visibleChatChannelIds) {
+      if (!joined.has(channelId)) {
+        socket.emit('joinChatChannel', channelId);
+        joined.add(channelId);
+      }
+    }
+  }, [visibleChatChannelIds]);
+
   // ═══════════════════════════════════════════════════════════════
   // SOCKET SETUP
   // ═══════════════════════════════════════════════════════════════
@@ -1609,9 +1659,11 @@ export default function App() {
     vaultSocketRef.current = socket;
     const joinActiveVault = () => {
       socket.emit('joinVault', activeVaultId);
+      syncChatPresenceRooms(socket);
     };
     joinActiveVault();
     socket.on('connect', joinActiveVault);
+    syncChatPresenceRooms(socket);
 
     const handleNoteChanged = (data: { noteId: string; vaultId: string }) => {
       if (data.vaultId !== activeVaultId) return;
@@ -1709,6 +1761,16 @@ export default function App() {
         },
       }));
     };
+    const handleChatPresence = (data: { vaultId: string; channelId: string; participants: string[]; online: string[] }) => {
+      if (data.vaultId !== activeVaultId) return;
+      setChatPresenceByChannel((prev) => ({
+        ...prev,
+        [data.channelId]: {
+          participants: data.participants ?? [],
+          online: data.online ?? [],
+        },
+      }));
+    };
 
     socket.on('vault:noteChanged', handleNoteChanged);
     socket.on('vault:noteCreated', handleNoteCreated);
@@ -1718,8 +1780,13 @@ export default function App() {
     socket.on('vault:chatMessageUpdated', handleChatMessageUpdated);
     socket.on('vault:chatAgentMemberUpserted', handleChatAgentMemberUpserted);
     socket.on('vault:chatAgentMemberRemoved', handleChatAgentMemberRemoved);
+    socket.on('vault:chatPresence', handleChatPresence);
     return () => {
       socket.off('connect', joinActiveVault);
+      for (const channelId of [...joinedChatChannelsRef.current]) {
+        socket.emit('leaveChatChannel', channelId);
+      }
+      joinedChatChannelsRef.current.clear();
       socket.emit('leaveVault', activeVaultId);
       vaultSocketRef.current = null;
       socket.off('vault:noteChanged', handleNoteChanged);
@@ -1730,9 +1797,16 @@ export default function App() {
       socket.off('vault:chatMessageUpdated', handleChatMessageUpdated);
       socket.off('vault:chatAgentMemberUpserted', handleChatAgentMemberUpserted);
       socket.off('vault:chatAgentMemberRemoved', handleChatAgentMemberRemoved);
+      socket.off('vault:chatPresence', handleChatPresence);
       socket.disconnect();
     };
-  }, [activeVaultId, loadVaultData, loadNoteContent, openNote]);
+  }, [activeVaultId, loadVaultData, loadNoteContent, openNote, syncChatPresenceRooms]);
+
+  useEffect(() => {
+    const socket = vaultSocketRef.current;
+    if (!socket?.connected || !activeVaultId) return;
+    syncChatPresenceRooms(socket);
+  }, [activeVaultId, syncChatPresenceRooms]);
 
   // ═══════════════════════════════════════════════════════════════
   // NOTE / FOLDER OPERATIONS
@@ -2101,6 +2175,7 @@ export default function App() {
           channelName={channel.title}
           messages={chatState.messagesByChannel[channel.id] ?? []}
           currentUser={currentUsername}
+          presence={chatPresenceByChannel[channel.id] ?? { participants: [], online: [] }}
           availableAgents={CHAT_AGENTS.map((agent) => ({
             id: agent.id,
             label: agent.label,
@@ -2137,7 +2212,7 @@ export default function App() {
         onLinkifySelection={(term, context) => handleLinkifyTerm(term, context, entry?.note?.title)}
       />
     );
-  }, [chatState.messagesByChannel, chatState.registeredAgentsByChannel, currentUsername, runningChatAgents, handleCancelChatRun, handleCreateChatInviteLink, handleInviteChatUser, handleRegisterChatAgent, handleRemoveChatAgent, handleSendChatMessage, noteContents, notes, handleNoteChange, saveNoteTab, renameNoteTab, handleExecuteDirective, handleLinkifyTerm, openNote]);
+  }, [chatState.messagesByChannel, chatState.registeredAgentsByChannel, chatPresenceByChannel, currentUsername, runningChatAgents, handleCancelChatRun, handleCreateChatInviteLink, handleInviteChatUser, handleRegisterChatAgent, handleRemoveChatAgent, handleSendChatMessage, noteContents, notes, handleNoteChange, saveNoteTab, renameNoteTab, handleExecuteDirective, handleLinkifyTerm, openNote]);
 
   if (!user) {
     return (

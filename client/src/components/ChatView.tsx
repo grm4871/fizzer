@@ -95,11 +95,17 @@ export interface RunningChatAgent {
   preview: string;
 }
 
+export interface ChatChannelPresence {
+  participants: string[];
+  online: string[];
+}
+
 interface ChatViewProps {
   channelId: string;
   channelName: string;
   messages: ChatMessage[];
   currentUser: string;
+  presence: ChatChannelPresence;
   availableAgents: ChatAgentOption[];
   registeredAgents: ChatAgentRegistration[];
   runningAgents: RunningChatAgent[];
@@ -467,6 +473,7 @@ export function ChatView({
   channelName,
   messages,
   currentUser,
+  presence,
   availableAgents,
   registeredAgents,
   runningAgents,
@@ -558,8 +565,9 @@ export function ChatView({
   ), [registeredAgentRows]);
   const getMessageAvatarKind = (message: ChatMessage): 'agent' | 'human' =>
     message.agentId || agentAuthors.has(message.author) ? 'agent' : 'human';
+  const onlineUsers = useMemo(() => new Set(presence.online), [presence.online]);
   const humanUsers = useMemo(() => {
-    const names = new Set<string>();
+    const names = new Set<string>(presence.participants);
     if (currentUser) names.add(currentUser);
     for (const message of messages) {
       if (message.author === 'Cascade') continue;
@@ -567,7 +575,7 @@ export function ChatView({
       if (message.author) names.add(message.author);
     }
     return Array.from(names).sort((a, b) => a.localeCompare(b));
-  }, [agentAuthors, currentUser, messages]);
+  }, [agentAuthors, currentUser, messages, presence.participants]);
   const mentionableAliases = useMemo(() => {
     const aliases = new Set<string>();
     for (const registration of registeredAgents) {
@@ -1190,17 +1198,21 @@ export function ChatView({
           </form>
         )}
 
-        {humanUsers.map((name) => (
-          <div className="chat-user chat-human" key={name}>
+        {humanUsers.map((name) => {
+          const isSelf = name === currentUser;
+          const isOnline = isSelf || onlineUsers.has(name);
+          return (
+          <div className={`chat-user chat-human${isOnline ? '' : ' is-offline'}`} key={name}>
             <div className="chat-user-row">
               <ChatAvatar name={name} kind="human" size="sm" />
               <div className="chat-user-copy">
                 <strong>{name}</strong>
-                <span>{name === currentUser ? 'you' : 'online'}</span>
+                <span>{isSelf ? 'you' : isOnline ? 'online' : 'offline'}</span>
               </div>
             </div>
           </div>
-        ))}
+          );
+        })}
 
         {registeredAgentRows.map((agent) => {
           const selectedModel = agent.registration.model || agent.models[0]?.id || '';

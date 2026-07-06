@@ -93,6 +93,8 @@ import {
   updateChatMessage,
   settleChatMessagesForRun,
   listChatAgentMembers,
+  listChatChannelParticipants,
+  listChatChannelParticipantUsernames,
   upsertChatAgentMember,
   removeChatAgentMember,
   resolveChatAgentRun,
@@ -322,6 +324,51 @@ vaultNamespace.on('connection', (socket) => {
   socket.on('leaveVault', (vaultId: string) => {
     socket.leave(`vault:${vaultId}`);
   });
+
+  socket.on('joinChatChannel', async (localChannelId: string) => {
+    const user = socket.data.user as { id: number; username: string };
+    if (typeof localChannelId !== 'string' || !localChannelId) return;
+    try {
+      const { route } = assertChatChannel(db, localChannelId, user.id);
+      await socket.join(chatPresenceRoom(route.sourceChannelId));
+      const tracked = socket.data.chatPresenceChannels as Map<string, string> | undefined
+        ?? (socket.data.chatPresenceChannels = new Map<string, string>());
+      tracked.set(route.sourceChannelId, route.sourceVaultId);
+      const online = await getOnlineUsernamesForChannel(route.sourceChannelId);
+      const participants = listChatChannelParticipantUsernames(db, route.sourceVaultId, route.sourceChannelId);
+      socket.emit('vault:chatPresence', {
+        vaultId: route.localVaultId,
+        channelId: localChannelId,
+        online,
+        participants,
+      });
+      await emitChatPresence(route.sourceVaultId, route.sourceChannelId);
+    } catch {
+      // ignore unauthorized / non-chat channels
+    }
+  });
+
+  socket.on('leaveChatChannel', async (localChannelId: string) => {
+    const user = socket.data.user as { id: number };
+    if (typeof localChannelId !== 'string' || !localChannelId) return;
+    try {
+      const { route } = assertChatChannel(db, localChannelId, user.id);
+      await socket.leave(chatPresenceRoom(route.sourceChannelId));
+      (socket.data.chatPresenceChannels as Map<string, string> | undefined)?.delete(route.sourceChannelId);
+      await emitChatPresence(route.sourceVaultId, route.sourceChannelId);
+    } catch {
+      // ignore
+    }
+  });
+
+  socket.on('disconnect', async () => {
+    const tracked = socket.data.chatPresenceChannels as Map<string, string> | undefined;
+    if (!tracked?.size) return;
+    for (const [sourceChannelId, sourceVaultId] of tracked.entries()) {
+      await emitChatPresence(sourceVaultId, sourceChannelId);
+    }
+    tracked.clear();
+  });
 });
 
 runsNamespace.on('connection', (socket) => {
@@ -359,6 +406,33 @@ function emitChatAgentEvent(sourceVaultId: string, sourceChannelId: string, even
       ...payload,
       vaultId: route.localVaultId,
       channelId: route.localChannelId,
+    });
+  }
+}
+
+function chatPresenceRoom(sourceChannelId: string) {
+  return `chat:${sourceChannelId}`;
+}
+
+async function getOnlineUsernamesForChannel(sourceChannelId: string): Promise<string[]> {
+  const sockets = await vaultNamespace.in(chatPresenceRoom(sourceChannelId)).fetchSockets();
+  const names = new Set<string>();
+  for (const socket of sockets) {
+    const user = socket.data.user as { username?: string } | undefined;
+    if (user?.username) names.add(user.username);
+  }
+  return Array.from(names).sort((a, b) => a.localeCompare(b));
+}
+
+async function emitChatPresence(sourceVaultId: string, sourceChannelId: string) {
+  const online = await getOnlineUsernamesForChannel(sourceChannelId);
+  const participants = listChatChannelParticipantUsernames(db, sourceVaultId, sourceChannelId);
+  for (const route of listChatChannelRoutes(db, sourceVaultId, sourceChannelId)) {
+    emitVaultEvent(route.localVaultId, 'vault:chatPresence', {
+      vaultId: route.localVaultId,
+      channelId: route.localChannelId,
+      online,
+      participants,
     });
   }
 }
@@ -1104,6 +1178,17 @@ app.get('/api/vaults/:vaultId/channels/:channelId/agents', requireAuth, (req: Au
   try {
     const agents = listChatAgentMembers(db, req.params.channelId, req.user!.id);
     res.json({ agents });
+  } catch {
+    res.status(404).json({ error: 'Chat channel not found' });
+  }
+});
+
+app.get('/api/vaults/:vaultId/channels/:channelId/presence', requireAuth, async (req: AuthedRequest, res) => {
+  try {
+    const { route } = assertChatChannel(db, req.params.channelId, req.user!.id);
+    const participants = listChatChannelParticipants(db, req.params.channelId, req.user!.id);
+    const online = await getOnlineUsernamesForChannel(route.sourceChannelId);
+    res.json({ participants, online });
   } catch {
     res.status(404).json({ error: 'Chat channel not found' });
   }
