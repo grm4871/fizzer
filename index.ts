@@ -125,6 +125,11 @@ const CLIENT_APP_HTML = path.join(CLIENT_DIST_DIR, 'app.html');
 
 type User = { id: number; username: string; password_hash: string; created_at: string };
 type AuthedRequest = Request & { user?: { id: number; username: string } };
+type ChatInviteToken = {
+  type: 'chat-invite';
+  sourceVaultId: string;
+  sourceChannelId: string;
+};
 
 // ── Database ───────────────────────────────────────────────────────
 
@@ -253,6 +258,26 @@ function signToken(user: { id: number; username: string }) {
 
 function publicUser(user: { id: number; username: string }) {
   return { id: user.id, username: user.username };
+}
+
+function signChatInvite(sourceVaultId: string, sourceChannelId: string) {
+  return jwt.sign({ type: 'chat-invite', sourceVaultId, sourceChannelId } satisfies ChatInviteToken, JWT_SECRET);
+}
+
+function verifyChatInvite(token: string): ChatInviteToken {
+  const decoded = jwt.verify(token, JWT_SECRET) as Partial<ChatInviteToken>;
+  if (
+    decoded.type !== 'chat-invite'
+    || typeof decoded.sourceVaultId !== 'string'
+    || typeof decoded.sourceChannelId !== 'string'
+  ) {
+    throw new Error('Invalid invite link');
+  }
+  return {
+    type: 'chat-invite',
+    sourceVaultId: decoded.sourceVaultId,
+    sourceChannelId: decoded.sourceChannelId,
+  };
 }
 
 function requireAuth(req: AuthedRequest, res: Response, next: NextFunction) {
@@ -1067,6 +1092,39 @@ function uniqueSharedChatTitle(vaultId: string, baseTitle: string): string {
   return `${base} ${Date.now()}`;
 }
 
+function addLinkedChatToUserVault(sourceVault: { id: string }, sourceChannel: { id: string; title: string }, userId: number, createdBy: number) {
+  let targetVault = firstOwnedVault(userId);
+  if (!targetVault) targetVault = createVault(db, userId, { name: 'My Vault' });
+
+  const existingLink = db.prepare(`
+    SELECT local_channel_id AS localChannelId, local_vault_id AS localVaultId
+    FROM chat_channel_links
+    WHERE source_channel_id = ?
+      AND local_vault_id IN (SELECT id FROM vaults WHERE created_by = ?)
+    ORDER BY created_at ASC
+    LIMIT 1
+  `).get(sourceChannel.id, userId) as { localChannelId: string; localVaultId: string } | undefined;
+
+  if (existingLink) {
+    return { vaultId: existingLink.localVaultId, channelId: existingLink.localChannelId, title: sourceChannel.title, created: false };
+  }
+
+  const title = uniqueSharedChatTitle(targetVault.id, sourceChannel.title);
+  const localChannel = createNote(db, targetVault.id, userId, {
+    title,
+    content: `${CHAT_NOTE_MARKER}\nshared_from=${sourceChannel.id}`,
+  });
+  linkChatChannel(db, {
+    localVaultId: targetVault.id,
+    localChannelId: localChannel.id,
+    sourceVaultId: sourceVault.id,
+    sourceChannelId: sourceChannel.id,
+    createdBy,
+  });
+  emitVaultEvent(targetVault.id, 'vault:noteCreated', { noteId: localChannel.id, vaultId: targetVault.id, title: localChannel.title });
+  return { vaultId: targetVault.id, channelId: localChannel.id, title: localChannel.title, created: true };
+}
+
 app.post('/api/vaults/:vaultId/channels/:channelId/invites', requireAuth, (req: AuthedRequest, res) => {
   const vault = getVault(db, req.params.vaultId, req.user!.id);
   if (!vault) return res.status(404).json({ error: 'Vault not found' });
@@ -1087,37 +1145,7 @@ app.post('/api/vaults/:vaultId/channels/:channelId/invites', requireAuth, (req: 
     if (!invitedUser) return res.status(404).json({ error: 'User not found' });
     if (invitedUser.id === req.user!.id) return res.status(400).json({ error: 'You already have this chat' });
 
-    let targetVault = firstOwnedVault(invitedUser.id);
-    if (!targetVault) targetVault = createVault(db, invitedUser.id, { name: 'My Vault' });
-
-    const existingLink = db.prepare(`
-      SELECT local_channel_id AS localChannelId, local_vault_id AS localVaultId
-      FROM chat_channel_links
-      WHERE source_channel_id = ?
-        AND local_vault_id IN (SELECT id FROM vaults WHERE created_by = ?)
-      ORDER BY created_at ASC
-      LIMIT 1
-    `).get(channel.id, invitedUser.id) as { localChannelId: string; localVaultId: string } | undefined;
-
-    let localChannelId = existingLink?.localChannelId;
-    let localVaultId = existingLink?.localVaultId || targetVault.id;
-    if (!localChannelId) {
-      const title = uniqueSharedChatTitle(targetVault.id, channel.title);
-      const localChannel = createNote(db, targetVault.id, invitedUser.id, {
-        title,
-        content: `${CHAT_NOTE_MARKER}\nshared_from=${channel.id}`,
-      });
-      localChannelId = localChannel.id;
-      localVaultId = targetVault.id;
-      linkChatChannel(db, {
-        localVaultId,
-        localChannelId,
-        sourceVaultId: vault.id,
-        sourceChannelId: channel.id,
-        createdBy: req.user!.id,
-      });
-      emitVaultEvent(localVaultId, 'vault:noteCreated', { noteId: localChannelId, vaultId: localVaultId, title: localChannel.title });
-    }
+    const linked = addLinkedChatToUserVault(vault, channel, invitedUser.id, req.user!.id);
 
     const message = createChatMessage(db, req.user!.id, vault.id, channel.id, {
       id: crypto.randomUUID(),
@@ -1127,18 +1155,134 @@ app.post('/api/vaults/:vaultId/channels/:channelId/invites', requireAuth, (req: 
       createdAt: new Date().toISOString(),
     });
     emitChatMessageEvent(vault.id, channel.id, 'vault:chatMessageCreated', message);
-    res.status(201).json({ user: publicUser(invitedUser), vaultId: localVaultId, channelId: localChannelId, message });
+    res.status(201).json({ user: publicUser(invitedUser), vaultId: linked.vaultId, channelId: linked.channelId, title: linked.title, message });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     res.status(400).json({ error: message });
   }
 });
 
+app.post('/api/vaults/:vaultId/channels/:channelId/invite-link', requireAuth, (req: AuthedRequest, res) => {
+  const vault = getVault(db, req.params.vaultId, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Vault not found' });
+  const channel = getNote(db, req.params.channelId);
+  if (!channel || channel.vault_id !== vault.id || !channel.content.trim().startsWith(CHAT_NOTE_MARKER)) {
+    return res.status(404).json({ error: 'Chat channel not found' });
+  }
+  if (vault.created_by !== req.user!.id) {
+    return res.status(403).json({ error: 'Only the chat owner can create invite links' });
+  }
+  const token = signChatInvite(vault.id, channel.id);
+  res.json({ token, url: `${publicBaseUrl(req)}/invite/${encodeURIComponent(token)}` });
+});
+
+app.get('/api/chat-invites/:token', (req, res) => {
+  try {
+    const invite = verifyChatInvite(req.params.token);
+    const channel = getNote(db, invite.sourceChannelId);
+    const vault = db.prepare('SELECT id, name, created_by FROM vaults WHERE id = ?').get(invite.sourceVaultId) as { id: string; name: string; created_by: number } | undefined;
+    if (!channel || !vault || channel.vault_id !== vault.id || !channel.content.trim().startsWith(CHAT_NOTE_MARKER)) {
+      return res.status(404).json({ error: 'Invite not found' });
+    }
+    const owner = db.prepare('SELECT username FROM users WHERE id = ?').get(vault.created_by) as { username: string } | undefined;
+    res.json({
+      invite: {
+        title: channel.title,
+        vaultName: vault.name,
+        owner: owner?.username || 'unknown',
+      },
+    });
+  } catch {
+    res.status(404).json({ error: 'Invite not found' });
+  }
+});
+
+app.post('/api/chat-invites/:token/accept', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const invite = verifyChatInvite(req.params.token);
+    const channel = getNote(db, invite.sourceChannelId);
+    const vault = db.prepare('SELECT * FROM vaults WHERE id = ?').get(invite.sourceVaultId) as ReturnType<typeof createVault> | undefined;
+    if (!channel || !vault || channel.vault_id !== vault.id || !channel.content.trim().startsWith(CHAT_NOTE_MARKER)) {
+      return res.status(404).json({ error: 'Invite not found' });
+    }
+    if (vault.created_by === req.user!.id) {
+      return res.json({ vaultId: vault.id, channelId: channel.id, title: channel.title, alreadyOwned: true });
+    }
+    const linked = addLinkedChatToUserVault(vault, channel, req.user!.id, vault.created_by);
+    res.status(201).json({ vaultId: linked.vaultId, channelId: linked.channelId, title: linked.title, created: linked.created });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Could not accept invite' });
+  }
+});
+
+function parseInviteUrl(rawUrl: string, base: string): string | null {
+  try {
+    const parsed = new URL(rawUrl);
+    const expected = new URL(base);
+    if (parsed.origin !== expected.origin) return null;
+    const match = parsed.pathname.match(/^\/invite\/([^/]+)$/);
+    return match ? decodeURIComponent(match[1]) : null;
+  } catch {
+    return null;
+  }
+}
+
+function escapeOembedHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function serveInviteOembed(req: Request, res: Response): boolean {
+  const rawUrl = typeof req.query.url === 'string' ? req.query.url : '';
+  const base = publicBaseUrl(req);
+  const token = parseInviteUrl(rawUrl, base);
+  if (!token) return false;
+
+  try {
+    const invite = verifyChatInvite(token);
+    const channel = getNote(db, invite.sourceChannelId);
+    const vault = db.prepare('SELECT id, name, created_by FROM vaults WHERE id = ?').get(invite.sourceVaultId) as { id: string; name: string; created_by: number } | undefined;
+    if (!channel || !vault || channel.vault_id !== vault.id || !channel.content.trim().startsWith(CHAT_NOTE_MARKER)) {
+      res.status(404).json({ error: 'Invite not found' });
+      return true;
+    }
+    const owner = db.prepare('SELECT username FROM users WHERE id = ?').get(vault.created_by) as { username: string } | undefined;
+    const inviteUrl = `${base}/invite/${encodeURIComponent(token)}`;
+    const title = `Join #${channel.title} on Cascade`;
+    const description = `${owner?.username || 'Someone'} invited you to add this chat to your own vault.`;
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    res.json({
+      version: '1.0',
+      type: 'rich',
+      provider_name: 'Cascade',
+      provider_url: base,
+      title,
+      author_name: owner?.username || 'Cascade',
+      html: `<a href="${escapeOembedHtml(inviteUrl)}" target="_blank" rel="noopener noreferrer">${escapeOembedHtml(title)}</a>`,
+      width: 420,
+      height: 96,
+      description,
+    });
+    return true;
+  } catch {
+    res.status(404).json({ error: 'Invite not found' });
+    return true;
+  }
+}
+
 // ── Public note publishing ─────────────────────────────────────────
 
 app.get('/p/:slug', servePublicNotePage(db));
 app.get('/p/:slug.json', servePublicNoteJson(db));
-app.get('/oembed', serveOembed(db));
+const publicNoteOembed = serveOembed(db);
+app.get('/oembed', (req, res) => {
+  if (serveInviteOembed(req, res)) return;
+  publicNoteOembed(req, res);
+});
 
 app.get('/api/notes/:id/publish', requireAuth, (req: AuthedRequest, res) => {
   try {

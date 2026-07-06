@@ -2058,6 +2058,29 @@ a {
   font-size: 0.6875rem;
   line-height: 1.35;
 }
+.chat-copy-invite-btn {
+  width: 100%;
+  min-height: 30px;
+  margin-bottom: 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+.chat-copy-invite-btn:hover:not(:disabled) {
+  border-color: var(--border-active);
+  color: var(--text-primary);
+}
+.chat-copy-invite-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
 .chat-agent-menu-actions {
   display: flex;
   justify-content: flex-end;

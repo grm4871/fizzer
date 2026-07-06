@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Activity, Bot, Brain, ChevronLeft, ChevronRight, Hash, ImagePlus, Paperclip, Plus, Reply, Send, Square, UserPlus, X } from 'lucide-react';
+import { Activity, Bot, Brain, ChevronLeft, ChevronRight, Copy, Hash, ImagePlus, Paperclip, Plus, Reply, Send, Square, UserPlus, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
@@ -98,6 +98,7 @@ interface ChatViewProps {
   runningAgents: RunningChatAgent[];
   onRegisterAgent: (channelId: string, registration: ChatAgentRegistration) => void;
   onRemoveAgent: (channelId: string, registrationId: string) => void;
+  onCreateInviteLink: (channelId: string) => Promise<string>;
   onInviteUser: (channelId: string, username: string) => Promise<void>;
   onSendMessage: (channelId: string, body: string, media?: ChatMediaAttachment[], replyTo?: ChatReplyRef) => void;
   onCancelRun: (runId: number) => void;
@@ -456,6 +457,7 @@ export function ChatView({
   runningAgents,
   onRegisterAgent,
   onRemoveAgent,
+  onCreateInviteLink,
   onInviteUser,
   onSendMessage,
   onCancelRun,
@@ -472,6 +474,7 @@ export function ChatView({
   const [inviteUsername, setInviteUsername] = useState('');
   const [inviteStatus, setInviteStatus] = useState('');
   const [inviteBusy, setInviteBusy] = useState(false);
+  const [inviteLinkBusy, setInviteLinkBusy] = useState(false);
   const [editingRegistrationId, setEditingRegistrationId] = useState<string | null>(null);
   const [agentFormError, setAgentFormError] = useState('');
   const createDefaultAgentForm = useCallback((): ChatAgentRegistration => {
@@ -713,6 +716,20 @@ export function ChatView({
       setInviteStatus(error instanceof Error ? error.message : 'Could not invite user');
     } finally {
       setInviteBusy(false);
+    }
+  }
+
+  async function copyInviteLink() {
+    setInviteLinkBusy(true);
+    setInviteStatus('');
+    try {
+      const url = await onCreateInviteLink(channelId);
+      await navigator.clipboard.writeText(url);
+      setInviteStatus('Invite link copied.');
+    } catch (error) {
+      setInviteStatus(error instanceof Error ? error.message : 'Could not copy invite link');
+    } finally {
+      setInviteLinkBusy(false);
     }
   }
 
@@ -1074,6 +1091,10 @@ export function ChatView({
           <>
         {inviteOpen && (
           <form className="chat-invite-menu" onSubmit={submitInvite} onClick={(event) => event.stopPropagation()}>
+            <button type="button" className="chat-copy-invite-btn" onClick={copyInviteLink} disabled={inviteLinkBusy}>
+              <Copy size={13} />
+              {inviteLinkBusy ? 'Copying' : 'Copy invite link'}
+            </button>
             <label>
               Username
               <input

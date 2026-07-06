@@ -491,6 +491,7 @@ export default function App() {
   const vaultSocketRef = useRef<ReturnType<typeof connectVaultSocket> | null>(null);
   const runSocketsRef = useRef<Map<number, ReturnType<typeof connectRunsSocket>>>(new Map());
   const streamingChatMessageIdsRef = useRef<Set<string>>(new Set());
+  const acceptedInviteTokenRef = useRef<string | null>(null);
   // Agent messages whose persistence is owned by the server (the run is linked to
   // them server-side). We skip our own PATCH for these to avoid duplicate writes.
   const serverOwnedChatMessageIdsRef = useRef<Set<string>>(new Set());
@@ -904,6 +905,28 @@ export default function App() {
     setFocusedPaneId(focused.id);
   }, []);
 
+  useEffect(() => {
+    const match = window.location.pathname.match(/^\/invite\/([^/]+)$/);
+    const token = match ? decodeURIComponent(match[1]) : '';
+    if (!token || !user || acceptedInviteTokenRef.current === token) return;
+    acceptedInviteTokenRef.current = token;
+    (async () => {
+      try {
+        const data = await api<{ vaultId: string; channelId: string; title: string }>(`/api/chat-invites/${encodeURIComponent(token)}/accept`, {
+          method: 'POST',
+        });
+        await loadVaults();
+        setActiveVaultId(data.vaultId);
+        await loadVaultData(data.vaultId);
+        openChatChannel(data.channelId, data.title || 'shared-chat', 'replace');
+        window.history.replaceState({}, '', '/app.html');
+        setNotice(`Added #${data.title || 'shared-chat'} to your vault.`);
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : 'Could not accept invite link');
+      }
+    })();
+  }, [loadVaultData, loadVaults, openChatChannel, user]);
+
   const handleCreateChannel = useCallback(async (folderId: string | null = null) => {
     const vaultId = activeVaultIdRef.current;
     if (!vaultId) return undefined;
@@ -1004,6 +1027,15 @@ export default function App() {
       method: 'POST',
       body: JSON.stringify({ username }),
     });
+  }, []);
+
+  const handleCreateChatInviteLink = useCallback(async (channelId: string) => {
+    const vaultId = activeVaultIdRef.current;
+    if (!vaultId) throw new Error('No active vault');
+    const data = await api<{ url: string }>(`/api/vaults/${vaultId}/channels/${channelId}/invite-link`, {
+      method: 'POST',
+    });
+    return data.url;
   }, []);
 
   const startAgentChatRun = useCallback(async (
@@ -2029,6 +2061,7 @@ export default function App() {
           runningAgents={runningChatAgents}
           onRegisterAgent={handleRegisterChatAgent}
           onRemoveAgent={handleRemoveChatAgent}
+          onCreateInviteLink={handleCreateChatInviteLink}
           onInviteUser={handleInviteChatUser}
           onSendMessage={handleSendChatMessage}
           onCancelRun={handleCancelChatRun}
@@ -2055,7 +2088,7 @@ export default function App() {
         onLinkifySelection={(term, context) => handleLinkifyTerm(term, context, entry?.note?.title)}
       />
     );
-  }, [chatState.messagesByChannel, chatState.registeredAgentsByChannel, currentUsername, runningChatAgents, handleCancelChatRun, handleInviteChatUser, handleRegisterChatAgent, handleRemoveChatAgent, handleSendChatMessage, noteContents, notes, handleNoteChange, saveNoteTab, renameNoteTab, handleExecuteDirective, handleLinkifyTerm, openNote]);
+  }, [chatState.messagesByChannel, chatState.registeredAgentsByChannel, currentUsername, runningChatAgents, handleCancelChatRun, handleCreateChatInviteLink, handleInviteChatUser, handleRegisterChatAgent, handleRemoveChatAgent, handleSendChatMessage, noteContents, notes, handleNoteChange, saveNoteTab, renameNoteTab, handleExecuteDirective, handleLinkifyTerm, openNote]);
 
   if (!user) {
     return (
