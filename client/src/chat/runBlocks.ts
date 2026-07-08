@@ -71,8 +71,33 @@ export function appendChatRunBlocks(existing: ChatBlock[] | undefined, blocks: C
 function chatMessageStreamScore(message: ChatMessage): number {
   const bodyScore = message.body?.length ?? 0;
   const blockScore = (message.blocks ?? []).reduce((sum, block) => sum + (block.text?.length ?? 0), 0);
-  const statusScore = message.status === 'running' ? 1 : message.status === 'failed' ? 2 : 10;
+  // Terminal statuses outrank running; canceled is a real terminal state.
+  const statusScore = message.status === 'running'
+    ? 1
+    : message.status === 'failed' || message.status === 'canceled'
+      ? 2
+      : 10;
   return statusScore * 1_000_000 + bodyScore + blockScore;
+}
+
+/** Prefer streamed assistant text over a generic CLI/SDK summary for chat body. */
+export function honestAgentChatBody(
+  streamedText: string,
+  summary: string | undefined,
+  terminal: 'completed' | 'failed' | 'canceled',
+): string {
+  const trimmed = streamedText.trim();
+  const summaryText = typeof summary === 'string' ? summary.trim() : '';
+  const isGeneric = /^(done\.?|completed note operations successfully\.?|agent failed\.?)$/i.test(summaryText);
+
+  if (terminal === 'failed' || terminal === 'canceled') {
+    const reason = summaryText
+      || (terminal === 'canceled' ? 'Run canceled by user.' : 'Agent failed.');
+    return trimmed ? `${trimmed}\n\n> ⚠️ ${reason}` : reason;
+  }
+  if (trimmed) return trimmed;
+  if (summaryText && !isGeneric) return summaryText;
+  return summaryText || 'Done.';
 }
 
 /** Prefer the richer of local streaming vs remote socket/DB copy of the same message. */

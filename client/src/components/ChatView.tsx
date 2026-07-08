@@ -61,7 +61,7 @@ export interface ChatMessage {
    * so the client orders them exactly as the server does. Absent until the
    * message is persisted — optimistic messages sort last within a tie. */
   seq?: number;
-  status?: 'sending' | 'running' | 'failed';
+  status?: 'sending' | 'running' | 'failed' | 'canceled';
   agentId?: string;
   registrationId?: string;
   runId?: number;
@@ -69,6 +69,16 @@ export interface ChatMessage {
   images?: string[];
   attachments?: Array<{ name: string; media_type: string; url: string }>;
   replyTo?: ChatReplyRef;
+}
+
+/** Desktop runner health from GET /api/me/desktop-runner */
+export interface DesktopRunnerHealth {
+  online: boolean;
+  activeRuns: number;
+  lastError: string | null;
+  lastErrorAt: string | null;
+  lastSeenAt: string | null;
+  models: Record<string, string[]> | null;
 }
 
 export interface ChatBlock {
@@ -131,6 +141,7 @@ interface ChatViewProps {
   availableAgents: ChatAgentOption[];
   registeredAgents: ChatAgentRegistration[];
   runningAgents: RunningChatAgent[];
+  runnerHealth?: DesktopRunnerHealth | null;
   onRegisterAgent: (channelId: string, registration: ChatAgentRegistration) => void;
   onRemoveAgent: (channelId: string, registrationId: string) => void;
   onCreateInviteLink: (channelId: string) => Promise<string>;
@@ -491,6 +502,7 @@ export function ChatView({
   availableAgents,
   registeredAgents,
   runningAgents,
+  runnerHealth = null,
   onRegisterAgent,
   onRemoveAgent,
   onCreateInviteLink,
@@ -927,6 +939,7 @@ export function ChatView({
                       <time dateTime={tail.createdAt}>{formatTime(tail.createdAt)}</time>
                       {tail.status === 'running' && <span className="chat-message-status">working</span>}
                       {tail.status === 'failed' && <span className="chat-message-status is-error">failed</span>}
+                      {tail.status === 'canceled' && <span className="chat-message-status is-error">canceled</span>}
                     </div>
                     {group.messages.map((message) => {
                       const hasRunWidget = message.status === 'running';
@@ -1168,6 +1181,26 @@ export function ChatView({
 
         {!usersCollapsed && (sidebarMode === 'runs' ? (
           <>
+            <div className="chat-users-title">Desktop runner</div>
+            <div className={`chat-runner-health ${runnerHealth?.online ? 'is-online' : 'is-offline'}`}>
+              <div className="chat-runner-health-row">
+                <span className={`chat-runner-dot ${runnerHealth?.online ? 'online' : 'offline'}`} />
+                <strong>{runnerHealth?.online ? 'Online' : 'Offline'}</strong>
+              </div>
+              <span className="chat-runner-meta">
+                {runnerHealth?.activeRuns ?? 0} active run{(runnerHealth?.activeRuns ?? 0) === 1 ? '' : 's'}
+              </span>
+              {runnerHealth?.lastError && (
+                <span className="chat-runner-error" title={runnerHealth.lastErrorAt || undefined}>
+                  Last error: {runnerHealth.lastError}
+                </span>
+              )}
+              {!runnerHealth?.online && (
+                <span className="chat-runner-hint">
+                  Open Cascade desktop signed in to the same account to run agents.
+                </span>
+              )}
+            </div>
             <div className="chat-users-title">Running agents</div>
             {runningAgents.length === 0 ? (
               <div className="chat-runs-empty">No agents running</div>

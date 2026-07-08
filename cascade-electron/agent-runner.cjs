@@ -295,6 +295,7 @@ async function runClaudeLocally(opts, emit) {
 
   activeClaudeQueries.set(runId, stream);
   let summary = '';
+  let streamedText = '';
   let sessionId;
   // Tracks whether the previous streamed block was text, so a new text block
   // (a fresh turn, typically split off by a tool call in between) gets a
@@ -319,6 +320,7 @@ async function runClaudeLocally(opts, emit) {
           } else if (blockType === 'text' && lastBlockWasText) {
             // Separate this turn's text from the previous one.
             emit('text', { message: { content: [{ type: 'text', text: '\n\n' }] } });
+            streamedText += '\n\n';
           }
         } else if (ev?.type === 'content_block_delta') {
           const delta = ev.delta;
@@ -327,6 +329,7 @@ async function runClaudeLocally(opts, emit) {
             lastBlockWasText = false;
           } else if (delta?.type === 'text_delta' && delta.text) {
             emit('text', { message: { content: [{ type: 'text', text: delta.text }] } });
+            streamedText += delta.text;
             lastBlockWasText = true;
           }
         }
@@ -342,7 +345,12 @@ async function runClaudeLocally(opts, emit) {
   } finally {
     activeClaudeQueries.delete(runId);
   }
-  return { summary: summary || 'Completed note operations successfully.', sessionId };
+  // Chat runs: prefer the streamed assistant text over a generic SDK result.
+  // Non-chat note runs keep the SDK result as the summary for the run list.
+  if (chatRun && streamedText.trim()) {
+    return { summary: streamedText.trim(), sessionId };
+  }
+  return { summary: summary || streamedText.trim() || 'Completed note operations successfully.', sessionId };
 }
 
 /**

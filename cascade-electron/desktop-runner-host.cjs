@@ -7,6 +7,7 @@
  */
 
 const path = require('path');
+const { spawnSync } = require('child_process');
 const { startLocalAgentRun, cancelLocalAgentRun, setNoteApiConfig } = require('./agent-runner.cjs');
 
 function loadSocketIoClient() {
@@ -21,7 +22,8 @@ const { io } = loadSocketIoClient();
 
 let socket = null;
 let apiBase = 'https://cscd.online';
-const activeCleanups = new Map();
+/** Active local runs keyed by runId → abort/cleanup marker. */
+const activeRuns = new Map();
 
 function normalizeApiBase(value) {
   const raw = String(value || '').trim();
@@ -33,14 +35,43 @@ function emitRunEvent(runId, type, payload) {
   socket?.emit('runner:runEvent', { runId, type, payload });
 }
 
+/**
+ * Probe locally installed CLIs for model lists (best-effort).
+ * Returns { agentId: string[] } for agents that report models.
+ */
+function probeLocalModels() {
+  const models = {};
+  try {
+    const result = spawnSync('grok', ['models'], {
+      encoding: 'utf8',
+      timeout: 8000,
+      env: process.env,
+    });
+    if (result.status === 0 && result.stdout) {
+      const ids = [];
+      for (const line of result.stdout.split(/\r?\n/)) {
+        // Lines like "  * grok-4.5 (default)" or "  - grok-composer-2.5-fast"
+        const m = line.match(/^\s*[*-]\s+([a-zA-Z0-9._-]+)/);
+        if (m) ids.push(m[1]);
+      }
+      if (ids.length) models.grok = ids;
+    }
+  } catch {
+    // grok not installed
+  }
+  return models;
+}
+
 async function handleDelegatedRun(payload) {
   const runId = Number(payload?.runId);
   if (!Number.isFinite(runId)) return;
 
-  if (activeCleanups.has(runId)) {
-    activeCleanups.delete(runId);
+  if (activeRuns.has(runId)) {
+    try { await cancelLocalAgentRun(runId); } catch { /* ignore */ }
+    activeRuns.delete(runId);
   }
 
+  activeRuns.set(runId, true);
   try {
     await startLocalAgentRun(payload, (event) => {
       emitRunEvent(runId, event.type, JSON.parse(event.payload_json));
@@ -48,14 +79,16 @@ async function handleDelegatedRun(payload) {
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Local agent run failed.';
     emitRunEvent(runId, 'status', { status: 'failed', summary: message });
+  } finally {
+    activeRuns.delete(runId);
   }
 }
 
 function disconnectDesktopRunner() {
-  for (const runId of activeCleanups.keys()) {
+  for (const runId of [...activeRuns.keys()]) {
     void cancelLocalAgentRun(runId);
   }
-  activeCleanups.clear();
+  activeRuns.clear();
   if (socket) {
     socket.removeAllListeners();
     socket.disconnect();
@@ -87,7 +120,8 @@ function connectDesktopRunner(token, nextApiBase) {
   });
 
   socket.on('connect', () => {
-    socket.emit('runner:register');
+    const models = probeLocalModels();
+    socket.emit('runner:register', { models });
     console.log(`[DesktopRunner] Connected to ${apiBase}/runners`);
   });
 
@@ -102,7 +136,7 @@ function connectDesktopRunner(token, nextApiBase) {
   socket.on('run:cancel', (data) => {
     const runId = Number(data?.runId);
     if (!Number.isFinite(runId)) return;
-    activeCleanups.delete(runId);
+    activeRuns.delete(runId);
     void cancelLocalAgentRun(runId);
   });
 
@@ -117,4 +151,5 @@ module.exports = {
   connectDesktopRunner,
   disconnectDesktopRunner,
   isDesktopRunnerConnected: () => Boolean(socket?.connected),
+  getActiveRunCount: () => activeRuns.size,
 };

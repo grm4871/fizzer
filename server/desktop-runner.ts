@@ -11,6 +11,12 @@ import jwt from 'jsonwebtoken';
 import type { Server, Socket } from 'socket.io';
 import type Database from 'better-sqlite3';
 import { resolveJwtSecret } from './security.js';
+import {
+  clearDelegatedRunRecord,
+  countActiveDelegatedRuns,
+  failOpenDelegatedRunsForOwner,
+  recordDelegatedRun,
+} from './runner.js';
 
 type Db = Database.Database;
 
@@ -43,13 +49,29 @@ type RunnerHooks = {
   finishDelegatedRun: (
     db: Db,
     runId: number,
-    opts: { status: 'completed' | 'failed'; summary: string; sessionId?: string },
+    opts: { status: 'completed' | 'failed' | 'canceled'; summary: string; sessionId?: string },
   ) => void;
+  /** Optional: settle chat messages / broadcast after runs fail on disconnect. */
+  onRunsFailedForOwner?: (ownerUserId: number, runIds: number[]) => void;
+};
+
+export type DesktopRunnerHealth = {
+  online: boolean;
+  activeRuns: number;
+  lastError: string | null;
+  lastErrorAt: string | null;
+  lastSeenAt: string | null;
+  models: Record<string, string[]> | null;
 };
 
 const JWT_SECRET = resolveJwtSecret();
 const runnersByUser = new Map<number, RunnerSocket>();
 const delegatedRunOwners = new Map<number, number>();
+/** Last error reported by (or about) each user's desktop runner. */
+const runnerLastError = new Map<number, { message: string; at: string }>();
+/** Last capability probe payload from the desktop (agent → model ids). */
+const runnerModels = new Map<number, Record<string, string[]>>();
+const runnerLastSeen = new Map<number, string>();
 
 export function initDesktopRunners(io: Server, db: Db, hooks: RunnerHooks): void {
   const runnersNamespace = io.of('/runners');
@@ -74,13 +96,39 @@ export function initDesktopRunners(io: Server, db: Db, hooks: RunnerHooks): void
 
     const existing = runnersByUser.get(user.id);
     if (existing && existing.id !== socket.id) {
+      // Replacing a previous socket for the same user. Do not fail active runs —
+      // the new connection is the same owner reclaiming the runner slot.
       existing.disconnect();
     }
     runnersByUser.set(user.id, socket);
+    runnerLastSeen.set(user.id, new Date().toISOString());
 
-    socket.on('runner:register', () => {
+    socket.on('runner:register', (payload?: { models?: Record<string, string[]> }) => {
       runnersByUser.set(user.id, socket);
+      runnerLastSeen.set(user.id, new Date().toISOString());
+      if (payload?.models && typeof payload.models === 'object') {
+        const cleaned: Record<string, string[]> = {};
+        for (const [agent, models] of Object.entries(payload.models)) {
+          if (Array.isArray(models)) {
+            cleaned[agent] = models.filter((m): m is string => typeof m === 'string' && m.trim().length > 0);
+          }
+        }
+        runnerModels.set(user.id, cleaned);
+      }
       socket.emit('runner:registered', { ok: true });
+    });
+
+    socket.on('runner:capabilities', (payload?: { models?: Record<string, string[]> }) => {
+      if (payload?.models && typeof payload.models === 'object') {
+        const cleaned: Record<string, string[]> = {};
+        for (const [agent, models] of Object.entries(payload.models)) {
+          if (Array.isArray(models)) {
+            cleaned[agent] = models.filter((m): m is string => typeof m === 'string' && m.trim().length > 0);
+          }
+        }
+        runnerModels.set(user.id, cleaned);
+      }
+      runnerLastSeen.set(user.id, new Date().toISOString());
     });
 
     socket.on('runner:runEvent', (data: { runId?: number; type?: string; payload?: unknown }) => {
@@ -92,21 +140,62 @@ export function initDesktopRunners(io: Server, db: Db, hooks: RunnerHooks): void
 
       if (data.type === 'status' && data.payload && typeof data.payload === 'object') {
         const status = (data.payload as { status?: string }).status;
-        if (status === 'completed' || status === 'failed') {
+        if (status === 'completed' || status === 'failed' || status === 'canceled') {
           const payload = data.payload as { summary?: string; sessionId?: string };
+          const summary = payload.summary
+            || (status === 'completed' ? 'Done.' : status === 'canceled' ? 'Run canceled by user.' : 'Agent failed.');
+          if (status === 'failed' && payload.summary) {
+            runnerLastError.set(user.id, { message: payload.summary, at: new Date().toISOString() });
+          }
           hooks.finishDelegatedRun(db, runId, {
             status,
-            summary: payload.summary || (status === 'completed' ? 'Done.' : 'Agent failed.'),
+            summary,
             sessionId: payload.sessionId,
           });
           delegatedRunOwners.delete(runId);
+          clearDelegatedRunRecord(db, runId);
         }
       }
     });
 
     socket.on('disconnect', () => {
-      if (runnersByUser.get(user.id)?.id === socket.id) {
-        runnersByUser.delete(user.id);
+      if (runnersByUser.get(user.id)?.id !== socket.id) {
+        // A newer socket already replaced this one — leave active runs alone.
+        return;
+      }
+      runnersByUser.delete(user.id);
+      // Fail DB-recorded delegated runs + any in-memory-only ones for this owner.
+      const failedFromDb = failOpenDelegatedRunsForOwner(
+        db,
+        user.id,
+        'Desktop agent runner disconnected.',
+      );
+      const failedIds = new Set(failedFromDb);
+      for (const [runId, ownerId] of [...delegatedRunOwners.entries()]) {
+        if (ownerId !== user.id) continue;
+        delegatedRunOwners.delete(runId);
+        if (failedIds.has(runId)) continue;
+        // In-memory only (record may already be cleared); still emit failed.
+        hooks.finishDelegatedRun(db, runId, {
+          status: 'failed',
+          summary: 'Desktop agent runner disconnected.',
+        });
+        hooks.publishRunEvent(db, runId, 'status', {
+          status: 'failed',
+          summary: 'Desktop agent runner disconnected.',
+        });
+        clearDelegatedRunRecord(db, runId);
+        failedIds.add(runId);
+      }
+      for (const runId of failedFromDb) {
+        delegatedRunOwners.delete(runId);
+      }
+      if (failedIds.size > 0) {
+        runnerLastError.set(user.id, {
+          message: `Runner disconnected; ${failedIds.size} run(s) failed.`,
+          at: new Date().toISOString(),
+        });
+        hooks.onRunsFailedForOwner?.(user.id, [...failedIds]);
       }
     });
   });
@@ -117,8 +206,24 @@ export function isDesktopRunnerOnline(userId: number): boolean {
   return Boolean(socket?.connected);
 }
 
-export function getDesktopRunnerStatus(userId: number) {
-  return { online: isDesktopRunnerOnline(userId) };
+export function getDesktopRunnerStatus(userId: number, db?: Db): DesktopRunnerHealth {
+  const err = runnerLastError.get(userId);
+  return {
+    online: isDesktopRunnerOnline(userId),
+    activeRuns: db ? countActiveDelegatedRuns(db, userId) : countInMemoryDelegatedRuns(userId),
+    lastError: err?.message ?? null,
+    lastErrorAt: err?.at ?? null,
+    lastSeenAt: runnerLastSeen.get(userId) ?? null,
+    models: runnerModels.get(userId) ?? null,
+  };
+}
+
+function countInMemoryDelegatedRuns(userId: number): number {
+  let n = 0;
+  for (const owner of delegatedRunOwners.values()) {
+    if (owner === userId) n += 1;
+  }
+  return n;
 }
 
 /**
@@ -137,10 +242,11 @@ export async function waitForDesktopRunner(userId: number, timeoutMs = 6000): Pr
   return false;
 }
 
-export function delegateRunToDesktop(userId: number, payload: DelegatedRunPayload): boolean {
+export function delegateRunToDesktop(userId: number, payload: DelegatedRunPayload, db?: Db): boolean {
   const socket = runnersByUser.get(userId);
   if (!socket?.connected) return false;
   delegatedRunOwners.set(payload.runId, userId);
+  if (db) recordDelegatedRun(db, payload.runId, userId);
   socket.emit('run:delegate', payload);
   return true;
 }
@@ -162,4 +268,9 @@ export function cancelDelegatedRun(userId: number, runId: number): boolean {
 
 export function clearDelegatedRun(runId: number): void {
   delegatedRunOwners.delete(runId);
+}
+
+/** Remember a runner-level error (e.g. 503 "no runner") for the health UI. */
+export function noteDesktopRunnerError(userId: number, message: string): void {
+  runnerLastError.set(userId, { message, at: new Date().toISOString() });
 }

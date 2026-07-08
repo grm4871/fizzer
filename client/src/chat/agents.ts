@@ -14,6 +14,12 @@ export const CHAT_AGENTS: Array<{ id: AgentId; label: string }> = [
   { id: 'hermes', label: 'Hermes' },
 ];
 
+/**
+ * Curated model presets shown in the agent picker.
+ * Prefer ids known to work with the local CLI; dead ids (e.g. retired grok-build)
+ * are intentionally omitted. Desktop may report additional live models via
+ * `/api/me/desktop-runner` which the UI merges in.
+ */
 export const CHAT_AGENT_MODEL_PRESETS: Record<AgentId, { id: string; label: string }[]> = {
   'claude-code': [
     { id: 'claude-sonnet-5', label: 'Claude Sonnet 5' },
@@ -28,7 +34,6 @@ export const CHAT_AGENT_MODEL_PRESETS: Record<AgentId, { id: string; label: stri
   grok: [
     { id: 'grok-4.5', label: 'Grok 4.5' },
     { id: 'grok-composer-2.5-fast', label: 'Grok Composer 2.5 Fast' },
-    { id: 'grok-build', label: 'Grok Build' },
   ],
   antigravity: [
     { id: 'flash_lite', label: 'Gemini 3.5 Flash (Low)' },
@@ -42,6 +47,26 @@ export const CHAT_AGENT_MODEL_PRESETS: Record<AgentId, { id: string; label: stri
   ],
   hermes: [],
 };
+
+/**
+ * Merge curated presets with live models reported by the desktop runner.
+ * Live ids not already in the preset list are appended as-is.
+ */
+export function mergeAgentModelPresets(
+  agentId: AgentId,
+  liveModels: string[] | null | undefined,
+): { id: string; label: string }[] {
+  const base = [...(CHAT_AGENT_MODEL_PRESETS[agentId] ?? [])];
+  if (!liveModels?.length) return base;
+  const seen = new Set(base.map((m) => m.id));
+  for (const id of liveModels) {
+    const trimmed = id.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    base.push({ id: trimmed, label: trimmed });
+  }
+  return base;
+}
 
 export function agentLabel(agentId: string) {
   return CHAT_AGENTS.find((agent) => agent.id === agentId)?.label ?? agentId;
@@ -63,7 +88,8 @@ export type AgentPromptRegistration = {
 
 /**
  * Build the system-ish header the agent receives for a channel reply.
- * When `continuation` is true the CLI session already holds earlier turns.
+ * When `continuation` is true the CLI session already holds earlier turns —
+ * use a short header and skip re-stating helper docs / channel notes.
  */
 export function formatAgentChatPrompt(
   channelName: string,
@@ -75,8 +101,14 @@ export function formatAgentChatPrompt(
   const selfAgent = CHAT_AGENTS.find((candidate) => candidate.id === registration.agentId);
   const selfHandle = registration.mention || registration.agentId;
   const selfName = registration.displayName || selfAgent?.label || registration.agentId;
-  const sessionNote = continuation ? ' Your session already has earlier turns.' : '';
+
+  if (continuation) {
+    // Session already has identity + prior turns. Keep the nudge short.
+    const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, responding to ${triggeringAuthor}. Continuation — session already has earlier turns. Reply briefly. Prefer \`cascade-chat send\` for mid-run updates.`;
+    return `${header}\n\n${request}`;
+  }
+
   const channelNote = registration.contextPrompt ? ` Channel note: ${registration.contextPrompt}` : '';
-  const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, responding to ${triggeringAuthor}.${sessionNote} Reply briefly. Run \`cascade-chat history --include-reply-context\` for full channel context. Use \`cascade-chat send --message "text"\` to send a standalone message in chat during your run, especially after tool calls. Notes: \`cascade-note\` + \`![[Title]]\` embeds.${channelNote}`;
+  const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, responding to ${triggeringAuthor}. Reply briefly. Run \`cascade-chat history --include-reply-context\` for full channel context. Use \`cascade-chat send --message "text"\` to send a standalone message in chat during your run, especially after tool calls. Notes: \`cascade-note\` + \`![[Title]]\` embeds.${channelNote}`;
   return `${header}\n\n${request}`;
 }

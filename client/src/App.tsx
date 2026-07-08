@@ -14,6 +14,7 @@ import {
   type ChatMediaAttachment,
   type ChatMessage,
   type ChatReplyRef,
+  type DesktopRunnerHealth,
   type RunningChatAgent,
 } from './components/ChatView';
 import { SearchOverlay } from './components/SearchOverlay';
@@ -27,9 +28,9 @@ import { isLocalRunId, cancelLocalAgentRun } from './localAgentRunner';
 import { startDesktopRunnerHost } from './desktopRunnerHost';
 import {
   agentLabel,
-  CHAT_AGENT_MODEL_PRESETS,
   CHAT_AGENTS,
   formatAgentChatPrompt,
+  mergeAgentModelPresets,
   normalizeChatCwd,
   type AgentId,
 } from './chat/agents';
@@ -37,6 +38,7 @@ import { getMentionedRegistrations, normalizeMention, stripRegisteredAgentMentio
 import {
   appendChatRunBlocks,
   hasChatRunToolBlock,
+  honestAgentChatBody,
   mergeRemoteChatMessage,
   newId,
   normalizeChatRunBlocks,
@@ -108,6 +110,7 @@ export default function App() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [runnerHealth, setRunnerHealth] = useState<DesktopRunnerHealth | null>(null);
   // ─── Derived focus state ────────────────────────────────────────
   const focusedPane = Layout.findPane(layout, focusedPaneId) ?? Layout.getFirstPane(layout);
   const activeTabId = focusedPane.activeTabId;
@@ -274,6 +277,38 @@ export default function App() {
     return () => {
       desktopRunnerStopRef.current?.();
       desktopRunnerStopRef.current = null;
+    };
+  }, [user]);
+
+  // Poll desktop runner health for the chat agent sidebar.
+  useEffect(() => {
+    if (!user) {
+      setRunnerHealth(null);
+      return;
+    }
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const data = await api<DesktopRunnerHealth>('/api/me/desktop-runner');
+        if (!cancelled) setRunnerHealth(data);
+      } catch {
+        if (!cancelled) {
+          setRunnerHealth({
+            online: false,
+            activeRuns: 0,
+            lastError: null,
+            lastErrorAt: null,
+            lastSeenAt: null,
+            models: null,
+          });
+        }
+      }
+    };
+    void tick();
+    const id = window.setInterval(tick, 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
     };
   }, [user]);
 
@@ -653,7 +688,7 @@ export default function App() {
     }));
     const vaultId = activeVaultIdRef.current;
     if (vaultId && !serverOwnedChatMessageIdsRef.current.has(messageId)) {
-      const immediate = !patched.status || patched.status === 'failed';
+      const immediate = !patched.status || patched.status === 'failed' || patched.status === 'canceled';
       scheduleChatMessagePatch(vaultId, channelId, messageId, patched, immediate);
     }
   }, [scheduleChatMessagePatch]);
@@ -736,34 +771,28 @@ export default function App() {
 
     let runSocket: ReturnType<typeof connectRunsSocket> | null = null;
     let activeRunId: number | null = null;
-    let agentMessageCreated = false;
+
+    // Eager placeholder so messageId always exists before /runs (and the server
+    // can single-write into it). Server will also ensure/create if needed.
+    streamingChatMessageIdsRef.current.add(agentMessageId);
+    appendChatMessage(channelId, {
+      id: agentMessageId,
+      channelId,
+      author: registration.displayName || agentLabel(agentId),
+      body: 'Thinking...',
+      createdAt: new Date().toISOString(),
+      status: 'running',
+      agentId,
+      registrationId: registration.id,
+    });
 
     try {
-      // One sticky session per member: the run resumes (and extends) the
-      // member's conversation. A `/clear` rotates conversationId to start fresh.
-      const resumeSessionId = registration.conversationId || undefined;
+      // Conversation id groups runs for backend session resume (findPriorSession).
+      // The actual CLI session_id is resolved server-side — not this value.
+      const conversationId = registration.conversationId || undefined;
       let assistantText = '';
       let bufferedBlocks: ChatBlock[] = [];
       const processedSeqs = new Set<number>();
-
-      const ensureAgentMessage = (runId?: number, patch: Partial<ChatMessage> = {}) => {
-        if (agentMessageCreated) return;
-        agentMessageCreated = true;
-        streamingChatMessageIdsRef.current.add(agentMessageId);
-        appendChatMessage(channelId, {
-          id: agentMessageId,
-          channelId,
-          author: registration.displayName || agentLabel(agentId),
-          body: assistantText.trim() || 'Thinking...',
-          createdAt: new Date().toISOString(),
-          status: 'running',
-          agentId,
-          registrationId: registration.id,
-          ...(runId ? { runId } : {}),
-          ...(bufferedBlocks.length ? { blocks: bufferedBlocks } : {}),
-          ...patch,
-        });
-      };
 
       const finishRun = (runId: number, cleanup: () => void) => {
         cleanup();
@@ -789,50 +818,43 @@ export default function App() {
         try {
           if (event.type === 'status') {
             const payload = JSON.parse(event.payload_json);
-            if (payload.status === 'completed' || payload.status === 'failed') {
-              // Collapse the chat body to the final answer (run summary); the full
-              // narration stays in `blocks` for the trace disclosure.
-              const summaryText = typeof payload.summary === 'string' ? payload.summary.trim() : '';
-              // On failure (e.g. usage limits), keep the agent's accumulated
-              // output — it's the scratchpad a resuming agent needs — and append
-              // the reason instead of overwriting the work with a bare error.
-              const streamed = assistantText.trim();
-              const finalBody = payload.status === 'failed'
-                ? (streamed
-                    ? `${streamed}\n\n> ⚠️ ${summaryText || 'Agent failed.'}`
-                    : (summaryText || 'Agent failed.'))
-                : (summaryText || streamed || 'Done.');
-              ensureAgentMessage(runId, {
-                body: finalBody,
-                status: payload.status === 'failed' ? 'failed' : undefined,
-              });
+            if (payload.status === 'completed' || payload.status === 'failed' || payload.status === 'canceled') {
+              const terminal = payload.status as 'completed' | 'failed' | 'canceled';
+              const finalBody = honestAgentChatBody(
+                assistantText,
+                typeof payload.summary === 'string' ? payload.summary : undefined,
+                terminal,
+              );
+              const nextStatus = terminal === 'completed' ? undefined : terminal;
               updateChatMessage(channelId, agentMessageId, (message) => ({
                 ...message,
                 body: finalBody,
-                status: payload.status === 'failed' ? 'failed' : undefined,
+                status: nextStatus,
+                runId,
               }));
-              if (payload.status === 'completed') {
+              if (terminal === 'completed') {
                 // The agent's session now holds everything through this reply, so
                 // the next turn only needs messages posted after it. Left untouched
                 // on failure so the next turn re-feeds the context this run missed.
                 agentContextWatermarkRef.current.set(watermarkKey, agentMessageId);
               }
-              if (payload.status === 'completed' && assistantText.trim()) {
+              // Chain agent→agent mentions from the cleaned final body, not raw stream.
+              if (terminal === 'completed' && finalBody.trim()) {
                 const registrations = (chatStateRef.current.registeredAgentsByChannel[channelId] ?? [])
                   .filter((item) => item.id !== registration.id);
-                const mentionedAgents = getMentionedRegistrations(assistantText, registrations, true);
-                const prompt = stripRegisteredAgentMentions(assistantText, registrations) || assistantText;
+                const mentionedAgents = getMentionedRegistrations(finalBody, registrations, true);
+                const chainPrompt = stripRegisteredAgentMentions(finalBody, registrations) || finalBody;
                 const triggeringAgentMessage: ChatMessage = {
                   id: agentMessageId,
                   channelId,
                   author: registration.displayName || agentLabel(agentId),
-                  body: assistantText,
+                  body: finalBody,
                   createdAt: new Date().toISOString(),
                   agentId,
                   registrationId: registration.id,
                 };
                 for (const mentionedRegistration of mentionedAgents) {
-                  startAgentChatRunRef.current?.(channelId, mentionedRegistration, prompt, triggeringAgentMessage);
+                  startAgentChatRunRef.current?.(channelId, mentionedRegistration, chainPrompt, triggeringAgentMessage);
                 }
               }
               finishRun(runId, cleanup);
@@ -845,25 +867,21 @@ export default function App() {
             if (!text && blocks.length === 0 && !hasToolBlock) return;
             if (text) assistantText += text;
             bufferedBlocks = appendChatRunBlocks(bufferedBlocks, blocks);
-            const createdByThisEvent = hasToolBlock && !agentMessageCreated;
-            if (hasToolBlock) ensureAgentMessage(runId);
-            if (!agentMessageCreated || createdByThisEvent) return;
             updateChatMessage(channelId, agentMessageId, (message) => ({
               ...message,
               body: text ? (message.body === 'Thinking...' ? text : message.body + text) : message.body,
               blocks: appendChatRunBlocks(message.blocks, blocks),
+              runId,
             }));
           } else if (event.type === 'user') {
             const payload = JSON.parse(event.payload_json);
             const blocks = normalizeChatRunBlocks(payload.message?.content);
-            const hasToolBlock = hasChatRunToolBlock(payload.message?.content);
+            if (blocks.length === 0) return;
             bufferedBlocks = appendChatRunBlocks(bufferedBlocks, blocks);
-            const createdByThisEvent = hasToolBlock && !agentMessageCreated;
-            if (hasToolBlock) ensureAgentMessage(runId);
-            if (blocks.length === 0 || !agentMessageCreated || createdByThisEvent) return;
             updateChatMessage(channelId, agentMessageId, (message) => ({
               ...message,
               blocks: appendChatRunBlocks(message.blocks, blocks),
+              runId,
             }));
           }
         } catch {
@@ -890,7 +908,7 @@ export default function App() {
           prompt: runPrompt,
           note_id: null,
           agent: agentId,
-          conversation_id: resumeSessionId,
+          conversation_id: conversationId,
           model: registration.model || undefined,
           cwd: normalizeChatCwd(registration.cwd) || undefined,
           yolo: registration.yolo,
@@ -945,19 +963,6 @@ export default function App() {
       } else {
         runSocket?.disconnect();
       }
-      if (!agentMessageCreated) {
-        appendChatMessage(channelId, {
-          id: agentMessageId,
-          channelId,
-          author: registration.displayName || agentLabel(agentId),
-          body: 'Failed to start agent.',
-          createdAt: new Date().toISOString(),
-          status: 'failed',
-          agentId,
-          registrationId: registration.id,
-          ...(activeRunId != null ? { runId: activeRunId } : {}),
-        });
-      }
       streamingChatMessageIdsRef.current.delete(agentMessageId);
       updateChatMessage(channelId, agentMessageId, (message) => ({
         ...message,
@@ -1000,7 +1005,7 @@ export default function App() {
                   ? {
                       ...message,
                       body: message.body === 'Thinking...' ? 'Run canceled by user.' : message.body,
-                      status: 'failed',
+                      status: 'canceled',
                     }
                   : message
               )),
@@ -1796,10 +1801,14 @@ export default function App() {
           availableAgents={CHAT_AGENTS.map((agent) => ({
             id: agent.id,
             label: agent.label,
-            models: CHAT_AGENT_MODEL_PRESETS[agent.id],
+            models: mergeAgentModelPresets(
+              agent.id,
+              runnerHealth?.models?.[agent.id] ?? null,
+            ),
           }))}
           registeredAgents={chatState.registeredAgentsByChannel[channel.id] ?? []}
           runningAgents={runningChatAgents}
+          runnerHealth={runnerHealth}
           onRegisterAgent={handleRegisterChatAgent}
           onRemoveAgent={handleRemoveChatAgent}
           onCreateInviteLink={handleCreateChatInviteLink}
@@ -1828,7 +1837,7 @@ export default function App() {
         onOpenNote={openNote}
       />
     );
-  }, [chatState.messagesByChannel, chatState.registeredAgentsByChannel, chatPresenceByChannel, currentUsername, runningChatAgents, handleCancelChatRun, handleCreateChatInviteLink, handleInviteChatUser, handleRegisterChatAgent, handleRemoveChatAgent, handleSendChatMessage, noteContents, notes, handleNoteChange, saveNoteTab, renameNoteTab, handleExecuteDirective, openNote]);
+  }, [chatState.messagesByChannel, chatState.registeredAgentsByChannel, chatPresenceByChannel, currentUsername, runningChatAgents, runnerHealth, handleCancelChatRun, handleCreateChatInviteLink, handleInviteChatUser, handleRegisterChatAgent, handleRemoveChatAgent, handleSendChatMessage, noteContents, notes, handleNoteChange, saveNoteTab, renameNoteTab, handleExecuteDirective, openNote]);
 
   if (!user) {
     return (

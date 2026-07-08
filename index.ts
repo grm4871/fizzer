@@ -62,12 +62,14 @@ import {
   findPriorSession,
   publishRunEvent,
   finishDelegatedRun,
+  failOrphanedRunsAfterRestart,
   type AgentId,
 } from './server/runner.js';
 import {
   delegateRunToDesktop,
   getDesktopRunnerStatus,
   initDesktopRunners,
+  noteDesktopRunnerError,
   waitForDesktopRunner,
 } from './server/desktop-runner.js';
 import {
@@ -83,6 +85,7 @@ import {
   assertChatChannel,
   buildAgentChatContentFromRunEvents,
   CHAT_NOTE_MARKER,
+  ensureAgentChatMessage,
   ensureChatSchema,
   linkChatChannel,
   listChatChannelRoutes,
@@ -235,6 +238,11 @@ db.exec(`
 `);
 
 ensureRunnerSchema(db);
+// In-memory desktop sockets die with the process; settle any left-open runs.
+{
+  const n = failOrphanedRunsAfterRestart(db);
+  if (n > 0) console.log(`[runner] Settled ${n} orphaned run(s) after restart.`);
+}
 ensureFeedSchema(db);
 ensureChatSchema(db);
 ensurePublishSchema(db);
@@ -502,7 +510,19 @@ setChatSyncSink((runId, eventType) => {
 // Wire the desktop-runner relay: a user's signed-in desktop app registers here
 // and executes delegated runs locally, streaming events back through the server.
 // The server never runs an agent itself.
-initDesktopRunners(io, db, { publishRunEvent, finishDelegatedRun });
+initDesktopRunners(io, db, {
+  publishRunEvent,
+  finishDelegatedRun,
+  onRunsFailedForOwner: (_ownerUserId, runIds) => {
+    for (const runId of runIds) {
+      // Stream-fold into any linked chat messages, then settle from run row.
+      syncRunToChatMessage(runId);
+      for (const update of settleChatMessagesForRun(db, runId)) {
+        emitChatMessageEvent(update.vaultId, update.channelId, 'vault:chatMessageUpdated', update.message);
+      }
+    }
+  },
+});
 
 // ── Health ──────────────────────────────────────────────────────────
 
@@ -1057,11 +1077,11 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
   // though it's about to be dispatchable. Hard-failing here is what surfaces the
   // spurious "no runner connected" mid-run.
   if (!(await waitForDesktopRunner(runnerUserId))) {
-    return res.status(503).json({
-      error: requesterIsOwner
-        ? 'No desktop agent runner is connected. Open Cascade on your computer (signed in to the same account) to run agents from chat.'
-        : "This agent's owner is offline — their desktop runner isn't connected, so the agent can't run right now.",
-    });
+    const error = requesterIsOwner
+      ? 'No desktop agent runner is connected. Open Cascade on your computer (signed in to the same account) to run agents from chat.'
+      : "This agent's owner is offline — their desktop runner isn't connected, so the agent can't run right now.";
+    noteDesktopRunnerError(runnerUserId, error);
+    return res.status(503).json({ error });
   }
 
   // Sanitize image attachments to { media_type, data } base64 entries.
@@ -1073,35 +1093,84 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     : [];
 
   try {
+    // Prompt may still get exocortex context for cold starts only.
+    const preliminaryConversationId =
+      typeof conversation_id === 'string' && conversation_id ? conversation_id : undefined;
+
+    // Peek at whether this turn will resume a prior CLI session. Continuations
+    // skip expensive/noisy exocortex injection — the session already holds context.
+    let willResume = false;
+    if (preliminaryConversationId) {
+      const prior = db.prepare(`
+        SELECT session_id FROM runs
+        WHERE vault_id = ?
+          AND ${note_id ? 'note_id = ?' : 'note_id IS NULL'}
+          AND agent = ?
+          AND conversation_id = ?
+          AND session_id IS NOT NULL
+        ORDER BY id DESC LIMIT 1
+      `).get(
+        ...(note_id
+          ? [runVault.id, note_id, selectedAgent, preliminaryConversationId]
+          : [runVault.id, selectedAgent, preliminaryConversationId]),
+      ) as { session_id: string } | undefined;
+      willResume = Boolean(prior?.session_id);
+    }
+
     let effectivePrompt = prompt;
-    try {
-      const recentMessages = targetChannelId
-        ? listChatMessages(db, targetChannelId, runnerUserId).slice(-8).map((message) => `${message.author}: ${message.body}`).join('\n')
-        : '';
-      const recallQuery = [prompt, recentMessages].filter(Boolean).join('\n');
-      const recall = buildRecallContext(
-        recallExocortex(db, runnerUserId, runVault.id, recallQuery, {
-          channelId: targetChannelId || undefined,
-          limit: 6,
-        }),
-      );
-      if (recall) {
-        effectivePrompt = `${prompt}\n\n[Context: ${recall}]`;
+    if (!willResume) {
+      try {
+        const recentMessages = targetChannelId
+          ? listChatMessages(db, targetChannelId, runnerUserId).slice(-8).map((message) => `${message.author}: ${message.body}`).join('\n')
+          : '';
+        const recallQuery = [prompt, recentMessages].filter(Boolean).join('\n');
+        const recall = buildRecallContext(
+          recallExocortex(db, runnerUserId, runVault.id, recallQuery, {
+            channelId: targetChannelId || undefined,
+            limit: 6,
+          }),
+        );
+        if (recall) {
+          effectivePrompt = `${prompt}\n\n[Context: ${recall}]`;
+        }
+      } catch (error) {
+        console.warn('Exocortex recall skipped:', error instanceof Error ? error.message : error);
       }
-    } catch (error) {
-      console.warn('Exocortex recall skipped:', error instanceof Error ? error.message : error);
     }
 
     const run = await startRun(db, runVault, note_id || null, effectivePrompt, selectedAgent, {
-      conversationId: typeof conversation_id === 'string' && conversation_id ? conversation_id : undefined,
+      conversationId: preliminaryConversationId,
       model: selectedModel,
     });
 
-    // Link this run to the chat message it's answering so the server can persist
-    // and broadcast the streamed reply itself. Keyed to the runner user (agent
-    // owner for cross-user pings) and the source channel, so the fan-out reaches
-    // every linked channel. Registered before delegation so no early event is missed.
+    // Server single-writer: create/link the running agent message before
+    // delegation so stream updates never no-op on a missing placeholder.
     if (targetChannelId && chatMessageId) {
+      try {
+        const { message: ensured, created } = ensureAgentChatMessage(
+          db,
+          runnerUserId,
+          runVault.id,
+          targetChannelId,
+          {
+            messageId: chatMessageId,
+            author: chatAuthor || selectedAgent,
+            agentId: selectedAgent,
+            registrationId: chatRegistrationId || undefined,
+            runId: run.id,
+            body: 'Thinking...',
+          },
+        );
+        const { route } = assertChatChannel(db, targetChannelId, runnerUserId);
+        emitChatMessageEvent(
+          route.sourceVaultId,
+          route.sourceChannelId,
+          created ? 'vault:chatMessageCreated' : 'vault:chatMessageUpdated',
+          ensured,
+        );
+      } catch (error) {
+        console.warn('ensureAgentChatMessage failed:', error instanceof Error ? error.message : error);
+      }
       chatRunTargets.set(run.id, {
         userId: runnerUserId,
         vaultId: runVault.id,
@@ -1110,6 +1179,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
       });
     }
 
+    const resumeSessionId = findPriorSession(db, run);
     const delegated = delegateRunToDesktop(runnerUserId, {
       runId: run.id,
       vaultId: runVault.id,
@@ -1118,19 +1188,21 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
       cwd: selectedCwd,
       vaultRoot: runVault.root_path,
       model: selectedModel,
-      resumeSessionId: findPriorSession(db, run),
+      resumeSessionId,
       chatChannelId: targetChannelId,
       chatMessageId,
       chatAuthor,
       chatRegistrationId,
       images: cleanImages,
       yolo: yoloMode,
-    });
+    }, db);
     if (!delegated) {
       chatRunTargets.delete(run.id);
-      return res.status(503).json({
-        error: 'Desktop agent runner disconnected before the run could start. Open Cascade on your computer and try again.',
-      });
+      const error = 'Desktop agent runner disconnected before the run could start. Open Cascade on your computer and try again.';
+      noteDesktopRunnerError(runnerUserId, error);
+      finishDelegatedRun(db, run.id, { status: 'failed', summary: error });
+      publishRunEvent(db, run.id, 'status', { status: 'failed', summary: error });
+      return res.status(503).json({ error });
     }
 
     res.json({ run });
@@ -1178,7 +1250,7 @@ app.get('/api/runs/:id/events', requireAuth, (req: AuthedRequest, res) => {
 
 // Whether this user's desktop app is connected and able to host agent runs.
 app.get('/api/me/desktop-runner', requireAuth, (req: AuthedRequest, res) => {
-  res.json(getDesktopRunnerStatus(req.user!.id));
+  res.json(getDesktopRunnerStatus(req.user!.id, db));
 });
 
 app.post('/api/runs/:id/cancel', requireAuth, async (req: AuthedRequest, res) => {

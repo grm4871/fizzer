@@ -39,7 +39,7 @@ export type ChatMessage = {
    * (see listChatMessages' `ORDER BY created_at ASC, rowid ASC`). Absent on
    * optimistic messages not yet persisted; those sort last among a tie (newest). */
   seq?: number;
-  status?: 'sending' | 'running' | 'failed';
+  status?: 'sending' | 'running' | 'failed' | 'canceled';
   agentId?: string;
   registrationId?: string;
   runId?: number;
@@ -443,12 +443,31 @@ function hasRunOutput(message: ChatMessage): boolean {
   return body.length > 0 && body !== 'Thinking...';
 }
 
+/** Prefer the visible assistant text already on the message over a CLI summary. */
+function honestChatBody(message: ChatMessage | undefined, fallbackSummary: string, emptyFallback: string): string {
+  if (message && hasRunOutput(message)) return message.body.trim();
+  const summary = fallbackSummary.trim();
+  // Generic CLI/SDK summaries are not chat answers — only use them if we have nothing else.
+  if (summary && !isGenericRunSummary(summary)) return summary;
+  if (message && hasRunOutput(message)) return message.body.trim();
+  return summary || emptyFallback;
+}
+
+function isGenericRunSummary(summary: string): boolean {
+  return /^(done\.?|completed note operations successfully\.?|agent failed\.?)$/i.test(summary.trim());
+}
+
 function terminalRunPatch(run: RunStatusRow, message?: ChatMessage): Pick<ChatMessage, 'body' | 'status'> | null {
   if (run.status === 'completed') {
-    return { body: run.summary?.trim() || 'Done.', status: undefined };
+    return {
+      body: honestChatBody(message, run.summary || '', 'Done.'),
+      status: undefined,
+    };
   }
-  if (run.status === 'failed') {
-    const reason = run.summary?.trim() || 'Agent failed.';
+  if (run.status === 'failed' || run.status === 'canceled') {
+    const reason = run.summary?.trim()
+      || (run.status === 'canceled' ? 'Run canceled by user.' : 'Agent failed.');
+    const status = run.status === 'canceled' ? 'canceled' as const : 'failed' as const;
     // Preserve any accumulated output so a failed run (usage limits, cancel, …)
     // keeps its scratchpad for a resuming agent; annotate with the reason rather
     // than erasing the work. Guard against re-appending if the streaming path
@@ -456,9 +475,9 @@ function terminalRunPatch(run: RunStatusRow, message?: ChatMessage): Pick<ChatMe
     if (message && hasRunOutput(message)) {
       const annotation = `> ⚠️ ${reason}`;
       const body = message.body.includes(annotation) ? message.body : `${message.body}\n\n${annotation}`;
-      return { body, status: 'failed' };
+      return { body, status };
     }
-    return { body: reason, status: 'failed' };
+    return { body: reason, status };
   }
   return null;
 }
@@ -572,6 +591,32 @@ export function createChatMessage(
   };
 
   const row = messageToRow(route.sourceVaultId, route.sourceChannelId, message);
+
+  // Idempotent create: client + server may both insert the agent placeholder
+  // (eager client create races with ensureAgentChatMessage). On conflict, keep
+  // the existing row and return it (optionally merging run_id/status).
+  const existing = db.prepare(
+    'SELECT *, rowid FROM chat_messages WHERE id = ? AND channel_id = ?',
+  ).get(row.id, row.channel_id) as ChatMessageRow | undefined;
+  if (existing) {
+    const current = rowToMessage(existing);
+    // Prefer non-empty agent fields from the newer write when filling blanks.
+    const merged: ChatMessage = {
+      ...current,
+      author: message.author || current.author,
+      body: current.body && current.body !== 'Thinking...' ? current.body : (message.body || current.body),
+      status: message.status || current.status,
+      agentId: message.agentId || current.agentId,
+      registrationId: message.registrationId || current.registrationId,
+      runId: message.runId ?? current.runId,
+      blocks: message.blocks?.length ? message.blocks : current.blocks,
+    };
+    return {
+      ...persistChatMessageRow(db, route.sourceVaultId, route.sourceChannelId, merged),
+      channelId: route.localChannelId,
+    };
+  }
+
   const info = db.prepare(`
     INSERT INTO chat_messages (
       id, channel_id, vault_id, author, body, created_at,
@@ -725,6 +770,9 @@ export type AgentChatContent = {
  * status). This is the server-authoritative equivalent of the client's stream
  * accumulation, so the agent reply is persisted and broadcast even if the
  * client that started the run disconnects mid-stream.
+ *
+ * Chat body prefers the streamed assistant **text**, not the CLI/SDK summary
+ * (which is often a generic "Done." / tool result string).
  */
 export function buildAgentChatContentFromRunEvents(
   events: Array<{ type: string; payload_json: string }>,
@@ -754,29 +802,78 @@ export function buildAgentChatContentFromRunEvents(
       } else if (s === 'failed') {
         status = 'failed';
         terminalSummary = String(payload?.summary || 'Agent failed.');
+      } else if (s === 'canceled') {
+        status = 'canceled';
+        terminalSummary = String(payload?.summary || 'Run canceled by user.');
       }
     }
   }
 
   const trimmed = assistantText.trim();
   const done = status !== 'running';
-  // Once the run finishes, a *successful* chat body collapses to the final answer
-  // (the run summary) so the chat stays readable; the full step-by-step narration
-  // is kept in `blocks` for the trace disclosure. On *failure* (e.g. usage
-  // limits) we instead preserve the agent's accumulated output — it's the
-  // scratchpad a resuming agent needs — and append the reason rather than
-  // erasing the work. While running we still show live text for visible progress.
+  // Successful chat body = streamed assistant text. CLI/SDK summary is only a
+  // fallback when nothing useful streamed (and even then, skip generic strings).
+  // Full step narration lives in `blocks` for the trace disclosure. Failures
+  // keep the scratchpad and append the reason.
   let body: string;
   if (!done) {
     body = trimmed || 'Thinking...';
-  } else if (status === 'failed') {
-    const reason = terminalSummary.trim() || 'Agent failed.';
+  } else if (status === 'failed' || status === 'canceled') {
+    const reason = terminalSummary.trim()
+      || (status === 'canceled' ? 'Run canceled by user.' : 'Agent failed.');
     body = trimmed ? `${trimmed}\n\n> ⚠️ ${reason}` : reason;
   } else {
-    body = terminalSummary.trim() || trimmed || 'Done.';
+    if (trimmed) {
+      body = trimmed;
+    } else if (terminalSummary.trim() && !isGenericRunSummary(terminalSummary)) {
+      body = terminalSummary.trim();
+    } else {
+      body = terminalSummary.trim() || 'Done.';
+    }
   }
 
   return { body, blocks, status, done };
+}
+
+/**
+ * Ensure a running agent chat message exists for a run (server single-writer).
+ * Creates the placeholder if missing; otherwise updates runId/status.
+ */
+export function ensureAgentChatMessage(
+  db: Db,
+  userId: number,
+  vaultId: string,
+  channelId: string,
+  input: {
+    messageId: string;
+    author: string;
+    agentId?: string;
+    registrationId?: string;
+    runId: number;
+    body?: string;
+  },
+): { message: ChatMessage; created: boolean } {
+  const existing = updateChatMessage(db, userId, vaultId, channelId, input.messageId, {
+    runId: input.runId,
+    status: 'running',
+    agentId: input.agentId,
+    registrationId: input.registrationId,
+    author: input.author,
+  });
+  if (existing) return { message: existing, created: false };
+
+  const message = createChatMessage(db, userId, vaultId, channelId, {
+    id: input.messageId,
+    channelId,
+    author: input.author,
+    body: input.body ?? 'Thinking...',
+    createdAt: new Date().toISOString(),
+    status: 'running',
+    agentId: input.agentId,
+    registrationId: input.registrationId,
+    runId: input.runId,
+  });
+  return { message, created: true };
 }
 
 export function listChatAgentMembers(db: Db, channelId: string, userId: number): ChatAgentRegistration[] {

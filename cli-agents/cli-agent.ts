@@ -7,8 +7,36 @@
  *
  * Each CLI is spawned as a child process in the vault directory with JSON
  * output mode enabled. Their JSONL event streams are translated on-the-fly
- * into the Anthropic-style content blocks (text / thinking / tool_use /
- * tool_result) that the chat UI already renders:
+ * into a **unified event schema** the chat UI already renders:
+ *
+ * ```
+ * emit('text', { message: { content: ContentBlock[] } })
+ * emit('user', { message: { content: ContentBlock[] } })  // tool results
+ *
+ * ContentBlock =
+ *   | { type: 'text', text: string }
+ *   | { type: 'thinking', thinking?: string, text?: string }
+ *   | { type: 'redacted_thinking' }
+ *   | { type: 'tool_use', id, name, input }
+ *   | { type: 'tool_result', tool_use_id, content, is_error? }
+ * ```
+ *
+ * Terminal status is emitted by agent-runner.cjs (not this module):
+ *   emit('status', { status: 'completed'|'failed'|'canceled', summary, sessionId? })
+ *
+ * ## Per-agent event fidelity
+ *
+ * | Agent        | text | thinking | tool_use | tool_result | images | resume |
+ * |--------------|------|----------|----------|-------------|--------|--------|
+ * | claude-code  | yes  | yes      | yes*     | yes*        | yes    | yes    |
+ * | codex        | yes  | yes      | yes      | yes         | yes    | yes    |
+ * | grok         | yes  | yes      | no†      | no†         | no     | yes    |
+ * | copilot      | yes  | partial  | partial  | partial     | no     | yes    |
+ * | hermes       | yes  | partial  | partial  | partial     | no     | yes    |
+ * | antigravity  | yes  | partial  | partial  | partial     | no     | yes    |
+ *
+ * \* Claude tools surface via SDK messages; cascade-* helpers are auto-allowed.
+ * † Grok runs tools silently — not surfaced in the JSONL stream.
  *
  * **Codex JSONL translation** (`codex exec --json`):
  *   - `thread.started`   → captures session id for conversation resume

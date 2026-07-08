@@ -30,7 +30,7 @@ let eventSink: ((event: RunEvent) => void) | null = null;
 // any) is still connected to relay the stream.
 let chatSyncSink: ((runId: number, eventType: string) => void) | null = null;
 
-export type RunStatus = 'queued' | 'running' | 'completed' | 'failed';
+export type RunStatus = 'queued' | 'running' | 'completed' | 'failed' | 'canceled';
 
 export type Run = {
   id: number;
@@ -46,6 +46,11 @@ export type Run = {
   summary: string | null;
   model: string | null;
 };
+
+/** Terminal statuses — run will not produce further events. */
+export function isTerminalRunStatus(status: string | null | undefined): boolean {
+  return status === 'completed' || status === 'failed' || status === 'canceled';
+}
 
 export type RunEvent = {
   id: number;
@@ -93,6 +98,14 @@ export function ensureRunnerSchema(db: Db) {
       ts TEXT NOT NULL DEFAULT (datetime('now')),
       UNIQUE(run_id, seq)
     );
+
+    -- Survives server restart so orphaned delegated runs can be settled.
+    CREATE TABLE IF NOT EXISTS delegated_runs (
+      run_id INTEGER PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
+      owner_user_id INTEGER NOT NULL,
+      started_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS delegated_runs_owner_idx ON delegated_runs(owner_user_id);
   `);
 
   // Migrations: add columns to pre-existing runs tables.
@@ -109,6 +122,58 @@ export function ensureRunnerSchema(db: Db) {
   if (!runCols.some(col => col.name === 'model')) {
     db.exec("ALTER TABLE runs ADD COLUMN model TEXT");
   }
+}
+
+/** Record that a run is actively delegated to a user's desktop runner. */
+export function recordDelegatedRun(db: Db, runId: number, ownerUserId: number): void {
+  db.prepare(`
+    INSERT INTO delegated_runs (run_id, owner_user_id, started_at)
+    VALUES (?, ?, datetime('now'))
+    ON CONFLICT(run_id) DO UPDATE SET owner_user_id = excluded.owner_user_id
+  `).run(runId, ownerUserId);
+}
+
+export function clearDelegatedRunRecord(db: Db, runId: number): void {
+  db.prepare('DELETE FROM delegated_runs WHERE run_id = ?').run(runId);
+}
+
+export function listDelegatedRunIdsForOwner(db: Db, ownerUserId: number): number[] {
+  const rows = db.prepare('SELECT run_id FROM delegated_runs WHERE owner_user_id = ?').all(ownerUserId) as Array<{ run_id: number }>;
+  return rows.map((r) => r.run_id);
+}
+
+export function countActiveDelegatedRuns(db: Db, ownerUserId: number): number {
+  const row = db.prepare(`
+    SELECT COUNT(*) AS n
+    FROM delegated_runs d
+    JOIN runs r ON r.id = d.run_id
+    WHERE d.owner_user_id = ? AND r.status IN ('queued', 'running')
+  `).get(ownerUserId) as { n: number } | undefined;
+  return row?.n ?? 0;
+}
+
+/**
+ * Mark any still-open runs (and their delegated_runs rows) as failed after a
+ * server restart — the in-memory desktop sockets are gone, so nothing can
+ * finish them.
+ */
+export function failOrphanedRunsAfterRestart(db: Db): number {
+  const open = db.prepare(`
+    SELECT id FROM runs WHERE status IN ('queued', 'running')
+  `).all() as Array<{ id: number }>;
+  if (open.length === 0) {
+    db.prepare('DELETE FROM delegated_runs').run();
+    return 0;
+  }
+  const finish = db.prepare(`
+    UPDATE runs
+    SET status = 'failed', finished_at = datetime('now'),
+        summary = 'Server restarted while this run was in progress.'
+    WHERE id = ? AND status IN ('queued', 'running')
+  `);
+  for (const row of open) finish.run(row.id);
+  db.prepare('DELETE FROM delegated_runs').run();
+  return open.length;
 }
 
 export function setRunEventSink(sink: ((event: RunEvent) => void) | null) {
@@ -136,7 +201,7 @@ export async function cancelRun(db: Db, runId: number): Promise<boolean> {
   if (!run) return false;
 
   // Already finished — idempotent cancel so stale UI can clear itself.
-  if (run.status === 'completed' || run.status === 'failed') {
+  if (isTerminalRunStatus(run.status)) {
     return true;
   }
 
@@ -147,24 +212,26 @@ export async function cancelRun(db: Db, runId: number): Promise<boolean> {
       cancelDelegatedRun(ownerId, runId);
     }
     clearDelegatedRun(runId);
+    clearDelegatedRunRecord(db, runId);
     db.prepare(`
       UPDATE runs
-      SET status = 'failed', finished_at = datetime('now'), summary = 'Run canceled by user.'
+      SET status = 'canceled', finished_at = datetime('now'), summary = 'Run canceled by user.'
       WHERE id = ?
     `).run(runId);
-    publishRunEvent(db, runId, 'status', { status: 'failed', summary: 'Run canceled by user.' });
+    publishRunEvent(db, runId, 'status', { status: 'canceled', summary: 'Run canceled by user.' });
     return true;
   }
 
   // No live owner (e.g. server restarted): mark the orphaned row canceled so
   // stale UI can clear itself.
   if (run.status === 'running' || run.status === 'queued') {
+    clearDelegatedRunRecord(db, runId);
     db.prepare(`
       UPDATE runs
-      SET status = 'failed', finished_at = datetime('now'), summary = 'Run canceled by user.'
+      SET status = 'canceled', finished_at = datetime('now'), summary = 'Run canceled by user.'
       WHERE id = ?
     `).run(runId);
-    publishRunEvent(db, runId, 'status', { status: 'failed', summary: 'Run canceled by user.' });
+    publishRunEvent(db, runId, 'status', { status: 'canceled', summary: 'Run canceled by user.' });
     return true;
   }
 
@@ -227,15 +294,45 @@ export function publishRunEvent(db: Db, runId: number, type: string, payload: un
 export function finishDelegatedRun(
   db: Db,
   runId: number,
-  opts: { status: 'completed' | 'failed'; summary: string; sessionId?: string },
+  opts: { status: 'completed' | 'failed' | 'canceled'; summary: string; sessionId?: string },
 ): void {
   const run = getRun(db, runId);
   if (!run) return;
-  if (run.status === 'completed' || run.status === 'failed') return;
+  if (isTerminalRunStatus(run.status)) return;
 
   db.prepare(`
     UPDATE runs
     SET status = ?, finished_at = datetime('now'), summary = ?, session_id = COALESCE(?, session_id)
     WHERE id = ?
   `).run(opts.status, opts.summary, opts.sessionId ?? null, runId);
+  clearDelegatedRunRecord(db, runId);
+}
+
+/**
+ * Mark open DB-delegated runs for an owner as failed (desktop gone / restart).
+ * Does not touch in-memory maps — caller clears those. Returns settled run ids.
+ */
+export function failOpenDelegatedRunsForOwner(
+  db: Db,
+  ownerUserId: number,
+  reason = 'Desktop agent runner disconnected.',
+): number[] {
+  const runIds = listDelegatedRunIdsForOwner(db, ownerUserId);
+  const settled: number[] = [];
+  for (const runId of runIds) {
+    const run = getRun(db, runId);
+    if (!run || isTerminalRunStatus(run.status)) {
+      clearDelegatedRunRecord(db, runId);
+      continue;
+    }
+    db.prepare(`
+      UPDATE runs
+      SET status = 'failed', finished_at = datetime('now'), summary = ?
+      WHERE id = ? AND status IN ('queued', 'running')
+    `).run(reason, runId);
+    publishRunEvent(db, runId, 'status', { status: 'failed', summary: reason });
+    clearDelegatedRunRecord(db, runId);
+    settled.push(runId);
+  }
+  return settled;
 }
