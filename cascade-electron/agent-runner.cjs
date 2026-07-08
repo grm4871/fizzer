@@ -142,6 +142,33 @@ function cleanupRunHelperConfig(runId) {
   } catch { /* ignore */ }
 }
 
+/** True when cascade-chat send ran during this run (helper config flag). */
+function readUsedChatSend(runId) {
+  const id = Number(runId);
+  if (!Number.isFinite(id) || id <= 0) return false;
+  try {
+    const raw = fs.readFileSync(helperConfigPathForRun(id), 'utf8');
+    const parsed = JSON.parse(raw);
+    return Boolean(parsed && parsed.usedChatSend);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Emit terminal status. When the agent already posted via cascade-chat send,
+ * set suppressChatBody so the run-linked bubble does not also show stdout.
+ */
+function emitTerminalStatus(emit, runId, status, summary, sessionId) {
+  const suppressChatBody = status === 'completed' && readUsedChatSend(runId);
+  emit('status', {
+    status,
+    summary: summary || (status === 'completed' ? 'Done.' : 'Agent failed.'),
+    ...(sessionId ? { sessionId } : {}),
+    ...(suppressChatBody ? { suppressChatBody: true } : {}),
+  });
+}
+
 /** True when this run was triggered from a chat channel (vs a note pane). */
 function isChatRun(opts) {
   return Boolean(String(opts && opts.chatChannelId || opts?.chat?.channelId || '').trim());
@@ -381,11 +408,11 @@ async function startLocalAgentRun(opts, sendEvent) {
   if (agent === 'claude-code') {
     try {
       const result = await runClaudeLocally({ ...opts, prompt }, emit);
-      emit('status', { status: 'completed', summary: result.summary, sessionId: result.sessionId });
+      emitTerminalStatus(emit, runId, 'completed', result.summary, result.sessionId);
       return { sessionId: result.sessionId };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      emit('status', { status: 'failed', summary: message });
+      emitTerminalStatus(emit, runId, 'failed', message);
       throw error;
     } finally {
       cleanupRunHelperConfig(runId);
@@ -410,15 +437,11 @@ async function startLocalAgentRun(opts, sendEvent) {
       runId,
       emit,
     });
-    emit('status', {
-      status: 'completed',
-      summary: result.summary || 'Done.',
-      sessionId: result.sessionId,
-    });
+    emitTerminalStatus(emit, runId, 'completed', result.summary || 'Done.', result.sessionId);
     return { sessionId: result.sessionId };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    emit('status', { status: 'failed', summary: message });
+    emitTerminalStatus(emit, runId, 'failed', message);
     throw error;
   } finally {
     clearRunHelperEnv(runId);

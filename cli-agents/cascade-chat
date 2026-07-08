@@ -88,6 +88,24 @@ function readHelperConfig() {
   }
 }
 
+/** Record that this run already posted via cascade-chat send (for double-post suppression). */
+function markChatSendUsed(config) {
+  const configPath = helperConfigPath();
+  try {
+    const next = {
+      ...(config && typeof config === 'object' ? config : {}),
+      usedChatSend: true,
+      chatSendCount: Number(config?.chatSendCount || 0) + 1,
+      updatedAt: new Date().toISOString(),
+    };
+    fs.mkdirSync(path.dirname(configPath), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(configPath, JSON.stringify(next, null, 2), { mode: 0o600 });
+    try { fs.chmodSync(configPath, 0o600); } catch { /* ignore */ }
+  } catch {
+    // Best-effort — missing config just means no suppression this run.
+  }
+}
+
 function configString(config, key) {
   return String(config && config[key] || '').trim();
 }
@@ -274,6 +292,9 @@ async function main() {
     };
     const result = await api(url, token, 'POST', `/api/vaults/${vaultId}/channels/${channelId}/messages`, message);
     const sent = result.message || message;
+    // Mark this run so the desktop runner suppresses the stream-body bubble
+    // (avoids double-posting the same reply via stdout + cascade-chat send).
+    markChatSendUsed(config);
     process.stdout.write(`sent ${sent.id || message.id}\n`);
     return;
   }

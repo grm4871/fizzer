@@ -85,6 +85,7 @@ export function honestAgentChatBody(
   streamedText: string,
   summary: string | undefined,
   terminal: 'completed' | 'failed' | 'canceled',
+  opts?: { suppressChatBody?: boolean },
 ): string {
   const trimmed = streamedText.trim();
   const summaryText = typeof summary === 'string' ? summary.trim() : '';
@@ -95,6 +96,8 @@ export function honestAgentChatBody(
       || (terminal === 'canceled' ? 'Run canceled by user.' : 'Agent failed.');
     return trimmed ? `${trimmed}\n\n> ⚠️ ${reason}` : reason;
   }
+  // Agent already posted via cascade-chat send — leave the run bubble empty.
+  if (opts?.suppressChatBody) return '';
   if (trimmed) return trimmed;
   if (summaryText && !isGeneric) return summaryText;
   return summaryText || 'Done.';

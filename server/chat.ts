@@ -781,6 +781,7 @@ export function buildAgentChatContentFromRunEvents(
   let blocks: ChatBlock[] = [];
   let status: ChatMessage['status'] = 'running';
   let terminalSummary = '';
+  let suppressChatBody = false;
 
   for (const event of events) {
     let payload: any;
@@ -796,6 +797,7 @@ export function buildAgentChatContentFromRunEvents(
       blocks = appendChatRunBlocks(blocks, normalizeChatRunBlocks(payload?.message?.content));
     } else if (event.type === 'status') {
       const s = payload?.status;
+      if (payload?.suppressChatBody === true) suppressChatBody = true;
       if (s === 'completed') {
         status = undefined;
         terminalSummary = String(payload?.summary || 'Done.');
@@ -815,6 +817,8 @@ export function buildAgentChatContentFromRunEvents(
   // fallback when nothing useful streamed (and even then, skip generic strings).
   // Full step narration lives in `blocks` for the trace disclosure. Failures
   // keep the scratchpad and append the reason.
+  // If the agent already posted via cascade-chat send, leave the run bubble
+  // body empty so we don't double-post the same reply.
   let body: string;
   if (!done) {
     body = trimmed || 'Thinking...';
@@ -822,6 +826,8 @@ export function buildAgentChatContentFromRunEvents(
     const reason = terminalSummary.trim()
       || (status === 'canceled' ? 'Run canceled by user.' : 'Agent failed.');
     body = trimmed ? `${trimmed}\n\n> ⚠️ ${reason}` : reason;
+  } else if (suppressChatBody) {
+    body = '';
   } else {
     if (trimmed) {
       body = trimmed;

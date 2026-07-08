@@ -104,11 +104,11 @@ export function formatAgentChatPrompt(
 
   if (continuation) {
     // Session already has identity + prior turns. Keep the nudge short.
-    const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, responding to ${triggeringAuthor}. Continuation — session already has earlier turns. Reply briefly. Prefer \`cascade-chat send\` for mid-run updates.`;
+    const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, responding to ${triggeringAuthor}. Continuation — session already has earlier turns. Reply briefly. Prefer \`cascade-chat send\` for mid-run updates. If you use cascade-chat send for the user-visible reply, do not also dump the same text to stdout (the run bubble is suppressed after send).`;
     return `${header}\n\n${request}`;
   }
 
   const channelNote = registration.contextPrompt ? ` Channel note: ${registration.contextPrompt}` : '';
-  const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, responding to ${triggeringAuthor}. Reply briefly. Run \`cascade-chat history --include-reply-context\` for full channel context. Use \`cascade-chat send --message "text"\` to send a standalone message in chat during your run, especially after tool calls. Notes: \`cascade-note\` + \`![[Title]]\` embeds.${channelNote}`;
+  const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, responding to ${triggeringAuthor}. Reply briefly. Run \`cascade-chat history --include-reply-context\` for full channel context. Use \`cascade-chat send --message "text"\` to send a standalone message in chat during your run, especially after tool calls. If you post via cascade-chat send, that is the user-visible reply — do not also put the same answer in stdout. Notes: \`cascade-note\` + \`![[Title]]\` embeds.${channelNote}`;
   return `${header}\n\n${request}`;
 }

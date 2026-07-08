@@ -571,7 +571,19 @@ export function ChatView({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const draftRef = useRef<HTMLTextAreaElement | null>(null);
   const sortedMessages = useMemo(
-    () => [...messages].sort((a, b) => {
+    () => [...messages]
+      // Hide completed run shells whose body was suppressed after cascade-chat
+      // send (empty body, not running/failed — the real reply is a separate send).
+      .filter((message) => {
+        if (message.status === 'running' || message.status === 'sending') return true;
+        if (message.status === 'failed' || message.status === 'canceled') return true;
+        if (message.body?.trim()) return true;
+        if (message.images?.length || message.attachments?.length) return true;
+        // Empty completed agent bubble with no media — suppressed double-post shell.
+        if (message.agentId || message.registrationId || message.runId != null) return false;
+        return true;
+      })
+      .sort((a, b) => {
       const byTime = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
       if (byTime !== 0) return byTime;
       // Same millisecond: order by server persistence order (rowid) so a user

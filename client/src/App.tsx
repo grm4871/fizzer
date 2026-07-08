@@ -822,10 +822,12 @@ export default function App() {
             const payload = JSON.parse(event.payload_json);
             if (payload.status === 'completed' || payload.status === 'failed' || payload.status === 'canceled') {
               const terminal = payload.status as 'completed' | 'failed' | 'canceled';
+              const suppressChatBody = payload.suppressChatBody === true;
               const finalBody = honestAgentChatBody(
                 assistantText,
                 typeof payload.summary === 'string' ? payload.summary : undefined,
                 terminal,
+                { suppressChatBody },
               );
               const nextStatus = terminal === 'completed' ? undefined : terminal;
               updateChatMessage(channelId, agentMessageId, (message) => ({
@@ -841,7 +843,8 @@ export default function App() {
                 agentContextWatermarkRef.current.set(watermarkKey, agentMessageId);
               }
               // Chain agent→agent mentions from the cleaned final body, not raw stream.
-              if (terminal === 'completed' && finalBody.trim()) {
+              // Skip when body was suppressed (real reply already went out via cascade-chat send).
+              if (terminal === 'completed' && finalBody.trim() && !suppressChatBody) {
                 const registrations = (chatStateRef.current.registeredAgentsByChannel[channelId] ?? [])
                   .filter((item) => item.id !== registration.id);
                 const mentionedAgents = getMentionedRegistrations(finalBody, registrations, true);
