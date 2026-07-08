@@ -3,11 +3,10 @@
  *
  * Provides two socket factory functions for real-time communication:
  *
- * 1. **Vault socket** (`/vault` namespace) — Delivers note CRUD events
- *    (`noteChanged`, `noteCreated`, `noteDeleted`) and AI directive streaming
- *    (`directive:chunk`, `directive:done`) for a joined vault room.
+ * 1. **Vault socket** (`/vault` namespace) — note CRUD, feeds, and chat
+ *    message/member/presence events for a joined vault room.
  *
- * 2. **Runs socket** (`/runs` namespace) — Streams AI agent run events
+ * 2. **Runs socket** (`/runs` namespace) — streams AI agent run events
  *    (status updates, text/tool output, follow-ups) for a joined run room.
  *
  * Both sockets authenticate via the JWT token stored in `localStorage` and
@@ -27,10 +26,6 @@ type ServerEvents = {
   'vault:noteCreated': (data: { noteId: string; vaultId: string; title?: string }) => void;
   'vault:noteDeleted': (data: { noteId: string; vaultId: string; title?: string }) => void;
   'vault:feedNotify': (data: { noteId: string; feedTitle: string; item?: { title?: string } }) => void;
-  /** Streamed chunk of an AI directive response. */
-  'directive:chunk': (data: { noteId: string; content: string }) => void;
-  /** Signals an AI directive has finished processing. */
-  'directive:done': (data: { noteId: string; directiveId: string }) => void;
   /** A new chat message was persisted for a channel in this vault. */
   'vault:chatMessageCreated': (data: { vaultId: string; channelId: string; message: ChatMessagePayload }) => void;
   /** An existing chat message was updated (merge, agent stream, etc.). */

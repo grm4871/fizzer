@@ -25,6 +25,34 @@ import { api, type User, type Vault, type Folder, type NoteSummary, type Note } 
 import { connectRunsSocket, connectVaultSocket } from './socket';
 import { isLocalRunId, cancelLocalAgentRun } from './localAgentRunner';
 import { startDesktopRunnerHost } from './desktopRunnerHost';
+import {
+  agentLabel,
+  CHAT_AGENT_MODEL_PRESETS,
+  CHAT_AGENTS,
+  formatAgentChatPrompt,
+  normalizeChatCwd,
+  type AgentId,
+} from './chat/agents';
+import { getMentionedRegistrations, normalizeMention, stripRegisteredAgentMentions } from './chat/mentions';
+import {
+  appendChatRunBlocks,
+  hasChatRunToolBlock,
+  mergeRemoteChatMessage,
+  newId,
+  normalizeChatRunBlocks,
+  textFromRunContent,
+  toChatMessagePatch,
+} from './chat/runBlocks';
+import {
+  CHAT_STORAGE_KEY,
+  loadChatState,
+  loadPersistedSession,
+  readLegacyLocalChatAgentMembers,
+  readLegacyLocalChatMessages,
+  SESSION_STORAGE_KEY,
+  type ChatState,
+  type PersistedSession,
+} from './chat/session';
 import { Gem, PanelLeftOpen } from 'lucide-react';
 
 /**
@@ -36,395 +64,12 @@ import { Gem, PanelLeftOpen } from 'lucide-react';
  * arranged into draggable, resizable panes. Note bodies are held per-tab in
  * `noteContents` so any number of note panes can be edited independently.
  *
+ * Pure chat helpers live under `./chat/*` (session, agents, mentions, run blocks).
+ *
  * @component
  */
 
-function sanitizeRestoredTabs(value: unknown): Tab[] {
-  if (!Array.isArray(value)) return [];
-  return value
-    .filter((tab): tab is Partial<Tab> => Boolean(tab) && typeof tab === 'object')
-    .map((tab): Tab | null => {
-      if (typeof tab.id !== 'string' || typeof tab.title !== 'string') return null;
-      if (tab.type === 'chat') {
-        return { id: tab.id, title: tab.title || 'Channel', type: 'chat', dirty: false };
-      }
-      if (tab.type === 'note') {
-        return { id: tab.id, title: tab.title, type: 'note', dirty: false };
-      }
-      return null;
-    })
-    .filter((tab): tab is Tab => Boolean(tab));
-}
-
-/**
- * Session persisted to localStorage so a reload restores the workspace: the open
- * tabs, the pane layout tree, and which pane was focused. Note bodies are
- * re-fetched on restore.
- */
-interface PersistedSession {
-  activeVaultId: string | null;
-  openTabs: Tab[];
-  layout: LayoutNode;
-  focusedPaneId: string;
-}
-
-const SESSION_STORAGE_KEY = 'cascade_session';
-const CHAT_STORAGE_KEY = 'cascade_chat_state';
-
-interface ChatState {
-  messagesByChannel: Record<string, ChatMessage[]>;
-  agentModelsByAgent: Record<string, string>;
-  registeredAgentsByChannel: Record<string, ChatAgentRegistration[]>;
-}
-
-const emptyChatState = (): ChatState => ({
-  messagesByChannel: {},
-  agentModelsByAgent: {},
-  registeredAgentsByChannel: {},
-});
-
-function emptySession(): PersistedSession {
-  const pane = Layout.createPane();
-  return { activeVaultId: null, openTabs: [], layout: pane, focusedPaneId: pane.id };
-}
-
-function loadPersistedSession(): PersistedSession {
-  try {
-    const raw = localStorage.getItem(SESSION_STORAGE_KEY);
-    if (!raw) return emptySession();
-    const parsed = JSON.parse(raw) as Partial<PersistedSession> & { activeTabId?: string; splitTabId?: string };
-    const openTabs = sanitizeRestoredTabs(parsed.openTabs);
-    const validIds = new Set(openTabs.map((t) => t.id));
-
-    let layout: LayoutNode;
-    if (parsed.layout) {
-      layout = Layout.ensureValid(parsed.layout, validIds);
-    } else {
-      // Migrate the pre-grid single/split-pane session into a layout tree.
-      const activeTabId = typeof parsed.activeTabId === 'string' ? parsed.activeTabId : null;
-      const splitTabId = typeof parsed.splitTabId === 'string' ? parsed.splitTabId : null;
-      layout = Layout.migrateFromLegacy(openTabs.map((t) => t.id), activeTabId, splitTabId);
-    }
-
-    const focusedPaneId =
-      parsed.focusedPaneId && Layout.findPane(layout, parsed.focusedPaneId)
-        ? parsed.focusedPaneId
-        : Layout.getFirstPane(layout).id;
-
-    return { activeVaultId: parsed.activeVaultId ?? null, openTabs, layout, focusedPaneId };
-  } catch {
-    return emptySession();
-  }
-}
-
-function readLegacyLocalChatAgentMembers(): Record<string, ChatAgentRegistration[]> {
-  try {
-    const raw = localStorage.getItem(CHAT_STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as Partial<ChatState>;
-    if (!parsed.registeredAgentsByChannel || typeof parsed.registeredAgentsByChannel !== 'object') return {};
-    const registeredAgentsByChannel: Record<string, ChatAgentRegistration[]> = {};
-    for (const [channelId, registrations] of Object.entries(parsed.registeredAgentsByChannel)) {
-      if (!Array.isArray(registrations)) continue;
-      registeredAgentsByChannel[channelId] = registrations
-        .filter((registration): registration is ChatAgentRegistration =>
-          Boolean(registration) &&
-          typeof registration === 'object' &&
-          typeof registration.agentId === 'string',
-        )
-        .map((registration, index) => {
-          const mention = typeof registration.mention === 'string' && registration.mention.trim()
-            ? registration.mention.replace(/^@+/, '').trim()
-            : registration.agentId;
-          return {
-            id: typeof registration.id === 'string' && registration.id.trim()
-              ? registration.id.trim()
-              : `legacy-${registration.agentId}-${mention}-${index}`,
-            agentId: registration.agentId,
-            displayName: typeof registration.displayName === 'string' && registration.displayName.trim()
-              ? registration.displayName.trim()
-              : agentLabel(registration.agentId as AgentId),
-            mention,
-            model: typeof registration.model === 'string' ? registration.model : '',
-            cwd: typeof registration.cwd === 'string' ? normalizeChatCwd(registration.cwd) : '',
-            contextPrompt: typeof registration.contextPrompt === 'string' ? registration.contextPrompt : '',
-            taggableByAgents: typeof registration.taggableByAgents === 'boolean' ? registration.taggableByAgents : true,
-            replyToEveryMessage: typeof registration.replyToEveryMessage === 'boolean' ? registration.replyToEveryMessage : false,
-            pingableByOthers: typeof registration.pingableByOthers === 'boolean' ? registration.pingableByOthers : false,
-            yolo: typeof registration.yolo === 'boolean' ? registration.yolo : false,
-            conversationId: typeof registration.conversationId === 'string' ? registration.conversationId : '',
-          };
-        });
-    }
-    return registeredAgentsByChannel;
-  } catch {
-    return {};
-  }
-}
-
-function readLegacyLocalChatMessages(): Record<string, ChatMessage[]> {
-  try {
-    const raw = localStorage.getItem(CHAT_STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as Partial<ChatState>;
-    if (!parsed.messagesByChannel || typeof parsed.messagesByChannel !== 'object') return {};
-    const messagesByChannel: Record<string, ChatMessage[]> = {};
-    for (const [channelId, messages] of Object.entries(parsed.messagesByChannel)) {
-      if (!Array.isArray(messages)) continue;
-      messagesByChannel[channelId] = messages
-        .filter((message): message is ChatMessage =>
-          Boolean(message) &&
-          typeof message.id === 'string' &&
-          typeof message.channelId === 'string' &&
-          typeof message.author === 'string' &&
-          typeof message.body === 'string' &&
-          typeof message.createdAt === 'string',
-        )
-        .map((message) => ({
-          ...message,
-          images: Array.isArray(message.images)
-            ? message.images.filter((item): item is string => typeof item === 'string')
-            : undefined,
-          attachments: Array.isArray(message.attachments)
-            ? message.attachments.filter((item): item is { name: string; media_type: string; url: string } =>
-              Boolean(item) &&
-              typeof item === 'object' &&
-              typeof item.name === 'string' &&
-              typeof item.media_type === 'string' &&
-              typeof item.url === 'string',
-            )
-            : undefined,
-          replyTo: message.replyTo &&
-            typeof message.replyTo === 'object' &&
-            typeof message.replyTo.messageId === 'string' &&
-            typeof message.replyTo.author === 'string' &&
-            typeof message.replyTo.mention === 'string' &&
-            typeof message.replyTo.preview === 'string'
-            ? message.replyTo
-            : undefined,
-        }));
-    }
-    return messagesByChannel;
-  } catch {
-    return {};
-  }
-}
-
-function loadChatState(): ChatState {
-  try {
-    const raw = localStorage.getItem(CHAT_STORAGE_KEY);
-    if (!raw) return emptyChatState();
-    const parsed = JSON.parse(raw) as Partial<ChatState>;
-    const agentModelsByAgent: Record<string, string> = {};
-
-    if (parsed.agentModelsByAgent && typeof parsed.agentModelsByAgent === 'object') {
-      for (const [key, value] of Object.entries(parsed.agentModelsByAgent)) {
-        if (typeof value === 'string') agentModelsByAgent[key] = value;
-      }
-    }
-
-    return { messagesByChannel: {}, agentModelsByAgent, registeredAgentsByChannel: {} };
-  } catch {
-    return emptyChatState();
-  }
-}
-
 type NoteEntry = { note: Note; draft: string };
-type AgentId = 'claude-code' | 'codex' | 'grok' | 'antigravity' | 'copilot' | 'hermes';
-
-const CHAT_AGENTS: Array<{ id: AgentId; label: string }> = [
-  { id: 'claude-code', label: 'Claude' },
-  { id: 'codex', label: 'Codex' },
-  { id: 'grok', label: 'Grok' },
-  { id: 'antigravity', label: 'Antigravity' },
-  { id: 'copilot', label: 'Copilot' },
-  { id: 'hermes', label: 'Hermes' },
-];
-
-const CHAT_AGENT_MODEL_PRESETS: Record<AgentId, { id: string; label: string }[]> = {
-  'claude-code': [
-    { id: 'claude-sonnet-5', label: 'Claude Sonnet 5' },
-    { id: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5' },
-    { id: 'claude-opus-4-8', label: 'Claude Opus 4.8' },
-    { id: 'claude-fable-5', label: 'Claude Fable 5' },
-  ],
-  codex: [
-    { id: 'gpt-5.5', label: 'GPT-5.5' },
-    { id: 'gpt-5.4', label: 'GPT-5.4' },
-  ],
-  grok: [
-    { id: 'grok-composer-2.5-fast', label: 'Grok Composer 2.5 Fast' },
-    { id: 'grok-build', label: 'Grok Build' },
-  ],
-  antigravity: [
-    { id: 'flash_lite', label: 'Gemini 3.5 Flash (Low)' },
-    { id: 'flash', label: 'Gemini 3.5 Flash (Medium)' },
-    { id: 'pro', label: 'Gemini 3.1 Pro (Low)' },
-  ],
-  copilot: [
-    { id: 'auto', label: 'Auto' },
-    { id: 'claude-haiku-4.5', label: 'Claude Haiku 4.5' },
-    { id: 'gpt-5.2', label: 'GPT-5.2' },
-  ],
-  hermes: [],
-};
-
-function escapeRegExp(value: string) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function mentionPattern(alias: string) {
-  const escaped = alias.trim().split(/\s+/).map(escapeRegExp).join('[\\s-]*');
-  return new RegExp(`@\\s*${escaped}(?=$|[\\s.,:;!?\\])}])`, 'gi');
-}
-
-function normalizeMention(value: string) {
-  return value.replace(/^@+/, '').trim();
-}
-
-function normalizeChatCwd(value: string) {
-  const trimmed = value.trim();
-  if (!trimmed || /^(vault\s*root|root|\.\/?)$/i.test(trimmed)) return '';
-  return trimmed;
-}
-
-function getMentionedRegistrations(text: string, registrations: ChatAgentRegistration[], fromAgent: boolean) {
-  const mentioned: ChatAgentRegistration[] = [];
-  for (const registration of registrations) {
-    if (fromAgent && !registration.taggableByAgents) continue;
-    const mention = normalizeMention(registration.mention || registration.agentId);
-    if (mention && mentionPattern(mention).test(text)) mentioned.push(registration);
-  }
-  return mentioned;
-}
-
-function stripRegisteredAgentMentions(text: string, registrations: ChatAgentRegistration[]) {
-  let next = text;
-  for (const registration of registrations) {
-    const mention = normalizeMention(registration.mention || registration.agentId);
-    if (mention) next = next.replace(mentionPattern(mention), ' ');
-  }
-  return next.replace(/\s+/g, ' ').trim();
-}
-
-function agentLabel(agentId: AgentId) {
-  return CHAT_AGENTS.find((agent) => agent.id === agentId)?.label ?? agentId;
-}
-
-function newId(prefix: string) {
-  const uuid = typeof crypto !== 'undefined' && 'randomUUID' in crypto
-    ? crypto.randomUUID()
-    : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-  return `${prefix}-${uuid}`;
-}
-
-function textFromRunContent(content: unknown): string {
-  if (typeof content === 'string') return content;
-  if (!Array.isArray(content)) return '';
-  return content
-    .map((block: any) => {
-      if (!block || typeof block !== 'object') return '';
-      if (block.type === 'text' && typeof block.text === 'string') return block.text;
-      return '';
-    })
-    .join('');
-}
-
-function normalizeChatRunBlocks(content: unknown): ChatBlock[] {
-  if (typeof content === 'string' && content.trim()) {
-    return [{ type: 'text', text: content }];
-  }
-  if (!Array.isArray(content)) return [];
-  const blocks: ChatBlock[] = [];
-  for (const item of content) {
-    if (!item || typeof item !== 'object') continue;
-    const block = item as Record<string, any>;
-    if (block.type === 'text' && typeof block.text === 'string') {
-      blocks.push({ type: 'text', text: block.text });
-    } else if (block.type === 'thinking') {
-      blocks.push({ type: 'thinking', text: String(block.thinking || block.text || '') });
-    } else if (block.type === 'redacted_thinking') {
-      blocks.push({ type: 'thinking', text: '', redacted: true });
-    }
-  }
-  return blocks;
-}
-
-function hasChatRunToolBlock(content: unknown): boolean {
-  return Array.isArray(content) && content.some((item) => {
-    if (!item || typeof item !== 'object') return false;
-    const type = (item as Record<string, unknown>).type;
-    return type === 'tool_use' || type === 'tool_result';
-  });
-}
-
-function appendChatRunBlocks(existing: ChatBlock[] | undefined, blocks: ChatBlock[]) {
-  const next = [...(existing ?? [])];
-  for (const block of blocks) {
-    const last = next[next.length - 1];
-    if (last && last.type === block.type && (block.type === 'text' || block.type === 'thinking')) {
-      next[next.length - 1] = {
-        ...last,
-        text: `${last.text || ''}${block.text || ''}`,
-      };
-    } else {
-      next.push({ ...block });
-    }
-  }
-  return next;
-}
-
-function chatMessageStreamScore(message: ChatMessage): number {
-  const bodyScore = message.body?.length ?? 0;
-  const blockScore = (message.blocks ?? []).reduce((sum, block) => sum + (block.text?.length ?? 0), 0);
-  const statusScore = message.status === 'running' ? 1 : message.status === 'failed' ? 2 : 10;
-  return statusScore * 1_000_000 + bodyScore + blockScore;
-}
-
-function mergeRemoteChatMessage(local: ChatMessage, remote: ChatMessage): ChatMessage {
-  const localScore = chatMessageStreamScore(local);
-  const remoteScore = chatMessageStreamScore(remote);
-  if (remoteScore >= localScore) return remote;
-  if (local.status === 'running' && !remote.status && remote.body.length >= local.body.length) {
-    return { ...remote, blocks: remote.blocks?.length ? remote.blocks : local.blocks };
-  }
-  return local;
-}
-
-/** JSON patch body with explicit nulls so the server can clear status/blocks. */
-function toChatMessagePatch(message: ChatMessage): Record<string, unknown> {
-  return {
-    author: message.author,
-    body: message.body,
-    createdAt: message.createdAt,
-    status: message.status ?? null,
-    agentId: message.agentId ?? null,
-    registrationId: message.registrationId ?? null,
-    runId: message.runId ?? null,
-    blocks: message.blocks ?? null,
-    images: message.images ?? null,
-    attachments: message.attachments ?? null,
-    replyTo: message.replyTo ?? null,
-  };
-}
-
-function formatAgentChatPrompt(
-  channelName: string,
-  registration: ChatAgentRegistration,
-  request: string,
-  triggeringAuthor: string,
-  // True when the agent's CLI session is being resumed — earlier turns live in
-  // the long session; pull channel history via cascade-chat only when needed.
-  continuation = false,
-) {
-  const selfAgent = CHAT_AGENTS.find((candidate) => candidate.id === registration.agentId);
-  const selfHandle = registration.mention || registration.agentId;
-  const selfName = registration.displayName || selfAgent?.label || registration.agentId;
-  const sessionNote = continuation ? ' Your session already has earlier turns.' : '';
-  const channelNote = registration.contextPrompt ? ` Channel note: ${registration.contextPrompt}` : '';
-  const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, responding to ${triggeringAuthor}.${sessionNote} Reply briefly. Run \`cascade-chat history --include-reply-context\` for full channel context. Use \`cascade-chat send --message "text"\` to send a standalone message in chat during your run, especially after tool calls. Notes: \`cascade-note\` + \`![[Title]]\` embeds.${channelNote}`;
-  return `${header}\n\n${request}`;
-}
 
 export default function App() {
   // ═══════════════════════════════════════════════════════════════
@@ -496,7 +141,6 @@ export default function App() {
   const noteContentsRef = useRef(noteContents); noteContentsRef.current = noteContents;
   const activeVaultIdRef = useRef(activeVaultId); activeVaultIdRef.current = activeVaultId;
   const notesRef = useRef(notes); notesRef.current = notes;
-  const localAgentUnsubsRef = useRef<Map<number, () => void>>(new Map());
   const desktopRunnerStopRef = useRef<(() => void) | null>(null);
   const chatStateRef = useRef(chatState); chatStateRef.current = chatState;
   const vaultSocketRef = useRef<ReturnType<typeof connectVaultSocket> | null>(null);
@@ -900,13 +544,6 @@ export default function App() {
     }
   }, [activeVaultId, loadVaultData]);
 
-  /** Add a tab to the registry and place it (active) into a pane. */
-  const addTabToPane = useCallback((tab: Tab, paneId: string) => {
-    setOpenTabs((prev) => [...prev, tab]);
-    setLayout(Layout.simplify(Layout.addTabToPane(layoutRef.current, paneId, tab.id)));
-    setFocusedPaneId(paneId);
-  }, []);
-
   // ═══════════════════════════════════════════════════════════════
   // CHAT CHANNEL OPERATIONS
   // ═══════════════════════════════════════════════════════════════
@@ -1132,9 +769,7 @@ export default function App() {
         cleanup();
         streamingChatMessageIdsRef.current.delete(agentMessageId);
         serverOwnedChatMessageIdsRef.current.delete(agentMessageId);
-        if (isLocalRunId(runId)) {
-          localAgentUnsubsRef.current.delete(runId);
-        } else {
+        if (!isLocalRunId(runId)) {
           const socket = runSocketsRef.current.get(runId);
           if (socket) {
             socket.off('connect', joinRunRoom);
@@ -1337,9 +972,7 @@ export default function App() {
     void (async () => {
       try {
         if (isLocalRunId(runId)) {
-          const cleanup = localAgentUnsubsRef.current.get(runId);
-          cleanup?.();
-          localAgentUnsubsRef.current.delete(runId);
+          // Negative run ids are legacy client-local runs (no longer started here).
           const cancelled = await cancelLocalAgentRun(runId);
           if (!cancelled) {
             setNotice('Could not cancel run');
@@ -1986,28 +1619,6 @@ export default function App() {
     });
   }, [handleSendChatMessage, loadVaultData, openChatChannel]);
 
-  const handleLinkifyTerm = useCallback(async (term: string, _context: string, sourceTitle?: string) => {
-    if (!activeVaultIdRef.current) return;
-    try {
-      const data = await api<{ note: Note; matched: boolean }>(
-        `/api/vaults/${activeVaultIdRef.current}/notes/linkify`,
-        { method: 'POST', body: JSON.stringify({ term }) },
-      );
-      await loadVaultData(activeVaultIdRef.current);
-      const canonical = data.note.title;
-      const linkedFrom = sourceTitle ? ` it was linked from the note "${sourceTitle}", which you can read if you desire context.` : '';
-      const prompt = data.matched
-        ? `the existing note "${canonical} was linked from ${linkedFrom}. if this provides additional context, please update ${canonical} to match."`
-        : `please fill in the new note titled "${canonical}". move the note into the folder that feels most appropriate, or create a new folder.${linkedFrom}`;
-      handleExecuteDirective(prompt);
-      setNotice(data.matched ? `Linking “${term}” to “${canonical}” — agent is updating it…` : `Created “${canonical}” — agent is filling it in…`);
-      return { title: canonical, matched: data.matched };
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Could not link term');
-      throw error;
-    }
-  }, [loadVaultData, handleExecuteDirective]);
-
   // ═══════════════════════════════════════════════════════════════
   // TAB / PANE MANAGEMENT
   // ═══════════════════════════════════════════════════════════════
@@ -2215,10 +1826,9 @@ export default function App() {
         }}
         notes={notes}
         onOpenNote={openNote}
-        onLinkifySelection={(term, context) => handleLinkifyTerm(term, context, entry?.note?.title)}
       />
     );
-  }, [chatState.messagesByChannel, chatState.registeredAgentsByChannel, chatPresenceByChannel, currentUsername, runningChatAgents, handleCancelChatRun, handleCreateChatInviteLink, handleInviteChatUser, handleRegisterChatAgent, handleRemoveChatAgent, handleSendChatMessage, noteContents, notes, handleNoteChange, saveNoteTab, renameNoteTab, handleExecuteDirective, handleLinkifyTerm, openNote]);
+  }, [chatState.messagesByChannel, chatState.registeredAgentsByChannel, chatPresenceByChannel, currentUsername, runningChatAgents, handleCancelChatRun, handleCreateChatInviteLink, handleInviteChatUser, handleRegisterChatAgent, handleRemoveChatAgent, handleSendChatMessage, noteContents, notes, handleNoteChange, saveNoteTab, renameNoteTab, handleExecuteDirective, openNote]);
 
   if (!user) {
     return (

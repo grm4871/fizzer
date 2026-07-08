@@ -26,7 +26,6 @@ import {
   createVault,
   deleteFolder,
   deleteNote,
-  ensureVaultSchema,
   getBacklinks,
   getGraph,
   getNote,
@@ -49,7 +48,6 @@ import {
   createNoteVersion,
   diffNoteVersions,
   diffText,
-  ensureVersionsSchema,
   listNoteVersions,
 } from './server/versions.js';
 import {
@@ -80,7 +78,7 @@ import {
   startFeedPoller,
 } from './server/feeds.js';
 import { fetchWidgetData } from './server/widgetData.js';
-import { resolveDeploySecret } from './server/security.js';
+import { corsOrigin, rateLimit, resolveDeploySecret, resolveJwtSecret } from './server/security.js';
 import {
   assertChatChannel,
   buildAgentChatContentFromRunEvents,
@@ -119,7 +117,8 @@ import {
 } from './server/exocortex.js';
 
 const PORT = Number(process.env.API_PORT || 3000);
-const JWT_SECRET = process.env.JWT_SECRET || 'cascade-dev-secret';
+/** Single source of truth with desktop-runner (persisted secret when env unset). */
+const JWT_SECRET = resolveJwtSecret();
 const DB_PATH = process.env.DOCS_DB_PATH || path.join(process.cwd(), 'docs.db');
 
 // Deploy trigger: the server runs inside the container and cannot run docker /
@@ -235,8 +234,6 @@ db.exec(`
   END;
 `);
 
-ensureVaultSchema(db);
-ensureVersionsSchema(db);
 ensureRunnerSchema(db);
 ensureFeedSchema(db);
 ensureChatSchema(db);
@@ -245,11 +242,12 @@ ensurePublishSchema(db);
 // ── Express & Socket.io setup ──────────────────────────────────────
 
 const app = express();
-app.use(cors({ origin: true, credentials: true }));
+const corsOriginOption = corsOrigin();
+app.use(cors({ origin: corsOriginOption, credentials: true }));
 app.use(express.json({ limit: '2mb' }));
 const httpServer = http.createServer(app);
 const io = new Server(httpServer, {
-  cors: { origin: true, credentials: true },
+  cors: { origin: corsOriginOption, credentials: true },
   // The desktop runner shares the Electron main-process event loop with the
   // agent it's running; a busy stream can delay heartbeat pongs. Give the
   // heartbeat generous slack so a working local runner isn't falsely declared
@@ -563,7 +561,9 @@ app.get(['/api/deploy/status', '/api/admin/deploy/status'], requireDeployAuth, (
 
 // ── Auth routes ────────────────────────────────────────────────────
 
-app.post('/api/auth/register', async (req, res) => {
+const authRateLimit = rateLimit({ windowMs: 15 * 60 * 1000, max: 30 });
+
+app.post('/api/auth/register', authRateLimit, async (req, res) => {
   const username = String(req.body.username || '').trim().toLowerCase();
   const password = String(req.body.password || '');
 
@@ -584,7 +584,7 @@ app.post('/api/auth/register', async (req, res) => {
   }
 });
 
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', authRateLimit, async (req, res) => {
   const username = String(req.body.username || '').trim().toLowerCase();
   const password = String(req.body.password || '');
   const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username) as User | undefined;

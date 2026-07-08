@@ -6,15 +6,10 @@
 type RunnerElectronAPI = {
   setRunnerToken?: (opts: { token: string; apiUrl?: string }) => Promise<{ success: boolean; error?: string }>;
   clearRunnerToken?: () => Promise<{ success: boolean }>;
-  getRunnerStatus?: () => Promise<{ connected: boolean }>;
 };
 
 function runnerElectronAPI(): RunnerElectronAPI | undefined {
   return (window as unknown as { electronAPI?: RunnerElectronAPI }).electronAPI;
-}
-
-export function canHostDesktopRunner(): boolean {
-  return Boolean(runnerElectronAPI()?.setRunnerToken);
 }
 
 function resolveApiBase(): string {
@@ -42,11 +37,4 @@ export function startDesktopRunnerHost(): () => void {
   return () => {
     void api.clearRunnerToken?.();
   };
-}
-
-export async function getDesktopRunnerStatus(): Promise<{ connected: boolean; available: boolean }> {
-  const api = runnerElectronAPI();
-  if (!api?.getRunnerStatus) return { connected: false, available: false };
-  const status = await api.getRunnerStatus();
-  return { connected: Boolean(status?.connected), available: true };
 }

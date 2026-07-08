@@ -1,0 +1,104 @@
+/**
+ * Pure helpers for turning agent run events into chat message blocks/patches.
+ */
+
+import type { ChatBlock, ChatMessage } from '../components/ChatView';
+
+export function newId(prefix: string) {
+  const uuid = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  return `${prefix}-${uuid}`;
+}
+
+export function textFromRunContent(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .map((block: unknown) => {
+      if (!block || typeof block !== 'object') return '';
+      const rec = block as Record<string, unknown>;
+      if (rec.type === 'text' && typeof rec.text === 'string') return rec.text;
+      return '';
+    })
+    .join('');
+}
+
+export function normalizeChatRunBlocks(content: unknown): ChatBlock[] {
+  if (typeof content === 'string' && content.trim()) {
+    return [{ type: 'text', text: content }];
+  }
+  if (!Array.isArray(content)) return [];
+  const blocks: ChatBlock[] = [];
+  for (const item of content) {
+    if (!item || typeof item !== 'object') continue;
+    const block = item as Record<string, unknown>;
+    if (block.type === 'text' && typeof block.text === 'string') {
+      blocks.push({ type: 'text', text: block.text });
+    } else if (block.type === 'thinking') {
+      blocks.push({ type: 'thinking', text: String(block.thinking || block.text || '') });
+    } else if (block.type === 'redacted_thinking') {
+      blocks.push({ type: 'thinking', text: '', redacted: true });
+    }
+  }
+  return blocks;
+}
+
+export function hasChatRunToolBlock(content: unknown): boolean {
+  return Array.isArray(content) && content.some((item) => {
+    if (!item || typeof item !== 'object') return false;
+    const type = (item as Record<string, unknown>).type;
+    return type === 'tool_use' || type === 'tool_result';
+  });
+}
+
+export function appendChatRunBlocks(existing: ChatBlock[] | undefined, blocks: ChatBlock[]) {
+  const next = [...(existing ?? [])];
+  for (const block of blocks) {
+    const last = next[next.length - 1];
+    if (last && last.type === block.type && (block.type === 'text' || block.type === 'thinking')) {
+      next[next.length - 1] = {
+        ...last,
+        text: `${last.text || ''}${block.text || ''}`,
+      };
+    } else {
+      next.push({ ...block });
+    }
+  }
+  return next;
+}
+
+function chatMessageStreamScore(message: ChatMessage): number {
+  const bodyScore = message.body?.length ?? 0;
+  const blockScore = (message.blocks ?? []).reduce((sum, block) => sum + (block.text?.length ?? 0), 0);
+  const statusScore = message.status === 'running' ? 1 : message.status === 'failed' ? 2 : 10;
+  return statusScore * 1_000_000 + bodyScore + blockScore;
+}
+
+/** Prefer the richer of local streaming vs remote socket/DB copy of the same message. */
+export function mergeRemoteChatMessage(local: ChatMessage, remote: ChatMessage): ChatMessage {
+  const localScore = chatMessageStreamScore(local);
+  const remoteScore = chatMessageStreamScore(remote);
+  if (remoteScore >= localScore) return remote;
+  if (local.status === 'running' && !remote.status && remote.body.length >= local.body.length) {
+    return { ...remote, blocks: remote.blocks?.length ? remote.blocks : local.blocks };
+  }
+  return local;
+}
+
+/** JSON patch body with explicit nulls so the server can clear status/blocks. */
+export function toChatMessagePatch(message: ChatMessage): Record<string, unknown> {
+  return {
+    author: message.author,
+    body: message.body,
+    createdAt: message.createdAt,
+    status: message.status ?? null,
+    agentId: message.agentId ?? null,
+    registrationId: message.registrationId ?? null,
+    runId: message.runId ?? null,
+    blocks: message.blocks ?? null,
+    images: message.images ?? null,
+    attachments: message.attachments ?? null,
+    replyTo: message.replyTo ?? null,
+  };
+}

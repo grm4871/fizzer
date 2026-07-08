@@ -5,6 +5,7 @@ import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import type { NoteSummary } from '../api';
 import { findEmbeddedNote, NOTE_DND_TYPE, noteEmbedMarkdown, splitDocEmbeds } from '../docEmbeds';
+import { escapeRegExp, normalizeMention } from '../chat/mentions';
 import { highlightJSON } from './jsonHighlighter';
 
 export const CHAT_NOTE_MARKER = 'cascade://chat-channel';
@@ -187,14 +188,6 @@ function formatTime(value: string) {
 
 function initialFor(name: string) {
   return (name.trim().charAt(0) || '?').toUpperCase();
-}
-
-function escapeRegExp(value: string) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function normalizeMention(value: string) {
-  return value.replace(/^@+/, '').trim();
 }
 
 function buildReplyPreview(message: ChatMessage) {

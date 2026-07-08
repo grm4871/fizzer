@@ -30,7 +30,7 @@ export function PopoutApp({ descriptor }: { descriptor: Tab }) {
   const [note, setNote] = useState<Note | null>(null);
   const [draft, setDraft] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [title, setTitle] = useState(descriptor.title);
+  const title = descriptor.title;
 
   useEffect(() => { document.title = title || 'Cascade'; }, [title]);
 

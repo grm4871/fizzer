@@ -27,7 +27,6 @@ interface NoteEditorProps {
   onOpenWikilink?: (title: string) => void;
   notes?: NoteSummary[];
   onOpenNote?: (id: string) => void;
-  onLinkifySelection?: (term: string, context: string) => void;
 }
 
 /* ─── Custom Dark Theme ──────────────────────────────────── */

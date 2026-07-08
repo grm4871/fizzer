@@ -3,8 +3,7 @@
  *
  * Centralizes the hardening Cascade needs once its server is reachable beyond
  * localhost (a small shared instance for friends): a persisted JWT secret, a
- * CORS origin allowlist, a feature gate for the arbitrary-shell widget command,
- * and a tiny in-memory rate limiter for the auth routes.
+ * CORS origin allowlist, and a tiny in-memory rate limiter for the auth routes.
  *
  * @module server/security
  */
@@ -19,12 +18,6 @@ const LEGACY_DEV_SECRET = 'cascade-dev-secret';
 
 /** True when the instance is meant to be reachable off-localhost. */
 export const NETWORK_MODE = /^(1|true|yes|on)$/i.test(process.env.CASCADE_NETWORK_MODE || '');
-
-/**
- * Whether the arbitrary-shell widget command endpoint is enabled. Off by
- * default — it runs unsandboxed bash in the vault root and must be opted into.
- */
-export const WIDGET_SHELL_ENABLED = /^(1|true|yes|on)$/i.test(process.env.CASCADE_ENABLE_WIDGET_SHELL || '');
 
 function persistedSecretPath(): string {
   const dir = path.join(os.homedir(), '.cascade');

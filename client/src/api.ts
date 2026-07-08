@@ -68,52 +68,12 @@ export type NotePublishInfo = {
   updated_at?: string;
 };
 
-/** A tag with an optional color and usage count. */
-export type Tag = {
-  id: string;
-  name: string;
-  color: string | null;
-  count: number;
-};
-
-/** A saved snapshot of a note for version history. */
-export type NoteVersion = {
-  id: string;
-  note_id: string;
-  label: string | null;
-  created_at: string;
-};
-
 /** A full-text search result with a ranked snippet. */
 export type SearchResult = {
   id: string;
   title: string;
   snippet: string;
   rank: number;
-};
-
-/** A note that links back to another note via wikilink. */
-export type BacklinkResult = {
-  id: string;
-  title: string;
-  context: string | null;
-};
-
-/** Wikilink graph data for visualization. */
-export type GraphData = {
-  nodes: GraphNode[];
-  edges: GraphEdge[];
-};
-
-export type GraphNode = {
-  id: string;
-  title: string;
-  folder_id: string | null;
-};
-
-export type GraphEdge = {
-  source: string;
-  target: string;
 };
 
 /* ─── API Client ─────────────────────────────────────────── */

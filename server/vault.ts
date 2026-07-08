@@ -214,12 +214,6 @@ function reIndexLinks(db: Db, noteId: string, vaultId: string, content: string):
   }
 }
 
-// ── Schema ─────────────────────────────────────────────────────────
-
-export function ensureVaultSchema(_db: Db): void {
-  // Schema is created in index.ts — this is a hook for future migrations
-}
-
 // ── Vaults ─────────────────────────────────────────────────────────
 
 export function listVaults(db: Db, userId: number): Vault[] {

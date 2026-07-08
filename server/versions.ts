@@ -38,14 +38,6 @@ export type NoteVersionSummary = {
 // SCHEMA
 // ═══════════════════════════════════════════════════════════════
 
-/**
- * Ensures the note_versions table exists.
- * Schema is now created in index.ts — this hook is kept for potential future migrations.
- */
-export function ensureVersionsSchema(_db: Db) {
-  // no-op — schema lives in index.ts
-}
-
 // ═══════════════════════════════════════════════════════════════
 // PUBLIC API
 // ═══════════════════════════════════════════════════════════════

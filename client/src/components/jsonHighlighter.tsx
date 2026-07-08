@@ -1,4 +1,4 @@
-import React, { ReactNode } from 'react';
+import type { ReactNode } from 'react';
 
 /**
  * Tokenizes a JSON string and renders styled spans for key tokens.

@@ -24,16 +24,13 @@
     "concurrently": "^9.2.1",
     "lucide-react": "^1.18.0",
     "react": "^19.1.0",
-    "react-colorful": "^5.6.1",
     "react-dom": "^19.1.0",
     "react-markdown": "^10.1.0",
     "react-router-dom": "^7.9.5",
     "remark-breaks": "^4.0.0",
     "remark-gfm": "^4.0.1",
     "socket.io-client": "^4.8.1",
-    "unist-util-visit": "^5.0.0",
-    "y-protocols": "^1.0.7",
-    "yjs": "^13.6.29"
+    "unist-util-visit": "^5.0.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.25.0",

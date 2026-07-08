@@ -84,10 +84,6 @@ const CLI_AGENT_LABELS: Record<CliAgentId, string> = {
   hermes: 'Hermes',
 };
 
-export function isCliAgent(agent: string): agent is CliAgentId {
-  return agent === 'codex' || agent === 'grok' || agent === 'antigravity' || agent === 'copilot' || agent === 'hermes';
-}
-
 export function getCliAgentBin(agent: CliAgentId): string {
   switch (agent) {
     case 'codex':
