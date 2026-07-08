@@ -20,6 +20,8 @@ const USAGE = `cascade-chat — read/send live Cascade chat
 Usage:
   cascade-chat history                 recent messages for the current channel
   cascade-chat send --message <text>    send a standalone message to the channel
+  cascade-chat distill                 condense chat into a vault note
+  cascade-chat search <query>          search chat (or all) via unified search
 
 Options:
   --vault <id>              vault id (default $CASCADE_NOTE_VAULT)
@@ -31,6 +33,14 @@ Options:
   --limit <n>               max messages (default 12)
   --include-reply-context   include parent reply snippets
   --reply-depth <n>         parent chain depth with --include-reply-context (default 1)
+  --from <msg-id>           distill range start
+  --to <msg-id>             distill range end
+  --last <n>                distill last N messages
+  --note <id|title>         distill target note (append/merge)
+  --mode create|append|merge  distill mode (default create)
+  --title <t>               distill create title
+  --confirm                 required for merge write
+  --scope chat|all          search scope (default chat)
   --url <base>              API base (default $CASCADE_NOTE_URL, else cscd.online)
   --token <jwt>             bearer token (default $CASCADE_NOTE_TOKEN)
   --json                    machine-readable output
@@ -263,16 +273,77 @@ async function main() {
     process.stdout.write(USAGE + '\n');
     process.exit(cmd ? 0 : 1);
   }
-  if (cmd !== 'history' && cmd !== 'send') fail(`unknown command "${cmd}". Run with --help.`);
+  if (cmd !== 'history' && cmd !== 'send' && cmd !== 'distill' && cmd !== 'search') {
+    fail(`unknown command "${cmd}". Run with --help.`);
+  }
 
   const config = readHelperConfig();
   const vaultId = optionString(args, 'vault', 'CASCADE_NOTE_VAULT', config, 'vaultId');
   const channelId = optionString(args, 'channel', 'CASCADE_CHAT_CHANNEL', config, 'chatChannelId');
   if (!vaultId) fail('missing vault. Pass --vault or set CASCADE_NOTE_VAULT.');
-  if (!channelId) fail('missing channel. Pass --channel or set CASCADE_CHAT_CHANNEL.');
+  if (cmd !== 'search' && !channelId) fail('missing channel. Pass --channel or set CASCADE_CHAT_CHANNEL.');
 
   const url = baseUrl(args, config);
   const token = await getToken(url, args, config);
+
+  if (cmd === 'search') {
+    const q = args._.slice(1).join(' ').trim();
+    if (!q) fail('search needs a query.');
+    const scope = String(args.scope || 'chat').trim() || 'chat';
+    const limit = optionInt(args, 'limit', 30);
+    const channelQ = channelId ? `&channel=${encodeURIComponent(channelId)}` : '';
+    const { results = [] } = await api(
+      url,
+      token,
+      'GET',
+      `/api/vaults/${vaultId}/search?q=${encodeURIComponent(q)}&scope=${encodeURIComponent(scope)}&limit=${limit}${channelQ}`,
+    );
+    if (args.json) process.stdout.write(JSON.stringify(results) + '\n');
+    else {
+      process.stdout.write(
+        (results.map((r) => `[${r.type || '?'}] ${r.id}  ${r.title || ''}\n  ${r.snippet || ''}`).join('\n\n')
+          || '(no matches)') + '\n',
+      );
+    }
+    return;
+  }
+
+  if (cmd === 'distill') {
+    const mode = String(args.mode || 'create').trim() || 'create';
+    const payload = {
+      mode,
+      fromMessageId: String(args.from || '').trim() || undefined,
+      toMessageId: String(args.to || '').trim() || undefined,
+      lastN: args.last !== undefined ? optionInt(args, 'last', 30) : undefined,
+      note: String(args.note || '').trim() || undefined,
+      title: String(args.title || '').trim() || undefined,
+      confirm: args.confirm === true,
+    };
+    const result = await api(
+      url,
+      token,
+      'POST',
+      `/api/vaults/${vaultId}/channels/${channelId}/distill`,
+      payload,
+    );
+    if (args.json) process.stdout.write(JSON.stringify(result) + '\n');
+    else if (result.status === 'needs_confirm') {
+      process.stdout.write(
+        `merge draft ready for note ${result.priorNoteId || ''}. Re-run with --confirm to write.\n`,
+      );
+      if (result.draft) process.stdout.write(result.draft.slice(0, 2000) + (result.draft.length > 2000 ? '\n…\n' : '\n'));
+    } else if (result.status === 'exists') {
+      process.stdout.write(
+        `already distilled → ${result.note?.id || result.priorNoteId}  ${result.note?.title || ''}\nUse --mode append to add more.\n`,
+      );
+    } else {
+      process.stdout.write(
+        `distilled (${result.mode}) → ${result.note?.id || ''}  ${result.note?.title || ''}\n`,
+      );
+    }
+    return;
+  }
+
   if (cmd === 'send') {
     const body = String(args.message === true || args.message === undefined ? await readStdin() : args.message).trim();
     if (!body) fail('missing message. Pass --message <text> or pipe text on stdin.');

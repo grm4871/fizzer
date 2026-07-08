@@ -118,6 +118,20 @@ import {
   getMemoryNote,
   recallExocortex,
 } from './server/exocortex.js';
+import {
+  backfillChatNoteBacklinks,
+  buildAgentMemoryInjection,
+  createAgentMemoryNote,
+  distillChatToNote,
+  ensureAgentMemoryFolders,
+  ensureEvolutionSchema,
+  indexChatMessageBacklinks,
+  isAgentMemoryEnabled,
+  listChatNoteBacklinks,
+  reresolveChatBacklinksForNote,
+  setAgentMemoryEnabled,
+  unifiedSearch,
+} from './server/evolution.js';
 
 const PORT = Number(process.env.API_PORT || 3000);
 /** Single source of truth with desktop-runner (persisted secret when env unset). */
@@ -246,6 +260,7 @@ ensureRunnerSchema(db);
 ensureFeedSchema(db);
 ensureChatSchema(db);
 ensurePublishSchema(db);
+ensureEvolutionSchema(db);
 
 // ── Express & Socket.io setup ──────────────────────────────────────
 
@@ -703,6 +718,7 @@ app.post('/api/vaults/:id/notes', requireAuth, (req: AuthedRequest, res) => {
   try {
     const note = createNote(db, vault.id, req.user!.id, req.body || {});
     createNoteVersion(db, note.id, note.content, 'created');
+    try { reresolveChatBacklinksForNote(db, vault.id, note.id, note.title); } catch { /* ignore */ }
     emitVaultEvent(vault.id, 'vault:noteCreated', { noteId: note.id, vaultId: vault.id, title: note.title });
     res.status(201).json({ note });
   } catch (error) {
@@ -744,6 +760,7 @@ app.post('/api/notes/:id/rename', requireAuth, (req: AuthedRequest, res) => {
 
   try {
     const note = renameNote(db, req.params.id, String(req.body.title ?? ''));
+    try { reresolveChatBacklinksForNote(db, vault.id, note.id, note.title); } catch { /* ignore */ }
     emitVaultEvent(vault.id, 'vault:noteChanged', { noteId: note.id, vaultId: vault.id });
     res.json({ note });
   } catch (error) {
@@ -825,8 +842,23 @@ app.get('/api/vaults/:id/search', requireAuth, (req: AuthedRequest, res) => {
   const query = String(req.query.q || '').trim();
   if (!query) return res.json({ results: [] });
 
+  const scopeRaw = String(req.query.scope || 'notes').trim().toLowerCase();
+  const scope = (scopeRaw === 'chat' || scopeRaw === 'all' || scopeRaw === 'notes')
+    ? scopeRaw
+    : 'notes';
+
   try {
-    res.json({ results: searchNotes(db, vault.id, query) });
+    // Default remains notes-only for backward compatibility with cascade-note search.
+    if (scope === 'notes') {
+      res.json({ results: searchNotes(db, vault.id, query) });
+      return;
+    }
+    const results = unifiedSearch(db, req.user!.id, vault.id, query, {
+      scope,
+      limit: Number(req.query.limit || 40),
+      channelId: typeof req.query.channel === 'string' ? req.query.channel : undefined,
+    });
+    res.json({ results });
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : 'Search failed' });
   }
@@ -876,7 +908,101 @@ app.get('/api/notes/:id/backlinks', requireAuth, (req: AuthedRequest, res) => {
   const vault = getVault(db, note.vault_id, req.user!.id);
   if (!vault) return res.status(404).json({ error: 'Note not found' });
 
-  res.json({ backlinks: getBacklinks(db, req.params.id) });
+  reresolveChatBacklinksForNote(db, note.vault_id, note.id, note.title);
+  const chatBacklinks = listChatNoteBacklinks(db, note.id, {
+    limit: Number(req.query.limit || 50),
+    offset: Number(req.query.offset || 0),
+    includeDeleted: req.query.include_deleted === '1' || req.query.include_deleted === 'true',
+  });
+  res.json({
+    backlinks: getBacklinks(db, req.params.id),
+    chatBacklinks,
+  });
+});
+
+// Chat → note backlink backfill (idempotent, resumable)
+app.post('/api/vaults/:id/chat-backlinks/backfill', requireAuth, (req: AuthedRequest, res) => {
+  const vault = getVault(db, req.params.id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Vault not found' });
+  try {
+    const result = backfillChatNoteBacklinks(db, vault.id, {
+      afterRowid: Number(req.body?.afterRowid || 0),
+      limit: Number(req.body?.limit || 500),
+    });
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Backfill failed' });
+  }
+});
+
+// Distill chat range → note
+app.post('/api/vaults/:vaultId/channels/:channelId/distill', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const mode = String(req.body?.mode || 'create') as 'create' | 'append' | 'merge';
+    const result = distillChatToNote(db, req.user!.id, req.params.vaultId, req.params.channelId, {
+      mode,
+      fromMessageId: typeof req.body?.fromMessageId === 'string' ? req.body.fromMessageId : undefined,
+      toMessageId: typeof req.body?.toMessageId === 'string' ? req.body.toMessageId : undefined,
+      lastN: req.body?.lastN != null ? Number(req.body.lastN) : undefined,
+      noteRef: typeof req.body?.note === 'string' ? req.body.note
+        : typeof req.body?.noteId === 'string' ? req.body.noteId
+          : typeof req.body?.noteRef === 'string' ? req.body.noteRef : undefined,
+      title: typeof req.body?.title === 'string' ? req.body.title : undefined,
+      confirm: req.body?.confirm === true,
+      by: req.user!.username,
+    });
+    if (result.note) {
+      emitVaultEvent(req.params.vaultId, 'vault:noteChanged', {
+        noteId: result.note.id,
+        vaultId: req.params.vaultId,
+        title: result.note.title,
+      });
+    }
+    res.status(result.status === 'needs_confirm' ? 202 : 200).json(result);
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Distill failed' });
+  }
+});
+
+// Agent memory controls
+app.get('/api/vaults/:id/agent-memory', requireAuth, (req: AuthedRequest, res) => {
+  const vault = getVault(db, req.params.id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Vault not found' });
+  try {
+    ensureAgentMemoryFolders(db, vault.id, req.user!.id);
+    const injection = buildAgentMemoryInjection(db, vault.id, {
+      channelTopic: typeof req.query.topic === 'string' ? req.query.topic : undefined,
+    });
+    res.json({
+      enabled: isAgentMemoryEnabled(db, vault.id),
+      injection,
+    });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Agent memory failed' });
+  }
+});
+
+app.put('/api/vaults/:id/agent-memory', requireAuth, (req: AuthedRequest, res) => {
+  const vault = getVault(db, req.params.id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Vault not found' });
+  try {
+    if (typeof req.body?.enabled === 'boolean') {
+      setAgentMemoryEnabled(db, vault.id, req.body.enabled);
+    }
+    if (req.body?.remember || req.body?.body) {
+      const note = createAgentMemoryNote(db, req.user!.id, vault.id, {
+        title: typeof req.body.title === 'string' ? req.body.title : undefined,
+        body: String(req.body.remember || req.body.body || ''),
+      });
+      emitVaultEvent(vault.id, 'vault:noteCreated', { noteId: note.id, vaultId: vault.id, title: note.title });
+      res.status(201).json({ enabled: isAgentMemoryEnabled(db, vault.id), note });
+      return;
+    }
+    ensureAgentMemoryFolders(db, vault.id, req.user!.id);
+    res.json({ enabled: isAgentMemoryEnabled(db, vault.id) });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Agent memory update failed' });
+  }
 });
 
 // ── Tag routes ─────────────────────────────────────────────────────
@@ -1119,6 +1245,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
 
     let effectivePrompt = prompt;
     if (!willResume) {
+      const contextChunks: string[] = [];
       try {
         const recentMessages = targetChannelId
           ? listChatMessages(db, targetChannelId, runnerUserId).slice(-8).map((message) => `${message.author}: ${message.body}`).join('\n')
@@ -1130,11 +1257,23 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
             limit: 6,
           }),
         );
-        if (recall) {
-          effectivePrompt = `${prompt}\n\n[Context: ${recall}]`;
-        }
+        if (recall) contextChunks.push(recall);
       } catch (error) {
         console.warn('Exocortex recall skipped:', error instanceof Error ? error.message : error);
+      }
+      try {
+        const channelTitle = targetChannelId
+          ? (getNote(db, targetChannelId)?.title || '')
+          : '';
+        const mem = buildAgentMemoryInjection(db, runVault.id, {
+          channelTopic: `${channelTitle} ${prompt}`.slice(0, 400),
+        });
+        if (mem.enabled && mem.text) contextChunks.push(mem.text);
+      } catch (error) {
+        console.warn('Agent memory injection skipped:', error instanceof Error ? error.message : error);
+      }
+      if (contextChunks.length) {
+        effectivePrompt = `${prompt}\n\n[Context: ${contextChunks.join('\n\n')}]`;
       }
     }
 
@@ -1288,6 +1427,16 @@ app.post('/api/vaults/:vaultId/channels/:channelId/messages', requireAuth, (req:
   try {
     const { route } = assertChatChannel(db, req.params.channelId, req.user!.id);
     const message = createChatMessage(db, req.user!.id, req.params.vaultId, req.params.channelId, req.body);
+    try {
+      indexChatMessageBacklinks(db, route.sourceVaultId, route.sourceChannelId, {
+        id: message.id,
+        author: message.author,
+        body: message.body,
+        createdAt: message.createdAt,
+      });
+    } catch (error) {
+      console.warn('chat backlink index skipped:', error instanceof Error ? error.message : error);
+    }
     emitChatMessageEvent(route.sourceVaultId, route.sourceChannelId, 'vault:chatMessageCreated', message);
     res.status(201).json({ message });
   } catch (err) {

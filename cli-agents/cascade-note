@@ -52,6 +52,10 @@ Usage:
   cascade-note create --title T          body via stdin (recommended) / --content-file / --content
   cascade-note edit <id|title>           replace body (stdin / --content-file / --content)
   cascade-note append <id|title>         append body  (stdin / --content-file / --content)
+  cascade-note backlinks <id|title>      note + chat backlinks for a note
+  cascade-note memory show               what agent memory would inject
+  cascade-note memory remember           write a memory note (body via stdin)
+  cascade-note memory enable|disable     toggle agent memory for the vault
 
 Body input (pick one):
   stdin             pipe it, e.g.  cascade-note create --title T <<'EOF' ... EOF
@@ -60,8 +64,11 @@ Body input (pick one):
 
 Options:
   --vault <id>     vault id   (default $CASCADE_NOTE_VAULT, else sole vault)
-  --title <t>      note title (create)
+  --title <t>      note title (create / memory)
   --folder <id>    folder id  (create)
+  --scope notes|chat|all   search scope (default notes)
+  --topic <text>   channel topic for memory show
+  --memory         scope create to _agent/memory (agent memory folder)
   --allow-empty    permit an empty body (otherwise empty is rejected)
   --url <base>     API base   (default $CASCADE_NOTE_URL, else cscd.online)
   --token <jwt>    bearer token (default $CASCADE_NOTE_TOKEN)
@@ -255,10 +262,62 @@ async function main() {
       const q = args._.slice(1).join(' ');
       if (!q) fail('search needs a query.');
       const vaultId = await resolveVault(url, token, args, config);
+      const scope = String(args.scope || 'notes').trim() || 'notes';
       const { results = [] } = await api(url, token, 'GET',
-        `/api/vaults/${vaultId}/search?q=${encodeURIComponent(q)}`);
-      out(args, results.map((r) => `${r.id}  ${r.title}\n    ${r.snippet || ''}`).join('\n')
-        || '(no matches)', results);
+        `/api/vaults/${vaultId}/search?q=${encodeURIComponent(q)}&scope=${encodeURIComponent(scope)}`);
+      out(args, results.map((r) => {
+        const kind = r.type ? `[${r.type}] ` : '';
+        return `${kind}${r.id}  ${r.title || ''}\n    ${r.snippet || ''}`;
+      }).join('\n') || '(no matches)', results);
+      break;
+    }
+    case 'backlinks': {
+      const ref = args._[1];
+      if (!ref) fail('backlinks needs a note id or title.');
+      const vaultId = await resolveVault(url, token, args, config);
+      const id = await resolveNote(url, token, vaultId, ref);
+      const data = await api(url, token, 'GET', `/api/notes/${id}/backlinks`);
+      const noteLinks = data.backlinks || [];
+      const chatLinks = data.chatBacklinks || [];
+      const human = [
+        `Note backlinks (${noteLinks.length}):`,
+        ...noteLinks.map((b) => `  ${b.id}  ${b.title}${b.context ? ` — ${b.context}` : ''}`),
+        `Chat backlinks (${chatLinks.length}):`,
+        ...chatLinks.map((b) => `  ${b.messageId}  #${b.channelId}  ${b.author}\n    ${b.snippet || ''}`),
+      ].join('\n');
+      out(args, human || '(no backlinks)', data);
+      break;
+    }
+    case 'memory': {
+      const sub = args._[1] || 'show';
+      const vaultId = await resolveVault(url, token, args, config);
+      if (sub === 'show') {
+        const topic = String(args.topic || '').trim();
+        const q = topic ? `?topic=${encodeURIComponent(topic)}` : '';
+        const data = await api(url, token, 'GET', `/api/vaults/${vaultId}/agent-memory${q}`);
+        const inj = data.injection || {};
+        const human = [
+          `enabled: ${data.enabled}`,
+          `notes: ${(inj.noteIds || []).length}${inj.truncated ? ' (truncated)' : ''}`,
+          inj.text || '(empty injection)',
+        ].join('\n');
+        out(args, human, data);
+      } else if (sub === 'enable' || sub === 'disable') {
+        const data = await api(url, token, 'PUT', `/api/vaults/${vaultId}/agent-memory`, {
+          enabled: sub === 'enable',
+        });
+        out(args, `agent memory ${sub}d`, data);
+      } else if (sub === 'remember') {
+        const body = await bodyContent(args);
+        const title = typeof args.title === 'string' ? args.title : undefined;
+        const data = await api(url, token, 'PUT', `/api/vaults/${vaultId}/agent-memory`, {
+          remember: body,
+          title,
+        });
+        out(args, `remembered ${data.note?.id || ''}  ${data.note?.title || ''}`, data);
+      } else {
+        fail(`unknown memory subcommand "${sub}". Use show|remember|enable|disable.`);
+      }
       break;
     }
     case 'get': {
@@ -277,6 +336,14 @@ async function main() {
       const vaultId = await resolveVault(url, token, args, config);
       const rawContent = await bodyContent(args);
       const content = rawContent.replace(/\\+`/g, '`');
+      if (args.memory === true) {
+        const data = await api(url, token, 'PUT', `/api/vaults/${vaultId}/agent-memory`, {
+          remember: content,
+          title,
+        });
+        out(args, `created memory ${data.note?.id || ''}  ${data.note?.title || ''}`, data.note || data);
+        break;
+      }
       const payload = { title, content };
       if (args.folder) payload.folder_id = String(args.folder);
       const { note } = await api(url, token, 'POST', `/api/vaults/${vaultId}/notes`, payload);

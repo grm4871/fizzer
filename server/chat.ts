@@ -643,6 +643,8 @@ export function createChatMessage(
   // Carry the persistence order so the create broadcast orders identically to a
   // later reload (which reads rowid) even for same-millisecond messages.
   message.seq = Number(info.lastInsertRowid);
+  // Chat→note backlinks are indexed by the route layer (see indexChatMessageBacklinks)
+  // to avoid a circular import with evolution.ts.
   return { ...message, channelId: route.localChannelId };
 }
 
