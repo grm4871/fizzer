@@ -25,7 +25,7 @@ import type { LayoutNode } from './layout/tree';
 import { api, type User, type Vault, type Folder, type NoteSummary, type Note } from './api';
 import { connectRunsSocket, connectVaultSocket } from './socket';
 import { isLocalRunId, cancelLocalAgentRun } from './localAgentRunner';
-import { startDesktopRunnerHost } from './desktopRunnerHost';
+import { ensureDesktopRunnerHost, startDesktopRunnerHost } from './desktopRunnerHost';
 import {
   agentLabel,
   CHAT_AGENTS,
@@ -531,8 +531,10 @@ export default function App() {
   useEffect(() => {
     const resyncOnResume = () => {
       if (!user) return;
-      desktopRunnerStopRef.current?.();
-      desktopRunnerStopRef.current = startDesktopRunnerHost();
+      // Soft re-assert only — never clearRunnerToken here. Focus/visibility
+      // fires constantly and was tearing down the /runners socket mid-agent,
+      // which failed open runs with "Desktop agent runner disconnected."
+      ensureDesktopRunnerHost();
 
       const vaultId = activeVaultIdRef.current;
       const vaultSocket = vaultSocketRef.current;

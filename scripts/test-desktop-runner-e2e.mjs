@@ -170,7 +170,77 @@ async function main() {
     }
     console.log('[e2e] OK run events persisted');
 
+    // ── Disconnect grace: brief blip must not fail an open run ──────────
+    let midRunPayload = null;
+    runnerSocket.off('run:delegate');
+    runnerSocket.on('run:delegate', (payload) => {
+      midRunPayload = payload;
+      runnerSocket.emit('runner:runEvent', {
+        runId: payload.runId,
+        type: 'status',
+        payload: { status: 'running' },
+      });
+      // Intentionally leave the run open — no completed status yet.
+    });
+
+    const { run: openRun } = await fetchJson(`${API_BASE}/api/vaults/${vault.id}/runs`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({ prompt: 'Stay open across reconnect', agent: 'grok', note_id: null }),
+    });
+    await sleep(300);
+    if (!midRunPayload || midRunPayload.runId !== openRun.id) {
+      throw new Error('Expected open run to be delegated');
+    }
+
+    // Simulate a transport blip: disconnect, then reconnect as same user.
     runnerSocket.disconnect();
+    await sleep(500);
+
+    const reconnected = io(`${API_BASE}/runners`, {
+      auth: { token },
+      transports: ['websocket'],
+    });
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('Reconnect timeout')), 10000);
+      reconnected.on('connect', () => {
+        clearTimeout(timer);
+        reconnected.emit('runner:register');
+        resolve();
+      });
+      reconnected.on('connect_error', (err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+    });
+    await sleep(400);
+
+    const stillOpen = await fetchJson(`${API_BASE}/api/runs/${openRun.id}`, { headers: auth });
+    if (stillOpen.run.status === 'failed') {
+      throw new Error(
+        `Open run was failed on brief disconnect (status=${stillOpen.run.status}, summary=${stillOpen.run.summary})`,
+      );
+    }
+    console.log('[e2e] OK open run survived brief disconnect+reconnect');
+
+    // Finish the open run from the reconnected socket.
+    reconnected.emit('runner:runEvent', {
+      runId: openRun.id,
+      type: 'status',
+      payload: { status: 'completed', summary: 'Recovered.', sessionId: 'desktop-session-2' },
+    });
+    await sleep(300);
+    const recovered = await fetchJson(`${API_BASE}/api/runs/${openRun.id}`, { headers: auth });
+    if (recovered.run.status !== 'completed') {
+      throw new Error(`Expected recovered run completed, got ${recovered.run.status}`);
+    }
+    console.log('[e2e] OK run completed after reconnect');
+
+    reconnected.disconnect();
+    runnerSocket.disconnect();
+
+    // Wait past waitForDesktopRunner (6s) so offline is definitive.
+    await sleep(6500);
 
     let rejected = false;
     try {

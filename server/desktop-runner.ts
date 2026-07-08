@@ -72,6 +72,75 @@ const runnerLastError = new Map<number, { message: string; at: string }>();
 /** Last capability probe payload from the desktop (agent → model ids). */
 const runnerModels = new Map<number, Record<string, string[]>>();
 const runnerLastSeen = new Map<number, string>();
+/**
+ * Pending fail-on-disconnect timers. Socket.io transport swaps, Electron focus
+ * resync, and busy main-process event loops cause brief disconnects; killing
+ * open runs immediately is what surfaces "Desktop agent runner disconnected"
+ * mid-turn. Wait for reconnection before settling.
+ */
+const DISCONNECT_GRACE_MS = Number(process.env.RUNNER_DISCONNECT_GRACE_MS || 20_000);
+const pendingDisconnectFails = new Map<number, ReturnType<typeof setTimeout>>();
+
+function clearPendingDisconnectFail(userId: number): void {
+  const timer = pendingDisconnectFails.get(userId);
+  if (timer) {
+    clearTimeout(timer);
+    pendingDisconnectFails.delete(userId);
+  }
+}
+
+function failOwnerRunsAfterDisconnect(
+  db: Db,
+  hooks: RunnerHooks,
+  userId: number,
+): void {
+  // Bail if they reconnected while we were waiting.
+  if (isDesktopRunnerOnline(userId)) return;
+
+  const failedFromDb = failOpenDelegatedRunsForOwner(
+    db,
+    userId,
+    'Desktop agent runner disconnected.',
+  );
+  const failedIds = new Set(failedFromDb);
+  for (const [runId, ownerId] of [...delegatedRunOwners.entries()]) {
+    if (ownerId !== userId) continue;
+    delegatedRunOwners.delete(runId);
+    if (failedIds.has(runId)) continue;
+    // In-memory only (record may already be cleared); still emit failed.
+    hooks.finishDelegatedRun(db, runId, {
+      status: 'failed',
+      summary: 'Desktop agent runner disconnected.',
+    });
+    hooks.publishRunEvent(db, runId, 'status', {
+      status: 'failed',
+      summary: 'Desktop agent runner disconnected.',
+    });
+    clearDelegatedRunRecord(db, runId);
+    failedIds.add(runId);
+  }
+  for (const runId of failedFromDb) {
+    delegatedRunOwners.delete(runId);
+  }
+  if (failedIds.size > 0) {
+    runnerLastError.set(userId, {
+      message: `Runner disconnected; ${failedIds.size} run(s) failed.`,
+      at: new Date().toISOString(),
+    });
+    hooks.onRunsFailedForOwner?.(userId, [...failedIds]);
+  }
+}
+
+function scheduleDisconnectFail(db: Db, hooks: RunnerHooks, userId: number): void {
+  clearPendingDisconnectFail(userId);
+  pendingDisconnectFails.set(
+    userId,
+    setTimeout(() => {
+      pendingDisconnectFails.delete(userId);
+      failOwnerRunsAfterDisconnect(db, hooks, userId);
+    }, DISCONNECT_GRACE_MS),
+  );
+}
 
 export function initDesktopRunners(io: Server, db: Db, hooks: RunnerHooks): void {
   const runnersNamespace = io.of('/runners');
@@ -94,18 +163,24 @@ export function initDesktopRunners(io: Server, db: Db, hooks: RunnerHooks): void
       return;
     }
 
+    // Reconnected (or first connect) — cancel any pending fail-on-disconnect.
+    clearPendingDisconnectFail(user.id);
+
+    // Register the new socket *before* disconnecting any previous one so the
+    // old socket's disconnect handler sees it has been replaced and does not
+    // schedule a fail-on-disconnect for still-active runs.
     const existing = runnersByUser.get(user.id);
-    if (existing && existing.id !== socket.id) {
-      // Replacing a previous socket for the same user. Do not fail active runs —
-      // the new connection is the same owner reclaiming the runner slot.
-      existing.disconnect();
-    }
     runnersByUser.set(user.id, socket);
     runnerLastSeen.set(user.id, new Date().toISOString());
+    if (existing && existing.id !== socket.id) {
+      // Same owner reclaiming the runner slot — leave active runs alone.
+      existing.disconnect();
+    }
 
     socket.on('runner:register', (payload?: { models?: Record<string, string[]> }) => {
       runnersByUser.set(user.id, socket);
       runnerLastSeen.set(user.id, new Date().toISOString());
+      clearPendingDisconnectFail(user.id);
       if (payload?.models && typeof payload.models === 'object') {
         const cleaned: Record<string, string[]> = {};
         for (const [agent, models] of Object.entries(payload.models)) {
@@ -164,39 +239,9 @@ export function initDesktopRunners(io: Server, db: Db, hooks: RunnerHooks): void
         return;
       }
       runnersByUser.delete(user.id);
-      // Fail DB-recorded delegated runs + any in-memory-only ones for this owner.
-      const failedFromDb = failOpenDelegatedRunsForOwner(
-        db,
-        user.id,
-        'Desktop agent runner disconnected.',
-      );
-      const failedIds = new Set(failedFromDb);
-      for (const [runId, ownerId] of [...delegatedRunOwners.entries()]) {
-        if (ownerId !== user.id) continue;
-        delegatedRunOwners.delete(runId);
-        if (failedIds.has(runId)) continue;
-        // In-memory only (record may already be cleared); still emit failed.
-        hooks.finishDelegatedRun(db, runId, {
-          status: 'failed',
-          summary: 'Desktop agent runner disconnected.',
-        });
-        hooks.publishRunEvent(db, runId, 'status', {
-          status: 'failed',
-          summary: 'Desktop agent runner disconnected.',
-        });
-        clearDelegatedRunRecord(db, runId);
-        failedIds.add(runId);
-      }
-      for (const runId of failedFromDb) {
-        delegatedRunOwners.delete(runId);
-      }
-      if (failedIds.size > 0) {
-        runnerLastError.set(user.id, {
-          message: `Runner disconnected; ${failedIds.size} run(s) failed.`,
-          at: new Date().toISOString(),
-        });
-        hooks.onRunsFailedForOwner?.(user.id, [...failedIds]);
-      }
+      // Defer failing open runs so a reconnect within the grace window keeps
+      // them alive (socket.io transport swap, focus resync, brief offline).
+      scheduleDisconnectFail(db, hooks, user.id);
     });
   });
 }

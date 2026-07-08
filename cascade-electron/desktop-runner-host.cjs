@@ -4,6 +4,10 @@
  * Connects to the Cascade server's /runners socket and executes delegated CLI
  * agent runs locally. Lives in the main process so it always pairs with
  * agent-runner.cjs (no renderer IPC required).
+ *
+ * Reconnect-safe: calling connect with the same token/url is a no-op when
+ * already connected (or reconnecting). Intentional reconnects do not cancel
+ * in-flight local agent runs — only explicit disconnect/logout does.
  */
 
 const path = require('path');
@@ -22,6 +26,8 @@ const { io } = loadSocketIoClient();
 
 let socket = null;
 let apiBase = 'https://cscd.online';
+/** Auth token currently driving the socket (for idempotent reconnects). */
+let currentToken = '';
 /** Active local runs keyed by runId → abort/cleanup marker. */
 const activeRuns = new Map();
 
@@ -84,16 +90,54 @@ async function handleDelegatedRun(payload) {
   }
 }
 
+/**
+ * Drop the socket only. Leave local agent processes running so a brief
+ * reconnect (focus resync, transport swap) does not kill mid-turn work.
+ */
+function detachSocket() {
+  if (!socket) return;
+  socket.removeAllListeners();
+  socket.disconnect();
+  socket = null;
+}
+
+/**
+ * Full teardown: cancel local runs and disconnect. Used on logout / missing token.
+ */
 function disconnectDesktopRunner() {
   for (const runId of [...activeRuns.keys()]) {
     void cancelLocalAgentRun(runId);
   }
   activeRuns.clear();
-  if (socket) {
-    socket.removeAllListeners();
-    socket.disconnect();
-    socket = null;
-  }
+  currentToken = '';
+  detachSocket();
+}
+
+function wireSocketHandlers(activeSocket) {
+  activeSocket.on('connect', () => {
+    const models = probeLocalModels();
+    activeSocket.emit('runner:register', { models });
+    console.log(`[DesktopRunner] Connected to ${apiBase}/runners`);
+  });
+
+  activeSocket.on('connect_error', (error) => {
+    console.error('[DesktopRunner] Connection error:', error?.message || error);
+  });
+
+  activeSocket.on('run:delegate', (payload) => {
+    void handleDelegatedRun(payload);
+  });
+
+  activeSocket.on('run:cancel', (data) => {
+    const runId = Number(data?.runId);
+    if (!Number.isFinite(runId)) return;
+    activeRuns.delete(runId);
+    void cancelLocalAgentRun(runId);
+  });
+
+  activeSocket.on('disconnect', (reason) => {
+    console.log('[DesktopRunner] Disconnected:', reason);
+  });
 }
 
 function connectDesktopRunner(token, nextApiBase) {
@@ -103,8 +147,28 @@ function connectDesktopRunner(token, nextApiBase) {
     return { success: false, error: 'Missing auth token' };
   }
 
-  apiBase = normalizeApiBase(nextApiBase);
-  disconnectDesktopRunner();
+  const nextBase = normalizeApiBase(nextApiBase);
+
+  // Idempotent: same credentials + existing socket → keep it.
+  // Renderer focus/visibility resync calls setRunnerToken often; tearing down
+  // here was cancelling agents and failing server-side delegated runs.
+  if (socket && currentToken === authToken && apiBase === nextBase) {
+    setNoteApiConfig({ url: nextBase, token: authToken });
+    if (socket.connected) {
+      const models = probeLocalModels();
+      socket.emit('runner:register', { models });
+      return { success: true, reused: true };
+    }
+    // Socket.io client is reconnecting on its own — do not recreate.
+    return { success: true, reused: true, reconnecting: true };
+  }
+
+  // Credential/url change: swap socket without killing in-flight local runs.
+  // The new server connection will own new delegates; old run events still
+  // stream if the process is mid-flight (orphaned until process ends).
+  apiBase = nextBase;
+  currentToken = authToken;
+  detachSocket();
 
   // Let the `cascade-note` wrapper auth against the same live instance the
   // desktop is connected to, reusing this session's token — so agents create
@@ -117,32 +181,12 @@ function connectDesktopRunner(token, nextApiBase) {
     reconnection: true,
     reconnectionAttempts: Infinity,
     reconnectionDelay: 2000,
+    // Avoid hammering the server during brief network blips mid-run.
+    reconnectionDelayMax: 10000,
+    timeout: 20000,
   });
 
-  socket.on('connect', () => {
-    const models = probeLocalModels();
-    socket.emit('runner:register', { models });
-    console.log(`[DesktopRunner] Connected to ${apiBase}/runners`);
-  });
-
-  socket.on('connect_error', (error) => {
-    console.error('[DesktopRunner] Connection error:', error?.message || error);
-  });
-
-  socket.on('run:delegate', (payload) => {
-    void handleDelegatedRun(payload);
-  });
-
-  socket.on('run:cancel', (data) => {
-    const runId = Number(data?.runId);
-    if (!Number.isFinite(runId)) return;
-    activeRuns.delete(runId);
-    void cancelLocalAgentRun(runId);
-  });
-
-  socket.on('disconnect', (reason) => {
-    console.log('[DesktopRunner] Disconnected:', reason);
-  });
+  wireSocketHandlers(socket);
 
   return { success: true };
 }

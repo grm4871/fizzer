@@ -22,10 +22,15 @@ function resolveApiBase(): string {
 }
 
 /**
- * Connect the main-process desktop runner relay after login.
+ * Ensure the main-process desktop runner relay is connected (after login).
+ * Idempotent — safe to call on focus/visibility resync without killing runs.
  * No-op in a plain browser.
+ *
+ * @param opts.clearOnStop When true (default), the returned stop() tears the
+ *   runner down (logout / unmount). Pass false for resume pings that should
+ *   only re-assert the token without ever clearing on cleanup.
  */
-export function startDesktopRunnerHost(): () => void {
+export function startDesktopRunnerHost(opts?: { clearOnStop?: boolean }): () => void {
   const api = runnerElectronAPI();
   if (!api?.setRunnerToken) return () => {};
 
@@ -34,7 +39,13 @@ export function startDesktopRunnerHost(): () => void {
 
   void api.setRunnerToken({ token, apiUrl: resolveApiBase() });
 
+  const clearOnStop = opts?.clearOnStop !== false;
   return () => {
-    void api.clearRunnerToken?.();
+    if (clearOnStop) void api.clearRunnerToken?.();
   };
+}
+
+/** Soft re-assert of the runner connection (no teardown). */
+export function ensureDesktopRunnerHost(): void {
+  startDesktopRunnerHost({ clearOnStop: false })();
 }
