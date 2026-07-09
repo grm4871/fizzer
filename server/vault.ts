@@ -431,8 +431,16 @@ export function getNote(db: Db, noteId: string): Note | undefined {
   };
 }
 
-export function createNote(db: Db, vaultId: string, userId: number, opts: { title?: string; content?: string; folder_id?: string }): Note {
-  const id = crypto.randomUUID();
+export function createNote(db: Db, vaultId: string, userId: number, opts: { id?: string; title?: string; content?: string; folder_id?: string }): Note {
+  // Accept a client-supplied id so the app can mint a note's real id up front,
+  // keep it local-only while empty, and persist under the same id on first
+  // save — no tab/layout remapping. Only honor a well-formed, unused UUID.
+  const providedId = typeof opts.id === 'string'
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(opts.id)
+    && !db.prepare('SELECT 1 FROM notes WHERE id = ?').get(opts.id)
+    ? opts.id
+    : null;
+  const id = providedId ?? crypto.randomUUID();
   const title = String(opts.title || 'Untitled').trim() || 'Untitled';
   const rawContent = String(opts.content || '');
   const content = rawContent.replace(/\\+`/g, '`');

@@ -309,6 +309,10 @@ export function Sidebar({
     };
   }
 
+  // Move-to-root drop handlers, shared by the "Notes" header and the empty
+  // area of the folder tree.
+  const rootDropProps = dropTargetProps(null);
+
   /** Recursively render a folder row with its children. */
   function renderFolder(folder: Folder, depth: number) {
     const isExpanded = expandedFolders.has(folder.id);
@@ -457,11 +461,17 @@ export function Sidebar({
         Notes
       </div>
       <div
-        className="folder-tree"
+        className={`folder-tree ${dragOverId === ROOT_DROP_ID ? 'drag-over' : ''}`}
         id="folder-tree"
         onContextMenu={(e) => {
           if (e.target === e.currentTarget) openMenu(e, { x: 0, y: 0, kind: 'root' });
         }}
+        // The whole empty tree area is a move-to-root drop target, not just the
+        // "Notes" header. Guard on target === currentTarget so drops that land on
+        // a folder/note row are handled by that row (and don't also fall to root).
+        onDragOver={(e) => { if (e.target === e.currentTarget) rootDropProps.onDragOver(e); }}
+        onDragLeave={rootDropProps.onDragLeave}
+        onDrop={(e) => { if (e.target === e.currentTarget) rootDropProps.onDrop(e); }}
       >
         {rootFolders.map((folder) => renderFolder(folder, 0))}
         {rootNotes.map((note) => renderNote(note, 0))}

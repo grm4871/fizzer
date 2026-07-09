@@ -143,6 +143,10 @@ export default function App() {
   const openTabsRef = useRef(openTabs); openTabsRef.current = openTabs;
   const noteContentsRef = useRef(noteContents); noteContentsRef.current = noteContents;
   const activeVaultIdRef = useRef(activeVaultId); activeVaultIdRef.current = activeVaultId;
+  // Ids of new notes that exist only in the client until the user writes
+  // something and saves — deferred so opening a blank tab doesn't litter the
+  // vault. The real (server) id is minted here up front, so no remap on save.
+  const unsavedNoteIdsRef = useRef<Set<string>>(new Set());
   const notesRef = useRef(notes); notesRef.current = notes;
   const desktopRunnerStopRef = useRef<(() => void) | null>(null);
   const chatStateRef = useRef(chatState); chatStateRef.current = chatState;
@@ -1138,6 +1142,9 @@ export default function App() {
 
   /** Close a tab from anywhere: drop it from the registry, content, and tree. */
   const closeTab = useCallback((tabId: string) => {
+    // An unsaved draft was never persisted — just drop it (this is the point:
+    // closing a blank new note leaves nothing behind).
+    unsavedNoteIdsRef.current.delete(tabId);
     setOpenTabs((prev) => prev.filter((t) => t.id !== tabId));
     setNoteContents((prev) => { const next = { ...prev }; delete next[tabId]; return next; });
     setLayout(Layout.simplify(Layout.removeTab(layoutRef.current, tabId)));
@@ -1152,6 +1159,8 @@ export default function App() {
 
   /** Fetch a note body into `noteContents` (no layout change). Self-heals stale tabs. */
   const loadNoteContent = useCallback(async (noteId: string) => {
+    // A not-yet-persisted draft lives only in the client; don't fetch it (404).
+    if (unsavedNoteIdsRef.current.has(noteId)) return;
     try {
       const data = await api<{ note: Note }>(`/api/notes/${noteId}`);
 
@@ -1226,6 +1235,23 @@ export default function App() {
     const entry = noteContentsRef.current[tabId];
     if (!entry) return;
     try {
+      if (unsavedNoteIdsRef.current.has(tabId)) {
+        // Deferred creation: only persist a new note once it has real content,
+        // so blank tabs never reach the vault. Created under the id already in
+        // use by the tab/layout, so nothing needs remapping.
+        if (!entry.draft.trim()) return;
+        const vaultId = activeVaultIdRef.current;
+        if (!vaultId) return;
+        const created = await api<{ note: Note }>(`/api/vaults/${vaultId}/notes`, {
+          method: 'POST',
+          body: JSON.stringify({ id: tabId, title: 'Untitled Note', content: entry.draft, folder_id: entry.note.folder_id ?? undefined }),
+        });
+        unsavedNoteIdsRef.current.delete(tabId);
+        setNoteContents((prev) => ({ ...prev, [tabId]: { note: created.note, draft: created.note.content } }));
+        setOpenTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, title: created.note.title, dirty: false } : t)));
+        if (vaultId) void loadVaultData(vaultId);
+        return created.note;
+      }
       const data = await api<{ note: Note }>(`/api/notes/${tabId}`, {
         method: 'PUT',
         body: JSON.stringify({ content: entry.draft }),
@@ -1461,41 +1487,33 @@ export default function App() {
   // NOTE / FOLDER OPERATIONS
   // ═══════════════════════════════════════════════════════════════
 
-  const handleCreateNote = useCallback(async () => {
-    if (!activeVaultIdRef.current) return;
-    try {
-      const data = await api<{ note: Note }>(`/api/vaults/${activeVaultIdRef.current}/notes`, {
-        method: 'POST',
-        body: JSON.stringify({ title: 'Untitled Note', content: '' }),
-      });
-      await loadVaultData(activeVaultIdRef.current);
-      openNote(data.note.id);
-    } catch (error) {
-      console.error('Error creating note:', error);
-    }
-  }, [loadVaultData, openNote]);
-
-  const handleCreateNoteInPane = useCallback(async (paneId: string) => {
+  /**
+   * Open a brand-new note as a client-only draft in `paneId` (or the focused
+   * pane). Nothing is written to the server until the user types content and
+   * saves — see saveNoteTab. The id is a real UUID minted here, so persisting
+   * later needs no tab/layout remap.
+   */
+  const openDraftNote = useCallback((paneId: string | null, folderId: string | null) => {
     const vaultId = activeVaultIdRef.current;
     if (!vaultId) return;
-    try {
-      const data = await api<{ note: Note }>(`/api/vaults/${vaultId}/notes`, {
-        method: 'POST',
-        body: JSON.stringify({ title: 'Untitled Note', content: '' }),
-      });
-      await loadVaultData(vaultId);
-      setOpenTabs((prev) =>
-        prev.some((t) => t.id === data.note.id)
-          ? prev
-          : [...prev, { id: data.note.id, title: data.note.title || 'Untitled Note', type: 'note', dirty: false }],
-      );
-      setLayout(Layout.simplify(Layout.addTabToPane(Layout.removeTab(layoutRef.current, data.note.id), paneId, data.note.id)));
-      setFocusedPaneId(paneId);
-      void loadNoteContent(data.note.id);
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Could not create note');
-    }
-  }, [loadNoteContent, loadVaultData]);
+    const id = crypto.randomUUID();
+    const now = new Date().toISOString();
+    const note: Note = {
+      id, vault_id: vaultId, folder_id: folderId, title: 'Untitled Note',
+      content_preview: '', is_pinned: 0, is_archived: 0, word_count: 0,
+      created_at: now, updated_at: now, tags: [], content: '', file_path: '',
+    };
+    unsavedNoteIdsRef.current.add(id);
+    setNoteContents((prev) => ({ ...prev, [id]: { note, draft: '' } }));
+    setOpenTabs((prev) => [...prev, { id, title: 'Untitled Note', type: 'note', dirty: false }]);
+    const targetPane = paneId ?? focusedPaneRef.current.id;
+    setLayout(Layout.simplify(Layout.addTabToPane(Layout.removeTab(layoutRef.current, id), targetPane, id)));
+    setFocusedPaneId(targetPane);
+  }, []);
+
+  const handleCreateNote = useCallback(() => openDraftNote(null, null), [openDraftNote]);
+
+  const handleCreateNoteInPane = useCallback((paneId: string) => openDraftNote(paneId, null), [openDraftNote]);
 
   const handleCreateChatInPane = useCallback(async (paneId: string) => {
     const vaultId = activeVaultIdRef.current;
@@ -1592,19 +1610,7 @@ export default function App() {
     }
   }, [loadVaultData]);
 
-  const handleCreateNoteInFolder = useCallback(async (folderId: string | null) => {
-    if (!activeVaultIdRef.current) return;
-    try {
-      const data = await api<{ note: Note }>(`/api/vaults/${activeVaultIdRef.current}/notes`, {
-        method: 'POST',
-        body: JSON.stringify({ title: 'Untitled Note', content: '', folder_id: folderId ?? undefined }),
-      });
-      await loadVaultData(activeVaultIdRef.current);
-      openNote(data.note.id);
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Could not create note');
-    }
-  }, [loadVaultData, openNote]);
+  const handleCreateNoteInFolder = useCallback((folderId: string | null) => openDraftNote(null, folderId), [openDraftNote]);
 
   const handleExecuteDirective = useCallback((text: string) => {
     const run = async () => {
