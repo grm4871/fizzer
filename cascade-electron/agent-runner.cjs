@@ -345,6 +345,10 @@ async function runClaudeLocally(opts, emit) {
   // paragraph break instead of being glued onto the prior turn's text.
   let lastBlockWasText = false;
   let harnessInThinking = false;
+  // Accumulate tool_use JSON from stream deltas so the chat UI gets structured
+  // tool cards (assistant complete messages are skipped to avoid double text).
+  /** @type {{ id: string, name: string, json: string } | null} */
+  let pendingTool = null;
   emitHarness(emit, `\x1b[2m# claude-code ${model} · ${cwd}\x1b[0m\r\n`);
   try {
     for await (const message of stream) {
@@ -374,6 +378,14 @@ async function runClaudeLocally(opts, emit) {
           } else if (blockType === 'tool_use') {
             harnessInThinking = false;
             const name = block?.name || 'tool';
+            const id = block?.id || `tool-${Date.now()}`;
+            pendingTool = { id, name, json: '' };
+            // Emit early so the timeline shows the tool while args stream in.
+            emit('text', {
+              message: {
+                content: [{ type: 'tool_use', id, name, input: block?.input && Object.keys(block.input).length ? block.input : {} }],
+              },
+            });
             const inputPreview = formatToolInput(block?.input);
             emitHarness(emit, `\x1b[36m▶ ${name}\x1b[0m${inputPreview ? ` ${inputPreview.slice(0, 200)}` : ''}\r\n`);
             lastBlockWasText = false;
@@ -401,12 +413,34 @@ async function runClaudeLocally(opts, emit) {
             streamedText += delta.text;
             lastBlockWasText = true;
           } else if (delta?.type === 'input_json_delta' && delta.partial_json) {
+            if (pendingTool) pendingTool.json += delta.partial_json;
             emitHarness(emit, `\x1b[36m${delta.partial_json}\x1b[0m`);
           }
         } else if (ev?.type === 'content_block_stop') {
           if (harnessInThinking) {
             emitHarness(emit, '\r\n');
             harnessInThinking = false;
+          }
+          if (pendingTool) {
+            let input = {};
+            if (pendingTool.json) {
+              try {
+                input = JSON.parse(pendingTool.json);
+              } catch {
+                input = { _raw: pendingTool.json };
+              }
+            }
+            emit('text', {
+              message: {
+                content: [{
+                  type: 'tool_use',
+                  id: pendingTool.id,
+                  name: pendingTool.name,
+                  input,
+                }],
+              },
+            });
+            pendingTool = null;
           }
         }
         continue;
@@ -430,6 +464,21 @@ async function runClaudeLocally(opts, emit) {
         }
       } else if (message.type === 'result') {
         emitHarness(emit, `\x1b[2m# result ${message.subtype || message.result || 'done'}\x1b[0m\r\n`);
+        // Machine-readable stats line for the Cascade run panel.
+        try {
+          const usage = message.usage || {};
+          const stats = {
+            model,
+            inputTokens: usage.input_tokens,
+            outputTokens: usage.output_tokens,
+            cacheReadTokens: usage.cache_read_input_tokens,
+            cacheWriteTokens: usage.cache_creation_input_tokens,
+            totalCostUsd: message.total_cost_usd,
+            numTurns: message.num_turns,
+            durationMs: message.duration_ms,
+          };
+          emitHarness(emit, `\x1b[2m# cascade-stats ${JSON.stringify(stats)}\x1b[0m\r\n`);
+        } catch { /* ignore */ }
       } else if (message.type === 'system') {
         emitHarness(emit, `\x1b[2m# system ${message.subtype || ''}\x1b[0m\r\n`);
       }

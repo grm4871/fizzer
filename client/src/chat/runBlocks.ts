@@ -39,6 +39,46 @@ export function normalizeChatRunBlocks(content: unknown): ChatBlock[] {
       blocks.push({ type: 'thinking', text: String(block.thinking || block.text || '') });
     } else if (block.type === 'redacted_thinking') {
       blocks.push({ type: 'thinking', text: '', redacted: true });
+    } else if (block.type === 'tool_use') {
+      blocks.push({
+        type: 'tool_use',
+        id: typeof block.id === 'string' ? block.id : undefined,
+        name: typeof block.name === 'string' ? block.name : 'tool',
+        input: block.input,
+      });
+    } else if (block.type === 'tool_result') {
+      const rawContent = block.content;
+      let contentText = '';
+      if (typeof rawContent === 'string') {
+        contentText = rawContent;
+      } else if (Array.isArray(rawContent)) {
+        contentText = rawContent
+          .map((part) => {
+            if (!part || typeof part !== 'object') return '';
+            const rec = part as Record<string, unknown>;
+            if (typeof rec.text === 'string') return rec.text;
+            return '';
+          })
+          .filter(Boolean)
+          .join('\n');
+      } else if (rawContent != null) {
+        try {
+          contentText = JSON.stringify(rawContent);
+        } catch {
+          contentText = String(rawContent);
+        }
+      }
+      blocks.push({
+        type: 'tool_result',
+        toolUseId: typeof block.tool_use_id === 'string'
+          ? block.tool_use_id
+          : typeof block.toolUseId === 'string'
+            ? block.toolUseId
+            : undefined,
+        content: contentText,
+        text: contentText,
+        isError: block.is_error === true || block.isError === true,
+      });
     }
   }
   return blocks;
@@ -61,9 +101,21 @@ export function appendChatRunBlocks(existing: ChatBlock[] | undefined, blocks: C
         ...last,
         text: `${last.text || ''}${block.text || ''}`,
       };
-    } else {
-      next.push({ ...block });
+      continue;
     }
+    // Merge tool_use updates for the same id (partial → final input).
+    if (block.type === 'tool_use' && block.id) {
+      const existingIdx = next.findIndex((b) => b.type === 'tool_use' && b.id === block.id);
+      if (existingIdx >= 0) {
+        next[existingIdx] = {
+          ...next[existingIdx],
+          name: block.name || next[existingIdx].name,
+          input: block.input !== undefined ? block.input : next[existingIdx].input,
+        };
+        continue;
+      }
+    }
+    next.push({ ...block });
   }
   return next;
 }
@@ -81,7 +133,11 @@ export function appendHarnessLog(existing: string | undefined, chunk: string, ma
 
 function chatMessageStreamScore(message: ChatMessage): number {
   const bodyScore = message.body?.length ?? 0;
-  const blockScore = (message.blocks ?? []).reduce((sum, block) => sum + (block.text?.length ?? 0), 0);
+  const blockScore = (message.blocks ?? []).reduce((sum, block) => {
+    if (block.type === 'tool_use') return sum + 200 + (block.name?.length ?? 0);
+    if (block.type === 'tool_result') return sum + Math.min(block.content?.length ?? block.text?.length ?? 0, 4000);
+    return sum + (block.text?.length ?? 0);
+  }, 0);
   const harnessScore = Math.min(message.harnessLog?.length ?? 0, 50_000);
   // Terminal statuses outrank running; canceled is a real terminal state.
   const statusScore = message.status === 'running'

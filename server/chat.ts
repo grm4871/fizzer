@@ -26,6 +26,14 @@ export type ChatBlock = {
   type: 'text' | 'thinking' | 'tool_use' | 'tool_result';
   text?: string;
   redacted?: boolean;
+  /** tool_use */
+  id?: string;
+  name?: string;
+  input?: unknown;
+  /** tool_result */
+  toolUseId?: string;
+  content?: string;
+  isError?: boolean;
 };
 
 /** Cap persisted harness terminal logs so a long run cannot bloat the DB. */
@@ -757,7 +765,7 @@ function textFromRunContent(content: unknown): string {
     .join('');
 }
 
-/** Convert run-event content into the chat block list (text + thinking only). */
+/** Convert run-event content into the chat block list (text, thinking, tools). */
 function normalizeChatRunBlocks(content: unknown): ChatBlock[] {
   if (typeof content === 'string' && content.trim()) {
     return [{ type: 'text', text: content }];
@@ -773,6 +781,46 @@ function normalizeChatRunBlocks(content: unknown): ChatBlock[] {
       blocks.push({ type: 'thinking', text: String(block.thinking || block.text || '') });
     } else if (block.type === 'redacted_thinking') {
       blocks.push({ type: 'thinking', text: '', redacted: true });
+    } else if (block.type === 'tool_use') {
+      blocks.push({
+        type: 'tool_use',
+        id: typeof block.id === 'string' ? block.id : undefined,
+        name: typeof block.name === 'string' ? block.name : 'tool',
+        input: block.input,
+      });
+    } else if (block.type === 'tool_result') {
+      const rawContent = block.content;
+      let contentText = '';
+      if (typeof rawContent === 'string') {
+        contentText = rawContent;
+      } else if (Array.isArray(rawContent)) {
+        contentText = rawContent
+          .map((part) => {
+            if (!part || typeof part !== 'object') return '';
+            const rec = part as Record<string, unknown>;
+            if (typeof rec.text === 'string') return rec.text;
+            return '';
+          })
+          .filter(Boolean)
+          .join('\n');
+      } else if (rawContent != null) {
+        try {
+          contentText = JSON.stringify(rawContent);
+        } catch {
+          contentText = String(rawContent);
+        }
+      }
+      blocks.push({
+        type: 'tool_result',
+        toolUseId: typeof block.tool_use_id === 'string'
+          ? block.tool_use_id
+          : typeof block.toolUseId === 'string'
+            ? block.toolUseId
+            : undefined,
+        content: contentText,
+        text: contentText,
+        isError: block.is_error === true || block.isError === true,
+      });
     }
   }
   return blocks;
@@ -785,9 +833,20 @@ function appendChatRunBlocks(existing: ChatBlock[], blocks: ChatBlock[]): ChatBl
     const last = next[next.length - 1];
     if (last && last.type === block.type && (block.type === 'text' || block.type === 'thinking')) {
       next[next.length - 1] = { ...last, text: `${last.text || ''}${block.text || ''}` };
-    } else {
-      next.push({ ...block });
+      continue;
     }
+    if (block.type === 'tool_use' && block.id) {
+      const existingIdx = next.findIndex((b) => b.type === 'tool_use' && b.id === block.id);
+      if (existingIdx >= 0) {
+        next[existingIdx] = {
+          ...next[existingIdx],
+          name: block.name || next[existingIdx].name,
+          input: block.input !== undefined ? block.input : next[existingIdx].input,
+        };
+        continue;
+      }
+    }
+    next.push({ ...block });
   }
   return next;
 }

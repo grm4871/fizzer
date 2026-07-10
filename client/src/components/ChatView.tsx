@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Activity, Bot, ChevronLeft, ChevronRight, Copy, Hash, ImagePlus, Paperclip, Plus, Reply, Send, Square, TerminalSquare, UserPlus, X } from 'lucide-react';
+import { Activity, Bot, ChevronLeft, ChevronRight, Copy, Hash, ImagePlus, Paperclip, Plus, Reply, Send, Square, UserPlus, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
@@ -7,7 +7,8 @@ import type { NoteSummary } from '../api';
 import { findEmbeddedNote, NOTE_DND_TYPE, noteEmbedMarkdown, splitDocEmbeds } from '../docEmbeds';
 import { escapeRegExp, normalizeMention } from '../chat/mentions';
 import { highlightJSON } from './jsonHighlighter';
-import { HarnessTerminal } from './HarnessTerminal';
+import { CascadeRunPanel } from './CascadeRunPanel';
+import { hasRunActivity } from '../chat/harnessActivity';
 
 export const CHAT_NOTE_MARKER = 'cascade://chat-channel';
 export const CHAT_MEDIA_LIMIT = 8;
@@ -88,6 +89,14 @@ export interface ChatBlock {
   type: 'text' | 'thinking' | 'tool_use' | 'tool_result';
   text?: string;
   redacted?: boolean;
+  /** tool_use */
+  id?: string;
+  name?: string;
+  input?: unknown;
+  /** tool_result */
+  toolUseId?: string;
+  content?: string;
+  isError?: boolean;
 }
 
 export interface ChatAgentRegistration {
@@ -438,73 +447,8 @@ function ChatAvatar({
   );
 }
 
-// The run widget holds the harness terminal (full process I/O / SDK stream) so
-// the chat body itself can stay short. Prefer harnessLog when present; fall
-// back to structured thinking/text blocks for older messages.
-const TRACE_REVEAL_MARGIN = 24;
-function traceTextOf(message: ChatMessage): string {
-  return (message.blocks || [])
-    .filter((block) => block.type === 'thinking' || block.type === 'text')
-    .map((block) => (block.redacted ? '[redacted]' : block.text || ''))
-    .filter(Boolean)
-    .join('\n\n');
-}
-/** Terminal buffer: live harness output, else legacy reasoning/text blocks. */
-function harnessTerminalContent(message: ChatMessage): string {
-  if (message.harnessLog?.trim()) return message.harnessLog;
-  return traceTextOf(message);
-}
 function hasExpandableTrace(message: ChatMessage): boolean {
-  if (message.harnessLog?.trim()) return true;
-  const blocks = message.blocks || [];
-  if (blocks.some((block) => block.type === 'thinking')) return true;
-  const traceLen = traceTextOf(message).trim().length;
-  return traceLen > (message.body || '').trim().length + TRACE_REVEAL_MARGIN;
-}
-
-function ChatRunWidget({ message, onCancelRun }: { message: ChatMessage; onCancelRun: (runId: number) => void }) {
-  const [open, setOpen] = useState(false);
-  const terminalContent = harnessTerminalContent(message);
-  const isRunning = message.status === 'running';
-  const canExpand = hasExpandableTrace(message);
-  const label = canExpand ? 'Terminal' : 'Working…';
-
-  if (!isRunning && !canExpand) return null;
-
-  return (
-    <div className={`chat-run-widget ${open ? 'open' : ''}`} onClick={(event) => event.stopPropagation()}>
-      <button
-        type="button"
-        className="chat-run-toggle"
-        onClick={() => canExpand && setOpen((value) => !value)}
-        disabled={!canExpand}
-      >
-        <TerminalSquare size={13} />
-        <span>{label}</span>
-        {isRunning && <span className="ai-spinner" />}
-        {canExpand && <ChevronRight size={13} className="ai-chevron" />}
-      </button>
-      {isRunning && message.runId && (
-        <button
-          type="button"
-          className="chat-run-stop"
-          onClick={(event) => {
-            event.stopPropagation();
-            onCancelRun(message.runId!);
-          }}
-          title="Stop run"
-        >
-          <Square size={11} fill="currentColor" />
-          Stop
-        </button>
-      )}
-      {open && canExpand && (
-        <div className="chat-run-terminal-wrap">
-          <HarnessTerminal content={terminalContent} active={isRunning} />
-        </div>
-      )}
-    </div>
-  );
+  return hasRunActivity(message);
 }
 
 export function ChatView({
@@ -587,13 +531,15 @@ export function ChatView({
   const sortedMessages = useMemo(
     () => [...messages]
       // Hide completed run shells whose body was suppressed after cascade-chat
-      // send (empty body, not running/failed — the real reply is a separate send).
+      // send — unless they still carry harness/thinking/tool activity worth showing.
       .filter((message) => {
         if (message.status === 'running' || message.status === 'sending') return true;
         if (message.status === 'failed' || message.status === 'canceled') return true;
         if (message.body?.trim()) return true;
         if (message.images?.length || message.attachments?.length) return true;
-        // Empty completed agent bubble with no media — suppressed double-post shell.
+        // Empty body but has run activity (thinking/tools/harness) — keep as activity card.
+        if (hasRunActivity(message)) return true;
+        // Empty completed agent bubble with no activity — suppressed double-post shell.
         if (message.agentId || message.registrationId || message.runId != null) return false;
         return true;
       })
@@ -1024,7 +970,13 @@ export function ChatView({
                             </div>
                           )}
                           {message.body && <ChatMessageText body={message.body} mentionableAliases={mentionableAliases} notes={notes} onOpenNote={onOpenNote} />}
-                          {(selected || hasRunWidget || hasThoughtBlocks) && <ChatRunWidget message={message} onCancelRun={onCancelRun} />}
+                          {(selected || hasRunWidget || hasThoughtBlocks) && (
+                            <CascadeRunPanel
+                              message={message}
+                              onCancelRun={onCancelRun}
+                              forceOpen={selected}
+                            />
+                          )}
                         </div>
                       );
                     })}
