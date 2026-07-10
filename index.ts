@@ -1262,8 +1262,9 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
         const recall = buildRecallContext(
           recallExocortex(db, runnerUserId, runVault.id, recallQuery, {
             channelId: targetChannelId || undefined,
-            limit: 6,
+            limit: 3,
           }),
+          700,
         );
         if (recall) contextChunks.push(recall);
       } catch (error) {
@@ -1275,6 +1276,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
           : '';
         const mem = buildAgentMemoryInjection(db, runVault.id, {
           channelTopic: `${channelTitle} ${prompt}`.slice(0, 400),
+          maxChars: 900,
         });
         if (mem.enabled && mem.text) contextChunks.push(mem.text);
       } catch (error) {
