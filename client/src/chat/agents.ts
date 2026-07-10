@@ -107,11 +107,11 @@ export function formatAgentChatPrompt(
   const selfName = registration.displayName || selfAgent?.label || registration.agentId;
 
   if (continuation) {
-    const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. Continue the existing session. Reply briefly via \`cascade-chat send\`; then leave stdout empty.`;
+    const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. Continue until the request is complete. Use \`cascade-chat send\` for brief progress updates, but do not stop after an update. Send the final response there, then leave stdout empty.`;
     return `${header}\n\n${request}`;
   }
 
   const channelNote = registration.contextPrompt ? ` Channel note: ${registration.contextPrompt}` : '';
-  const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. Reply briefly. Run \`cascade-chat history --include-reply-context\`. Reply via \`cascade-chat send --message "text"\`; then leave stdout empty.${channelNote}`;
+  const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. Run \`cascade-chat history --include-reply-context\`, then complete the request. Use \`cascade-chat send --message "text"\` for brief progress updates, but do not stop after an update. Send the final response there, then leave stdout empty.${channelNote}`;
   return `${header}\n\n${request}`;
 }
