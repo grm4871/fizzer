@@ -570,7 +570,13 @@ export function buildHarnessActivity(message: ChatMessage): HarnessActivity {
   const fromBlocks = itemsFromBlocks(message.blocks);
   const hasStructuredTools = fromBlocks.tools.size > 0;
   const hasStructuredThinking = fromBlocks.thinkingText.trim().length > 0;
-  const harness = parseHarnessLog(rawLog, hasStructuredTools, hasStructuredThinking);
+  // Parsing the entire retained terminal transcript on every stream chunk can
+  // monopolize the renderer. Keep launch metadata from the head and current
+  // activity/stats from the tail; Raw view still receives the full transcript.
+  const parseLog = rawLog.length > 72_000
+    ? `${rawLog.slice(0, 4_000)}\n# older harness output omitted from structured parser\n${rawLog.slice(-64_000)}`
+    : rawLog;
+  const harness = parseHarnessLog(parseLog, hasStructuredTools, hasStructuredThinking);
 
   let items = fromBlocks.items;
   let thinkingText = fromBlocks.thinkingText;

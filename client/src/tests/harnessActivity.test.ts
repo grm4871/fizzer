@@ -109,6 +109,19 @@ describe('buildHarnessActivity', () => {
     expect(activity.items[0]?.title).toBe('Bash');
   });
 
+  it('keeps launch metadata and recent events when harness logs are large', () => {
+    const recentEvent = JSON.stringify({
+      type: 'item.completed',
+      item: { id: 'recent', type: 'command_execution', command: 'echo recent', aggregated_output: 'ok', exit_code: 0 },
+    });
+    const activity = buildHarnessActivity(msg({
+      harnessLog: `$ codex exec --json\n# cwd /home/jt/project\n${'old output\n'.repeat(9_000)}${recentEvent}\n`,
+    }));
+    expect(activity.stats.command).toBe('codex exec --json');
+    expect(activity.stats.cwd).toBe('/home/jt/project');
+    expect(activity.items.some((item) => item.tool?.input === 'echo recent')).toBe(true);
+  });
+
   it('keeps activity for empty-body cascade-chat shells', () => {
     const m = msg({
       agentId: 'claude-code',
