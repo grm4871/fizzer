@@ -40,9 +40,9 @@
   --radius-lg: 10px;
   --radius-xl: 14px;
 
-  --transition-fast: 150ms ease;
-  --transition-normal: 250ms ease;
-  --transition-slow: 400ms ease;
+  --transition-fast: 60ms ease-out;
+  --transition-normal: 140ms ease-out;
+  --transition-slow: 220ms ease-out;
 
   --shadow-sm: 0 1px 3px hsla(0, 0%, 0%, 0.4);
   --shadow-md: 0 4px 14px hsla(0, 0%, 0%, 0.5);
@@ -175,7 +175,7 @@ a {
   font-size: 0.8125rem;
   font-weight: 500;
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
   white-space: nowrap;
   user-select: none;
   border: 1px solid var(--border);
@@ -184,10 +184,9 @@ a {
 }
 .btn:hover:not(:disabled) {
   background: var(--bg-overlay);
-  transform: scale(1.02);
 }
 .btn:active:not(:disabled) {
-  transform: scale(0.98);
+  filter: brightness(0.92);
 }
 .btn:disabled {
   opacity: 0.4;
@@ -230,7 +229,7 @@ a {
   color: var(--text-secondary);
   border-radius: var(--radius-md);
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition: background-color var(--transition-fast), color var(--transition-fast);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -888,7 +887,7 @@ a {
   border: none;
   background: none;
   border-bottom: 2px solid transparent;
-  transition: all var(--transition-fast);
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
   white-space: nowrap;
   position: relative;
   min-width: 0;
@@ -928,7 +927,7 @@ a {
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-sm);
-  transition: all var(--transition-fast);
+  transition: background-color var(--transition-fast), color var(--transition-fast), opacity var(--transition-fast);
   flex-shrink: 0;
   line-height: 1;
 }
@@ -950,7 +949,7 @@ a {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition: background-color var(--transition-fast), color var(--transition-fast);
 }
 .tab-new-btn:hover {
   background: hsla(22, 7%, 14%, 0.5);
@@ -996,7 +995,7 @@ a {
   cursor: pointer;
   font-size: 0.8125rem;
   font-weight: 600;
-  transition: all var(--transition-fast);
+  transition: background-color var(--transition-fast), color var(--transition-fast);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2551,7 +2550,7 @@ a {
   border-radius: var(--radius-md);
   text-align: left;
   font-size: 0.8125rem;
-  transition: all var(--transition-fast);
+  transition: background-color var(--transition-fast), color var(--transition-fast);
 }
 .command-palette-item:hover,
 .command-palette-item.highlighted {
@@ -2671,7 +2670,7 @@ a {
   cursor: pointer;
   border-radius: var(--radius-md);
   text-align: left;
-  transition: all var(--transition-fast);
+  transition: background-color var(--transition-fast);
 }
 .search-result-item:hover,
 .search-result-item.highlighted {
@@ -3062,7 +3061,7 @@ a {
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-sm);
-  transition: all var(--transition-fast);
+  transition: background-color var(--transition-fast), color var(--transition-fast), opacity var(--transition-fast);
   flex-shrink: 0;
 }
 .tab-item:hover .tab-popout {
@@ -3135,7 +3134,7 @@ a {
   border-radius: var(--radius-sm);
   pointer-events: none;
   z-index: 20;
-  transition: all 60ms ease-out;
+  transition: inset 60ms ease-out;
 }
 .pane-dropzone-center { inset: 8px; }
 .pane-dropzone-left { top: 8px; bottom: 8px; left: 8px; width: calc(50% - 12px); }
