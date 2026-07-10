@@ -604,6 +604,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
                   message={message}
                   onCancelRun={onCancelRun}
                   forceOpen={selected}
+                  onContentGrow={onImageLoad}
                 />
               )}
             </div>

@@ -883,10 +883,32 @@ export default function App() {
     type MessageUpdater = (message: ChatMessage) => ChatMessage;
     let pendingMessageUpdates: MessageUpdater[] = [];
     let messageUpdateTimer: number | null = null;
+    let pendingHarnessChunks = '';
+    let pendingHarnessRunId: number | null = null;
+    let harnessFlushTimer: number | null = null;
+    // Dual-rate batching: structured content stays snappy; raw harness bytes
+    // are much higher volume and don't need 30fps React commits.
+    const STREAM_UI_MS = 48;
+    const HARNESS_UI_MS = 140;
 
     const flushMessageUpdates = () => {
       if (messageUpdateTimer != null) window.clearTimeout(messageUpdateTimer);
       messageUpdateTimer = null;
+      if (harnessFlushTimer != null) {
+        window.clearTimeout(harnessFlushTimer);
+        harnessFlushTimer = null;
+      }
+      if (pendingHarnessChunks) {
+        const chunk = pendingHarnessChunks;
+        const harnessRunId = pendingHarnessRunId;
+        pendingHarnessChunks = '';
+        pendingHarnessRunId = null;
+        pendingMessageUpdates.push((message) => ({
+          ...message,
+          harnessLog: appendHarnessLog(message.harnessLog, chunk),
+          ...(harnessRunId != null ? { runId: harnessRunId } : {}),
+        }));
+      }
       if (pendingMessageUpdates.length === 0) return;
       const updates = pendingMessageUpdates;
       pendingMessageUpdates = [];
@@ -899,7 +921,15 @@ export default function App() {
     const queueMessageUpdate = (updater: MessageUpdater) => {
       pendingMessageUpdates.push(updater);
       if (messageUpdateTimer != null) return;
-      messageUpdateTimer = window.setTimeout(flushMessageUpdates, 32);
+      messageUpdateTimer = window.setTimeout(flushMessageUpdates, STREAM_UI_MS);
+    };
+
+    const queueHarnessChunk = (chunk: string, runIdForChunk: number) => {
+      pendingHarnessChunks += chunk;
+      pendingHarnessRunId = runIdForChunk;
+      if (harnessFlushTimer != null || messageUpdateTimer != null) return;
+      // If structure updates are pending, piggy-back; else slow-path harness only.
+      harnessFlushTimer = window.setTimeout(flushMessageUpdates, HARNESS_UI_MS);
     };
 
     const applyMessageUpdateNow = (updater: MessageUpdater) => {
@@ -1025,11 +1055,7 @@ export default function App() {
             const payload = JSON.parse(event.payload_json);
             const chunk = typeof payload?.data === 'string' ? payload.data : '';
             if (!chunk) return;
-            queueMessageUpdate((message) => ({
-              ...message,
-              harnessLog: appendHarnessLog(message.harnessLog, chunk),
-              runId,
-            }));
+            queueHarnessChunk(chunk, runId);
           }
         } catch {
           // Ignore one malformed stream event; the run status will still settle.

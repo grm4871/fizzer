@@ -86,7 +86,19 @@ function ThinkingBlock({
   const [open, setOpen] = useState(Boolean(defaultOpen || live));
   const preRef = useRef<HTMLPreElement>(null);
   const pinRef = useRef(true);
-  const lines = text.trim() ? indentBlock(text.trim()) : [];
+  // Live thinking can grow many times per second; paint a throttled snapshot
+  // so we don't re-split multi-KB strings into lines on every chunk.
+  const [paintText, setPaintText] = useState(text);
+  useEffect(() => {
+    if (!live) {
+      setPaintText(text);
+      return;
+    }
+    const timer = window.setTimeout(() => setPaintText(text), 90);
+    return () => window.clearTimeout(timer);
+  }, [text, live]);
+
+  const lines = paintText.trim() ? indentBlock(paintText.trim()) : [];
   const collapsedPreview = lines[0]?.replace(/^\s+/, '') || '';
   const more = lines.length > 1 ? ` (+${lines.length - 1} lines)` : '';
 
@@ -104,7 +116,7 @@ function ThinkingBlock({
     const pre = preRef.current;
     if (!pre) return;
     if (live || pinRef.current) scrollToBottomSoon(pre);
-  }, [text, open, live, lines.length]);
+  }, [paintText, open, live, lines.length]);
 
   return (
     <div className="crp-term-block crp-term-thinking">
@@ -340,10 +352,13 @@ export const CascadeRunPanel = memo(function CascadeRunPanel({
   message,
   onCancelRun,
   forceOpen = false,
+  onContentGrow,
 }: {
   message: ChatMessage;
   onCancelRun: (runId: number) => void;
   forceOpen?: boolean;
+  /** Notify parent (main chat scroller) when harness content height grows. */
+  onContentGrow?: () => void;
 }) {
   const isRunning = message.status === 'running';
   const activity = useMemo(() => buildHarnessActivity(message), [message]);
@@ -353,7 +368,9 @@ export const CascadeRunPanel = memo(function CascadeRunPanel({
   const bodyRef = useRef<HTMLDivElement>(null);
   /** User is following the tail of the outer harness scroller. */
   const pinBottomRef = useRef(true);
-  const summary = summarizeActivity(activity, isRunning);
+  const onContentGrowRef = useRef(onContentGrow);
+  onContentGrowRef.current = onContentGrow;
+  const summary = useMemo(() => summarizeActivity(activity, isRunning), [activity, isRunning]);
   const statChips = useMemo(() => buildHeaderStatChips(activity.stats), [activity.stats]);
   const showUsage = hasUsageStats(activity.stats) || statChips.length > 0;
   const effectiveOpen = open || forceOpen;
@@ -366,7 +383,8 @@ export const CascadeRunPanel = memo(function CascadeRunPanel({
       n += (item.text?.length || 0) + (item.tool?.result?.length || 0) + 1;
     }
     n += activity.stats.toolCount * 17 + (activity.stats.numTurns || 0);
-    n += activity.rawLog.length;
+    // Coarse harness length — avoid re-scrolling on every stats byte.
+    n += Math.floor((activity.rawLog.length || 0) / 256);
     return n;
   }, [activity]);
 
@@ -386,6 +404,12 @@ export const CascadeRunPanel = memo(function CascadeRunPanel({
     if (!pinBottomRef.current) return;
     scrollToBottomSoon(bodyRef.current);
   }, [scrollEpoch, isRunning, effectiveOpen, showRaw]);
+
+  // Keep the main chat panel pinned when harness/thinking expands.
+  useLayoutEffect(() => {
+    if (!effectiveOpen) return;
+    onContentGrowRef.current?.();
+  }, [scrollEpoch, effectiveOpen]);
 
   if (!isRunning && !canExpand) return null;
 

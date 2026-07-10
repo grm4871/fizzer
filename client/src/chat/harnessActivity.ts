@@ -565,18 +565,91 @@ function parseJsonlEvent(
   }
 }
 
+/** Pull only `# cascade-stats` / meta headers — O(tail lines), not full JSONL. */
+function extractHarnessMetaFast(raw: string): Pick<HarnessMeta, 'model' | 'cwd' | 'command' | 'exitCode' | 'stats'> {
+  const plain = stripAnsi(raw || '');
+  // Prefer recent stats; keep a small head slice for model/cwd launch lines.
+  const head = plain.length > 3_000 ? plain.slice(0, 3_000) : plain;
+  const tail = plain.length > 8_000 ? plain.slice(-8_000) : plain;
+  const sample = head === tail ? head : `${head}\n${tail}`;
+  const meta: Pick<HarnessMeta, 'model' | 'cwd' | 'command' | 'exitCode' | 'stats'> = {};
+  for (const line of sample.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const claudeHdr = trimmed.match(/^#\s*claude-code\s+(\S+)(?:\s*·\s*(.+))?$/i);
+    if (claudeHdr) {
+      meta.model = claudeHdr[1];
+      if (claudeHdr[2]) meta.cwd = claudeHdr[2].trim();
+      continue;
+    }
+    if (trimmed.startsWith('# cwd ')) {
+      meta.cwd = trimmed.slice(6).trim();
+      continue;
+    }
+    if (trimmed.startsWith('# exit ')) {
+      meta.exitCode = trimmed.slice(7).trim();
+      continue;
+    }
+    if (trimmed.startsWith('$ ') && !meta.command) {
+      meta.command = trimmed.slice(2).trim();
+      continue;
+    }
+    const statsIdx = trimmed.indexOf('# cascade-stats ');
+    if (statsIdx >= 0) {
+      try {
+        const json = JSON.parse(trimmed.slice(statsIdx + '# cascade-stats '.length)) as Record<string, unknown>;
+        meta.stats = mergeRunStats(meta.stats, parseCascadeStatsJson(json));
+      } catch { /* ignore */ }
+    }
+  }
+  return meta;
+}
+
+// Cache last activity per message id to skip re-parse when fingerprints match.
+const activityCache = new Map<string, { fp: string; activity: HarnessActivity }>();
+const ACTIVITY_CACHE_MAX = 40;
+
+function activityFingerprint(message: ChatMessage): string {
+  const blocks = message.blocks;
+  const lastBlock = blocks && blocks.length ? blocks[blocks.length - 1] : null;
+  const lastText = lastBlock?.text?.length ?? 0;
+  const lastContent = typeof lastBlock?.content === 'string' ? lastBlock.content.length : 0;
+  return [
+    message.status || '',
+    message.body?.length ?? 0,
+    blocks?.length ?? 0,
+    lastText,
+    lastContent,
+    message.harnessLog?.length ?? 0,
+    // Sample end of harness so stats-only growth still invalidates.
+    (message.harnessLog || '').slice(-120),
+  ].join('|');
+}
+
 export function buildHarnessActivity(message: ChatMessage): HarnessActivity {
+  const msgId = message.id || '';
+  const fp = activityFingerprint(message);
+  if (msgId) {
+    const hit = activityCache.get(msgId);
+    if (hit && hit.fp === fp) return hit.activity;
+  }
+
   const rawLog = message.harnessLog || '';
   const fromBlocks = itemsFromBlocks(message.blocks);
   const hasStructuredTools = fromBlocks.tools.size > 0;
   const hasStructuredThinking = fromBlocks.thinkingText.trim().length > 0;
-  // Parsing the entire retained terminal transcript on every stream chunk can
-  // monopolize the renderer. Keep launch metadata from the head and current
-  // activity/stats from the tail; Raw view still receives the full transcript.
-  const parseLog = rawLog.length > 72_000
-    ? `${rawLog.slice(0, 4_000)}\n# older harness output omitted from structured parser\n${rawLog.slice(-64_000)}`
-    : rawLog;
-  const harness = parseHarnessLog(parseLog, hasStructuredTools, hasStructuredThinking);
+  // When structured blocks already carry thinking+tools (Claude stream path),
+  // skip full JSONL/tool scrape — only harvest cascade-stats for header chips.
+  // Otherwise parse a bounded head+tail of the harness transcript.
+  const structuredEnough = hasStructuredThinking || hasStructuredTools;
+  const harness: HarnessMeta = structuredEnough
+    ? { ...extractHarnessMetaFast(rawLog), fallbackItems: [], fallbackThinking: '' }
+    : (() => {
+        const parseLog = rawLog.length > 48_000
+          ? `${rawLog.slice(0, 3_000)}\n# older harness output omitted from structured parser\n${rawLog.slice(-40_000)}`
+          : rawLog;
+        return parseHarnessLog(parseLog, hasStructuredTools, hasStructuredThinking);
+      })();
 
   let items = fromBlocks.items;
   let thinkingText = fromBlocks.thinkingText;
@@ -656,12 +729,20 @@ export function buildHarnessActivity(message: ChatMessage): HarnessActivity {
     hasRaw: rawLog.trim().length > 0,
   };
 
-  return {
+  const activity: HarnessActivity = {
     items,
     thinkingText: thinkingText.trim(),
     stats,
     rawLog,
   };
+  if (msgId) {
+    activityCache.set(msgId, { fp, activity });
+    if (activityCache.size > ACTIVITY_CACHE_MAX) {
+      const oldest = activityCache.keys().next().value;
+      if (oldest) activityCache.delete(oldest);
+    }
+  }
+  return activity;
 }
 
 /** True when the message has activity worth showing in the run panel. */
