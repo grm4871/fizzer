@@ -84,6 +84,17 @@ describe('buildHarnessActivity', () => {
     expect(activity.stats.rateLimitUtilization).toBe(62);
   });
 
+  it('builds header chips for tokens, context, and cost', async () => {
+    const { buildHeaderStatChips } = await import('../chat/harnessActivity');
+    const activity = buildHarnessActivity(msg({
+      harnessLog: '# cascade-stats {"inputTokens":1200,"outputTokens":80,"totalCostUsd":0.012,"contextWindow":200000,"contextUsed":42000}\n',
+    }));
+    const chips = buildHeaderStatChips(activity.stats);
+    expect(chips.some((c) => c.id === 'tok' && /tok/.test(c.label))).toBe(true);
+    expect(chips.some((c) => c.id === 'ctx' && /ctx/.test(c.label))).toBe(true);
+    expect(chips.some((c) => c.id === 'cost' && c.label.startsWith('$'))).toBe(true);
+  });
+
   it('falls back to codex JSONL tools when blocks are empty', () => {
     const activity = buildHarnessActivity(msg({
       harnessLog: JSON.stringify({

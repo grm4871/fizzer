@@ -94,6 +94,42 @@ function emitHarness(emit: AgentEmit | undefined, data: string): void {
   emit('harness', { data });
 }
 
+/** Machine-readable stats line for the harness header (token/ctx/cost chips). */
+function emitCascadeStats(emit: AgentEmit | undefined, stats: Record<string, unknown>): void {
+  if (!emit || !stats || typeof stats !== 'object') return;
+  const clean: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(stats)) {
+    if (value !== undefined && value !== null && value !== '') clean[key] = value;
+  }
+  if (Object.keys(clean).length === 0) return;
+  try {
+    emitHarness(emit, `\x1b[2m# cascade-stats ${JSON.stringify(clean)}\x1b[0m\r\n`);
+  } catch { /* ignore */ }
+}
+
+function numFromUnknown(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim() && Number.isFinite(Number(value))) return Number(value);
+  return undefined;
+}
+
+/** Pull token fields from common CLI usage blobs. */
+function statsFromUsageBlob(
+  usage: Record<string, unknown> | null | undefined,
+  extra: Record<string, unknown> = {},
+): Record<string, unknown> {
+  if (!usage && Object.keys(extra).length === 0) return extra;
+  const u = usage || {};
+  return {
+    inputTokens: numFromUnknown(u.input_tokens ?? u.inputTokens ?? u.prompt_tokens),
+    outputTokens: numFromUnknown(u.output_tokens ?? u.outputTokens ?? u.completion_tokens),
+    cacheReadTokens: numFromUnknown(u.cache_read_input_tokens ?? u.cacheReadTokens),
+    cacheWriteTokens: numFromUnknown(u.cache_creation_input_tokens ?? u.cacheWriteTokens),
+    totalCostUsd: numFromUnknown(u.total_cost_usd ?? u.cost_usd ?? u.cost),
+    ...extra,
+  };
+}
+
 // ═══════════════════════════════════════════════════════════════
 // CONFIG
 // ═══════════════════════════════════════════════════════════════
@@ -566,20 +602,47 @@ async function runGrok(
   // a `thought` (or any non-text event) between answers marks the boundary.
   let emittedText = false;
   let lastWasText = false;
+  let thoughtChars = 0;
+  let textChars = 0;
+
+  if (model) emitCascadeStats(emit, { model });
 
   const onLine = (line: string) => {
     const ev = JSON.parse(line);
+    // Any usage blob mid-stream → surface for harness chips.
+    if (ev.usage && typeof ev.usage === 'object') {
+      emitCascadeStats(emit, statsFromUsageBlob(ev.usage as Record<string, unknown>, { model }));
+    }
     if (ev.type === 'thought') {
-      emit('text', { message: { content: [{ type: 'thinking', thinking: ev.data || '' }] } });
+      const chunk = String(ev.data || '');
+      thoughtChars += chunk.length;
+      emit('text', { message: { content: [{ type: 'thinking', thinking: chunk }] } });
       lastWasText = false;
     } else if (ev.type === 'text') {
       const chunk = ev.data || '';
       const sep = (!lastWasText && emittedText) ? '\n\n' : '';
       emit('text', { message: { content: [{ type: 'text', text: sep + chunk }] } });
       text += sep + chunk;
+      textChars += String(chunk).length;
       if (chunk) { emittedText = true; lastWasText = true; }
     } else if (ev.type === 'end') {
       if (ev.sessionId) sessionId = ev.sessionId;
+      const usage = (ev.usage && typeof ev.usage === 'object')
+        ? ev.usage as Record<string, unknown>
+        : (ev.stats && typeof ev.stats === 'object' ? ev.stats as Record<string, unknown> : null);
+      if (usage) {
+        emitCascadeStats(emit, statsFromUsageBlob(usage, { model }));
+      } else if (thoughtChars > 0 || textChars > 0) {
+        // Rough char-based estimate when the CLI omits usage — labeled approx in UI via raw counts.
+        // ~4 chars/token is a common heuristic for Latin text.
+        const approxIn = Math.max(1, Math.round((prompt.length) / 4));
+        const approxOut = Math.max(0, Math.round((thoughtChars + textChars) / 4));
+        emitCascadeStats(emit, {
+          model,
+          inputTokens: approxIn,
+          outputTokens: approxOut,
+        });
+      }
     }
   };
 

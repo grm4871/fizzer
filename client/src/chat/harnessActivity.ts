@@ -814,23 +814,111 @@ export function summarizeActivity(activity: HarnessActivity, isRunning: boolean)
     const chars = activity.stats.thinkingChars;
     parts.push(chars >= 1000 ? `thought ${formatTokenCount(chars)}` : 'thought');
   }
-  const ctx = formatContextLine(activity.stats);
-  if (ctx) parts.push(ctx);
+  // Token / context / cost live in header chips when present; keep summary short.
+  if (!formatTokenCount(activity.stats.inputTokens) && !formatTokenCount(activity.stats.outputTokens)) {
+    const ctx = formatContextLine(activity.stats);
+    if (ctx) parts.push(ctx);
+  }
   const turns = formatTurnsLine(activity.stats);
   if (turns) parts.push(turns);
-  const tokIn = formatTokenCount(activity.stats.inputTokens);
-  const tokOut = formatTokenCount(activity.stats.outputTokens);
-  if (tokIn || tokOut) {
-    parts.push([tokIn, tokOut].filter(Boolean).join('→') + ' tok');
-  }
-  const cost = formatCostUsd(activity.stats.totalCostUsd);
-  if (cost) parts.push(cost);
   const lim = formatRateLimitLine(activity.stats);
-  if (lim && parts.length < 5) parts.push(lim.replace(/^limit /, ''));
+  if (lim && parts.length < 4) parts.push(lim.replace(/^limit /, ''));
   const dur = formatDurationMs(activity.stats.durationMs);
   if (dur) parts.push(dur);
   if (activity.stats.model && parts.length < 3) parts.push(activity.stats.model);
   return parts.join(' · ') || (isRunning ? 'Working…' : 'Activity');
+}
+
+export type HeaderStatChip = {
+  id: string;
+  label: string;
+  title?: string;
+  /** Highlight when context is getting full or rate limit is hot. */
+  warn?: boolean;
+};
+
+/**
+ * Compact chips for the click-to-expand harness header.
+ * Prefer token + context + cost so usage is visible without opening the panel.
+ */
+export function buildHeaderStatChips(stats: RunStats): HeaderStatChip[] {
+  const chips: HeaderStatChip[] = [];
+
+  const tokIn = formatTokenCount(stats.inputTokens);
+  const tokOut = formatTokenCount(stats.outputTokens);
+  if (tokIn || tokOut) {
+    chips.push({
+      id: 'tok',
+      label: `${tokIn || '—'}→${tokOut || '—'} tok`,
+      title: [
+        stats.inputTokens != null ? `in ${stats.inputTokens.toLocaleString()}` : null,
+        stats.outputTokens != null ? `out ${stats.outputTokens.toLocaleString()}` : null,
+        stats.cacheReadTokens != null && stats.cacheReadTokens > 0
+          ? `cache read ${stats.cacheReadTokens.toLocaleString()}`
+          : null,
+      ].filter(Boolean).join(' · ') || 'tokens',
+    });
+  }
+
+  const ctx = formatContextLine(stats);
+  if (ctx) {
+    chips.push({
+      id: 'ctx',
+      label: ctx,
+      title: stats.contextUsed != null && stats.contextWindow != null
+        ? `context ${stats.contextUsed.toLocaleString()} / ${stats.contextWindow.toLocaleString()}`
+        : 'context window',
+      warn: stats.contextPct != null && stats.contextPct >= 80,
+    });
+  }
+
+  const cost = formatCostUsd(stats.totalCostUsd);
+  if (cost) {
+    chips.push({
+      id: 'cost',
+      label: cost,
+      title: stats.totalCostUsd != null ? `$${stats.totalCostUsd.toFixed(6)}` : 'cost',
+    });
+  }
+
+  const turns = formatTurnsLine(stats);
+  if (turns) {
+    chips.push({
+      id: 'turns',
+      label: turns,
+      title: 'agent turns',
+    });
+  }
+
+  if (stats.cacheReadTokens != null && stats.cacheReadTokens > 0 && !tokIn && !tokOut) {
+    const cr = formatTokenCount(stats.cacheReadTokens);
+    if (cr) chips.push({ id: 'cache', label: `cache ${cr}`, title: 'cache read tokens' });
+  }
+
+  const lim = formatRateLimitLine(stats);
+  if (lim && chips.length < 5) {
+    chips.push({
+      id: 'limit',
+      label: lim.replace(/^limit /, ''),
+      title: 'rate limit',
+      warn: (stats.rateLimitUtilization != null && stats.rateLimitUtilization >= 80)
+        || (stats.rateLimitStatus != null && stats.rateLimitStatus !== 'allowed'),
+    });
+  }
+
+  return chips;
+}
+
+export function hasUsageStats(stats: RunStats): boolean {
+  return Boolean(
+    stats.inputTokens != null
+    || stats.outputTokens != null
+    || stats.contextUsed != null
+    || stats.contextWindow != null
+    || stats.contextPct != null
+    || stats.totalCostUsd != null
+    || stats.numTurns != null,
+  );
 }
 
 export function toolResultPreview(result: string | undefined, max = 600): string {

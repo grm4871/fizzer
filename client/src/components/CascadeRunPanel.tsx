@@ -10,6 +10,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ChevronRight, Square, TerminalSquare } from 'lucide-react';
 import {
   buildHarnessActivity,
+  buildHeaderStatChips,
   formatContextLine,
   formatCostUsd,
   formatDurationMs,
@@ -18,6 +19,7 @@ import {
   formatTokenCount,
   formatTurnsLine,
   hasRunActivity,
+  hasUsageStats,
   summarizeActivity,
   toolResultPreview,
   type ActivityItem,
@@ -356,6 +358,8 @@ export function CascadeRunPanel({
   /** User is following the tail of the outer harness scroller. */
   const pinBottomRef = useRef(true);
   const summary = summarizeActivity(activity, isRunning);
+  const statChips = useMemo(() => buildHeaderStatChips(activity.stats), [activity.stats]);
+  const showUsage = hasUsageStats(activity.stats) || statChips.length > 0;
   const effectiveOpen = open || forceOpen;
 
   // Fingerprint content growth (length alone misses same-length edits; items
@@ -402,10 +406,26 @@ export function CascadeRunPanel({
           className="crp-toggle"
           onClick={() => canExpand && setOpen((v) => !v)}
           disabled={!canExpand}
+          title={showUsage
+            ? statChips.map((c) => c.title || c.label).join('\n')
+            : summary}
         >
           <TerminalSquare size={13} className="crp-toggle-icon" />
           <span className="crp-toggle-label">Harness</span>
           <span className="crp-toggle-summary">{summary}</span>
+          {statChips.length > 0 && (
+            <span className="crp-stat-chips" aria-label="Run usage stats">
+              {statChips.map((chip) => (
+                <span
+                  key={chip.id}
+                  className={`crp-stat-chip${chip.warn ? ' is-warn' : ''}`}
+                  title={chip.title || chip.label}
+                >
+                  {chip.label}
+                </span>
+              ))}
+            </span>
+          )}
           {isRunning && <span className="ai-spinner crp-spinner" />}
           {canExpand && <ChevronRight size={13} className="crp-chevron" />}
         </button>

@@ -1567,6 +1567,40 @@ a {
   color: hsl(25, 5%, 42%);
   font-variant-numeric: tabular-nums;
 }
+/* Token / context / cost chips on the click-to-expand harness header */
+.crp-stat-chips {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 55%;
+  overflow: hidden;
+}
+.crp-stat-chip {
+  flex-shrink: 0;
+  max-width: 9.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid hsla(33, 30%, 45%, 0.28);
+  background: hsla(33, 28%, 40%, 0.12);
+  color: hsl(33, 28%, 68%);
+  font-size: 0.625rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+}
+.crp-stat-chip.is-warn {
+  border-color: hsla(18, 70%, 50%, 0.45);
+  background: hsla(18, 60%, 42%, 0.18);
+  color: hsl(22, 70%, 72%);
+}
+.crp-toggle:not(:disabled):hover .crp-stat-chip {
+  border-color: hsla(33, 35%, 50%, 0.4);
+  color: hsl(33, 32%, 78%);
+}
 .crp-spinner {
   width: 10px;
   height: 10px;
