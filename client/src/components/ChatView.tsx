@@ -4,7 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import type { NoteSummary } from '../api';
-import { findEmbeddedNote, NOTE_DND_TYPE, noteEmbedMarkdown, splitDocEmbeds } from '../docEmbeds';
+import { DOC_EMBED_REGEX, findEmbeddedNote, NOTE_DND_TYPE, noteEmbedMarkdown, splitDocEmbeds } from '../docEmbeds';
 import { escapeRegExp, normalizeMention } from '../chat/mentions';
 import { highlightJSON } from './jsonHighlighter';
 import { CascadeRunPanel } from './CascadeRunPanel';
@@ -184,6 +184,10 @@ interface ChatViewProps {
   notes?: NoteSummary[];
   onOpenNote?: (id: string) => void;
 }
+
+// Stable fallback: an inline `= []` default would mint a new identity every
+// render and defeat the notes-aware memo comparators below.
+const EMPTY_NOTES: NoteSummary[] = [];
 
 function isImageMediaType(mediaType: string) {
   return mediaType.startsWith('image/');
@@ -416,8 +420,15 @@ const ChatMessageText = memo(function ChatMessageText({
 }, (prev, next) =>
   prev.body === next.body
   && aliasesEqual(prev.mentionableAliases, next.mentionableAliases)
-  && prev.notes === next.notes
+  // The notes list only affects bodies that render `![[...]]` embeds; plain
+  // messages must not re-parse their markdown every time any note changes.
+  && (prev.notes === next.notes || !bodyHasDocEmbed(next.body))
 );
+
+function bodyHasDocEmbed(body: string): boolean {
+  DOC_EMBED_REGEX.lastIndex = 0;
+  return DOC_EMBED_REGEX.test(body);
+}
 
 export function canGroupChatMessages(a: ChatMessage, b: ChatMessage) {
   if (a.author.trim() !== b.author.trim()) return false;
@@ -479,6 +490,144 @@ function hasExpandableTrace(message: ChatMessage): boolean {
   return hasRunActivity(message);
 }
 
+function groupHasDocEmbed(group: ChatMessageGroup): boolean {
+  return group.messages.some((message) => message.body && bodyHasDocEmbed(message.body));
+}
+
+/**
+ * One author-run of messages. Memoized so keystrokes in the composer, agent
+ * panel state, and stream ticks in *other* groups don't re-render the whole
+ * transcript — only the group whose message objects actually changed.
+ */
+const ChatGroupRow = memo(function ChatGroupRow({
+  group,
+  selectedMessageId,
+  avatarKind,
+  mentionableAliases,
+  notes,
+  onOpenNote,
+  onCancelRun,
+  onToggleSelect,
+  onContextMenu,
+  onLightbox,
+  onImageLoad,
+}: {
+  group: ChatMessageGroup;
+  /** Pre-filtered by the parent: non-null only when the selection is inside this group. */
+  selectedMessageId: string | null;
+  avatarKind: 'agent' | 'human';
+  mentionableAliases: string[];
+  notes: NoteSummary[];
+  onOpenNote?: (id: string) => void;
+  onCancelRun: ChatViewProps['onCancelRun'];
+  onToggleSelect: (id: string) => void;
+  onContextMenu: (event: React.MouseEvent, message: ChatMessage) => void;
+  onLightbox: (src: string) => void;
+  onImageLoad: () => void;
+}) {
+  const head = group.messages[0];
+  const tail = group.messages[group.messages.length - 1];
+  const groupHasRunWidget = group.messages.some((message) => message.status === 'running' || hasExpandableTrace(message));
+  const groupSelected = group.messages.some((message) => message.id === selectedMessageId);
+  return (
+    <article
+      className={`chat-message-group ${tail.status ? `status-${tail.status}` : ''} ${groupHasRunWidget ? 'has-run-widget' : ''} ${groupSelected ? 'selected' : ''}`}
+    >
+      <ChatAvatar name={head.author} kind={avatarKind} />
+      <div className="chat-message-body">
+        <div className="chat-message-meta">
+          <strong>{head.author}</strong>
+          <time dateTime={tail.createdAt}>{formatTime(tail.createdAt)}</time>
+          {tail.status === 'running' && <span className="chat-message-status">working</span>}
+          {tail.status === 'failed' && <span className="chat-message-status is-error">failed</span>}
+          {tail.status === 'canceled' && <span className="chat-message-status is-error">canceled</span>}
+        </div>
+        {group.messages.map((message) => {
+          const hasRunWidget = message.status === 'running';
+          const hasThoughtBlocks = hasExpandableTrace(message);
+          const isTappable = hasRunWidget || hasThoughtBlocks;
+          const selected = selectedMessageId === message.id;
+          return (
+            <div
+              key={message.id}
+              className={`chat-message-chunk ${isTappable ? 'has-run-widget' : ''} ${selected ? 'selected' : ''}`}
+              onClick={() => {
+                if (isTappable) onToggleSelect(message.id);
+              }}
+              onContextMenu={(event) => onContextMenu(event, message)}
+            >
+              {message.replyTo && (
+                <div className="chat-reply-quote">
+                  <Reply size={12} />
+                  <strong>{message.replyTo.author}</strong>
+                  <span>{message.replyTo.preview}</span>
+                </div>
+              )}
+              {message.images && message.images.length > 0 && (
+                <div className="chat-msg-images">
+                  {message.images.map((src, imageIndex) => (
+                    <a
+                      key={imageIndex}
+                      href={src}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={(event) => {
+                        event.preventDefault();
+                        onLightbox(src);
+                      }}
+                    >
+                      <img src={src} alt="" className="chat-msg-image" onLoad={onImageLoad} />
+                    </a>
+                  ))}
+                </div>
+              )}
+              {message.attachments && message.attachments.length > 0 && (
+                <div className="chat-msg-attachments">
+                  {message.attachments.map((attachment, attachmentIndex) => (
+                    <a
+                      key={attachmentIndex}
+                      className="chat-msg-attachment"
+                      href={attachment.url}
+                      download={attachment.name}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      <Paperclip size={13} />
+                      <span>{attachment.name}</span>
+                    </a>
+                  ))}
+                </div>
+              )}
+              {message.body && <ChatMessageText body={message.body} mentionableAliases={mentionableAliases} notes={notes} onOpenNote={onOpenNote} />}
+              {(selected || hasRunWidget || hasThoughtBlocks) && (
+                <CascadeRunPanel
+                  message={message}
+                  onCancelRun={onCancelRun}
+                  forceOpen={selected}
+                />
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </article>
+  );
+}, (prev, next) =>
+  prev.group === next.group
+  && prev.selectedMessageId === next.selectedMessageId
+  && prev.avatarKind === next.avatarKind
+  && prev.mentionableAliases === next.mentionableAliases
+  // Same trick as ChatMessageText: note churn only invalidates groups that
+  // actually render an embed.
+  && (prev.notes === next.notes || !groupHasDocEmbed(next.group))
+  && prev.onOpenNote === next.onOpenNote
+  && prev.onCancelRun === next.onCancelRun
+  && prev.onToggleSelect === next.onToggleSelect
+  && prev.onContextMenu === next.onContextMenu
+  && prev.onLightbox === next.onLightbox
+  && prev.onImageLoad === next.onImageLoad
+);
+
 export function ChatView({
   channelId,
   channelName,
@@ -499,7 +648,7 @@ export function ChatView({
   onInviteUser,
   onSendMessage,
   onCancelRun,
-  notes = [],
+  notes = EMPTY_NOTES,
   onOpenNote,
 }: ChatViewProps) {
   const [draft, setDraft] = useState('');
@@ -592,7 +741,27 @@ export function ChatView({
     }),
     [messages],
   );
-  const messageGroups = useMemo(() => groupChatMessages(sortedMessages), [sortedMessages]);
+  // Grouping recomputes on every message change, but unchanged groups must
+  // keep their object identity or ChatGroupRow's memo never hits: reuse the
+  // previous group object when the exact same message refs compose it.
+  const groupIdentityCacheRef = useRef<Map<string, ChatMessageGroup>>(new Map());
+  const messageGroups = useMemo(() => {
+    const fresh = groupChatMessages(sortedMessages);
+    const cache = groupIdentityCacheRef.current;
+    const nextCache = new Map<string, ChatMessageGroup>();
+    const stable = fresh.map((group) => {
+      const key = group.messages[0].id;
+      const prev = cache.get(key);
+      const reusable = prev
+        && prev.messages.length === group.messages.length
+        && prev.messages.every((message, index) => message === group.messages[index]);
+      const chosen = reusable ? prev : group;
+      nextCache.set(key, chosen);
+      return chosen;
+    });
+    groupIdentityCacheRef.current = nextCache;
+    return stable;
+  }, [sortedMessages]);
   const registeredAgentRows = useMemo(() => registeredAgents.map((registration) => {
     const agent = availableAgents.find((option) => option.id === registration.agentId);
     return agent ? { ...agent, registration } : null;
@@ -831,11 +1000,17 @@ export function ChatView({
     draftRef.current?.focus();
   }
 
-  function openMessageContextMenu(event: React.MouseEvent, message: ChatMessage) {
+  const openMessageContextMenu = useCallback((event: React.MouseEvent, message: ChatMessage) => {
     event.preventDefault();
     event.stopPropagation();
     setContextMenu({ x: event.clientX, y: event.clientY, message });
-  }
+  }, []);
+
+  const toggleMessageSelection = useCallback((id: string) => {
+    setSelectedMessageId((current) => (current === id ? null : id));
+  }, []);
+
+  const openLightbox = useCallback((src: string) => setLightboxSrc(src), []);
 
   async function submitAgentRegistration(event: React.FormEvent) {
     event.preventDefault();
@@ -1062,92 +1237,23 @@ export function ChatView({
           ) : (
             messageGroups.map((group) => {
               const head = group.messages[0];
-              const tail = group.messages[group.messages.length - 1];
-              const groupHasRunWidget = group.messages.some((message) => message.status === 'running' || hasExpandableTrace(message));
-              const groupSelected = group.messages.some((message) => message.id === selectedMessageId);
+              const groupSelected = selectedMessageId != null
+                && group.messages.some((message) => message.id === selectedMessageId);
               return (
-                <article
+                <ChatGroupRow
                   key={head.id}
-                  className={`chat-message-group ${tail.status ? `status-${tail.status}` : ''} ${groupHasRunWidget ? 'has-run-widget' : ''} ${groupSelected ? 'selected' : ''}`}
-                >
-                  <ChatAvatar name={head.author} kind={getMessageAvatarKind(head)} />
-                  <div className="chat-message-body">
-                    <div className="chat-message-meta">
-                      <strong>{head.author}</strong>
-                      <time dateTime={tail.createdAt}>{formatTime(tail.createdAt)}</time>
-                      {tail.status === 'running' && <span className="chat-message-status">working</span>}
-                      {tail.status === 'failed' && <span className="chat-message-status is-error">failed</span>}
-                      {tail.status === 'canceled' && <span className="chat-message-status is-error">canceled</span>}
-                    </div>
-                    {group.messages.map((message) => {
-                      const hasRunWidget = message.status === 'running';
-                      const hasThoughtBlocks = hasExpandableTrace(message);
-                      const isTappable = hasRunWidget || hasThoughtBlocks;
-                      const selected = selectedMessageId === message.id;
-                      return (
-                        <div
-                          key={message.id}
-                          className={`chat-message-chunk ${isTappable ? 'has-run-widget' : ''} ${selected ? 'selected' : ''}`}
-                          onClick={() => {
-                            if (isTappable) setSelectedMessageId((current) => current === message.id ? null : message.id);
-                          }}
-                          onContextMenu={(event) => openMessageContextMenu(event, message)}
-                        >
-                          {message.replyTo && (
-                            <div className="chat-reply-quote">
-                              <Reply size={12} />
-                              <strong>{message.replyTo.author}</strong>
-                              <span>{message.replyTo.preview}</span>
-                            </div>
-                          )}
-                          {message.images && message.images.length > 0 && (
-                            <div className="chat-msg-images">
-                              {message.images.map((src, imageIndex) => (
-                                <a
-                                  key={imageIndex}
-                                  href={src}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  onClick={(event) => {
-                                    event.preventDefault();
-                                    setLightboxSrc(src);
-                                  }}
-                                >
-                                  <img src={src} alt="" className="chat-msg-image" onLoad={scrollToBottomIfSticky} />
-                                </a>
-                              ))}
-                            </div>
-                          )}
-                          {message.attachments && message.attachments.length > 0 && (
-                            <div className="chat-msg-attachments">
-                              {message.attachments.map((attachment, attachmentIndex) => (
-                                <a
-                                  key={attachmentIndex}
-                                  className="chat-msg-attachment"
-                                  href={attachment.url}
-                                  download={attachment.name}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                >
-                                  <Paperclip size={13} />
-                                  <span>{attachment.name}</span>
-                                </a>
-                              ))}
-                            </div>
-                          )}
-                          {message.body && <ChatMessageText body={message.body} mentionableAliases={mentionableAliases} notes={notes} onOpenNote={onOpenNote} />}
-                          {(selected || hasRunWidget || hasThoughtBlocks) && (
-                            <CascadeRunPanel
-                              message={message}
-                              onCancelRun={onCancelRun}
-                              forceOpen={selected}
-                            />
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </article>
+                  group={group}
+                  selectedMessageId={groupSelected ? selectedMessageId : null}
+                  avatarKind={getMessageAvatarKind(head)}
+                  mentionableAliases={mentionableAliases}
+                  notes={notes}
+                  onOpenNote={onOpenNote}
+                  onCancelRun={onCancelRun}
+                  onToggleSelect={toggleMessageSelection}
+                  onContextMenu={openMessageContextMenu}
+                  onLightbox={openLightbox}
+                  onImageLoad={scrollToBottomIfSticky}
+                />
               );
             })
           )}
