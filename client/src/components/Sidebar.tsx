@@ -106,9 +106,11 @@ export function Sidebar({
     [folders],
   );
 
+  const listedNotes = useMemo(() => notes.filter((note) => note.is_listed !== 0), [notes]);
+
   const notesByFolder = useMemo(() => {
     const map = new Map<string | null, NoteSummary[]>();
-    for (const note of notes) {
+    for (const note of listedNotes) {
       const key = note.folder_id;
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(note);
@@ -120,7 +122,7 @@ export function Sidebar({
       });
     }
     return map;
-  }, [notes]);
+  }, [listedNotes]);
 
   const childFolders = useMemo(() => {
     const map = new Map<string | null, Folder[]>();

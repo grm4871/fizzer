@@ -47,6 +47,7 @@ export type NoteSummary = {
   content_preview: string;
   is_pinned: number;
   is_archived: number;
+  is_listed: number;
   word_count: number;
   created_at: string;
   updated_at: string;
@@ -160,14 +161,15 @@ function getFolderPath(vault: Vault, db: Db, folderId: string): string {
 
 
 function resolveNotePath(db: Db, noteId: string): string | undefined {
-  const note = db.prepare('SELECT id, vault_id, folder_id, title FROM notes WHERE id = ?').get(noteId) as {
-    id: string; vault_id: string; folder_id: string | null; title: string;
+  const note = db.prepare('SELECT id, vault_id, folder_id, title, is_listed FROM notes WHERE id = ?').get(noteId) as {
+    id: string; vault_id: string; folder_id: string | null; title: string; is_listed: number;
   } | undefined;
   if (!note) return undefined;
 
   const vault = db.prepare('SELECT * FROM vaults WHERE id = ?').get(note.vault_id) as Vault | undefined;
   if (!vault) return undefined;
 
+  if (!note.is_listed) return path.join(vault.root_path, '.cascade-unlisted', `${sanitizeFilename(note.title)}.md`);
   if (note.folder_id) {
     const folderPath = getFolderPath(vault, db, note.folder_id);
     return path.join(folderPath, `${sanitizeFilename(note.title)}.md`);
@@ -365,7 +367,7 @@ export function deleteFolder(db: Db, folderId: string): void {
 export function listNotes(db: Db, vaultId: string, opts?: { folder_id?: string; is_archived?: boolean; tag?: string }): NoteSummary[] {
   let sql = `
     SELECT n.id, n.vault_id, n.folder_id, n.title, n.content_preview,
-           n.is_pinned, n.is_archived, n.word_count, n.created_at, n.updated_at
+           n.is_pinned, n.is_archived, n.is_listed, n.word_count, n.created_at, n.updated_at
     FROM notes n
     WHERE n.vault_id = ?
   `;
@@ -406,7 +408,7 @@ export function listNotes(db: Db, vaultId: string, opts?: { folder_id?: string; 
 export function getNote(db: Db, noteId: string): Note | undefined {
   const row = db.prepare(`
     SELECT id, vault_id, folder_id, title, content_preview,
-           is_pinned, is_archived, word_count, created_at, updated_at
+           is_pinned, is_archived, is_listed, word_count, created_at, updated_at
     FROM notes WHERE id = ?
   `).get(noteId) as Omit<NoteSummary, 'tags'> | undefined;
   if (!row) return undefined;
@@ -431,7 +433,7 @@ export function getNote(db: Db, noteId: string): Note | undefined {
   };
 }
 
-export function createNote(db: Db, vaultId: string, userId: number, opts: { id?: string; title?: string; content?: string; folder_id?: string }): Note {
+export function createNote(db: Db, vaultId: string, userId: number, opts: { id?: string; title?: string; content?: string; folder_id?: string; is_listed?: boolean }): Note {
   // Accept a client-supplied id so the app can mint a note's real id up front,
   // keep it local-only while empty, and persist under the same id on first
   // save — no tab/layout remapping. Only honor a well-formed, unused UUID.
@@ -445,6 +447,7 @@ export function createNote(db: Db, vaultId: string, userId: number, opts: { id?:
   const rawContent = String(opts.content || '');
   const content = rawContent.replace(/\\+`/g, '`');
   const folderId = opts.folder_id || null;
+  const isListed = opts.is_listed === false ? 0 : 1;
   const preview = makePreview(content);
   const wc = wordCount(content);
 
@@ -453,7 +456,11 @@ export function createNote(db: Db, vaultId: string, userId: number, opts: { id?:
 
   // Determine file path
   let filePath: string;
-  if (folderId) {
+  if (!isListed) {
+    const unlistedPath = path.join(vault.root_path, '.cascade-unlisted');
+    fs.mkdirSync(unlistedPath, { recursive: true });
+    filePath = path.join(unlistedPath, `${sanitizeFilename(title)}.md`);
+  } else if (folderId) {
     const folderPath = getFolderPath(vault, db, folderId);
     fs.mkdirSync(folderPath, { recursive: true });
     filePath = path.join(folderPath, `${sanitizeFilename(title)}.md`);
@@ -467,9 +474,9 @@ export function createNote(db: Db, vaultId: string, userId: number, opts: { id?:
 
   // Insert DB row
   db.prepare(`
-    INSERT INTO notes (id, vault_id, folder_id, title, content, content_preview, is_pinned, is_archived, word_count, created_by)
-    VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?)
-  `).run(id, vaultId, folderId, title, content, preview, wc, userId);
+    INSERT INTO notes (id, vault_id, folder_id, title, content, content_preview, is_pinned, is_archived, is_listed, word_count, created_by)
+    VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?)
+  `).run(id, vaultId, folderId, title, content, preview, isListed, wc, userId);
 
   // Index links
   reIndexLinks(db, id, vaultId, content);
@@ -578,7 +585,8 @@ export function moveNote(db: Db, noteId: string, folderId: string | null): void 
 
   const oldPath = resolveNotePath(db, noteId);
 
-  db.prepare('UPDATE notes SET folder_id = ?, updated_at = datetime(\'now\') WHERE id = ?').run(folderId, noteId);
+  // A move into the visible tree is also the explicit "list this note" action.
+  db.prepare('UPDATE notes SET folder_id = ?, is_listed = 1, updated_at = datetime(\'now\') WHERE id = ?').run(folderId, noteId);
 
   const newPath = resolveNotePath(db, noteId);
 

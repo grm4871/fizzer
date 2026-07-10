@@ -47,6 +47,7 @@ export type NoteSummary = {
   content_preview: string;
   is_pinned: number;
   is_archived: number;
+  is_listed: number;
   word_count: number;
   created_at: string;
   updated_at: string;

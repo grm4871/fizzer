@@ -1510,7 +1510,7 @@ export default function App() {
     const now = new Date().toISOString();
     const note: Note = {
       id, vault_id: vaultId, folder_id: folderId, title: 'Untitled Note',
-      content_preview: '', is_pinned: 0, is_archived: 0, word_count: 0,
+      content_preview: '', is_pinned: 0, is_archived: 0, is_listed: 1, word_count: 0,
       created_at: now, updated_at: now, tags: [], content: '', file_path: '',
     };
     unsavedNoteIdsRef.current.add(id);

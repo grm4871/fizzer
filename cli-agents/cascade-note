@@ -49,7 +49,7 @@ Usage:
   cascade-note list                      vaults, or notes with --vault
   cascade-note search <query>            search notes in a vault
   cascade-note get <id|title>            print a note's content
-  cascade-note create --title T          body via stdin (recommended) / --content-file / --content
+  cascade-note create --title T [--unlisted] body via stdin (recommended) / --content-file / --content
   cascade-note edit <id|title>           replace body (stdin / --content-file / --content)
   cascade-note append <id|title>         append body  (stdin / --content-file / --content)
   cascade-note backlinks <id|title>      note + chat backlinks for a note
@@ -344,7 +344,7 @@ async function main() {
         out(args, `created memory ${data.note?.id || ''}  ${data.note?.title || ''}`, data.note || data);
         break;
       }
-      const payload = { title, content };
+      const payload = { title, content, ...(args.unlisted === true ? { is_listed: false } : {}) };
       if (args.folder) payload.folder_id = String(args.folder);
       const { note } = await api(url, token, 'POST', `/api/vaults/${vaultId}/notes`, payload);
       out(args, `created ${note.id}  ${note.title}`, note);

@@ -371,6 +371,13 @@ const ChatMessageText = memo(function ChatMessageText({
             onClick={() => embedded && onOpenNote?.(embedded.id)}
             disabled={!embedded}
             title={embedded ? `Open ${embedded.title}` : undefined}
+            draggable={!!embedded}
+            onDragStart={(event) => {
+              if (!embedded) return;
+              event.dataTransfer.setData(NOTE_DND_TYPE, embedded.id);
+              event.dataTransfer.setData('text/plain', noteEmbedMarkdown(embedded));
+              event.dataTransfer.effectAllowed = 'copyMove';
+            }}
           >
             <span className="chat-doc-embed-title">{embedded?.title ?? `Missing note: ${part.value}`}</span>
             {embedded?.content_preview?.trim() && (

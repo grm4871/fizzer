@@ -197,6 +197,7 @@ db.exec(`
     content_preview TEXT NOT NULL DEFAULT '',
     is_pinned INTEGER NOT NULL DEFAULT 0,
     is_archived INTEGER NOT NULL DEFAULT 0,
+    is_listed INTEGER NOT NULL DEFAULT 1,
     word_count INTEGER NOT NULL DEFAULT 0,
     created_by INTEGER NOT NULL REFERENCES users(id),
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -233,6 +234,12 @@ db.exec(`
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 `);
+
+// Existing installations predate unlisted notes. SQLite has no portable
+// ADD COLUMN IF NOT EXISTS, so inspect the schema before applying the migration.
+if (!(db.prepare("PRAGMA table_info(notes)").all() as { name: string }[]).some((column) => column.name === 'is_listed')) {
+  db.exec('ALTER TABLE notes ADD COLUMN is_listed INTEGER NOT NULL DEFAULT 1');
+}
 
 // FTS5 virtual table
 db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(title, content, content='notes', content_rowid='rowid');`);
