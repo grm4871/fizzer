@@ -559,6 +559,37 @@ function getOrCreateNamedFolder(db: Db, vaultId: string, name: string, parentId:
   return { id: folder.id, name: folder.name };
 }
 
+function sanitizeAgentFolderName(name: string): string {
+  return String(name || 'agent')
+    .replace(/^@+/, '')
+    .trim()
+    .replace(/[<>:"/\\|?*\x00-\x1f]+/g, '-')
+    .replace(/\s+/g, '-')
+    .slice(0, 64) || 'agent';
+}
+
+function ensureIndexNote(db: Db, vaultId: string, userId: number, folderId: string, heading: string): void {
+  const index = db.prepare(`
+    SELECT id FROM notes WHERE vault_id = ? AND folder_id = ? AND title = 'INDEX' COLLATE NOCASE
+  `).get(vaultId, folderId) as { id: string } | undefined;
+  if (index) return;
+  createNote(db, vaultId, userId, {
+    title: 'INDEX',
+    folder_id: folderId,
+    content: [
+      `# ${heading}`,
+      '',
+      'One-line pointers to memory notes in this folder. Higher lines = higher priority when trimming injection.',
+      '',
+      '## Pointers',
+      '',
+      '- (add bullets as agents learn facts)',
+      '',
+    ].join('\n'),
+  });
+}
+
+/** Shared vault-level agent memory: `_agent/memory/`. */
 export function ensureAgentMemoryFolders(
   db: Db,
   vaultId: string,
@@ -566,27 +597,30 @@ export function ensureAgentMemoryFolders(
 ): { rootId: string; memoryId: string } {
   const root = getOrCreateNamedFolder(db, vaultId, AGENT_ROOT, null);
   const memory = getOrCreateNamedFolder(db, vaultId, AGENT_MEMORY, root.id);
-  // Ensure INDEX note exists
-  const index = db.prepare(`
-    SELECT id FROM notes WHERE vault_id = ? AND folder_id = ? AND title = 'INDEX' COLLATE NOCASE
-  `).get(vaultId, memory.id) as { id: string } | undefined;
-  if (!index) {
-    createNote(db, vaultId, userId, {
-      title: 'INDEX',
-      folder_id: memory.id,
-      content: [
-        '# Agent memory index',
-        '',
-        'One-line pointers to memory notes in this folder. Higher lines = higher priority when trimming injection.',
-        '',
-        '## Pointers',
-        '',
-        '- (add bullets as agents learn facts)',
-        '',
-      ].join('\n'),
-    });
-  }
+  ensureIndexNote(db, vaultId, userId, memory.id, 'Agent memory index (shared)');
   return { rootId: root.id, memoryId: memory.id };
+}
+
+/**
+ * Per-agent memory: `_agent/<mention>/memory/`.
+ * Falls back to shared memory folder when agentKey is empty.
+ */
+export function ensureAgentNamedMemoryFolders(
+  db: Db,
+  vaultId: string,
+  userId: number,
+  agentKey: string,
+): { rootId: string; agentRootId: string; memoryId: string } {
+  const root = getOrCreateNamedFolder(db, vaultId, AGENT_ROOT, null);
+  const key = sanitizeAgentFolderName(agentKey);
+  if (!key || key === 'memory') {
+    const shared = ensureAgentMemoryFolders(db, vaultId, userId);
+    return { rootId: shared.rootId, agentRootId: shared.rootId, memoryId: shared.memoryId };
+  }
+  const agentRoot = getOrCreateNamedFolder(db, vaultId, key, root.id);
+  const memory = getOrCreateNamedFolder(db, vaultId, AGENT_MEMORY, agentRoot.id);
+  ensureIndexNote(db, vaultId, userId, memory.id, `Agent memory — @${key}`);
+  return { rootId: root.id, agentRootId: agentRoot.id, memoryId: memory.id };
 }
 
 export function isAgentMemoryEnabled(db: Db, vaultId: string): boolean {
@@ -617,7 +651,7 @@ export type AgentMemoryInjection = {
 export function buildAgentMemoryInjection(
   db: Db,
   vaultId: string,
-  opts: { channelTopic?: string; maxChars?: number } = {},
+  opts: { channelTopic?: string; maxChars?: number; agentKey?: string } = {},
 ): AgentMemoryInjection {
   if (!isAgentMemoryEnabled(db, vaultId)) {
     return { enabled: false, text: '', noteIds: [], truncated: false };
@@ -625,12 +659,22 @@ export function buildAgentMemoryInjection(
   const maxChars = Math.max(500, Math.min(Number(opts.maxChars || 4000), 12000));
   const folders = listFolders(db, vaultId);
   const agentRoot = folders.find((f) => !f.parent_id && f.name.toLowerCase() === AGENT_ROOT);
-  const memoryFolder = agentRoot
+  // Shared `_agent/memory`
+  const sharedMemory = agentRoot
     ? folders.find((f) => f.parent_id === agentRoot.id && f.name.toLowerCase() === AGENT_MEMORY)
+    : undefined;
+  // Per-agent `_agent/<mention>/memory`
+  const agentKey = sanitizeAgentFolderName(opts.agentKey || '');
+  const namedRoot = agentRoot && agentKey
+    ? folders.find((f) => f.parent_id === agentRoot.id && f.name.toLowerCase() === agentKey.toLowerCase())
+    : undefined;
+  const namedMemory = namedRoot
+    ? folders.find((f) => f.parent_id === namedRoot.id && f.name.toLowerCase() === AGENT_MEMORY)
     : undefined;
   const exocortex = folders.find((f) => !f.parent_id && f.name.toLowerCase() === EXOCORTEX_FOLDER.toLowerCase());
 
-  const folderIds = [memoryFolder?.id, exocortex?.id].filter(Boolean) as string[];
+  // Prefer per-agent memory first (higher priority via sort order of folderIds query — we'll boost later).
+  const folderIds = [namedMemory?.id, sharedMemory?.id, exocortex?.id].filter(Boolean) as string[];
   if (folderIds.length === 0) {
     return { enabled: true, text: '', noteIds: [], truncated: false };
   }
@@ -691,11 +735,13 @@ export function createAgentMemoryNote(
   db: Db,
   userId: number,
   vaultId: string,
-  input: { title?: string; body: string },
+  input: { title?: string; body: string; agentKey?: string },
 ): Note {
   const vault = getVault(db, vaultId, userId);
   if (!vault) throw new Error('Vault not found');
-  const { memoryId } = ensureAgentMemoryFolders(db, vaultId, userId);
+  const { memoryId } = input.agentKey
+    ? ensureAgentNamedMemoryFolders(db, vaultId, userId, input.agentKey)
+    : ensureAgentMemoryFolders(db, vaultId, userId);
   const body = String(input.body || '').trim();
   if (!body) throw new Error('Memory body is required');
   const title = String(input.title || body.split('\n')[0] || 'Memory').slice(0, 80);

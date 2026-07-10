@@ -109,6 +109,7 @@ export function readLegacyLocalChatAgentMembers(): Record<string, ChatAgentRegis
             id: typeof registration.id === 'string' && registration.id.trim()
               ? registration.id.trim()
               : `legacy-${registration.agentId}-${mention}-${index}`,
+            vaultAgentId: typeof registration.vaultAgentId === 'string' ? registration.vaultAgentId : '',
             agentId: registration.agentId,
             displayName: typeof registration.displayName === 'string' && registration.displayName.trim()
               ? registration.displayName.trim()

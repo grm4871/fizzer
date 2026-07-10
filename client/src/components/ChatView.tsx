@@ -101,6 +101,8 @@ export interface ChatBlock {
 
 export interface ChatAgentRegistration {
   id: string;
+  /** Persistent vault-level agent id (shared across channels). */
+  vaultAgentId?: string;
   agentId: string;
   displayName: string;
   mention: string;

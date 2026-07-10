@@ -704,6 +704,7 @@ export default function App() {
     const normalized = {
       ...registration,
       id: registration.id || createChatAgentRegistrationId(),
+      vaultAgentId: registration.vaultAgentId || '',
       displayName: registration.displayName.trim() || agentLabel(registration.agentId as AgentId),
       mention: normalizeMention(registration.mention || registration.agentId),
       cwd: normalizeChatCwd(registration.cwd),

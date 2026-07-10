@@ -96,6 +96,11 @@ import {
   listChatAgentMembers,
   listChatChannelParticipants,
   listChatChannelParticipantUsernames,
+  listVaultAgents,
+  upsertVaultAgent,
+  deleteVaultAgent,
+  getVaultAgent,
+  addVaultAgentToChannel,
   upsertChatAgentMember,
   removeChatAgentMember,
   resolveChatAgentRun,
@@ -977,9 +982,11 @@ app.get('/api/vaults/:id/agent-memory', requireAuth, (req: AuthedRequest, res) =
   const vault = getVault(db, req.params.id, req.user!.id);
   if (!vault) return res.status(404).json({ error: 'Vault not found' });
   try {
+    const agentKey = typeof req.query.agent === 'string' ? req.query.agent : undefined;
     ensureAgentMemoryFolders(db, vault.id, req.user!.id);
     const injection = buildAgentMemoryInjection(db, vault.id, {
       channelTopic: typeof req.query.topic === 'string' ? req.query.topic : undefined,
+      agentKey,
     });
     res.json({
       enabled: isAgentMemoryEnabled(db, vault.id),
@@ -1001,6 +1008,8 @@ app.put('/api/vaults/:id/agent-memory', requireAuth, (req: AuthedRequest, res) =
       const note = createAgentMemoryNote(db, req.user!.id, vault.id, {
         title: typeof req.body.title === 'string' ? req.body.title : undefined,
         body: String(req.body.remember || req.body.body || ''),
+        agentKey: typeof req.body.agent === 'string' ? req.body.agent
+          : typeof req.body.agentKey === 'string' ? req.body.agentKey : undefined,
       });
       emitVaultEvent(vault.id, 'vault:noteCreated', { noteId: note.id, vaultId: vault.id, title: note.title });
       res.status(201).json({ enabled: isAgentMemoryEnabled(db, vault.id), note });
@@ -1010,6 +1019,67 @@ app.put('/api/vaults/:id/agent-memory', requireAuth, (req: AuthedRequest, res) =
     res.json({ enabled: isAgentMemoryEnabled(db, vault.id) });
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : 'Agent memory update failed' });
+  }
+});
+
+// Vault-level persistent agents (identity shared across channels)
+app.get('/api/vaults/:vaultId/vault-agents', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const agents = listVaultAgents(db, req.user!.id, req.params.vaultId);
+    res.json({ agents });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+app.put('/api/vaults/:vaultId/vault-agents', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const agent = upsertVaultAgent(db, req.user!.id, req.params.vaultId, req.body || {});
+    emitVaultEvent(req.params.vaultId, 'vault:vaultAgentUpserted', { agent });
+    res.json({ agent });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+app.get('/api/vaults/:vaultId/vault-agents/:agentId', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const agent = getVaultAgent(db, req.user!.id, req.params.vaultId, req.params.agentId);
+    if (!agent) return res.status(404).json({ error: 'Vault agent not found' });
+    res.json({ agent });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+app.delete('/api/vaults/:vaultId/vault-agents/:agentId', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const removed = deleteVaultAgent(db, req.user!.id, req.params.vaultId, req.params.agentId);
+    if (!removed) return res.status(404).json({ error: 'Vault agent not found' });
+    emitVaultEvent(req.params.vaultId, 'vault:vaultAgentRemoved', { agentId: req.params.agentId });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+app.post('/api/vaults/:vaultId/channels/:channelId/agents/from-vault', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const vaultAgentId = String(req.body?.vaultAgentId || req.body?.agentId || '').trim();
+    if (!vaultAgentId) return res.status(400).json({ error: 'vaultAgentId is required' });
+    const { route } = assertChatChannel(db, req.params.channelId, req.user!.id);
+    const registration = addVaultAgentToChannel(
+      db,
+      req.user!.id,
+      req.params.vaultId,
+      req.params.channelId,
+      vaultAgentId,
+      req.body || {},
+    );
+    emitChatAgentEvent(route.sourceVaultId, route.sourceChannelId, 'vault:chatAgentMemberUpserted', { registration });
+    res.status(201).json({ registration });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
 
@@ -1277,6 +1347,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
         const mem = buildAgentMemoryInjection(db, runVault.id, {
           channelTopic: `${channelTitle} ${prompt}`.slice(0, 400),
           maxChars: 900,
+          agentKey: chatAuthor || selectedAgent,
         });
         if (mem.enabled && mem.text) contextChunks.push(mem.text);
       } catch (error) {

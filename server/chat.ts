@@ -73,6 +73,9 @@ export function appendHarnessLog(existing: string | undefined, chunk: string, ma
 /** A registered agent member in a chat channel (shown in the member list, @mentionable). */
 export type ChatAgentRegistration = {
   id: string;
+  /** Persistent vault-level agent this membership belongs to (vault_agents.id).
+   * Empty only transiently for legacy rows before the backfill migration runs. */
+  vaultAgentId: string;
   agentId: string;
   displayName: string;
   mention: string;
@@ -90,6 +93,35 @@ export type ChatAgentRegistration = {
   /** Conversation id linking this member's runs into one resumable session. A
    * `/clear` command rotates this to start a fresh session. */
   conversationId: string;
+};
+
+/** A persistent, vault-level chat agent. Identity fields (agent backend, name,
+ * mention, model, cwd, context prompt) live canonically here; channel
+ * memberships in `chat_agent_members` keep a synced copy for back-compat plus
+ * their own per-channel state (conversation, flags). */
+export type VaultAgent = {
+  id: string;
+  vaultId: string;
+  agentId: string;
+  displayName: string;
+  mention: string;
+  model: string;
+  cwd: string;
+  contextPrompt: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type VaultAgentWithChannels = VaultAgent & {
+  /** Channels this agent is currently a member of (source channel ids). */
+  channelIds: string[];
+};
+
+/** A channel membership of a persistent vault agent, with its (source) location. */
+export type VaultAgentMembership = {
+  registration: ChatAgentRegistration;
+  vaultId: string;
+  channelId: string;
 };
 
 type ChatMessageRow = {
@@ -176,6 +208,21 @@ export function ensureChatSchema(db: Db): void {
     );
     CREATE INDEX IF NOT EXISTS chat_agent_members_channel_idx ON chat_agent_members(channel_id);
 
+    CREATE TABLE IF NOT EXISTS vault_agents (
+      id TEXT PRIMARY KEY,
+      vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
+      agent_id TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      mention TEXT NOT NULL,
+      model TEXT NOT NULL DEFAULT '',
+      cwd TEXT NOT NULL DEFAULT '',
+      context_prompt TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(vault_id, mention)
+    );
+    CREATE INDEX IF NOT EXISTS vault_agents_vault_idx ON vault_agents(vault_id);
+
     CREATE TABLE IF NOT EXISTS chat_channel_links (
       local_channel_id TEXT PRIMARY KEY REFERENCES notes(id) ON DELETE CASCADE,
       local_vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
@@ -206,6 +253,9 @@ export function ensureChatSchema(db: Db): void {
   if (!memberCols.some((col) => col.name === 'pingable_by_others')) {
     db.exec('ALTER TABLE chat_agent_members ADD COLUMN pingable_by_others INTEGER NOT NULL DEFAULT 0');
   }
+  if (!memberCols.some((col) => col.name === 'vault_agent_id')) {
+    db.exec("ALTER TABLE chat_agent_members ADD COLUMN vault_agent_id TEXT NOT NULL DEFAULT ''");
+  }
   db.exec(`
     INSERT INTO chat_messages_fts(rowid, author, body)
     SELECT cm.rowid, cm.author, cm.body
@@ -214,12 +264,16 @@ export function ensureChatSchema(db: Db): void {
       SELECT 1 FROM chat_messages_fts fts WHERE fts.rowid = cm.rowid
     );
   `);
+
+  // Backfill vault_agents from existing channel memberships (idempotent).
+  backfillVaultAgentsFromMembers(db);
 }
 
 type ChatAgentMemberRow = {
   id: string;
   channel_id: string;
   vault_id: string;
+  vault_agent_id: string;
   agent_id: string;
   display_name: string;
   mention: string;
@@ -233,9 +287,38 @@ type ChatAgentMemberRow = {
   conversation_id: string;
 };
 
+type VaultAgentRow = {
+  id: string;
+  vault_id: string;
+  agent_id: string;
+  display_name: string;
+  mention: string;
+  model: string;
+  cwd: string;
+  context_prompt: string;
+  created_at: string;
+  updated_at: string;
+};
+
+function rowToVaultAgent(row: VaultAgentRow): VaultAgent {
+  return {
+    id: row.id,
+    vaultId: row.vault_id,
+    agentId: row.agent_id,
+    displayName: row.display_name,
+    mention: row.mention,
+    model: row.model,
+    cwd: row.cwd,
+    contextPrompt: row.context_prompt,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 function rowToAgentMember(row: ChatAgentMemberRow): ChatAgentRegistration {
   return {
     id: row.id,
+    vaultAgentId: row.vault_agent_id || '',
     agentId: row.agent_id,
     displayName: row.display_name,
     mention: row.mention,
@@ -248,6 +331,53 @@ function rowToAgentMember(row: ChatAgentMemberRow): ChatAgentRegistration {
     yolo: row.yolo !== 0,
     conversationId: row.conversation_id,
   };
+}
+
+/**
+ * One-time / idempotent: for each chat_agent_members row without vault_agent_id,
+ * find-or-create a vault_agents row (keyed by vault+mention) and link it.
+ */
+function backfillVaultAgentsFromMembers(db: Db): void {
+  const orphans = db.prepare(`
+    SELECT * FROM chat_agent_members
+    WHERE vault_agent_id IS NULL OR vault_agent_id = ''
+  `).all() as ChatAgentMemberRow[];
+  if (orphans.length === 0) return;
+
+  const findVa = db.prepare(`
+    SELECT id FROM vault_agents WHERE vault_id = ? AND mention = ? COLLATE NOCASE
+  `);
+  const insertVa = db.prepare(`
+    INSERT INTO vault_agents (id, vault_id, agent_id, display_name, mention, model, cwd, context_prompt)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const link = db.prepare(`
+    UPDATE chat_agent_members SET vault_agent_id = ? WHERE id = ? AND channel_id = ?
+  `);
+
+  for (const row of orphans) {
+    const mention = normalizeMention(row.mention || '', row.agent_id || 'agent');
+    let va = findVa.get(row.vault_id, mention) as { id: string } | undefined;
+    if (!va) {
+      const id = crypto.randomUUID();
+      try {
+        insertVa.run(
+          id,
+          row.vault_id,
+          row.agent_id,
+          row.display_name || row.agent_id,
+          mention,
+          row.model || '',
+          row.cwd || '',
+          row.context_prompt || '',
+        );
+        va = { id };
+      } catch {
+        va = findVa.get(row.vault_id, mention) as { id: string } | undefined;
+      }
+    }
+    if (va) link.run(va.id, row.id, row.channel_id);
+  }
 }
 
 function normalizeMention(value: string, fallback: string): string {
@@ -264,6 +394,7 @@ function normalizeAgentRegistration(input: Partial<ChatAgentRegistration>, fallb
 
   return {
     id,
+    vaultAgentId: String(input.vaultAgentId || '').trim(),
     agentId,
     displayName: String(input.displayName || '').trim() || agentId,
     mention,
@@ -277,6 +408,221 @@ function normalizeAgentRegistration(input: Partial<ChatAgentRegistration>, fallb
     // May be empty here; upsert preserves the existing session or mints a new one.
     conversationId: String(input.conversationId || '').trim(),
   };
+}
+
+/** Find or create the vault-level agent identity for a membership. */
+function ensureVaultAgentForMember(
+  db: Db,
+  vaultId: string,
+  member: ChatAgentRegistration,
+): VaultAgent {
+  if (member.vaultAgentId) {
+    const existing = db.prepare('SELECT * FROM vault_agents WHERE id = ? AND vault_id = ?')
+      .get(member.vaultAgentId, vaultId) as VaultAgentRow | undefined;
+    if (existing) {
+      // Keep identity fields in sync when membership is saved with updates.
+      db.prepare(`
+        UPDATE vault_agents SET
+          agent_id = ?, display_name = ?, mention = ?, model = ?, cwd = ?, context_prompt = ?,
+          updated_at = datetime('now')
+        WHERE id = ?
+      `).run(
+        member.agentId,
+        member.displayName,
+        member.mention,
+        member.model,
+        member.cwd,
+        member.contextPrompt,
+        existing.id,
+      );
+      // Push identity to all other channel memberships of this vault agent.
+      db.prepare(`
+        UPDATE chat_agent_members SET
+          agent_id = ?, display_name = ?, mention = ?, model = ?, cwd = ?, context_prompt = ?,
+          updated_at = datetime('now')
+        WHERE vault_agent_id = ?
+      `).run(
+        member.agentId,
+        member.displayName,
+        member.mention,
+        member.model,
+        member.cwd,
+        member.contextPrompt,
+        existing.id,
+      );
+      return rowToVaultAgent(db.prepare('SELECT * FROM vault_agents WHERE id = ?').get(existing.id) as VaultAgentRow);
+    }
+  }
+
+  const byMention = db.prepare(`
+    SELECT * FROM vault_agents WHERE vault_id = ? AND mention = ? COLLATE NOCASE
+  `).get(vaultId, member.mention) as VaultAgentRow | undefined;
+  if (byMention) {
+    db.prepare(`
+      UPDATE vault_agents SET
+        agent_id = ?, display_name = ?, model = ?, cwd = ?, context_prompt = ?,
+        updated_at = datetime('now')
+      WHERE id = ?
+    `).run(member.agentId, member.displayName, member.model, member.cwd, member.contextPrompt, byMention.id);
+    return rowToVaultAgent(db.prepare('SELECT * FROM vault_agents WHERE id = ?').get(byMention.id) as VaultAgentRow);
+  }
+
+  const id = crypto.randomUUID();
+  db.prepare(`
+    INSERT INTO vault_agents (id, vault_id, agent_id, display_name, mention, model, cwd, context_prompt)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    vaultId,
+    member.agentId,
+    member.displayName,
+    member.mention,
+    member.model,
+    member.cwd,
+    member.contextPrompt,
+  );
+  return rowToVaultAgent(db.prepare('SELECT * FROM vault_agents WHERE id = ?').get(id) as VaultAgentRow);
+}
+
+export function listVaultAgents(db: Db, userId: number, vaultId: string): VaultAgentWithChannels[] {
+  const vault = getVault(db, vaultId, userId);
+  if (!vault) throw new Error('Vault not found');
+  const rows = db.prepare(`
+    SELECT * FROM vault_agents WHERE vault_id = ? ORDER BY display_name ASC, mention ASC
+  `).all(vaultId) as VaultAgentRow[];
+  return rows.map((row) => {
+    const channelIds = (db.prepare(`
+      SELECT DISTINCT channel_id FROM chat_agent_members WHERE vault_agent_id = ?
+    `).all(row.id) as Array<{ channel_id: string }>).map((r) => r.channel_id);
+    return { ...rowToVaultAgent(row), channelIds };
+  });
+}
+
+export function getVaultAgent(db: Db, userId: number, vaultId: string, vaultAgentId: string): VaultAgentWithChannels | undefined {
+  const vault = getVault(db, vaultId, userId);
+  if (!vault) throw new Error('Vault not found');
+  const row = db.prepare('SELECT * FROM vault_agents WHERE id = ? AND vault_id = ?')
+    .get(vaultAgentId, vaultId) as VaultAgentRow | undefined;
+  if (!row) return undefined;
+  const channelIds = (db.prepare(`
+    SELECT DISTINCT channel_id FROM chat_agent_members WHERE vault_agent_id = ?
+  `).all(row.id) as Array<{ channel_id: string }>).map((r) => r.channel_id);
+  return { ...rowToVaultAgent(row), channelIds };
+}
+
+export function upsertVaultAgent(
+  db: Db,
+  userId: number,
+  vaultId: string,
+  input: Partial<VaultAgent> & { agentId?: string },
+): VaultAgent {
+  const vault = getVault(db, vaultId, userId);
+  if (!vault) throw new Error('Vault not found');
+  const agentId = String(input.agentId || '').trim();
+  if (!agentId) throw new Error('agentId is required');
+  const mention = normalizeMention(String(input.mention || ''), agentId);
+  const displayName = String(input.displayName || '').trim() || agentId;
+  const model = String(input.model || '');
+  const cwd = String(input.cwd || '');
+  const contextPrompt = String(input.contextPrompt || '');
+  const id = String(input.id || '').trim() || crypto.randomUUID();
+
+  const existing = db.prepare('SELECT * FROM vault_agents WHERE id = ? AND vault_id = ?')
+    .get(id, vaultId) as VaultAgentRow | undefined;
+  if (existing) {
+    db.prepare(`
+      UPDATE vault_agents SET
+        agent_id = ?, display_name = ?, mention = ?, model = ?, cwd = ?, context_prompt = ?,
+        updated_at = datetime('now')
+      WHERE id = ?
+    `).run(agentId, displayName, mention, model, cwd, contextPrompt, id);
+    db.prepare(`
+      UPDATE chat_agent_members SET
+        agent_id = ?, display_name = ?, mention = ?, model = ?, cwd = ?, context_prompt = ?,
+        updated_at = datetime('now')
+      WHERE vault_agent_id = ?
+    `).run(agentId, displayName, mention, model, cwd, contextPrompt, id);
+  } else {
+    // Mention uniqueness per vault
+    const clash = db.prepare(`
+      SELECT id FROM vault_agents WHERE vault_id = ? AND mention = ? COLLATE NOCASE AND id != ?
+    `).get(vaultId, mention, id);
+    if (clash) throw new Error(`Mention @${mention} is already used by another vault agent`);
+    db.prepare(`
+      INSERT INTO vault_agents (id, vault_id, agent_id, display_name, mention, model, cwd, context_prompt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, vaultId, agentId, displayName, mention, model, cwd, contextPrompt);
+  }
+  return rowToVaultAgent(db.prepare('SELECT * FROM vault_agents WHERE id = ?').get(id) as VaultAgentRow);
+}
+
+export function deleteVaultAgent(db: Db, userId: number, vaultId: string, vaultAgentId: string): boolean {
+  const vault = getVault(db, vaultId, userId);
+  if (!vault) throw new Error('Vault not found');
+  // Drop all channel memberships first
+  db.prepare('DELETE FROM chat_agent_members WHERE vault_agent_id = ?').run(vaultAgentId);
+  const result = db.prepare('DELETE FROM vault_agents WHERE id = ? AND vault_id = ?').run(vaultAgentId, vaultId);
+  return result.changes > 0;
+}
+
+/**
+ * Add an existing vault agent to a channel (or refresh membership flags).
+ * Identity always comes from vault_agents.
+ */
+export function addVaultAgentToChannel(
+  db: Db,
+  userId: number,
+  vaultId: string,
+  channelId: string,
+  vaultAgentId: string,
+  flags: Partial<Pick<ChatAgentRegistration, 'taggableByAgents' | 'replyToEveryMessage' | 'pingableByOthers' | 'yolo' | 'conversationId'>> = {},
+): ChatAgentRegistration {
+  const { route } = assertChatChannel(db, channelId, userId);
+  if (route.localVaultId !== vaultId) throw new Error('Chat channel not found');
+  const va = db.prepare('SELECT * FROM vault_agents WHERE id = ? AND vault_id = ?')
+    .get(vaultAgentId, route.sourceVaultId) as VaultAgentRow | undefined;
+  if (!va) throw new Error('Vault agent not found');
+
+  const existing = db.prepare(`
+    SELECT * FROM chat_agent_members WHERE vault_agent_id = ? AND channel_id = ?
+  `).get(vaultAgentId, route.sourceChannelId) as ChatAgentMemberRow | undefined;
+
+  const conversationId = flags.conversationId
+    || existing?.conversation_id
+    || crypto.randomUUID();
+  const taggable = flags.taggableByAgents !== undefined ? flags.taggableByAgents : (existing ? existing.taggable_by_agents !== 0 : true);
+  const replyEvery = flags.replyToEveryMessage !== undefined ? flags.replyToEveryMessage : (existing ? existing.reply_to_every_message !== 0 : false);
+  const pingable = flags.pingableByOthers !== undefined ? flags.pingableByOthers : (existing ? existing.pingable_by_others !== 0 : false);
+  const yolo = flags.yolo !== undefined ? flags.yolo : (existing ? existing.yolo !== 0 : false);
+  const memberId = existing?.id || crypto.randomUUID();
+
+  if (existing) {
+    db.prepare(`
+      UPDATE chat_agent_members SET
+        agent_id = ?, display_name = ?, mention = ?, model = ?, cwd = ?, context_prompt = ?,
+        taggable_by_agents = ?, reply_to_every_message = ?, pingable_by_others = ?, yolo = ?,
+        conversation_id = ?, vault_agent_id = ?, updated_at = datetime('now')
+      WHERE id = ? AND channel_id = ?
+    `).run(
+      va.agent_id, va.display_name, va.mention, va.model, va.cwd, va.context_prompt,
+      taggable ? 1 : 0, replyEvery ? 1 : 0, pingable ? 1 : 0, yolo ? 1 : 0,
+      conversationId, va.id, memberId, route.sourceChannelId,
+    );
+  } else {
+    db.prepare(`
+      INSERT INTO chat_agent_members (
+        id, channel_id, vault_id, vault_agent_id, agent_id, display_name, mention,
+        model, cwd, context_prompt, taggable_by_agents, reply_to_every_message, pingable_by_others, yolo, conversation_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      memberId, route.sourceChannelId, route.sourceVaultId, va.id,
+      va.agent_id, va.display_name, va.mention, va.model, va.cwd, va.context_prompt,
+      taggable ? 1 : 0, replyEvery ? 1 : 0, pingable ? 1 : 0, yolo ? 1 : 0, conversationId,
+    );
+  }
+
+  return rowToAgentMember(db.prepare('SELECT * FROM chat_agent_members WHERE id = ? AND channel_id = ?')
+    .get(memberId, route.sourceChannelId) as ChatAgentMemberRow);
 }
 
 function parseJson<T>(value: string | null): T | undefined {
@@ -1041,16 +1387,39 @@ export function upsertChatAgentMember(
   const { route } = assertChatChannel(db, channelId, userId);
   if (route.localVaultId !== vaultId) throw new Error('Chat channel not found');
 
+  // Prefer linking an existing vault agent when vaultAgentId is provided.
+  if (input.vaultAgentId && String(input.vaultAgentId).trim()) {
+    return addVaultAgentToChannel(db, userId, vaultId, channelId, String(input.vaultAgentId).trim(), {
+      taggableByAgents: input.taggableByAgents,
+      replyToEveryMessage: input.replyToEveryMessage,
+      pingableByOthers: input.pingableByOthers,
+      yolo: input.yolo,
+      conversationId: input.conversationId,
+    });
+  }
+
   const member = normalizeAgentRegistration(input);
-  const existing = db.prepare('SELECT id, conversation_id FROM chat_agent_members WHERE id = ? AND channel_id = ?').get(member.id, route.sourceChannelId) as { id: string; conversation_id: string } | undefined;
+  const existing = db.prepare('SELECT id, conversation_id, vault_agent_id FROM chat_agent_members WHERE id = ? AND channel_id = ?').get(member.id, route.sourceChannelId) as { id: string; conversation_id: string; vault_agent_id: string } | undefined;
 
   // The session id is sticky: an explicit value (e.g. a `/clear` rotation) wins,
   // otherwise keep the member's existing session, otherwise mint a fresh one.
   member.conversationId = member.conversationId || existing?.conversation_id || crypto.randomUUID();
+  if (existing?.vault_agent_id) member.vaultAgentId = existing.vault_agent_id;
+
+  const vaultAgent = ensureVaultAgentForMember(db, route.sourceVaultId, member);
+  member.vaultAgentId = vaultAgent.id;
+  // Identity is canonical on vault_agents
+  member.agentId = vaultAgent.agentId;
+  member.displayName = vaultAgent.displayName;
+  member.mention = vaultAgent.mention;
+  member.model = vaultAgent.model;
+  member.cwd = vaultAgent.cwd;
+  member.contextPrompt = vaultAgent.contextPrompt;
 
   if (existing) {
     db.prepare(`
       UPDATE chat_agent_members SET
+        vault_agent_id = ?,
         agent_id = ?,
         display_name = ?,
         mention = ?,
@@ -1065,6 +1434,7 @@ export function upsertChatAgentMember(
         updated_at = datetime('now')
       WHERE id = ? AND channel_id = ?
     `).run(
+      member.vaultAgentId,
       member.agentId,
       member.displayName,
       member.mention,
@@ -1082,13 +1452,14 @@ export function upsertChatAgentMember(
   } else {
     db.prepare(`
       INSERT INTO chat_agent_members (
-        id, channel_id, vault_id, agent_id, display_name, mention,
+        id, channel_id, vault_id, vault_agent_id, agent_id, display_name, mention,
         model, cwd, context_prompt, taggable_by_agents, reply_to_every_message, pingable_by_others, yolo, conversation_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       member.id,
       route.sourceChannelId,
       route.sourceVaultId,
+      member.vaultAgentId,
       member.agentId,
       member.displayName,
       member.mention,
