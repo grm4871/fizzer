@@ -40,14 +40,10 @@ function scrollToBottom(el: HTMLElement | null | undefined) {
   el.scrollTop = el.scrollHeight;
 }
 
-/** Scroll now and again after layout/paint (nested pre max-height grows async). */
+/** Scroll once after layout; repeated updates naturally coalesce before paint. */
 function scrollToBottomSoon(el: HTMLElement | null | undefined) {
   if (!el) return;
-  scrollToBottom(el);
-  requestAnimationFrame(() => {
-    scrollToBottom(el);
-    requestAnimationFrame(() => scrollToBottom(el));
-  });
+  requestAnimationFrame(() => scrollToBottom(el));
 }
 
 function previewInput(input: unknown): string {
@@ -344,13 +340,10 @@ export const CascadeRunPanel = memo(function CascadeRunPanel({
   message,
   onCancelRun,
   forceOpen = false,
-  onContentGrow,
 }: {
   message: ChatMessage;
   onCancelRun: (runId: number) => void;
   forceOpen?: boolean;
-  /** Notify parent (main chat scroller) when harness content height grows. */
-  onContentGrow?: () => void;
 }) {
   const isRunning = message.status === 'running';
   const activity = useMemo(() => buildHarnessActivity(message), [message]);
@@ -393,12 +386,6 @@ export const CascadeRunPanel = memo(function CascadeRunPanel({
     if (!pinBottomRef.current) return;
     scrollToBottomSoon(bodyRef.current);
   }, [scrollEpoch, isRunning, effectiveOpen, showRaw]);
-
-  // Keep the main chat panel pinned when harness/thinking expands.
-  useLayoutEffect(() => {
-    if (!effectiveOpen) return;
-    onContentGrow?.();
-  }, [scrollEpoch, effectiveOpen, onContentGrow]);
 
   if (!isRunning && !canExpand) return null;
 

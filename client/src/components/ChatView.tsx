@@ -561,6 +561,7 @@ export function ChatView({
   const messagesContentRef = useRef<HTMLDivElement | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
   const wasAtBottomRef = useRef(true);
+  const scrollFrameRef = useRef<number | null>(null);
   const previousChannelIdRef = useRef(channelId);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const draftRef = useRef<HTMLTextAreaElement | null>(null);
@@ -642,29 +643,13 @@ export function ChatView({
     }
   }, [usersCollapsed]);
 
-  // Fingerprint content growth so we re-stick when a running message's body,
-  // harness log, or thinking blocks grow without a new message being added.
-  const chatScrollEpoch = useMemo(() => {
-    let n = sortedMessages.length * 1_000_003;
-    for (const message of sortedMessages) {
-      n += (message.body?.length ?? 0);
-      n += (message.harnessLog?.length ?? 0);
-      n += (message.blocks ?? []).reduce(
-        (sum, block) => sum
-          + (block.text?.length ?? 0)
-          + (typeof block.content === 'string' ? block.content.length : 0)
-          + (block.name?.length ?? 0)
-          + 1,
-        0,
-      );
-      if (message.status === 'running') n += 17;
-    }
-    return n;
-  }, [sortedMessages]);
-
   const scrollToBottomIfSticky = useCallback(() => {
     if (!wasAtBottomRef.current) return;
-    endRef.current?.scrollIntoView({ block: 'end' });
+    if (scrollFrameRef.current != null) return;
+    scrollFrameRef.current = requestAnimationFrame(() => {
+      scrollFrameRef.current = null;
+      if (wasAtBottomRef.current) endRef.current?.scrollIntoView({ block: 'end' });
+    });
   }, []);
 
   useLayoutEffect(() => {
@@ -672,9 +657,8 @@ export function ChatView({
       previousChannelIdRef.current = channelId;
       wasAtBottomRef.current = true;
     }
-    if (!wasAtBottomRef.current) return;
-    endRef.current?.scrollIntoView({ block: 'end' });
-  }, [chatScrollEpoch, channelId]);
+    scrollToBottomIfSticky();
+  }, [sortedMessages.length, channelId, scrollToBottomIfSticky]);
 
   // When harness/thinking expands layout height without a React dep change
   // (or after paint), keep the main chat scroller pinned if the user was at bottom.
@@ -682,16 +666,15 @@ export function ChatView({
     const content = messagesContentRef.current;
     if (!content || typeof ResizeObserver === 'undefined') return;
     const ro = new ResizeObserver(() => {
-      if (!wasAtBottomRef.current) return;
-      // rAF: wait for nested max-height growth (thinking pre) to settle.
-      requestAnimationFrame(() => {
-        if (!wasAtBottomRef.current) return;
-        endRef.current?.scrollIntoView({ block: 'end' });
-      });
+      scrollToBottomIfSticky();
     });
     ro.observe(content);
     return () => ro.disconnect();
-  }, [channelId]);
+  }, [channelId, scrollToBottomIfSticky]);
+
+  useEffect(() => () => {
+    if (scrollFrameRef.current != null) cancelAnimationFrame(scrollFrameRef.current);
+  }, []);
 
   const updateBottomStickiness = useCallback(() => {
     const element = messagesRef.current;
@@ -1158,7 +1141,6 @@ export function ChatView({
                               message={message}
                               onCancelRun={onCancelRun}
                               forceOpen={selected}
-                              onContentGrow={scrollToBottomIfSticky}
                             />
                           )}
                         </div>
