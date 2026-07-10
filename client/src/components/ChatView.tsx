@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Activity, Bot, Brain, ChevronLeft, ChevronRight, Copy, Hash, ImagePlus, Paperclip, Plus, Reply, Send, Square, TerminalSquare, UserPlus, X } from 'lucide-react';
+import { Activity, Bot, ChevronLeft, ChevronRight, Copy, Hash, ImagePlus, Paperclip, Plus, Reply, Send, Square, TerminalSquare, UserPlus, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
@@ -467,12 +467,7 @@ function ChatRunWidget({ message, onCancelRun }: { message: ChatMessage; onCance
   const terminalContent = harnessTerminalContent(message);
   const isRunning = message.status === 'running';
   const canExpand = hasExpandableTrace(message);
-  const hasHarness = Boolean(message.harnessLog?.trim());
-  const label = !canExpand
-    ? 'Working…'
-    : hasHarness
-      ? 'Terminal'
-      : 'Details';
+  const label = canExpand ? 'Terminal' : 'Working…';
 
   if (!isRunning && !canExpand) return null;
 
@@ -484,7 +479,7 @@ function ChatRunWidget({ message, onCancelRun }: { message: ChatMessage; onCance
         onClick={() => canExpand && setOpen((value) => !value)}
         disabled={!canExpand}
       >
-        {hasHarness || isRunning ? <TerminalSquare size={13} /> : <Brain size={13} />}
+        <TerminalSquare size={13} />
         <span>{label}</span>
         {isRunning && <span className="ai-spinner" />}
         {canExpand && <ChevronRight size={13} className="ai-chevron" />}
