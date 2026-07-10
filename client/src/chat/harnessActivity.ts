@@ -31,6 +31,11 @@ export interface ActivityItem {
   meta?: boolean;
 }
 
+export interface RateLimitWindow {
+  utilization: number;
+  resetsAt?: string | null;
+}
+
 export interface RunStats {
   model?: string;
   cwd?: string;
@@ -42,7 +47,27 @@ export interface RunStats {
   cacheWriteTokens?: number;
   totalCostUsd?: number;
   numTurns?: number;
+  /** Configured max agent turns (when known). */
+  maxTurns?: number;
   durationMs?: number;
+  durationApiMs?: number;
+  /** Tokens currently filling the model context window. */
+  contextUsed?: number;
+  /** Model context window size in tokens. */
+  contextWindow?: number;
+  /** 0–100 context fill percentage when reported by the harness. */
+  contextPct?: number;
+  maxOutputTokens?: number;
+  autoCompactThreshold?: number;
+  /** Plan rate-limit snapshot (claude.ai etc.). */
+  rateLimitStatus?: string;
+  rateLimitType?: string;
+  rateLimitUtilization?: number;
+  rateLimitResetsAt?: string;
+  overageStatus?: string;
+  overageInUse?: boolean;
+  subscriptionType?: string;
+  rateLimitWindows?: Record<string, RateLimitWindow>;
   toolCount: number;
   thinkingChars: number;
   hasThinking: boolean;
@@ -287,17 +312,8 @@ function parseHarnessLog(raw: string, hasStructuredTools: boolean, hasStructured
     }
     if (trimmed.startsWith('# cascade-stats ')) {
       try {
-        const json = JSON.parse(trimmed.slice('# cascade-stats '.length));
-        meta.stats = {
-          inputTokens: num(json.inputTokens ?? json.input_tokens),
-          outputTokens: num(json.outputTokens ?? json.output_tokens),
-          cacheReadTokens: num(json.cacheReadTokens ?? json.cache_read_input_tokens),
-          cacheWriteTokens: num(json.cacheWriteTokens ?? json.cache_creation_input_tokens),
-          totalCostUsd: num(json.totalCostUsd ?? json.total_cost_usd),
-          numTurns: num(json.numTurns ?? json.num_turns),
-          durationMs: num(json.durationMs ?? json.duration_ms),
-          model: typeof json.model === 'string' ? json.model : undefined,
-        };
+        const json = JSON.parse(trimmed.slice('# cascade-stats '.length)) as Record<string, unknown>;
+        meta.stats = mergeRunStats(meta.stats, parseCascadeStatsJson(json));
       } catch { /* ignore */ }
       continue;
     }
@@ -366,6 +382,81 @@ function num(value: unknown): number | undefined {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (typeof value === 'string' && value.trim() && Number.isFinite(Number(value))) return Number(value);
   return undefined;
+}
+
+function str(value: unknown): string | undefined {
+  if (typeof value === 'string' && value.trim()) return value.trim();
+  return undefined;
+}
+
+function bool(value: unknown): boolean | undefined {
+  if (typeof value === 'boolean') return value;
+  return undefined;
+}
+
+/** Parse one `# cascade-stats` JSON object into partial RunStats. */
+function parseCascadeStatsJson(json: Record<string, unknown>): Partial<RunStats> {
+  const windowsRaw = json.rateLimitWindows;
+  let rateLimitWindows: Record<string, RateLimitWindow> | undefined;
+  if (windowsRaw && typeof windowsRaw === 'object') {
+    rateLimitWindows = {};
+    for (const [key, win] of Object.entries(windowsRaw as Record<string, unknown>)) {
+      if (!win || typeof win !== 'object') continue;
+      const rec = win as Record<string, unknown>;
+      const utilization = num(rec.utilization);
+      if (utilization == null) continue;
+      rateLimitWindows[key] = {
+        utilization,
+        resetsAt: rec.resetsAt == null ? null : String(rec.resetsAt),
+      };
+    }
+    if (Object.keys(rateLimitWindows).length === 0) rateLimitWindows = undefined;
+  }
+
+  return {
+    model: str(json.model),
+    inputTokens: num(json.inputTokens ?? json.input_tokens),
+    outputTokens: num(json.outputTokens ?? json.output_tokens),
+    cacheReadTokens: num(json.cacheReadTokens ?? json.cache_read_input_tokens),
+    cacheWriteTokens: num(json.cacheWriteTokens ?? json.cache_creation_input_tokens),
+    totalCostUsd: num(json.totalCostUsd ?? json.total_cost_usd),
+    numTurns: num(json.numTurns ?? json.num_turns),
+    maxTurns: num(json.maxTurns ?? json.max_turns),
+    durationMs: num(json.durationMs ?? json.duration_ms),
+    durationApiMs: num(json.durationApiMs ?? json.duration_api_ms),
+    contextUsed: num(json.contextUsed ?? json.context_used ?? json.totalTokens),
+    contextWindow: num(json.contextWindow ?? json.context_window ?? json.maxTokens),
+    contextPct: num(json.contextPct ?? json.context_pct ?? json.percentage),
+    maxOutputTokens: num(json.maxOutputTokens ?? json.max_output_tokens),
+    autoCompactThreshold: num(json.autoCompactThreshold),
+    rateLimitStatus: str(json.rateLimitStatus),
+    rateLimitType: str(json.rateLimitType),
+    rateLimitUtilization: num(json.rateLimitUtilization),
+    rateLimitResetsAt: str(json.rateLimitResetsAt),
+    overageStatus: str(json.overageStatus),
+    overageInUse: bool(json.overageInUse),
+    subscriptionType: str(json.subscriptionType),
+    rateLimitWindows,
+  };
+}
+
+/** Merge stats patches; later non-null values win (multiple cascade-stats lines). */
+function mergeRunStats(
+  base: Partial<RunStats> | undefined,
+  patch: Partial<RunStats> | undefined,
+): Partial<RunStats> {
+  if (!base) return { ...(patch || {}) };
+  if (!patch) return { ...base };
+  const next: Partial<RunStats> = { ...base };
+  for (const [key, value] of Object.entries(patch) as Array<[keyof RunStats, RunStats[keyof RunStats]]>) {
+    if (value === undefined || value === null || value === '') continue;
+    if (key === 'rateLimitWindows' && base.rateLimitWindows && patch.rateLimitWindows) {
+      next.rateLimitWindows = { ...base.rateLimitWindows, ...patch.rateLimitWindows };
+      continue;
+    }
+    (next as Record<string, unknown>)[key] = value;
+  }
+  return next;
 }
 
 function parseJsonlEvent(
@@ -513,18 +604,45 @@ export function buildHarnessActivity(message: ChatMessage): HarnessActivity {
   }
 
   const toolCount = items.filter((item) => item.kind === 'tool').length;
+  const hs = harness.stats || {};
+  // Derive context % when harness only gave used/window.
+  let contextUsed = hs.contextUsed;
+  let contextWindow = hs.contextWindow;
+  let contextPct = hs.contextPct;
+  if (contextUsed == null && (hs.inputTokens != null || hs.cacheReadTokens != null)) {
+    contextUsed = (hs.inputTokens || 0) + (hs.cacheReadTokens || 0);
+  }
+  if (contextPct == null && contextUsed != null && contextWindow != null && contextWindow > 0) {
+    contextPct = Math.min(100, (contextUsed / contextWindow) * 100);
+  }
+
   const stats: RunStats = {
-    model: harness.model || harness.stats?.model,
+    model: harness.model || hs.model,
     cwd: harness.cwd,
     command: harness.command,
     exitCode: harness.exitCode,
-    inputTokens: harness.stats?.inputTokens,
-    outputTokens: harness.stats?.outputTokens,
-    cacheReadTokens: harness.stats?.cacheReadTokens,
-    cacheWriteTokens: harness.stats?.cacheWriteTokens,
-    totalCostUsd: harness.stats?.totalCostUsd,
-    numTurns: harness.stats?.numTurns,
-    durationMs: harness.stats?.durationMs,
+    inputTokens: hs.inputTokens,
+    outputTokens: hs.outputTokens,
+    cacheReadTokens: hs.cacheReadTokens,
+    cacheWriteTokens: hs.cacheWriteTokens,
+    totalCostUsd: hs.totalCostUsd,
+    numTurns: hs.numTurns,
+    maxTurns: hs.maxTurns,
+    durationMs: hs.durationMs,
+    durationApiMs: hs.durationApiMs,
+    contextUsed,
+    contextWindow,
+    contextPct,
+    maxOutputTokens: hs.maxOutputTokens,
+    autoCompactThreshold: hs.autoCompactThreshold,
+    rateLimitStatus: hs.rateLimitStatus,
+    rateLimitType: hs.rateLimitType,
+    rateLimitUtilization: hs.rateLimitUtilization,
+    rateLimitResetsAt: hs.rateLimitResetsAt,
+    overageStatus: hs.overageStatus,
+    overageInUse: hs.overageInUse,
+    subscriptionType: hs.subscriptionType,
+    rateLimitWindows: hs.rateLimitWindows,
     toolCount,
     thinkingChars: thinkingText.length,
     hasThinking: thinkingText.trim().length > 0,
@@ -579,6 +697,109 @@ export function formatDurationMs(ms: number | undefined): string | null {
   return `${m}m ${s}s`;
 }
 
+export function formatPct(n: number | undefined, digits = 0): string | null {
+  if (n == null || !Number.isFinite(n)) return null;
+  return `${n.toFixed(digits)}%`;
+}
+
+/** Human label for rate-limit window keys. */
+export function formatRateLimitType(type: string | undefined): string {
+  if (!type) return 'limit';
+  const map: Record<string, string> = {
+    five_hour: '5h',
+    seven_day: '7d',
+    seven_day_opus: '7d opus',
+    seven_day_sonnet: '7d sonnet',
+    seven_day_oauth_apps: '7d apps',
+    overage: 'overage',
+  };
+  return map[type] || type.replace(/_/g, ' ');
+}
+
+export function formatResetsAt(iso: string | undefined | null): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      hour: 'numeric',
+      minute: '2-digit',
+      month: 'short',
+      day: 'numeric',
+    }).format(d);
+  } catch {
+    return d.toISOString();
+  }
+}
+
+/** Context window line: `ctx 42k/200k (21%)`. */
+export function formatContextLine(stats: RunStats): string | null {
+  const used = formatTokenCount(stats.contextUsed);
+  const max = formatTokenCount(stats.contextWindow);
+  const pct = formatPct(stats.contextPct, stats.contextPct != null && stats.contextPct < 10 ? 1 : 0);
+  if (used && max) return `ctx ${used}/${max}${pct ? ` (${pct})` : ''}`;
+  if (pct && max) return `ctx ${pct} of ${max}`;
+  if (pct) return `ctx ${pct}`;
+  if (used) return `ctx ${used}`;
+  if (max) return `ctx max ${max}`;
+  return null;
+}
+
+/** Turn length line: `turns 4/30` or `turns 4`. */
+export function formatTurnsLine(stats: RunStats): string | null {
+  if (stats.numTurns == null && stats.maxTurns == null) return null;
+  if (stats.numTurns != null && stats.maxTurns != null) {
+    return `turns ${stats.numTurns}/${stats.maxTurns}`;
+  }
+  if (stats.numTurns != null) return `turns ${stats.numTurns}`;
+  return `max turns ${stats.maxTurns}`;
+}
+
+/** Primary usage-limit line when any rate-limit data exists. */
+export function formatRateLimitLine(stats: RunStats): string | null {
+  const parts: string[] = [];
+  if (stats.rateLimitUtilization != null || stats.rateLimitType) {
+    const label = formatRateLimitType(stats.rateLimitType);
+    const pct = formatPct(stats.rateLimitUtilization, 0);
+    parts.push(pct ? `${label} ${pct}` : label);
+  }
+  const resets = formatResetsAt(stats.rateLimitResetsAt);
+  if (resets) parts.push(`resets ${resets}`);
+  if (stats.rateLimitStatus && stats.rateLimitStatus !== 'allowed') {
+    parts.push(stats.rateLimitStatus.replace(/_/g, ' '));
+  }
+  if (stats.overageInUse) parts.push('overage');
+  else if (stats.overageStatus && stats.overageStatus !== 'allowed') {
+    parts.push(`overage ${stats.overageStatus.replace(/_/g, ' ')}`);
+  }
+  if (stats.subscriptionType) parts.push(stats.subscriptionType);
+  if (parts.length === 0 && stats.rateLimitWindows) {
+    const entries = Object.entries(stats.rateLimitWindows);
+    if (entries.length) {
+      const [type, win] = entries.sort((a, b) => b[1].utilization - a[1].utilization)[0];
+      parts.push(`${formatRateLimitType(type)} ${formatPct(win.utilization, 0)}`);
+      const r = formatResetsAt(win.resetsAt);
+      if (r) parts.push(`resets ${r}`);
+    }
+  }
+  return parts.length ? `limit ${parts.join(' · ')}` : null;
+}
+
+/** Extra rate-limit window lines when multiple windows are present. */
+export function formatRateLimitWindowLines(stats: RunStats): string[] {
+  if (!stats.rateLimitWindows) return [];
+  const entries = Object.entries(stats.rateLimitWindows);
+  if (entries.length <= 1) return [];
+  return entries
+    .sort((a, b) => b[1].utilization - a[1].utilization)
+    .map(([type, win]) => {
+      const bits = [`${formatRateLimitType(type)} ${formatPct(win.utilization, 0) || '?'}`];
+      const r = formatResetsAt(win.resetsAt);
+      if (r) bits.push(`resets ${r}`);
+      return `limit ${bits.join(' · ')}`;
+    });
+}
+
 export function summarizeActivity(activity: HarnessActivity, isRunning: boolean): string {
   const parts: string[] = [];
   if (isRunning) {
@@ -593,6 +814,10 @@ export function summarizeActivity(activity: HarnessActivity, isRunning: boolean)
     const chars = activity.stats.thinkingChars;
     parts.push(chars >= 1000 ? `thought ${formatTokenCount(chars)}` : 'thought');
   }
+  const ctx = formatContextLine(activity.stats);
+  if (ctx) parts.push(ctx);
+  const turns = formatTurnsLine(activity.stats);
+  if (turns) parts.push(turns);
   const tokIn = formatTokenCount(activity.stats.inputTokens);
   const tokOut = formatTokenCount(activity.stats.outputTokens);
   if (tokIn || tokOut) {
@@ -600,6 +825,8 @@ export function summarizeActivity(activity: HarnessActivity, isRunning: boolean)
   }
   const cost = formatCostUsd(activity.stats.totalCostUsd);
   if (cost) parts.push(cost);
+  const lim = formatRateLimitLine(activity.stats);
+  if (lim && parts.length < 5) parts.push(lim.replace(/^limit /, ''));
   const dur = formatDurationMs(activity.stats.durationMs);
   if (dur) parts.push(dur);
   if (activity.stats.model && parts.length < 3) parts.push(activity.stats.model);

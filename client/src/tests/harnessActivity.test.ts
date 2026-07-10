@@ -63,7 +63,9 @@ describe('buildHarnessActivity', () => {
     const activity = buildHarnessActivity(msg({
       harnessLog: [
         '# claude-code claude-sonnet-4 · /home/jt/proj',
-        '# cascade-stats {"inputTokens":1200,"outputTokens":80,"totalCostUsd":0.012,"durationMs":4500}',
+        '# cascade-stats {"model":"claude-sonnet-4","maxTurns":30}',
+        '# cascade-stats {"inputTokens":1200,"outputTokens":80,"totalCostUsd":0.012,"durationMs":4500,"numTurns":4,"contextWindow":200000,"contextUsed":42000}',
+        '# cascade-stats {"rateLimitType":"five_hour","rateLimitUtilization":62,"rateLimitResetsAt":"2026-07-10T20:00:00.000Z","rateLimitStatus":"allowed"}',
         '# exit 0',
       ].join('\n'),
     }));
@@ -73,6 +75,13 @@ describe('buildHarnessActivity', () => {
     expect(activity.stats.outputTokens).toBe(80);
     expect(activity.stats.totalCostUsd).toBe(0.012);
     expect(activity.stats.durationMs).toBe(4500);
+    expect(activity.stats.numTurns).toBe(4);
+    expect(activity.stats.maxTurns).toBe(30);
+    expect(activity.stats.contextWindow).toBe(200000);
+    expect(activity.stats.contextUsed).toBe(42000);
+    expect(activity.stats.contextPct).toBeCloseTo(21, 0);
+    expect(activity.stats.rateLimitType).toBe('five_hour');
+    expect(activity.stats.rateLimitUtilization).toBe(62);
   });
 
   it('falls back to codex JSONL tools when blocks are empty', () => {

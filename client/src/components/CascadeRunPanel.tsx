@@ -10,14 +10,19 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronRight, Square, TerminalSquare } from 'lucide-react';
 import {
   buildHarnessActivity,
+  formatContextLine,
   formatCostUsd,
   formatDurationMs,
+  formatRateLimitLine,
+  formatRateLimitWindowLines,
   formatTokenCount,
+  formatTurnsLine,
   hasRunActivity,
   summarizeActivity,
   toolResultPreview,
   type ActivityItem,
   type HarnessActivity,
+  type RunStats,
 } from '../chat/harnessActivity';
 import { HarnessTerminal } from './HarnessTerminal';
 import type { ChatMessage } from './ChatView';
@@ -132,22 +137,52 @@ function ToolBlock({
   );
 }
 
-function buildStatusLine(activity: HarnessActivity, isRunning: boolean): string | null {
-  const parts: string[] = [];
-  if (activity.stats.model) parts.push(activity.stats.model);
-  const tokIn = formatTokenCount(activity.stats.inputTokens);
-  const tokOut = formatTokenCount(activity.stats.outputTokens);
-  if (tokIn || tokOut) parts.push(`${tokIn || '?'}→${tokOut || '?'} tok`);
-  const cost = formatCostUsd(activity.stats.totalCostUsd);
-  if (cost) parts.push(cost);
-  const dur = formatDurationMs(activity.stats.durationMs);
-  if (dur) parts.push(dur);
-  if (activity.stats.toolCount > 0) {
-    parts.push(`${activity.stats.toolCount} tool${activity.stats.toolCount === 1 ? '' : 's'}`);
+/** Trailing `# …` meta lines for usage / context / turns / limits. */
+function buildMetaLines(stats: RunStats, isRunning: boolean): string[] {
+  const lines: string[] = [];
+  const primary: string[] = [];
+  if (stats.model) primary.push(stats.model);
+
+  const ctx = formatContextLine(stats);
+  if (ctx) primary.push(ctx);
+
+  const turns = formatTurnsLine(stats);
+  if (turns) primary.push(turns);
+
+  const tokIn = formatTokenCount(stats.inputTokens);
+  const tokOut = formatTokenCount(stats.outputTokens);
+  if (tokIn || tokOut) primary.push(`${tokIn || '?'}→${tokOut || '?'} tok`);
+
+  if (stats.cacheReadTokens != null && stats.cacheReadTokens > 0) {
+    const cr = formatTokenCount(stats.cacheReadTokens);
+    if (cr) primary.push(`cache ${cr}`);
   }
-  if (isRunning && parts.length === 0) return 'running';
-  if (parts.length === 0) return null;
-  return parts.join(' · ');
+
+  const cost = formatCostUsd(stats.totalCostUsd);
+  if (cost) primary.push(cost);
+
+  const dur = formatDurationMs(stats.durationMs);
+  if (dur) primary.push(dur);
+
+  if (stats.toolCount > 0) {
+    primary.push(`${stats.toolCount} tool${stats.toolCount === 1 ? '' : 's'}`);
+  }
+
+  if (primary.length) lines.push(primary.join(' · '));
+  else if (isRunning) lines.push('running');
+
+  const limitLine = formatRateLimitLine(stats);
+  if (limitLine) lines.push(limitLine);
+
+  // Only dump multi-window detail when we have more than the primary summary.
+  const windows = formatRateLimitWindowLines(stats);
+  if (windows.length > 1) {
+    for (const w of windows) {
+      if (w !== limitLine) lines.push(w);
+    }
+  }
+
+  return lines;
 }
 
 function StructuredTranscript({
@@ -158,7 +193,7 @@ function StructuredTranscript({
   isRunning: boolean;
 }) {
   const { stats, items } = activity;
-  const statusLine = buildStatusLine(activity, isRunning);
+  const metaLines = buildMetaLines(stats, isRunning);
   const lastIdx = items.length - 1;
 
   // If we only have thinkingText and no items, synthesize one block.
@@ -227,9 +262,11 @@ function StructuredTranscript({
       {stats.exitCode != null && stats.exitCode !== '' && (
         <div className="crp-term-line meta dim"># exit {stats.exitCode}</div>
       )}
-      {statusLine && !isRunning && (
-        <div className="crp-term-line meta dim"># {statusLine}</div>
-      )}
+      {/* Always show usage lines when we have them — mid-run (max turns /
+          rate limits) and after completion (ctx, turns, cost). */}
+      {metaLines.map((line, i) => (
+        <div key={`meta-${i}`} className="crp-term-line meta dim"># {line}</div>
+      ))}
       {isRunning && (
         <div className="crp-term-line run-cursor" aria-hidden="true">
           <span className="crp-term-cursor">█</span>

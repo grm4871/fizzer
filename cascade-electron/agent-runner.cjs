@@ -226,6 +226,89 @@ function formatToolInput(input) {
   }
 }
 
+/**
+ * Emit a machine-readable `# cascade-stats …` harness line for the chat UI.
+ * Merges whatever fields we have (usage, context, rate limits) — the client
+ * keeps the latest non-null values per field.
+ */
+function emitCascadeStats(emit, stats) {
+  if (!emit || !stats || typeof stats !== 'object') return;
+  // Drop undefined so the JSON stays compact and easy to merge.
+  const clean = {};
+  for (const [key, value] of Object.entries(stats)) {
+    if (value !== undefined && value !== null && value !== '') clean[key] = value;
+  }
+  if (Object.keys(clean).length === 0) return;
+  try {
+    emitHarness(emit, `\x1b[2m# cascade-stats ${JSON.stringify(clean)}\x1b[0m\r\n`);
+  } catch { /* ignore */ }
+}
+
+/** Pull context-window / turn / cost fields off a Claude SDK result message. */
+function statsFromClaudeResult(message, model, maxTurns) {
+  const usage = message.usage || {};
+  const modelUsage = message.modelUsage && typeof message.modelUsage === 'object'
+    ? message.modelUsage
+    : {};
+  // Prefer the entry matching the run model; else first modelUsage row.
+  let mu = modelUsage[model];
+  if (!mu) {
+    const keys = Object.keys(modelUsage);
+    mu = keys.length ? modelUsage[keys[0]] : null;
+  }
+  const contextWindow = numOrUndef(mu?.contextWindow);
+  // Approximate filled context from last-turn API usage when SDK doesn't
+  // give an explicit total. Cache-read + input ≈ tokens in the window.
+  const inputTokens = numOrUndef(usage.input_tokens) ?? numOrUndef(mu?.inputTokens);
+  const outputTokens = numOrUndef(usage.output_tokens) ?? numOrUndef(mu?.outputTokens);
+  const cacheRead = numOrUndef(usage.cache_read_input_tokens) ?? numOrUndef(mu?.cacheReadInputTokens);
+  const cacheWrite = numOrUndef(usage.cache_creation_input_tokens) ?? numOrUndef(mu?.cacheCreationInputTokens);
+  let contextUsed = null;
+  if (inputTokens != null || cacheRead != null) {
+    contextUsed = (inputTokens || 0) + (cacheRead || 0);
+  }
+  return {
+    model,
+    inputTokens,
+    outputTokens,
+    cacheReadTokens: cacheRead,
+    cacheWriteTokens: cacheWrite,
+    totalCostUsd: numOrUndef(message.total_cost_usd) ?? numOrUndef(mu?.costUSD),
+    numTurns: numOrUndef(message.num_turns),
+    maxTurns: numOrUndef(maxTurns),
+    durationMs: numOrUndef(message.duration_ms),
+    durationApiMs: numOrUndef(message.duration_api_ms),
+    contextWindow,
+    contextUsed: contextUsed ?? undefined,
+    maxOutputTokens: numOrUndef(mu?.maxOutputTokens),
+  };
+}
+
+function numOrUndef(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim() && Number.isFinite(Number(value))) return Number(value);
+  return undefined;
+}
+
+/** Normalize a Claude rate_limit_event into cascade-stats fields. */
+function statsFromRateLimitInfo(info) {
+  if (!info || typeof info !== 'object') return null;
+  const out = {
+    rateLimitStatus: info.status || undefined,
+    rateLimitType: info.rateLimitType || undefined,
+    rateLimitUtilization: numOrUndef(info.utilization),
+    rateLimitResetsAt: info.resetsAt != null
+      ? (typeof info.resetsAt === 'number'
+        ? new Date(info.resetsAt * (info.resetsAt < 1e12 ? 1000 : 1)).toISOString()
+        : String(info.resetsAt))
+      : undefined,
+    overageStatus: info.overageStatus || undefined,
+    overageInUse: info.isUsingOverage === true || info.overageInUse === true ? true : undefined,
+  };
+  if (Object.values(out).every((v) => v === undefined)) return null;
+  return out;
+}
+
 function expandHome(input) {
   const value = String(input || '').trim();
   if (!value) return '';
@@ -350,9 +433,18 @@ async function runClaudeLocally(opts, emit) {
   /** @type {{ id: string, name: string, json: string } | null} */
   let pendingTool = null;
   emitHarness(emit, `\x1b[2m# claude-code ${model} · ${cwd}\x1b[0m\r\n`);
+  // Advertise configured turn cap up front so the panel can show turns N/max mid-run.
+  emitCascadeStats(emit, { model, maxTurns });
   try {
     for await (const message of stream) {
       if (message.session_id) sessionId = message.session_id;
+
+      // Subscription rate-limit telemetry (claude.ai plans). Sparse but useful.
+      if (message.type === 'rate_limit_event') {
+        const rl = statsFromRateLimitInfo(message.rate_limit_info);
+        if (rl) emitCascadeStats(emit, rl);
+        continue;
+      }
 
       // Partial streaming: translate token-level deltas into the same
       // { message: { content: [...] } } shape the chat accumulators expect,
@@ -464,21 +556,68 @@ async function runClaudeLocally(opts, emit) {
         }
       } else if (message.type === 'result') {
         emitHarness(emit, `\x1b[2m# result ${message.subtype || message.result || 'done'}\x1b[0m\r\n`);
-        // Machine-readable stats line for the Cascade run panel.
+        emitCascadeStats(emit, statsFromClaudeResult(message, model, maxTurns));
+        // Best-effort: ask the live query for context-window breakdown + plan
+        // rate limits. Methods may no-op once the stream is closing.
         try {
-          const usage = message.usage || {};
-          const stats = {
-            model,
-            inputTokens: usage.input_tokens,
-            outputTokens: usage.output_tokens,
-            cacheReadTokens: usage.cache_read_input_tokens,
-            cacheWriteTokens: usage.cache_creation_input_tokens,
-            totalCostUsd: message.total_cost_usd,
-            numTurns: message.num_turns,
-            durationMs: message.duration_ms,
-          };
-          emitHarness(emit, `\x1b[2m# cascade-stats ${JSON.stringify(stats)}\x1b[0m\r\n`);
-        } catch { /* ignore */ }
+          if (typeof stream.getContextUsage === 'function') {
+            const ctx = await stream.getContextUsage();
+            if (ctx && typeof ctx === 'object') {
+              emitCascadeStats(emit, {
+                contextUsed: numOrUndef(ctx.totalTokens),
+                contextWindow: numOrUndef(ctx.maxTokens) ?? numOrUndef(ctx.rawMaxTokens),
+                contextPct: numOrUndef(ctx.percentage),
+                model: typeof ctx.model === 'string' ? ctx.model : undefined,
+                autoCompactThreshold: numOrUndef(ctx.autoCompactThreshold),
+              });
+            }
+          }
+        } catch { /* control channel may already be closed */ }
+        try {
+          const usageFn = stream.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET;
+          if (typeof usageFn === 'function') {
+            const plan = await usageFn.call(stream);
+            if (plan && plan.rate_limits_available && plan.rate_limits) {
+              const rl = plan.rate_limits;
+              // Prefer the most-constrained window for a single summary line.
+              const windows = [
+                ['five_hour', rl.five_hour],
+                ['seven_day', rl.seven_day],
+                ['seven_day_opus', rl.seven_day_opus],
+                ['seven_day_sonnet', rl.seven_day_sonnet],
+              ];
+              let best = null;
+              for (const [type, win] of windows) {
+                if (!win || win.utilization == null) continue;
+                if (!best || win.utilization > best.utilization) {
+                  best = { type, utilization: win.utilization, resets_at: win.resets_at };
+                }
+              }
+              if (best) {
+                emitCascadeStats(emit, {
+                  rateLimitType: best.type,
+                  rateLimitUtilization: best.utilization,
+                  rateLimitResetsAt: best.resets_at || undefined,
+                  rateLimitStatus: best.utilization >= 100 ? 'rejected'
+                    : best.utilization >= 80 ? 'allowed_warning' : 'allowed',
+                  subscriptionType: plan.subscription_type || undefined,
+                });
+              }
+              // Keep a fuller snapshot for the UI if multiple windows exist.
+              const rateLimitWindows = {};
+              for (const [type, win] of windows) {
+                if (!win || win.utilization == null) continue;
+                rateLimitWindows[type] = {
+                  utilization: win.utilization,
+                  resetsAt: win.resets_at || null,
+                };
+              }
+              if (Object.keys(rateLimitWindows).length) {
+                emitCascadeStats(emit, { rateLimitWindows, subscriptionType: plan.subscription_type || undefined });
+              }
+            }
+          }
+        } catch { /* experimental / unavailable */ }
       } else if (message.type === 'system') {
         emitHarness(emit, `\x1b[2m# system ${message.subtype || ''}\x1b[0m\r\n`);
       }
