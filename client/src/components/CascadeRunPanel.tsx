@@ -1,25 +1,13 @@
 /**
- * Cascade harness run panel — structured activity view for agent runs.
+ * Agent harness panel — structured transcript in a terminal-like stream.
  *
- * Parses thinking / tools / usage into a custom Cascade UI instead of dumping
- * raw JSONL into a terminal. Raw xterm remains available as an advanced tab.
+ * Renders parsed thinking / tools / meta as sequential harness lines
+ * (not raw JSONL, not a product "timeline" UI). Optional Raw tab shows
+ * the true process/SDK buffer in xterm when needed.
  */
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import {
-  Activity,
-  Brain,
-  Check,
-  ChevronRight,
-  CircleDot,
-  Cpu,
-  Folder,
-  Loader2,
-  Square,
-  TerminalSquare,
-  Wrench,
-  X,
-} from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronRight, Square, TerminalSquare } from 'lucide-react';
 import {
   buildHarnessActivity,
   formatCostUsd,
@@ -31,174 +19,224 @@ import {
   type ActivityItem,
   type HarnessActivity,
 } from '../chat/harnessActivity';
-import { highlightJSON } from './jsonHighlighter';
 import { HarnessTerminal } from './HarnessTerminal';
 import type { ChatMessage } from './ChatView';
 
-type PanelTab = 'timeline' | 'thinking' | 'raw';
-
-function formatInputForDisplay(input: unknown): { kind: 'json' | 'text'; value: string } {
-  if (input == null) return { kind: 'text', value: '' };
-  if (typeof input === 'string') {
-    const t = input.trim();
-    if ((t.startsWith('{') || t.startsWith('[')) && t.length > 1) {
-      try {
-        return { kind: 'json', value: JSON.stringify(JSON.parse(t), null, 2) };
-      } catch {
-        return { kind: 'text', value: t };
-      }
-    }
-    return { kind: 'text', value: t };
-  }
+function previewInput(input: unknown): string {
+  if (input == null) return '';
+  if (typeof input === 'string') return input.trim();
+  if (typeof input !== 'object') return String(input);
+  const rec = input as Record<string, unknown>;
+  if (typeof rec.command === 'string') return rec.command;
+  if (typeof rec.file_path === 'string') return rec.file_path;
+  if (typeof rec.path === 'string') return rec.path;
+  if (typeof rec.pattern === 'string') return rec.pattern;
+  if (typeof rec.query === 'string') return rec.query;
+  if (typeof rec.message === 'string') return rec.message;
   try {
-    return { kind: 'json', value: JSON.stringify(input, null, 2) };
+    const s = JSON.stringify(input);
+    return s.length > 240 ? `${s.slice(0, 239)}…` : s;
   } catch {
-    return { kind: 'text', value: String(input) };
+    return String(input);
   }
 }
 
-function ToolStatusIcon({ status }: { status: 'running' | 'done' | 'error' }) {
-  if (status === 'running') return <Loader2 size={12} className="crp-spin" />;
-  if (status === 'error') return <X size={12} />;
-  return <Check size={12} />;
+function indentBlock(text: string, prefix = '  '): string[] {
+  return text
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .split('\n')
+    .map((line) => (line.length ? `${prefix}${line}` : prefix.trimEnd()));
 }
 
-function TimelineItem({
+/** Collapsible thinking block rendered as terminal-style dim lines. */
+function ThinkingBlock({
+  text,
+  defaultOpen,
+  live,
+}: {
+  text: string;
+  defaultOpen?: boolean;
+  live?: boolean;
+}) {
+  const [open, setOpen] = useState(Boolean(defaultOpen || live));
+  const lines = text.trim() ? indentBlock(text.trim()) : [];
+  const collapsedPreview = lines[0]?.replace(/^\s+/, '') || '';
+  const more = lines.length > 1 ? ` (+${lines.length - 1} lines)` : '';
+
+  useEffect(() => {
+    if (live) setOpen(true);
+  }, [live]);
+
+  return (
+    <div className="crp-term-block crp-term-thinking">
+      <button type="button" className="crp-term-fold" onClick={() => setOpen((v) => !v)}>
+        <span className="crp-term-mark dim">·</span>
+        <span className="crp-term-tag dim">thinking</span>
+        {!open && (
+          <span className="crp-term-fold-preview dim">
+            {collapsedPreview}
+            {more}
+          </span>
+        )}
+        {open && <span className="crp-term-fold-preview" />}
+        <ChevronRight size={12} className={`crp-term-fold-chevron${open ? ' open' : ''}`} />
+      </button>
+      {open && (
+        <pre className="crp-term-pre dim">
+          {lines.join('\n')}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+function ToolBlock({
   item,
   defaultOpen,
 }: {
   item: ActivityItem;
   defaultOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(Boolean(defaultOpen));
-  const isTool = item.kind === 'tool' && item.tool;
-  const isThinking = item.kind === 'thinking';
-  const expandable = isTool || (isThinking && (item.text?.length || 0) > 160);
-
-  const status = item.tool?.status || 'done';
-  const inputDisp = isTool ? formatInputForDisplay(item.tool?.input) : null;
-  const resultText = isTool ? toolResultPreview(item.tool?.result) : '';
+  const tool = item.tool!;
+  const [open, setOpen] = useState(Boolean(defaultOpen || tool.status === 'running'));
+  const inputLine = previewInput(tool.input);
+  const result = toolResultPreview(tool.result, 3000);
+  const hasBody = Boolean(result || (tool.status === 'running' && !result));
+  const mark = tool.status === 'error' ? '✗' : tool.status === 'running' ? '…' : '✓';
+  const markClass = tool.status === 'error' ? 'err' : tool.status === 'running' ? 'run' : 'ok';
 
   return (
-    <div className={`crp-item crp-item-${item.kind} status-${status}${open ? ' open' : ''}`}>
+    <div className={`crp-term-block crp-term-tool status-${tool.status}`}>
       <button
         type="button"
-        className="crp-item-head"
-        onClick={() => expandable && setOpen((v) => !v)}
-        disabled={!expandable}
+        className="crp-term-fold"
+        onClick={() => hasBody && setOpen((v) => !v)}
+        disabled={!hasBody}
       >
-        <span className="crp-item-icon" aria-hidden="true">
-          {isThinking && <Brain size={13} />}
-          {isTool && <Wrench size={13} />}
-          {item.kind === 'system' && <CircleDot size={13} />}
-          {item.kind === 'text' && <Activity size={13} />}
-          {item.kind === 'meta' && <Folder size={13} />}
-        </span>
-        <span className="crp-item-title">{item.title}</span>
-        {!open && item.text && (
-          <span className="crp-item-preview">{item.text}</span>
+        <span className={`crp-term-mark ${markClass}`}>{mark}</span>
+        <span className="crp-term-tag tool">{tool.name || item.title}</span>
+        {inputLine && <span className="crp-term-fold-preview">{inputLine}</span>}
+        {hasBody && (
+          <ChevronRight size={12} className={`crp-term-fold-chevron${open ? ' open' : ''}`} />
         )}
-        {isTool && (
-          <span className={`crp-item-status status-${status}`}>
-            <ToolStatusIcon status={status} />
-          </span>
-        )}
-        {expandable && <ChevronRight size={13} className="crp-chevron" />}
       </button>
-      {open && (
-        <div className="crp-item-body">
-          {isThinking && (
-            <div className="crp-thinking-prose">{item.text}</div>
-          )}
-          {isTool && inputDisp && inputDisp.value && (
-            <div className="crp-code-block">
-              <div className="crp-code-label">Input</div>
-              <pre className="crp-code">
-                {inputDisp.kind === 'json'
-                  ? highlightJSON(inputDisp.value)
-                  : inputDisp.value}
-              </pre>
-            </div>
-          )}
-          {isTool && resultText && (
-            <div className={`crp-code-block ${item.tool?.isError ? 'is-error' : ''}`}>
-              <div className="crp-code-label">{item.tool?.isError ? 'Error' : 'Result'}</div>
-              <pre className="crp-code">{resultText}</pre>
-            </div>
-          )}
-          {isTool && !resultText && status === 'running' && (
-            <div className="crp-item-muted">Running…</div>
-          )}
-        </div>
+      {open && hasBody && (
+        <pre className={`crp-term-pre ${tool.isError ? 'err' : 'muted'}`}>
+          {result
+            ? indentBlock(result).join('\n')
+            : '  …'}
+        </pre>
       )}
     </div>
   );
 }
 
-function StatsPills({ activity }: { activity: HarnessActivity }) {
-  const pills: ReactNode[] = [];
-  const { stats } = activity;
-  if (stats.toolCount > 0) {
-    pills.push(
-      <span key="tools" className="crp-pill" title="Tool calls">
-        <Wrench size={11} />
-        {stats.toolCount}
-      </span>,
-    );
+function buildStatusLine(activity: HarnessActivity, isRunning: boolean): string | null {
+  const parts: string[] = [];
+  if (activity.stats.model) parts.push(activity.stats.model);
+  const tokIn = formatTokenCount(activity.stats.inputTokens);
+  const tokOut = formatTokenCount(activity.stats.outputTokens);
+  if (tokIn || tokOut) parts.push(`${tokIn || '?'}→${tokOut || '?'} tok`);
+  const cost = formatCostUsd(activity.stats.totalCostUsd);
+  if (cost) parts.push(cost);
+  const dur = formatDurationMs(activity.stats.durationMs);
+  if (dur) parts.push(dur);
+  if (activity.stats.toolCount > 0) {
+    parts.push(`${activity.stats.toolCount} tool${activity.stats.toolCount === 1 ? '' : 's'}`);
   }
-  if (stats.hasThinking) {
-    pills.push(
-      <span key="think" className="crp-pill" title="Thinking length">
-        <Brain size={11} />
-        {formatTokenCount(stats.thinkingChars) || '·'}
-      </span>,
-    );
-  }
-  const tokIn = formatTokenCount(stats.inputTokens);
-  const tokOut = formatTokenCount(stats.outputTokens);
-  if (tokIn || tokOut) {
-    pills.push(
-      <span key="tok" className="crp-pill" title="Input → output tokens">
-        <Cpu size={11} />
-        {[tokIn || '?', tokOut || '?'].join('→')}
-      </span>,
-    );
-  }
-  const cost = formatCostUsd(stats.totalCostUsd);
-  if (cost) {
-    pills.push(
-      <span key="cost" className="crp-pill" title="Estimated cost">
-        {cost}
-      </span>,
-    );
-  }
-  const dur = formatDurationMs(stats.durationMs);
-  if (dur) {
-    pills.push(
-      <span key="dur" className="crp-pill" title="Duration">
-        {dur}
-      </span>,
-    );
-  }
-  if (stats.model) {
-    pills.push(
-      <span key="model" className="crp-pill crp-pill-model" title="Model">
-        {stats.model}
-      </span>,
-    );
-  }
-  if (stats.cwd) {
-    const short = stats.cwd.replace(/^\/home\/[^/]+/, '~').replace(/\/$/, '');
-    const base = short.split('/').filter(Boolean).slice(-2).join('/') || short;
-    pills.push(
-      <span key="cwd" className="crp-pill" title={stats.cwd}>
-        <Folder size={11} />
-        {base}
-      </span>,
-    );
-  }
-  if (pills.length === 0) return null;
-  return <div className="crp-pills">{pills}</div>;
+  if (isRunning && parts.length === 0) return 'running';
+  if (parts.length === 0) return null;
+  return parts.join(' · ');
+}
+
+function StructuredTranscript({
+  activity,
+  isRunning,
+}: {
+  activity: HarnessActivity;
+  isRunning: boolean;
+}) {
+  const { stats, items } = activity;
+  const statusLine = buildStatusLine(activity, isRunning);
+  const lastIdx = items.length - 1;
+
+  // If we only have thinkingText and no items, synthesize one block.
+  const renderItems = items.length > 0
+    ? items
+    : activity.thinkingText
+      ? [{
+          id: 'thinking-only',
+          kind: 'thinking' as const,
+          title: 'Thinking',
+          text: activity.thinkingText,
+        }]
+      : [];
+
+  return (
+    <div className="crp-term-stream" role="log" aria-label="Agent harness output">
+      {(stats.command || stats.model || stats.cwd) && (
+        <div className="crp-term-line meta">
+          {stats.command
+            ? <span className="dim">$ {stats.command}</span>
+            : (
+              <span className="dim">
+                # {stats.model || 'agent'}
+                {stats.cwd ? ` · ${stats.cwd}` : ''}
+              </span>
+            )}
+        </div>
+      )}
+
+      {renderItems.length === 0 && (
+        <div className="crp-term-line dim">
+          {isRunning ? 'waiting for harness stream…' : 'no structured output'}
+        </div>
+      )}
+
+      {renderItems.map((item, index) => {
+        if (item.kind === 'thinking') {
+          return (
+            <ThinkingBlock
+              key={item.id}
+              text={item.text || ''}
+              defaultOpen={isRunning && index === lastIdx}
+              live={isRunning && index === lastIdx}
+            />
+          );
+        }
+        if (item.kind === 'tool' && item.tool) {
+          return (
+            <ToolBlock
+              key={item.id}
+              item={item}
+              defaultOpen={isRunning && (index === lastIdx || item.tool.status === 'running')}
+            />
+          );
+        }
+        if (item.text) {
+          return (
+            <div key={item.id} className="crp-term-line">
+              {item.text}
+            </div>
+          );
+        }
+        return null;
+      })}
+
+      {stats.exitCode != null && stats.exitCode !== '' && (
+        <div className="crp-term-line meta dim"># exit {stats.exitCode}</div>
+      )}
+      {statusLine && !isRunning && (
+        <div className="crp-term-line meta dim"># {statusLine}</div>
+      )}
+      {isRunning && (
+        <div className="crp-term-line run-cursor" aria-hidden="true">
+          <span className="crp-term-cursor">█</span>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function CascadeRunPanel({
@@ -208,21 +246,16 @@ export function CascadeRunPanel({
 }: {
   message: ChatMessage;
   onCancelRun: (runId: number) => void;
-  /** When parent selects the message, keep the panel expanded. */
   forceOpen?: boolean;
 }) {
   const isRunning = message.status === 'running';
   const activity = useMemo(() => buildHarnessActivity(message), [message]);
   const canExpand = hasRunActivity(message) || activity.items.length > 0 || activity.stats.hasRaw;
   const [open, setOpen] = useState(isRunning);
-  const [tab, setTab] = useState<PanelTab>('timeline');
+  const [showRaw, setShowRaw] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
   const summary = summarizeActivity(activity, isRunning);
-  const repliedViaChat = !isRunning
-    && !(message.body || '').trim()
-    && (message.agentId || message.registrationId || message.runId != null);
 
-  // Auto-open while running; stay open if user expanded or parent selected.
   useEffect(() => {
     if (isRunning) setOpen(true);
   }, [isRunning]);
@@ -231,26 +264,18 @@ export function CascadeRunPanel({
     if (forceOpen) setOpen(true);
   }, [forceOpen]);
 
-  // Follow timeline tail while running.
   useEffect(() => {
-    if (!isRunning || !open || tab !== 'timeline') return;
+    if (!isRunning || !open || showRaw) return;
     const el = bodyRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [activity.items.length, activity.thinkingText.length, isRunning, open, tab]);
-
-  // Prefer thinking tab content when only thinking exists
-  useEffect(() => {
-    if (tab === 'timeline' && activity.items.length === 0 && activity.stats.hasThinking) {
-      setTab('thinking');
-    }
-  }, [activity.items.length, activity.stats.hasThinking, tab]);
+  }, [activity.items.length, activity.thinkingText.length, isRunning, open, showRaw]);
 
   if (!isRunning && !canExpand) return null;
 
-  const showThinkingTab = activity.stats.hasThinking;
-  const showRawTab = activity.stats.hasRaw;
   const effectiveOpen = open || forceOpen;
+  const hasStructured = activity.items.length > 0 || activity.stats.hasThinking;
+  const useRaw = showRaw || (!hasStructured && activity.stats.hasRaw);
 
   return (
     <div
@@ -264,12 +289,8 @@ export function CascadeRunPanel({
           onClick={() => canExpand && setOpen((v) => !v)}
           disabled={!canExpand}
         >
-          <span className="crp-toggle-icon" aria-hidden="true">
-            {isRunning ? <Activity size={13} /> : <TerminalSquare size={13} />}
-          </span>
-          <span className="crp-toggle-label">
-            {isRunning ? 'Live run' : repliedViaChat ? 'Run activity' : 'Run'}
-          </span>
+          <TerminalSquare size={13} className="crp-toggle-icon" />
+          <span className="crp-toggle-label">Harness</span>
           <span className="crp-toggle-summary">{summary}</span>
           {isRunning && <span className="ai-spinner crp-spinner" />}
           {canExpand && <ChevronRight size={13} className="crp-chevron" />}
@@ -292,97 +313,24 @@ export function CascadeRunPanel({
 
       {effectiveOpen && canExpand && (
         <div className="crp-shell">
-          <StatsPills activity={activity} />
-
-          {(showThinkingTab || showRawTab || activity.items.length > 0) && (
-            <div className="crp-tabs" role="tablist">
-              <button
-                type="button"
-                role="tab"
-                aria-selected={tab === 'timeline'}
-                className={tab === 'timeline' ? 'active' : ''}
-                onClick={() => setTab('timeline')}
-              >
-                Timeline
-              </button>
-              {showThinkingTab && (
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={tab === 'thinking'}
-                  className={tab === 'thinking' ? 'active' : ''}
-                  onClick={() => setTab('thinking')}
-                >
-                  Thinking
-                </button>
-              )}
-              {showRawTab && (
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={tab === 'raw'}
-                  className={tab === 'raw' ? 'active' : ''}
-                  onClick={() => setTab('raw')}
-                >
-                  Raw
-                </button>
-              )}
-            </div>
-          )}
-
-          <div className="crp-body" ref={bodyRef}>
-            {tab === 'timeline' && (
-              <div className="crp-timeline">
-                {activity.items.length === 0 && !activity.stats.hasThinking && (
-                  <div className="crp-empty">
-                    {isRunning
-                      ? 'Waiting for the harness to stream activity…'
-                      : 'No structured activity recorded for this run.'}
-                  </div>
-                )}
-                {activity.items.map((item, index) => (
-                  <TimelineItem
-                    key={item.id}
-                    item={item}
-                    defaultOpen={
-                      isRunning
-                      && index === activity.items.length - 1
-                      && (item.kind === 'thinking' || item.tool?.status === 'running')
-                    }
-                  />
-                ))}
-                {activity.items.length === 0 && activity.stats.hasThinking && (
-                  <TimelineItem
-                    item={{
-                      id: 'thinking-only',
-                      kind: 'thinking',
-                      title: 'Thinking',
-                      text: activity.thinkingText,
-                    }}
-                    defaultOpen
-                  />
-                )}
-              </div>
-            )}
-
-            {tab === 'thinking' && (
-              <div className="crp-thinking-full">
-                {activity.thinkingText
-                  ? <div className="crp-thinking-prose">{activity.thinkingText}</div>
-                  : <div className="crp-empty">No thinking trace.</div>}
-              </div>
-            )}
-
-            {tab === 'raw' && (
+          <div className="crp-term" ref={bodyRef}>
+            {useRaw ? (
               <div className="crp-raw-wrap">
-                <HarnessTerminal content={activity.rawLog} active={isRunning} />
+                <HarnessTerminal content={activity.rawLog || activity.thinkingText} active={isRunning} />
               </div>
+            ) : (
+              <StructuredTranscript activity={activity} isRunning={isRunning} />
             )}
           </div>
-
-          {repliedViaChat && (
-            <div className="crp-footnote">
-              Reply was posted via chat send — this panel is the run record.
+          {activity.stats.hasRaw && hasStructured && (
+            <div className="crp-term-footer">
+              <button
+                type="button"
+                className="crp-raw-toggle"
+                onClick={() => setShowRaw((v) => !v)}
+              >
+                {showRaw ? 'structured' : 'raw buffer'}
+              </button>
             </div>
           )}
         </div>
