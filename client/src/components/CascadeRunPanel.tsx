@@ -6,7 +6,7 @@
  * the true process/SDK buffer in xterm when needed.
  */
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ChevronRight, Square, TerminalSquare } from 'lucide-react';
 import {
   buildHarnessActivity,
@@ -340,7 +340,7 @@ function StructuredTranscript({
   );
 }
 
-export function CascadeRunPanel({
+export const CascadeRunPanel = memo(function CascadeRunPanel({
   message,
   onCancelRun,
   forceOpen = false,
@@ -478,4 +478,4 @@ export function CascadeRunPanel({
       )}
     </div>
   );
-}
+});
