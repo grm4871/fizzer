@@ -600,16 +600,23 @@ export function ChatView({
   const getMessageAvatarKind = (message: ChatMessage): 'agent' | 'human' =>
     message.agentId || agentAuthors.has(message.author) ? 'agent' : 'human';
   const onlineUsers = useMemo(() => new Set(presence.online), [presence.online]);
-  const humanUsers = useMemo(() => {
-    const names = new Set<string>(presence.participants);
-    if (currentUser) names.add(currentUser);
+  const humanMessageAuthors = useMemo(() => {
+    const names = new Set<string>();
     for (const message of messages) {
       if (message.author === 'Cascade') continue;
       if (message.agentId || agentAuthors.has(message.author)) continue;
       if (message.author) names.add(message.author);
     }
+    return Array.from(names).sort((a, b) => a.localeCompare(b)).join('\n');
+  }, [agentAuthors, messages]);
+  const humanUsers = useMemo(() => {
+    const names = new Set<string>(presence.participants);
+    if (currentUser) names.add(currentUser);
+    for (const name of humanMessageAuthors.split('\n')) {
+      if (name) names.add(name);
+    }
     return Array.from(names).sort((a, b) => a.localeCompare(b));
-  }, [agentAuthors, currentUser, messages, presence.participants]);
+  }, [currentUser, humanMessageAuthors, presence.participants]);
   const mentionableAliases = useMemo(() => {
     const aliases = new Set<string>();
     for (const registration of registeredAgents) {
@@ -763,10 +770,6 @@ export function ChatView({
   const channelVaultAgentIds = useMemo(
     () => new Set(registeredAgents.map((r) => r.vaultAgentId).filter(Boolean) as string[]),
     [registeredAgents],
-  );
-  const vaultAgentsNotInChannel = useMemo(
-    () => vaultAgents.filter((va) => !channelVaultAgentIds.has(va.id)),
-    [vaultAgents, channelVaultAgentIds],
   );
 
   async function addVaultAgentFromPicker(vaultAgentId: string) {
