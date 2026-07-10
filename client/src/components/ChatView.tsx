@@ -557,6 +557,8 @@ export function ChatView({
   const [mediaError, setMediaError] = useState('');
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const messagesRef = useRef<HTMLDivElement | null>(null);
+  /** Inner content wrapper — ResizeObserver watches height growth (harness, thinking). */
+  const messagesContentRef = useRef<HTMLDivElement | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
   const wasAtBottomRef = useRef(true);
   const previousChannelIdRef = useRef(channelId);
@@ -640,6 +642,31 @@ export function ChatView({
     }
   }, [usersCollapsed]);
 
+  // Fingerprint content growth so we re-stick when a running message's body,
+  // harness log, or thinking blocks grow without a new message being added.
+  const chatScrollEpoch = useMemo(() => {
+    let n = sortedMessages.length * 1_000_003;
+    for (const message of sortedMessages) {
+      n += (message.body?.length ?? 0);
+      n += (message.harnessLog?.length ?? 0);
+      n += (message.blocks ?? []).reduce(
+        (sum, block) => sum
+          + (block.text?.length ?? 0)
+          + (typeof block.content === 'string' ? block.content.length : 0)
+          + (block.name?.length ?? 0)
+          + 1,
+        0,
+      );
+      if (message.status === 'running') n += 17;
+    }
+    return n;
+  }, [sortedMessages]);
+
+  const scrollToBottomIfSticky = useCallback(() => {
+    if (!wasAtBottomRef.current) return;
+    endRef.current?.scrollIntoView({ block: 'end' });
+  }, []);
+
   useLayoutEffect(() => {
     if (previousChannelIdRef.current !== channelId) {
       previousChannelIdRef.current = channelId;
@@ -647,17 +674,29 @@ export function ChatView({
     }
     if (!wasAtBottomRef.current) return;
     endRef.current?.scrollIntoView({ block: 'end' });
-  }, [sortedMessages.length, channelId]);
+  }, [chatScrollEpoch, channelId]);
+
+  // When harness/thinking expands layout height without a React dep change
+  // (or after paint), keep the main chat scroller pinned if the user was at bottom.
+  useEffect(() => {
+    const content = messagesContentRef.current;
+    if (!content || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => {
+      if (!wasAtBottomRef.current) return;
+      // rAF: wait for nested max-height growth (thinking pre) to settle.
+      requestAnimationFrame(() => {
+        if (!wasAtBottomRef.current) return;
+        endRef.current?.scrollIntoView({ block: 'end' });
+      });
+    });
+    ro.observe(content);
+    return () => ro.disconnect();
+  }, [channelId]);
 
   const updateBottomStickiness = useCallback(() => {
     const element = messagesRef.current;
     if (!element) return;
     wasAtBottomRef.current = isAtScrollBottom(element);
-  }, []);
-
-  const scrollToBottomIfSticky = useCallback(() => {
-    if (!wasAtBottomRef.current) return;
-    endRef.current?.scrollIntoView({ block: 'end' });
   }, []);
 
   useEffect(() => {
@@ -1031,6 +1070,7 @@ export function ChatView({
           aria-label={`${channelName} messages`}
           onScroll={updateBottomStickiness}
         >
+          <div ref={messagesContentRef} className="chat-messages-content">
           {sortedMessages.length === 0 ? (
             <div className="chat-empty">
               <Hash size={24} />
@@ -1118,6 +1158,7 @@ export function ChatView({
                               message={message}
                               onCancelRun={onCancelRun}
                               forceOpen={selected}
+                              onContentGrow={scrollToBottomIfSticky}
                             />
                           )}
                         </div>
@@ -1129,6 +1170,7 @@ export function ChatView({
             })
           )}
           <div ref={endRef} />
+          </div>
         </div>
 
         <footer

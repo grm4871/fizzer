@@ -344,10 +344,13 @@ export const CascadeRunPanel = memo(function CascadeRunPanel({
   message,
   onCancelRun,
   forceOpen = false,
+  onContentGrow,
 }: {
   message: ChatMessage;
   onCancelRun: (runId: number) => void;
   forceOpen?: boolean;
+  /** Notify parent (main chat scroller) when harness content height grows. */
+  onContentGrow?: () => void;
 }) {
   const isRunning = message.status === 'running';
   const activity = useMemo(() => buildHarnessActivity(message), [message]);
@@ -370,6 +373,7 @@ export const CascadeRunPanel = memo(function CascadeRunPanel({
       n += (item.text?.length || 0) + (item.tool?.result?.length || 0) + 1;
     }
     n += activity.stats.toolCount * 17 + (activity.stats.numTurns || 0);
+    n += activity.rawLog.length;
     return n;
   }, [activity]);
 
@@ -389,6 +393,12 @@ export const CascadeRunPanel = memo(function CascadeRunPanel({
     if (!pinBottomRef.current) return;
     scrollToBottomSoon(bodyRef.current);
   }, [scrollEpoch, isRunning, effectiveOpen, showRaw]);
+
+  // Keep the main chat panel pinned when harness/thinking expands.
+  useLayoutEffect(() => {
+    if (!effectiveOpen) return;
+    onContentGrow?.();
+  }, [scrollEpoch, effectiveOpen, onContentGrow]);
 
   if (!isRunning && !canExpand) return null;
 
