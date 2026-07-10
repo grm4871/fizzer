@@ -61,7 +61,7 @@ type ContextMenu =
   | { x: number; y: number; kind: 'root' };
 
 type ElectronUpdateAPI = {
-  updateAndRestart?: () => Promise<{ success: boolean; relaunching?: boolean; error?: string }>;
+  updateAndRestart?: () => Promise<{ success: boolean; refreshing?: boolean; error?: string }>;
   onUpdateFailed?: (callback: (payload: { error?: string }) => void) => () => void;
 };
 
@@ -501,7 +501,7 @@ export function Sidebar({
             if (!result.success) {
               alert('Desktop update failed: ' + (result.error || 'Unknown error'));
               setUpdating(false);
-            } else if (!result.relaunching) {
+            } else if (!result.refreshing) {
               setUpdating(false);
             }
           }}

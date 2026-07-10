@@ -147,14 +147,13 @@ function runUpdateCommand(command, args, cwd) {
   });
 }
 
-async function updateDesktopFromSource() {
+async function updateDesktopInPlace() {
   const root = getProjectRoot();
   const gitBin = process.platform === 'win32' ? 'git.exe' : 'git';
 
   // The desktop shell loads its UI from the remote server (cscd.online), and
-  // client/dist is committed, so an update only needs the latest source +
-  // a restart — no local npm install or build is required. Stash any local
-  // changes first so a dirty working tree can't abort the fast-forward pull,
+  // client/dist is committed, so an update only needs the latest source.
+  // Stash any local changes first so a dirty working tree can't abort the fast-forward pull,
   // then restore them afterward.
   const stashOut = await runUpdateCommand(gitBin, ['stash', '--include-untracked'], root);
   const didStash = !/No local changes to save/i.test(stashOut);
@@ -164,9 +163,13 @@ async function updateDesktopFromSource() {
   if (didStash) {
     await runUpdateCommand(gitBin, ['stash', 'pop'], root);
   }
+}
 
-  app.relaunch();
-  app.exit(0);
+/** Reload every renderer without terminating the Electron main process. */
+function refreshDesktopWindows() {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.reloadIgnoringCache();
+  }
 }
 
 /** Send an IPC message to every live window. */
@@ -650,6 +653,8 @@ ipcMain.handle('netdoc:getLatestVersionContent', async (event, netdocId) => {
 });
 
 // ── Desktop app update ───────────────────────────────────────
+// Keep the original channel name so updated hosted UI remains compatible with
+// desktop shells that have not received the in-place updater yet.
 ipcMain.handle('app:updateAndRestart', async () => {
   try {
     if (desktopUpdateInProgress) {
@@ -666,15 +671,20 @@ ipcMain.handle('app:updateAndRestart', async () => {
     }
 
     desktopUpdateInProgress = true;
-    void updateDesktopFromSource().catch((error) => {
-      desktopUpdateInProgress = false;
-      console.error('[IPC] Desktop update failed:', error);
-      broadcastToWindows('app:updateFailed', {
-        error: error instanceof Error ? error.message : String(error),
+    void updateDesktopInPlace()
+      .then(() => {
+        desktopUpdateInProgress = false;
+        refreshDesktopWindows();
+      })
+      .catch((error) => {
+        desktopUpdateInProgress = false;
+        console.error('[IPC] Desktop update failed:', error);
+        broadcastToWindows('app:updateFailed', {
+          error: error instanceof Error ? error.message : String(error),
+        });
       });
-    });
 
-    return { success: true, relaunching: true };
+    return { success: true, refreshing: true };
   } catch (error) {
     desktopUpdateInProgress = false;
     console.error('[IPC] Desktop update failed:', error);

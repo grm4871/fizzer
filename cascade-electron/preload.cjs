@@ -93,6 +93,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   // ── App Update ──────────────────────────────────────────────
+  // Stable bridge name retained for compatibility; updates now refresh in place.
   updateAndRestart: () => ipcRenderer.invoke('app:updateAndRestart'),
   onUpdateFailed: (callback) => {
     const listener = (_event, payload) => callback(payload);
