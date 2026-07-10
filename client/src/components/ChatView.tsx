@@ -629,7 +629,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
   && prev.onImageLoad === next.onImageLoad
 );
 
-export function ChatView({
+export const ChatView = memo(function ChatView({
   channelId,
   channelName,
   messages,
@@ -1847,4 +1847,4 @@ export function ChatView({
       )}
     </section>
   );
-}
+});

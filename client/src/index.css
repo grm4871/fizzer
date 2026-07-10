@@ -2,7 +2,7 @@
    Cascade Notes — Design System & Global Styles
    ═══════════════════════════════════════════════════════════ */
 
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+/* Fonts load async via <link> in app.html — CSS @import blocked first paint. */
 
 /* ─── Design Tokens ──────────────────────────────────────── */
 :root {
@@ -40,9 +40,10 @@
   --radius-lg: 10px;
   --radius-xl: 14px;
 
-  --transition-fast: 60ms ease-out;
-  --transition-normal: 140ms ease-out;
-  --transition-slow: 220ms ease-out;
+  /* Snappy chrome: long transitions read as hover lag when idle. */
+  --transition-fast: 0ms;
+  --transition-normal: 80ms ease-out;
+  --transition-slow: 140ms ease-out;
 
   --shadow-sm: 0 1px 3px hsla(0, 0%, 0%, 0.4);
   --shadow-md: 0 4px 14px hsla(0, 0%, 0%, 0.5);
@@ -1194,9 +1195,28 @@ a {
   display: flex;
   gap: 10px;
   padding: 8px 16px;
+  /* Skip layout/paint for offscreen rows; isolate hover paint from siblings. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 72px;
+  contain: layout style;
+  position: relative;
 }
-.chat-message-group:hover {
+/* Hover via pseudo so large harness children aren't forced to repaint. */
+.chat-message-group::before {
+  content: '';
+  position: absolute;
+  inset: 0;
   background: hsla(22, 7%, 14%, 0.42);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+.chat-message-group:hover::before {
+  opacity: 1;
+}
+.chat-message-group > * {
+  position: relative;
+  z-index: 1;
 }
 .chat-message-group.has-run-widget .chat-message-chunk.has-run-widget {
   cursor: pointer;
@@ -1512,6 +1532,10 @@ a {
   background: #0c0b0a;
   overflow: hidden;
   box-sizing: border-box;
+  /* Isolate expensive terminal paint from parent hover / sibling reflow. */
+  contain: layout style paint;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 40px;
 }
 .cascade-run-panel.is-running {
   border-color: hsla(33, 40%, 40%, 0.45);

@@ -296,34 +296,62 @@ export default function App() {
   }, [user]);
 
   // Poll desktop runner health for the chat agent sidebar.
+  // Only commit setState when the payload actually changes — identical JSON
+  // every 5s was re-rendering the whole chat tree and made idle hover laggy.
   useEffect(() => {
     if (!user) {
       setRunnerHealth(null);
       return;
     }
     let cancelled = false;
+    let timer: number | null = null;
+    const OFFLINE: DesktopRunnerHealth = {
+      online: false,
+      activeRuns: 0,
+      lastError: null,
+      lastErrorAt: null,
+      lastSeenAt: null,
+      models: null,
+    };
+    const sameHealth = (a: DesktopRunnerHealth | null, b: DesktopRunnerHealth): boolean => {
+      if (!a) return false;
+      if (a.online !== b.online) return false;
+      if (a.activeRuns !== b.activeRuns) return false;
+      if (a.lastError !== b.lastError) return false;
+      if (a.lastErrorAt !== b.lastErrorAt) return false;
+      if (a.lastSeenAt !== b.lastSeenAt) return false;
+      if (a.models === b.models) return true;
+      if (!a.models || !b.models) return a.models === b.models;
+      try {
+        return JSON.stringify(a.models) === JSON.stringify(b.models);
+      } catch {
+        return false;
+      }
+    };
+    const apply = (data: DesktopRunnerHealth) => {
+      setRunnerHealth((prev) => (sameHealth(prev, data) ? prev : data));
+    };
     const tick = async () => {
+      // Skip network work while the tab is hidden; resume on visibilitychange.
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
       try {
         const data = await api<DesktopRunnerHealth>('/api/me/desktop-runner');
-        if (!cancelled) setRunnerHealth(data);
+        if (!cancelled) apply(data);
       } catch {
-        if (!cancelled) {
-          setRunnerHealth({
-            online: false,
-            activeRuns: 0,
-            lastError: null,
-            lastErrorAt: null,
-            lastSeenAt: null,
-            models: null,
-          });
-        }
+        if (!cancelled) apply(OFFLINE);
       }
     };
     void tick();
-    const id = window.setInterval(tick, 5000);
+    // 12s is plenty for a status pill; was 5s and forced full tree work.
+    timer = window.setInterval(tick, 12_000);
+    const onVis = () => {
+      if (document.visibilityState === 'visible') void tick();
+    };
+    document.addEventListener('visibilitychange', onVis);
     return () => {
       cancelled = true;
-      window.clearInterval(id);
+      if (timer != null) window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVis);
     };
   }, [user]);
 
