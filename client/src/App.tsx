@@ -16,6 +16,7 @@ import {
   type ChatReplyRef,
   type DesktopRunnerHealth,
   type RunningChatAgent,
+  type VaultAgent,
 } from './components/ChatView';
 import { SearchOverlay } from './components/SearchOverlay';
 import { CommandPalette } from './components/CommandPalette';
@@ -112,6 +113,7 @@ export default function App() {
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [runnerHealth, setRunnerHealth] = useState<DesktopRunnerHealth | null>(null);
+  const [vaultAgents, setVaultAgents] = useState<VaultAgent[]>([]);
   // ─── Derived focus state ────────────────────────────────────────
   const focusedPane = Layout.findPane(layout, focusedPaneId) ?? Layout.getFirstPane(layout);
   const activeTabId = focusedPane.activeTabId;
@@ -514,6 +516,15 @@ export default function App() {
     }
   }, []);
 
+  const loadVaultAgents = useCallback(async (vaultId: string) => {
+    try {
+      const data = await api<{ agents: VaultAgent[] }>(`/api/vaults/${vaultId}/vault-agents`);
+      setVaultAgents(data.agents ?? []);
+    } catch {
+      setVaultAgents([]);
+    }
+  }, []);
+
   const loadVaultData = useCallback(async (vaultId: string) => {
     try {
       const [folderData, noteData] = await Promise.all([
@@ -527,11 +538,12 @@ export default function App() {
         loadChatMessages(vaultId, nextNotes),
         loadChatAgentMembers(vaultId, nextNotes),
         loadChatPresence(vaultId, nextNotes),
+        loadVaultAgents(vaultId),
       ]);
     } catch (error) {
       console.error('Error loading vault data:', error);
     }
-  }, [loadChatMessages, loadChatAgentMembers, loadChatPresence]);
+  }, [loadChatMessages, loadChatAgentMembers, loadChatPresence, loadVaultAgents]);
 
   useEffect(() => {
     const resyncOnResume = () => {
@@ -722,8 +734,12 @@ export default function App() {
       },
     }));
     const vaultId = activeVaultIdRef.current;
-    if (vaultId) void persistChatAgentMemberToServer(vaultId, channelId, normalized);
-  }, [persistChatAgentMemberToServer]);
+    if (vaultId) {
+      void persistChatAgentMemberToServer(vaultId, channelId, normalized).then(() => {
+        void loadVaultAgents(vaultId);
+      });
+    }
+  }, [persistChatAgentMemberToServer, loadVaultAgents]);
 
   const handleRemoveChatAgent = useCallback((channelId: string, registrationId: string) => {
     setChatState((prev) => ({
@@ -734,8 +750,85 @@ export default function App() {
       },
     }));
     const vaultId = activeVaultIdRef.current;
-    if (vaultId) void removeChatAgentMemberOnServer(vaultId, channelId, registrationId);
-  }, [removeChatAgentMemberOnServer]);
+    if (vaultId) {
+      void removeChatAgentMemberOnServer(vaultId, channelId, registrationId).then(() => {
+        void loadVaultAgents(vaultId);
+      });
+    }
+  }, [removeChatAgentMemberOnServer, loadVaultAgents]);
+
+  const handleUpsertVaultAgent = useCallback(async (input: Partial<VaultAgent> & { agentId: string }) => {
+    const vaultId = activeVaultIdRef.current;
+    if (!vaultId) throw new Error('No active vault');
+    const data = await api<{ agent: VaultAgent }>(`/api/vaults/${vaultId}/vault-agents`, {
+      method: 'PUT',
+      body: JSON.stringify(input),
+    });
+    const agent = data.agent;
+    setVaultAgents((prev) => {
+      const rest = prev.filter((a) => a.id !== agent.id);
+      return [...rest, agent].sort((a, b) => (a.displayName || a.mention).localeCompare(b.displayName || b.mention));
+    });
+    // Sync identity into any loaded channel memberships
+    setChatState((prev) => {
+      const next = { ...prev.registeredAgentsByChannel };
+      for (const [chId, regs] of Object.entries(next)) {
+        next[chId] = regs.map((r) => (
+          r.vaultAgentId === agent.id
+            ? {
+                ...r,
+                agentId: agent.agentId,
+                displayName: agent.displayName,
+                mention: agent.mention,
+                model: agent.model,
+                cwd: agent.cwd,
+                contextPrompt: agent.contextPrompt,
+              }
+            : r
+        ));
+      }
+      return { ...prev, registeredAgentsByChannel: next };
+    });
+    return agent;
+  }, []);
+
+  const handleDeleteVaultAgent = useCallback(async (vaultAgentId: string) => {
+    const vaultId = activeVaultIdRef.current;
+    if (!vaultId) return;
+    await api(`/api/vaults/${vaultId}/vault-agents/${vaultAgentId}`, { method: 'DELETE' });
+    setVaultAgents((prev) => prev.filter((a) => a.id !== vaultAgentId));
+    setChatState((prev) => {
+      const next: Record<string, ChatAgentRegistration[]> = {};
+      for (const [chId, regs] of Object.entries(prev.registeredAgentsByChannel)) {
+        next[chId] = regs.filter((r) => r.vaultAgentId !== vaultAgentId);
+      }
+      return { ...prev, registeredAgentsByChannel: next };
+    });
+  }, []);
+
+  const handleAddVaultAgentToChannel = useCallback(async (channelId: string, vaultAgentId: string) => {
+    const vaultId = activeVaultIdRef.current;
+    if (!vaultId) throw new Error('No active vault');
+    const data = await api<{ registration: ChatAgentRegistration }>(
+      `/api/vaults/${vaultId}/channels/${channelId}/agents/from-vault`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ vaultAgentId }),
+      },
+    );
+    const reg = data.registration;
+    setChatState((prev) => ({
+      ...prev,
+      registeredAgentsByChannel: {
+        ...prev.registeredAgentsByChannel,
+        [channelId]: [
+          ...(prev.registeredAgentsByChannel[channelId] ?? []).filter((item) => item.id !== reg.id && item.vaultAgentId !== vaultAgentId),
+          reg,
+        ],
+      },
+    }));
+    void loadVaultAgents(vaultId);
+  }, [loadVaultAgents]);
 
   const handleInviteChatUser = useCallback(async (channelId: string, username: string) => {
     const vaultId = activeVaultIdRef.current;
@@ -1829,10 +1922,14 @@ export default function App() {
             ),
           }))}
           registeredAgents={chatState.registeredAgentsByChannel[channel.id] ?? []}
+          vaultAgents={vaultAgents}
           runningAgents={runningChatAgents}
           runnerHealth={runnerHealth}
           onRegisterAgent={handleRegisterChatAgent}
           onRemoveAgent={handleRemoveChatAgent}
+          onUpsertVaultAgent={handleUpsertVaultAgent}
+          onDeleteVaultAgent={handleDeleteVaultAgent}
+          onAddVaultAgentToChannel={handleAddVaultAgentToChannel}
           onCreateInviteLink={handleCreateChatInviteLink}
           onInviteUser={handleInviteChatUser}
           onSendMessage={handleSendChatMessage}
@@ -1859,7 +1956,7 @@ export default function App() {
         onOpenNote={openNote}
       />
     );
-  }, [chatState.messagesByChannel, chatState.registeredAgentsByChannel, chatPresenceByChannel, currentUsername, runningChatAgents, runnerHealth, handleCancelChatRun, handleCreateChatInviteLink, handleInviteChatUser, handleRegisterChatAgent, handleRemoveChatAgent, handleSendChatMessage, noteContents, notes, handleNoteChange, saveNoteTab, renameNoteTab, handleExecuteDirective, openNote]);
+  }, [chatState.messagesByChannel, chatState.registeredAgentsByChannel, chatPresenceByChannel, currentUsername, runningChatAgents, runnerHealth, vaultAgents, handleCancelChatRun, handleCreateChatInviteLink, handleInviteChatUser, handleRegisterChatAgent, handleRemoveChatAgent, handleUpsertVaultAgent, handleDeleteVaultAgent, handleAddVaultAgentToChannel, handleSendChatMessage, noteContents, notes, handleNoteChange, saveNoteTab, renameNoteTab, handleExecuteDirective, openNote]);
 
   if (!user) {
     return (

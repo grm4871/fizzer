@@ -122,6 +122,21 @@ export interface ChatAgentRegistration {
   conversationId: string;
 }
 
+/** Persistent vault-scoped agent identity (shared across channels). */
+export interface VaultAgent {
+  id: string;
+  vaultId: string;
+  agentId: string;
+  displayName: string;
+  mention: string;
+  model: string;
+  cwd: string;
+  contextPrompt: string;
+  channelIds?: string[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export function createChatAgentRegistrationId() {
   return `reg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -154,10 +169,14 @@ interface ChatViewProps {
   presence: ChatChannelPresence;
   availableAgents: ChatAgentOption[];
   registeredAgents: ChatAgentRegistration[];
+  vaultAgents?: VaultAgent[];
   runningAgents: RunningChatAgent[];
   runnerHealth?: DesktopRunnerHealth | null;
   onRegisterAgent: (channelId: string, registration: ChatAgentRegistration) => void;
   onRemoveAgent: (channelId: string, registrationId: string) => void;
+  onUpsertVaultAgent?: (agent: Partial<VaultAgent> & { agentId: string }) => Promise<VaultAgent | void> | VaultAgent | void;
+  onDeleteVaultAgent?: (vaultAgentId: string) => Promise<void> | void;
+  onAddVaultAgentToChannel?: (channelId: string, vaultAgentId: string) => Promise<void> | void;
   onCreateInviteLink: (channelId: string) => Promise<string>;
   onInviteUser: (channelId: string, username: string) => Promise<void>;
   onSendMessage: (channelId: string, body: string, media?: ChatMediaAttachment[], replyTo?: ChatReplyRef) => void;
@@ -468,10 +487,14 @@ export function ChatView({
   presence,
   availableAgents,
   registeredAgents,
+  vaultAgents = [],
   runningAgents,
   runnerHealth = null,
   onRegisterAgent,
   onRemoveAgent,
+  onUpsertVaultAgent,
+  onDeleteVaultAgent,
+  onAddVaultAgentToChannel,
   onCreateInviteLink,
   onInviteUser,
   onSendMessage,
@@ -484,6 +507,8 @@ export function ChatView({
   const [usersCollapsed, setUsersCollapsed] = useState(() =>
     typeof localStorage !== 'undefined' && localStorage.getItem('cascade_chat_users_collapsed') === '1'
   );
+  /** Agent panel flow: pick existing vault agent, create, or edit membership/identity. */
+  const [agentPanelMode, setAgentPanelMode] = useState<'picker' | 'create' | 'edit-member' | 'edit-identity'>('picker');
   const [agentMenuOpen, setAgentMenuOpen] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteUsername, setInviteUsername] = useState('');
@@ -704,8 +729,11 @@ export function ChatView({
       setAgentMenuOpen(false);
       setEditingRegistrationId(null);
       setAgentFormError('');
+      setAgentPanelMode('picker');
       return;
     }
+    // Prefer picker of vault agents; fall back to create form.
+    setAgentPanelMode(vaultAgents.length > 0 || onAddVaultAgentToChannel ? 'picker' : 'create');
     openAgentEditor();
   }
 
@@ -714,13 +742,62 @@ export function ChatView({
     setAgentMenuOpen(false);
     setEditingRegistrationId(null);
     setAgentFormError('');
+    setAgentPanelMode('picker');
     setInviteStatus('');
     setInviteOpen((value) => !value);
   }
 
   function editRegisteredAgent(event: React.MouseEvent, registration: ChatAgentRegistration) {
     event.stopPropagation();
+    // Channel membership edit: flags + session. Identity via edit-identity.
+    setAgentPanelMode('edit-member');
     openAgentEditor(registration);
+  }
+
+  function editVaultIdentity(event: React.MouseEvent, registration: ChatAgentRegistration) {
+    event.stopPropagation();
+    setAgentPanelMode('edit-identity');
+    openAgentEditor(registration);
+  }
+
+  const channelVaultAgentIds = useMemo(
+    () => new Set(registeredAgents.map((r) => r.vaultAgentId).filter(Boolean) as string[]),
+    [registeredAgents],
+  );
+  const vaultAgentsNotInChannel = useMemo(
+    () => vaultAgents.filter((va) => !channelVaultAgentIds.has(va.id)),
+    [vaultAgents, channelVaultAgentIds],
+  );
+
+  async function addVaultAgentFromPicker(vaultAgentId: string) {
+    setAgentFormError('');
+    try {
+      if (onAddVaultAgentToChannel) {
+        await onAddVaultAgentToChannel(channelId, vaultAgentId);
+      } else {
+        const va = vaultAgents.find((a) => a.id === vaultAgentId);
+        if (!va) return;
+        onRegisterAgent(channelId, {
+          id: createChatAgentRegistrationId(),
+          vaultAgentId: va.id,
+          agentId: va.agentId,
+          displayName: va.displayName,
+          mention: va.mention,
+          model: va.model,
+          cwd: va.cwd,
+          contextPrompt: va.contextPrompt,
+          taggableByAgents: true,
+          replyToEveryMessage: false,
+          pingableByOthers: false,
+          yolo: false,
+          conversationId: '',
+        });
+      }
+      setAgentMenuOpen(false);
+      setAgentPanelMode('picker');
+    } catch (error) {
+      setAgentFormError(error instanceof Error ? error.message : 'Could not add agent');
+    }
   }
 
   function startReply(message: ChatMessage) {
@@ -735,39 +812,93 @@ export function ChatView({
     setContextMenu({ x: event.clientX, y: event.clientY, message });
   }
 
-  function submitAgentRegistration(event: React.FormEvent) {
+  async function submitAgentRegistration(event: React.FormEvent) {
     event.preventDefault();
     if (!agentForm.agentId) return;
     const mention = agentForm.mention.replace(/^@+/, '').trim();
-    if (!mention) {
+    if (!mention && agentPanelMode !== 'edit-member') {
       setAgentFormError('Choose a unique @ handle.');
       return;
     }
-    const duplicateMention = registeredAgents.some((registration) =>
-      registration.id !== agentForm.id
-      && normalizeMention(registration.mention) === normalizeMention(mention),
-    );
-    if (duplicateMention) {
-      setAgentFormError(`@${mention} is already used in this channel.`);
-      return;
+    if (agentPanelMode !== 'edit-member') {
+      const duplicateMention = registeredAgents.some((registration) =>
+        registration.id !== agentForm.id
+        && normalizeMention(registration.mention) === normalizeMention(mention),
+      );
+      if (duplicateMention && agentPanelMode === 'create') {
+        setAgentFormError(`@${mention} is already used in this channel.`);
+        return;
+      }
     }
     const model = modelFromPicker(modelChoice, customModel);
-    if (!model) {
+    if (!model && agentPanelMode !== 'edit-member') {
       setAgentFormError('Choose a model or enter a custom model ID.');
       return;
     }
-    onRegisterAgent(channelId, {
-      ...agentForm,
-      id: agentForm.id || createChatAgentRegistrationId(),
-      displayName: agentForm.displayName.trim(),
-      mention,
-      model,
-      cwd: agentForm.cwd.trim(),
-      contextPrompt: agentForm.contextPrompt.trim(),
-    });
-    setAgentMenuOpen(false);
-    setEditingRegistrationId(null);
-    setAgentFormError('');
+
+    try {
+      if (agentPanelMode === 'edit-identity' && onUpsertVaultAgent && agentForm.vaultAgentId) {
+        await onUpsertVaultAgent({
+          id: agentForm.vaultAgentId,
+          agentId: agentForm.agentId,
+          displayName: agentForm.displayName.trim(),
+          mention,
+          model,
+          cwd: agentForm.cwd.trim(),
+          contextPrompt: agentForm.contextPrompt.trim(),
+        });
+        // Also refresh this channel membership copy
+        onRegisterAgent(channelId, {
+          ...agentForm,
+          displayName: agentForm.displayName.trim(),
+          mention,
+          model,
+          cwd: agentForm.cwd.trim(),
+          contextPrompt: agentForm.contextPrompt.trim(),
+        });
+      } else if (agentPanelMode === 'create' && onUpsertVaultAgent) {
+        const va = await onUpsertVaultAgent({
+          agentId: agentForm.agentId,
+          displayName: agentForm.displayName.trim() || agentForm.agentId,
+          mention,
+          model,
+          cwd: agentForm.cwd.trim(),
+          contextPrompt: agentForm.contextPrompt.trim(),
+        });
+        const vaultAgentId = va?.id || agentForm.vaultAgentId || '';
+        if (vaultAgentId && onAddVaultAgentToChannel) {
+          await onAddVaultAgentToChannel(channelId, vaultAgentId);
+        } else {
+          onRegisterAgent(channelId, {
+            ...agentForm,
+            id: agentForm.id || createChatAgentRegistrationId(),
+            vaultAgentId,
+            displayName: agentForm.displayName.trim(),
+            mention,
+            model,
+            cwd: agentForm.cwd.trim(),
+            contextPrompt: agentForm.contextPrompt.trim(),
+          });
+        }
+      } else {
+        // edit-member or fallback create without vault-agent API
+        onRegisterAgent(channelId, {
+          ...agentForm,
+          id: agentForm.id || createChatAgentRegistrationId(),
+          displayName: agentForm.displayName.trim(),
+          mention: mention || agentForm.mention,
+          model: model || agentForm.model,
+          cwd: agentForm.cwd.trim(),
+          contextPrompt: agentForm.contextPrompt.trim(),
+        });
+      }
+      setAgentMenuOpen(false);
+      setEditingRegistrationId(null);
+      setAgentPanelMode('picker');
+      setAgentFormError('');
+    } catch (error) {
+      setAgentFormError(error instanceof Error ? error.message : 'Could not save agent');
+    }
   }
 
   async function submitInvite(event: React.FormEvent) {
@@ -1258,6 +1389,10 @@ export function ChatView({
           );
         })}
 
+        <div className="chat-users-title">In this channel</div>
+        {registeredAgentRows.length === 0 && (
+          <div className="chat-runs-empty">No agents yet — add from vault</div>
+        )}
         {registeredAgentRows.map((agent) => {
           const selectedModel = agent.registration.model || agent.models[0]?.id || '';
           const isEditing = editingRegistrationId === agent.registration.id && agentMenuOpen;
@@ -1270,12 +1405,12 @@ export function ChatView({
                 type="button"
                 className="chat-agent-edit-btn"
                 onClick={(event) => editRegisteredAgent(event, agent.registration)}
-                title="Edit agent settings"
+                title="Channel settings for this agent"
               >
                 <ChatAvatar name={agent.registration.displayName || agent.label} kind="agent" size="sm" />
                 <div className="chat-user-copy">
                   <strong>{agent.registration.displayName || agent.label}</strong>
-                  <span>@{agent.registration.mention || agent.id} · {selectedModel || 'no model selected'}</span>
+                  <span>@{agent.registration.mention || agent.id} · {selectedModel || 'no model'}</span>
                 </div>
               </button>
               <button
@@ -1293,45 +1428,126 @@ export function ChatView({
           );
         })}
 
-        {sidebarMode === 'users' && agentMenuOpen && (
-          <form className="chat-agent-menu" onSubmit={submitAgentRegistration} onClick={(event) => event.stopPropagation()}>
+        {vaultAgents.length > 0 && (
+          <>
+            <div className="chat-users-title">Vault agents</div>
+            {vaultAgents.map((va) => {
+              const inChannel = channelVaultAgentIds.has(va.id);
+              const backend = availableAgents.find((a) => a.id === va.agentId)?.label || va.agentId;
+              const nCh = va.channelIds?.length ?? 0;
+              return (
+                <div className="chat-user chat-vault-agent" key={va.id}>
+                  <div className="chat-user-row chat-vault-agent-row">
+                    <ChatAvatar name={va.displayName || va.mention} kind="agent" size="sm" />
+                    <div className="chat-user-copy">
+                      <strong>{va.displayName || va.mention}</strong>
+                      <span>@{va.mention} · {backend} · {nCh} ch</span>
+                    </div>
+                    {!inChannel && (
+                      <button
+                        type="button"
+                        className="chat-vault-add-btn"
+                        title="Add to this channel"
+                        onClick={() => void addVaultAgentFromPicker(va.id)}
+                      >
+                        <Plus size={12} />
+                      </button>
+                    )}
+                    {inChannel && <span className="chat-vault-in-ch">in channel</span>}
+                    {onDeleteVaultAgent && (
+                      <button
+                        type="button"
+                        className="chat-remove-agent"
+                        title="Delete vault agent (all channels)"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          if (window.confirm(`Delete vault agent @${va.mention}? Removes from ${nCh || 'all'} channel(s).`)) {
+                            void onDeleteVaultAgent(va.id);
+                          }
+                        }}
+                      >
+                        <X size={12} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </>
+        )}
+
+        {sidebarMode === 'users' && agentMenuOpen && agentPanelMode === 'picker' && (
+          <div className="chat-agent-menu" onClick={(event) => event.stopPropagation()}>
+            <div className="chat-agent-menu-heading">Add agent to #{channelName}</div>
+            {vaultAgentsNotInChannel.length === 0 ? (
+              <div className="chat-runs-empty">No unused vault agents</div>
+            ) : (
+              vaultAgentsNotInChannel.map((va) => (
+                <button
+                  key={va.id}
+                  type="button"
+                  className="chat-vault-pick-btn"
+                  onClick={() => void addVaultAgentFromPicker(va.id)}
+                >
+                  <ChatAvatar name={va.displayName || va.mention} kind="agent" size="sm" />
+                  <span className="chat-user-copy">
+                    <strong>{va.displayName || va.mention}</strong>
+                    <span>@{va.mention} · {va.model || va.agentId}</span>
+                  </span>
+                </button>
+              ))
+            )}
+            {agentFormError && <div className="chat-agent-form-error">{agentFormError}</div>}
+            <div className="chat-agent-menu-actions">
+              <button
+                type="button"
+                onClick={() => {
+                  setAgentMenuOpen(false);
+                  setAgentPanelMode('picker');
+                  setAgentFormError('');
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setAgentPanelMode('create');
+                  openAgentEditor();
+                }}
+              >
+                Create new…
+              </button>
+            </div>
+          </div>
+        )}
+
+        {sidebarMode === 'users' && agentMenuOpen && agentPanelMode !== 'picker' && (
+          <form className="chat-agent-menu" onSubmit={(e) => void submitAgentRegistration(e)} onClick={(event) => event.stopPropagation()}>
+            <div className="chat-agent-menu-heading">
+              {agentPanelMode === 'edit-member' && 'Channel membership'}
+              {agentPanelMode === 'edit-identity' && 'Vault identity (all channels)'}
+              {agentPanelMode === 'create' && 'New vault agent'}
+            </div>
+            {agentPanelMode !== 'edit-member' && (
+              <>
             <label>
-              Agent
+              Backend
               <select
                 value={agentForm.agentId}
                 onChange={(event) => {
                   const agent = availableAgents.find((option) => option.id === event.target.value);
                   setAgentFormError('');
                   const nextPreset = agent?.models[0]?.id ?? '';
-                  if (editingRegistrationId) {
-                    const { choice, custom } = resolveModelPicker(agent, nextPreset);
-                    setModelChoice(choice);
-                    setCustomModel(custom);
-                    setAgentForm((value) => ({
-                      ...value,
-                      agentId: event.target.value,
-                      displayName: value.displayName || agent?.label || event.target.value,
-                      model: modelFromPicker(choice, custom),
-                    }));
-                    return;
-                  }
                   const { choice, custom } = resolveModelPicker(agent, nextPreset);
                   setModelChoice(choice);
                   setCustomModel(custom);
-                  setAgentForm({
-                    id: createChatAgentRegistrationId(),
+                  setAgentForm((value) => ({
+                    ...value,
                     agentId: event.target.value,
-                    displayName: agent?.label ?? event.target.value,
-                    mention: agent?.label.toLowerCase().replace(/\s+/g, '-') ?? event.target.value,
+                    displayName: value.displayName || agent?.label || event.target.value,
                     model: modelFromPicker(choice, custom),
-                    cwd: '',
-                    contextPrompt: '',
-                    taggableByAgents: true,
-                    replyToEveryMessage: false,
-                    pingableByOthers: false,
-                    yolo: false,
-                    conversationId: '',
-                  });
+                  }));
                 }}
               >
                 {availableAgents.map((agent) => (
@@ -1415,14 +1631,18 @@ export function ChatView({
               />
             </label>
             <label>
-              Context
+              Persona / context
               <textarea
                 value={agentForm.contextPrompt}
-                placeholder="Optional channel-specific prompt"
+                placeholder="Standing instructions for this agent"
                 rows={3}
                 onChange={(event) => setAgentForm((value) => ({ ...value, contextPrompt: event.target.value }))}
               />
             </label>
+              </>
+            )}
+            {(agentPanelMode === 'edit-member' || agentPanelMode === 'create') && (
+              <>
             <label className="chat-agent-toggle">
               <input
                 type="checkbox"
@@ -1455,6 +1675,17 @@ export function ChatView({
               />
               Yolo mode (skip permission prompts)
             </label>
+              </>
+            )}
+            {agentPanelMode === 'edit-member' && agentForm.vaultAgentId && (
+              <button
+                type="button"
+                className="chat-agent-identity-link"
+                onClick={(event) => editVaultIdentity(event, agentForm)}
+              >
+                Edit vault identity (name, model, persona)…
+              </button>
+            )}
             {agentFormError && <div className="chat-agent-form-error">{agentFormError}</div>}
             <div className="chat-agent-menu-actions">
               <button
@@ -1462,12 +1693,15 @@ export function ChatView({
                 onClick={() => {
                   setAgentMenuOpen(false);
                   setEditingRegistrationId(null);
+                  setAgentPanelMode('picker');
                   setAgentFormError('');
                 }}
               >
                 Cancel
               </button>
-              <button type="submit">{editingRegistrationId ? 'Save changes' : 'Save'}</button>
+              <button type="submit">
+                {agentPanelMode === 'create' ? 'Create & add' : 'Save'}
+              </button>
             </div>
           </form>
         )}

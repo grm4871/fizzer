@@ -2185,6 +2185,64 @@ a {
   line-height: 1.3;
   word-break: break-word;
 }
+.chat-agent-menu-heading {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin: 0 0 8px;
+}
+.chat-vault-agent-row {
+  width: 100%;
+  gap: 6px;
+}
+.chat-vault-add-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+.chat-vault-add-btn:hover {
+  color: var(--text-primary);
+  background: hsla(22, 7%, 17%, 0.75);
+}
+.chat-vault-in-ch {
+  flex-shrink: 0;
+  font-size: 0.625rem;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+.chat-vault-pick-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  margin-bottom: 4px;
+  border-radius: var(--radius-md);
+  text-align: left;
+  color: var(--text-secondary);
+}
+.chat-vault-pick-btn:hover {
+  background: hsla(22, 7%, 17%, 0.75);
+  color: var(--text-primary);
+}
+.chat-agent-identity-link {
+  display: block;
+  width: 100%;
+  margin: 4px 0 8px;
+  padding: 6px 0;
+  font-size: 0.75rem;
+  color: var(--accent);
+  text-align: left;
+}
+.chat-agent-identity-link:hover {
+  text-decoration: underline;
+}
 .chat-run-row {
   display: flex;
   align-items: flex-start;
