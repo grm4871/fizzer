@@ -880,6 +880,32 @@ export default function App() {
 
     let runSocket: ReturnType<typeof connectRunsSocket> | null = null;
     let activeRunId: number | null = null;
+    type MessageUpdater = (message: ChatMessage) => ChatMessage;
+    let pendingMessageUpdates: MessageUpdater[] = [];
+    let messageUpdateTimer: number | null = null;
+
+    const flushMessageUpdates = () => {
+      if (messageUpdateTimer != null) window.clearTimeout(messageUpdateTimer);
+      messageUpdateTimer = null;
+      if (pendingMessageUpdates.length === 0) return;
+      const updates = pendingMessageUpdates;
+      pendingMessageUpdates = [];
+      updateChatMessage(channelId, agentMessageId, (message) =>
+        updates.reduce((next, update) => update(next), message));
+    };
+
+    // CLI streams often emit text, structured blocks, and harness bytes as
+    // separate events for the same output. Collapse those into one React update.
+    const queueMessageUpdate = (updater: MessageUpdater) => {
+      pendingMessageUpdates.push(updater);
+      if (messageUpdateTimer != null) return;
+      messageUpdateTimer = window.setTimeout(flushMessageUpdates, 32);
+    };
+
+    const applyMessageUpdateNow = (updater: MessageUpdater) => {
+      pendingMessageUpdates.push(updater);
+      flushMessageUpdates();
+    };
 
     // Eager placeholder so messageId always exists before /runs (and the server
     // can single-write into it). Server will also ensure/create if needed.
@@ -937,7 +963,7 @@ export default function App() {
                 { suppressChatBody },
               );
               const nextStatus = terminal === 'completed' ? undefined : terminal;
-              updateChatMessage(channelId, agentMessageId, (message) => ({
+              applyMessageUpdateNow((message) => ({
                 ...message,
                 body: finalBody,
                 status: nextStatus,
@@ -979,7 +1005,7 @@ export default function App() {
             if (!text && blocks.length === 0 && !hasToolBlock) return;
             if (text) assistantText += text;
             bufferedBlocks = appendChatRunBlocks(bufferedBlocks, blocks);
-            updateChatMessage(channelId, agentMessageId, (message) => ({
+            queueMessageUpdate((message) => ({
               ...message,
               body: text ? (message.body === 'Thinking...' ? text : message.body + text) : message.body,
               blocks: appendChatRunBlocks(message.blocks, blocks),
@@ -990,7 +1016,7 @@ export default function App() {
             const blocks = normalizeChatRunBlocks(payload.message?.content);
             if (blocks.length === 0) return;
             bufferedBlocks = appendChatRunBlocks(bufferedBlocks, blocks);
-            updateChatMessage(channelId, agentMessageId, (message) => ({
+            queueMessageUpdate((message) => ({
               ...message,
               blocks: appendChatRunBlocks(message.blocks, blocks),
               runId,
@@ -999,7 +1025,7 @@ export default function App() {
             const payload = JSON.parse(event.payload_json);
             const chunk = typeof payload?.data === 'string' ? payload.data : '';
             if (!chunk) return;
-            updateChatMessage(channelId, agentMessageId, (message) => ({
+            queueMessageUpdate((message) => ({
               ...message,
               harnessLog: appendHarnessLog(message.harnessLog, chunk),
               runId,
@@ -1055,7 +1081,7 @@ export default function App() {
         handleRegisterChatAgent(channelId, { ...registration, conversationId: res.run.conversation_id });
       }
 
-      updateChatMessage(channelId, agentMessageId, (message) => ({
+      queueMessageUpdate((message) => ({
         ...message,
         runId: res.run.id,
       }));
@@ -1085,7 +1111,7 @@ export default function App() {
         runSocket?.disconnect();
       }
       streamingChatMessageIdsRef.current.delete(agentMessageId);
-      updateChatMessage(channelId, agentMessageId, (message) => ({
+      applyMessageUpdateNow((message) => ({
         ...message,
         body: error instanceof Error ? error.message : 'Failed to start agent.',
         status: 'failed',
