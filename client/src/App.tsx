@@ -119,6 +119,14 @@ export default function App() {
   const activeTabId = focusedPane.activeTabId;
   const currentUsername = user?.username ?? '';
   const noteTitleById = useMemo(() => new Map(notes.map((note) => [note.id, note.title])), [notes]);
+  const availableChatAgents = useMemo(() => CHAT_AGENTS.map((agent) => ({
+    id: agent.id,
+    label: agent.label,
+    models: mergeAgentModelPresets(
+      agent.id,
+      runnerHealth?.models?.[agent.id] ?? null,
+    ),
+  })), [runnerHealth?.models]);
 
   const runningChatAgents = useMemo(() => {
     const entries: RunningChatAgent[] = [];
@@ -1913,14 +1921,7 @@ export default function App() {
           messages={chatState.messagesByChannel[channel.id] ?? []}
           currentUser={currentUsername}
           presence={chatPresenceByChannel[channel.id] ?? { participants: [], online: [] }}
-          availableAgents={CHAT_AGENTS.map((agent) => ({
-            id: agent.id,
-            label: agent.label,
-            models: mergeAgentModelPresets(
-              agent.id,
-              runnerHealth?.models?.[agent.id] ?? null,
-            ),
-          }))}
+          availableAgents={availableChatAgents}
           registeredAgents={chatState.registeredAgentsByChannel[channel.id] ?? []}
           vaultAgents={vaultAgents}
           runningAgents={runningChatAgents}
@@ -1956,7 +1957,7 @@ export default function App() {
         onOpenNote={openNote}
       />
     );
-  }, [chatState.messagesByChannel, chatState.registeredAgentsByChannel, chatPresenceByChannel, currentUsername, runningChatAgents, runnerHealth, vaultAgents, handleCancelChatRun, handleCreateChatInviteLink, handleInviteChatUser, handleRegisterChatAgent, handleRemoveChatAgent, handleUpsertVaultAgent, handleDeleteVaultAgent, handleAddVaultAgentToChannel, handleSendChatMessage, noteContents, notes, handleNoteChange, saveNoteTab, renameNoteTab, handleExecuteDirective, openNote]);
+  }, [availableChatAgents, chatState.messagesByChannel, chatState.registeredAgentsByChannel, chatPresenceByChannel, currentUsername, runningChatAgents, runnerHealth, vaultAgents, handleCancelChatRun, handleCreateChatInviteLink, handleInviteChatUser, handleRegisterChatAgent, handleRemoveChatAgent, handleUpsertVaultAgent, handleDeleteVaultAgent, handleAddVaultAgentToChannel, handleSendChatMessage, noteContents, notes, handleNoteChange, saveNoteTab, renameNoteTab, handleExecuteDirective, openNote]);
 
   if (!user) {
     return (
