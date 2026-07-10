@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Activity, Bot, Brain, ChevronLeft, ChevronRight, Copy, Hash, ImagePlus, Paperclip, Plus, Reply, Send, Square, UserPlus, X } from 'lucide-react';
+import { Activity, Bot, Brain, ChevronLeft, ChevronRight, Copy, Hash, ImagePlus, Paperclip, Plus, Reply, Send, Square, TerminalSquare, UserPlus, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
@@ -7,6 +7,7 @@ import type { NoteSummary } from '../api';
 import { findEmbeddedNote, NOTE_DND_TYPE, noteEmbedMarkdown, splitDocEmbeds } from '../docEmbeds';
 import { escapeRegExp, normalizeMention } from '../chat/mentions';
 import { highlightJSON } from './jsonHighlighter';
+import { HarnessTerminal } from './HarnessTerminal';
 
 export const CHAT_NOTE_MARKER = 'cascade://chat-channel';
 export const CHAT_MEDIA_LIMIT = 8;
@@ -66,6 +67,8 @@ export interface ChatMessage {
   registrationId?: string;
   runId?: number;
   blocks?: ChatBlock[];
+  /** Full harness terminal transcript (raw process I/O / SDK stream). */
+  harnessLog?: string;
   images?: string[];
   attachments?: Array<{ name: string; media_type: string; url: string }>;
   replyTo?: ChatReplyRef;
@@ -435,9 +438,9 @@ function ChatAvatar({
   );
 }
 
-// The trace disclosure holds the agent's full play-by-play (reasoning + the
-// step narration) so the chat body itself can stay short. Show it only when
-// there's something beyond the final answer already shown as the body.
+// The run widget holds the harness terminal (full process I/O / SDK stream) so
+// the chat body itself can stay short. Prefer harnessLog when present; fall
+// back to structured thinking/text blocks for older messages.
 const TRACE_REVEAL_MARGIN = 24;
 function traceTextOf(message: ChatMessage): string {
   return (message.blocks || [])
@@ -446,7 +449,13 @@ function traceTextOf(message: ChatMessage): string {
     .filter(Boolean)
     .join('\n\n');
 }
+/** Terminal buffer: live harness output, else legacy reasoning/text blocks. */
+function harnessTerminalContent(message: ChatMessage): string {
+  if (message.harnessLog?.trim()) return message.harnessLog;
+  return traceTextOf(message);
+}
 function hasExpandableTrace(message: ChatMessage): boolean {
+  if (message.harnessLog?.trim()) return true;
   const blocks = message.blocks || [];
   if (blocks.some((block) => block.type === 'thinking')) return true;
   const traceLen = traceTextOf(message).trim().length;
@@ -455,9 +464,15 @@ function hasExpandableTrace(message: ChatMessage): boolean {
 
 function ChatRunWidget({ message, onCancelRun }: { message: ChatMessage; onCancelRun: (runId: number) => void }) {
   const [open, setOpen] = useState(false);
-  const traceText = traceTextOf(message);
+  const terminalContent = harnessTerminalContent(message);
   const isRunning = message.status === 'running';
   const canExpand = hasExpandableTrace(message);
+  const hasHarness = Boolean(message.harnessLog?.trim());
+  const label = !canExpand
+    ? 'Working…'
+    : hasHarness
+      ? 'Terminal'
+      : 'Details';
 
   if (!isRunning && !canExpand) return null;
 
@@ -469,8 +484,8 @@ function ChatRunWidget({ message, onCancelRun }: { message: ChatMessage; onCance
         onClick={() => canExpand && setOpen((value) => !value)}
         disabled={!canExpand}
       >
-        <Brain size={13} />
-        <span>{canExpand ? 'Details' : 'Working…'}</span>
+        {hasHarness || isRunning ? <TerminalSquare size={13} /> : <Brain size={13} />}
+        <span>{label}</span>
         {isRunning && <span className="ai-spinner" />}
         {canExpand && <ChevronRight size={13} className="ai-chevron" />}
       </button>
@@ -488,7 +503,11 @@ function ChatRunWidget({ message, onCancelRun }: { message: ChatMessage; onCance
           Stop
         </button>
       )}
-      {open && canExpand && <div className="chat-run-body">{traceText}</div>}
+      {open && canExpand && (
+        <div className="chat-run-terminal-wrap">
+          <HarnessTerminal content={terminalContent} active={isRunning} />
+        </div>
+      )}
     </div>
   );
 }

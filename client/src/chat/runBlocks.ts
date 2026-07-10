@@ -68,16 +68,28 @@ export function appendChatRunBlocks(existing: ChatBlock[] | undefined, blocks: C
   return next;
 }
 
+/** Cap in-memory harness logs (matches server HARNESS_LOG_MAX_CHARS). */
+export const HARNESS_LOG_MAX_CHARS = 512_000;
+
+/** Append a harness chunk, keeping only the tail when over the size cap. */
+export function appendHarnessLog(existing: string | undefined, chunk: string, max = HARNESS_LOG_MAX_CHARS): string {
+  if (!chunk) return existing || '';
+  const next = (existing || '') + chunk;
+  if (next.length <= max) return next;
+  return next.slice(next.length - max);
+}
+
 function chatMessageStreamScore(message: ChatMessage): number {
   const bodyScore = message.body?.length ?? 0;
   const blockScore = (message.blocks ?? []).reduce((sum, block) => sum + (block.text?.length ?? 0), 0);
+  const harnessScore = Math.min(message.harnessLog?.length ?? 0, 50_000);
   // Terminal statuses outrank running; canceled is a real terminal state.
   const statusScore = message.status === 'running'
     ? 1
     : message.status === 'failed' || message.status === 'canceled'
       ? 2
       : 10;
-  return statusScore * 1_000_000 + bodyScore + blockScore;
+  return statusScore * 1_000_000 + bodyScore + blockScore + harnessScore;
 }
 
 /** Prefer streamed assistant text over a generic CLI/SDK summary for chat body. */
@@ -107,11 +119,24 @@ export function honestAgentChatBody(
 export function mergeRemoteChatMessage(local: ChatMessage, remote: ChatMessage): ChatMessage {
   const localScore = chatMessageStreamScore(local);
   const remoteScore = chatMessageStreamScore(remote);
-  if (remoteScore >= localScore) return remote;
-  if (local.status === 'running' && !remote.status && remote.body.length >= local.body.length) {
-    return { ...remote, blocks: remote.blocks?.length ? remote.blocks : local.blocks };
+  const harnessLog = (local.harnessLog?.length ?? 0) >= (remote.harnessLog?.length ?? 0)
+    ? local.harnessLog
+    : remote.harnessLog;
+  if (remoteScore >= localScore) {
+    return harnessLog && harnessLog !== remote.harnessLog
+      ? { ...remote, harnessLog }
+      : remote;
   }
-  return local;
+  if (local.status === 'running' && !remote.status && remote.body.length >= local.body.length) {
+    return {
+      ...remote,
+      blocks: remote.blocks?.length ? remote.blocks : local.blocks,
+      harnessLog: harnessLog || remote.harnessLog || local.harnessLog,
+    };
+  }
+  return harnessLog && harnessLog !== local.harnessLog
+    ? { ...local, harnessLog }
+    : local;
 }
 
 /** JSON patch body with explicit nulls so the server can clear status/blocks. */
@@ -125,6 +150,7 @@ export function toChatMessagePatch(message: ChatMessage): Record<string, unknown
     registrationId: message.registrationId ?? null,
     runId: message.runId ?? null,
     blocks: message.blocks ?? null,
+    harnessLog: message.harnessLog ?? null,
     images: message.images ?? null,
     attachments: message.attachments ?? null,
     replyTo: message.replyTo ?? null,

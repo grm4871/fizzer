@@ -1575,6 +1575,34 @@ a {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+/* Real xterm.js harness pane (collapsible under the run widget). */
+.chat-run-terminal-wrap {
+  grid-column: 1 / -1;
+  min-height: 140px;
+  max-height: min(360px, 50vh);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: #0c0b0a;
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px hsla(25, 8%, 100%, 0.03);
+}
+.harness-terminal {
+  width: 100%;
+  height: min(360px, 50vh);
+  min-height: 140px;
+  padding: 6px 4px 6px 8px;
+  box-sizing: border-box;
+}
+.harness-terminal .xterm {
+  height: 100%;
+}
+.harness-terminal .xterm-viewport {
+  overflow-y: auto !important;
+}
+.harness-terminal .xterm-screen {
+  /* Keep glyph canvas from forcing horizontal overflow in chat bubbles. */
+  overflow: hidden;
+}
 .chat-composer {
   flex-shrink: 0;
   display: grid;

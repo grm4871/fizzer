@@ -210,6 +210,22 @@ function classifySdkMessage(message) {
   return message.type || 'message';
 }
 
+/** Emit a harness/terminal chunk for the chat terminal pane. */
+function emitHarness(emit, data) {
+  if (!data) return;
+  emit('harness', { data: String(data) });
+}
+
+function formatToolInput(input) {
+  if (input == null) return '';
+  if (typeof input === 'string') return input;
+  try {
+    return JSON.stringify(input);
+  } catch {
+    return String(input);
+  }
+}
+
 function expandHome(input) {
   const value = String(input || '').trim();
   if (!value) return '';
@@ -328,6 +344,8 @@ async function runClaudeLocally(opts, emit) {
   // (a fresh turn, typically split off by a tool call in between) gets a
   // paragraph break instead of being glued onto the prior turn's text.
   let lastBlockWasText = false;
+  let harnessInThinking = false;
+  emitHarness(emit, `\x1b[2m# claude-code ${model} · ${cwd}\x1b[0m\r\n`);
   try {
     for await (const message of stream) {
       if (message.session_id) sessionId = message.session_id;
@@ -337,27 +355,58 @@ async function runClaudeLocally(opts, emit) {
       // routing thinking_delta → a thinking block and text_delta → a text
       // block. The assembled `assistant` message is skipped below so its
       // content isn't appended a second time on top of these deltas.
+      // Also tee a human-readable transcript into the harness terminal pane.
       if (message.type === 'stream_event') {
         const ev = message.event;
         if (ev?.type === 'content_block_start') {
-          const blockType = ev.content_block?.type;
-          if (blockType === 'redacted_thinking') {
-            emit('text', { message: { content: [{ type: 'redacted_thinking' }] } });
+          const block = ev.content_block;
+          const blockType = block?.type;
+          if (blockType === 'thinking' || blockType === 'redacted_thinking') {
+            if (!harnessInThinking) {
+              emitHarness(emit, '\x1b[2m# thinking\x1b[0m\r\n');
+              harnessInThinking = true;
+            }
+            if (blockType === 'redacted_thinking') {
+              emit('text', { message: { content: [{ type: 'redacted_thinking' }] } });
+              emitHarness(emit, '\x1b[2m[redacted]\x1b[0m');
+              lastBlockWasText = false;
+            }
+          } else if (blockType === 'tool_use') {
+            harnessInThinking = false;
+            const name = block?.name || 'tool';
+            const inputPreview = formatToolInput(block?.input);
+            emitHarness(emit, `\x1b[36m▶ ${name}\x1b[0m${inputPreview ? ` ${inputPreview.slice(0, 200)}` : ''}\r\n`);
             lastBlockWasText = false;
-          } else if (blockType === 'text' && lastBlockWasText) {
-            // Separate this turn's text from the previous one.
-            emit('text', { message: { content: [{ type: 'text', text: '\n\n' }] } });
-            streamedText += '\n\n';
+          } else if (blockType === 'text') {
+            if (harnessInThinking) {
+              emitHarness(emit, '\r\n');
+              harnessInThinking = false;
+            }
+            if (lastBlockWasText) {
+              // Separate this turn's text from the previous one.
+              emit('text', { message: { content: [{ type: 'text', text: '\n\n' }] } });
+              emitHarness(emit, '\r\n\r\n');
+              streamedText += '\n\n';
+            }
           }
         } else if (ev?.type === 'content_block_delta') {
           const delta = ev.delta;
           if (delta?.type === 'thinking_delta' && delta.thinking) {
             emit('text', { message: { content: [{ type: 'thinking', thinking: delta.thinking }] } });
+            emitHarness(emit, `\x1b[2m${delta.thinking}\x1b[0m`);
             lastBlockWasText = false;
           } else if (delta?.type === 'text_delta' && delta.text) {
             emit('text', { message: { content: [{ type: 'text', text: delta.text }] } });
+            emitHarness(emit, delta.text);
             streamedText += delta.text;
             lastBlockWasText = true;
+          } else if (delta?.type === 'input_json_delta' && delta.partial_json) {
+            emitHarness(emit, `\x1b[36m${delta.partial_json}\x1b[0m`);
+          }
+        } else if (ev?.type === 'content_block_stop') {
+          if (harnessInThinking) {
+            emitHarness(emit, '\r\n');
+            harnessInThinking = false;
           }
         }
         continue;
@@ -365,6 +414,25 @@ async function runClaudeLocally(opts, emit) {
 
       // The complete assistant message duplicates the streamed deltas above.
       if (message.type === 'assistant') continue;
+
+      // Tool results and other non-streamed messages → harness + structured events.
+      if (message.type === 'user' && message.message?.content) {
+        const content = Array.isArray(message.message.content) ? message.message.content : [];
+        for (const block of content) {
+          if (block?.type === 'tool_result') {
+            const body = typeof block.content === 'string'
+              ? block.content
+              : formatToolInput(block.content);
+            const flag = block.is_error ? '\x1b[31m✗' : '\x1b[32m✓';
+            const preview = String(body || '').slice(0, 4000);
+            emitHarness(emit, `${flag} tool_result\x1b[0m\r\n${preview}\r\n`);
+          }
+        }
+      } else if (message.type === 'result') {
+        emitHarness(emit, `\x1b[2m# result ${message.subtype || message.result || 'done'}\x1b[0m\r\n`);
+      } else if (message.type === 'system') {
+        emitHarness(emit, `\x1b[2m# system ${message.subtype || ''}\x1b[0m\r\n`);
+      }
 
       emit(classifySdkMessage(message), message);
       if (message.type === 'result') summary = message.result || message.subtype || summary;

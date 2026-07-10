@@ -28,6 +28,9 @@ export type ChatBlock = {
   redacted?: boolean;
 };
 
+/** Cap persisted harness terminal logs so a long run cannot bloat the DB. */
+export const HARNESS_LOG_MAX_CHARS = 512_000;
+
 export type ChatMessage = {
   id: string;
   channelId: string;
@@ -44,10 +47,20 @@ export type ChatMessage = {
   registrationId?: string;
   runId?: number;
   blocks?: ChatBlock[];
+  /** Full harness terminal transcript (raw process I/O / SDK stream). */
+  harnessLog?: string;
   images?: string[];
   attachments?: Array<{ name: string; media_type: string; url: string }>;
   replyTo?: ChatReplyRef;
 };
+
+/** Append a harness chunk, keeping only the tail when over the size cap. */
+export function appendHarnessLog(existing: string | undefined, chunk: string, max = HARNESS_LOG_MAX_CHARS): string {
+  if (!chunk) return existing || '';
+  const next = (existing || '') + chunk;
+  if (next.length <= max) return next;
+  return next.slice(next.length - max);
+}
 
 /** A registered agent member in a chat channel (shown in the member list, @mentionable). */
 export type ChatAgentRegistration = {
@@ -84,6 +97,7 @@ type ChatMessageRow = {
   registration_id: string | null;
   run_id: number | null;
   blocks_json: string | null;
+  harness_log: string | null;
   images_json: string | null;
   attachments_json: string | null;
   reply_to_json: string | null;
@@ -116,6 +130,7 @@ export function ensureChatSchema(db: Db): void {
       registration_id TEXT,
       run_id INTEGER,
       blocks_json TEXT,
+      harness_log TEXT,
       images_json TEXT,
       attachments_json TEXT,
       reply_to_json TEXT
@@ -165,7 +180,11 @@ export function ensureChatSchema(db: Db): void {
     CREATE INDEX IF NOT EXISTS chat_channel_links_source_idx ON chat_channel_links(source_channel_id);
   `);
 
-  // Migrations: add columns to pre-existing chat_agent_members tables.
+  // Migrations: add columns to pre-existing tables.
+  const messageCols = db.prepare("PRAGMA table_info(chat_messages)").all() as Array<{ name: string }>;
+  if (!messageCols.some((col) => col.name === 'harness_log')) {
+    db.exec('ALTER TABLE chat_messages ADD COLUMN harness_log TEXT');
+  }
   const memberCols = db.prepare("PRAGMA table_info(chat_agent_members)").all() as Array<{ name: string }>;
   if (!memberCols.some((col) => col.name === 'yolo')) {
     db.exec('ALTER TABLE chat_agent_members ADD COLUMN yolo INTEGER NOT NULL DEFAULT 0');
@@ -283,6 +302,7 @@ function rowToMessage(row: ChatMessageRow): ChatMessage {
       const blocks = parseJson<ChatBlock[]>(row.blocks_json);
       return blocks?.length ? { blocks } : {};
     })(),
+    ...(row.harness_log ? { harnessLog: row.harness_log } : {}),
     ...(() => {
       const images = parseJson<string[]>(row.images_json);
       return images?.length ? { images } : {};
@@ -311,6 +331,7 @@ function messageToRow(vaultId: string, channelId: string, message: ChatMessage):
     registration_id: message.registrationId ?? null,
     run_id: message.runId ?? null,
     blocks_json: serializeJson(message.blocks),
+    harness_log: message.harnessLog ?? null,
     images_json: serializeJson(message.images),
     attachments_json: serializeJson(message.attachments),
     reply_to_json: serializeJson(message.replyTo),
@@ -494,6 +515,7 @@ function persistChatMessageRow(db: Db, vaultId: string, channelId: string, messa
       registration_id = ?,
       run_id = ?,
       blocks_json = ?,
+      harness_log = ?,
       images_json = ?,
       attachments_json = ?,
       reply_to_json = ?
@@ -507,6 +529,7 @@ function persistChatMessageRow(db: Db, vaultId: string, channelId: string, messa
     row.registration_id,
     row.run_id,
     row.blocks_json,
+    row.harness_log,
     row.images_json,
     row.attachments_json,
     row.reply_to_json,
@@ -610,6 +633,9 @@ export function createChatMessage(
       registrationId: message.registrationId || current.registrationId,
       runId: message.runId ?? current.runId,
       blocks: message.blocks?.length ? message.blocks : current.blocks,
+      harnessLog: (message.harnessLog?.length ?? 0) > (current.harnessLog?.length ?? 0)
+        ? message.harnessLog
+        : current.harnessLog,
     };
     return {
       ...persistChatMessageRow(db, route.sourceVaultId, route.sourceChannelId, merged),
@@ -621,8 +647,8 @@ export function createChatMessage(
     INSERT INTO chat_messages (
       id, channel_id, vault_id, author, body, created_at,
       status, agent_id, registration_id, run_id,
-      blocks_json, images_json, attachments_json, reply_to_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      blocks_json, harness_log, images_json, attachments_json, reply_to_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     row.id,
     row.channel_id,
@@ -635,6 +661,7 @@ export function createChatMessage(
     row.registration_id,
     row.run_id,
     row.blocks_json,
+    row.harness_log,
     row.images_json,
     row.attachments_json,
     row.reply_to_json,
@@ -691,6 +718,11 @@ export function updateChatMessage(
   }
   if ('blocks' in patchRecord) {
     next.blocks = patch.blocks === null || patch.blocks === undefined ? undefined : patch.blocks;
+  }
+  if ('harnessLog' in patchRecord) {
+    next.harnessLog = patch.harnessLog === null || patch.harnessLog === undefined
+      ? undefined
+      : patch.harnessLog;
   }
   if ('images' in patchRecord) {
     next.images = patch.images === null || patch.images === undefined ? undefined : patch.images;
@@ -763,15 +795,16 @@ function appendChatRunBlocks(existing: ChatBlock[], blocks: ChatBlock[]): ChatBl
 export type AgentChatContent = {
   body: string;
   blocks: ChatBlock[];
+  harnessLog: string;
   status: ChatMessage['status'];
   done: boolean;
 };
 
 /**
  * Fold an agent run's event log into the chat message shape (body + blocks +
- * status). This is the server-authoritative equivalent of the client's stream
- * accumulation, so the agent reply is persisted and broadcast even if the
- * client that started the run disconnects mid-stream.
+ * harness log + status). This is the server-authoritative equivalent of the
+ * client's stream accumulation, so the agent reply is persisted and broadcast
+ * even if the client that started the run disconnects mid-stream.
  *
  * Chat body prefers the streamed assistant **text**, not the CLI/SDK summary
  * (which is often a generic "Done." / tool result string).
@@ -781,6 +814,7 @@ export function buildAgentChatContentFromRunEvents(
 ): AgentChatContent {
   let assistantText = '';
   let blocks: ChatBlock[] = [];
+  let harnessLog = '';
   let status: ChatMessage['status'] = 'running';
   let terminalSummary = '';
   let suppressChatBody = false;
@@ -797,6 +831,9 @@ export function buildAgentChatContentFromRunEvents(
       blocks = appendChatRunBlocks(blocks, normalizeChatRunBlocks(payload?.message?.content));
     } else if (event.type === 'user') {
       blocks = appendChatRunBlocks(blocks, normalizeChatRunBlocks(payload?.message?.content));
+    } else if (event.type === 'harness') {
+      const chunk = typeof payload?.data === 'string' ? payload.data : '';
+      harnessLog = appendHarnessLog(harnessLog, chunk);
     } else if (event.type === 'status') {
       const s = payload?.status;
       if (payload?.suppressChatBody === true) suppressChatBody = true;
@@ -817,8 +854,8 @@ export function buildAgentChatContentFromRunEvents(
   const done = status !== 'running';
   // Successful chat body = streamed assistant text. CLI/SDK summary is only a
   // fallback when nothing useful streamed (and even then, skip generic strings).
-  // Full step narration lives in `blocks` for the trace disclosure. Failures
-  // keep the scratchpad and append the reason.
+  // Full step narration lives in `blocks` / `harnessLog` for the terminal pane.
+  // Failures keep the scratchpad and append the reason.
   // If the agent already posted via cascade-chat send, leave the run bubble
   // body empty so we don't double-post the same reply.
   let body: string;
@@ -840,7 +877,7 @@ export function buildAgentChatContentFromRunEvents(
     }
   }
 
-  return { body, blocks, status, done };
+  return { body, blocks, harnessLog, status, done };
 }
 
 /**

@@ -37,6 +37,7 @@ import {
 import { getMentionedRegistrations, normalizeMention, stripRegisteredAgentMentions } from './chat/mentions';
 import {
   appendChatRunBlocks,
+  appendHarnessLog,
   hasChatRunToolBlock,
   honestAgentChatBody,
   mergeRemoteChatMessage,
@@ -890,6 +891,15 @@ export default function App() {
             updateChatMessage(channelId, agentMessageId, (message) => ({
               ...message,
               blocks: appendChatRunBlocks(message.blocks, blocks),
+              runId,
+            }));
+          } else if (event.type === 'harness') {
+            const payload = JSON.parse(event.payload_json);
+            const chunk = typeof payload?.data === 'string' ? payload.data : '';
+            if (!chunk) return;
+            updateChatMessage(channelId, agentMessageId, (message) => ({
+              ...message,
+              harnessLog: appendHarnessLog(message.harnessLog, chunk),
               runId,
             }));
           }

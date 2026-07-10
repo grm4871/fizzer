@@ -485,6 +485,7 @@ function syncRunToChatMessage(runId: number) {
     const updated = updateChatMessage(db, target.userId, target.vaultId, target.channelId, target.messageId, {
       body: content.body,
       blocks: content.blocks.length ? content.blocks : undefined,
+      harnessLog: content.harnessLog || undefined,
       status: content.status,
       runId,
     });

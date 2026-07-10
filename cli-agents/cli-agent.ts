@@ -55,7 +55,6 @@
  */
 
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import readline from 'node:readline';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -86,8 +85,14 @@ function spawnEnv(runId?: number): NodeJS.ProcessEnv {
 // TYPES
 // ═══════════════════════════════════════════════════════════════
 
-export type AgentEmit = (type: 'text' | 'user', payload: unknown) => void;
+export type AgentEmit = (type: 'text' | 'user' | 'harness', payload: unknown) => void;
 export type CliImage = { media_type: string; data: string };
+
+/** Emit a raw harness/terminal chunk (stdout/stderr or formatted SDK lines). */
+function emitHarness(emit: AgentEmit | undefined, data: string): void {
+  if (!emit || !data) return;
+  emit('harness', { data });
+}
 
 // ═══════════════════════════════════════════════════════════════
 // CONFIG
@@ -255,7 +260,8 @@ function writeTempImages(images: CliImage[]): { paths: string[]; cleanup: () => 
  * Spawns a CLI process, streams its stdout line-by-line through `onLine`,
  * accumulates stderr, enforces a timeout, and resolves with a summary.
  *
- * This is the shared process-management core used by both runCodex and runGrok.
+ * Also tees raw stdout/stderr into harness events so the chat UI can render a
+ * real terminal view of the headless process pipes (not a PTY — read-only).
  *
  * @param bin        - Binary name or path to execute
  * @param args       - CLI arguments
@@ -274,6 +280,7 @@ function driveProcess(
   getSummary: () => string,
   label: string,
   runId?: number,
+  emit?: AgentEmit,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     let child;
@@ -293,7 +300,11 @@ function driveProcess(
       }
     };
 
+    emitHarness(emit, `\x1b[2m$ ${bin} ${args.map((a) => (/\s/.test(a) ? JSON.stringify(a) : a)).join(' ')}\x1b[0m\r\n`);
+    emitHarness(emit, `\x1b[2m# cwd ${cwd}\x1b[0m\r\n`);
+
     let stderr = '';
+    let stdoutBuf = '';
     let settled = false;
     const timer = setTimeout(() => {
       if (!settled) {
@@ -304,14 +315,30 @@ function driveProcess(
       }
     }, CLI_TIMEOUT_MS);
 
-    const rl = readline.createInterface({ input: child.stdout });
-    rl.on('line', (line) => {
-      const trimmed = line.trim();
-      if (!trimmed) return;
-      try { onLine(trimmed); } catch { /* ignore a single malformed line */ }
+    // Single stdout consumer: tee raw bytes to the harness terminal and split
+    // lines for JSONL parsing (readline would contend for the same stream).
+    child.stdout.on('data', (d: Buffer | string) => {
+      const chunk = d.toString();
+      emitHarness(emit, chunk);
+      stdoutBuf += chunk;
+      let nl = stdoutBuf.indexOf('\n');
+      while (nl >= 0) {
+        const line = stdoutBuf.slice(0, nl);
+        stdoutBuf = stdoutBuf.slice(nl + 1);
+        const trimmed = line.trim();
+        if (trimmed) {
+          try { onLine(trimmed); } catch { /* ignore a single malformed line */ }
+        }
+        nl = stdoutBuf.indexOf('\n');
+      }
     });
 
-    child.stderr.on('data', (d) => { stderr += d.toString(); });
+    child.stderr.on('data', (d: Buffer | string) => {
+      const chunk = d.toString();
+      stderr += chunk;
+      // Dim red for stderr so it is distinguishable in the terminal pane.
+      emitHarness(emit, `\x1b[31m${chunk}\x1b[0m`);
+    });
 
     child.on('error', (err) => {
       if (settled) return;
@@ -326,6 +353,12 @@ function driveProcess(
       settled = true;
       clearTimeout(timer);
       cleanUpProcess();
+      // Flush a trailing partial stdout line (no final newline).
+      const trailing = stdoutBuf.trim();
+      if (trailing) {
+        try { onLine(trailing); } catch { /* ignore */ }
+      }
+      emitHarness(emit, `\x1b[2m# exit ${code ?? '?'}\x1b[0m\r\n`);
       if (code === 0) {
         resolve(getSummary());
       } else {
@@ -483,7 +516,7 @@ async function runCodex(
   };
 
   try {
-    const summaryText = await driveProcess(CODEX_BIN, args, cwd, onLine, () => summary || 'Completed note operations successfully.', 'Codex', runId);
+    const summaryText = await driveProcess(CODEX_BIN, args, cwd, onLine, () => summary || 'Completed note operations successfully.', 'Codex', runId, emit);
     return { summary: summaryText, sessionId };
   } finally {
     cleanup();
@@ -551,7 +584,7 @@ async function runGrok(
   };
 
   try {
-    const summaryText = await driveProcess(GROK_BIN, args, cwd, onLine, () => text || 'Completed note operations successfully.', 'Grok', runId);
+    const summaryText = await driveProcess(GROK_BIN, args, cwd, onLine, () => text || 'Completed note operations successfully.', 'Grok', runId, emit);
     return { summary: summaryText, sessionId };
   } catch (error) {
     const diagnostic = extractGrokDiagnostic(debugFile);
@@ -700,7 +733,7 @@ function discoverAntigravityEnv(): Record<string, string> {
 /**
  * Helper to run a command and return stdout as string.
  */
-function runCommand(bin: string, args: string[], cwd: string, runId?: number): Promise<string> {
+function runCommand(bin: string, args: string[], cwd: string, runId?: number, emit?: AgentEmit): Promise<string> {
   return new Promise((resolve, reject) => {
     const discoveredEnv = discoverAntigravityEnv();
     const env = { ...spawnEnv(runId), ...discoveredEnv };
@@ -710,11 +743,20 @@ function runCommand(bin: string, args: string[], cwd: string, runId?: number): P
     fs.appendFileSync(logFile, `[${new Date().toISOString()}] Discovered Env: ${JSON.stringify(discoveredEnv)}\n`);
     fs.appendFileSync(logFile, `[${new Date().toISOString()}] Env: LS_ADDRESS=${env.ANTIGRAVITY_LS_ADDRESS}, CSRF_TOKEN=${env.ANTIGRAVITY_CSRF_TOKEN}\n`);
 
+    emitHarness(emit, `\x1b[2m$ ${bin} ${args.map((a) => (/\s/.test(a) ? JSON.stringify(a) : a)).join(' ')}\x1b[0m\r\n`);
     const child = spawn(bin, args, { cwd, env });
     let stdout = '';
     let stderr = '';
-    child.stdout.on('data', (d) => { stdout += d.toString(); });
-    child.stderr.on('data', (d) => { stderr += d.toString(); });
+    child.stdout.on('data', (d) => {
+      const chunk = d.toString();
+      stdout += chunk;
+      emitHarness(emit, chunk);
+    });
+    child.stderr.on('data', (d) => {
+      const chunk = d.toString();
+      stderr += chunk;
+      emitHarness(emit, `\x1b[31m${chunk}\x1b[0m`);
+    });
     child.on('error', (err) => {
       fs.appendFileSync(logFile, `[${new Date().toISOString()}] Spawn Error: ${err.message}\n`);
       reject(err);
@@ -723,6 +765,7 @@ function runCommand(bin: string, args: string[], cwd: string, runId?: number): P
       fs.appendFileSync(logFile, `[${new Date().toISOString()}] Exit Code: ${code}\n`);
       fs.appendFileSync(logFile, `[${new Date().toISOString()}] Stdout: ${stdout.trim()}\n`);
       fs.appendFileSync(logFile, `[${new Date().toISOString()}] Stderr: ${stderr.trim()}\n`);
+      emitHarness(emit, `\x1b[2m# exit ${code ?? '?'}\x1b[0m\r\n`);
       if (code === 0) {
         resolve(stdout);
       } else {
@@ -789,7 +832,7 @@ async function runAntigravity(
 
   let stdoutStr: string;
   try {
-    stdoutStr = await runCommand(bin, args, cwd, runId);
+    stdoutStr = await runCommand(bin, args, cwd, runId, emit);
   } catch (err) {
     throw new Error(`Failed to run agentapi: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -860,7 +903,8 @@ async function runAntigravity(
 
         for (let i = processedLines; i < lines.length; i++) {
           const step = JSON.parse(lines[i]);
-          
+          emitHarness(emit, `${lines[i]}\r\n`);
+
           if (step.source === 'MODEL' && step.type === 'PLANNER_RESPONSE') {
             const text = step.content || '';
             const toolCalls = step.tool_calls || [];
@@ -1081,7 +1125,7 @@ async function runCopilot(prompt: string, cwd: string, emit: AgentEmit, resumeId
     }
   };
 
-  const summaryText = await driveProcess(COPILOT_BIN, args, cwd, onLine, () => summary || 'Completed note operations successfully.', 'Copilot', runId);
+  const summaryText = await driveProcess(COPILOT_BIN, args, cwd, onLine, () => summary || 'Completed note operations successfully.', 'Copilot', runId, emit);
   return { summary: summaryText, sessionId: sessionId || resumeId };
 }
 
@@ -1129,6 +1173,7 @@ async function runHermes(prompt: string, cwd: string, emit: AgentEmit, resumeId?
     () => text.trim() || 'Completed note operations successfully.',
     'Hermes',
     runId,
+    emit,
   );
   return { summary: summaryText, sessionId };
 }
@@ -1143,6 +1188,7 @@ function driveHermesProcess(
   getSummary: () => string,
   label: string,
   runId?: number,
+  emit?: AgentEmit,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     let child;
@@ -1166,7 +1212,12 @@ function driveHermesProcess(
       }
     };
 
+    emitHarness(emit, `\x1b[2m$ ${bin} ${args.map((a) => (/\s/.test(a) ? JSON.stringify(a) : a)).join(' ')}\x1b[0m\r\n`);
+    emitHarness(emit, `\x1b[2m# cwd ${cwd}\x1b[0m\r\n`);
+
     let stderr = '';
+    let stdoutBuf = '';
+    let stderrBuf = '';
     let settled = false;
     const timer = setTimeout(() => {
       if (!settled) {
@@ -1177,21 +1228,41 @@ function driveHermesProcess(
       }
     }, CLI_TIMEOUT_MS);
 
-    const stdoutRl = readline.createInterface({ input: child.stdout });
-    stdoutRl.on('line', (line) => {
-      const trimmed = line.trim();
-      if (!trimmed) return;
-      try { onStdoutLine(trimmed); } catch { /* ignore a single malformed line */ }
+    child.stdout.on('data', (d: Buffer | string) => {
+      const chunk = d.toString();
+      emitHarness(emit, chunk);
+      stdoutBuf += chunk;
+      let nl = stdoutBuf.indexOf('\n');
+      while (nl >= 0) {
+        const line = stdoutBuf.slice(0, nl);
+        stdoutBuf = stdoutBuf.slice(nl + 1);
+        const trimmed = line.trim();
+        if (trimmed) {
+          try { onStdoutLine(trimmed); } catch { /* ignore a single malformed line */ }
+        }
+        nl = stdoutBuf.indexOf('\n');
+      }
     });
 
-    const stderrRl = readline.createInterface({ input: child.stderr });
-    stderrRl.on('line', (line) => {
-      const trimmed = line.trim();
-      if (!trimmed) return;
-      if (trimmed.startsWith('{')) {
-        try { onStderrLine(trimmed); } catch { /* ignore a single malformed event */ }
-      } else {
-        stderr += trimmed + '\n';
+    child.stderr.on('data', (d: Buffer | string) => {
+      const chunk = d.toString();
+      emitHarness(emit, `\x1b[31m${chunk}\x1b[0m`);
+      stderrBuf += chunk;
+      let nl = stderrBuf.indexOf('\n');
+      while (nl >= 0) {
+        const line = stderrBuf.slice(0, nl);
+        stderrBuf = stderrBuf.slice(nl + 1);
+        const trimmed = line.trim();
+        if (!trimmed) {
+          nl = stderrBuf.indexOf('\n');
+          continue;
+        }
+        if (trimmed.startsWith('{')) {
+          try { onStderrLine(trimmed); } catch { /* ignore a single malformed event */ }
+        } else {
+          stderr += trimmed + '\n';
+        }
+        nl = stderrBuf.indexOf('\n');
       }
     });
 
@@ -1208,6 +1279,19 @@ function driveHermesProcess(
       settled = true;
       clearTimeout(timer);
       cleanUpProcess();
+      const trailingOut = stdoutBuf.trim();
+      if (trailingOut) {
+        try { onStdoutLine(trailingOut); } catch { /* ignore */ }
+      }
+      const trailingErr = stderrBuf.trim();
+      if (trailingErr) {
+        if (trailingErr.startsWith('{')) {
+          try { onStderrLine(trailingErr); } catch { /* ignore */ }
+        } else {
+          stderr += trailingErr + '\n';
+        }
+      }
+      emitHarness(emit, `\x1b[2m# exit ${code ?? '?'}\x1b[0m\r\n`);
       if (code === 0) {
         resolve(getSummary());
       } else {
