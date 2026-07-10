@@ -6,7 +6,7 @@
  * the true process/SDK buffer in xterm when needed.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ChevronRight, Square, TerminalSquare } from 'lucide-react';
 import {
   buildHarnessActivity,
@@ -26,6 +26,27 @@ import {
 } from '../chat/harnessActivity';
 import { HarnessTerminal } from './HarnessTerminal';
 import type { ChatMessage } from './ChatView';
+
+const SCROLL_PIN_PX = 48;
+
+function isPinnedToBottom(el: HTMLElement, slack = SCROLL_PIN_PX): boolean {
+  return el.scrollHeight - el.scrollTop - el.clientHeight <= slack;
+}
+
+function scrollToBottom(el: HTMLElement | null | undefined) {
+  if (!el) return;
+  el.scrollTop = el.scrollHeight;
+}
+
+/** Scroll now and again after layout/paint (nested pre max-height grows async). */
+function scrollToBottomSoon(el: HTMLElement | null | undefined) {
+  if (!el) return;
+  scrollToBottom(el);
+  requestAnimationFrame(() => {
+    scrollToBottom(el);
+    requestAnimationFrame(() => scrollToBottom(el));
+  });
+}
 
 function previewInput(input: unknown): string {
   if (input == null) return '';
@@ -65,13 +86,27 @@ function ThinkingBlock({
   live?: boolean;
 }) {
   const [open, setOpen] = useState(Boolean(defaultOpen || live));
+  const preRef = useRef<HTMLPreElement>(null);
+  const pinRef = useRef(true);
   const lines = text.trim() ? indentBlock(text.trim()) : [];
   const collapsedPreview = lines[0]?.replace(/^\s+/, '') || '';
   const more = lines.length > 1 ? ` (+${lines.length - 1} lines)` : '';
 
   useEffect(() => {
-    if (live) setOpen(true);
+    if (live) {
+      setOpen(true);
+      pinRef.current = true;
+    }
   }, [live]);
+
+  // Thinking body is its own scroll container (max-height). Follow the tail
+  // while live / pinned — outer panel scroll alone never moves this.
+  useLayoutEffect(() => {
+    if (!open) return;
+    const pre = preRef.current;
+    if (!pre) return;
+    if (live || pinRef.current) scrollToBottomSoon(pre);
+  }, [text, open, live, lines.length]);
 
   return (
     <div className="crp-term-block crp-term-thinking">
@@ -88,7 +123,13 @@ function ThinkingBlock({
         <ChevronRight size={12} className={`crp-term-fold-chevron${open ? ' open' : ''}`} />
       </button>
       {open && (
-        <pre className="crp-term-pre dim">
+        <pre
+          ref={preRef}
+          className="crp-term-pre dim"
+          onScroll={(event) => {
+            pinRef.current = isPinnedToBottom(event.currentTarget);
+          }}
+        >
           {lines.join('\n')}
         </pre>
       )}
@@ -105,11 +146,26 @@ function ToolBlock({
 }) {
   const tool = item.tool!;
   const [open, setOpen] = useState(Boolean(defaultOpen || tool.status === 'running'));
+  const preRef = useRef<HTMLPreElement>(null);
+  const pinRef = useRef(true);
   const inputLine = previewInput(tool.input);
   const result = toolResultPreview(tool.result, 3000);
   const hasBody = Boolean(result || (tool.status === 'running' && !result));
   const mark = tool.status === 'error' ? '✗' : tool.status === 'running' ? '…' : '✓';
   const markClass = tool.status === 'error' ? 'err' : tool.status === 'running' ? 'run' : 'ok';
+  const live = tool.status === 'running';
+
+  useEffect(() => {
+    if (live) {
+      setOpen(true);
+      pinRef.current = true;
+    }
+  }, [live]);
+
+  useLayoutEffect(() => {
+    if (!open || !hasBody) return;
+    if (live || pinRef.current) scrollToBottomSoon(preRef.current);
+  }, [result, open, hasBody, live]);
 
   return (
     <div className={`crp-term-block crp-term-tool status-${tool.status}`}>
@@ -127,7 +183,13 @@ function ToolBlock({
         )}
       </button>
       {open && hasBody && (
-        <pre className={`crp-term-pre ${tool.isError ? 'err' : 'muted'}`}>
+        <pre
+          ref={preRef}
+          className={`crp-term-pre ${tool.isError ? 'err' : 'muted'}`}
+          onScroll={(event) => {
+            pinRef.current = isPinnedToBottom(event.currentTarget);
+          }}
+        >
           {result
             ? indentBlock(result).join('\n')
             : '  …'}
@@ -291,26 +353,41 @@ export function CascadeRunPanel({
   const [open, setOpen] = useState(isRunning);
   const [showRaw, setShowRaw] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
+  /** User is following the tail of the outer harness scroller. */
+  const pinBottomRef = useRef(true);
   const summary = summarizeActivity(activity, isRunning);
+  const effectiveOpen = open || forceOpen;
+
+  // Fingerprint content growth (length alone misses same-length edits; items
+  // grow thinking in-place without changing items.length).
+  const scrollEpoch = useMemo(() => {
+    let n = activity.thinkingText.length;
+    for (const item of activity.items) {
+      n += (item.text?.length || 0) + (item.tool?.result?.length || 0) + 1;
+    }
+    n += activity.stats.toolCount * 17 + (activity.stats.numTurns || 0);
+    return n;
+  }, [activity]);
 
   useEffect(() => {
-    if (isRunning) setOpen(true);
+    if (isRunning) {
+      setOpen(true);
+      pinBottomRef.current = true;
+    }
   }, [isRunning]);
 
   useEffect(() => {
     if (forceOpen) setOpen(true);
   }, [forceOpen]);
 
-  useEffect(() => {
-    if (!isRunning || !open || showRaw) return;
-    const el = bodyRef.current;
-    if (!el) return;
-    el.scrollTop = el.scrollHeight;
-  }, [activity.items.length, activity.thinkingText.length, isRunning, open, showRaw]);
+  useLayoutEffect(() => {
+    if (!isRunning || !effectiveOpen || showRaw) return;
+    if (!pinBottomRef.current) return;
+    scrollToBottomSoon(bodyRef.current);
+  }, [scrollEpoch, isRunning, effectiveOpen, showRaw]);
 
   if (!isRunning && !canExpand) return null;
 
-  const effectiveOpen = open || forceOpen;
   const hasStructured = activity.items.length > 0 || activity.stats.hasThinking;
   const useRaw = showRaw || (!hasStructured && activity.stats.hasRaw);
 
@@ -350,7 +427,14 @@ export function CascadeRunPanel({
 
       {effectiveOpen && canExpand && (
         <div className="crp-shell">
-          <div className="crp-term" ref={bodyRef}>
+          <div
+            className="crp-term"
+            ref={bodyRef}
+            onScroll={(event) => {
+              // While running, only keep following if the user is near the tail.
+              pinBottomRef.current = isPinnedToBottom(event.currentTarget);
+            }}
+          >
             {useRaw ? (
               <div className="crp-raw-wrap">
                 <HarnessTerminal content={activity.rawLog || activity.thinkingText} active={isRunning} />
