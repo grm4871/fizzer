@@ -120,11 +120,29 @@ function statsFromUsageBlob(
 ): Record<string, unknown> {
   if (!usage && Object.keys(extra).length === 0) return extra;
   const u = usage || {};
+  const input = numFromUnknown(u.input_tokens ?? u.inputTokens ?? u.prompt_tokens);
+  const cached = numFromUnknown(
+    u.cached_input_tokens ?? u.cache_read_input_tokens ?? u.cacheReadTokens ?? u.cachedInputTokens,
+  );
+  const output = numFromUnknown(
+    u.output_tokens
+    ?? u.outputTokens
+    ?? u.completion_tokens
+    // Codex sometimes splits reasoning tokens out of output_tokens.
+    ?? ((numFromUnknown(u.reasoning_output_tokens) != null || numFromUnknown(u.reasoningOutputTokens) != null)
+      ? (numFromUnknown(u.output_tokens) || 0)
+        + (numFromUnknown(u.reasoning_output_tokens) || numFromUnknown(u.reasoningOutputTokens) || 0)
+      : undefined),
+  );
+  const total = numFromUnknown(u.total_tokens ?? u.totalTokens);
   return {
-    inputTokens: numFromUnknown(u.input_tokens ?? u.inputTokens ?? u.prompt_tokens),
-    outputTokens: numFromUnknown(u.output_tokens ?? u.outputTokens ?? u.completion_tokens),
-    cacheReadTokens: numFromUnknown(u.cache_read_input_tokens ?? u.cacheReadTokens),
+    inputTokens: input,
+    outputTokens: output,
+    cacheReadTokens: cached,
     cacheWriteTokens: numFromUnknown(u.cache_creation_input_tokens ?? u.cacheWriteTokens),
+    // Prefer explicit context totals; else input (+ cache) approximates window fill.
+    contextUsed: total
+      ?? (input != null || cached != null ? (input || 0) + (cached || 0) : undefined),
     totalCostUsd: numFromUnknown(u.total_cost_usd ?? u.cost_usd ?? u.cost),
     ...extra,
   };
@@ -500,8 +518,11 @@ async function runCodex(
   let summary = '';
   let sessionId: string | undefined;
   let emittedText = false; // prefix a paragraph break before later turns' text
+  let turnCount = 0;
   const emittedTool = new Set<string>();
   const isToolItem = (type: string) => type !== 'agent_message' && type !== 'reasoning';
+
+  if (model) emitCascadeStats(emit, { model });
 
   // Build a friendly tool_use block from a Codex item.
   const toolUseBlock = (item: any) => {
@@ -524,6 +545,30 @@ async function runCodex(
   const onLine = (line: string) => {
     const ev = JSON.parse(line);
     const item = ev.item;
+    // Usage can appear on turn.completed or nested event_msg token_count payloads.
+    if (ev.type === 'turn.completed' && ev.usage && typeof ev.usage === 'object') {
+      turnCount += 1;
+      emitCascadeStats(emit, statsFromUsageBlob(ev.usage as Record<string, unknown>, {
+        model,
+        numTurns: turnCount,
+      }));
+    } else if (ev.type === 'event_msg' && ev.payload && typeof ev.payload === 'object') {
+      const payload = ev.payload as Record<string, unknown>;
+      if (payload.type === 'token_count') {
+        const info = (payload.info && typeof payload.info === 'object')
+          ? payload.info as Record<string, unknown>
+          : payload;
+        const usage = (info.total_token_usage && typeof info.total_token_usage === 'object')
+          ? info.total_token_usage as Record<string, unknown>
+          : (info.last_token_usage && typeof info.last_token_usage === 'object')
+            ? info.last_token_usage as Record<string, unknown>
+            : info;
+        emitCascadeStats(emit, statsFromUsageBlob(usage, { model, numTurns: turnCount || undefined }));
+      }
+    } else if (ev.usage && typeof ev.usage === 'object') {
+      emitCascadeStats(emit, statsFromUsageBlob(ev.usage as Record<string, unknown>, { model }));
+    }
+
     switch (ev.type) {
       case 'thread.started':
         if (ev.thread_id) sessionId = ev.thread_id;
@@ -547,7 +592,7 @@ async function runCodex(
           emit('user', { message: { content: [{ type: 'tool_result', tool_use_id: item.id, content: truncate(String(out), 8000), is_error: isError }] } });
         }
         break;
-      // turn.started / turn.completed carry no renderable content.
+      // turn.started handled above via usage path; no content blocks.
     }
   };
 

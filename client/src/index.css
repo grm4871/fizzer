@@ -1504,12 +1504,14 @@ a {
 }
 /* ── Harness panel: terminal-style structured transcript ─── */
 .cascade-run-panel {
-  width: min(640px, 100%);
+  width: 100%;
+  max-width: 100%;
   margin-top: 8px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: #0c0b0a;
   overflow: hidden;
+  box-sizing: border-box;
 }
 .cascade-run-panel.is-running {
   border-color: hsla(33, 40%, 40%, 0.45);
