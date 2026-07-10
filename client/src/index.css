@@ -2216,20 +2216,33 @@ a {
   color: var(--text-tertiary);
   white-space: nowrap;
 }
+.chat-vault-pick-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+.chat-vault-pick-row.is-in-channel .chat-vault-pick-btn {
+  opacity: 0.55;
+  cursor: default;
+}
 .chat-vault-pick-btn {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   padding: 6px 8px;
-  margin-bottom: 4px;
   border-radius: var(--radius-md);
   text-align: left;
   color: var(--text-secondary);
 }
-.chat-vault-pick-btn:hover {
+.chat-vault-pick-btn:hover:not(:disabled) {
   background: hsla(22, 7%, 17%, 0.75);
   color: var(--text-primary);
+}
+.chat-vault-pick-btn:disabled {
+  cursor: default;
 }
 .chat-agent-identity-link {
   display: block;

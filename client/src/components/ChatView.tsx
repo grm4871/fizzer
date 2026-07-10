@@ -1428,32 +1428,35 @@ export function ChatView({
           );
         })}
 
-        {vaultAgents.length > 0 && (
-          <>
-            <div className="chat-users-title">Vault agents</div>
-            {vaultAgents.map((va) => {
-              const inChannel = channelVaultAgentIds.has(va.id);
-              const backend = availableAgents.find((a) => a.id === va.agentId)?.label || va.agentId;
-              const nCh = va.channelIds?.length ?? 0;
-              return (
-                <div className="chat-user chat-vault-agent" key={va.id}>
-                  <div className="chat-user-row chat-vault-agent-row">
-                    <ChatAvatar name={va.displayName || va.mention} kind="agent" size="sm" />
-                    <div className="chat-user-copy">
-                      <strong>{va.displayName || va.mention}</strong>
-                      <span>@{va.mention} · {backend} · {nCh} ch</span>
-                    </div>
-                    {!inChannel && (
-                      <button
-                        type="button"
-                        className="chat-vault-add-btn"
-                        title="Add to this channel"
-                        onClick={() => void addVaultAgentFromPicker(va.id)}
-                      >
-                        <Plus size={12} />
-                      </button>
-                    )}
-                    {inChannel && <span className="chat-vault-in-ch">in channel</span>}
+        {sidebarMode === 'users' && agentMenuOpen && agentPanelMode === 'picker' && (
+          <div className="chat-agent-menu" onClick={(event) => event.stopPropagation()}>
+            <div className="chat-agent-menu-heading">Add agent to #{channelName}</div>
+            {vaultAgents.length === 0 ? (
+              <div className="chat-runs-empty">No vault agents yet</div>
+            ) : (
+              vaultAgents.map((va) => {
+                const inChannel = channelVaultAgentIds.has(va.id);
+                const nCh = va.channelIds?.length ?? 0;
+                return (
+                  <div key={va.id} className={`chat-vault-pick-row${inChannel ? ' is-in-channel' : ''}`}>
+                    <button
+                      type="button"
+                      className="chat-vault-pick-btn"
+                      disabled={inChannel}
+                      onClick={() => {
+                        if (!inChannel) void addVaultAgentFromPicker(va.id);
+                      }}
+                      title={inChannel ? 'Already in this channel' : 'Add to this channel'}
+                    >
+                      <ChatAvatar name={va.displayName || va.mention} kind="agent" size="sm" />
+                      <span className="chat-user-copy">
+                        <strong>{va.displayName || va.mention}</strong>
+                        <span>
+                          @{va.mention} · {va.model || va.agentId}
+                          {inChannel ? ' · already here' : nCh > 0 ? ` · ${nCh} ch` : ''}
+                        </span>
+                      </span>
+                    </button>
                     {onDeleteVaultAgent && (
                       <button
                         type="button"
@@ -1470,32 +1473,8 @@ export function ChatView({
                       </button>
                     )}
                   </div>
-                </div>
-              );
-            })}
-          </>
-        )}
-
-        {sidebarMode === 'users' && agentMenuOpen && agentPanelMode === 'picker' && (
-          <div className="chat-agent-menu" onClick={(event) => event.stopPropagation()}>
-            <div className="chat-agent-menu-heading">Add agent to #{channelName}</div>
-            {vaultAgentsNotInChannel.length === 0 ? (
-              <div className="chat-runs-empty">No unused vault agents</div>
-            ) : (
-              vaultAgentsNotInChannel.map((va) => (
-                <button
-                  key={va.id}
-                  type="button"
-                  className="chat-vault-pick-btn"
-                  onClick={() => void addVaultAgentFromPicker(va.id)}
-                >
-                  <ChatAvatar name={va.displayName || va.mention} kind="agent" size="sm" />
-                  <span className="chat-user-copy">
-                    <strong>{va.displayName || va.mention}</strong>
-                    <span>@{va.mention} · {va.model || va.agentId}</span>
-                  </span>
-                </button>
-              ))
+                );
+              })
             )}
             {agentFormError && <div className="chat-agent-form-error">{agentFormError}</div>}
             <div className="chat-agent-menu-actions">
