@@ -265,6 +265,17 @@ db.exec(`
   END;
 `);
 
+/** Rebuild FTS5 indexes when triggers/getters drift after bulk deletes. */
+function rebuildSearchIndexes(db: Database.Database): void {
+  for (const table of ['notes_fts', 'chat_messages_fts'] as const) {
+    try {
+      db.exec(`INSERT INTO ${table}(${table}) VALUES('rebuild')`);
+    } catch (error) {
+      console.warn(`[db] ${table} rebuild skipped:`, error instanceof Error ? error.message : error);
+    }
+  }
+}
+
 ensureRunnerSchema(db);
 // In-memory desktop sockets die with the process; settle any left-open runs.
 {
@@ -275,6 +286,7 @@ ensureFeedSchema(db);
 ensureChatSchema(db);
 ensurePublishSchema(db);
 ensureEvolutionSchema(db);
+rebuildSearchIndexes(db);
 
 // ── Express & Socket.io setup ──────────────────────────────────────
 
