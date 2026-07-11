@@ -86,10 +86,12 @@ export default function App() {
 
   // Auth state
   const [user, setUser] = useState<User | null>(null);
-  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [authMode, setAuthMode] = useState<'login' | 'register' | 'reset'>('login');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [resetToken, setResetToken] = useState('');
   const [authError, setAuthError] = useState('');
+  const [authNotice, setAuthNotice] = useState('');
 
   // App data state
   const [vaults, setVaults] = useState<Vault[]>([]);
@@ -2156,7 +2158,21 @@ export default function App() {
   async function submitAuth(event: React.FormEvent) {
     event.preventDefault();
     setAuthError('');
+    setAuthNotice('');
     try {
+      if (authMode === 'reset') {
+        // Redeem an owner-issued reset token; the server logs us straight in.
+        const data = await api<{ user: User; token: string }>('/api/auth/reset', {
+          method: 'POST',
+          body: JSON.stringify({ token: resetToken.trim(), newPassword: password }),
+        });
+        localStorage.setItem('docs_token', data.token);
+        setUser(data.user);
+        setPassword('');
+        setResetToken('');
+        await loadVaults();
+        return;
+      }
       const inviteMatch = window.location.pathname.match(/^\/invite\/([^/]+)$/);
       const inviteToken = inviteMatch ? decodeURIComponent(inviteMatch[1]) : '';
       const data = await api<{ user: User; token: string }>(`/api/auth/${authMode}`, {
@@ -2292,19 +2308,48 @@ export default function App() {
             <Gem size={24} aria-hidden="true" />
             <h1>Cascade</h1>
           </div>
-          <label htmlFor="username">
-            Username
-            <input id="username" value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" autoFocus />
-          </label>
-          <label htmlFor="password">
-            Password
-            <input id="password" value={password} onChange={(e) => setPassword(e.target.value)} type="password" autoComplete={authMode === 'login' ? 'current-password' : 'new-password'} />
-          </label>
+          {authMode === 'reset' ? (
+            <>
+              <p className="auth-hint">Paste the reset token the server owner gave you, then choose a new password.</p>
+              <label htmlFor="reset-token">
+                Reset token
+                <input id="reset-token" value={resetToken} onChange={(e) => setResetToken(e.target.value)} autoComplete="off" autoFocus />
+              </label>
+              <label htmlFor="password">
+                New password
+                <input id="password" value={password} onChange={(e) => setPassword(e.target.value)} type="password" autoComplete="new-password" />
+              </label>
+            </>
+          ) : (
+            <>
+              <label htmlFor="username">
+                Username
+                <input id="username" value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" autoFocus />
+              </label>
+              <label htmlFor="password">
+                Password
+                <input id="password" value={password} onChange={(e) => setPassword(e.target.value)} type="password" autoComplete={authMode === 'login' ? 'current-password' : 'new-password'} />
+              </label>
+            </>
+          )}
+          {authNotice && <div className="auth-notice">{authNotice}</div>}
           {authError && <div className="error">{authError}</div>}
-          <button id="auth-submit" type="submit">{authMode === 'login' ? 'Log in' : 'Create account'}</button>
+          <button id="auth-submit" type="submit">
+            {authMode === 'login' ? 'Log in' : authMode === 'register' ? 'Create account' : 'Set new password'}
+          </button>
           {(hasInvite || authMode === 'register') && (
-            <button id="auth-toggle-mode" type="button" className="link-button" onClick={() => setAuthMode(authMode === 'login' ? 'register' : 'login')}>
+            <button id="auth-toggle-mode" type="button" className="link-button" onClick={() => { setAuthError(''); setAuthNotice(''); setAuthMode(authMode === 'login' ? 'register' : 'login'); }}>
               {authMode === 'login' ? 'Create account for this invite' : 'Already have an account? Log in'}
+            </button>
+          )}
+          {authMode === 'login' && (
+            <button type="button" className="link-button" onClick={() => { setAuthError(''); setAuthNotice(''); setAuthMode('reset'); }}>
+              Forgot password?
+            </button>
+          )}
+          {authMode === 'reset' && (
+            <button type="button" className="link-button" onClick={() => { setAuthError(''); setAuthNotice(''); setAuthMode('login'); }}>
+              Back to log in
             </button>
           )}
         </form>

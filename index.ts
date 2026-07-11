@@ -758,6 +758,49 @@ app.post('/api/auth/password', requireAuth, authRateLimit, async (req: AuthedReq
   res.json({ ok: true, token: signToken(user) });
 });
 
+// The server owner (first-registered account) issues a single-use, 1-hour
+// password-reset token for a locked-out user. No email infra: the owner hands
+// the token over out-of-band. The token is signed with the user's *current*
+// password hash, so it self-invalidates the moment the password changes
+// (single use) — no reset-token table to maintain.
+app.post('/api/auth/reset/issue', requireAuth, authRateLimit, (req: AuthedRequest, res) => {
+  const owner = db.prepare('SELECT MIN(id) AS ownerId FROM users').get() as { ownerId: number | null };
+  if (owner.ownerId == null || owner.ownerId !== req.user!.id) {
+    return res.status(403).json({ error: 'Only the server owner can issue password resets' });
+  }
+  const username = String(req.body.username || '').trim().toLowerCase();
+  const target = db.prepare('SELECT * FROM users WHERE username = ?').get(username) as User | undefined;
+  if (!target) return res.status(404).json({ error: 'No account with that username' });
+  const token = jwt.sign({ type: 'pw-reset', userId: target.id }, JWT_SECRET + target.password_hash, { expiresIn: '1h' });
+  res.json({ token, username: target.username, expiresInMinutes: 60 });
+});
+
+// Redeem a reset token to set a new password (typically the user is locked out,
+// so this is unauthenticated). Verified against the user's current password
+// hash, so a token stops working once used or after it expires.
+app.post('/api/auth/reset', authRateLimit, async (req, res) => {
+  const token = String(req.body.token || '').trim();
+  const newPassword = String(req.body.newPassword || '');
+  if (newPassword.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+  const decoded = (() => {
+    try { return jwt.decode(token) as { type?: string; userId?: number } | null; } catch { return null; }
+  })();
+  if (!decoded || decoded.type !== 'pw-reset' || typeof decoded.userId !== 'number') {
+    return res.status(400).json({ error: 'This reset link is invalid' });
+  }
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(decoded.userId) as User | undefined;
+  if (!user) return res.status(400).json({ error: 'This reset link is invalid' });
+  try {
+    jwt.verify(token, JWT_SECRET + user.password_hash);
+  } catch {
+    return res.status(400).json({ error: 'This reset link is invalid or has expired' });
+  }
+  const passwordHash = await bcrypt.hash(newPassword, 12);
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(passwordHash, user.id);
+  const updated = { id: user.id, username: user.username };
+  res.json({ ok: true, user: publicUser(updated), token: signToken(updated) });
+});
+
 app.get('/api/me', requireAuth, (req: AuthedRequest, res) => {
   res.json({ user: req.user });
 });
