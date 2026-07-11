@@ -24,7 +24,7 @@ import { CHAT_NOTE_MARKER } from './ChatView';
 import {
   Folder as FolderIcon, FolderOpen, FileText, Pin, Gem, Edit2, FolderPlus,
   Search, ChevronRight, PanelLeftClose, LogOut, Trash2, FilePlus, FolderInput, Pencil, RefreshCw,
-  Hash, Unlink,
+  Hash, Unlink, ShieldCheck,
 } from 'lucide-react';
 
 const FOLDER_DND_TYPE = 'application/x-cascade-folder';
@@ -46,6 +46,8 @@ interface SidebarProps {
   onSearch: () => void;
   onCollapse: () => void;
   onLogout: () => void;
+  isOwner?: boolean;
+  onOpenAdmin?: () => void;
   onDeleteNote: (id: string) => void;
   onMoveNote: (id: string, folderId: string | null) => void;
   onUnlistNote: (id: string) => void;
@@ -82,6 +84,8 @@ export function Sidebar({
   onSearch,
   onCollapse,
   onLogout,
+  isOwner,
+  onOpenAdmin,
   onDeleteNote,
   onMoveNote,
   onUnlistNote,
@@ -512,6 +516,11 @@ export function Sidebar({
         >
           <RefreshCw size={16} className={updating ? 'spin' : ''} />
         </button>
+        {isOwner && onOpenAdmin && (
+          <button className="btn-icon" onClick={onOpenAdmin} title="Admin">
+            <ShieldCheck size={16} />
+          </button>
+        )}
         <button id="logout-btn" className="btn-icon" onClick={onLogout} title="Log out">
           <LogOut size={16} />
         </button>

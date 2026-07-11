@@ -330,6 +330,12 @@ function publicUser(user: { id: number; username: string }) {
   return { id: user.id, username: user.username };
 }
 
+/** The server owner is the first-registered account (lowest user id). */
+function isOwner(userId: number): boolean {
+  const row = db.prepare('SELECT MIN(id) AS ownerId FROM users').get() as { ownerId: number | null };
+  return row.ownerId != null && row.ownerId === userId;
+}
+
 function signChatInvite(sourceVaultId: string, sourceChannelId: string) {
   return jwt.sign(
     { type: 'chat-invite', sourceVaultId, sourceChannelId } satisfies ChatInviteToken,
@@ -727,7 +733,7 @@ app.post('/api/auth/register', authRateLimit, async (req, res) => {
     const passwordHash = await bcrypt.hash(password, 12);
     const result = db.prepare('INSERT INTO users (username, password_hash) VALUES (?, ?)').run(username, passwordHash);
     const user = { id: Number(result.lastInsertRowid), username };
-    res.status(201).json({ user: publicUser(user), token: signToken(user) });
+    res.status(201).json({ user: publicUser(user), token: signToken(user), owner: isOwner(user.id) });
   } catch {
     res.status(409).json({ error: 'Username is already taken' });
   }
@@ -742,7 +748,7 @@ app.post('/api/auth/login', authRateLimit, async (req, res) => {
     return res.status(401).json({ error: 'Invalid username or password' });
   }
 
-  res.json({ user: publicUser(user), token: signToken(user) });
+  res.json({ user: publicUser(user), token: signToken(user), owner: isOwner(user.id) });
 });
 
 app.post('/api/auth/password', requireAuth, authRateLimit, async (req: AuthedRequest, res) => {
@@ -764,8 +770,7 @@ app.post('/api/auth/password', requireAuth, authRateLimit, async (req: AuthedReq
 // password hash, so it self-invalidates the moment the password changes
 // (single use) — no reset-token table to maintain.
 app.post('/api/auth/reset/issue', requireAuth, authRateLimit, (req: AuthedRequest, res) => {
-  const owner = db.prepare('SELECT MIN(id) AS ownerId FROM users').get() as { ownerId: number | null };
-  if (owner.ownerId == null || owner.ownerId !== req.user!.id) {
+  if (!isOwner(req.user!.id)) {
     return res.status(403).json({ error: 'Only the server owner can issue password resets' });
   }
   const username = String(req.body.username || '').trim().toLowerCase();
@@ -798,11 +803,18 @@ app.post('/api/auth/reset', authRateLimit, async (req, res) => {
   const passwordHash = await bcrypt.hash(newPassword, 12);
   db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(passwordHash, user.id);
   const updated = { id: user.id, username: user.username };
-  res.json({ ok: true, user: publicUser(updated), token: signToken(updated) });
+  res.json({ ok: true, user: publicUser(updated), token: signToken(updated), owner: isOwner(updated.id) });
 });
 
 app.get('/api/me', requireAuth, (req: AuthedRequest, res) => {
-  res.json({ user: req.user });
+  res.json({ user: req.user, owner: isOwner(req.user!.id) });
+});
+
+// Owner-only: list accounts for the admin panel (no secrets).
+app.get('/api/admin/users', requireAuth, (req: AuthedRequest, res) => {
+  if (!isOwner(req.user!.id)) return res.status(403).json({ error: 'Owner only' });
+  const users = db.prepare('SELECT id, username, created_at FROM users ORDER BY id ASC').all() as Array<{ id: number; username: string; created_at: string }>;
+  res.json({ users });
 });
 
 // ── Vault routes ───────────────────────────────────────────────────

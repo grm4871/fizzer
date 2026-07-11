@@ -21,6 +21,7 @@ import {
 } from './components/ChatView';
 import { SearchOverlay } from './components/SearchOverlay';
 import { CommandPalette } from './components/CommandPalette';
+import { AdminPanel } from './components/AdminPanel';
 import { PaneGrid, type TabDragPayload } from './components/PaneGrid';
 import * as Layout from './layout/tree';
 import type { LayoutNode } from './layout/tree';
@@ -86,6 +87,8 @@ export default function App() {
 
   // Auth state
   const [user, setUser] = useState<User | null>(null);
+  const [isOwner, setIsOwner] = useState(false);
+  const [adminOpen, setAdminOpen] = useState(false);
   const [authMode, setAuthMode] = useState<'login' | 'register' | 'reset'>('login');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -315,8 +318,8 @@ export default function App() {
   useEffect(() => {
     const token = localStorage.getItem('docs_token');
     if (!token) return;
-    api<{ user: User }>('/api/me')
-      .then((data) => { setUser(data.user); void loadVaults(); })
+    api<{ user: User; owner?: boolean }>('/api/me')
+      .then((data) => { setUser(data.user); setIsOwner(Boolean(data.owner)); void loadVaults(); })
       .catch(() => localStorage.removeItem('docs_token'));
   }, [loadVaults]);
 
@@ -2162,12 +2165,13 @@ export default function App() {
     try {
       if (authMode === 'reset') {
         // Redeem an owner-issued reset token; the server logs us straight in.
-        const data = await api<{ user: User; token: string }>('/api/auth/reset', {
+        const data = await api<{ user: User; token: string; owner?: boolean }>('/api/auth/reset', {
           method: 'POST',
           body: JSON.stringify({ token: resetToken.trim(), newPassword: password }),
         });
         localStorage.setItem('docs_token', data.token);
         setUser(data.user);
+        setIsOwner(Boolean(data.owner));
         setPassword('');
         setResetToken('');
         await loadVaults();
@@ -2175,12 +2179,13 @@ export default function App() {
       }
       const inviteMatch = window.location.pathname.match(/^\/invite\/([^/]+)$/);
       const inviteToken = inviteMatch ? decodeURIComponent(inviteMatch[1]) : '';
-      const data = await api<{ user: User; token: string }>(`/api/auth/${authMode}`, {
+      const data = await api<{ user: User; token: string; owner?: boolean }>(`/api/auth/${authMode}`, {
         method: 'POST',
         body: JSON.stringify({ username, password, ...(authMode === 'register' && inviteToken ? { inviteToken } : {}) }),
       });
       localStorage.setItem('docs_token', data.token);
       setUser(data.user);
+      setIsOwner(Boolean(data.owner));
       setPassword('');
       await loadVaults();
     } catch (error) {
@@ -2194,6 +2199,8 @@ export default function App() {
     runSocketsRef.current.clear();
     localStorage.removeItem('docs_token');
     setUser(null);
+    setIsOwner(false);
+    setAdminOpen(false);
     setVaults([]);
     setActiveVaultId(null);
     setFolders([]);
@@ -2375,6 +2382,8 @@ export default function App() {
       {sidebarOpen && (
         <Sidebar
           user={user}
+          isOwner={isOwner}
+          onOpenAdmin={() => setAdminOpen(true)}
           vaults={vaults}
           activeVaultId={activeVaultId}
           folders={folders}
@@ -2471,6 +2480,7 @@ export default function App() {
 
       <SearchOverlay open={searchOpen} onClose={() => setSearchOpen(false)} vaultId={activeVaultId} onSelectNote={(id) => openNote(id)} />
       <CommandPalette open={commandPaletteOpen} onClose={() => setCommandPaletteOpen(false)} notes={notes} onSelectNote={(id) => openNote(id)} onCreateNote={handleCreateNote} />
+      {adminOpen && <AdminPanel onClose={() => setAdminOpen(false)} />}
 
       {notice && <div className="toast" role="status">{notice}</div>}
     </main>
