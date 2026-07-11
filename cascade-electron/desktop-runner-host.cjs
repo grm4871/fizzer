@@ -30,6 +30,13 @@ let apiBase = 'https://cscd.online';
 let currentToken = '';
 /** Active local runs keyed by runId → abort/cleanup marker. */
 const activeRuns = new Map();
+/**
+ * Terminal events that may have been emitted while the server was down.
+ * Re-sent on reconnect so the server can settle the run after restart.
+ * Entries expire after TERMINAL_REPLAY_MS.
+ */
+const recentTerminalEvents = new Map();
+const TERMINAL_REPLAY_MS = 5 * 60 * 1000;
 
 function normalizeApiBase(value) {
   const raw = String(value || '').trim();
@@ -37,8 +44,35 @@ function normalizeApiBase(value) {
   return raw.replace(/\/$/, '');
 }
 
+function pruneRecentTerminals() {
+  const cutoff = Date.now() - TERMINAL_REPLAY_MS;
+  for (const [runId, entry] of recentTerminalEvents.entries()) {
+    if (!entry || entry.at < cutoff) recentTerminalEvents.delete(runId);
+  }
+}
+
 function emitRunEvent(runId, type, payload) {
+  if (type === 'status' && payload && typeof payload === 'object') {
+    const status = payload.status;
+    if (status === 'completed' || status === 'failed' || status === 'canceled') {
+      recentTerminalEvents.set(runId, { type, payload, at: Date.now() });
+      pruneRecentTerminals();
+    }
+  }
   socket?.emit('runner:runEvent', { runId, type, payload });
+}
+
+function registerWithServer(activeSocket) {
+  const models = probeLocalModels();
+  const activeRunIds = [...activeRuns.keys()].filter((id) => Number.isFinite(Number(id))).map(Number);
+  activeSocket.emit('runner:register', { models, activeRunIds });
+  // Re-emit terminal status for runs that finished while disconnected so the
+  // post-restart server can settle them instead of waiting for orphan timeout.
+  pruneRecentTerminals();
+  for (const [runId, entry] of recentTerminalEvents.entries()) {
+    if (activeRuns.has(runId)) continue; // still live — stream will continue
+    activeSocket.emit('runner:runEvent', { runId, type: entry.type, payload: entry.payload });
+  }
 }
 
 /**
@@ -115,9 +149,11 @@ function disconnectDesktopRunner() {
 
 function wireSocketHandlers(activeSocket) {
   activeSocket.on('connect', () => {
-    const models = probeLocalModels();
-    activeSocket.emit('runner:register', { models });
-    console.log(`[DesktopRunner] Connected to ${apiBase}/runners`);
+    registerWithServer(activeSocket);
+    console.log(
+      `[DesktopRunner] Connected to ${apiBase}/runners`
+      + (activeRuns.size ? ` (reclaiming ${activeRuns.size} active run(s))` : ''),
+    );
   });
 
   activeSocket.on('connect_error', (error) => {
@@ -132,6 +168,7 @@ function wireSocketHandlers(activeSocket) {
     const runId = Number(data?.runId);
     if (!Number.isFinite(runId)) return;
     activeRuns.delete(runId);
+    recentTerminalEvents.delete(runId);
     void cancelLocalAgentRun(runId);
   });
 
@@ -155,8 +192,7 @@ function connectDesktopRunner(token, nextApiBase) {
   if (socket && currentToken === authToken && apiBase === nextBase) {
     setNoteApiConfig({ url: nextBase, token: authToken });
     if (socket.connected) {
-      const models = probeLocalModels();
-      socket.emit('runner:register', { models });
+      registerWithServer(socket);
       return { success: true, reused: true };
     }
     // Socket.io client is reconnecting on its own — do not recreate.

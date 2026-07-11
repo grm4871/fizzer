@@ -15,6 +15,8 @@ import {
   clearDelegatedRunRecord,
   countActiveDelegatedRuns,
   failOpenDelegatedRunsForOwner,
+  getDelegatedRunOwnerFromDb,
+  listOpenDelegatedRuns,
   recordDelegatedRun,
 } from './runner.js';
 
@@ -79,6 +81,12 @@ const runnerLastSeen = new Map<number, string>();
  * mid-turn. Wait for reconnection before settling.
  */
 const DISCONNECT_GRACE_MS = Number(process.env.RUNNER_DISCONNECT_GRACE_MS || 20_000);
+/**
+ * After model-server restart, in-memory ownership is empty but desktop agents
+ * often keep running. Wait this long for desktops to reconnect + reclaim before
+ * settling leftover DB rows as failed.
+ */
+const ORPHAN_RECLAIM_MS = Number(process.env.RUNNER_ORPHAN_RECLAIM_MS || 120_000);
 const pendingDisconnectFails = new Map<number, ReturnType<typeof setTimeout>>();
 
 function clearPendingDisconnectFail(userId: number): void {
@@ -177,7 +185,11 @@ export function initDesktopRunners(io: Server, db: Db, hooks: RunnerHooks): void
       existing.disconnect();
     }
 
-    socket.on('runner:register', (payload?: { models?: Record<string, string[]> }) => {
+    socket.on('runner:register', (payload?: {
+      models?: Record<string, string[]>;
+      /** Local mid-flight run ids so the server can reclaim ownership after restart. */
+      activeRunIds?: number[];
+    }) => {
       runnersByUser.set(user.id, socket);
       runnerLastSeen.set(user.id, new Date().toISOString());
       clearPendingDisconnectFail(user.id);
@@ -190,7 +202,8 @@ export function initDesktopRunners(io: Server, db: Db, hooks: RunnerHooks): void
         }
         runnerModels.set(user.id, cleaned);
       }
-      socket.emit('runner:registered', { ok: true });
+      const reclaimed = reclaimActiveRunsFromDesktop(db, user.id, payload?.activeRunIds);
+      socket.emit('runner:registered', { ok: true, reclaimed });
     });
 
     socket.on('runner:capabilities', (payload?: { models?: Record<string, string[]> }) => {
@@ -209,7 +222,7 @@ export function initDesktopRunners(io: Server, db: Db, hooks: RunnerHooks): void
     socket.on('runner:runEvent', (data: { runId?: number; type?: string; payload?: unknown }) => {
       const runId = Number(data?.runId);
       if (!Number.isFinite(runId) || !data?.type) return;
-      if (delegatedRunOwners.get(runId) !== user.id) return;
+      if (!acceptRunEventFromOwner(db, runId, user.id)) return;
 
       hooks.publishRunEvent(db, runId, data.type, data.payload ?? {});
 
@@ -304,6 +317,11 @@ export function getDelegatedRunOwner(runId: number): number | undefined {
   return delegatedRunOwners.get(runId);
 }
 
+/** Restore in-memory ownership after server restart (desktop reclaimed the run). */
+export function reclaimDelegatedRun(runId: number, userId: number): void {
+  delegatedRunOwners.set(runId, userId);
+}
+
 export function cancelDelegatedRun(userId: number, runId: number): boolean {
   const socket = runnersByUser.get(userId);
   if (!socket?.connected) return false;
@@ -318,4 +336,113 @@ export function clearDelegatedRun(runId: number): void {
 /** Remember a runner-level error (e.g. 503 "no runner") for the health UI. */
 export function noteDesktopRunnerError(userId: number, message: string): void {
   runnerLastError.set(userId, { message, at: new Date().toISOString() });
+}
+
+/**
+ * Accept a streamed run event if this user owns the run in memory, or if the
+ * durable delegated_runs row still names them (post-restart rehydrate path).
+ */
+function acceptRunEventFromOwner(db: Db, runId: number, userId: number): boolean {
+  const memOwner = delegatedRunOwners.get(runId);
+  if (memOwner === userId) return true;
+  if (memOwner != null && memOwner !== userId) return false;
+
+  const dbOwner = getDelegatedRunOwnerFromDb(db, runId);
+  if (dbOwner !== userId) return false;
+  // Rehydrate memory so cancel/count paths see the live owner again.
+  delegatedRunOwners.set(runId, userId);
+  return true;
+}
+
+/**
+ * Reclaim ownership for mid-flight runs the desktop reports after reconnect.
+ * Only accepts ids still open in delegated_runs for this user.
+ */
+function reclaimActiveRunsFromDesktop(
+  db: Db,
+  userId: number,
+  activeRunIds: number[] | undefined,
+): number[] {
+  if (!Array.isArray(activeRunIds) || activeRunIds.length === 0) return [];
+  const reclaimed: number[] = [];
+  for (const raw of activeRunIds) {
+    const runId = Number(raw);
+    if (!Number.isFinite(runId)) continue;
+    const dbOwner = getDelegatedRunOwnerFromDb(db, runId);
+    if (dbOwner !== userId) continue;
+    delegatedRunOwners.set(runId, userId);
+    reclaimed.push(runId);
+  }
+  if (reclaimed.length > 0) {
+    console.log(`[runner] Reclaimed ${reclaimed.length} run(s) for user ${userId}: ${reclaimed.join(', ')}`);
+  }
+  return reclaimed;
+}
+
+/**
+ * After process boot, leave open delegated runs alive so reconnecting desktops
+ * can finish them. Only settle leftovers after ORPHAN_RECLAIM_MS if still open
+ * and not reclaimed by an online desktop.
+ */
+export function scheduleOrphanReclaimAfterRestart(db: Db, hooks: RunnerHooks): void {
+  const open = listOpenDelegatedRuns(db);
+  const looseOpen = db.prepare(`
+    SELECT id FROM runs
+    WHERE status IN ('queued', 'running')
+      AND id NOT IN (SELECT run_id FROM delegated_runs)
+  `).all() as Array<{ id: number }>;
+  if (open.length === 0 && looseOpen.length === 0) return;
+
+  console.log(
+    `[runner] ${open.length} open delegated run(s)`
+    + (looseOpen.length ? ` + ${looseOpen.length} loose` : '')
+    + ` after restart; reclaim window ${ORPHAN_RECLAIM_MS}ms`,
+  );
+
+  setTimeout(() => {
+    const stillOpen = listOpenDelegatedRuns(db);
+    let kept = 0;
+    const failedIds: number[] = [];
+    const summaryUnclaimed = 'Desktop agent runner did not reclaim this run after server restart.';
+
+    for (const { run_id, owner_user_id } of stillOpen) {
+      if (delegatedRunOwners.get(run_id) === owner_user_id && isDesktopRunnerOnline(owner_user_id)) {
+        kept += 1;
+        continue;
+      }
+      const run = db.prepare(
+        `SELECT id FROM runs WHERE id = ? AND status IN ('queued', 'running')`,
+      ).get(run_id) as { id: number } | undefined;
+      if (!run) {
+        clearDelegatedRunRecord(db, run_id);
+        delegatedRunOwners.delete(run_id);
+        continue;
+      }
+      hooks.finishDelegatedRun(db, run_id, { status: 'failed', summary: summaryUnclaimed });
+      hooks.publishRunEvent(db, run_id, 'status', { status: 'failed', summary: summaryUnclaimed });
+      clearDelegatedRunRecord(db, run_id);
+      delegatedRunOwners.delete(run_id);
+      failedIds.push(run_id);
+    }
+
+    // Loose open runs (no delegated_runs row) cannot reclaim — settle only those.
+    const looseSummary = 'Server restarted while this run was in progress.';
+    const stillLoose = db.prepare(`
+      SELECT id FROM runs
+      WHERE status IN ('queued', 'running')
+        AND id NOT IN (SELECT run_id FROM delegated_runs)
+    `).all() as Array<{ id: number }>;
+    for (const row of stillLoose) {
+      hooks.finishDelegatedRun(db, row.id, { status: 'failed', summary: looseSummary });
+      hooks.publishRunEvent(db, row.id, 'status', { status: 'failed', summary: looseSummary });
+      failedIds.push(row.id);
+    }
+
+    if (failedIds.length > 0) {
+      hooks.onRunsFailedForOwner?.(0, failedIds);
+    }
+    console.log(
+      `[runner] Orphan reclaim done: kept=${kept}, failed=${failedIds.length}`,
+    );
+  }, ORPHAN_RECLAIM_MS);
 }

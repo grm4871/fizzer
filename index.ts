@@ -63,7 +63,7 @@ import {
   findPriorSession,
   publishRunEvent,
   finishDelegatedRun,
-  failOrphanedRunsAfterRestart,
+  listOpenDelegatedRuns,
   type AgentId,
 } from './server/runner.js';
 import {
@@ -71,6 +71,7 @@ import {
   getDesktopRunnerStatus,
   initDesktopRunners,
   noteDesktopRunnerError,
+  scheduleOrphanReclaimAfterRestart,
   waitForDesktopRunner,
 } from './server/desktop-runner.js';
 import {
@@ -279,11 +280,9 @@ function rebuildSearchIndexes(db: Database.Database): void {
 }
 
 ensureRunnerSchema(db);
-// In-memory desktop sockets die with the process; settle any left-open runs.
-{
-  const n = failOrphanedRunsAfterRestart(db);
-  if (n > 0) console.log(`[runner] Settled ${n} orphaned run(s) after restart.`);
-}
+// In-memory desktop sockets die with the process, but local agents often keep
+// running. Defer orphan settle so reconnecting desktops can reclaim mid-flight
+// runs (see scheduleOrphanReclaimAfterRestart + activeRunIds on register).
 ensureFeedSchema(db);
 ensureChatSchema(db);
 db.exec(`
@@ -602,6 +601,44 @@ initDesktopRunners(io, db, {
     }
   },
 });
+
+// Restore chat stream targets for open delegated runs so mid-flight agents keep
+// updating chat after a model-server restart (targets are in-memory only).
+{
+  const open = listOpenDelegatedRuns(db);
+  let restored = 0;
+  for (const { run_id, owner_user_id } of open) {
+    const rows = db.prepare(`
+      SELECT id, vault_id, channel_id FROM chat_messages
+      WHERE run_id = ? AND status = 'running'
+      ORDER BY created_at DESC LIMIT 1
+    `).all(run_id) as Array<{ id: string; vault_id: string; channel_id: string }>;
+    for (const row of rows) {
+      chatRunTargets.set(run_id, {
+        userId: owner_user_id,
+        vaultId: row.vault_id,
+        channelId: row.channel_id,
+        messageId: row.id,
+      });
+      restored += 1;
+    }
+  }
+  if (restored > 0) {
+    console.log(`[runner] Restored ${restored} chat run target(s) after restart.`);
+  }
+  scheduleOrphanReclaimAfterRestart(db, {
+    publishRunEvent,
+    finishDelegatedRun,
+    onRunsFailedForOwner: (_ownerUserId, runIds) => {
+      for (const runId of runIds) {
+        syncRunToChatMessage(runId);
+        for (const update of settleChatMessagesForRun(db, runId)) {
+          emitChatMessageEvent(update.vaultId, update.channelId, 'vault:chatMessageUpdated', update.message);
+        }
+      }
+    },
+  });
+}
 
 // ── Health ──────────────────────────────────────────────────────────
 

@@ -16,5 +16,18 @@ When asked to deploy changes, always:
 
 1. **Commit and push** your working tree.
 2. **Run the private deploy script**: `./.private/deploy-cscd-online.sh` (untracked, in `.private/`). It POSTs to the server's `/api/deploy` endpoint with the deploy token; the host watcher then fast-forwards to the pushed commit and runs `deploy/deploy.sh`. (`deploy/deploy.sh` itself needs root and is not run directly.)
+3. **Wait for the deploy to land** (do not assume "queued" means done). Prefer:
+   - `./.private/deploy-cscd-online.sh --wait` (queues then polls until `last` updates or timeout), or
+   - `./.private/deploy-cscd-status.sh` / `GET /api/deploy/status` with the deploy token.
+   Poll every few seconds for up to ~3–5 minutes. Confirm `pending: false` and `last.status` is `ok` (or report `error` + message). Note `last.commit` in your final reply.
+4. Deploy is fragile: the queue can succeed while the host watcher fails, or the agent process can die mid-deploy when the container restarts. Always verify status (or that live `/api/health` + expected commit behavior returned) before claiming ship.
 
-Once the script returns `queued`, the deploy is handed off — **do not poll the deploy status or the live bundle**. Consider the task done after queuing.
+### After deploy lands — restart for the user
+
+- **Web clients** auto-reload when `version.json` changes (`client/public/version-check.js`). You usually do **not** need to tell users to hard-refresh, but mention it if something still looks stale.
+- **Electron / desktop runner** does **not** auto-restart. After deploys that touch any of:
+  - `cascade-electron/` (main process, `desktop-runner-host.cjs`, `agent-runner.cjs`, preload)
+  - `cli-agents/` wrappers used by the desktop
+  - server contracts the desktop runner depends on (`/runners`, delegated run payload)
+  **restart the Cascade desktop app for the user** (or clearly ask them to quit + relaunch) so mid-session sockets and local CLI wrappers pick up the new code. Server-only changes that keep the runner protocol compatible can leave the app running; mid-flight runs are designed to survive model-server restart via reclaim, but a **desktop** restart still drops local agent processes.
+- If you cannot restart Electron from this environment, say so and give the user a one-line "please relaunch Cascade desktop" note.
