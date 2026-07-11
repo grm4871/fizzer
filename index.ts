@@ -158,6 +158,7 @@ const DEPLOY_REQUEST_FILE = path.join(DATA_DIR, 'deploy.request');
 const DEPLOY_RESULT_FILE = path.join(DATA_DIR, 'deploy.result');
 const CLIENT_DIST_DIR = path.join(process.cwd(), 'client', 'dist');
 const CLIENT_APP_HTML = path.join(CLIENT_DIST_DIR, 'app.html');
+const ANDROID_APK_PATH = path.join(CLIENT_DIST_DIR, 'cascade-android.apk');
 
 type User = { id: number; username: string; password_hash: string; created_at: string };
 type AuthedRequest = Request & { user?: { id: number; username: string } };
@@ -2112,6 +2113,10 @@ app.delete('/api/notes/:id/publish', requireAuth, (req: AuthedRequest, res) => {
 // ── Static client ──────────────────────────────────────────────────
 
 if (fs.existsSync(CLIENT_APP_HTML)) {
+  app.get('/download/android', (_req, res) => {
+    if (!fs.existsSync(ANDROID_APK_PATH)) return res.status(404).json({ error: 'Android build is not available' });
+    res.download(ANDROID_APK_PATH, 'cascade-android.apk');
+  });
   app.use(express.static(CLIENT_DIST_DIR));
   app.get('*', (req, res, next) => {
     if (
