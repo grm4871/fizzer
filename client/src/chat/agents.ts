@@ -112,6 +112,6 @@ export function formatAgentChatPrompt(
   }
 
   const channelNote = registration.contextPrompt ? ` Channel note: ${registration.contextPrompt}` : '';
-  const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. Run \`cascade-chat history --include-reply-context\`, then complete the request. Use \`cascade-chat send --message "text"\` for brief progress updates, but do not stop after an update. Send the final response there, then leave stdout empty.${channelNote}`;
+  const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. Run \`cascade-chat history --include-reply-context\`, then complete the request. Use \`cascade-chat send --message "text"\` for brief progress updates, but do not stop after an update. Send the final response there, then leave stdout empty. Notes you create via cascade-note are unlisted by default (chat/search only); use \`--listed\` only if the user asks to put them in the sidebar.${channelNote}`;
   return `${header}\n\n${request}`;
 }

@@ -517,6 +517,8 @@ export function distillChatToNote(
   const note = createNote(db, vaultId, userId, {
     title: titleBase,
     content: `# ${titleBase}\n\n${bodyCore}\n`,
+    // Distill is agent-initiated — keep out of the human sidebar tree by default.
+    is_listed: false,
   });
   createNoteVersion(db, note.id, note.content, 'distill-create');
   for (const m of selected) {
@@ -576,6 +578,7 @@ function ensureIndexNote(db: Db, vaultId: string, userId: number, folderId: stri
   createNote(db, vaultId, userId, {
     title: 'INDEX',
     folder_id: folderId,
+    is_listed: false,
     content: [
       `# ${heading}`,
       '',
@@ -749,6 +752,7 @@ export function createAgentMemoryNote(
     title,
     folder_id: memoryId,
     content: `${body}\n`,
+    is_listed: false,
   });
   // Prepend pointer to INDEX
   const index = db.prepare(`

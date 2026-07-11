@@ -49,7 +49,7 @@ Usage:
   cascade-note list                      vaults, or notes with --vault
   cascade-note search <query>            search notes in a vault
   cascade-note get <id|title>            print a note's content
-  cascade-note create --title T [--unlisted] body via stdin (recommended) / --content-file / --content
+  cascade-note create --title T [--listed] body via stdin (recommended) / --content-file / --content
   cascade-note edit <id|title>           replace body (stdin / --content-file / --content)
   cascade-note append <id|title>         append body  (stdin / --content-file / --content)
   cascade-note backlinks <id|title>      note + chat backlinks for a note
@@ -66,6 +66,8 @@ Options:
   --vault <id>     vault id   (default $CASCADE_NOTE_VAULT, else sole vault)
   --title <t>      note title (create / memory)
   --folder <id>    folder id  (create)
+  --listed         put create in the sidebar tree (default is unlisted / chat-only)
+  --unlisted       explicit unlisted (default for create; kept for compatibility)
   --scope notes|chat|all   search scope (default notes)
   --topic <text>   channel topic for memory show
   --memory         scope create to _agent/memory (agent memory folder)
@@ -344,10 +346,18 @@ async function main() {
         out(args, `created memory ${data.note?.id || ''}  ${data.note?.title || ''}`, data.note || data);
         break;
       }
-      const payload = { title, content, ...(args.unlisted === true ? { is_listed: false } : {}) };
-      if (args.folder) payload.folder_id = String(args.folder);
+      // Agent default: unlisted (chat/search/embed only). Sidebar listing is
+      // human-directed — pass --listed only when the user asks to put it in the tree.
+      const listed = args.listed === true;
+      const payload = {
+        title,
+        content,
+        is_listed: listed,
+        ...(args.folder ? { folder_id: String(args.folder) } : {}),
+      };
       const { note } = await api(url, token, 'POST', `/api/vaults/${vaultId}/notes`, payload);
-      out(args, `created ${note.id}  ${note.title}`, note);
+      const where = note.is_listed ? 'listed' : 'unlisted';
+      out(args, `created ${note.id}  ${note.title}  (${where})`, note);
       break;
     }
     case 'edit':

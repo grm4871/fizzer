@@ -161,6 +161,8 @@ export function createMemoryNote(db: Db, userId: number, vaultId: string, input:
   const note = createNote(db, vault.id, userId, {
     title,
     folder_id: folder.id,
+    // Memory notes are agent-side; keep them out of the human sidebar tree.
+    is_listed: false,
     content: frontmatter({
       body,
       type,

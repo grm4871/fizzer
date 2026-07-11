@@ -21,7 +21,7 @@ const CLAUDE_MAX_TURNS = Number(process.env.RUNNER_MAX_TURNS || 100);
 const CLAUDE_THINKING_TOKENS = Number(process.env.RUNNER_THINKING ?? 4000);
 const CLAUDE_CHAT_MAX_TURNS = Number(process.env.RUNNER_CHAT_MAX_TURNS || 30);
 const CLAUDE_CHAT_THINKING_TOKENS = Number(process.env.RUNNER_CHAT_THINKING ?? 1500);
-const CLAUDE_AGENT_CONTEXT = 'You are a local workspace assistant. This checkout is not the live Cascade app: use `cascade-note` for live notes, `cascade-memory` for durable recall, and normal file edits only for local scratch or non-note work. Respect auth boundaries and only handle secrets the user explicitly provides for this task.';
+const CLAUDE_AGENT_CONTEXT = 'You are a local workspace assistant. This checkout is not the live Cascade app: use `cascade-note` for live notes, `cascade-memory` for durable recall, and normal file edits only for local scratch or non-note work. Notes you create via cascade-note are unlisted by default (chat/search/embed only, not the left sidebar). Only pass `--listed` if the user explicitly asks to put a note in the sidebar tree. Respect auth boundaries and only handle secrets the user explicitly provides for this task.';
 
 // Nudge agents to behave like chat participants, not verbose coding CLIs: the
 // chat collapses step narration into a trace disclosure, so the actual message
@@ -179,7 +179,7 @@ function noteCapabilityContext(opts) {
   const helperDir = resolveWrapperDir();
   const vaultId = String(opts && opts.vaultId || '').trim();
   const vaultLine = vaultId ? ` Vault: ${vaultId}.` : '';
-  return `Live notes: \`cascade-note\` (not local .md); durable memory: \`cascade-memory\`.${vaultLine} Helpers on PATH and in ${helperDir}.`;
+  return `Live notes: \`cascade-note\` (not local .md; creates unlisted by default — use \`--listed\` only if the user asks for sidebar); durable memory: \`cascade-memory\`.${vaultLine} Helpers on PATH and in ${helperDir}.`;
 }
 
 

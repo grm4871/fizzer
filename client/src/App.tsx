@@ -16,6 +16,7 @@ import {
   type ChatReplyRef,
   type DesktopRunnerHealth,
   type RunningChatAgent,
+  type SharedChatNote,
   type VaultAgent,
 } from './components/ChatView';
 import { SearchOverlay } from './components/SearchOverlay';
@@ -460,16 +461,16 @@ export default function App() {
     const results = await Promise.all(finalIds.map(async (channelId) => {
       try {
         const data = await api<ChatChannelPresence>(`/api/vaults/${vaultId}/channels/${channelId}/presence`);
-        return { channelId, participants: data.participants ?? [], online: data.online ?? [] };
+        return { channelId, participants: data.participants ?? [], online: data.online ?? [], owner: data.owner ?? '' };
       } catch {
-        return { channelId, participants: [], online: [] };
+        return { channelId, participants: [], online: [], owner: '' };
       }
     }));
 
     setChatPresenceByChannel((prev) => {
       const next = { ...prev };
-      for (const { channelId, participants, online } of results) {
-        next[channelId] = { participants, online };
+      for (const { channelId, participants, online, owner } of results) {
+        next[channelId] = { participants, online, owner };
       }
       return next;
     });
@@ -740,6 +741,22 @@ export default function App() {
         },
       };
     });
+  }, []);
+
+  const handleOpenSharedChatNote = useCallback(async (
+    channelId: string,
+    messageId: string,
+    title: string,
+  ): Promise<SharedChatNote | null> => {
+    try {
+      const data = await api<{ notes: SharedChatNote[] }>(
+        `/api/vaults/${activeVaultIdRef.current || 'none'}/channels/${channelId}/messages/${messageId}/embeds`,
+      );
+      return data.notes.find((note) => note.title.toLowerCase() === title.trim().toLowerCase()) ?? null;
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not open shared note');
+      return null;
+    }
   }, []);
 
   useEffect(() => {
@@ -1054,6 +1071,20 @@ export default function App() {
     });
     return data.url;
   }, []);
+
+  const handleRemoveChatParticipant = useCallback(async (channelId: string, username: string) => {
+    const vaultId = activeVaultIdRef.current;
+    if (!vaultId) return;
+    await api(`/api/vaults/${vaultId}/channels/${channelId}/members/${encodeURIComponent(username)}`, { method: 'DELETE' });
+  }, []);
+
+  const handleLeaveChatChannel = useCallback(async (channelId: string) => {
+    const vaultId = activeVaultIdRef.current;
+    if (!vaultId || !window.confirm('Leave this channel?')) return;
+    await api(`/api/vaults/${vaultId}/channels/${channelId}/members/me`, { method: 'DELETE' });
+    closeTabRef.current(channelId);
+    await loadVaultData(vaultId);
+  }, [loadVaultData]);
 
   const startAgentChatRun = useCallback(async (
     channelId: string,
@@ -1621,7 +1652,14 @@ export default function App() {
         if (!vaultId) return;
         const created = await api<{ note: Note }>(`/api/vaults/${vaultId}/notes`, {
           method: 'POST',
-          body: JSON.stringify({ id: tabId, title: 'Untitled Note', content: entry.draft, folder_id: entry.note.folder_id ?? undefined }),
+          body: JSON.stringify({
+            id: tabId,
+            title: 'Untitled Note',
+            content: entry.draft,
+            folder_id: entry.note.folder_id ?? undefined,
+            // Human-authored drafts stay listed unless this draft was unlisted.
+            is_listed: entry.note.is_listed !== 0,
+          }),
         });
         unsavedNoteIdsRef.current.delete(tabId);
         setNoteContents((prev) => ({ ...prev, [tabId]: { note: created.note, draft: created.note.content } }));
@@ -1813,13 +1851,14 @@ export default function App() {
         },
       }));
     };
-    const handleChatPresence = (data: { vaultId: string; channelId: string; participants: string[]; online: string[] }) => {
+    const handleChatPresence = (data: { vaultId: string; channelId: string; participants: string[]; online: string[]; owner?: string }) => {
       if (data.vaultId !== activeVaultId) return;
       setChatPresenceByChannel((prev) => ({
         ...prev,
         [data.channelId]: {
           participants: data.participants ?? [],
           online: data.online ?? [],
+          owner: data.owner ?? '',
         },
       }));
     };
@@ -2118,9 +2157,11 @@ export default function App() {
     event.preventDefault();
     setAuthError('');
     try {
+      const inviteMatch = window.location.pathname.match(/^\/invite\/([^/]+)$/);
+      const inviteToken = inviteMatch ? decodeURIComponent(inviteMatch[1]) : '';
       const data = await api<{ user: User; token: string }>(`/api/auth/${authMode}`, {
         method: 'POST',
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ username, password, ...(authMode === 'register' && inviteToken ? { inviteToken } : {}) }),
       });
       localStorage.setItem('docs_token', data.token);
       setUser(data.user);
@@ -2209,10 +2250,13 @@ export default function App() {
           onAddVaultAgentToChannel={handleAddVaultAgentToChannel}
           onCreateInviteLink={handleCreateChatInviteLink}
           onInviteUser={handleInviteChatUser}
+          onRemoveParticipant={handleRemoveChatParticipant}
+          onLeaveChannel={handleLeaveChatChannel}
           onSendMessage={handleSendChatMessage}
           onCancelRun={handleCancelChatRun}
           notes={notes}
           onOpenNote={openNote}
+          onOpenSharedNote={handleOpenSharedChatNote}
           membersOpen={chatMembersOpen}
           onMembersOpenChange={setChatMembersOpen}
           vaultId={activeVaultId || undefined}
@@ -2237,9 +2281,10 @@ export default function App() {
         onOpenNote={openNote}
       />
     );
-  }, [availableChatAgents, chatState.messagesByChannel, chatState.registeredAgentsByChannel, chatPresenceByChannel, currentUsername, loadingChatChannels, runningChatAgents, runnerHealth, vaultAgents, handleCancelChatRun, handleCreateChatInviteLink, handleInviteChatUser, handleRegisterChatAgent, handleRemoveChatAgent, handleUpsertVaultAgent, handleDeleteVaultAgent, handleAddVaultAgentToChannel, handleSendChatMessage, noteContents, notes, handleNoteChange, saveNoteTab, renameNoteTab, handleExecuteDirective, openNote, chatMembersOpen, activeVaultId, handleHydrateChatMessage]);
+  }, [availableChatAgents, chatState.messagesByChannel, chatState.registeredAgentsByChannel, chatPresenceByChannel, currentUsername, loadingChatChannels, runningChatAgents, runnerHealth, vaultAgents, handleCancelChatRun, handleCreateChatInviteLink, handleInviteChatUser, handleRemoveChatParticipant, handleLeaveChatChannel, handleRegisterChatAgent, handleRemoveChatAgent, handleUpsertVaultAgent, handleDeleteVaultAgent, handleAddVaultAgentToChannel, handleSendChatMessage, noteContents, notes, handleNoteChange, saveNoteTab, renameNoteTab, handleExecuteDirective, openNote, chatMembersOpen, activeVaultId, handleHydrateChatMessage, handleOpenSharedChatNote]);
 
   if (!user) {
+    const hasInvite = /^\/invite\/[^/]+$/.test(window.location.pathname);
     return (
       <main className="auth-shell">
         <form className="auth-panel" id="auth-panel" onSubmit={submitAuth}>
@@ -2257,9 +2302,11 @@ export default function App() {
           </label>
           {authError && <div className="error">{authError}</div>}
           <button id="auth-submit" type="submit">{authMode === 'login' ? 'Log in' : 'Create account'}</button>
-          <button id="auth-toggle-mode" type="button" className="link-button" onClick={() => setAuthMode(authMode === 'login' ? 'register' : 'login')}>
-            {authMode === 'login' ? 'Need an account? Sign up' : 'Already have an account? Log in'}
-          </button>
+          {(hasInvite || authMode === 'register') && (
+            <button id="auth-toggle-mode" type="button" className="link-button" onClick={() => setAuthMode(authMode === 'login' ? 'register' : 'login')}>
+              {authMode === 'login' ? 'Create account for this invite' : 'Already have an account? Log in'}
+            </button>
+          )}
         </form>
       </main>
     );
