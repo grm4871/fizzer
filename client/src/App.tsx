@@ -451,14 +451,30 @@ export default function App() {
     });
   }, []);
 
-  const loadChatMessages = useCallback(async (vaultId: string, noteList: NoteSummary[]) => {
+  const loadChatMessages = useCallback(async (
+    vaultId: string,
+    noteList: NoteSummary[],
+    opts?: { silent?: boolean },
+  ) => {
     const channelIds = noteList
       .filter((note) => note.content_preview.trim().startsWith(CHAT_NOTE_MARKER))
       .map((note) => note.id);
     if (channelIds.length === 0) return;
 
     const legacyMessages = readLegacyLocalChatMessages();
-    setLoadingChatChannels((prev) => Object.fromEntries([...Object.entries(prev), ...channelIds.map((id) => [id, true])]));
+    const silent = opts?.silent === true;
+    // Only show "Loading…" for channels with no cached transcript. Silent
+    // refreshes (app resume / focus) must never blank the open channel.
+    if (!silent) {
+      setLoadingChatChannels((prev) => {
+        const next = { ...prev };
+        for (const id of channelIds) {
+          const cached = chatStateRef.current.messagesByChannel[id];
+          if (!cached || cached.length === 0) next[id] = true;
+        }
+        return next;
+      });
+    }
     const loadChannels = async (ids: string[]) => {
       const results = await Promise.all(ids.map(async (channelId) => {
         try {
@@ -478,12 +494,17 @@ export default function App() {
           }
           return { channelId, messages };
         } catch {
-          return { channelId, messages: legacyMessages[channelId] ?? [] };
+          // Keep whatever we already have on soft failure (resume offline).
+          const cached = chatStateRef.current.messagesByChannel[channelId];
+          return { channelId, messages: cached ?? legacyMessages[channelId] ?? [] };
         }
       }));
       setChatState((prev) => ({
         ...prev,
-        messagesByChannel: Object.fromEntries([...Object.entries(prev.messagesByChannel), ...results.map(({ channelId, messages }) => [channelId, messages])]),
+        messagesByChannel: Object.fromEntries([
+          ...Object.entries(prev.messagesByChannel),
+          ...results.map(({ channelId, messages }) => [channelId, messages]),
+        ]),
       }));
       setLoadingChatChannels((prev) => {
         const next = { ...prev };
@@ -605,7 +626,7 @@ export default function App() {
     }
   }, []);
 
-  const loadVaultData = useCallback(async (vaultId: string) => {
+  const loadVaultData = useCallback(async (vaultId: string, opts?: { soft?: boolean }) => {
     try {
       const [folderData, noteData] = await Promise.all([
         api<{ folders: Folder[] }>(`/api/vaults/${vaultId}/folders`),
@@ -615,7 +636,7 @@ export default function App() {
       setFolders(folderData.folders || []);
       setNotes(nextNotes);
       await Promise.all([
-        loadChatMessages(vaultId, nextNotes),
+        loadChatMessages(vaultId, nextNotes, { silent: opts?.soft === true }),
         loadChatAgentMembers(vaultId, nextNotes),
         loadChatPresence(vaultId, nextNotes),
         loadVaultAgents(vaultId),
@@ -626,6 +647,7 @@ export default function App() {
   }, [loadChatMessages, loadChatAgentMembers, loadChatPresence, loadVaultAgents]);
 
   useEffect(() => {
+    let resumeTimer: number | null = null;
     const resyncOnResume = () => {
       if (!user) return;
       // Soft re-assert only — never clearRunnerToken here. Focus/visibility
@@ -649,8 +671,14 @@ export default function App() {
           socket.connect();
         }
       }
+      // Soft vault refresh: keep showing cached chat history (no Loading blank).
+      // Debounce — iOS fires focus+visibility together when switching apps.
       if (vaultId) {
-        void loadVaultData(vaultId);
+        if (resumeTimer != null) window.clearTimeout(resumeTimer);
+        resumeTimer = window.setTimeout(() => {
+          resumeTimer = null;
+          void loadVaultData(vaultId, { soft: true });
+        }, 250);
       }
     };
     const onVisible = () => {
@@ -659,6 +687,7 @@ export default function App() {
     window.addEventListener('focus', resyncOnResume);
     document.addEventListener('visibilitychange', onVisible);
     return () => {
+      if (resumeTimer != null) window.clearTimeout(resumeTimer);
       window.removeEventListener('focus', resyncOnResume);
       document.removeEventListener('visibilitychange', onVisible);
     };

@@ -1001,7 +1001,7 @@ export const ChatView = memo(function ChatView({
     programmaticClearRef.current = window.setTimeout(() => {
       programmaticClearRef.current = null;
       programmaticScrollRef.current = false;
-    }, 120);
+    }, 80);
   }, []);
 
   const scrollToBottomIfSticky = useCallback(() => {
@@ -1046,11 +1046,20 @@ export const ChatView = memo(function ChatView({
   }, []);
 
   const updateBottomStickiness = useCallback(() => {
-    // Ignore scrolls we triggered; only a real user scroll should unstick.
-    if (programmaticScrollRef.current) return;
     const element = messagesRef.current;
     if (!element) return;
-    wasAtBottomRef.current = isAtScrollBottom(element);
+    const atBottom = isAtScrollBottom(element);
+    // Programmatic pins set scrollTop then fire scroll events — ignore those
+    // while still at bottom. If the user scrolls away mid-pin, unstick immediately
+    // so history remains readable (mobile was fighting upward scrolls).
+    if (programmaticScrollRef.current) {
+      if (!atBottom) {
+        programmaticScrollRef.current = false;
+        wasAtBottomRef.current = false;
+      }
+      return;
+    }
+    wasAtBottomRef.current = atBottom;
   }, []);
 
   useEffect(() => {
@@ -1430,9 +1439,17 @@ export const ChatView = memo(function ChatView({
           role="log"
           aria-label={`${channelName} messages`}
           onScroll={updateBottomStickiness}
+          onTouchStart={() => {
+            // User gesture wins over any in-flight programmatic pin.
+            programmaticScrollRef.current = false;
+          }}
+          onWheel={() => {
+            programmaticScrollRef.current = false;
+          }}
         >
           <div ref={messagesContentRef} className="chat-messages-content">
-          {isLoadingMessages ? (
+          {/* Never blank an already-loaded transcript for a background refresh. */}
+          {isLoadingMessages && sortedMessages.length === 0 ? (
             <div className="chat-empty" aria-live="polite">
               <span className="chat-loading-dot" aria-hidden="true" />
               <strong>Loading messages…</strong>
