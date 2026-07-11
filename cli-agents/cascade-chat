@@ -21,6 +21,7 @@ Usage:
   cascade-chat history                 recent messages for the current channel
   cascade-chat send --message <text>    send a standalone message to the channel
   cascade-chat avatar --url <https-url> set this agent's profile picture
+                        (also --avatar-url; --url here is the image, not API base)
   cascade-chat distill                 condense chat into a vault note
   cascade-chat search <query>          search chat (or all) via unified search
 
@@ -123,8 +124,10 @@ function configString(config, key) {
   return String(config && config[key] || '').trim();
 }
 
-function baseUrl(args, config) {
-  const raw = String(args.url || configString(config, 'url') || process.env.CASCADE_NOTE_URL || DEFAULT_URL).trim();
+function baseUrl(args, config, { ignoreArgsUrl = false } = {}) {
+  // Avatar uses --url for the *picture*; don't treat that as the API base.
+  const fromArgs = ignoreArgsUrl ? '' : args.url;
+  const raw = String(fromArgs || configString(config, 'url') || process.env.CASCADE_NOTE_URL || DEFAULT_URL).trim();
   return raw.replace(/\/$/, '');
 }
 
@@ -286,14 +289,17 @@ async function main() {
   if (!vaultId) fail('missing vault. Pass --vault or set CASCADE_NOTE_VAULT.');
   if (cmd !== 'search' && !channelId) fail('missing channel. Pass --channel or set CASCADE_CHAT_CHANNEL.');
 
-  const url = baseUrl(args, config);
+  const url = baseUrl(args, config, { ignoreArgsUrl: cmd === 'avatar' });
   const token = await getToken(url, args, config);
 
   if (cmd === 'avatar') {
     const registrationId = configString(config, 'registrationId');
     if (!registrationId) fail('avatar can only be used from a registered agent chat run.');
-    const avatarUrl = args.clear === true ? '' : String(args.url || '').trim();
+    const avatarUrl = args.clear === true
+      ? ''
+      : String(args['avatar-url'] || args.url || '').trim();
     if (!args.clear && !avatarUrl) fail('missing --url <https-url>, or use --clear.');
+    if (!args.clear && !/^https?:\/\//i.test(avatarUrl)) fail('profile picture must be an http(s) URL');
     const result = await api(
       url, token, 'PUT',
       `/api/vaults/${vaultId}/channels/${channelId}/agents/${encodeURIComponent(registrationId)}/avatar`,
