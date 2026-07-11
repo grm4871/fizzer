@@ -58,7 +58,7 @@ import {
   type ChatState,
   type PersistedSession,
 } from './chat/session';
-import { Gem, PanelLeftOpen } from 'lucide-react';
+import { Gem, PanelLeftOpen, Users } from 'lucide-react';
 
 /**
  * @file App.tsx — Root component for Cascade
@@ -109,6 +109,17 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidebarWidth, setSidebarWidth] = useState(() => Number(localStorage.getItem('cascade_sidebar_w')) || 280);
   const [isResizing, setIsResizing] = useState(false);
+  // Members panel open. Mobile starts closed (toolbar opens it like the folder
+  // sidebar); desktop restores the previous expanded/collapsed rail preference.
+  const [chatMembersOpen, setChatMembersOpen] = useState(() => {
+    if (typeof window !== 'undefined' && window.matchMedia('(max-width: 900px)').matches) {
+      return false;
+    }
+    if (typeof localStorage !== 'undefined') {
+      return localStorage.getItem('cascade_chat_users_collapsed') !== '1';
+    }
+    return true;
+  });
 
   const [searchOpen, setSearchOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
@@ -118,6 +129,8 @@ export default function App() {
   // ─── Derived focus state ────────────────────────────────────────
   const focusedPane = Layout.findPane(layout, focusedPaneId) ?? Layout.getFirstPane(layout);
   const activeTabId = focusedPane.activeTabId;
+  const focusedTab = openTabs.find((tab) => tab.id === activeTabId) ?? null;
+  const focusedIsChat = focusedTab?.type === 'chat';
   const currentUsername = user?.username ?? '';
   const noteTitleById = useMemo(() => new Map(notes.map((note) => [note.id, note.title])), [notes]);
   const availableChatAgents = useMemo(() => CHAT_AGENTS.map((agent) => ({
@@ -196,8 +209,24 @@ export default function App() {
   useEffect(() => {
     if (window.matchMedia('(max-width: 900px)').matches) {
       setSidebarOpen(false);
+      setChatMembersOpen(false);
     }
   }, []);
+
+  // Mobile: members only while a chat is focused. Desktop keeps rail preference.
+  useEffect(() => {
+    if (!focusedIsChat && window.matchMedia('(max-width: 900px)').matches) {
+      setChatMembersOpen(false);
+    }
+  }, [focusedIsChat]);
+
+  useEffect(() => {
+    if (typeof localStorage === 'undefined') return;
+    // Desktop rail preference; mobile always starts closed so skip overwriting
+    // with false when the user is on a phone.
+    if (window.matchMedia('(max-width: 900px)').matches) return;
+    localStorage.setItem('cascade_chat_users_collapsed', chatMembersOpen ? '0' : '1');
+  }, [chatMembersOpen]);
 
   // Persist the workspace session.
   useEffect(() => {
@@ -2034,6 +2063,8 @@ export default function App() {
           onCancelRun={handleCancelChatRun}
           notes={notes}
           onOpenNote={openNote}
+          membersOpen={chatMembersOpen}
+          onMembersOpenChange={setChatMembersOpen}
         />
       );
     }
@@ -2054,7 +2085,7 @@ export default function App() {
         onOpenNote={openNote}
       />
     );
-  }, [availableChatAgents, chatState.messagesByChannel, chatState.registeredAgentsByChannel, chatPresenceByChannel, currentUsername, runningChatAgents, runnerHealth, vaultAgents, handleCancelChatRun, handleCreateChatInviteLink, handleInviteChatUser, handleRegisterChatAgent, handleRemoveChatAgent, handleUpsertVaultAgent, handleDeleteVaultAgent, handleAddVaultAgentToChannel, handleSendChatMessage, noteContents, notes, handleNoteChange, saveNoteTab, renameNoteTab, handleExecuteDirective, openNote]);
+  }, [availableChatAgents, chatState.messagesByChannel, chatState.registeredAgentsByChannel, chatPresenceByChannel, currentUsername, runningChatAgents, runnerHealth, vaultAgents, handleCancelChatRun, handleCreateChatInviteLink, handleInviteChatUser, handleRegisterChatAgent, handleRemoveChatAgent, handleUpsertVaultAgent, handleDeleteVaultAgent, handleAddVaultAgentToChannel, handleSendChatMessage, noteContents, notes, handleNoteChange, saveNoteTab, renameNoteTab, handleExecuteDirective, openNote, chatMembersOpen]);
 
   if (!user) {
     return (
@@ -2144,11 +2175,35 @@ export default function App() {
       <div className="workspace flex flex-col flex-1" style={{ height: '100%', overflow: 'hidden' }}>
         <div className="workspace-toolbar" style={{ display: 'flex', alignItems: 'center', background: 'var(--bg-surface)', padding: '4px 8px', gap: 4, borderBottom: '1px solid var(--border)' }}>
           {!sidebarOpen && (
-            <button id="sidebar-expand-btn" className="btn-icon" onClick={() => setSidebarOpen(true)} title="Expand sidebar">
+            <button
+              id="sidebar-expand-btn"
+              className="btn-icon"
+              onClick={() => {
+                setSidebarOpen(true);
+                // One mobile drawer at a time (same idea as exclusive sidebars).
+                if (window.matchMedia('(max-width: 900px)').matches) setChatMembersOpen(false);
+              }}
+              title="Expand sidebar"
+            >
               <PanelLeftOpen size={16} />
             </button>
           )}
           <div style={{ flex: 1, minWidth: 0 }} />
+          {focusedIsChat && !chatMembersOpen && (
+            <button
+              id="chat-members-expand-btn"
+              type="button"
+              className="btn-icon chat-members-toolbar-btn"
+              onClick={() => {
+                setChatMembersOpen(true);
+                if (window.matchMedia('(max-width: 900px)').matches) setSidebarOpen(false);
+              }}
+              title="Show channel members"
+              aria-label="Show channel members"
+            >
+              <Users size={16} />
+            </button>
+          )}
         </div>
 
         <div className="flex-1" style={{ position: 'relative', display: 'flex', overflow: 'hidden' }}>

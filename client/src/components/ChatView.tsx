@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Activity, Bot, ChevronLeft, ChevronRight, Copy, Hash, ImagePlus, Paperclip, Plus, Reply, Send, Square, UserPlus, Users, X } from 'lucide-react';
+import { Activity, Bot, ChevronLeft, ChevronRight, Copy, Hash, ImagePlus, Paperclip, Plus, Reply, Send, Square, UserPlus, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
@@ -185,6 +185,9 @@ interface ChatViewProps {
   onCancelRun: (runId: number) => void;
   notes?: NoteSummary[];
   onOpenNote?: (id: string) => void;
+  /** When set, members panel open state is controlled by the app (workspace toolbar). */
+  membersOpen?: boolean;
+  onMembersOpenChange?: (open: boolean) => void;
 }
 
 // Stable fallback: an inline `= []` default would mint a new identity every
@@ -794,12 +797,26 @@ export const ChatView = memo(function ChatView({
   onCancelRun,
   notes = EMPTY_NOTES,
   onOpenNote,
+  membersOpen: membersOpenProp,
+  onMembersOpenChange,
 }: ChatViewProps) {
   const [draft, setDraft] = useState('');
   const [sidebarMode, setSidebarMode] = useState<'users' | 'runs'>('users');
-  const [usersCollapsed, setUsersCollapsed] = useState(() =>
+  const [usersCollapsedLocal, setUsersCollapsedLocal] = useState(() =>
     typeof localStorage !== 'undefined' && localStorage.getItem('cascade_chat_users_collapsed') === '1'
   );
+  // Controlled from App toolbar when provided; otherwise local desktop rail state.
+  const usersCollapsed = onMembersOpenChange
+    ? !(membersOpenProp ?? false)
+    : usersCollapsedLocal;
+  const setUsersCollapsed = useCallback((value: boolean | ((prev: boolean) => boolean)) => {
+    const next = typeof value === 'function' ? value(usersCollapsed) : value;
+    if (onMembersOpenChange) {
+      onMembersOpenChange(!next);
+    } else {
+      setUsersCollapsedLocal(next);
+    }
+  }, [onMembersOpenChange, usersCollapsed]);
   /** Agent panel flow: pick existing vault agent, create, or edit membership/identity. */
   const [agentPanelMode, setAgentPanelMode] = useState<'picker' | 'create' | 'edit-member' | 'edit-identity'>('picker');
   const [agentMenuOpen, setAgentMenuOpen] = useState(false);
@@ -961,13 +978,16 @@ export const ChatView = memo(function ChatView({
 
   useEffect(() => {
     if (typeof localStorage === 'undefined') return;
-    localStorage.setItem('cascade_chat_users_collapsed', usersCollapsed ? '1' : '0');
+    // Only persist local (desktop) preference — mobile toolbar state is App-owned.
+    if (!onMembersOpenChange) {
+      localStorage.setItem('cascade_chat_users_collapsed', usersCollapsed ? '1' : '0');
+    }
     if (usersCollapsed) {
       setAgentMenuOpen(false);
       setInviteOpen(false);
       setEditingRegistrationId(null);
     }
-  }, [usersCollapsed]);
+  }, [usersCollapsed, onMembersOpenChange]);
 
   /** Pin the scroller to the bottom now, flagging it as a programmatic scroll. */
   const scrollToBottom = useCallback(() => {
@@ -1400,15 +1420,6 @@ export const ChatView = memo(function ChatView({
             <h2>{channelName}</h2>
             <span>{sortedMessages.length} messages</span>
           </div>
-          <button
-            type="button"
-            className={`chat-mobile-members-btn${usersCollapsed ? '' : ' is-active'}`}
-            onClick={() => setUsersCollapsed((value) => !value)}
-            title={usersCollapsed ? 'Show members' : 'Hide members'}
-            aria-label={usersCollapsed ? 'Show channel members' : 'Hide channel members'}
-          >
-            <Users size={18} />
-          </button>
         </header>
 
         <div
@@ -1581,19 +1592,6 @@ export const ChatView = memo(function ChatView({
             Reply
           </button>
         </div>
-      )}
-
-      {!usersCollapsed && (
-        <button
-          type="button"
-          className="chat-users-backdrop"
-          aria-label="Close members"
-          onClick={() => {
-            setUsersCollapsed(true);
-            setAgentMenuOpen(false);
-            setInviteOpen(false);
-          }}
-        />
       )}
 
       <aside

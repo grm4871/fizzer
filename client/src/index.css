@@ -1169,28 +1169,12 @@ a {
   font-weight: 600;
   line-height: 1.2;
 }
-.chat-mobile-members-btn,
-.chat-users-backdrop {
+/* Members toolbar toggle is mobile-only (mirrors folder sidebar expand). */
+.chat-members-toolbar-btn {
   display: none;
 }
-.chat-mobile-members-btn {
-  margin-left: auto;
-  width: 36px;
-  height: 36px;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-surface);
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-.chat-mobile-members-btn.is-active,
-.chat-mobile-members-btn:hover {
-  border-color: var(--border-active);
-  background: var(--bg-raised);
-  color: var(--text-primary);
+.chat-users-backdrop {
+  display: none;
 }
 .chat-header-copy span {
   color: var(--text-tertiary);
@@ -2970,52 +2954,48 @@ a {
     padding-bottom: max(10px, env(safe-area-inset-bottom));
   }
 
-  .chat-mobile-members-btn {
+  /* Same pattern as left folder sidebar: toolbar button opens a side panel. */
+  .chat-members-toolbar-btn {
     display: inline-flex;
   }
 
-  .chat-users-backdrop {
-    display: block;
-    position: fixed;
-    inset: 0;
-    z-index: 88;
-    border: 0;
-    padding: 0;
-    background: hsla(22, 8%, 5%, 0.55);
-    cursor: default;
+  .chat-view {
+    position: relative;
   }
 
   .chat-users,
   .chat-users.is-collapsed {
-    position: fixed;
+    position: absolute;
     top: 0;
     right: 0;
     bottom: 0;
-    z-index: 90;
+    z-index: 80;
     display: flex;
     flex-direction: column;
     width: min(86vw, 300px);
     max-width: 100vw;
     flex: none;
     border-left: 1px solid var(--border);
+    background: var(--bg-surface);
     box-shadow: var(--shadow-lg);
-    transform: translateX(0);
-    transition: transform var(--transition-normal) ease;
-    padding-top: max(10px, env(safe-area-inset-top));
-    padding-bottom: max(14px, env(safe-area-inset-bottom));
+    padding: 10px 8px max(14px, env(safe-area-inset-bottom));
     overflow-y: auto;
   }
 
+  /* Fully hide when closed — no offscreen translate / dim overlay. */
   .chat-users.is-collapsed {
-    transform: translateX(100%);
-    pointer-events: none;
-    visibility: hidden;
+    display: none;
   }
 
   .chat-users:not(.is-collapsed) .chat-users-header {
     flex-direction: row;
     align-items: center;
     padding: 0 4px 6px;
+  }
+
+  .chat-users:not(.is-collapsed) .chat-users-collapse-btn {
+    /* Matches sidebar collapse affordance on the open panel. */
+    display: inline-flex;
   }
 
   .workspace-toolbar {
