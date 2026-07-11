@@ -846,21 +846,40 @@ function agyTryAutoApprove(conversationId: string): void {
   agyLsPost('ResolveOutstandingSteps', { cascadeId: conversationId });
 }
 
-/** Map UI / live model ids to agentapi --model= tiers. */
+/** Map UI / live model ids (slugs, enums, labels) to agentapi --model= tiers. */
 export function resolveAntigravityModelTier(model?: string | null): AntigravityTier | undefined {
   if (!model || !String(model).trim()) return undefined;
-  const raw = String(model).trim();
+  let raw = String(model).trim();
+  // "id|label" live entries from listAntigravityModels
+  if (raw.includes('|')) raw = raw.split('|')[0].trim();
   const lower = raw.toLowerCase();
   if (ANTIGRAVITY_TIERS.has(lower)) return lower as AntigravityTier;
 
-  // Live MODEL_PLACEHOLDER / label heuristics from GetCascadeModelConfigData.
-  if (/flash_lite|flash.*\(low\)|m187\b/i.test(raw)) return 'flash_lite';
-  if (/flash.*\(high\)|m132\b/i.test(raw)) return 'flash';
-  if (/flash.*\(medium\)|m20\b|^flash$/i.test(raw) || /gemini\s*3\.5\s*flash/i.test(raw)) return 'flash';
-  if (/gemini\s*3\.1\s*pro|m36\b|m16\b|\bpro\b/i.test(raw)) return 'pro';
-  // Claude / GPT-OSS slots in Antigravity IDE are not agentapi tiers; fall back
-  // to pro so the run still starts (tier resolves to whatever pro maps to).
-  if (/claude|opus|sonnet|gpt|oss/i.test(raw)) return 'pro';
+  // GetAvailableModels slugs + enums + human labels.
+  // Lite / extra-low → flash_lite
+  if (
+    /flash_lite|flash-lite|extra-low|flash.*\(low\)|m187\b|m50\b|gemini-2\.5-flash-lite|gemini-3\.1-flash-lite/i.test(raw)
+  ) {
+    return 'flash_lite';
+  }
+  // High flash / mid flash / generic flash → flash
+  if (
+    /flash.*\(high\)|flash.*\(medium\)|m132\b|m20\b|m18\b|m21\b|gemini-3-flash|gemini-3\.5-flash|gemini-2\.5-flash|gemini-3\.1-flash/i.test(raw)
+    || lower === 'flash'
+  ) {
+    return 'flash';
+  }
+  // Pro family
+  if (
+    /gemini-2\.5-pro|gemini-3\.1-pro|gemini-pro|pro-high|pro-low|m36\b|m16\b|m37\b|\(high\)|\(low\)/i.test(raw)
+    && /pro/i.test(raw)
+  ) {
+    return 'pro';
+  }
+  if (/\bpro\b/i.test(raw) && !/flash/i.test(raw)) return 'pro';
+  // Claude / GPT-OSS / other cascade slots — agentapi only has tiers; use pro.
+  if (/claude|opus|sonnet|gpt|oss|anthropic/i.test(raw)) return 'pro';
+  if (/model_placeholder_m/i.test(raw)) return 'pro';
   return undefined;
 }
 
@@ -868,7 +887,7 @@ export function resolveAntigravityModelTier(model?: string | null): AntigravityT
  * Discover Antigravity language_server HTTP address + CSRF + project id.
  * Prefer env, then /proc cmdline + language_server.log, then /proc environ.
  */
-function discoverAntigravityEnv(): Record<string, string> {
+function discoverAntigravityEnv(cwd?: string): Record<string, string> {
   const env: Record<string, string> = { ANTIGRAVITY_AGENT: '1' };
 
   if (process.env.ANTIGRAVITY_PROJECT_ID) {
@@ -879,14 +898,14 @@ function discoverAntigravityEnv(): Record<string, string> {
       if (fs.existsSync(projectsDir)) {
         const files = fs.readdirSync(projectsDir);
         let projectId: string | undefined;
-        const cwd = process.cwd();
+        const searchCwd = cwd ? path.resolve(cwd) : process.cwd();
         for (const file of files) {
           if (!file.endsWith('.json')) continue;
           try {
             const filePath = path.join(projectsDir, file);
             const content = fs.readFileSync(filePath, 'utf-8');
             const data = JSON.parse(content) as { id?: string; name?: string };
-            if (content.includes(cwd) || content.includes(`file://${cwd}`) || data.name === 'cascade') {
+            if (content.includes(searchCwd) || content.includes(`file://${searchCwd}`) || data.name === 'cascade') {
               projectId = data.id || file.replace(/\.json$/, '');
               break;
             }
@@ -962,63 +981,157 @@ function discoverAntigravityEnv(): Record<string, string> {
   return env;
 }
 
-/**
- * Live model list from the Antigravity language server (same catalog as the IDE).
- * Returns display labels + agentapi-runnable tier aliases. Empty if LS offline.
- */
-export function listAntigravityModels(): string[] {
+type AgyModelEntry = { id: string; label: string; recommended?: boolean };
+
+function agyLsJson(endpoint: string, body: Record<string, unknown> = {}): unknown | null {
   const discovered = discoverAntigravityEnv();
   const addr = discovered.ANTIGRAVITY_LS_ADDRESS || process.env.ANTIGRAVITY_LS_ADDRESS;
   const token = discovered.ANTIGRAVITY_CSRF_TOKEN || process.env.ANTIGRAVITY_CSRF_TOKEN;
-  if (!addr || !token) {
-    return ['flash_lite', 'flash', 'pro'];
-  }
-
+  if (!addr || !token) return null;
   const host = addr.includes('://') ? addr : `http://${addr}`;
-  const url = `${host.replace(/\/$/, '')}/exa.language_server_pb.LanguageServerService/GetCascadeModelConfigData`;
+  const url = `${host.replace(/\/$/, '')}/exa.language_server_pb.LanguageServerService/${endpoint}`;
   try {
     const result = spawnSync(
       'curl',
       [
-        '-sS', '-m', '4',
+        '-sS', '-m', '6',
         '-X', 'POST', url,
         '-H', 'Content-Type: application/json',
         '-H', `X-Codeium-Csrf-Token: ${token}`,
-        '-d', '{}',
+        '-d', JSON.stringify(body),
       ],
-      { encoding: 'utf8', timeout: 6000 },
+      { encoding: 'utf8', timeout: 8000 },
     );
-    if (result.status !== 0 || !result.stdout?.trim()) {
-      return ['flash_lite', 'flash', 'pro'];
-    }
-    const data = JSON.parse(result.stdout) as {
-      clientModelConfigs?: Array<{
-        label?: string;
-        modelOrAlias?: { model?: string; alias?: string };
-      }>;
-    };
-    const ids: string[] = [];
-    const seen = new Set<string>();
-    // Always include agentapi tiers first so the picker can pass them through.
-    for (const tier of ['flash_lite', 'flash', 'pro']) {
-      seen.add(tier);
-      ids.push(tier);
-    }
-    for (const cfg of data.clientModelConfigs || []) {
-      const label = (cfg.label || '').trim();
-      const modelKey = (cfg.modelOrAlias?.model || cfg.modelOrAlias?.alias || '').trim();
-      // Prefer human labels as selectable ids when they resolve to a tier; also
-      // keep the model enum so mergeAgentModelPresets can surface them.
-      for (const candidate of [label, modelKey]) {
-        if (!candidate || seen.has(candidate)) continue;
-        seen.add(candidate);
-        ids.push(candidate);
-      }
-    }
-    return ids;
+    if (result.status !== 0 || !result.stdout?.trim()) return null;
+    return JSON.parse(result.stdout);
   } catch {
-    return ['flash_lite', 'flash', 'pro'];
+    return null;
   }
+}
+
+/**
+ * Full live catalog from Antigravity LS.
+ * Prefer GetAvailableModels (complete map with slugs + displayName); merge
+ * GetCascadeModelConfigData (recommended cascade picker rows) so nothing the
+ * IDE shows is dropped. Entries are `id|label` for the desktop/UI merge.
+ */
+export function listAntigravityModels(): string[] {
+  const byId = new Map<string, AgyModelEntry>();
+  const add = (id: string, label: string, recommended = false) => {
+    const cleanId = id.trim();
+    const cleanLabel = (label || id).trim();
+    if (!cleanId) return;
+    // Skip autocomplete/tab-only internals.
+    if (/^tab[_-]|tab_jump|tab_flash/i.test(cleanId) || /^tab[_-]/i.test(cleanLabel)) return;
+    if (/^chat_\d+$/i.test(cleanId)) return;
+    const prev = byId.get(cleanId);
+    if (prev) {
+      // Prefer richer label / recommended flag.
+      if (cleanLabel.length > prev.label.length) prev.label = cleanLabel;
+      if (recommended) prev.recommended = true;
+      return;
+    }
+    byId.set(cleanId, { id: cleanId, label: cleanLabel, recommended });
+  };
+
+  // agentapi runnable tiers (always present even if LS is down).
+  add('flash_lite', 'Gemini Flash Lite (agentapi tier)', true);
+  add('flash', 'Gemini Flash (agentapi tier)', true);
+  add('pro', 'Gemini Pro (agentapi tier)', true);
+
+  // 1) Full registry — includes 2.5 Pro, 3 Flash, Flash Lite, Image, etc.
+  const available = agyLsJson('GetAvailableModels') as {
+    response?: { models?: Record<string, Record<string, unknown>> };
+    models?: Record<string, Record<string, unknown>>;
+  } | null;
+  const modelMap = available?.response?.models || available?.models || {};
+  for (const [slug, meta] of Object.entries(modelMap)) {
+    if (!meta || typeof meta !== 'object') continue;
+    const isInternal = Boolean(meta.isInternal ?? meta.is_internal);
+    const displayName = String(meta.displayName || meta.display_name || '').trim();
+    const enumId = String(meta.model || '').trim();
+    const recommended = Boolean(meta.recommended ?? meta.isRecommended);
+    // Keep public models (displayName) and recommended; drop nameless internals.
+    if (isInternal && !displayName && !recommended) continue;
+    if (!displayName && !recommended && isInternal) continue;
+    const label = displayName || slug;
+    // Prefer human slug as id when present; also index enum for resolve/mapping.
+    add(slug, label, recommended);
+    if (enumId && enumId !== slug) add(enumId, label, recommended);
+  }
+
+  // 2) Cascade picker rows (may include battle/recommended-only extras).
+  const cascade = agyLsJson('GetCascadeModelConfigData') as {
+    clientModelConfigs?: Array<{
+      label?: string;
+      isRecommended?: boolean;
+      modelOrAlias?: { model?: string; alias?: string };
+    }>;
+    battleModeModelConfigs?: Array<{
+      label?: string;
+      isRecommended?: boolean;
+      modelOrAlias?: { model?: string; alias?: string };
+    }>;
+  } | null;
+  for (const cfg of [
+    ...(cascade?.clientModelConfigs || []),
+    ...(cascade?.battleModeModelConfigs || []),
+  ]) {
+    const label = (cfg.label || '').trim();
+    const modelKey = (cfg.modelOrAlias?.model || cfg.modelOrAlias?.alias || '').trim();
+    if (modelKey) add(modelKey, label || modelKey, Boolean(cfg.isRecommended));
+    if (label) add(label, label, Boolean(cfg.isRecommended));
+  }
+
+  // Drop pure aliases: keep agentapi tiers + human slugs; drop MODEL_* enums
+  // and bare label-as-id when a slug already covers the same label.
+  const score = (e: AgyModelEntry): number => {
+    if (ANTIGRAVITY_TIERS.has(e.id)) return 40;
+    if (/^MODEL_/i.test(e.id)) return 10;
+    if (e.id === e.label) return 5;
+    if (/^[a-z0-9][a-z0-9._-]+$/i.test(e.id)) return 50; // slug
+    return 20;
+  };
+  // Group by lowercase label; within a group keep all distinct slugs (they are
+  // different model ids even when displayName collides), but only the best
+  // non-slug alias.
+  const groups = new Map<string, AgyModelEntry[]>();
+  for (const e of byId.values()) {
+    const lk = e.label.toLowerCase();
+    const arr = groups.get(lk) || [];
+    arr.push(e);
+    groups.set(lk, arr);
+  }
+  const picked: AgyModelEntry[] = [];
+  for (const [, group] of groups) {
+    const slugs = group.filter((e) => /^[a-z0-9][a-z0-9._-]+$/i.test(e.id) && !/^MODEL_/i.test(e.id) && e.id !== e.label);
+    if (slugs.length > 0) {
+      // Distinct slug ids share a displayName — disambiguate labels with id.
+      if (slugs.length === 1) {
+        picked.push(slugs[0]);
+      } else {
+        for (const s of slugs) {
+          picked.push({
+            ...s,
+            label: s.label.includes(s.id) ? s.label : `${s.label} · ${s.id}`,
+          });
+        }
+      }
+      continue;
+    }
+    group.sort((a, b) => score(b) - score(a));
+    picked.push(group[0]);
+  }
+
+  // Stable order: agentapi tiers first, then recommended, then label alpha.
+  const ordered = picked.sort((a, b) => {
+    const aTier = ANTIGRAVITY_TIERS.has(a.id) ? 0 : 1;
+    const bTier = ANTIGRAVITY_TIERS.has(b.id) ? 0 : 1;
+    if (aTier !== bTier) return aTier - bTier;
+    if (Boolean(a.recommended) !== Boolean(b.recommended)) return a.recommended ? -1 : 1;
+    return a.label.localeCompare(b.label);
+  });
+  return ordered.map((e) => (e.label && e.label !== e.id ? `${e.id}|${e.label}` : e.id));
 }
 
 function agyToolFriendlyName(name: string): string {
@@ -1079,7 +1192,7 @@ function agyNormalizeToolArgs(args: unknown): Record<string, unknown> {
 /** Spawn agentapi (or other) and capture stdout; tees to harness; tracks cancel. */
 function runCommand(bin: string, args: string[], cwd: string, runId?: number, emit?: AgentEmit): Promise<string> {
   return new Promise((resolve, reject) => {
-    const discoveredEnv = discoverAntigravityEnv();
+    const discoveredEnv = discoverAntigravityEnv(cwd);
     const env = { ...spawnEnv(runId), ...discoveredEnv };
 
     if (!env.ANTIGRAVITY_LS_ADDRESS || !env.ANTIGRAVITY_CSRF_TOKEN) {
