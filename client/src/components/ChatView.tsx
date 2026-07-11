@@ -70,6 +70,8 @@ export interface ChatMessage {
   blocks?: ChatBlock[];
   /** Full harness terminal transcript (raw process I/O / SDK stream). */
   harnessLog?: string;
+  /** List API omitted harnessLog but server has one — expand fetches full message. */
+  hasHarness?: boolean;
   images?: string[];
   attachments?: Array<{ name: string; media_type: string; url: string }>;
   replyTo?: ChatReplyRef;
@@ -189,6 +191,9 @@ interface ChatViewProps {
   /** When set, members panel open state is controlled by the app (workspace toolbar). */
   membersOpen?: boolean;
   onMembersOpenChange?: (open: boolean) => void;
+  vaultId?: string;
+  /** Merge a full message (e.g. harness log) after expand-fetch. */
+  onHydrateMessage?: (message: ChatMessage) => void;
 }
 
 // Stable fallback: an inline `= []` default would mint a new identity every
@@ -681,6 +686,8 @@ const ChatGroupRow = memo(function ChatGroupRow({
   onLightbox,
   onImageLoad,
   scrollRootRef,
+  vaultId,
+  onHydrateMessage,
 }: {
   group: ChatMessageGroup;
   /** Pre-filtered by the parent: non-null only when the selection is inside this group. */
@@ -698,6 +705,8 @@ const ChatGroupRow = memo(function ChatGroupRow({
   onImageLoad: () => void;
   /** Chat scroller element — used as IntersectionObserver root. */
   scrollRootRef: RefObject<HTMLDivElement | null>;
+  vaultId?: string;
+  onHydrateMessage?: (message: ChatMessage) => void;
 }) {
   const head = group.messages[0];
   const tail = group.messages[group.messages.length - 1];
@@ -828,6 +837,8 @@ const ChatGroupRow = memo(function ChatGroupRow({
                       onCancelRun={onCancelRun}
                       forceOpen={selected}
                       onContentGrow={onImageLoad}
+                      vaultId={vaultId}
+                      onHydrateMessage={onHydrateMessage}
                     />
                   )}
                 </SwipeToReply>
@@ -856,6 +867,8 @@ const ChatGroupRow = memo(function ChatGroupRow({
   && prev.onLightbox === next.onLightbox
   && prev.onImageLoad === next.onImageLoad
   && prev.scrollRootRef === next.scrollRootRef
+  && prev.vaultId === next.vaultId
+  && prev.onHydrateMessage === next.onHydrateMessage
 );
 
 export const ChatView = memo(function ChatView({
@@ -883,6 +896,8 @@ export const ChatView = memo(function ChatView({
   onOpenNote,
   membersOpen: membersOpenProp,
   onMembersOpenChange,
+  vaultId,
+  onHydrateMessage,
 }: ChatViewProps) {
   const [draft, setDraft] = useState('');
   const [sidebarMode, setSidebarMode] = useState<'users' | 'runs'>('users');
@@ -1605,6 +1620,8 @@ export const ChatView = memo(function ChatView({
                   onLightbox={openLightbox}
                   onImageLoad={scrollToBottomIfSticky}
                   scrollRootRef={messagesRef}
+                  vaultId={vaultId}
+                  onHydrateMessage={onHydrateMessage}
                 />
               );
             })

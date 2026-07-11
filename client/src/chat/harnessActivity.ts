@@ -749,6 +749,7 @@ export function buildHarnessActivity(message: ChatMessage): HarnessActivity {
 export function hasRunActivity(message: ChatMessage): boolean {
   if (message.status === 'running') return true;
   if (message.harnessLog?.trim()) return true;
+  if (message.hasHarness) return true;
   const blocks = message.blocks || [];
   if (blocks.some((b) => b.type === 'thinking' || b.type === 'tool_use' || b.type === 'tool_result')) {
     return true;

@@ -388,7 +388,7 @@ export function distillChatToNote(
   const { route } = assertChatChannel(db, channelId, userId);
   if (route.localVaultId !== vaultId) throw new Error('Chat channel not found');
 
-  const all = listChatMessages(db, channelId, userId);
+  const all = listChatMessages(db, channelId, userId, { detail: 'full', limit: 500 });
   const selected = selectMessagesForDistill(all, input);
   if (selected.length === 0) throw new Error('No messages to distill');
 

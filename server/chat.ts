@@ -57,10 +57,17 @@ export type ChatMessage = {
   blocks?: ChatBlock[];
   /** Full harness terminal transcript (raw process I/O / SDK stream). */
   harnessLog?: string;
+  /** List payloads omit harnessLog; true when a full log exists server-side. */
+  hasHarness?: boolean;
   images?: string[];
   attachments?: Array<{ name: string; media_type: string; url: string }>;
   replyTo?: ChatReplyRef;
 };
+
+/** Max messages returned by the default channel list (newest first window). */
+export const CHAT_LIST_DEFAULT_LIMIT = 120;
+/** Cap thinking/tool bodies in list payloads — full text loads on expand. */
+const LIST_BLOCK_TEXT_MAX = 280;
 
 /** Append a harness chunk, keeping only the tail when over the size cap. */
 export function appendHarnessLog(existing: string | undefined, chunk: string, max = HARNESS_LOG_MAX_CHARS): string {
@@ -814,8 +821,34 @@ function serializeJson(value: unknown): string | null {
   return JSON.stringify(value);
 }
 
-function rowToMessage(row: ChatMessageRow): ChatMessage {
+function slimBlocksForList(blocks: ChatBlock[]): ChatBlock[] {
+  return blocks.map((block) => {
+    if (block.type === 'thinking' && block.text && block.text.length > LIST_BLOCK_TEXT_MAX) {
+      return { ...block, text: `${block.text.slice(0, LIST_BLOCK_TEXT_MAX)}…` };
+    }
+    if (block.type === 'tool_result') {
+      const raw = block.content || block.text || '';
+      if (raw.length > LIST_BLOCK_TEXT_MAX) {
+        const clipped = `${raw.slice(0, LIST_BLOCK_TEXT_MAX)}…`;
+        return { ...block, content: clipped, text: clipped };
+      }
+    }
+    if (block.type === 'text' && block.text && block.text.length > LIST_BLOCK_TEXT_MAX * 4) {
+      // Keep more of visible text blocks; still bound pathological rows.
+      return { ...block, text: `${block.text.slice(0, LIST_BLOCK_TEXT_MAX * 4)}…` };
+    }
+    return block;
+  });
+}
+
+function rowToMessage(row: ChatMessageRow & { has_harness?: number }, opts?: { detail?: 'list' | 'full' }): ChatMessage {
+  const detail = opts?.detail ?? 'full';
   const status = row.status as ChatMessage['status'] | null;
+  const hasHarnessCol = typeof row.has_harness === 'number'
+    ? row.has_harness !== 0
+    : Boolean(row.harness_log && row.harness_log.length > 0);
+  const blocks = parseJson<ChatBlock[]>(row.blocks_json);
+  const slimBlocks = detail === 'list' && blocks?.length ? slimBlocksForList(blocks) : blocks;
   return {
     id: row.id,
     channelId: row.channel_id,
@@ -827,14 +860,19 @@ function rowToMessage(row: ChatMessageRow): ChatMessage {
     ...(row.agent_id ? { agentId: row.agent_id } : {}),
     ...(row.registration_id ? { registrationId: row.registration_id } : {}),
     ...(row.run_id != null ? { runId: row.run_id } : {}),
-    ...(() => {
-      const blocks = parseJson<ChatBlock[]>(row.blocks_json);
-      return blocks?.length ? { blocks } : {};
-    })(),
-    ...(row.harness_log ? { harnessLog: row.harness_log } : {}),
+    ...(slimBlocks?.length ? { blocks: slimBlocks } : {}),
+    // List: never ship multi-hundred-KB harness logs over the wire.
+    ...(detail === 'full' && row.harness_log ? { harnessLog: row.harness_log } : {}),
+    ...(hasHarnessCol ? { hasHarness: true } : {}),
     ...(() => {
       const images = parseJson<string[]>(row.images_json);
-      return images?.length ? { images } : {};
+      if (!images?.length) return {};
+      // List: drop giant data-URL payloads; keep short http(s) thumbs.
+      if (detail === 'list') {
+        const light = images.filter((src) => typeof src === 'string' && !src.startsWith('data:') && src.length < 2048);
+        return light.length ? { images: light } : {};
+      }
+      return { images };
     })(),
     ...(() => {
       const attachments = parseJson<Array<{ name: string; media_type: string; url: string }>>(row.attachments_json);
@@ -974,18 +1012,66 @@ export function listChatChannelParticipants(db: Db, channelId: string, userId: n
   return listChatChannelParticipantUsernames(db, route.sourceVaultId, route.sourceChannelId);
 }
 
-export function listChatMessages(db: Db, channelId: string, userId: number): ChatMessage[] {
+export function listChatMessages(
+  db: Db,
+  channelId: string,
+  userId: number,
+  opts?: { detail?: 'list' | 'full'; limit?: number },
+): ChatMessage[] {
   const { route } = assertChatChannel(db, channelId, userId);
-  const rows = db.prepare(`
-    SELECT *, rowid
-    FROM chat_messages
-    WHERE channel_id = ?
-    ORDER BY created_at ASC, rowid ASC
-  `).all(route.sourceChannelId) as ChatMessageRow[];
+  const detail = opts?.detail ?? 'list';
+  const limit = Math.max(1, Math.min(Number(opts?.limit) || CHAT_LIST_DEFAULT_LIMIT, 500));
+
+  // List path: skip selecting harness_log body (can be hundreds of KB per row).
+  // Newest window first, then reverse to chronological for the client.
+  const rows = (detail === 'full'
+    ? db.prepare(`
+        SELECT *, rowid,
+          CASE WHEN harness_log IS NOT NULL AND length(harness_log) > 0 THEN 1 ELSE 0 END AS has_harness
+        FROM chat_messages
+        WHERE channel_id = ?
+        ORDER BY created_at DESC, rowid DESC
+        LIMIT ?
+      `).all(route.sourceChannelId, limit)
+    : db.prepare(`
+        SELECT id, channel_id, vault_id, author, body, created_at,
+          status, agent_id, registration_id, run_id,
+          blocks_json, images_json, attachments_json, reply_to_json,
+          rowid,
+          CASE WHEN harness_log IS NOT NULL AND length(harness_log) > 0 THEN 1 ELSE 0 END AS has_harness
+        FROM chat_messages
+        WHERE channel_id = ?
+        ORDER BY created_at DESC, rowid DESC
+        LIMIT ?
+      `).all(route.sourceChannelId, limit)
+  ) as Array<ChatMessageRow & { has_harness?: number }>;
+
+  rows.reverse();
   return rows.map((row) => ({
-    ...reconcileChatMessageRunStatus(db, row),
+    ...reconcileChatMessageRunStatus(db, row, detail),
     channelId: route.localChannelId,
   }));
+}
+
+/** Full single message (includes harness log) — used when expanding a harness panel. */
+export function getChatMessage(
+  db: Db,
+  channelId: string,
+  userId: number,
+  messageId: string,
+): ChatMessage | undefined {
+  const { route } = assertChatChannel(db, channelId, userId);
+  const row = db.prepare(`
+    SELECT *, rowid,
+      CASE WHEN harness_log IS NOT NULL AND length(harness_log) > 0 THEN 1 ELSE 0 END AS has_harness
+    FROM chat_messages
+    WHERE id = ? AND channel_id = ?
+  `).get(messageId, route.sourceChannelId) as (ChatMessageRow & { has_harness?: number }) | undefined;
+  if (!row) return undefined;
+  return {
+    ...rowToMessage(row, { detail: 'full' }),
+    channelId: route.localChannelId,
+  };
 }
 
 function hasRunOutput(message: ChatMessage): boolean {
@@ -1068,8 +1154,12 @@ function persistChatMessageRow(db: Db, vaultId: string, channelId: string, messa
   return message;
 }
 
-function reconcileChatMessageRunStatus(db: Db, row: ChatMessageRow): ChatMessage {
-  const message = rowToMessage(row);
+function reconcileChatMessageRunStatus(
+  db: Db,
+  row: ChatMessageRow & { has_harness?: number },
+  detail: 'list' | 'full' = 'full',
+): ChatMessage {
+  const message = rowToMessage(row, { detail });
   if (message.status !== 'running' || row.run_id == null) return message;
 
   const run = db.prepare('SELECT id, status, summary FROM runs WHERE id = ?').get(row.run_id) as RunStatusRow | undefined;

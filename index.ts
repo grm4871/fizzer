@@ -90,6 +90,7 @@ import {
   linkChatChannel,
   listChatChannelRoutes,
   listChatMessages,
+  getChatMessage,
   createChatMessage,
   updateChatMessage,
   settleChatMessagesForRun,
@@ -1531,10 +1532,25 @@ app.post('/api/runs/:id/cancel', requireAuth, async (req: AuthedRequest, res) =>
 
 app.get('/api/vaults/:vaultId/channels/:channelId/messages', requireAuth, (req: AuthedRequest, res) => {
   try {
-    const messages = listChatMessages(db, req.params.channelId, req.user!.id);
+    // Default list is slim (no harness logs, truncated blocks, last N messages).
+    // ?detail=full ships everything — avoid on mobile cold load.
+    const detail = String(req.query.detail || 'list') === 'full' ? 'full' : 'list';
+    const limitRaw = Number(req.query.limit);
+    const limit = Number.isFinite(limitRaw) ? limitRaw : undefined;
+    const messages = listChatMessages(db, req.params.channelId, req.user!.id, { detail, limit });
     res.json({ messages });
   } catch {
     res.status(404).json({ error: 'Chat channel not found' });
+  }
+});
+
+app.get('/api/vaults/:vaultId/channels/:channelId/messages/:messageId', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const message = getChatMessage(db, req.params.channelId, req.user!.id, req.params.messageId);
+    if (!message) return res.status(404).json({ error: 'Message not found' });
+    res.json({ message });
+  } catch {
+    res.status(404).json({ error: 'Message not found' });
   }
 });
 

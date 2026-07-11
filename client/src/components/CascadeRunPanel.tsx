@@ -28,6 +28,7 @@ import {
 } from '../chat/harnessActivity';
 import { HarnessTerminal } from './HarnessTerminal';
 import type { ChatMessage } from './ChatView';
+import { api } from '../api';
 
 const SCROLL_PIN_PX = 48;
 const EDGE_PX = 2;
@@ -444,23 +445,59 @@ export const CascadeRunPanel = memo(function CascadeRunPanel({
   onCancelRun,
   forceOpen = false,
   onContentGrow,
+  vaultId,
+  onHydrateMessage,
 }: {
   message: ChatMessage;
   onCancelRun: (runId: number) => void;
   forceOpen?: boolean;
   /** Notify parent (main chat scroller) when harness content height grows. */
   onContentGrow?: () => void;
+  vaultId?: string;
+  /** Merge a full message payload (harness log) after expand-fetch. */
+  onHydrateMessage?: (message: ChatMessage) => void;
 }) {
   const isRunning = message.status === 'running';
   const canExpand = hasRunActivity(message);
   const [open, setOpen] = useState(isRunning);
   const [showRaw, setShowRaw] = useState(false);
+  const [hydrating, setHydrating] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
   /** User is following the tail of the outer harness scroller. */
   const pinBottomRef = useRef(true);
   const onContentGrowRef = useRef(onContentGrow);
   onContentGrowRef.current = onContentGrow;
+  const onHydrateRef = useRef(onHydrateMessage);
+  onHydrateRef.current = onHydrateMessage;
   const effectiveOpen = open || forceOpen;
+
+  // List API omits harness_log — pull full message once when the user expands.
+  useEffect(() => {
+    if (!effectiveOpen || isRunning) return;
+    if (message.harnessLog) return;
+    if (!message.hasHarness && !(message.blocks?.some((b) => b.type === 'thinking' || b.type === 'tool_use'))) {
+      // Still may want full blocks if list truncated thinking — fetch when hasHarness only
+    }
+    if (!message.hasHarness) return;
+    if (!vaultId || !message.channelId || !message.id) return;
+    let cancelled = false;
+    setHydrating(true);
+    void api<{ message: ChatMessage }>(
+      `/api/vaults/${vaultId}/channels/${message.channelId}/messages/${encodeURIComponent(message.id)}`,
+    )
+      .then((data) => {
+        if (cancelled || !data.message) return;
+        onHydrateRef.current?.(data.message);
+      })
+      .catch(() => { /* keep slim payload */ })
+      .finally(() => {
+        if (!cancelled) setHydrating(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [effectiveOpen, isRunning, message.harnessLog, message.hasHarness, message.channelId, message.id, message.blocks, vaultId]);
+
   // Heavy parse only when open or live — collapsed closed panels were parsing
   // full harness logs for every agent message during list scroll.
   const activity = useMemo(() => {
@@ -542,7 +579,7 @@ export const CascadeRunPanel = memo(function CascadeRunPanel({
         >
           <TerminalSquare size={13} className="crp-toggle-icon" />
           <span className="crp-toggle-label">Harness</span>
-          <span className="crp-toggle-summary">{summary}</span>
+          <span className="crp-toggle-summary">{hydrating ? 'loading…' : summary}</span>
           {statChips.length > 0 && (
             <span className="crp-stat-chips" aria-label="Run usage stats">
               {statChips.map((chip) => (

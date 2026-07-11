@@ -509,7 +509,10 @@ export default function App() {
     const loadChannels = async (ids: string[]) => {
       const results = await Promise.all(ids.map(async (channelId) => {
         try {
-          const data = await api<{ messages: ChatMessage[] }>(`/api/vaults/${vaultId}/channels/${channelId}/messages`);
+          // Slim list payload (no harness logs) — mobile cold load stays small.
+          const data = await api<{ messages: ChatMessage[] }>(
+            `/api/vaults/${vaultId}/channels/${channelId}/messages?detail=list&limit=120`,
+          );
           let messages = data.messages ?? [];
           const local = legacyMessages[channelId] ?? [];
           if (messages.length === 0 && local.length > 0) {
@@ -520,7 +523,9 @@ export default function App() {
                 });
               } catch { /* Best-effort legacy migration. */ }
             }
-            const refreshed = await api<{ messages: ChatMessage[] }>(`/api/vaults/${vaultId}/channels/${channelId}/messages`);
+            const refreshed = await api<{ messages: ChatMessage[] }>(
+              `/api/vaults/${vaultId}/channels/${channelId}/messages?detail=list&limit=120`,
+            );
             messages = refreshed.messages ?? [];
           }
           return { channelId, messages };
@@ -702,6 +707,40 @@ export default function App() {
     }
     void loadChatPresence(vaultId, notesList, { channelIds: ids });
   }, [loadChatMessages, loadChatAgentMembers, loadChatPresence]);
+
+  /** Merge full message detail (harness log) after expand-fetch. */
+  const handleHydrateChatMessage = useCallback((message: ChatMessage) => {
+    const channelId = message.channelId;
+    if (!channelId) return;
+    setChatState((prev) => {
+      const existing = prev.messagesByChannel[channelId] ?? [];
+      const index = existing.findIndex((item) => item.id === message.id);
+      if (index === -1) {
+        return {
+          ...prev,
+          messagesByChannel: {
+            ...prev.messagesByChannel,
+            [channelId]: [...existing, message],
+          },
+        };
+      }
+      const next = [...existing];
+      next[index] = mergeRemoteChatMessage(existing[index], {
+        ...message,
+        // Prefer full harness/blocks from expand fetch.
+        harnessLog: message.harnessLog || existing[index].harnessLog,
+        blocks: message.blocks?.length ? message.blocks : existing[index].blocks,
+        hasHarness: message.hasHarness ?? existing[index].hasHarness,
+      });
+      return {
+        ...prev,
+        messagesByChannel: {
+          ...prev.messagesByChannel,
+          [channelId]: next,
+        },
+      };
+    });
+  }, []);
 
   useEffect(() => {
     let resumeTimer: number | null = null;
@@ -2167,6 +2206,8 @@ export default function App() {
           onOpenNote={openNote}
           membersOpen={chatMembersOpen}
           onMembersOpenChange={setChatMembersOpen}
+          vaultId={activeVaultId || undefined}
+          onHydrateMessage={handleHydrateChatMessage}
         />
       );
     }
@@ -2187,7 +2228,7 @@ export default function App() {
         onOpenNote={openNote}
       />
     );
-  }, [availableChatAgents, chatState.messagesByChannel, chatState.registeredAgentsByChannel, chatPresenceByChannel, currentUsername, loadingChatChannels, runningChatAgents, runnerHealth, vaultAgents, handleCancelChatRun, handleCreateChatInviteLink, handleInviteChatUser, handleRegisterChatAgent, handleRemoveChatAgent, handleUpsertVaultAgent, handleDeleteVaultAgent, handleAddVaultAgentToChannel, handleSendChatMessage, noteContents, notes, handleNoteChange, saveNoteTab, renameNoteTab, handleExecuteDirective, openNote, chatMembersOpen]);
+  }, [availableChatAgents, chatState.messagesByChannel, chatState.registeredAgentsByChannel, chatPresenceByChannel, currentUsername, loadingChatChannels, runningChatAgents, runnerHealth, vaultAgents, handleCancelChatRun, handleCreateChatInviteLink, handleInviteChatUser, handleRegisterChatAgent, handleRemoveChatAgent, handleUpsertVaultAgent, handleDeleteVaultAgent, handleAddVaultAgentToChannel, handleSendChatMessage, noteContents, notes, handleNoteChange, saveNoteTab, renameNoteTab, handleExecuteDirective, openNote, chatMembersOpen, activeVaultId, handleHydrateChatMessage]);
 
   if (!user) {
     return (
