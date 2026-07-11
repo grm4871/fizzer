@@ -93,6 +93,12 @@ export function corsOrigin() {
       .map((value) => value.trim())
       .filter(Boolean),
   );
+  // Capacitor serves bundled assets from a local app origin even when every
+  // API request targets the production HTTPS host. These origins are native
+  // WebViews, not remotely hosted Cascade frontends.
+  allowed.add('https://localhost');
+  allowed.add('capacitor://localhost');
+  allowed.add('ionic://localhost');
   return (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
     if (!origin || allowed.has(origin)) return callback(null, true);
     callback(new Error(`Origin ${origin} is not allowed by CORS`));
