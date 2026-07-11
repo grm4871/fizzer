@@ -1570,9 +1570,11 @@ a {
 .crp-toggle:not(:disabled) {
   cursor: pointer;
 }
-.crp-toggle:not(:disabled):hover {
+.crp-toggle:not(:disabled):is(:hover, :focus-visible) {
   color: hsl(35, 12%, 82%);
   background: hsla(22, 8%, 100%, 0.03);
+  /* Keyboard selection should read like hover, not a separate loud border. */
+  box-shadow: none;
 }
 .crp-toggle:disabled {
   cursor: default;
@@ -1625,7 +1627,7 @@ a {
   background: hsla(18, 60%, 42%, 0.18);
   color: hsl(22, 70%, 72%);
 }
-.crp-toggle:not(:disabled):hover .crp-stat-chip {
+.crp-toggle:not(:disabled):is(:hover, :focus-visible) .crp-stat-chip {
   border-color: hsla(33, 35%, 50%, 0.4);
   color: hsl(33, 32%, 78%);
 }
