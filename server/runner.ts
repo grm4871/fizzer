@@ -235,8 +235,9 @@ export async function cancelRun(db: Db, runId: number): Promise<boolean> {
   }
 
   // Active runs execute on the user's desktop; tell that runner to stop.
-  if (isDelegatedRun(runId)) {
-    const ownerId = getDelegatedRunOwner(runId);
+  // After server restart, ownership may only exist in delegated_runs until reclaim.
+  const ownerId = getDelegatedRunOwner(runId) ?? getDelegatedRunOwnerFromDb(db, runId);
+  if (ownerId != null || isDelegatedRun(runId)) {
     if (ownerId != null) {
       cancelDelegatedRun(ownerId, runId);
     }
@@ -251,7 +252,7 @@ export async function cancelRun(db: Db, runId: number): Promise<boolean> {
     return true;
   }
 
-  // No live owner (e.g. server restarted): mark the orphaned row canceled so
+  // No live owner (e.g. server restarted, never reclaimed): mark canceled so
   // stale UI can clear itself.
   if (run.status === 'running' || run.status === 'queued') {
     clearDelegatedRunRecord(db, runId);
