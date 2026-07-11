@@ -1089,8 +1089,20 @@ function honestChatBody(message: ChatMessage | undefined, fallbackSummary: strin
   return summary || emptyFallback;
 }
 
+function isAntigravityPlannerMonologue(summary: string): boolean {
+  const t = summary.trim();
+  if (!t) return false;
+  if (/^I will\b/i.test(t)) return true;
+  if (/^I(?:'ll| am going to)\b/i.test(t)) return true;
+  if (/^Let me\b/i.test(t)) return true;
+  return false;
+}
+
 function isGenericRunSummary(summary: string): boolean {
-  return /^(done\.?|completed note operations successfully\.?|agent failed\.?)$/i.test(summary.trim());
+  const s = summary.trim();
+  if (/^(done\.?|completed note operations successfully\.?|agent failed\.?)$/i.test(s)) return true;
+  if (isAntigravityPlannerMonologue(s)) return true;
+  return false;
 }
 
 function terminalRunPatch(run: RunStatusRow, message?: ChatMessage): Pick<ChatMessage, 'body' | 'status'> | null {

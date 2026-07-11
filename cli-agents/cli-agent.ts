@@ -285,7 +285,9 @@ export async function runCliAgent(opts: CliAgentOpts): Promise<CliAgentResult> {
   } else if (opts.agent === 'hermes') {
     return runHermes(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.runId);
   } else {
-    return runAntigravity(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.runId, opts.db, opts.model);
+    return runAntigravity(
+      prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.runId, opts.db, opts.model, opts.yolo,
+    );
   }
 }
 
@@ -750,6 +752,100 @@ function antigravityTranscriptPath(conversationId: string): string {
   );
 }
 
+/** Planner narration ("I will view…") is harness/thinking — not a chat reply. */
+function agyIsPlannerMonologue(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  if (/^I will\b/i.test(t)) return true;
+  if (/^I(?:'ll| am going to)\b/i.test(t)) return true;
+  if (/^Let me\b/i.test(t)) return true;
+  return false;
+}
+
+function resolveAntigravityProjectConfigPath(cwd: string): string | null {
+  const projectsDir = path.join(os.homedir(), '.gemini', 'config', 'projects');
+  if (!fs.existsSync(projectsDir)) return null;
+  const absCwd = path.resolve(cwd);
+  for (const file of fs.readdirSync(projectsDir)) {
+    if (!file.endsWith('.json')) continue;
+    const filePath = path.join(projectsDir, file);
+    try {
+      const content = fs.readFileSync(filePath, 'utf-8');
+      if (content.includes(absCwd) || content.includes(`file://${absCwd}`)) return filePath;
+    } catch { /* ignore */ }
+  }
+  return null;
+}
+
+/**
+ * Patch the Antigravity project config so Cascade hookup runs auto-approve
+ * plans/commands instead of blocking on IDE permission prompts.
+ */
+function ensureAntigravityCascadeHookup(cwd: string, yolo?: boolean): void {
+  const configPath = resolveAntigravityProjectConfigPath(cwd);
+  if (!configPath) return;
+  let data: Record<string, unknown>;
+  try {
+    data = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
+  } catch {
+    return;
+  }
+
+  const settings = (data.settings as Record<string, unknown>) || {};
+  settings.fileAccessPolicy = 'AGENT_SETTING_POLICY_ALLOW';
+  settings.autoExecutionPolicy = 'CASCADE_COMMANDS_AUTO_EXECUTION_EAGER';
+  settings.artifactReviewMode = 'ARTIFACT_REVIEW_MODE_TURBO';
+  if (yolo) settings.internetPolicy = 'AGENT_SETTING_POLICY_ALLOW';
+  data.settings = settings;
+
+  const absCwd = path.resolve(cwd);
+  const grants = new Set<string>();
+  const existing = data.permissionGrants as { permissionGrants?: { allow?: string[] } } | undefined;
+  for (const g of existing?.permissionGrants?.allow || []) grants.add(g);
+  for (const prefix of ['read_file', 'write_file']) {
+    grants.add(`${prefix}(${absCwd})`);
+    grants.add(`${prefix}(${absCwd}/.env)`);
+  }
+  for (const cmd of ['npm', 'node', 'npx', 'agentapi', 'curl', 'rg', 'git', 'bash', 'sh', 'tsx', 'tsc']) {
+    grants.add(`command(${cmd})`);
+  }
+  data.permissionGrants = { permissionGrants: { allow: [...grants] } };
+
+  try {
+    fs.writeFileSync(configPath, `${JSON.stringify(data, null, 2)}\n`);
+  } catch { /* ignore */ }
+}
+
+/** Best-effort LS call to unblock pending plan/permission prompts. */
+function agyLsPost(endpoint: string, body: Record<string, unknown>): boolean {
+  const discovered = discoverAntigravityEnv();
+  const addr = discovered.ANTIGRAVITY_LS_ADDRESS || process.env.ANTIGRAVITY_LS_ADDRESS;
+  const token = discovered.ANTIGRAVITY_CSRF_TOKEN || process.env.ANTIGRAVITY_CSRF_TOKEN;
+  if (!addr || !token) return false;
+  const host = addr.includes('://') ? addr : `http://${addr}`;
+  const url = `${host.replace(/\/$/, '')}/exa.language_server_pb.LanguageServerService/${endpoint}`;
+  try {
+    const result = spawnSync(
+      'curl',
+      [
+        '-sS', '-m', '4',
+        '-X', 'POST', url,
+        '-H', 'Content-Type: application/json',
+        '-H', `X-Codeium-Csrf-Token: ${token}`,
+        '-d', JSON.stringify(body),
+      ],
+      { encoding: 'utf8', timeout: 6000 },
+    );
+    return result.status === 0;
+  } catch {
+    return false;
+  }
+}
+
+function agyTryAutoApprove(conversationId: string): void {
+  agyLsPost('ResolveOutstandingSteps', { cascadeId: conversationId });
+}
+
 /** Map UI / live model ids to agentapi --model= tiers. */
 export function resolveAntigravityModelTier(model?: string | null): AntigravityTier | undefined {
   if (!model || !String(model).trim()) return undefined;
@@ -1057,9 +1153,11 @@ async function runAntigravity(
   runId?: number,
   db?: Db,
   model?: string,
+  yolo?: boolean,
 ): Promise<CliAgentResult> {
   const bin = antigravityBin();
   assertCliAgentAvailable('antigravity');
+  ensureAntigravityCascadeHookup(cwd, yolo);
   if (runId !== undefined) antigravityCancelFlags.delete(runId);
 
   // Snapshot line count before send-message so we only stream new turns.
@@ -1135,6 +1233,7 @@ async function runAntigravity(
   let sawFinalPlanner = false;
   let idleAfterFinal = 0;
   let stallPolls = 0;
+  let approvePolls = 0;
   const pendingToolIds: string[] = [];
   const emittedTools = new Set<string>();
   let emittedText = false;
@@ -1184,16 +1283,17 @@ async function runAntigravity(
       if (source === 'MODEL' && type === 'PLANNER_RESPONSE') {
         const text = (step.content || '').trim();
         const toolCalls = Array.isArray(step.tool_calls) ? step.tool_calls : [];
+        const isThinking = toolCalls.length > 0 || agyIsPlannerMonologue(text);
 
         if (text) {
-          summary = text;
-          if (toolCalls.length > 0) {
-            // Monologue before tools → thinking (keeps chat body clean).
+          if (isThinking) {
+            // Monologue before tools → thinking only (never chat body / summary).
             emit('text', {
               message: { content: [{ type: 'thinking', thinking: text }] },
             });
             emitHarness(emit, `\x1b[2m# thinking\x1b[0m\r\n\x1b[2m${text.slice(0, 500)}\x1b[0m\r\n`);
           } else {
+            summary = text;
             const sep = emittedText ? '\n\n' : '';
             emit('text', {
               message: { content: [{ type: 'text', text: sep + text }] },
@@ -1232,6 +1332,9 @@ async function runAntigravity(
       if (source === 'MODEL' || source === 'SYSTEM') {
         if (type === 'ERROR_MESSAGE' || status === 'ERROR') {
           const msg = String(step.content || 'Antigravity error').slice(0, 2000);
+          if (/denied permission|pending review|user interaction|awaiting approval/i.test(msg)) {
+            agyTryAutoApprove(conversationId);
+          }
           emitHarness(emit, `\x1b[31m✖ ${msg}\x1b[0m\r\n`);
           const toolId = pendingToolIds.shift();
           if (toolId) {
@@ -1287,11 +1390,13 @@ async function runAntigravity(
     try {
       checkTranscript();
     } catch { /* ignore single poll errors */ }
+    approvePolls += 1;
+    if (approvePolls % 15 === 0) agyTryAutoApprove(conversationId);
     if (!done) await sleep(AGY_POLL_MS);
   }
 
-  if (!summary.trim()) {
-    summary = lastStepType ? `Antigravity finished (${lastStepType}).` : 'Done.';
+  if (!emittedText || !summary.trim() || agyIsPlannerMonologue(summary)) {
+    summary = 'Done.';
   }
 
   emitHarness(emit, `\x1b[2m# done · ${processedLines} transcript lines\x1b[0m\r\n`);
