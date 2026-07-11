@@ -102,6 +102,7 @@ import {
   getVaultAgent,
   addVaultAgentToChannel,
   upsertChatAgentMember,
+  setChatAgentAvatar,
   removeChatAgentMember,
   resolveChatAgentRun,
   type ChatMessage,
@@ -1561,6 +1562,21 @@ app.put('/api/vaults/:vaultId/channels/:channelId/agents', requireAuth, (req: Au
   try {
     const { route } = assertChatChannel(db, req.params.channelId, req.user!.id);
     const registration = upsertChatAgentMember(db, req.user!.id, req.params.vaultId, req.params.channelId, req.body);
+    emitChatAgentEvent(route.sourceVaultId, route.sourceChannelId, 'vault:chatAgentMemberUpserted', { registration });
+    res.json({ registration });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+// Used by the agent helper. The registration id is supplied by its isolated run
+// context, so a running agent can only update the identity it was launched as.
+app.put('/api/vaults/:vaultId/channels/:channelId/agents/:registrationId/avatar', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const { route } = assertChatChannel(db, req.params.channelId, req.user!.id);
+    const registration = setChatAgentAvatar(
+      db, req.user!.id, req.params.vaultId, req.params.channelId, req.params.registrationId, req.body?.avatarUrl,
+    );
     emitChatAgentEvent(route.sourceVaultId, route.sourceChannelId, 'vault:chatAgentMemberUpserted', { registration });
     res.json({ registration });
   } catch (err) {

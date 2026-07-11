@@ -1261,6 +1261,12 @@ a {
   background: hsl(196, 33%, 25%);
   color: hsl(190, 22%, 88%);
 }
+.chat-avatar img {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
+}
 .chat-message-body {
   min-width: 0;
   flex: 1;

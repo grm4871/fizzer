@@ -20,6 +20,7 @@ const USAGE = `cascade-chat — read/send live Cascade chat
 Usage:
   cascade-chat history                 recent messages for the current channel
   cascade-chat send --message <text>    send a standalone message to the channel
+  cascade-chat avatar --url <https-url> set this agent's profile picture
   cascade-chat distill                 condense chat into a vault note
   cascade-chat search <query>          search chat (or all) via unified search
 
@@ -27,6 +28,8 @@ Options:
   --vault <id>              vault id (default $CASCADE_NOTE_VAULT)
   --channel <id>            channel id (default $CASCADE_CHAT_CHANNEL)
   --message <text>          message body for send (default: stdin)
+  --url <https-url>         profile picture URL for avatar
+  --clear                   remove this agent's profile picture
   --author <name>           author for send (default current agent/user)
   --before-message-id <id>  only messages before this message
   --around-message-id <id>  window centered around this message
@@ -273,7 +276,7 @@ async function main() {
     process.stdout.write(USAGE + '\n');
     process.exit(cmd ? 0 : 1);
   }
-  if (cmd !== 'history' && cmd !== 'send' && cmd !== 'distill' && cmd !== 'search') {
+  if (cmd !== 'history' && cmd !== 'send' && cmd !== 'avatar' && cmd !== 'distill' && cmd !== 'search') {
     fail(`unknown command "${cmd}". Run with --help.`);
   }
 
@@ -285,6 +288,20 @@ async function main() {
 
   const url = baseUrl(args, config);
   const token = await getToken(url, args, config);
+
+  if (cmd === 'avatar') {
+    const registrationId = configString(config, 'registrationId');
+    if (!registrationId) fail('avatar can only be used from a registered agent chat run.');
+    const avatarUrl = args.clear === true ? '' : String(args.url || '').trim();
+    if (!args.clear && !avatarUrl) fail('missing --url <https-url>, or use --clear.');
+    const result = await api(
+      url, token, 'PUT',
+      `/api/vaults/${vaultId}/channels/${channelId}/agents/${encodeURIComponent(registrationId)}/avatar`,
+      { avatarUrl },
+    );
+    process.stdout.write(result.registration?.avatarUrl ? 'profile picture updated\n' : 'profile picture cleared\n');
+    return;
+  }
 
   if (cmd === 'search') {
     const q = args._.slice(1).join(' ').trim();

@@ -105,6 +105,7 @@ export interface ChatAgentRegistration {
   vaultAgentId?: string;
   agentId: string;
   displayName: string;
+  avatarUrl: string;
   mention: string;
   model: string;
   cwd: string;
@@ -128,6 +129,7 @@ export interface VaultAgent {
   vaultId: string;
   agentId: string;
   displayName: string;
+  avatarUrl: string;
   mention: string;
   model: string;
   cwd: string;
@@ -473,15 +475,17 @@ function groupChatMessages(messages: ChatMessage[]): ChatMessageGroup[] {
 function ChatAvatar({
   name,
   kind,
+  avatarUrl = '',
   size = 'md',
 }: {
   name: string;
   kind: 'agent' | 'human';
+  avatarUrl?: string;
   size?: 'sm' | 'md';
 }) {
   return (
     <div className={`chat-avatar chat-avatar-${size} chat-avatar-${kind}`} aria-hidden="true">
-      {kind === 'agent' ? <Bot size={size === 'sm' ? 14 : 15} /> : initialFor(name)}
+      {avatarUrl ? <img src={avatarUrl} alt="" /> : kind === 'agent' ? <Bot size={size === 'sm' ? 14 : 15} /> : initialFor(name)}
     </div>
   );
 }
@@ -503,6 +507,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
   group,
   selectedMessageId,
   avatarKind,
+  avatarUrl,
   mentionableAliases,
   notes,
   onOpenNote,
@@ -516,6 +521,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
   /** Pre-filtered by the parent: non-null only when the selection is inside this group. */
   selectedMessageId: string | null;
   avatarKind: 'agent' | 'human';
+  avatarUrl?: string;
   mentionableAliases: string[];
   notes: NoteSummary[];
   onOpenNote?: (id: string) => void;
@@ -533,7 +539,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
     <article
       className={`chat-message-group ${tail.status ? `status-${tail.status}` : ''} ${groupHasRunWidget ? 'has-run-widget' : ''} ${groupSelected ? 'selected' : ''}`}
     >
-      <ChatAvatar name={head.author} kind={avatarKind} />
+      <ChatAvatar name={head.author} kind={avatarKind} avatarUrl={avatarUrl} />
       <div className="chat-message-body">
         <div className="chat-message-meta">
           <strong>{head.author}</strong>
@@ -779,6 +785,12 @@ export const ChatView = memo(function ChatView({
   ), [registeredAgentRows]);
   const getMessageAvatarKind = (message: ChatMessage): 'agent' | 'human' =>
     message.agentId || agentAuthors.has(message.author) ? 'agent' : 'human';
+  const getMessageAvatarUrl = (message: ChatMessage) => {
+    const registration = message.registrationId
+      ? registeredAgents.find((agent) => agent.id === message.registrationId)
+      : registeredAgents.find((agent) => agent.agentId === message.agentId || agent.displayName === message.author);
+    return registration?.avatarUrl || '';
+  };
   const onlineUsers = useMemo(() => new Set(presence.online), [presence.online]);
   const humanMessageAuthors = useMemo(() => {
     const names = new Set<string>();
@@ -1276,6 +1288,7 @@ export const ChatView = memo(function ChatView({
                   group={group}
                   selectedMessageId={groupSelected ? selectedMessageId : null}
                   avatarKind={getMessageAvatarKind(head)}
+                  avatarUrl={getMessageAvatarUrl(head)}
                   mentionableAliases={mentionableAliases}
                   notes={notes}
                   onOpenNote={onOpenNote}
@@ -1571,7 +1584,7 @@ export const ChatView = memo(function ChatView({
                 onClick={(event) => editRegisteredAgent(event, agent.registration)}
                 title="Channel settings for this agent"
               >
-                <ChatAvatar name={agent.registration.displayName || agent.label} kind="agent" size="sm" />
+                <ChatAvatar name={agent.registration.displayName || agent.label} kind="agent" avatarUrl={agent.registration.avatarUrl} size="sm" />
                 <div className="chat-user-copy">
                   <strong>{agent.registration.displayName || agent.label}</strong>
                   <span>@{agent.registration.mention || agent.id} · {selectedModel || 'no model'}</span>
@@ -1612,7 +1625,7 @@ export const ChatView = memo(function ChatView({
                       }}
                       title={inChannel ? 'Already in this channel' : 'Add to this channel'}
                     >
-                      <ChatAvatar name={va.displayName || va.mention} kind="agent" size="sm" />
+                      <ChatAvatar name={va.displayName || va.mention} kind="agent" avatarUrl={va.avatarUrl} size="sm" />
                       <span className="chat-user-copy">
                         <strong>{va.displayName || va.mention}</strong>
                         <span>
