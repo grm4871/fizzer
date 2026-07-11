@@ -90,9 +90,9 @@ function chainScrollDelta(el: HTMLElement, deltaY: number): boolean {
 }
 
 /**
- * When a nested harness/thinking scroller is already at its edge, keep
- * scrolling the outer chat instead of trapping the thumb/gesture.
- * `active` rebinds after folds mount their `<pre>` (ref is null while closed).
+ * Wheel-only edge chaining into parent scrollers (thinking → harness → chat).
+ * Touch chaining used non-passive touchmove + preventDefault and stuttered the
+ * main list; mobile relies on CSS overscroll-behavior instead.
  */
 function useScrollChain(ref: RefObject<HTMLElement | null>, active = true) {
   useEffect(() => {
@@ -108,40 +108,9 @@ function useScrollChain(ref: RefObject<HTMLElement | null>, active = true) {
       }
     };
 
-    let lastY = 0;
-    let tracking = false;
-    const onTouchStart = (event: TouchEvent) => {
-      if (event.touches.length !== 1) return;
-      lastY = event.touches[0].clientY;
-      tracking = true;
-    };
-    const onTouchMove = (event: TouchEvent) => {
-      if (!tracking || event.touches.length !== 1) return;
-      const y = event.touches[0].clientY;
-      const deltaY = lastY - y; // finger up → content down
-      lastY = y;
-      if (!deltaY) return;
-      if (!atScrollEdge(el, deltaY)) return;
-      if (chainScrollDelta(el, deltaY)) {
-        // Prevent the nested scroller from rubber-banding / eating the gesture.
-        event.preventDefault();
-      }
-    };
-    const onTouchEnd = () => {
-      tracking = false;
-    };
-
     el.addEventListener('wheel', onWheel, { passive: false });
-    el.addEventListener('touchstart', onTouchStart, { passive: true });
-    el.addEventListener('touchmove', onTouchMove, { passive: false });
-    el.addEventListener('touchend', onTouchEnd, { passive: true });
-    el.addEventListener('touchcancel', onTouchEnd, { passive: true });
     return () => {
       el.removeEventListener('wheel', onWheel);
-      el.removeEventListener('touchstart', onTouchStart);
-      el.removeEventListener('touchmove', onTouchMove);
-      el.removeEventListener('touchend', onTouchEnd);
-      el.removeEventListener('touchcancel', onTouchEnd);
     };
   }, [ref, active]);
 }

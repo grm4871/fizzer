@@ -505,8 +505,13 @@ function groupHasDocEmbed(group: ChatMessageGroup): boolean {
 /** Swipe-left → reply (mobile/touch). Touch/pen only so desktop drag-select stays clean. */
 const SWIPE_REPLY_MAX = 72;
 const SWIPE_REPLY_THRESHOLD = 52;
-const SWIPE_AXIS_SLOP = 10;
+const SWIPE_AXIS_SLOP = 12;
 
+/**
+ * DOM-driven swipe: no React setState during vertical pan or per-frame drag.
+ * Previous version set dragging=true on every pointerdown and setOffset on every
+ * move — that re-rendered the whole message row and stuttered list scroll.
+ */
 function SwipeToReply({
   onReply,
   children,
@@ -520,37 +525,57 @@ function SwipeToReply({
   onClick?: () => void;
   onContextMenu?: (event: React.MouseEvent) => void;
 }) {
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const hintRef = useRef<HTMLDivElement | null>(null);
   const startRef = useRef<{ x: number; y: number; pointerId: number } | null>(null);
   const axisRef = useRef<'h' | 'v' | null>(null);
-  /** Positive distance dragged left (px). */
   const offsetRef = useRef(0);
-  const [offset, setOffset] = useState(0);
-  const [dragging, setDragging] = useState(false);
-  const armed = offset >= SWIPE_REPLY_THRESHOLD;
+  const armedRef = useRef(false);
+
+  const paint = useCallback((offset: number, dragging: boolean) => {
+    const content = contentRef.current;
+    const hint = hintRef.current;
+    const root = rootRef.current;
+    if (content) {
+      content.style.transition = dragging ? 'none' : 'transform 160ms ease-out';
+      content.style.transform = offset ? `translate3d(${-offset}px, 0, 0)` : '';
+    }
+    if (hint) {
+      const progress = Math.min(1, offset / SWIPE_REPLY_THRESHOLD);
+      hint.style.opacity = String(progress);
+      hint.style.transform = `scale(${0.75 + progress * 0.25})`;
+    }
+    if (root) {
+      root.classList.toggle('is-dragging', dragging);
+      const armed = offset >= SWIPE_REPLY_THRESHOLD;
+      if (armed !== armedRef.current) {
+        armedRef.current = armed;
+        root.classList.toggle('is-armed', armed);
+      }
+    }
+  }, []);
 
   const reset = useCallback((animate: boolean) => {
     startRef.current = null;
     axisRef.current = null;
     offsetRef.current = 0;
-    setDragging(false);
     if (!animate) {
-      setOffset(0);
+      paint(0, false);
       return;
     }
-    // Next frame so the browser can apply the CSS transition after drag ends.
-    requestAnimationFrame(() => setOffset(0));
-  }, []);
+    paint(0, true);
+    requestAnimationFrame(() => paint(0, false));
+  }, [paint]);
 
   const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     if (event.pointerType === 'mouse' || event.button !== 0) return;
-    // Don't steal pans that start on interactive chrome (links, harness folds, etc.).
     const target = event.target as HTMLElement | null;
     if (target?.closest('a, button, input, textarea, select, .cascade-run-panel, pre, code')) return;
+    // Track only — no setState (vertical list scroll must stay free).
     startRef.current = { x: event.clientX, y: event.clientY, pointerId: event.pointerId };
     axisRef.current = null;
     offsetRef.current = 0;
-    setDragging(true);
-    setOffset(0);
   };
 
   const onPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -560,30 +585,36 @@ function SwipeToReply({
     const dy = event.clientY - start.y;
     if (!axisRef.current) {
       if (Math.abs(dx) < SWIPE_AXIS_SLOP && Math.abs(dy) < SWIPE_AXIS_SLOP) return;
-      // Prefer vertical list scroll when the gesture is mostly vertical.
       if (Math.abs(dy) >= Math.abs(dx)) {
         axisRef.current = 'v';
-        reset(false);
+        startRef.current = null;
         return;
       }
       axisRef.current = 'h';
       try {
         event.currentTarget.setPointerCapture(event.pointerId);
       } catch {
-        // Ignore capture failures (detached node).
+        // ignore
       }
     }
     if (axisRef.current !== 'h') return;
-    // Left swipe only (negative dx → positive distance).
     const next = Math.max(0, Math.min(SWIPE_REPLY_MAX, -dx));
     offsetRef.current = next;
-    setOffset(next);
+    paint(next, true);
     event.preventDefault();
   };
 
   const finish = (event: React.PointerEvent<HTMLDivElement>) => {
     const start = startRef.current;
-    if (!start || event.pointerId !== start.pointerId) return;
+    if (!start || event.pointerId !== start.pointerId) {
+      // Vertical pan may have cleared start — still release capture if any.
+      try {
+        if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        }
+      } catch { /* ignore */ }
+      return;
+    }
     const committed = axisRef.current === 'h' && offsetRef.current >= SWIPE_REPLY_THRESHOLD;
     try {
       if (event.currentTarget.hasPointerCapture(event.pointerId)) {
@@ -603,11 +634,10 @@ function SwipeToReply({
     }
   };
 
-  const progress = Math.min(1, offset / SWIPE_REPLY_THRESHOLD);
-
   return (
     <div
-      className={`chat-swipe-row ${className} ${dragging ? 'is-dragging' : ''} ${armed ? 'is-armed' : ''}`}
+      ref={rootRef}
+      className={`chat-swipe-row ${className}`}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={finish}
@@ -615,20 +645,10 @@ function SwipeToReply({
       onClick={onClick}
       onContextMenu={onContextMenu}
     >
-      <div
-        className="chat-swipe-reply-hint"
-        aria-hidden="true"
-        style={{ opacity: progress, transform: `scale(${0.75 + progress * 0.25})` }}
-      >
+      <div ref={hintRef} className="chat-swipe-reply-hint" aria-hidden="true">
         <Reply size={16} />
       </div>
-      <div
-        className="chat-swipe-content"
-        style={{
-          transform: offset ? `translate3d(${-offset}px, 0, 0)` : undefined,
-          transition: dragging ? 'none' : 'transform 160ms ease-out',
-        }}
-      >
+      <div ref={contentRef} className="chat-swipe-content">
         {children}
       </div>
     </div>
@@ -991,10 +1011,16 @@ export const ChatView = memo(function ChatView({
     }
   }, [usersCollapsed, onMembersOpenChange]);
 
+  /** Suppress sticky pin for a short window after the user scrolls (RO noise). */
+  const userScrollQuietUntilRef = useRef(0);
+
   /** Pin the scroller to the bottom now, flagging it as a programmatic scroll. */
   const scrollToBottom = useCallback(() => {
     const el = messagesRef.current;
     if (!el) return;
+    // Never yank the list while the user is actively scrolling history.
+    if (performance.now() < userScrollQuietUntilRef.current) return;
+    if (!wasAtBottomRef.current && previousChannelIdRef.current === channelId) return;
     programmaticScrollRef.current = true;
     el.scrollTop = el.scrollHeight;
     if (programmaticClearRef.current != null) clearTimeout(programmaticClearRef.current);
@@ -1002,14 +1028,17 @@ export const ChatView = memo(function ChatView({
       programmaticClearRef.current = null;
       programmaticScrollRef.current = false;
     }, 80);
-  }, []);
+  }, [channelId]);
 
   const scrollToBottomIfSticky = useCallback(() => {
     if (!wasAtBottomRef.current) return;
+    if (performance.now() < userScrollQuietUntilRef.current) return;
     if (scrollFrameRef.current != null) return;
     scrollFrameRef.current = requestAnimationFrame(() => {
       scrollFrameRef.current = null;
-      if (wasAtBottomRef.current) scrollToBottom();
+      if (wasAtBottomRef.current && performance.now() >= userScrollQuietUntilRef.current) {
+        scrollToBottom();
+      }
     });
   }, [scrollToBottom]);
 
@@ -1019,6 +1048,7 @@ export const ChatView = memo(function ChatView({
       // across a few frames because markdown/images/widgets settle after paint.
       previousChannelIdRef.current = channelId;
       wasAtBottomRef.current = true;
+      userScrollQuietUntilRef.current = 0;
       scrollToBottom();
       requestAnimationFrame(scrollToBottom);
       const t1 = window.setTimeout(scrollToBottom, 60);
@@ -1033,11 +1063,20 @@ export const ChatView = memo(function ChatView({
   useEffect(() => {
     const content = messagesContentRef.current;
     if (!content || typeof ResizeObserver === 'undefined') return;
+    let roFrame: number | null = null;
     const ro = new ResizeObserver(() => {
-      scrollToBottomIfSticky();
+      // Coalesce RO storms (markdown/images/fonts) to one rAF — was a scroll jank source.
+      if (roFrame != null) return;
+      roFrame = requestAnimationFrame(() => {
+        roFrame = null;
+        scrollToBottomIfSticky();
+      });
     });
     ro.observe(content);
-    return () => ro.disconnect();
+    return () => {
+      if (roFrame != null) cancelAnimationFrame(roFrame);
+      ro.disconnect();
+    };
   }, [channelId, scrollToBottomIfSticky]);
 
   useEffect(() => () => {
@@ -1056,10 +1095,15 @@ export const ChatView = memo(function ChatView({
       if (!atBottom) {
         programmaticScrollRef.current = false;
         wasAtBottomRef.current = false;
+        userScrollQuietUntilRef.current = performance.now() + 220;
       }
       return;
     }
     wasAtBottomRef.current = atBottom;
+    // While reading history, ignore ResizeObserver sticky pins briefly.
+    if (!atBottom) {
+      userScrollQuietUntilRef.current = performance.now() + 220;
+    }
   }, []);
 
   useEffect(() => {

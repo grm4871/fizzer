@@ -1220,10 +1220,17 @@ a {
   display: flex;
   gap: 10px;
   padding: 8px 16px;
-  /* No content-visibility: on mobile Safari it underestimates scrollHeight so
-     the transcript only scrolls a couple rows before getting stuck. */
+  /* Paint isolation without content-visibility (Safari under-scrolled with CV). */
+  contain: layout style;
   position: relative;
   -webkit-tap-highlight-color: transparent;
+}
+/* Desktop-only: skip offscreen paint for plain rows (not harness-heavy ones). */
+@media (min-width: 901px) and (pointer: fine) {
+  .chat-message-group:not(.has-run-widget) {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 96px;
+  }
 }
 /* Hover via pseudo so large harness children aren't forced to repaint.
    Only real hover pointers — touch sticky-:hover was flashing the row. */
@@ -1277,6 +1284,7 @@ a {
   color: var(--accent);
   pointer-events: none;
   z-index: 0;
+  opacity: 0;
 }
 .chat-swipe-row.is-armed .chat-swipe-reply-hint {
   background: var(--accent);
@@ -1285,10 +1293,10 @@ a {
 .chat-swipe-content {
   position: relative;
   z-index: 1;
-  will-change: transform;
 }
 .chat-swipe-row.is-dragging .chat-swipe-content {
-  /* Keep text selection from fighting the gesture. */
+  /* Layer only while dragging — permanent will-change was costly on long chats. */
+  will-change: transform;
   user-select: none;
 }
 .chat-message-chunk + .chat-message-chunk {
@@ -1763,7 +1771,7 @@ a {
   padding: 8px 10px 10px;
   scrollbar-width: thin;
   scrollbar-color: hsl(25, 5%, 28%) transparent;
-  /* Allow edge scroll to chain into the main chat (JS reinforces on mobile). */
+  /* Edge overscroll chains to parent chat without non-passive JS touch handlers. */
   overscroll-behavior-y: auto;
   -webkit-overflow-scrolling: touch;
 }
@@ -1873,6 +1881,8 @@ a {
   overflow: auto;
   overscroll-behavior-y: auto;
   -webkit-overflow-scrolling: touch;
+  /* Avoid compositing every thinking fold all the time. */
+  contain: layout style;
   font: inherit;
   line-height: 1.45;
   white-space: pre-wrap;
