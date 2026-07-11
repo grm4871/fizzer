@@ -35,6 +35,7 @@ import {
   listTags,
   listVaults,
   moveNote,
+  unlistNote,
   removeTag,
   renameNote,
   searchNotes,
@@ -826,6 +827,22 @@ app.post('/api/notes/:id/move', requireAuth, (req: AuthedRequest, res) => {
     res.json({ note });
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : 'Could not move note' });
+  }
+});
+
+app.post('/api/notes/:id/unlist', requireAuth, (req: AuthedRequest, res) => {
+  const existing = getNote(db, req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Note not found' });
+  const vault = getVault(db, existing.vault_id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Note not found' });
+
+  try {
+    unlistNote(db, req.params.id);
+    const note = getNote(db, req.params.id);
+    emitVaultEvent(vault.id, 'vault:noteChanged', { noteId: req.params.id, vaultId: vault.id, title: note?.title ?? existing.title });
+    res.json({ note });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not unlink note' });
   }
 });
 

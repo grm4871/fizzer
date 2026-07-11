@@ -609,6 +609,26 @@ export function moveNote(db: Db, noteId: string, folderId: string | null): void 
   }
 }
 
+export function unlistNote(db: Db, noteId: string): void {
+  const note = db.prepare('SELECT id FROM notes WHERE id = ?').get(noteId) as { id: string } | undefined;
+  if (!note) throw new Error('Note not found');
+
+  const oldPath = resolveNotePath(db, noteId);
+  db.prepare("UPDATE notes SET folder_id = NULL, is_listed = 0, updated_at = datetime('now') WHERE id = ?").run(noteId);
+  const newPath = resolveNotePath(db, noteId);
+
+  if (oldPath && newPath && oldPath !== newPath) {
+    try {
+      if (fs.existsSync(oldPath)) {
+        fs.mkdirSync(path.dirname(newPath), { recursive: true });
+        fs.renameSync(oldPath, newPath);
+      }
+    } catch {
+      // Keep the database operation consistent with the existing move behavior.
+    }
+  }
+}
+
 export function togglePin(db: Db, noteId: string): void {
   db.prepare('UPDATE notes SET is_pinned = CASE WHEN is_pinned = 0 THEN 1 ELSE 0 END, updated_at = datetime(\'now\') WHERE id = ?').run(noteId);
 }

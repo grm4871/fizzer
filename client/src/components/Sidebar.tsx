@@ -24,7 +24,7 @@ import { CHAT_NOTE_MARKER } from './ChatView';
 import {
   Folder as FolderIcon, FolderOpen, FileText, Pin, Gem, Edit2, FolderPlus,
   Search, ChevronRight, PanelLeftClose, LogOut, Trash2, FilePlus, FolderInput, Pencil, RefreshCw,
-  Hash,
+  Hash, Unlink,
 } from 'lucide-react';
 
 const FOLDER_DND_TYPE = 'application/x-cascade-folder';
@@ -48,6 +48,7 @@ interface SidebarProps {
   onLogout: () => void;
   onDeleteNote: (id: string) => void;
   onMoveNote: (id: string, folderId: string | null) => void;
+  onUnlistNote: (id: string) => void;
   onMoveFolder: (id: string, parentId: string | null, position: number) => void;
   onCreateFolder: (parentId?: string | null) => Promise<Folder | undefined>;
   onRenameFolder: (id: string, name: string) => void;
@@ -83,6 +84,7 @@ export function Sidebar({
   onLogout,
   onDeleteNote,
   onMoveNote,
+  onUnlistNote,
   onMoveFolder,
   onCreateFolder,
   onRenameFolder,
@@ -296,7 +298,7 @@ export function Sidebar({
         setDragOverId(null);
         if (noteId) {
           const note = notes.find((n) => n.id === noteId);
-          if (!note || note.folder_id === targetFolderId) return;
+          if (!note || (note.is_listed !== 0 && note.folder_id === targetFolderId)) return;
           onMoveNote(noteId, targetFolderId);
           if (targetFolderId) expandFolder(targetFolderId);
           return;
@@ -544,6 +546,11 @@ export function Sidebar({
               <button onClick={() => setMoveMenu(true)}>
                 <FolderInput size={14} /> Move to…
               </button>
+              {!notes.find((x) => x.id === contextMenu.id)?.content_preview.trim().startsWith(CHAT_NOTE_MARKER) && (
+                <button onClick={() => { setContextMenu(null); onUnlistNote(contextMenu.id); }}>
+                  <Unlink size={14} /> Unlink from sidebar
+                </button>
+              )}
               <div className="menu-divider" />
               <button className="menu-danger" onClick={() => { setContextMenu(null); onDeleteNote(contextMenu.id); }}>
                 <Trash2 size={14} /> Delete

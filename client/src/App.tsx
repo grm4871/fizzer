@@ -1942,6 +1942,15 @@ export default function App() {
     }
   }, [loadVaultData]);
 
+  const handleUnlistNote = useCallback(async (noteId: string) => {
+    try {
+      await api(`/api/notes/${noteId}/unlist`, { method: 'POST' });
+      if (activeVaultIdRef.current) await loadVaultData(activeVaultIdRef.current);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not unlink note');
+    }
+  }, [loadVaultData]);
+
   const handleCreateFolder = useCallback(async (parentId: string | null = null) => {
     if (!activeVaultIdRef.current) return undefined;
     try {
@@ -2306,6 +2315,7 @@ export default function App() {
           onLogout={handleLogout}
           onDeleteNote={handleDeleteNote}
           onMoveNote={handleMoveNote}
+          onUnlistNote={handleUnlistNote}
           onMoveFolder={handleMoveFolder}
           onCreateFolder={handleCreateFolder}
           onRenameFolder={handleRenameFolder}
