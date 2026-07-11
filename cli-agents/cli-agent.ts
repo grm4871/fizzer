@@ -33,10 +33,11 @@
  * | grok         | yes  | yes      | no†      | no†         | no     | yes    |
  * | copilot      | yes  | partial  | partial  | partial     | no     | yes    |
  * | hermes       | yes  | partial  | partial  | partial     | no     | yes    |
- * | antigravity  | yes  | partial  | partial  | partial     | no     | yes    |
+ * | antigravity  | yes  | yes‡     | yes‡     | yes‡       | no     | yes    |
  *
  * \* Claude tools surface via SDK messages; cascade-* helpers are auto-allowed.
  * † Grok runs tools silently — not surfaced in the JSONL stream.
+ * ‡ Antigravity: transcript.jsonl → thinking/tool_use/tool_result + formatted harness.
  *
  * **Codex JSONL translation** (`codex exec --json`):
  *   - `thread.started`   → captures session id for conversation resume
@@ -707,191 +708,346 @@ async function runGrok(
 // ANTIGRAVITY AGENT
 // ═══════════════════════════════════════════════════════════════
 
+/** agentapi only accepts these --model= tiers (not full IDE model enums). */
+type AntigravityTier = 'flash_lite' | 'flash' | 'pro';
+const ANTIGRAVITY_TIERS = new Set<string>(['flash_lite', 'flash', 'pro']);
+
+/** Poll interval while watching transcript.jsonl. */
+const AGY_POLL_MS = 400;
 /**
- * Dynamically discovers the active Antigravity language server address, CSRF token,
- * project ID, and agent mode by scanning process information and config files.
+ * Only treat "no new transcript lines" as done after a *final* planner
+ * response (no tools). Mid-tool gaps used to kill runs at ~10s.
+ */
+const AGY_IDLE_AFTER_FINAL_POLLS = 8; // ~3.2s settle after final text
+/** Hard ceiling if the agent stalls mid-tool forever (still far above old 10s). */
+const AGY_STALL_POLLS = 450; // ~3 min with no new lines
+/** Wait for transcript.jsonl after new-conversation / send-message. */
+const AGY_TRANSCRIPT_WAIT_MS = 30_000;
+
+type AgyTranscriptStep = {
+  step_index?: number;
+  source?: string;
+  type?: string;
+  status?: string;
+  content?: string;
+  tool_calls?: Array<{ id?: string; name?: string; args?: Record<string, unknown> }>;
+};
+
+function antigravityBin(): string {
+  return process.env.ANTIGRAVITY_BIN || path.join(os.homedir(), '.gemini', 'antigravity', 'bin', 'agentapi');
+}
+
+function antigravityTranscriptPath(conversationId: string): string {
+  return path.join(
+    os.homedir(),
+    '.gemini',
+    'antigravity',
+    'brain',
+    conversationId,
+    '.system_generated',
+    'logs',
+    'transcript.jsonl',
+  );
+}
+
+/** Map UI / live model ids to agentapi --model= tiers. */
+export function resolveAntigravityModelTier(model?: string | null): AntigravityTier | undefined {
+  if (!model || !String(model).trim()) return undefined;
+  const raw = String(model).trim();
+  const lower = raw.toLowerCase();
+  if (ANTIGRAVITY_TIERS.has(lower)) return lower as AntigravityTier;
+
+  // Live MODEL_PLACEHOLDER / label heuristics from GetCascadeModelConfigData.
+  if (/flash_lite|flash.*\(low\)|m187\b/i.test(raw)) return 'flash_lite';
+  if (/flash.*\(high\)|m132\b/i.test(raw)) return 'flash';
+  if (/flash.*\(medium\)|m20\b|^flash$/i.test(raw) || /gemini\s*3\.5\s*flash/i.test(raw)) return 'flash';
+  if (/gemini\s*3\.1\s*pro|m36\b|m16\b|\bpro\b/i.test(raw)) return 'pro';
+  // Claude / GPT-OSS slots in Antigravity IDE are not agentapi tiers; fall back
+  // to pro so the run still starts (tier resolves to whatever pro maps to).
+  if (/claude|opus|sonnet|gpt|oss/i.test(raw)) return 'pro';
+  return undefined;
+}
+
+/**
+ * Discover Antigravity language_server HTTP address + CSRF + project id.
+ * Prefer env, then /proc cmdline + language_server.log, then /proc environ.
  */
 function discoverAntigravityEnv(): Record<string, string> {
-  const env: Record<string, string> = {};
+  const env: Record<string, string> = { ANTIGRAVITY_AGENT: '1' };
 
-  // Discover and set ANTIGRAVITY_PROJECT_ID
   if (process.env.ANTIGRAVITY_PROJECT_ID) {
-    env['ANTIGRAVITY_PROJECT_ID'] = process.env.ANTIGRAVITY_PROJECT_ID;
+    env.ANTIGRAVITY_PROJECT_ID = process.env.ANTIGRAVITY_PROJECT_ID;
   } else {
     try {
       const projectsDir = path.join(os.homedir(), '.gemini', 'config', 'projects');
       if (fs.existsSync(projectsDir)) {
         const files = fs.readdirSync(projectsDir);
         let projectId: string | undefined;
+        const cwd = process.cwd();
         for (const file of files) {
-          if (file.endsWith('.json')) {
-            try {
-              const filePath = path.join(projectsDir, file);
-              const content = fs.readFileSync(filePath, 'utf-8');
-              const data = JSON.parse(content);
-              const cwdUri = `file://${process.cwd()}`;
-              const matchesCwd = content.includes(cwdUri) || content.includes(process.cwd());
-              if (matchesCwd || data.name === 'cascade') {
-                projectId = data.id;
-                break;
-              }
-            } catch {
-              // ignore
+          if (!file.endsWith('.json')) continue;
+          try {
+            const filePath = path.join(projectsDir, file);
+            const content = fs.readFileSync(filePath, 'utf-8');
+            const data = JSON.parse(content) as { id?: string; name?: string };
+            if (content.includes(cwd) || content.includes(`file://${cwd}`) || data.name === 'cascade') {
+              projectId = data.id || file.replace(/\.json$/, '');
+              break;
             }
-          }
+          } catch { /* ignore */ }
         }
-        if (!projectId && files.length > 0) {
-          const firstJson = files.find(f => f.endsWith('.json'));
-          if (firstJson) {
-            projectId = firstJson.replace('.json', '');
-          }
+        if (!projectId) {
+          const firstJson = files.find((f) => f.endsWith('.json'));
+          if (firstJson) projectId = firstJson.replace(/\.json$/, '');
         }
-        if (projectId) {
-          env['ANTIGRAVITY_PROJECT_ID'] = projectId;
-        }
+        if (projectId) env.ANTIGRAVITY_PROJECT_ID = projectId;
       }
-    } catch (err) {
-      console.error('Error discovering Antigravity project ID:', err);
-    }
+    } catch { /* ignore */ }
   }
 
-  // Always set agent flag for agentapi executions
-  env['ANTIGRAVITY_AGENT'] = '1';
-
   if (process.env.ANTIGRAVITY_LS_ADDRESS && process.env.ANTIGRAVITY_CSRF_TOKEN) {
-    env['ANTIGRAVITY_LS_ADDRESS'] = process.env.ANTIGRAVITY_LS_ADDRESS;
-    env['ANTIGRAVITY_CSRF_TOKEN'] = process.env.ANTIGRAVITY_CSRF_TOKEN;
+    env.ANTIGRAVITY_LS_ADDRESS = process.env.ANTIGRAVITY_LS_ADDRESS;
+    env.ANTIGRAVITY_CSRF_TOKEN = process.env.ANTIGRAVITY_CSRF_TOKEN;
     return env;
   }
 
   let token: string | undefined;
-
-  // 1. Scan /proc/*/cmdline to find the CSRF token (cmdline is readable without ptrace scopes)
-  try {
-    const files = fs.readdirSync('/proc');
-    for (const file of files) {
-      if (/^\d+$/.test(file)) {
-        try {
-          const cmdline = fs.readFileSync(`/proc/${file}/cmdline`, 'utf-8');
-          if (cmdline.includes('language_server')) {
-            const parts = cmdline.split('\0');
-            const tokenIdx = parts.indexOf('--csrf_token');
-            if (tokenIdx !== -1 && tokenIdx + 1 < parts.length && parts[tokenIdx + 1]) {
-              token = parts[tokenIdx + 1];
-              break;
-            }
-          }
-        } catch {
-          // ignore processes we cannot read
-        }
-      }
-    }
-  } catch (err) {
-    console.error('Error scanning /proc/*/cmdline:', err);
-  }
-
-  // 2. Scan language_server.log for the HTTP port
   let port: string | undefined;
+
+  try {
+    for (const file of fs.readdirSync('/proc')) {
+      if (!/^\d+$/.test(file)) continue;
+      try {
+        const cmdline = fs.readFileSync(`/proc/${file}/cmdline`, 'utf-8');
+        if (!cmdline.includes('language_server')) continue;
+        const parts = cmdline.split('\0');
+        const tokenIdx = parts.indexOf('--csrf_token');
+        if (tokenIdx !== -1 && parts[tokenIdx + 1]) {
+          token = parts[tokenIdx + 1];
+          break;
+        }
+      } catch { /* ignore */ }
+    }
+  } catch { /* ignore */ }
+
   try {
     const logPath = path.join(os.homedir(), '.config', 'Antigravity', 'logs', 'language_server.log');
     if (fs.existsSync(logPath)) {
       const content = fs.readFileSync(logPath, 'utf-8');
       const matches = [...content.matchAll(/Language server listening on random port at (\d+) for HTTP/g)];
-      if (matches.length > 0) {
-        port = matches[matches.length - 1][1];
-      }
+      if (matches.length > 0) port = matches[matches.length - 1][1];
     }
-  } catch (err) {
-    console.error('Error reading language_server.log:', err);
-  }
+  } catch { /* ignore */ }
 
+  // Validate log port is actually open; fall back to /proc/net/tcp listeners later if needed.
   if (port && token) {
-    env['ANTIGRAVITY_LS_ADDRESS'] = `localhost:${port}`;
-    env['ANTIGRAVITY_CSRF_TOKEN'] = token;
+    env.ANTIGRAVITY_LS_ADDRESS = `localhost:${port}`;
+    env.ANTIGRAVITY_CSRF_TOKEN = token;
     return env;
   }
 
-  // Fallback: Scan /proc/*/environ (works if ptrace_scope is disabled)
   try {
-    const files = fs.readdirSync('/proc');
-    for (const file of files) {
-      if (/^\d+$/.test(file)) {
-        try {
-          const envContent = fs.readFileSync(`/proc/${file}/environ`, 'utf-8');
-          const parts = envContent.split('\0');
-          const addrVar = parts.find(p => p.startsWith('ANTIGRAVITY_LS_ADDRESS='));
-          const tokenVar = parts.find(p => p.startsWith('ANTIGRAVITY_CSRF_TOKEN='));
-          if (addrVar && tokenVar) {
-            env['ANTIGRAVITY_LS_ADDRESS'] = addrVar.split('=')[1];
-            env['ANTIGRAVITY_CSRF_TOKEN'] = tokenVar.split('=')[1];
-            break;
-          }
-        } catch {
-          // ignore
+    for (const file of fs.readdirSync('/proc')) {
+      if (!/^\d+$/.test(file)) continue;
+      try {
+        const envContent = fs.readFileSync(`/proc/${file}/environ`, 'utf-8');
+        const parts = envContent.split('\0');
+        const addrVar = parts.find((p) => p.startsWith('ANTIGRAVITY_LS_ADDRESS='));
+        const tokenVar = parts.find((p) => p.startsWith('ANTIGRAVITY_CSRF_TOKEN='));
+        if (addrVar && tokenVar) {
+          env.ANTIGRAVITY_LS_ADDRESS = addrVar.slice('ANTIGRAVITY_LS_ADDRESS='.length);
+          env.ANTIGRAVITY_CSRF_TOKEN = tokenVar.slice('ANTIGRAVITY_CSRF_TOKEN='.length);
+          break;
         }
-      }
+      } catch { /* ignore */ }
     }
-  } catch (err) {
-    // ignore
-  }
+  } catch { /* ignore */ }
 
   return env;
 }
 
 /**
- * Helper to run a command and return stdout as string.
+ * Live model list from the Antigravity language server (same catalog as the IDE).
+ * Returns display labels + agentapi-runnable tier aliases. Empty if LS offline.
  */
+export function listAntigravityModels(): string[] {
+  const discovered = discoverAntigravityEnv();
+  const addr = discovered.ANTIGRAVITY_LS_ADDRESS || process.env.ANTIGRAVITY_LS_ADDRESS;
+  const token = discovered.ANTIGRAVITY_CSRF_TOKEN || process.env.ANTIGRAVITY_CSRF_TOKEN;
+  if (!addr || !token) {
+    return ['flash_lite', 'flash', 'pro'];
+  }
+
+  const host = addr.includes('://') ? addr : `http://${addr}`;
+  const url = `${host.replace(/\/$/, '')}/exa.language_server_pb.LanguageServerService/GetCascadeModelConfigData`;
+  try {
+    const result = spawnSync(
+      'curl',
+      [
+        '-sS', '-m', '4',
+        '-X', 'POST', url,
+        '-H', 'Content-Type: application/json',
+        '-H', `X-Codeium-Csrf-Token: ${token}`,
+        '-d', '{}',
+      ],
+      { encoding: 'utf8', timeout: 6000 },
+    );
+    if (result.status !== 0 || !result.stdout?.trim()) {
+      return ['flash_lite', 'flash', 'pro'];
+    }
+    const data = JSON.parse(result.stdout) as {
+      clientModelConfigs?: Array<{
+        label?: string;
+        modelOrAlias?: { model?: string; alias?: string };
+      }>;
+    };
+    const ids: string[] = [];
+    const seen = new Set<string>();
+    // Always include agentapi tiers first so the picker can pass them through.
+    for (const tier of ['flash_lite', 'flash', 'pro']) {
+      seen.add(tier);
+      ids.push(tier);
+    }
+    for (const cfg of data.clientModelConfigs || []) {
+      const label = (cfg.label || '').trim();
+      const modelKey = (cfg.modelOrAlias?.model || cfg.modelOrAlias?.alias || '').trim();
+      // Prefer human labels as selectable ids when they resolve to a tier; also
+      // keep the model enum so mergeAgentModelPresets can surface them.
+      for (const candidate of [label, modelKey]) {
+        if (!candidate || seen.has(candidate)) continue;
+        seen.add(candidate);
+        ids.push(candidate);
+      }
+    }
+    return ids;
+  } catch {
+    return ['flash_lite', 'flash', 'pro'];
+  }
+}
+
+function agyToolFriendlyName(name: string): string {
+  const n = (name || '').trim();
+  const map: Record<string, string> = {
+    list_dir: 'List Directory',
+    list_directory: 'List Directory',
+    view_file: 'View File',
+    write_to_file: 'Write File',
+    replace_file_content: 'Edit File',
+    multi_replace_file_content: 'Edit File',
+    grep_search: 'Search Workspace',
+    run_command: 'Bash',
+    search_web: 'Web Search',
+    code_action: 'Code Action',
+    generate_image: 'Generate Image',
+    invoke_subagent: 'Subagent',
+    ask_question: 'Ask Question',
+    read_browser_page: 'Browser',
+    open_browser_url: 'Browser',
+  };
+  return map[n] || map[n.toLowerCase()] || n || 'Tool';
+}
+
+function agyPreviewInput(input: unknown): string {
+  if (input == null) return '';
+  if (typeof input === 'string') return input.slice(0, 200);
+  if (typeof input !== 'object') return String(input).slice(0, 200);
+  const rec = input as Record<string, unknown>;
+  for (const key of ['Command', 'command', 'DirectoryPath', 'FilePath', 'file_path', 'path', 'Query', 'pattern', 'Url', 'url']) {
+    const v = rec[key];
+    if (typeof v === 'string' && v.trim()) {
+      // agentapi sometimes double-quotes JSON string values
+      return v.replace(/^"+|"+$/g, '').slice(0, 200);
+    }
+  }
+  try {
+    return JSON.stringify(input).slice(0, 200);
+  } catch {
+    return '';
+  }
+}
+
+function agyNormalizeToolArgs(args: unknown): Record<string, unknown> {
+  if (!args || typeof args !== 'object') return {};
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(args as Record<string, unknown>)) {
+    if (typeof v === 'string') {
+      const unquoted = v.replace(/^"+|"+$/g, '');
+      out[k] = unquoted;
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+/** Spawn agentapi (or other) and capture stdout; tees to harness; tracks cancel. */
 function runCommand(bin: string, args: string[], cwd: string, runId?: number, emit?: AgentEmit): Promise<string> {
   return new Promise((resolve, reject) => {
     const discoveredEnv = discoverAntigravityEnv();
     const env = { ...spawnEnv(runId), ...discoveredEnv };
 
-    const logFile = '/home/jt/Desktop/cascade/debug.log';
-    fs.appendFileSync(logFile, `[${new Date().toISOString()}] In-App Executing: ${bin} ${args.join(' ')}\n`);
-    fs.appendFileSync(logFile, `[${new Date().toISOString()}] Discovered Env: ${JSON.stringify(discoveredEnv)}\n`);
-    fs.appendFileSync(logFile, `[${new Date().toISOString()}] Env: LS_ADDRESS=${env.ANTIGRAVITY_LS_ADDRESS}, CSRF_TOKEN=${env.ANTIGRAVITY_CSRF_TOKEN}\n`);
+    if (!env.ANTIGRAVITY_LS_ADDRESS || !env.ANTIGRAVITY_CSRF_TOKEN) {
+      reject(new Error(
+        'Antigravity language server not found (ANTIGRAVITY_LS_ADDRESS / CSRF). '
+        + 'Open the Antigravity app and sign in, then retry.',
+      ));
+      return;
+    }
 
     emitHarness(emit, `\x1b[2m$ ${bin} ${args.map((a) => (/\s/.test(a) ? JSON.stringify(a) : a)).join(' ')}\x1b[0m\r\n`);
-    const child = spawn(bin, args, { cwd, env });
+    emitHarness(emit, `\x1b[2m# antigravity ls ${env.ANTIGRAVITY_LS_ADDRESS} · project ${env.ANTIGRAVITY_PROJECT_ID || '?'}\x1b[0m\r\n`);
+
+    let child: ChildProcess;
+    try {
+      child = spawn(bin, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (err) {
+      reject(new Error(`Failed to launch agentapi: ${err instanceof Error ? err.message : String(err)}`));
+      return;
+    }
+    if (runId !== undefined) activeCliProcesses.set(runId, child);
+
     let stdout = '';
     let stderr = '';
-    child.stdout.on('data', (d) => {
+    let settled = false;
+    const cleanup = () => {
+      if (runId !== undefined) activeCliProcesses.delete(runId);
+    };
+
+    child.stdout?.on('data', (d: Buffer | string) => {
       const chunk = d.toString();
       stdout += chunk;
-      emitHarness(emit, chunk);
+      // agentapi returns one JSON blob — keep harness tidy (no full prompt dump)
     });
-    child.stderr.on('data', (d) => {
+    child.stderr?.on('data', (d: Buffer | string) => {
       const chunk = d.toString();
       stderr += chunk;
       emitHarness(emit, `\x1b[31m${chunk}\x1b[0m`);
     });
     child.on('error', (err) => {
-      fs.appendFileSync(logFile, `[${new Date().toISOString()}] Spawn Error: ${err.message}\n`);
-      reject(err);
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new Error(`agentapi could not start: ${err.message}`));
     });
     child.on('close', (code) => {
-      fs.appendFileSync(logFile, `[${new Date().toISOString()}] Exit Code: ${code}\n`);
-      fs.appendFileSync(logFile, `[${new Date().toISOString()}] Stdout: ${stdout.trim()}\n`);
-      fs.appendFileSync(logFile, `[${new Date().toISOString()}] Stderr: ${stderr.trim()}\n`);
-      emitHarness(emit, `\x1b[2m# exit ${code ?? '?'}\x1b[0m\r\n`);
+      if (settled) return;
+      settled = true;
+      cleanup();
+      emitHarness(emit, `\x1b[2m# agentapi exit ${code ?? '?'}\x1b[0m\r\n`);
       if (code === 0) {
         resolve(stdout);
       } else {
-        reject(new Error(`Exit code ${code}: ${stderr}`));
+        const detail = (stderr || stdout).trim().slice(-800);
+        reject(new Error(`agentapi exited ${code}${detail ? `: ${detail}` : ''}`));
       }
     });
   });
 }
 
 /**
- * Runs the Antigravity agent using the `agentapi` language server wrapper commands.
- * Polls the generated `transcript.jsonl` file to stream assistant reasoning and responses.
- *
- * @param prompt   - Full prompt (context + user prompt)
- * @param cwd      - Vault root path
- * @param emit     - Event emitter callback
- * @param resumeId - Optional session id to resume a prior conversation
- * @returns Summary text and session id
+ * Runs the Antigravity agent via agentapi + transcript.jsonl polling.
+ * Emits structured text/thinking/tool blocks for the chat harness panel
+ * (not raw JSONL dumps).
  */
 async function runAntigravity(
   prompt: string,
@@ -902,40 +1058,33 @@ async function runAntigravity(
   db?: Db,
   model?: string,
 ): Promise<CliAgentResult> {
-  const bin = process.env.ANTIGRAVITY_BIN || path.join(os.homedir(), '.gemini', 'antigravity', 'bin', 'agentapi');
+  const bin = antigravityBin();
+  assertCliAgentAvailable('antigravity');
+  if (runId !== undefined) antigravityCancelFlags.delete(runId);
 
-  const transcriptPathFor = (conversationId: string) => path.join(
-    os.homedir(),
-    '.gemini',
-    'antigravity',
-    'brain',
-    conversationId,
-    '.system_generated',
-    'logs',
-    'transcript.jsonl',
-  );
-
-  // On resume the transcript already holds the full prior conversation. Snapshot
-  // the line count *before* send-message so we only stream new turns — otherwise
-  // we replay the last reply and exit early on an old DONE step.
+  // Snapshot line count before send-message so we only stream new turns.
   let processedLines = 0;
   if (resumeId) {
-    const priorTranscript = transcriptPathFor(resumeId);
-    if (fs.existsSync(priorTranscript)) {
-      const content = fs.readFileSync(priorTranscript, 'utf-8');
-      processedLines = content.split('\n').filter((line) => line.trim()).length;
+    const prior = antigravityTranscriptPath(resumeId);
+    if (fs.existsSync(prior)) {
+      processedLines = fs.readFileSync(prior, 'utf-8').split('\n').filter((l) => l.trim()).length;
     }
   }
 
-  let args: string[] = [];
-  if (resumeId) {
-    args = ['send-message', resumeId, prompt];
-  } else {
-    args = ['new-conversation'];
-    if (model) {
-      args.push(`--model=${model}`);
-    }
-    args.push(prompt);
+  const tier = resolveAntigravityModelTier(model);
+  const args: string[] = resumeId
+    ? ['send-message', resumeId, prompt]
+    : (() => {
+        const a = ['new-conversation'];
+        if (tier) a.push(`--model=${tier}`);
+        a.push(prompt);
+        return a;
+      })();
+
+  if (model && tier && model !== tier) {
+    emitHarness(emit, `\x1b[2m# model ${model} → agentapi tier ${tier}\x1b[0m\r\n`);
+  } else if (tier) {
+    emitCascadeStats(emit, { model: tier });
   }
 
   let stdoutStr: string;
@@ -947,152 +1096,238 @@ async function runAntigravity(
 
   let conversationId = '';
   try {
-    const res = JSON.parse(stdoutStr);
-    if (res.response?.newConversation?.conversationId) {
-      conversationId = res.response.newConversation.conversationId;
-    } else if (res.response?.sendMessage?.recipientId) {
-      conversationId = res.response.sendMessage.recipientId;
-    }
+    const res = JSON.parse(stdoutStr) as {
+      error?: string;
+      response?: {
+        newConversation?: { conversationId?: string };
+        sendMessage?: { recipientId?: string };
+      };
+    };
+    if (res.error) throw new Error(res.error);
+    conversationId = res.response?.newConversation?.conversationId
+      || res.response?.sendMessage?.recipientId
+      || '';
   } catch (err) {
-    throw new Error(`Failed to parse agentapi JSON output: ${stdoutStr}`);
+    if (err instanceof Error && !err.message.includes('JSON')) throw err;
+    throw new Error(`Failed to parse agentapi JSON output: ${stdoutStr.slice(0, 500)}`);
   }
-
   if (!conversationId) {
-    throw new Error(`No conversationId returned by agentapi: ${stdoutStr}`);
+    throw new Error(`No conversationId returned by agentapi: ${stdoutStr.slice(0, 500)}`);
   }
 
-  const transcriptPath = transcriptPathFor(conversationId);
+  emitHarness(emit, `\x1b[2m# conversation ${conversationId}\x1b[0m\r\n`);
+  const transcriptPath = antigravityTranscriptPath(conversationId);
 
-  let summary = 'Completed note operations successfully.';
-  let done = false;
-  let isChecking = false;
-  let noNewLinesCount = 0;
-
-  // Wait for the transcript.jsonl file to exist
-  let exists = false;
-  for (let i = 0; i < 100; i++) {
-    if (fs.existsSync(transcriptPath)) {
-      exists = true;
-      break;
+  // Wait for transcript file
+  const waitDeadline = Date.now() + AGY_TRANSCRIPT_WAIT_MS;
+  while (!fs.existsSync(transcriptPath)) {
+    if (Date.now() > waitDeadline) {
+      throw new Error(`Transcript file was not created at ${transcriptPath}`);
     }
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    if (runId !== undefined && isAntigravityRunCanceled(runId, db)) {
+      return { summary: 'Run canceled by user.', sessionId: conversationId };
+    }
+    await sleep(AGY_POLL_MS);
   }
 
-  if (!exists) {
-    throw new Error(`Transcript file was not created at ${transcriptPath}`);
-  }
-
-  const transcriptBaseline = processedLines;
-
-  const getToolFriendlyName = (name: string) => {
-    if (name === 'list_dir') return 'List Directory';
-    if (name === 'view_file') return 'View File';
-    if (name === 'write_to_file') return 'Write File';
-    if (name === 'replace_file_content') return 'Edit File';
-    if (name === 'multi_replace_file_content') return 'Edit File';
-    if (name === 'grep_search') return 'Search Workspace';
-    if (name === 'run_command') return 'Bash';
-    return name;
-  };
-
+  let summary = '';
+  let done = false;
+  let sawFinalPlanner = false;
+  let idleAfterFinal = 0;
+  let stallPolls = 0;
+  const pendingToolIds: string[] = [];
   const emittedTools = new Set<string>();
-  let emittedText = false; // prefix a paragraph break before later turns' text
+  let emittedText = false;
+  let lastStepType = '';
 
-  const checkTranscript = async () => {
-    if (isChecking) return;
-    isChecking = true;
-
+  const checkTranscript = (): void => {
+    let content: string;
     try {
-      const content = fs.readFileSync(transcriptPath, 'utf-8');
-      const lines = content.split('\n').filter(l => l.trim());
-      
-      if (lines.length > processedLines) {
-        noNewLinesCount = 0;
+      content = fs.readFileSync(transcriptPath, 'utf-8');
+    } catch {
+      return;
+    }
+    const lines = content.split('\n').filter((l) => l.trim());
+    if (lines.length <= processedLines) {
+      stallPolls += 1;
+      if (sawFinalPlanner) {
+        idleAfterFinal += 1;
+        if (idleAfterFinal >= AGY_IDLE_AFTER_FINAL_POLLS) done = true;
+      } else if (stallPolls >= AGY_STALL_POLLS) {
+        emitHarness(emit, `\x1b[33m# stall timeout after ${Math.round((AGY_STALL_POLLS * AGY_POLL_MS) / 1000)}s with no transcript progress\x1b[0m\r\n`);
+        done = true;
+      }
+      return;
+    }
 
-        for (let i = processedLines; i < lines.length; i++) {
-          const step = JSON.parse(lines[i]);
-          emitHarness(emit, `${lines[i]}\r\n`);
+    stallPolls = 0;
+    idleAfterFinal = 0;
 
-          if (step.source === 'MODEL' && step.type === 'PLANNER_RESPONSE') {
-            const text = step.content || '';
-            const toolCalls = step.tool_calls || [];
-            
-            if (text) {
-              summary = text;
-              emit('text', { message: { content: [{ type: 'text', text: (emittedText ? '\n\n' : '') + text }] } });
-              emittedText = true;
-            }
+    for (let i = processedLines; i < lines.length; i++) {
+      let step: AgyTranscriptStep;
+      try {
+        step = JSON.parse(lines[i]) as AgyTranscriptStep;
+      } catch {
+        continue;
+      }
 
-            for (const tc of toolCalls) {
-              const toolId = tc.id || `tc-${step.step_index}`;
-              if (!emittedTools.has(toolId)) {
-                emittedTools.add(toolId);
-                const friendlyName = getToolFriendlyName(tc.name);
-                emit('text', {
-                  message: {
-                    content: [{
-                      type: 'tool_use',
-                      id: toolId,
-                      name: friendlyName,
-                      input: tc.args || {}
-                    }]
-                  }
-                });
-              }
-            }
+      const source = step.source || '';
+      const type = (step.type || '').toUpperCase();
+      const status = (step.status || '').toUpperCase();
+      lastStepType = type;
 
-            if (step.status === 'DONE' && toolCalls.length === 0) {
-              done = true;
-            }
-          } else if (step.source === 'MODEL' && step.type !== 'USER_INPUT' && step.type !== 'CONVERSATION_HISTORY' && step.type !== 'SYSTEM_MESSAGE') {
-            const toolId = `tc-${step.step_index - 1}`;
-            const outText = step.content || '';
-            const isError = step.status === 'ERROR' || step.type === 'ERROR_MESSAGE';
+      // Skip system noise in structured stream (still ignore raw dump).
+      if (type === 'CONVERSATION_HISTORY' || type === 'USER_INPUT' || type === 'SYSTEM_MESSAGE') {
+        continue;
+      }
+
+      if (source === 'MODEL' && type === 'PLANNER_RESPONSE') {
+        const text = (step.content || '').trim();
+        const toolCalls = Array.isArray(step.tool_calls) ? step.tool_calls : [];
+
+        if (text) {
+          summary = text;
+          if (toolCalls.length > 0) {
+            // Monologue before tools → thinking (keeps chat body clean).
+            emit('text', {
+              message: { content: [{ type: 'thinking', thinking: text }] },
+            });
+            emitHarness(emit, `\x1b[2m# thinking\x1b[0m\r\n\x1b[2m${text.slice(0, 500)}\x1b[0m\r\n`);
+          } else {
+            const sep = emittedText ? '\n\n' : '';
+            emit('text', {
+              message: { content: [{ type: 'text', text: sep + text }] },
+            });
+            emittedText = true;
+            emitHarness(emit, `${text}\r\n`);
+          }
+        }
+
+        for (const tc of toolCalls) {
+          const toolId = tc.id || `agy-${conversationId}-${step.step_index ?? i}-${pendingToolIds.length}`;
+          if (emittedTools.has(toolId)) continue;
+          emittedTools.add(toolId);
+          pendingToolIds.push(toolId);
+          const name = agyToolFriendlyName(tc.name || 'tool');
+          const input = agyNormalizeToolArgs(tc.args);
+          emit('text', {
+            message: {
+              content: [{ type: 'tool_use', id: toolId, name, input }],
+            },
+          });
+          const preview = agyPreviewInput(input);
+          emitHarness(emit, `\x1b[36m▶ ${name}\x1b[0m${preview ? ` ${preview}` : ''}\r\n`);
+        }
+
+        // True completion: planner finished with no more tools.
+        if (status === 'DONE' && toolCalls.length === 0) {
+          sawFinalPlanner = true;
+        } else {
+          sawFinalPlanner = false;
+        }
+        continue;
+      }
+
+      // Tool results and other model steps
+      if (source === 'MODEL' || source === 'SYSTEM') {
+        if (type === 'ERROR_MESSAGE' || status === 'ERROR') {
+          const msg = String(step.content || 'Antigravity error').slice(0, 2000);
+          emitHarness(emit, `\x1b[31m✖ ${msg}\x1b[0m\r\n`);
+          const toolId = pendingToolIds.shift();
+          if (toolId) {
             emit('user', {
               message: {
                 content: [{
                   type: 'tool_result',
                   tool_use_id: toolId,
-                  content: truncate(String(outText), 8000),
-                  is_error: isError
-                }]
-              }
+                  content: truncate(msg, 8000),
+                  is_error: true,
+                }],
+              },
             });
           }
+          continue;
         }
-        processedLines = lines.length;
-      } else {
-        noNewLinesCount++;
-      }
 
-      if (done || (processedLines > transcriptBaseline && noNewLinesCount >= 20)) {
-        done = true;
+        // Tool execution result steps (VIEW_FILE, RUN_COMMAND, …)
+        if (type !== 'PLANNER_RESPONSE' && type !== 'EPHEMERAL_MESSAGE' && type !== 'CHECKPOINT') {
+          const outText = String(step.content || '');
+          const toolId = pendingToolIds.shift() || `agy-result-${step.step_index ?? i}`;
+          const isError = status === 'ERROR';
+          emit('user', {
+            message: {
+              content: [{
+                type: 'tool_result',
+                tool_use_id: toolId,
+                content: truncate(outText, 8000),
+                is_error: isError,
+              }],
+            },
+          });
+          const preview = outText.replace(/\s+/g, ' ').trim().slice(0, 160);
+          emitHarness(emit, `${isError ? '\x1b[31m' : '\x1b[2m'}◀ ${type}${preview ? `: ${preview}` : ''}\x1b[0m\r\n`);
+          sawFinalPlanner = false;
+        }
       }
-    } catch (err) {
-      // ignore read/parse errors
-    } finally {
-      isChecking = false;
+    }
+    processedLines = lines.length;
+
+    // If we already saw final planner and drained new lines, allow settle.
+    if (sawFinalPlanner && pendingToolIds.length === 0) {
+      idleAfterFinal = Math.max(idleAfterFinal, 1);
     }
   };
 
   while (!done) {
-    if (db && runId !== undefined) {
-      const currentRun = db.prepare('SELECT status FROM runs WHERE id = ?').get(runId) as { status: string } | undefined;
-      if (currentRun && currentRun.status === 'failed') {
-        done = true;
-        break;
-      }
+    if (runId !== undefined && isAntigravityRunCanceled(runId, db)) {
+      return { summary: summary || 'Run canceled by user.', sessionId: conversationId };
     }
-    await checkTranscript();
-    if (!done) {
-      await new Promise((resolve) => setTimeout(resolve, 500));
-    }
+    // Desktop cancel kills the agentapi child; after that we only poll. Also
+    // treat explicit cancel flag on the process map absence mid-wait as soft.
+    try {
+      checkTranscript();
+    } catch { /* ignore single poll errors */ }
+    if (!done) await sleep(AGY_POLL_MS);
   }
 
-  return {
-    summary,
-    sessionId: conversationId
-  };
+  if (!summary.trim()) {
+    summary = lastStepType ? `Antigravity finished (${lastStepType}).` : 'Done.';
+  }
+
+  emitHarness(emit, `\x1b[2m# done · ${processedLines} transcript lines\x1b[0m\r\n`);
+  if (runId !== undefined) antigravityCancelFlags.delete(runId);
+  return { summary, sessionId: conversationId };
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isAntigravityRunCanceled(runId: number, db?: Db): boolean {
+  // Cancel path: cancelLocalAgentRun kills the child; desktop also finishes
+  // the run as canceled. Check DB when available; otherwise check process map
+  // was force-cleared with a sentinel — we use a side map.
+  if (antigravityCancelFlags.has(runId)) return true;
+  if (!db) return false;
+  try {
+    const row = db.prepare('SELECT status FROM runs WHERE id = ?').get(runId) as { status?: string } | undefined;
+    return row?.status === 'canceled' || row?.status === 'failed';
+  } catch {
+    return false;
+  }
+}
+
+/** Set by cancel hooks so transcript polling stops promptly. */
+const antigravityCancelFlags = new Set<number>();
+
+/** Allow desktop cancel to stop transcript polling without a live child. */
+export function cancelAntigravityRun(runId: number): void {
+  antigravityCancelFlags.add(runId);
+  const child = activeCliProcesses.get(runId);
+  if (child) {
+    try { child.kill('SIGTERM'); } catch { /* ignore */ }
+    activeCliProcesses.delete(runId);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════

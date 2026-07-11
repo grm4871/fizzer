@@ -99,6 +99,30 @@ function probeLocalModels() {
   } catch {
     // grok not installed
   }
+
+  // Antigravity: pull live IDE catalog via language_server (agentapi tiers + labels).
+  try {
+    // Prefer compiled dist (production); fall back to tsx source for dev.
+    let listAntigravityModels = null;
+    try {
+      ({ listAntigravityModels } = require(path.join(__dirname, '..', 'dist', 'cli-agents', 'cli-agent.js')));
+    } catch {
+      try {
+        // Dynamic import of TS not available in CJS sync probe — use curl inline
+        // mirror of listAntigravityModels when dist is missing.
+        listAntigravityModels = null;
+      } catch { /* ignore */ }
+    }
+    if (typeof listAntigravityModels === 'function') {
+      const agy = listAntigravityModels();
+      if (Array.isArray(agy) && agy.length) models.antigravity = agy;
+    } else {
+      // Minimal fallback when dist not built yet
+      models.antigravity = ['flash_lite', 'flash', 'pro'];
+    }
+  } catch {
+    models.antigravity = ['flash_lite', 'flash', 'pro'];
+  }
   return models;
 }
 

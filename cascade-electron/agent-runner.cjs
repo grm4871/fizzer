@@ -11,6 +11,7 @@ const os = require('os');
 const { pathToFileURL } = require('url');
 
 let cliAgentModulePromise = null;
+let cliAgentModuleMtimeMs = -1;
 let claudeSdkPromise = null;
 
 // Claude (claude-code) runs locally via the Anthropic Agent SDK, authenticated
@@ -340,9 +341,14 @@ function resolveAgentCwd(inputCwd, vaultRoot) {
 }
 
 async function loadCliAgentModule() {
-  if (!cliAgentModulePromise) {
-    const modPath = path.join(__dirname, '..', 'dist', 'cli-agents', 'cli-agent.js');
-    cliAgentModulePromise = import(pathToFileURL(modPath).href);
+  const modPath = path.join(__dirname, '..', 'dist', 'cli-agents', 'cli-agent.js');
+  // Bust cache when dist rebuilds so harness fixes apply without killing Electron.
+  let mtimeMs = 0;
+  try { mtimeMs = fs.statSync(modPath).mtimeMs; } catch { /* ignore */ }
+  if (!cliAgentModulePromise || cliAgentModuleMtimeMs !== mtimeMs) {
+    cliAgentModuleMtimeMs = mtimeMs;
+    const href = pathToFileURL(modPath).href + `?t=${mtimeMs || Date.now()}`;
+    cliAgentModulePromise = import(href);
   }
   return cliAgentModulePromise;
 }
@@ -716,12 +722,19 @@ async function cancelLocalAgentRun(runId) {
     return true;
   }
 
-  const { activeCliProcesses } = await loadCliAgentModule();
-  const child = activeCliProcesses.get(id);
-  if (!child) return false;
-  try { child.kill('SIGTERM'); } catch { /* ignore */ }
-  activeCliProcesses.delete(id);
-  return true;
+  const mod = await loadCliAgentModule();
+  // Antigravity keeps polling transcript.jsonl after agentapi exits — flag it.
+  let flagged = false;
+  if (typeof mod.cancelAntigravityRun === 'function') {
+    try { mod.cancelAntigravityRun(id); flagged = true; } catch { /* ignore */ }
+  }
+  const child = mod.activeCliProcesses?.get(id);
+  if (child) {
+    try { child.kill('SIGTERM'); } catch { /* ignore */ }
+    mod.activeCliProcesses.delete(id);
+    return true;
+  }
+  return flagged;
 }
 
 module.exports = {

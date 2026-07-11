@@ -39,10 +39,12 @@ export const CHAT_AGENT_MODEL_PRESETS: Record<AgentId, { id: string; label: stri
     { id: 'grok-4.5', label: 'Grok 4.5' },
     { id: 'grok-composer-2.5-fast', label: 'Grok Composer 2.5 Fast' },
   ],
+  // agentapi --model= only accepts flash_lite|flash|pro; desktop merges live
+  // IDE labels from GetCascadeModelConfigData on top of these tiers.
   antigravity: [
     { id: 'flash_lite', label: 'Gemini 3.5 Flash (Low)' },
     { id: 'flash', label: 'Gemini 3.5 Flash (Medium)' },
-    { id: 'pro', label: 'Gemini 3.1 Pro (Low)' },
+    { id: 'pro', label: 'Gemini 3.1 Pro' },
   ],
   copilot: [
     { id: 'auto', label: 'Auto' },
