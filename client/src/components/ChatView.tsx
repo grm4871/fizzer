@@ -712,7 +712,12 @@ export const ChatView = memo(function ChatView({
   const endRef = useRef<HTMLDivElement | null>(null);
   const wasAtBottomRef = useRef(true);
   const scrollFrameRef = useRef<number | null>(null);
-  const previousChannelIdRef = useRef(channelId);
+  // null so the first mount counts as a channel change and force-scrolls to bottom.
+  const previousChannelIdRef = useRef<string | null>(null);
+  // True while we scroll programmatically, so the resulting scroll events aren't
+  // mistaken for the user scrolling away from the bottom (which would unstick).
+  const programmaticScrollRef = useRef(false);
+  const programmaticClearRef = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const draftRef = useRef<HTMLTextAreaElement | null>(null);
   const sortedMessages = useMemo(() => {
@@ -815,22 +820,42 @@ export const ChatView = memo(function ChatView({
     }
   }, [usersCollapsed]);
 
+  /** Pin the scroller to the bottom now, flagging it as a programmatic scroll. */
+  const scrollToBottom = useCallback(() => {
+    const el = messagesRef.current;
+    if (!el) return;
+    programmaticScrollRef.current = true;
+    el.scrollTop = el.scrollHeight;
+    if (programmaticClearRef.current != null) clearTimeout(programmaticClearRef.current);
+    programmaticClearRef.current = window.setTimeout(() => {
+      programmaticClearRef.current = null;
+      programmaticScrollRef.current = false;
+    }, 120);
+  }, []);
+
   const scrollToBottomIfSticky = useCallback(() => {
     if (!wasAtBottomRef.current) return;
     if (scrollFrameRef.current != null) return;
     scrollFrameRef.current = requestAnimationFrame(() => {
       scrollFrameRef.current = null;
-      if (wasAtBottomRef.current) endRef.current?.scrollIntoView({ block: 'end' });
+      if (wasAtBottomRef.current) scrollToBottom();
     });
-  }, []);
+  }, [scrollToBottom]);
 
   useLayoutEffect(() => {
     if (previousChannelIdRef.current !== channelId) {
+      // New channel (or first mount): force the view to the bottom, re-pinning
+      // across a few frames because markdown/images/widgets settle after paint.
       previousChannelIdRef.current = channelId;
       wasAtBottomRef.current = true;
+      scrollToBottom();
+      requestAnimationFrame(scrollToBottom);
+      const t1 = window.setTimeout(scrollToBottom, 60);
+      const t2 = window.setTimeout(scrollToBottom, 200);
+      return () => { clearTimeout(t1); clearTimeout(t2); };
     }
     scrollToBottomIfSticky();
-  }, [sortedMessages.length, channelId, scrollToBottomIfSticky]);
+  }, [sortedMessages.length, channelId, scrollToBottom, scrollToBottomIfSticky]);
 
   // When harness/thinking expands layout height without a React dep change
   // (or after paint), keep the main chat scroller pinned if the user was at bottom.
@@ -846,9 +871,12 @@ export const ChatView = memo(function ChatView({
 
   useEffect(() => () => {
     if (scrollFrameRef.current != null) cancelAnimationFrame(scrollFrameRef.current);
+    if (programmaticClearRef.current != null) clearTimeout(programmaticClearRef.current);
   }, []);
 
   const updateBottomStickiness = useCallback(() => {
+    // Ignore scrolls we triggered; only a real user scroll should unstick.
+    if (programmaticScrollRef.current) return;
     const element = messagesRef.current;
     if (!element) return;
     wasAtBottomRef.current = isAtScrollBottom(element);
