@@ -715,33 +715,35 @@ export const ChatView = memo(function ChatView({
   const previousChannelIdRef = useRef(channelId);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const draftRef = useRef<HTMLTextAreaElement | null>(null);
-  const sortedMessages = useMemo(
-    () => [...messages]
-      // Hide completed run shells whose body was suppressed after cascade-chat
-      // send — unless they still carry harness/thinking/tool activity worth showing.
-      .filter((message) => {
+  const sortedMessages = useMemo(() => {
+    // Index-stable sort: never invent order for messages missing seq. Treating
+    // missing seq as MAX_SAFE_INTEGER put an already-persisted agent shell
+    // (has seq) *before* the optimistic user prompt (no seq yet) — classic
+    // "response then prompt" flip while idle/network races.
+    const indexed = messages.map((message, index) => ({ message, index }));
+    return indexed
+      .filter(({ message }) => {
         if (message.status === 'running' || message.status === 'sending') return true;
         if (message.status === 'failed' || message.status === 'canceled') return true;
         if (message.body?.trim()) return true;
         if (message.images?.length || message.attachments?.length) return true;
-        // Empty body but has run activity (thinking/tools/harness) — keep as activity card.
         if (hasRunActivity(message)) return true;
-        // Empty completed agent bubble with no activity — suppressed double-post shell.
         if (message.agentId || message.registrationId || message.runId != null) return false;
         return true;
       })
       .sort((a, b) => {
-      const byTime = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
-      if (byTime !== 0) return byTime;
-      // Same millisecond: order by server persistence order (rowid) so a user
-      // message and the agent placeholder it triggers never flip. Not-yet-
-      // persisted messages (no seq) sort last within the tie — they're newest.
-      const seqA = a.seq ?? Number.MAX_SAFE_INTEGER;
-      const seqB = b.seq ?? Number.MAX_SAFE_INTEGER;
-      return seqA - seqB;
-    }),
-    [messages],
-  );
+        const byTime = new Date(a.message.createdAt).getTime() - new Date(b.message.createdAt).getTime();
+        if (byTime !== 0) return byTime;
+        const seqA = a.message.seq;
+        const seqB = b.message.seq;
+        if (typeof seqA === 'number' && typeof seqB === 'number' && seqA !== seqB) {
+          return seqA - seqB;
+        }
+        // Incomplete seq pair: keep append order (user is pushed before agent).
+        return a.index - b.index;
+      })
+      .map(({ message }) => message);
+  }, [messages]);
   // Grouping recomputes on every message change, but unchanged groups must
   // keep their object identity or ChatGroupRow's memo never hits: reuse the
   // previous group object when the exact same message refs compose it.

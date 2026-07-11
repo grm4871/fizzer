@@ -41,6 +41,7 @@ import {
   appendHarnessLog,
   hasChatRunToolBlock,
   honestAgentChatBody,
+  afterChatTimestamp,
   mergeRemoteChatMessage,
   newId,
   normalizeChatRunBlocks,
@@ -461,13 +462,18 @@ export default function App() {
     });
   }, []);
 
-  const persistChatMessageToServer = useCallback(async (vaultId: string, channelId: string, message: ChatMessage) => {
+  const persistChatMessageToServer = useCallback(async (
+    vaultId: string,
+    channelId: string,
+    message: ChatMessage,
+  ): Promise<ChatMessage | null> => {
     try {
       const data = await api<{ message: ChatMessage }>(`/api/vaults/${vaultId}/channels/${channelId}/messages`, {
         method: 'POST',
         body: JSON.stringify(message),
       });
-      if (!data.message) return;
+      if (!data.message) return null;
+      const merged = mergeRemoteChatMessage(message, data.message);
       setChatState((prev) => {
         const existing = prev.messagesByChannel[channelId] ?? [];
         const index = existing.findIndex((item) => item.id === data.message.id);
@@ -482,9 +488,11 @@ export default function App() {
           },
         };
       });
+      return merged;
     } catch (error) {
       console.error('Failed to persist chat message:', error);
       setNotice(error instanceof Error ? error.message : 'Could not save chat message');
+      return null;
     }
   }, []);
 
@@ -967,13 +975,15 @@ export default function App() {
 
     // Eager placeholder so messageId always exists before /runs (and the server
     // can single-write into it). Server will also ensure/create if needed.
+    // createdAt is strictly after the triggering prompt so same-ms + seq races
+    // cannot sort the agent shell above the user message.
     streamingChatMessageIdsRef.current.add(agentMessageId);
     appendChatMessage(channelId, {
       id: agentMessageId,
       channelId,
       author: registration.displayName || agentLabel(agentId),
       body: 'Thinking...',
-      createdAt: new Date().toISOString(),
+      createdAt: afterChatTimestamp(triggeringMessage.createdAt),
       status: 'running',
       agentId,
       registrationId: registration.id,
@@ -1303,33 +1313,40 @@ export default function App() {
     });
 
     const vaultId = activeVaultIdRef.current;
-    if (vaultId) {
-      if (mergeTargetId) {
-        scheduleChatMessagePatch(vaultId, channelId, mergeTargetId, outgoingMessage, true);
-      } else {
-        void persistChatMessageToServer(vaultId, channelId, candidate);
+    // Persist the user prompt *before* starting agents. If the agent shell is
+    // inserted first it gets a lower rowid/seq and survives reloads as
+    // "response then prompt" even when the UI briefly looked correct.
+    void (async () => {
+      let trigger = outgoingMessage;
+      if (vaultId) {
+        if (mergeTargetId) {
+          scheduleChatMessagePatch(vaultId, channelId, mergeTargetId, outgoingMessage, true);
+        } else {
+          const saved = await persistChatMessageToServer(vaultId, channelId, candidate);
+          if (saved) trigger = saved;
+        }
       }
-    }
 
-    const registrations = chatStateRef.current.registeredAgentsByChannel[channelId] ?? [];
-    const implicitMention = replyTo?.mention ? `@${replyTo.mention}` : '';
-    const mentionSource = [implicitMention, trimmed, attachments.map((item) => item.name).join(' ')].filter(Boolean).join(' ');
-    const mentionedAgents = getMentionedRegistrations(mentionSource, registrations, false);
-    const targetAgents = [
-      ...mentionedAgents,
-      ...registrations.filter((registration) =>
-        registration.replyToEveryMessage
-        && !mentionedAgents.some((mentioned) => mentioned.id === registration.id)
-      ),
-    ];
-    if (targetAgents.length === 0) return;
-    const prompt = stripRegisteredAgentMentions(mentionSource, registrations) || mentionSource || 'Please review the attached media.';
-    const runImages = mediaToRunImages(media);
-    const agentsWithoutImages = new Set<AgentId>(['grok', 'antigravity', 'copilot', 'hermes']);
-    for (const registration of targetAgents) {
-      const imagesForRun = agentsWithoutImages.has(registration.agentId as AgentId) ? [] : runImages;
-      void startAgentChatRun(channelId, registration, prompt, outgoingMessage, imagesForRun);
-    }
+      const registrations = chatStateRef.current.registeredAgentsByChannel[channelId] ?? [];
+      const implicitMention = replyTo?.mention ? `@${replyTo.mention}` : '';
+      const mentionSource = [implicitMention, trimmed, attachments.map((item) => item.name).join(' ')].filter(Boolean).join(' ');
+      const mentionedAgents = getMentionedRegistrations(mentionSource, registrations, false);
+      const targetAgents = [
+        ...mentionedAgents,
+        ...registrations.filter((registration) =>
+          registration.replyToEveryMessage
+          && !mentionedAgents.some((mentioned) => mentioned.id === registration.id)
+        ),
+      ];
+      if (targetAgents.length === 0) return;
+      const prompt = stripRegisteredAgentMentions(mentionSource, registrations) || mentionSource || 'Please review the attached media.';
+      const runImages = mediaToRunImages(media);
+      const agentsWithoutImages = new Set<AgentId>(['grok', 'antigravity', 'copilot', 'hermes']);
+      for (const registration of targetAgents) {
+        const imagesForRun = agentsWithoutImages.has(registration.agentId as AgentId) ? [] : runImages;
+        void startAgentChatRun(channelId, registration, prompt, trigger, imagesForRun);
+      }
+    })();
   }, [scheduleChatMessagePatch, persistChatMessageToServer, startAgentChatRun, user, handleRegisterChatAgent, appendChatMessage]);
 
   /** Close a tab from anywhere: drop it from the registry, content, and tree. */

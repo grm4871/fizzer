@@ -1301,6 +1301,9 @@ export function ensureAgentChatMessage(
     registrationId?: string;
     runId: number;
     body?: string;
+    /** Optional; when omitted, stamp strictly after the channel's latest message
+     * so agent shells never share a millisecond (and lower rowid) with the prompt. */
+    createdAt?: string;
   },
 ): { message: ChatMessage; created: boolean } {
   const existing = updateChatMessage(db, userId, vaultId, channelId, input.messageId, {
@@ -1312,12 +1315,25 @@ export function ensureAgentChatMessage(
   });
   if (existing) return { message: existing, created: false };
 
+  const { route } = assertChatChannel(db, channelId, userId);
+  let createdAt = input.createdAt || new Date().toISOString();
+  const latest = db.prepare(`
+    SELECT created_at FROM chat_messages
+    WHERE channel_id = ?
+    ORDER BY created_at DESC, rowid DESC
+    LIMIT 1
+  `).get(route.sourceChannelId) as { created_at: string } | undefined;
+  if (latest?.created_at && createdAt <= latest.created_at) {
+    const t = Date.parse(latest.created_at);
+    createdAt = new Date((Number.isFinite(t) ? t : Date.now()) + 1).toISOString();
+  }
+
   const message = createChatMessage(db, userId, vaultId, channelId, {
     id: input.messageId,
     channelId,
     author: input.author,
     body: input.body ?? 'Thinking...',
-    createdAt: new Date().toISOString(),
+    createdAt,
     status: 'running',
     agentId: input.agentId,
     registrationId: input.registrationId,

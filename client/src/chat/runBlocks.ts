@@ -11,6 +11,16 @@ export function newId(prefix: string) {
   return `${prefix}-${uuid}`;
 }
 
+/** ISO timestamp strictly after `iso` (and not before now). Used so agent shells
+ * never share a millisecond with the prompt they reply to — that race was
+ * flipping transcript order when the agent row got a lower seq first. */
+export function afterChatTimestamp(iso: string | undefined | null): string {
+  const now = Date.now();
+  const base = iso ? Date.parse(iso) : NaN;
+  const ms = Number.isFinite(base) ? Math.max(now, base + 1) : now;
+  return new Date(ms).toISOString();
+}
+
 export function textFromRunContent(content: unknown): string {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return '';
@@ -178,21 +188,26 @@ export function mergeRemoteChatMessage(local: ChatMessage, remote: ChatMessage):
   const harnessLog = (local.harnessLog?.length ?? 0) >= (remote.harnessLog?.length ?? 0)
     ? local.harnessLog
     : remote.harnessLog;
+  // Always keep server seq when either side has it — sort depends on it.
+  const seq = remote.seq ?? local.seq;
   if (remoteScore >= localScore) {
-    return harnessLog && harnessLog !== remote.harnessLog
+    const next = harnessLog && harnessLog !== remote.harnessLog
       ? { ...remote, harnessLog }
       : remote;
+    return seq != null && next.seq !== seq ? { ...next, seq } : next;
   }
   if (local.status === 'running' && !remote.status && remote.body.length >= local.body.length) {
     return {
       ...remote,
       blocks: remote.blocks?.length ? remote.blocks : local.blocks,
       harnessLog: harnessLog || remote.harnessLog || local.harnessLog,
+      ...(seq != null ? { seq } : {}),
     };
   }
-  return harnessLog && harnessLog !== local.harnessLog
+  const next = harnessLog && harnessLog !== local.harnessLog
     ? { ...local, harnessLog }
     : local;
+  return seq != null && next.seq !== seq ? { ...next, seq } : next;
 }
 
 /** JSON patch body with explicit nulls so the server can clear status/blocks. */
