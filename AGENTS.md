@@ -22,12 +22,14 @@ When asked to deploy changes, always:
    Poll every few seconds for up to ~3–5 minutes. Confirm `pending: false` and `last.status` is `ok` (or report `error` + message). Note `last.commit` in your final reply.
 4. Deploy is fragile: the queue can succeed while the host watcher fails, or the agent process can die mid-deploy when the container restarts. Always verify status (or that live `/api/health` + expected commit behavior returned) before claiming ship.
 
-### After deploy lands — restart for the user
+### After deploy lands — refresh in place (never kill the app)
 
-- **Web clients** auto-reload when `version.json` changes (`client/public/version-check.js`). You usually do **not** need to tell users to hard-refresh, but mention it if something still looks stale.
-- **Electron / desktop runner** does **not** auto-restart. After deploys that touch any of:
-  - `cascade-electron/` (main process, `desktop-runner-host.cjs`, `agent-runner.cjs`, preload)
-  - `cli-agents/` wrappers used by the desktop
-  - server contracts the desktop runner depends on (`/runners`, delegated run payload)
-  **restart the Cascade desktop app for the user** (or clearly ask them to quit + relaunch) so mid-session sockets and local CLI wrappers pick up the new code. Server-only changes that keep the runner protocol compatible can leave the app running; mid-flight runs are designed to survive model-server restart via reclaim, but a **desktop** restart still drops local agent processes.
-- If you cannot restart Electron from this environment, say so and give the user a one-line "please relaunch Cascade desktop" note.
+**Do not** quit, `pkill`, `app.relaunch`, or otherwise terminate the Electron process. That kills every agent run hosted by the desktop. Full app restart is never the deploy follow-up path.
+
+- **Web clients** auto-reload when `version.json` changes (`client/public/version-check.js`). No action needed unless something still looks stale.
+- **Electron desktop** already has an **in-place hot reload**:
+  - Sidebar footer **Update desktop app** button (RefreshCw icon) → `electronAPI.updateAndRestart` → IPC `app:updateAndRestart`.
+  - That **git pull --ff-only**s the checkout (source-desktop builds) and calls `refreshDesktopWindows()` (renderer `reloadIgnoringCache` only). Main process stays up; local agent processes are not canceled by this path.
+  - Keyboard: **Ctrl/Cmd+R** reloads the focused renderer only. (**Ctrl/Cmd+Shift+R** relaunches the whole app — do **not** use that after deploy.)
+- After a deploy that changes hosted UI or desktop source the user should pick up, **use/tell them the sidebar reload button** (or Ctrl/Cmd+R for renderer-only). Prefer that over asking them to quit Cascade.
+- Server-only deploys that keep the runner protocol compatible need no desktop action; mid-flight runs are designed to survive **model-server** restart via reclaim (`activeRunIds` + deferred orphan settle).
