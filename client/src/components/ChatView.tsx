@@ -498,7 +498,7 @@ function groupHasDocEmbed(group: ChatMessageGroup): boolean {
   return group.messages.some((message) => message.body && bodyHasDocEmbed(message.body));
 }
 
-/** iMessage-style swipe-right → reply. Touch/pen only so desktop drag-select stays clean. */
+/** Swipe-left → reply (mobile/touch). Touch/pen only so desktop drag-select stays clean. */
 const SWIPE_REPLY_MAX = 72;
 const SWIPE_REPLY_THRESHOLD = 52;
 const SWIPE_AXIS_SLOP = 10;
@@ -518,6 +518,7 @@ function SwipeToReply({
 }) {
   const startRef = useRef<{ x: number; y: number; pointerId: number } | null>(null);
   const axisRef = useRef<'h' | 'v' | null>(null);
+  /** Positive distance dragged left (px). */
   const offsetRef = useRef(0);
   const [offset, setOffset] = useState(0);
   const [dragging, setDragging] = useState(false);
@@ -569,8 +570,8 @@ function SwipeToReply({
       }
     }
     if (axisRef.current !== 'h') return;
-    // Right swipe only.
-    const next = Math.max(0, Math.min(SWIPE_REPLY_MAX, dx));
+    // Left swipe only (negative dx → positive distance).
+    const next = Math.max(0, Math.min(SWIPE_REPLY_MAX, -dx));
     offsetRef.current = next;
     setOffset(next);
     event.preventDefault();
@@ -620,7 +621,7 @@ function SwipeToReply({
       <div
         className="chat-swipe-content"
         style={{
-          transform: offset ? `translate3d(${offset}px, 0, 0)` : undefined,
+          transform: offset ? `translate3d(${-offset}px, 0, 0)` : undefined,
           transition: dragging ? 'none' : 'transform 160ms ease-out',
         }}
       >

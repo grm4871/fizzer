@@ -1261,7 +1261,7 @@ a {
   border-radius: var(--radius-sm);
   background: hsla(22, 7%, 14%, 0.35);
 }
-/* Swipe-right → reply (mobile/touch). Hint sits under the sliding content. */
+/* Swipe-left → reply (mobile/touch). Hint sits under the sliding content. */
 .chat-swipe-row {
   position: relative;
   touch-action: pan-y;
@@ -1272,7 +1272,8 @@ a {
 }
 .chat-swipe-reply-hint {
   position: absolute;
-  left: 10px;
+  right: 10px;
+  left: auto;
   top: 50%;
   translate: 0 -50%;
   width: 28px;
