@@ -714,6 +714,19 @@ export default function App() {
     void loadChatPresence(vaultId, notesList, { channelIds: ids });
   }, [loadChatMessages, loadChatAgentMembers, loadChatPresence]);
 
+  // Hydrate the active chat channel whenever it's the focused tab and its
+  // messages aren't loaded. Chat transcripts aren't persisted to localStorage
+  // (mobile perf), so a backgrounded webview that reloads on resume — or any
+  // cold load with a chat tab already restored from the layout — comes back
+  // with no messages and never calls openChatChannel. Without this, the empty
+  // "#channel" placeholder shows until the user interacts. ensureChatChannelLoaded
+  // is idempotent (skips when already cached) and flags the channel as loading,
+  // so ChatView shows "Loading messages…" instead of the empty state.
+  useEffect(() => {
+    if (!user || !activeVaultId) return;
+    if (focusedTab?.type === 'chat') ensureChatChannelLoaded(focusedTab.id);
+  }, [user, activeVaultId, notes, focusedTab?.id, focusedTab?.type, ensureChatChannelLoaded]);
+
   /** Merge full message detail (harness log) after expand-fetch. */
   const handleHydrateChatMessage = useCallback((message: ChatMessage) => {
     const channelId = message.channelId;
@@ -798,6 +811,14 @@ export default function App() {
           void loadVaultData(vaultId, { soft: true });
         }, 250);
       }
+      // If the active tab is a chat channel that lost its (unpersisted) messages
+      // while backgrounded, fetch it immediately with a loading state instead of
+      // waiting on the silent soft-refresh — otherwise it shows the empty
+      // "#channel" placeholder on resume.
+      const activeId = focusedPaneRef.current.activeTabId;
+      if (activeId && openTabsRef.current.some((t) => t.id === activeId && t.type === 'chat')) {
+        ensureChatChannelLoaded(activeId);
+      }
     };
     const onVisible = () => {
       if (document.visibilityState === 'visible') resyncOnResume();
@@ -809,7 +830,7 @@ export default function App() {
       window.removeEventListener('focus', resyncOnResume);
       document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [user, loadVaultData]);
+  }, [user, loadVaultData, ensureChatChannelLoaded]);
 
   useEffect(() => {
     if (activeVaultId) {
