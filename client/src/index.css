@@ -1771,8 +1771,8 @@ a {
   padding: 8px 10px 10px;
   scrollbar-width: thin;
   scrollbar-color: hsl(25, 5%, 28%) transparent;
-  /* Avoid outer scroll jump while expanding a fold on short mobile viewports. */
-  overscroll-behavior: contain;
+  /* Allow edge scroll to chain into the main chat (JS reinforces on mobile). */
+  overscroll-behavior-y: auto;
   -webkit-overflow-scrolling: touch;
 }
 @media (max-width: 640px) {
@@ -1879,6 +1879,8 @@ a {
   padding: 0;
   max-height: 200px;
   overflow: auto;
+  overscroll-behavior-y: auto;
+  -webkit-overflow-scrolling: touch;
   font: inherit;
   line-height: 1.45;
   white-space: pre-wrap;
@@ -3171,8 +3173,18 @@ a {
     padding-right: 8px;
   }
 
+  /* Keep profile pictures on narrow phones (was display:none for space). */
   .chat-avatar {
-    display: none;
+    display: flex;
+    width: 26px;
+    height: 26px;
+    flex: 0 0 26px;
+    font-size: 0.6875rem;
+  }
+  .chat-avatar-sm {
+    width: 24px;
+    height: 24px;
+    flex-basis: 24px;
   }
 
   .chat-composer {

@@ -6,7 +6,7 @@
  * the true process/SDK buffer in xterm when needed.
  */
 
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { ChevronRight, Square, TerminalSquare } from 'lucide-react';
 import {
   buildHarnessActivity,
@@ -30,6 +30,7 @@ import { HarnessTerminal } from './HarnessTerminal';
 import type { ChatMessage } from './ChatView';
 
 const SCROLL_PIN_PX = 48;
+const EDGE_PX = 2;
 
 function isPinnedToBottom(el: HTMLElement, slack = SCROLL_PIN_PX): boolean {
   return el.scrollHeight - el.scrollTop - el.clientHeight <= slack;
@@ -44,6 +45,105 @@ function scrollToBottom(el: HTMLElement | null | undefined) {
 function scrollToBottomSoon(el: HTMLElement | null | undefined) {
   if (!el) return;
   requestAnimationFrame(() => scrollToBottom(el));
+}
+
+function isScrollableY(el: HTMLElement): boolean {
+  if (el.scrollHeight <= el.clientHeight + 1) return false;
+  const oy = getComputedStyle(el).overflowY;
+  return oy === 'auto' || oy === 'scroll' || oy === 'overlay' || el.classList.contains('chat-messages');
+}
+
+function findScrollParent(el: HTMLElement): HTMLElement | null {
+  let p: HTMLElement | null = el.parentElement;
+  while (p) {
+    if (isScrollableY(p)) return p;
+    p = p.parentElement;
+  }
+  return null;
+}
+
+function atScrollEdge(el: HTMLElement, deltaY: number): boolean {
+  if (deltaY > 0) return el.scrollTop + el.clientHeight >= el.scrollHeight - EDGE_PX;
+  if (deltaY < 0) return el.scrollTop <= EDGE_PX;
+  return false;
+}
+
+/** Push leftover scroll into the nearest parent scroller (harness → chat). */
+function chainScrollDelta(el: HTMLElement, deltaY: number): boolean {
+  if (!deltaY || !atScrollEdge(el, deltaY)) return false;
+  let parent = findScrollParent(el);
+  let remaining = deltaY;
+  while (parent && remaining !== 0) {
+    if (!atScrollEdge(parent, remaining)) {
+      parent.scrollTop += remaining;
+      return true;
+    }
+    // Parent also at edge — walk up (thinking → harness → chat).
+    const next = findScrollParent(parent);
+    if (!next) {
+      parent.scrollTop += remaining;
+      return true;
+    }
+    parent = next;
+  }
+  return false;
+}
+
+/**
+ * When a nested harness/thinking scroller is already at its edge, keep
+ * scrolling the outer chat instead of trapping the thumb/gesture.
+ * `active` rebinds after folds mount their `<pre>` (ref is null while closed).
+ */
+function useScrollChain(ref: RefObject<HTMLElement | null>, active = true) {
+  useEffect(() => {
+    if (!active) return;
+    const el = ref.current;
+    if (!el) return;
+
+    const onWheel = (event: WheelEvent) => {
+      if (event.ctrlKey) return; // pinch-zoom
+      if (!atScrollEdge(el, event.deltaY)) return;
+      if (chainScrollDelta(el, event.deltaY)) {
+        event.preventDefault();
+      }
+    };
+
+    let lastY = 0;
+    let tracking = false;
+    const onTouchStart = (event: TouchEvent) => {
+      if (event.touches.length !== 1) return;
+      lastY = event.touches[0].clientY;
+      tracking = true;
+    };
+    const onTouchMove = (event: TouchEvent) => {
+      if (!tracking || event.touches.length !== 1) return;
+      const y = event.touches[0].clientY;
+      const deltaY = lastY - y; // finger up → content down
+      lastY = y;
+      if (!deltaY) return;
+      if (!atScrollEdge(el, deltaY)) return;
+      if (chainScrollDelta(el, deltaY)) {
+        // Prevent the nested scroller from rubber-banding / eating the gesture.
+        event.preventDefault();
+      }
+    };
+    const onTouchEnd = () => {
+      tracking = false;
+    };
+
+    el.addEventListener('wheel', onWheel, { passive: false });
+    el.addEventListener('touchstart', onTouchStart, { passive: true });
+    el.addEventListener('touchmove', onTouchMove, { passive: false });
+    el.addEventListener('touchend', onTouchEnd, { passive: true });
+    el.addEventListener('touchcancel', onTouchEnd, { passive: true });
+    return () => {
+      el.removeEventListener('wheel', onWheel);
+      el.removeEventListener('touchstart', onTouchStart);
+      el.removeEventListener('touchmove', onTouchMove);
+      el.removeEventListener('touchend', onTouchEnd);
+      el.removeEventListener('touchcancel', onTouchEnd);
+    };
+  }, [ref, active]);
 }
 
 function previewInput(input: unknown): string {
@@ -118,6 +218,9 @@ function ThinkingBlock({
     if (live || pinRef.current) scrollToBottomSoon(pre);
   }, [paintText, open, live, lines.length]);
 
+  // Bind after fold opens so the <pre> exists.
+  useScrollChain(preRef, open);
+
   return (
     <div className="crp-term-block crp-term-thinking">
       <button
@@ -187,6 +290,8 @@ function ToolBlock({
     if (!open || !hasBody) return;
     if (live || pinRef.current) scrollToBottomSoon(preRef.current);
   }, [result, open, hasBody, live]);
+
+  useScrollChain(preRef, open && hasBody);
 
   return (
     <div className={`crp-term-block crp-term-tool status-${tool.status}`}>
@@ -391,6 +496,8 @@ export const CascadeRunPanel = memo(function CascadeRunPanel({
   const statChips = useMemo(() => buildHeaderStatChips(activity.stats), [activity.stats]);
   const showUsage = hasUsageStats(activity.stats) || statChips.length > 0;
   const effectiveOpen = open || forceOpen;
+  // Harness body → main chat when already at top/bottom.
+  useScrollChain(bodyRef, effectiveOpen && canExpand);
 
   // Fingerprint content growth (length alone misses same-length edits; items
   // grow thinking in-place without changing items.length).
