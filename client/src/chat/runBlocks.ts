@@ -142,11 +142,13 @@ export function appendHarnessLog(existing: string | undefined, chunk: string, ma
 }
 
 function chatMessageStreamScore(message: ChatMessage): number {
-  const bodyScore = message.body?.length ?? 0;
+  const bodyLen = message.body?.length ?? 0;
   const blockScore = (message.blocks ?? []).reduce((sum, block) => {
     if (block.type === 'tool_use') return sum + 200 + (block.name?.length ?? 0);
     if (block.type === 'tool_result') return sum + Math.min(block.content?.length ?? block.text?.length ?? 0, 4000);
-    return sum + (block.text?.length ?? 0);
+    // Prefer structured thinking in blocks over stuffing it into body length.
+    if (block.type === 'thinking') return sum + Math.min(block.text?.length ?? 0, 2000);
+    return sum + Math.min(block.text?.length ?? 0, 4000);
   }, 0);
   const harnessScore = Math.min(message.harnessLog?.length ?? 0, 50_000);
   // Terminal statuses outrank running; canceled is a real terminal state.
@@ -155,7 +157,16 @@ function chatMessageStreamScore(message: ChatMessage): number {
     : message.status === 'failed' || message.status === 'canceled'
       ? 2
       : 10;
-  return statusScore * 1_000_000 + bodyScore + blockScore + harnessScore;
+  // Dual-post suppress: completed run shell with empty body must beat a local
+  // copy that still holds streamed monologue (otherwise thinking reappears).
+  const suppressShell = statusScore === 10
+    && message.runId != null
+    && !(message.body?.trim())
+    ? 900_000
+    : 0;
+  // Cap body influence so monologue length can't overturn terminal status/suppress.
+  const bodyScore = Math.min(bodyLen, 8_000);
+  return statusScore * 1_000_000 + suppressShell + bodyScore + blockScore + harnessScore;
 }
 
 /** Prefer streamed assistant text over a generic CLI/SDK summary for chat body. */
@@ -172,7 +183,9 @@ export function honestAgentChatBody(
   if (terminal === 'failed' || terminal === 'canceled') {
     const reason = summaryText
       || (terminal === 'canceled' ? 'Run canceled by user.' : 'Agent failed.');
-    return trimmed ? `${trimmed}\n\n> ⚠️ ${reason}` : reason;
+    // Prefer a short failure reason; don't dump the whole mid-run monologue.
+    if (trimmed && trimmed.length <= 800) return `${trimmed}\n\n> ⚠️ ${reason}`;
+    return reason;
   }
   // Agent already posted via cascade-chat send — leave the run bubble empty.
   if (opts?.suppressChatBody) return '';

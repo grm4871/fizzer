@@ -1438,9 +1438,14 @@ export function buildAgentChatContentFromRunEvents(
   // Failures keep the scratchpad and append the reason.
   // If the agent already posted via cascade-chat send, leave the run bubble
   // body empty so we don't double-post the same reply.
+  //
+  // While still running, never put intermediate stream text in the chat body —
+  // models often emit plan/monologue/"thinking out loud" as type:text tokens
+  // (and real thinking blocks already stay in blocks). Showing that mid-run
+  // leaked "thinking traces" into the transcript. Harness + blocks still update.
   let body: string;
   if (!done) {
-    body = trimmed || 'Thinking...';
+    body = 'Thinking...';
   } else if (status === 'failed' || status === 'canceled') {
     const reason = terminalSummary.trim()
       || (status === 'canceled' ? 'Run canceled by user.' : 'Agent failed.');

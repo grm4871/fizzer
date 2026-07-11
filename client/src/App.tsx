@@ -1136,11 +1136,16 @@ export default function App() {
             const text = textFromRunContent(payload.message?.content);
             const hasToolBlock = hasChatRunToolBlock(payload.message?.content);
             if (!text && blocks.length === 0 && !hasToolBlock) return;
+            // Accumulate final-answer candidates, but do not write intermediate
+            // stream monologue into the chat bubble — that leaked plan/thinking
+            // traces into the transcript. Body stays "Thinking..." until status.
             if (text) assistantText += text;
             bufferedBlocks = appendChatRunBlocks(bufferedBlocks, blocks);
             queueMessageUpdate((message) => ({
               ...message,
-              body: text ? (message.body === 'Thinking...' ? text : message.body + text) : message.body,
+              body: message.status === 'running' || message.body === 'Thinking...' || !message.body?.trim()
+                ? 'Thinking...'
+                : message.body,
               blocks: appendChatRunBlocks(message.blocks, blocks),
               runId,
             }));
