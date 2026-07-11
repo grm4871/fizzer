@@ -66,6 +66,9 @@ html {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
+  /* Edge-to-edge (Android 15+ forces it): the regions behind the transparent
+     status/navigation bars show this, so match the app so it isn't letterboxed. */
+  background: var(--bg-base);
 }
 
 body {

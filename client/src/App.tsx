@@ -2448,7 +2448,7 @@ export default function App() {
 
       {/* Workspace */}
       <div className="workspace flex flex-col flex-1" style={{ height: '100%', overflow: 'hidden' }}>
-        <div className="workspace-toolbar" style={{ display: 'flex', alignItems: 'center', background: 'var(--bg-surface)', padding: '4px 8px', gap: 4, borderBottom: '1px solid var(--border)' }}>
+        <div className="workspace-toolbar" style={{ display: 'flex', alignItems: 'center', background: 'var(--bg-surface)', padding: '4px 8px', paddingTop: 'calc(4px + env(safe-area-inset-top))', gap: 4, borderBottom: '1px solid var(--border)' }}>
           {!sidebarOpen && (
             <button
               id="sidebar-expand-btn"

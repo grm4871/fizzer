@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Matches the web app's --bg-base (hsl(22, 8%, 7%)) so the window and the
+         regions behind the transparent system bars blend with the UI. -->
+    <color name="appBackground">#FF131110</color>
+</resources>
