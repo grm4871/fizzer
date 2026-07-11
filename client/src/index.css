@@ -1261,6 +1261,44 @@ a {
   border-radius: var(--radius-sm);
   background: hsla(22, 7%, 14%, 0.35);
 }
+/* Swipe-right → reply (mobile/touch). Hint sits under the sliding content. */
+.chat-swipe-row {
+  position: relative;
+  touch-action: pan-y;
+  -webkit-tap-highlight-color: transparent;
+}
+.chat-swipe-row + .chat-swipe-row {
+  margin-top: 2px;
+}
+.chat-swipe-reply-hint {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  translate: 0 -50%;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--accent-subtle);
+  color: var(--accent);
+  pointer-events: none;
+  z-index: 0;
+}
+.chat-swipe-row.is-armed .chat-swipe-reply-hint {
+  background: var(--accent);
+  color: hsl(22, 15%, 8%);
+}
+.chat-swipe-content {
+  position: relative;
+  z-index: 1;
+  will-change: transform;
+}
+.chat-swipe-row.is-dragging .chat-swipe-content {
+  /* Keep text selection from fighting the gesture. */
+  user-select: none;
+}
 .chat-message-chunk + .chat-message-chunk {
   margin-top: 2px;
 }

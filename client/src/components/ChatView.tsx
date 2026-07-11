@@ -498,6 +498,138 @@ function groupHasDocEmbed(group: ChatMessageGroup): boolean {
   return group.messages.some((message) => message.body && bodyHasDocEmbed(message.body));
 }
 
+/** iMessage-style swipe-right → reply. Touch/pen only so desktop drag-select stays clean. */
+const SWIPE_REPLY_MAX = 72;
+const SWIPE_REPLY_THRESHOLD = 52;
+const SWIPE_AXIS_SLOP = 10;
+
+function SwipeToReply({
+  onReply,
+  children,
+  className = '',
+  onClick,
+  onContextMenu,
+}: {
+  onReply: () => void;
+  children: ReactNode;
+  className?: string;
+  onClick?: () => void;
+  onContextMenu?: (event: React.MouseEvent) => void;
+}) {
+  const startRef = useRef<{ x: number; y: number; pointerId: number } | null>(null);
+  const axisRef = useRef<'h' | 'v' | null>(null);
+  const offsetRef = useRef(0);
+  const [offset, setOffset] = useState(0);
+  const [dragging, setDragging] = useState(false);
+  const armed = offset >= SWIPE_REPLY_THRESHOLD;
+
+  const reset = useCallback((animate: boolean) => {
+    startRef.current = null;
+    axisRef.current = null;
+    offsetRef.current = 0;
+    setDragging(false);
+    if (!animate) {
+      setOffset(0);
+      return;
+    }
+    // Next frame so the browser can apply the CSS transition after drag ends.
+    requestAnimationFrame(() => setOffset(0));
+  }, []);
+
+  const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === 'mouse' || event.button !== 0) return;
+    // Don't steal pans that start on interactive chrome (links, harness folds, etc.).
+    const target = event.target as HTMLElement | null;
+    if (target?.closest('a, button, input, textarea, select, .cascade-run-panel, pre, code')) return;
+    startRef.current = { x: event.clientX, y: event.clientY, pointerId: event.pointerId };
+    axisRef.current = null;
+    offsetRef.current = 0;
+    setDragging(true);
+    setOffset(0);
+  };
+
+  const onPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    const start = startRef.current;
+    if (!start || event.pointerId !== start.pointerId) return;
+    const dx = event.clientX - start.x;
+    const dy = event.clientY - start.y;
+    if (!axisRef.current) {
+      if (Math.abs(dx) < SWIPE_AXIS_SLOP && Math.abs(dy) < SWIPE_AXIS_SLOP) return;
+      // Prefer vertical list scroll when the gesture is mostly vertical.
+      if (Math.abs(dy) >= Math.abs(dx)) {
+        axisRef.current = 'v';
+        reset(false);
+        return;
+      }
+      axisRef.current = 'h';
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch {
+        // Ignore capture failures (detached node).
+      }
+    }
+    if (axisRef.current !== 'h') return;
+    // Right swipe only.
+    const next = Math.max(0, Math.min(SWIPE_REPLY_MAX, dx));
+    offsetRef.current = next;
+    setOffset(next);
+    event.preventDefault();
+  };
+
+  const finish = (event: React.PointerEvent<HTMLDivElement>) => {
+    const start = startRef.current;
+    if (!start || event.pointerId !== start.pointerId) return;
+    const committed = axisRef.current === 'h' && offsetRef.current >= SWIPE_REPLY_THRESHOLD;
+    try {
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+    } catch {
+      // ignore
+    }
+    reset(true);
+    if (committed) {
+      try {
+        navigator.vibrate?.(12);
+      } catch {
+        // ignore
+      }
+      onReply();
+    }
+  };
+
+  const progress = Math.min(1, offset / SWIPE_REPLY_THRESHOLD);
+
+  return (
+    <div
+      className={`chat-swipe-row ${className} ${dragging ? 'is-dragging' : ''} ${armed ? 'is-armed' : ''}`}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={finish}
+      onPointerCancel={finish}
+      onClick={onClick}
+      onContextMenu={onContextMenu}
+    >
+      <div
+        className="chat-swipe-reply-hint"
+        aria-hidden="true"
+        style={{ opacity: progress, transform: `scale(${0.75 + progress * 0.25})` }}
+      >
+        <Reply size={16} />
+      </div>
+      <div
+        className="chat-swipe-content"
+        style={{
+          transform: offset ? `translate3d(${offset}px, 0, 0)` : undefined,
+          transition: dragging ? 'none' : 'transform 160ms ease-out',
+        }}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
 /**
  * One author-run of messages. Memoized so keystrokes in the composer, agent
  * panel state, and stream ticks in *other* groups don't re-render the whole
@@ -514,6 +646,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
   onCancelRun,
   onToggleSelect,
   onContextMenu,
+  onReply,
   onLightbox,
   onImageLoad,
 }: {
@@ -528,6 +661,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
   onCancelRun: ChatViewProps['onCancelRun'];
   onToggleSelect: (id: string) => void;
   onContextMenu: (event: React.MouseEvent, message: ChatMessage) => void;
+  onReply: (message: ChatMessage) => void;
   onLightbox: (src: string) => void;
   onImageLoad: () => void;
 }) {
@@ -554,9 +688,10 @@ const ChatGroupRow = memo(function ChatGroupRow({
           const isTappable = hasRunWidget || hasThoughtBlocks;
           const selected = selectedMessageId === message.id;
           return (
-            <div
+            <SwipeToReply
               key={message.id}
               className={`chat-message-chunk ${isTappable ? 'has-run-widget' : ''} ${selected ? 'selected' : ''}`}
+              onReply={() => onReply(message)}
               onClick={() => {
                 if (isTappable) onToggleSelect(message.id);
               }}
@@ -613,7 +748,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
                   onContentGrow={onImageLoad}
                 />
               )}
-            </div>
+            </SwipeToReply>
           );
         })}
       </div>
@@ -631,6 +766,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
   && prev.onCancelRun === next.onCancelRun
   && prev.onToggleSelect === next.onToggleSelect
   && prev.onContextMenu === next.onContextMenu
+  && prev.onReply === next.onReply
   && prev.onLightbox === next.onLightbox
   && prev.onImageLoad === next.onImageLoad
 );
@@ -1037,11 +1173,12 @@ export const ChatView = memo(function ChatView({
     }
   }
 
-  function startReply(message: ChatMessage) {
+  const startReply = useCallback((message: ChatMessage) => {
     setReplyTarget(buildReplyRef(message, registeredAgents));
     setContextMenu(null);
-    draftRef.current?.focus();
-  }
+    // Focus after paint so the reply bar is mounted first (esp. mobile keyboard).
+    requestAnimationFrame(() => draftRef.current?.focus());
+  }, [registeredAgents]);
 
   const openMessageContextMenu = useCallback((event: React.MouseEvent, message: ChatMessage) => {
     event.preventDefault();
@@ -1304,6 +1441,7 @@ export const ChatView = memo(function ChatView({
                   onCancelRun={onCancelRun}
                   onToggleSelect={toggleMessageSelection}
                   onContextMenu={openMessageContextMenu}
+                  onReply={startReply}
                   onLightbox={openLightbox}
                   onImageLoad={scrollToBottomIfSticky}
                 />
