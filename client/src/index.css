@@ -1220,17 +1220,20 @@ a {
   display: flex;
   gap: 10px;
   padding: 8px 16px;
-  /* Paint isolation without content-visibility (Safari under-scrolled with CV). */
+  /* Paint isolation — no content-visibility (re-entry paint on scroll was janky). */
   contain: layout style;
   position: relative;
   -webkit-tap-highlight-color: transparent;
 }
-/* Desktop-only: skip offscreen paint for plain rows (not harness-heavy ones). */
-@media (min-width: 901px) and (pointer: fine) {
-  .chat-message-group:not(.has-run-widget) {
-    content-visibility: auto;
-    contain-intrinsic-size: auto 96px;
-  }
+.chat-message-group.is-offscreen {
+  display: block;
+  padding: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.chat-message-offscreen-stub {
+  height: 100%;
+  min-height: inherit;
 }
 /* Hover via pseudo so large harness children aren't forced to repaint.
    Only real hover pointers — touch sticky-:hover was flashing the row. */

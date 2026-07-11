@@ -452,8 +452,7 @@ export const CascadeRunPanel = memo(function CascadeRunPanel({
   onContentGrow?: () => void;
 }) {
   const isRunning = message.status === 'running';
-  const activity = useMemo(() => buildHarnessActivity(message), [message]);
-  const canExpand = hasRunActivity(message) || activity.items.length > 0 || activity.stats.hasRaw;
+  const canExpand = hasRunActivity(message);
   const [open, setOpen] = useState(isRunning);
   const [showRaw, setShowRaw] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -461,16 +460,29 @@ export const CascadeRunPanel = memo(function CascadeRunPanel({
   const pinBottomRef = useRef(true);
   const onContentGrowRef = useRef(onContentGrow);
   onContentGrowRef.current = onContentGrow;
-  const summary = useMemo(() => summarizeActivity(activity, isRunning), [activity, isRunning]);
-  const statChips = useMemo(() => buildHeaderStatChips(activity.stats), [activity.stats]);
-  const showUsage = hasUsageStats(activity.stats) || statChips.length > 0;
   const effectiveOpen = open || forceOpen;
+  // Heavy parse only when open or live — collapsed closed panels were parsing
+  // full harness logs for every agent message during list scroll.
+  const activity = useMemo(() => {
+    if (!isRunning && !effectiveOpen) return null;
+    return buildHarnessActivity(message);
+  }, [message, isRunning, effectiveOpen]);
+  const summary = useMemo(
+    () => (activity ? summarizeActivity(activity, isRunning) : (isRunning ? 'running…' : 'trace')),
+    [activity, isRunning],
+  );
+  const statChips = useMemo(
+    () => (activity ? buildHeaderStatChips(activity.stats) : []),
+    [activity],
+  );
+  const showUsage = activity ? (hasUsageStats(activity.stats) || statChips.length > 0) : false;
   // Harness body → main chat when already at top/bottom.
-  useScrollChain(bodyRef, effectiveOpen && canExpand);
+  useScrollChain(bodyRef, Boolean(effectiveOpen && canExpand && activity));
 
   // Fingerprint content growth (length alone misses same-length edits; items
   // grow thinking in-place without changing items.length).
   const scrollEpoch = useMemo(() => {
+    if (!activity) return 0;
     let n = activity.thinkingText.length;
     for (const item of activity.items) {
       n += (item.text?.length || 0) + (item.tool?.result?.length || 0) + 1;
@@ -493,21 +505,21 @@ export const CascadeRunPanel = memo(function CascadeRunPanel({
   }, [forceOpen]);
 
   useLayoutEffect(() => {
-    if (!isRunning || !effectiveOpen || showRaw) return;
+    if (!activity || !isRunning || !effectiveOpen || showRaw) return;
     if (!pinBottomRef.current) return;
     scrollToBottomSoon(bodyRef.current);
-  }, [scrollEpoch, isRunning, effectiveOpen, showRaw]);
+  }, [scrollEpoch, isRunning, effectiveOpen, showRaw, activity]);
 
   // Keep the main chat panel pinned when harness/thinking expands.
   useLayoutEffect(() => {
-    if (!effectiveOpen) return;
+    if (!effectiveOpen || !activity) return;
     onContentGrowRef.current?.();
-  }, [scrollEpoch, effectiveOpen]);
+  }, [scrollEpoch, effectiveOpen, activity]);
 
   if (!isRunning && !canExpand) return null;
 
-  const hasStructured = activity.items.length > 0 || activity.stats.hasThinking;
-  const useRaw = showRaw || (!hasStructured && activity.stats.hasRaw);
+  const hasStructured = Boolean(activity && (activity.items.length > 0 || activity.stats.hasThinking));
+  const useRaw = Boolean(activity && (showRaw || (!hasStructured && activity.stats.hasRaw)));
 
   return (
     <div
@@ -563,7 +575,7 @@ export const CascadeRunPanel = memo(function CascadeRunPanel({
         )}
       </div>
 
-      {effectiveOpen && canExpand && (
+      {effectiveOpen && canExpand && activity && (
         <div className="crp-shell">
           <div
             className="crp-term"

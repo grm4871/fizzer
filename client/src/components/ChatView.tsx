@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { Activity, Bot, ChevronLeft, ChevronRight, Copy, Hash, ImagePlus, Paperclip, Plus, Reply, Send, Square, UserPlus, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -229,15 +229,18 @@ function isAtScrollBottom(element: HTMLElement, threshold = 24) {
   return element.scrollHeight - element.scrollTop - element.clientHeight <= threshold;
 }
 
+// Reuse one formatter — creating Intl.DateTimeFormat per message was scroll noise.
+const CHAT_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
+  month: 'short',
+  day: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit',
+});
+
 function formatTime(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '';
-  return new Intl.DateTimeFormat(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  }).format(date);
+  return CHAT_TIME_FORMATTER.format(date);
 }
 
 function initialFor(name: string) {
@@ -659,6 +662,9 @@ function SwipeToReply({
  * One author-run of messages. Memoized so keystrokes in the composer, agent
  * panel state, and stream ticks in *other* groups don't re-render the whole
  * transcript — only the group whose message objects actually changed.
+ *
+ * Offscreen rows collapse to a height placeholder (IntersectionObserver) so
+ * scroll doesn't paint/parse markdown + harness for the entire history.
  */
 const ChatGroupRow = memo(function ChatGroupRow({
   group,
@@ -674,6 +680,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
   onReply,
   onLightbox,
   onImageLoad,
+  scrollRootRef,
 }: {
   group: ChatMessageGroup;
   /** Pre-filtered by the parent: non-null only when the selection is inside this group. */
@@ -689,94 +696,148 @@ const ChatGroupRow = memo(function ChatGroupRow({
   onReply: (message: ChatMessage) => void;
   onLightbox: (src: string) => void;
   onImageLoad: () => void;
+  /** Chat scroller element — used as IntersectionObserver root. */
+  scrollRootRef: RefObject<HTMLDivElement | null>;
 }) {
   const head = group.messages[0];
   const tail = group.messages[group.messages.length - 1];
   const groupHasRunWidget = group.messages.some((message) => message.status === 'running' || hasExpandableTrace(message));
   const groupSelected = group.messages.some((message) => message.id === selectedMessageId);
+  const articleRef = useRef<HTMLElement | null>(null);
+  const heightRef = useRef(0);
+  // Start mounted so first paint / stick-to-bottom has real content; IO then unmounts offscreen.
+  const [inView, setInView] = useState(true);
+  const forceMounted = groupSelected
+    || group.messages.some((message) => message.status === 'running');
+
+  useEffect(() => {
+    const el = articleRef.current;
+    const root = scrollRootRef.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (!entry) return;
+        if (entry.isIntersecting) {
+          setInView(true);
+        } else if (!forceMounted) {
+          // Preserve height so scroll position doesn't jump when unmounting markdown.
+          heightRef.current = el.offsetHeight || heightRef.current;
+          setInView(false);
+        }
+      },
+      {
+        root: root || null,
+        // Large margin keeps a buffer of mounted rows above/below the viewport.
+        rootMargin: '600px 0px',
+        threshold: 0,
+      },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [scrollRootRef, forceMounted, group.messages.length]);
+
+  useLayoutEffect(() => {
+    if (inView && articleRef.current) {
+      heightRef.current = articleRef.current.offsetHeight || heightRef.current;
+    }
+  });
+
+  const showBody = inView || forceMounted;
+  const placeholderH = heightRef.current || (groupHasRunWidget ? 120 : 72);
+
   return (
     <article
-      className={`chat-message-group ${tail.status ? `status-${tail.status}` : ''} ${groupHasRunWidget ? 'has-run-widget' : ''} ${groupSelected ? 'selected' : ''}`}
+      ref={articleRef}
+      className={`chat-message-group ${tail.status ? `status-${tail.status}` : ''} ${groupHasRunWidget ? 'has-run-widget' : ''} ${groupSelected ? 'selected' : ''} ${showBody ? '' : 'is-offscreen'}`}
+      style={showBody ? undefined : { height: placeholderH, minHeight: placeholderH }}
+      aria-hidden={showBody ? undefined : true}
     >
-      <ChatAvatar name={head.author} kind={avatarKind} avatarUrl={avatarUrl} />
-      <div className="chat-message-body">
-        <div className="chat-message-meta">
-          <strong>{head.author}</strong>
-          <time dateTime={tail.createdAt}>{formatTime(tail.createdAt)}</time>
-          {tail.status === 'running' && <span className="chat-message-status">working</span>}
-          {tail.status === 'failed' && <span className="chat-message-status is-error">failed</span>}
-          {tail.status === 'canceled' && <span className="chat-message-status is-error">canceled</span>}
-        </div>
-        {group.messages.map((message) => {
-          const hasRunWidget = message.status === 'running';
-          const hasThoughtBlocks = hasExpandableTrace(message);
-          const isTappable = hasRunWidget || hasThoughtBlocks;
-          const selected = selectedMessageId === message.id;
-          return (
-            <SwipeToReply
-              key={message.id}
-              className={`chat-message-chunk ${isTappable ? 'has-run-widget' : ''} ${selected ? 'selected' : ''}`}
-              onReply={() => onReply(message)}
-              onClick={() => {
-                if (isTappable) onToggleSelect(message.id);
-              }}
-              onContextMenu={(event) => onContextMenu(event, message)}
-            >
-              {message.replyTo && (
-                <div className="chat-reply-quote">
-                  <Reply size={12} />
-                  <strong>{message.replyTo.author}</strong>
-                  <span>{message.replyTo.preview}</span>
-                </div>
-              )}
-              {message.images && message.images.length > 0 && (
-                <div className="chat-msg-images">
-                  {message.images.map((src, imageIndex) => (
-                    <a
-                      key={imageIndex}
-                      href={src}
-                      target="_blank"
-                      rel="noreferrer"
-                      onClick={(event) => {
-                        event.preventDefault();
-                        onLightbox(src);
-                      }}
-                    >
-                      <img src={src} alt="" className="chat-msg-image" onLoad={onImageLoad} />
-                    </a>
-                  ))}
-                </div>
-              )}
-              {message.attachments && message.attachments.length > 0 && (
-                <div className="chat-msg-attachments">
-                  {message.attachments.map((attachment, attachmentIndex) => (
-                    <a
-                      key={attachmentIndex}
-                      className="chat-msg-attachment"
-                      href={attachment.url}
-                      download={attachment.name}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      <Paperclip size={13} />
-                      <span>{attachment.name}</span>
-                    </a>
-                  ))}
-                </div>
-              )}
-              {message.body && <ChatMessageText body={message.body} mentionableAliases={mentionableAliases} notes={notes} onOpenNote={onOpenNote} />}
-              {(selected || hasRunWidget || hasThoughtBlocks) && (
-                <CascadeRunPanel
-                  message={message}
-                  onCancelRun={onCancelRun}
-                  forceOpen={selected}
-                  onContentGrow={onImageLoad}
-                />
-              )}
-            </SwipeToReply>
-          );
-        })}
-      </div>
+      {showBody ? (
+        <>
+          <ChatAvatar name={head.author} kind={avatarKind} avatarUrl={avatarUrl} />
+          <div className="chat-message-body">
+            <div className="chat-message-meta">
+              <strong>{head.author}</strong>
+              <time dateTime={tail.createdAt}>{formatTime(tail.createdAt)}</time>
+              {tail.status === 'running' && <span className="chat-message-status">working</span>}
+              {tail.status === 'failed' && <span className="chat-message-status is-error">failed</span>}
+              {tail.status === 'canceled' && <span className="chat-message-status is-error">canceled</span>}
+            </div>
+            {group.messages.map((message) => {
+              const hasRunWidget = message.status === 'running';
+              const hasThoughtBlocks = hasExpandableTrace(message);
+              const isTappable = hasRunWidget || hasThoughtBlocks;
+              const selected = selectedMessageId === message.id;
+              return (
+                <SwipeToReply
+                  key={message.id}
+                  className={`chat-message-chunk ${isTappable ? 'has-run-widget' : ''} ${selected ? 'selected' : ''}`}
+                  onReply={() => onReply(message)}
+                  onClick={() => {
+                    if (isTappable) onToggleSelect(message.id);
+                  }}
+                  onContextMenu={(event) => onContextMenu(event, message)}
+                >
+                  {message.replyTo && (
+                    <div className="chat-reply-quote">
+                      <Reply size={12} />
+                      <strong>{message.replyTo.author}</strong>
+                      <span>{message.replyTo.preview}</span>
+                    </div>
+                  )}
+                  {message.images && message.images.length > 0 && (
+                    <div className="chat-msg-images">
+                      {message.images.map((src, imageIndex) => (
+                        <a
+                          key={imageIndex}
+                          href={src}
+                          target="_blank"
+                          rel="noreferrer"
+                          onClick={(event) => {
+                            event.preventDefault();
+                            onLightbox(src);
+                          }}
+                        >
+                          <img src={src} alt="" className="chat-msg-image" onLoad={onImageLoad} />
+                        </a>
+                      ))}
+                    </div>
+                  )}
+                  {message.attachments && message.attachments.length > 0 && (
+                    <div className="chat-msg-attachments">
+                      {message.attachments.map((attachment, attachmentIndex) => (
+                        <a
+                          key={attachmentIndex}
+                          className="chat-msg-attachment"
+                          href={attachment.url}
+                          download={attachment.name}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          <Paperclip size={13} />
+                          <span>{attachment.name}</span>
+                        </a>
+                      ))}
+                    </div>
+                  )}
+                  {message.body && <ChatMessageText body={message.body} mentionableAliases={mentionableAliases} notes={notes} onOpenNote={onOpenNote} />}
+                  {(selected || hasRunWidget || hasThoughtBlocks) && (
+                    <CascadeRunPanel
+                      message={message}
+                      onCancelRun={onCancelRun}
+                      forceOpen={selected}
+                      onContentGrow={onImageLoad}
+                    />
+                  )}
+                </SwipeToReply>
+              );
+            })}
+          </div>
+        </>
+      ) : (
+        <div className="chat-message-offscreen-stub" />
+      )}
     </article>
   );
 }, (prev, next) =>
@@ -794,6 +855,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
   && prev.onReply === next.onReply
   && prev.onLightbox === next.onLightbox
   && prev.onImageLoad === next.onImageLoad
+  && prev.scrollRootRef === next.scrollRootRef
 );
 
 export const ChatView = memo(function ChatView({
@@ -1105,6 +1167,15 @@ export const ChatView = memo(function ChatView({
       userScrollQuietUntilRef.current = performance.now() + 220;
     }
   }, []);
+
+  // Native passive scroll listener — React's onScroll isn't passive and can
+  // block compositor scrolling on long threads.
+  useEffect(() => {
+    const el = messagesRef.current;
+    if (!el) return;
+    el.addEventListener('scroll', updateBottomStickiness, { passive: true });
+    return () => el.removeEventListener('scroll', updateBottomStickiness);
+  }, [channelId, updateBottomStickiness]);
 
   useEffect(() => {
     setReplyTarget(null);
@@ -1492,7 +1563,6 @@ export const ChatView = memo(function ChatView({
           className="chat-messages"
           role="log"
           aria-label={`${channelName} messages`}
-          onScroll={updateBottomStickiness}
           onTouchStart={() => {
             // User gesture wins over any in-flight programmatic pin.
             programmaticScrollRef.current = false;
@@ -1534,6 +1604,7 @@ export const ChatView = memo(function ChatView({
                   onReply={startReply}
                   onLightbox={openLightbox}
                   onImageLoad={scrollToBottomIfSticky}
+                  scrollRootRef={messagesRef}
                 />
               );
             })
