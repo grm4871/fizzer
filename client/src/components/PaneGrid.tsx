@@ -270,8 +270,25 @@ function Pane({
 }: { pane: PaneNode } & Omit<PaneGridProps, 'node' | 'onResize'>) {
   const contentRef = useRef<HTMLDivElement | null>(null);
   const [dropSide, setDropSide] = useState<DropSide | null>(null);
+  // Keep visited tabs mounted (hidden) so switching doesn't remount ChatView /
+  // NoteEditor and re-parse the whole transcript.
+  const [mountedTabIds, setMountedTabIds] = useState<string[]>(() => (
+    pane.activeTabId ? [pane.activeTabId] : []
+  ));
 
-  const activeTab = openTabs.find((t) => t.id === pane.activeTabId) ?? null;
+  useEffect(() => {
+    const active = pane.activeTabId;
+    if (!active) return;
+    setMountedTabIds((prev) => (prev.includes(active) ? prev : [...prev, active]));
+  }, [pane.activeTabId]);
+
+  useEffect(() => {
+    // Drop keep-alives for tabs that left this pane.
+    setMountedTabIds((prev) => {
+      const next = prev.filter((id) => pane.tabIds.includes(id));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [pane.tabIds]);
 
   const handleDragOver = (event: DragEvent) => {
     if (!event.dataTransfer.types.includes(DRAG_MIME)) return;
@@ -292,6 +309,10 @@ function Pane({
       : 'center';
     onDropTab(payload, pane.id, side);
   };
+
+  const mountedTabs = mountedTabIds
+    .map((id) => openTabs.find((t) => t.id === id))
+    .filter((t): t is Tab => Boolean(t));
 
   return (
     <div
@@ -321,10 +342,29 @@ function Pane({
         onDragLeave={() => setDropSide(null)}
         onDrop={handleDrop}
       >
-        {activeTab ? (
-          renderContent(activeTab, pane.id)
-        ) : (
+        {mountedTabs.length === 0 ? (
           <div className="pane-empty">Empty pane</div>
+        ) : (
+          mountedTabs.map((tab) => {
+            const active = tab.id === pane.activeTabId;
+            return (
+              <div
+                key={tab.id}
+                className="pane-tab-keepalive"
+                hidden={!active}
+                style={{
+                  display: active ? 'flex' : 'none',
+                  flex: 1,
+                  minHeight: 0,
+                  minWidth: 0,
+                  flexDirection: 'column',
+                  overflow: 'hidden',
+                }}
+              >
+                {renderContent(tab, pane.id)}
+              </div>
+            );
+          })
         )}
         {dropSide && <div className={`pane-dropzone pane-dropzone-${dropSide}`} />}
       </div>

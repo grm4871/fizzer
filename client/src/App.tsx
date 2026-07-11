@@ -386,14 +386,29 @@ export default function App() {
     };
   }, [user]);
 
-  const loadChatAgentMembers = useCallback(async (vaultId: string, noteList: NoteSummary[]) => {
-    const channelIds = noteList
-      .filter((note) => note.content_preview.trim().startsWith(CHAT_NOTE_MARKER))
-      .map((note) => note.id);
-    if (channelIds.length === 0) return;
+  /** Chat channels currently open as tabs (not every chat note in the vault). */
+  const openChatTabIds = useCallback((): string[] => {
+    return openTabsRef.current.filter((tab) => tab.type === 'chat').map((tab) => tab.id);
+  }, []);
+
+  const loadChatAgentMembers = useCallback(async (
+    vaultId: string,
+    noteList: NoteSummary[],
+    opts?: { channelIds?: string[] },
+  ) => {
+    const chatNoteIds = new Set(
+      noteList
+        .filter((note) => note.content_preview.trim().startsWith(CHAT_NOTE_MARKER))
+        .map((note) => note.id),
+    );
+    // Default: only open chat tabs — not every channel in the vault.
+    const finalIds = opts?.channelIds?.length
+      ? opts.channelIds
+      : openChatTabIds().filter((id) => chatNoteIds.has(id));
+    if (finalIds.length === 0) return;
 
     const legacyAgents = readLegacyLocalChatAgentMembers();
-    const results = await Promise.all(channelIds.map(async (channelId) => {
+    const results = await Promise.all(finalIds.map(async (channelId) => {
       try {
         const data = await api<{ agents: ChatAgentRegistration[] }>(`/api/vaults/${vaultId}/channels/${channelId}/agents`);
         let agents = data.agents ?? [];
@@ -425,15 +440,24 @@ export default function App() {
       }
       return { ...prev, registeredAgentsByChannel };
     });
-  }, []);
+  }, [openChatTabIds]);
 
-  const loadChatPresence = useCallback(async (vaultId: string, noteList: NoteSummary[]) => {
-    const channelIds = noteList
-      .filter((note) => note.content_preview.trim().startsWith(CHAT_NOTE_MARKER))
-      .map((note) => note.id);
-    if (channelIds.length === 0) return;
+  const loadChatPresence = useCallback(async (
+    vaultId: string,
+    noteList: NoteSummary[],
+    opts?: { channelIds?: string[] },
+  ) => {
+    const chatNoteIds = new Set(
+      noteList
+        .filter((note) => note.content_preview.trim().startsWith(CHAT_NOTE_MARKER))
+        .map((note) => note.id),
+    );
+    const finalIds = opts?.channelIds?.length
+      ? opts.channelIds
+      : openChatTabIds().filter((id) => chatNoteIds.has(id));
+    if (finalIds.length === 0) return;
 
-    const results = await Promise.all(channelIds.map(async (channelId) => {
+    const results = await Promise.all(finalIds.map(async (channelId) => {
       try {
         const data = await api<ChatChannelPresence>(`/api/vaults/${vaultId}/channels/${channelId}/presence`);
         return { channelId, participants: data.participants ?? [], online: data.online ?? [] };
@@ -449,16 +473,23 @@ export default function App() {
       }
       return next;
     });
-  }, []);
+  }, [openChatTabIds]);
 
   const loadChatMessages = useCallback(async (
     vaultId: string,
     noteList: NoteSummary[],
-    opts?: { silent?: boolean },
+    opts?: { silent?: boolean; channelIds?: string[] },
   ) => {
-    const channelIds = noteList
-      .filter((note) => note.content_preview.trim().startsWith(CHAT_NOTE_MARKER))
-      .map((note) => note.id);
+    const chatNoteIds = new Set(
+      noteList
+        .filter((note) => note.content_preview.trim().startsWith(CHAT_NOTE_MARKER))
+        .map((note) => note.id),
+    );
+    // Condense: only open chat tabs (or an explicit list) — never every channel note.
+    const requested = opts?.channelIds?.length
+      ? opts.channelIds
+      : openChatTabIds().filter((id) => chatNoteIds.has(id));
+    const channelIds = requested.filter((id) => chatNoteIds.has(id) || opts?.channelIds?.includes(id));
     if (channelIds.length === 0) return;
 
     const legacyMessages = readLegacyLocalChatMessages();
@@ -513,11 +544,9 @@ export default function App() {
       });
     };
 
-    const visible = channelIds.filter((id) => openTabsRef.current.some((tab) => tab.type === 'chat' && tab.id === id));
-    const background = channelIds.filter((id) => !visible.includes(id));
-    await loadChannels(visible.length ? visible : channelIds);
-    if (visible.length && background.length) void loadChannels(background);
-  }, []);
+    // Focused/open channels first (usually one); no fan-out to the whole vault.
+    await loadChannels(channelIds);
+  }, [openChatTabIds]);
 
   const persistChatMessageToServer = useCallback(async (
     vaultId: string,
@@ -635,16 +664,44 @@ export default function App() {
       const nextNotes = noteData.notes || [];
       setFolders(folderData.folders || []);
       setNotes(nextNotes);
+      // Chat payloads only for open tabs — switching into a tab hydrates on demand.
+      const openChats = openChatTabIds().filter((id) =>
+        nextNotes.some((n) => n.id === id && n.content_preview.trim().startsWith(CHAT_NOTE_MARKER)),
+      );
       await Promise.all([
-        loadChatMessages(vaultId, nextNotes, { silent: opts?.soft === true }),
-        loadChatAgentMembers(vaultId, nextNotes),
-        loadChatPresence(vaultId, nextNotes),
+        loadChatMessages(vaultId, nextNotes, { silent: opts?.soft === true, channelIds: openChats }),
+        loadChatAgentMembers(vaultId, nextNotes, { channelIds: openChats }),
+        loadChatPresence(vaultId, nextNotes, { channelIds: openChats }),
         loadVaultAgents(vaultId),
       ]);
     } catch (error) {
       console.error('Error loading vault data:', error);
     }
-  }, [loadChatMessages, loadChatAgentMembers, loadChatPresence, loadVaultAgents]);
+  }, [loadChatMessages, loadChatAgentMembers, loadChatPresence, loadVaultAgents, openChatTabIds]);
+
+  /** Hydrate one chat channel when the user focuses its tab (skip if cached). */
+  const ensureChatChannelLoaded = useCallback((channelId: string) => {
+    const vaultId = activeVaultIdRef.current;
+    if (!vaultId) return;
+    const notesList = notesRef.current;
+    const isChat = notesList.some(
+      (n) => n.id === channelId && n.content_preview.trim().startsWith(CHAT_NOTE_MARKER),
+    );
+    if (!isChat) return;
+
+    const hasMessages = (chatStateRef.current.messagesByChannel[channelId]?.length ?? 0) > 0;
+    const hasAgents = (chatStateRef.current.registeredAgentsByChannel[channelId]?.length ?? 0) > 0;
+    if (hasMessages && hasAgents) return;
+
+    const ids = [channelId];
+    if (!hasMessages) {
+      void loadChatMessages(vaultId, notesList, { channelIds: ids });
+    }
+    if (!hasAgents) {
+      void loadChatAgentMembers(vaultId, notesList, { channelIds: ids });
+    }
+    void loadChatPresence(vaultId, notesList, { channelIds: ids });
+  }, [loadChatMessages, loadChatAgentMembers, loadChatPresence]);
 
   useEffect(() => {
     let resumeTimer: number | null = null;
@@ -728,6 +785,7 @@ export default function App() {
     if (existingPane) {
       setLayout(Layout.setActiveTab(prev, existingPane.id, channelId));
       setFocusedPaneId(existingPane.id);
+      ensureChatChannelLoaded(channelId);
       return;
     }
 
@@ -740,7 +798,8 @@ export default function App() {
     }
     setLayout(Layout.simplify(next));
     setFocusedPaneId(focused.id);
-  }, []);
+    ensureChatChannelLoaded(channelId);
+  }, [ensureChatChannelLoaded]);
 
   useEffect(() => {
     const match = window.location.pathname.match(/^\/invite\/([^/]+)$/);
@@ -1924,7 +1983,8 @@ export default function App() {
     setFocusedPaneId(paneId);
     const tab = openTabsRef.current.find((t) => t.id === tabId);
     if (tab?.type === 'note' && !noteContentsRef.current[tabId]) void loadNoteContent(tabId);
-  }, [loadNoteContent]);
+    if (tab?.type === 'chat') ensureChatChannelLoaded(tabId);
+  }, [loadNoteContent, ensureChatChannelLoaded]);
 
   /** Handle a tab dropped onto a pane (drag-tile). */
   const handleDropTab = useCallback((payload: TabDragPayload, targetPaneId: string, side: Layout.DropSide, index?: number) => {
