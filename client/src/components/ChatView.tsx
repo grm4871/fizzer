@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Activity, Bot, ChevronLeft, ChevronRight, Copy, Hash, ImagePlus, Paperclip, Plus, Reply, Send, Square, UserPlus, X } from 'lucide-react';
+import { Activity, Bot, ChevronLeft, ChevronRight, Copy, Hash, ImagePlus, Paperclip, Plus, Reply, Send, Square, UserPlus, Users, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
@@ -1262,6 +1262,15 @@ export const ChatView = memo(function ChatView({
             <h2>{channelName}</h2>
             <span>{sortedMessages.length} messages</span>
           </div>
+          <button
+            type="button"
+            className={`chat-mobile-members-btn${usersCollapsed ? '' : ' is-active'}`}
+            onClick={() => setUsersCollapsed((value) => !value)}
+            title={usersCollapsed ? 'Show members' : 'Hide members'}
+            aria-label={usersCollapsed ? 'Show channel members' : 'Hide channel members'}
+          >
+            <Users size={18} />
+          </button>
         </header>
 
         <div
@@ -1433,6 +1442,19 @@ export const ChatView = memo(function ChatView({
             Reply
           </button>
         </div>
+      )}
+
+      {!usersCollapsed && (
+        <button
+          type="button"
+          className="chat-users-backdrop"
+          aria-label="Close members"
+          onClick={() => {
+            setUsersCollapsed(true);
+            setAgentMenuOpen(false);
+            setInviteOpen(false);
+          }}
+        />
       )}
 
       <aside
