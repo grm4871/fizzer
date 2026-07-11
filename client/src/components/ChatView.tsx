@@ -167,6 +167,7 @@ interface ChatViewProps {
   channelId: string;
   channelName: string;
   messages: ChatMessage[];
+  isLoadingMessages?: boolean;
   currentUser: string;
   presence: ChatChannelPresence;
   availableAgents: ChatAgentOption[];
@@ -779,6 +780,7 @@ export const ChatView = memo(function ChatView({
   channelId,
   channelName,
   messages,
+  isLoadingMessages = false,
   currentUser,
   presence,
   availableAgents,
@@ -1430,7 +1432,12 @@ export const ChatView = memo(function ChatView({
           onScroll={updateBottomStickiness}
         >
           <div ref={messagesContentRef} className="chat-messages-content">
-          {sortedMessages.length === 0 ? (
+          {isLoadingMessages ? (
+            <div className="chat-empty" aria-live="polite">
+              <span className="chat-loading-dot" aria-hidden="true" />
+              <strong>Loading messages…</strong>
+            </div>
+          ) : sortedMessages.length === 0 ? (
             <div className="chat-empty">
               <Hash size={24} />
               <strong>#{channelName}</strong>

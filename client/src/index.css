@@ -1201,6 +1201,15 @@ a {
   color: var(--text-secondary);
   font-size: 1rem;
 }
+.chat-loading-dot {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--border);
+  border-top-color: var(--text-secondary);
+  border-radius: 50%;
+  animation: chat-loading-spin 700ms linear infinite;
+}
+@keyframes chat-loading-spin { to { transform: rotate(360deg); } }
 .chat-message-group {
   display: flex;
   gap: 10px;

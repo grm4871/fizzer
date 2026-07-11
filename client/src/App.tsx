@@ -96,6 +96,7 @@ export default function App() {
   const [folders, setFolders] = useState<Folder[]>([]);
   const [notes, setNotes] = useState<NoteSummary[]>([]);
   const [chatState, setChatState] = useState<ChatState>(loadChatState);
+  const [loadingChatChannels, setLoadingChatChannels] = useState<Record<string, boolean>>({});
   const [chatPresenceByChannel, setChatPresenceByChannel] = useState<Record<string, ChatChannelPresence>>({});
 
   // Tabs + tiling layout
@@ -457,38 +458,44 @@ export default function App() {
     if (channelIds.length === 0) return;
 
     const legacyMessages = readLegacyLocalChatMessages();
-    const results = await Promise.all(channelIds.map(async (channelId) => {
-      try {
-        const data = await api<{ messages: ChatMessage[] }>(`/api/vaults/${vaultId}/channels/${channelId}/messages`);
-        let messages = data.messages ?? [];
-        const local = legacyMessages[channelId] ?? [];
-        if (messages.length === 0 && local.length > 0) {
-          for (const message of local) {
-            try {
-              await api(`/api/vaults/${vaultId}/channels/${channelId}/messages`, {
-                method: 'POST',
-                body: JSON.stringify(message),
-              });
-            } catch {
-              // Best-effort migration from pre-network chat storage.
+    setLoadingChatChannels((prev) => Object.fromEntries([...Object.entries(prev), ...channelIds.map((id) => [id, true])]));
+    const loadChannels = async (ids: string[]) => {
+      const results = await Promise.all(ids.map(async (channelId) => {
+        try {
+          const data = await api<{ messages: ChatMessage[] }>(`/api/vaults/${vaultId}/channels/${channelId}/messages`);
+          let messages = data.messages ?? [];
+          const local = legacyMessages[channelId] ?? [];
+          if (messages.length === 0 && local.length > 0) {
+            for (const message of local) {
+              try {
+                await api(`/api/vaults/${vaultId}/channels/${channelId}/messages`, {
+                  method: 'POST', body: JSON.stringify(message),
+                });
+              } catch { /* Best-effort legacy migration. */ }
             }
+            const refreshed = await api<{ messages: ChatMessage[] }>(`/api/vaults/${vaultId}/channels/${channelId}/messages`);
+            messages = refreshed.messages ?? [];
           }
-          const refreshed = await api<{ messages: ChatMessage[] }>(`/api/vaults/${vaultId}/channels/${channelId}/messages`);
-          messages = refreshed.messages ?? [];
+          return { channelId, messages };
+        } catch {
+          return { channelId, messages: legacyMessages[channelId] ?? [] };
         }
-        return { channelId, messages };
-      } catch {
-        return { channelId, messages: legacyMessages[channelId] ?? [] };
-      }
-    }));
+      }));
+      setChatState((prev) => ({
+        ...prev,
+        messagesByChannel: Object.fromEntries([...Object.entries(prev.messagesByChannel), ...results.map(({ channelId, messages }) => [channelId, messages])]),
+      }));
+      setLoadingChatChannels((prev) => {
+        const next = { ...prev };
+        for (const id of ids) delete next[id];
+        return next;
+      });
+    };
 
-    setChatState((prev) => {
-      const messagesByChannel = { ...prev.messagesByChannel };
-      for (const { channelId, messages } of results) {
-        messagesByChannel[channelId] = messages;
-      }
-      return { ...prev, messagesByChannel };
-    });
+    const visible = channelIds.filter((id) => openTabsRef.current.some((tab) => tab.type === 'chat' && tab.id === id));
+    const background = channelIds.filter((id) => !visible.includes(id));
+    await loadChannels(visible.length ? visible : channelIds);
+    if (visible.length && background.length) void loadChannels(background);
   }, []);
 
   const persistChatMessageToServer = useCallback(async (
@@ -2045,6 +2052,7 @@ export default function App() {
           channelId={channel.id}
           channelName={channel.title}
           messages={chatState.messagesByChannel[channel.id] ?? []}
+          isLoadingMessages={loadingChatChannels[channel.id] === true}
           currentUser={currentUsername}
           presence={chatPresenceByChannel[channel.id] ?? { participants: [], online: [] }}
           availableAgents={availableChatAgents}
@@ -2085,7 +2093,7 @@ export default function App() {
         onOpenNote={openNote}
       />
     );
-  }, [availableChatAgents, chatState.messagesByChannel, chatState.registeredAgentsByChannel, chatPresenceByChannel, currentUsername, runningChatAgents, runnerHealth, vaultAgents, handleCancelChatRun, handleCreateChatInviteLink, handleInviteChatUser, handleRegisterChatAgent, handleRemoveChatAgent, handleUpsertVaultAgent, handleDeleteVaultAgent, handleAddVaultAgentToChannel, handleSendChatMessage, noteContents, notes, handleNoteChange, saveNoteTab, renameNoteTab, handleExecuteDirective, openNote, chatMembersOpen]);
+  }, [availableChatAgents, chatState.messagesByChannel, chatState.registeredAgentsByChannel, chatPresenceByChannel, currentUsername, loadingChatChannels, runningChatAgents, runnerHealth, vaultAgents, handleCancelChatRun, handleCreateChatInviteLink, handleInviteChatUser, handleRegisterChatAgent, handleRemoveChatAgent, handleUpsertVaultAgent, handleDeleteVaultAgent, handleAddVaultAgentToChannel, handleSendChatMessage, noteContents, notes, handleNoteChange, saveNoteTab, renameNoteTab, handleExecuteDirective, openNote, chatMembersOpen]);
 
   if (!user) {
     return (
