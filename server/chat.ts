@@ -279,6 +279,8 @@ export function ensureChatSchema(db: Db): void {
 
   // Backfill vault_agents from existing channel memberships (idempotent).
   backfillVaultAgentsFromMembers(db);
+  // Enforce unique handles (case-insensitive); resolve conflicts preferring #cascade-dev.
+  reconcileVaultAgentIdentities(db);
 }
 
 type ChatAgentMemberRow = {
@@ -397,9 +399,151 @@ function backfillVaultAgentsFromMembers(db: Db): void {
   }
 }
 
+/** Canonical @handle: strip @, trim, lowercase — vault-wide unique. */
 function normalizeMention(value: string, fallback: string): string {
-  const mention = String(value || fallback).replace(/^@+/, '').trim();
-  return mention || fallback;
+  const raw = String(value || fallback).replace(/^@+/, '').trim().toLowerCase();
+  const cleaned = raw.replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
+  if (cleaned) return cleaned;
+  const fb = String(fallback || 'agent').replace(/^@+/, '').trim().toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
+  return fb || 'agent';
+}
+
+function findCascadeDevChannelId(db: Db, vaultId: string): string | null {
+  const row = db.prepare(`
+    SELECT id FROM notes
+    WHERE vault_id = ?
+      AND lower(trim(title)) = 'cascade-dev'
+      AND (
+        trim(content_preview) LIKE 'cascade://chat-channel%'
+        OR trim(content) LIKE 'cascade://chat-channel%'
+      )
+    ORDER BY updated_at DESC
+    LIMIT 1
+  `).get(vaultId) as { id: string } | undefined;
+  return row?.id ?? null;
+}
+
+function agentInChannel(db: Db, vaultAgentId: string, channelId: string): boolean {
+  const row = db.prepare(`
+    SELECT 1 AS ok FROM chat_agent_members
+    WHERE vault_agent_id = ? AND channel_id = ?
+    LIMIT 1
+  `).get(vaultAgentId, channelId) as { ok: number } | undefined;
+  return Boolean(row);
+}
+
+/** Mint a free mention in the vault (base, base-2, base-3, …). */
+function allocateUniqueMention(db: Db, vaultId: string, base: string, excludeId: string): string {
+  const root = normalizeMention(base, 'agent');
+  let candidate = root;
+  let n = 2;
+  for (;;) {
+    const clash = db.prepare(`
+      SELECT id FROM vault_agents
+      WHERE vault_id = ? AND mention = ? COLLATE NOCASE AND id != ?
+      LIMIT 1
+    `).get(vaultId, candidate, excludeId) as { id: string } | undefined;
+    if (!clash) return candidate;
+    candidate = `${root}-${n++}`;
+    if (n > 500) return `${root}-${crypto.randomUUID().slice(0, 8)}`;
+  }
+}
+
+/**
+ * Repair handle collisions vault-wide.
+ * Winner = agent present in #cascade-dev when possible, else random.
+ * Losers get a unique @handle suffix; memberships are re-synced.
+ */
+export function reconcileVaultAgentIdentities(db: Db): { renamed: Array<{ id: string; from: string; to: string }> } {
+  const renamed: Array<{ id: string; from: string; to: string }> = [];
+  const vaultIds = (db.prepare('SELECT DISTINCT vault_id AS id FROM vault_agents').all() as Array<{ id: string }>)
+    .map((r) => r.id);
+
+  for (const vaultId of vaultIds) {
+    // Normalize every mention to canonical form first.
+    const all = db.prepare('SELECT * FROM vault_agents WHERE vault_id = ?').all(vaultId) as VaultAgentRow[];
+    for (const row of all) {
+      const next = normalizeMention(row.mention || row.agent_id, row.agent_id || 'agent');
+      if (next !== row.mention) {
+        // May still collide after lowercasing — handled in group pass below.
+        try {
+          db.prepare(`
+            UPDATE vault_agents SET mention = ?, updated_at = datetime('now') WHERE id = ?
+          `).run(next, row.id);
+          db.prepare(`
+            UPDATE chat_agent_members SET mention = ?, updated_at = datetime('now') WHERE vault_agent_id = ?
+          `).run(next, row.id);
+          if (row.mention !== next) renamed.push({ id: row.id, from: row.mention, to: next });
+        } catch {
+          // UNIQUE violation until group reconciliation renames losers.
+        }
+      }
+    }
+
+    const cascadeDevId = findCascadeDevChannelId(db, vaultId);
+    const agents = db.prepare('SELECT * FROM vault_agents WHERE vault_id = ?').all(vaultId) as VaultAgentRow[];
+    const groups = new Map<string, VaultAgentRow[]>();
+    for (const agent of agents) {
+      const key = normalizeMention(agent.mention || agent.agent_id, agent.agent_id || 'agent');
+      const list = groups.get(key) ?? [];
+      list.push(agent);
+      groups.set(key, list);
+    }
+
+    for (const [handle, group] of groups) {
+      if (group.length <= 1) {
+        // Ensure single agent has canonical handle stored.
+        const only = group[0];
+        if (only && only.mention !== handle) {
+          db.prepare(`UPDATE vault_agents SET mention = ?, updated_at = datetime('now') WHERE id = ?`).run(handle, only.id);
+          db.prepare(`UPDATE chat_agent_members SET mention = ?, updated_at = datetime('now') WHERE vault_agent_id = ?`).run(handle, only.id);
+        }
+        continue;
+      }
+
+      let winners = cascadeDevId
+        ? group.filter((a) => agentInChannel(db, a.id, cascadeDevId))
+        : [];
+      if (winners.length === 0) winners = group;
+      const winner = winners[Math.floor(Math.random() * winners.length)];
+
+      // Winner keeps the base handle.
+      if (winner.mention !== handle) {
+        try {
+          db.prepare(`UPDATE vault_agents SET mention = ?, updated_at = datetime('now') WHERE id = ?`).run(handle, winner.id);
+          db.prepare(`UPDATE chat_agent_members SET mention = ?, updated_at = datetime('now') WHERE vault_agent_id = ?`).run(handle, winner.id);
+          renamed.push({ id: winner.id, from: winner.mention, to: handle });
+        } catch { /* rare */ }
+      }
+
+      for (const loser of group) {
+        if (loser.id === winner.id) continue;
+        const next = allocateUniqueMention(db, vaultId, handle, loser.id);
+        const from = loser.mention;
+        db.prepare(`UPDATE vault_agents SET mention = ?, updated_at = datetime('now') WHERE id = ?`).run(next, loser.id);
+        db.prepare(`UPDATE chat_agent_members SET mention = ?, updated_at = datetime('now') WHERE vault_agent_id = ?`).run(next, loser.id);
+        renamed.push({ id: loser.id, from, to: next });
+      }
+    }
+
+    // Drop duplicate memberships of the same vault agent in one channel (keep oldest).
+    const dups = db.prepare(`
+      SELECT channel_id, vault_agent_id, MIN(rowid) AS keep_rowid, COUNT(*) AS c
+      FROM chat_agent_members
+      WHERE vault_id = ? AND vault_agent_id IS NOT NULL AND vault_agent_id != ''
+      GROUP BY channel_id, vault_agent_id
+      HAVING c > 1
+    `).all(vaultId) as Array<{ channel_id: string; vault_agent_id: string; keep_rowid: number }>;
+    for (const dup of dups) {
+      db.prepare(`
+        DELETE FROM chat_agent_members
+        WHERE channel_id = ? AND vault_agent_id = ? AND rowid != ?
+      `).run(dup.channel_id, dup.vault_agent_id, dup.keep_rowid);
+    }
+  }
+
+  return { renamed };
 }
 
 function normalizeAgentRegistration(input: Partial<ChatAgentRegistration>, fallbackAgentId?: string): ChatAgentRegistration {
@@ -428,17 +572,30 @@ function normalizeAgentRegistration(input: Partial<ChatAgentRegistration>, fallb
   };
 }
 
-/** Find or create the vault-level agent identity for a membership. */
+/**
+ * Find or create the vault-level agent identity for a membership.
+ * Never silently steals another agent's handle or overwrites its settings.
+ */
 function ensureVaultAgentForMember(
   db: Db,
   vaultId: string,
   member: ChatAgentRegistration,
 ): VaultAgent {
+  const mention = normalizeMention(member.mention || '', member.agentId);
+
   if (member.vaultAgentId) {
     const existing = db.prepare('SELECT * FROM vault_agents WHERE id = ? AND vault_id = ?')
       .get(member.vaultAgentId, vaultId) as VaultAgentRow | undefined;
     if (existing) {
-      // Keep identity fields in sync when membership is saved with updates.
+      // Handle must stay unique if the membership is renaming identity.
+      const clash = db.prepare(`
+        SELECT id, mention FROM vault_agents
+        WHERE vault_id = ? AND mention = ? COLLATE NOCASE AND id != ?
+        LIMIT 1
+      `).get(vaultId, mention, existing.id) as { id: string; mention: string } | undefined;
+      if (clash) {
+        throw new Error(`Mention @${mention} is already used by another vault agent`);
+      }
       db.prepare(`
         UPDATE vault_agents SET
           agent_id = ?, display_name = ?, avatar_url = ?, mention = ?, model = ?, cwd = ?, context_prompt = ?,
@@ -448,13 +605,12 @@ function ensureVaultAgentForMember(
         member.agentId,
         member.displayName,
         member.avatarUrl,
-        member.mention,
+        mention,
         member.model,
         member.cwd,
         member.contextPrompt,
         existing.id,
       );
-      // Push identity to all other channel memberships of this vault agent.
       db.prepare(`
         UPDATE chat_agent_members SET
           agent_id = ?, display_name = ?, avatar_url = ?, mention = ?, model = ?, cwd = ?, context_prompt = ?,
@@ -464,7 +620,7 @@ function ensureVaultAgentForMember(
         member.agentId,
         member.displayName,
         member.avatarUrl,
-        member.mention,
+        mention,
         member.model,
         member.cwd,
         member.contextPrompt,
@@ -474,17 +630,12 @@ function ensureVaultAgentForMember(
     }
   }
 
+  // Existing identity with this handle — link only; do not clobber its settings.
   const byMention = db.prepare(`
     SELECT * FROM vault_agents WHERE vault_id = ? AND mention = ? COLLATE NOCASE
-  `).get(vaultId, member.mention) as VaultAgentRow | undefined;
+  `).get(vaultId, mention) as VaultAgentRow | undefined;
   if (byMention) {
-    db.prepare(`
-      UPDATE vault_agents SET
-        agent_id = ?, display_name = ?, avatar_url = ?, model = ?, cwd = ?, context_prompt = ?,
-        updated_at = datetime('now')
-      WHERE id = ?
-    `).run(member.agentId, member.displayName, member.avatarUrl, member.model, member.cwd, member.contextPrompt, byMention.id);
-    return rowToVaultAgent(db.prepare('SELECT * FROM vault_agents WHERE id = ?').get(byMention.id) as VaultAgentRow);
+    return rowToVaultAgent(byMention);
   }
 
   const id = crypto.randomUUID();
@@ -497,7 +648,7 @@ function ensureVaultAgentForMember(
     member.agentId,
     member.displayName,
     member.avatarUrl,
-    member.mention,
+    mention,
     member.model,
     member.cwd,
     member.contextPrompt,
@@ -551,6 +702,13 @@ export function upsertVaultAgent(
   const existing = db.prepare('SELECT * FROM vault_agents WHERE id = ? AND vault_id = ?')
     .get(id, vaultId) as VaultAgentRow | undefined;
   const avatarUrl = String(input.avatarUrl || existing?.avatar_url || '').trim();
+
+  // Unique handle on both create and update (case-insensitive).
+  const clash = db.prepare(`
+    SELECT id FROM vault_agents WHERE vault_id = ? AND mention = ? COLLATE NOCASE AND id != ?
+  `).get(vaultId, mention, id) as { id: string } | undefined;
+  if (clash) throw new Error(`Mention @${mention} is already used by another vault agent`);
+
   if (existing) {
     db.prepare(`
       UPDATE vault_agents SET
@@ -565,11 +723,6 @@ export function upsertVaultAgent(
       WHERE vault_agent_id = ?
     `).run(agentId, displayName, avatarUrl, mention, model, cwd, contextPrompt, id);
   } else {
-    // Mention uniqueness per vault
-    const clash = db.prepare(`
-      SELECT id FROM vault_agents WHERE vault_id = ? AND mention = ? COLLATE NOCASE AND id != ?
-    `).get(vaultId, mention, id);
-    if (clash) throw new Error(`Mention @${mention} is already used by another vault agent`);
     db.prepare(`
       INSERT INTO vault_agents (id, vault_id, agent_id, display_name, avatar_url, mention, model, cwd, context_prompt)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)

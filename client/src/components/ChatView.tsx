@@ -1227,17 +1227,27 @@ export const ChatView = memo(function ChatView({
   async function submitAgentRegistration(event: React.FormEvent) {
     event.preventDefault();
     if (!agentForm.agentId) return;
-    const mention = agentForm.mention.replace(/^@+/, '').trim();
+    const mention = normalizeMention(agentForm.mention || '');
     if (!mention && agentPanelMode !== 'edit-member') {
       setAgentFormError('Choose a unique @ handle.');
       return;
     }
-    if (agentPanelMode !== 'edit-member') {
-      const duplicateMention = registeredAgents.some((registration) =>
-        registration.id !== agentForm.id
-        && normalizeMention(registration.mention) === normalizeMention(mention),
+    if (agentPanelMode !== 'edit-member' && mention) {
+      // Vault-wide uniqueness (not just this channel) — every agent is a persistent entity.
+      const vaultClash = vaultAgents.some((va) =>
+        va.id !== agentForm.vaultAgentId
+        && normalizeMention(va.mention) === mention,
       );
-      if (duplicateMention && agentPanelMode === 'create') {
+      if (vaultClash) {
+        setAgentFormError(`@${mention} is already used by another vault agent.`);
+        return;
+      }
+      const channelClash = registeredAgents.some((registration) =>
+        registration.id !== agentForm.id
+        && registration.vaultAgentId !== agentForm.vaultAgentId
+        && normalizeMention(registration.mention) === mention,
+      );
+      if (channelClash) {
         setAgentFormError(`@${mention} is already used in this channel.`);
         return;
       }

@@ -130,6 +130,7 @@ import {
   createAgentMemoryNote,
   distillChatToNote,
   ensureAgentMemoryFolders,
+  ensureAgentNamedMemoryFolders,
   ensureEvolutionSchema,
   indexChatMessageBacklinks,
   isAgentMemoryEnabled,
@@ -1036,6 +1037,12 @@ app.get('/api/vaults/:vaultId/vault-agents', requireAuth, (req: AuthedRequest, r
 app.put('/api/vaults/:vaultId/vault-agents', requireAuth, (req: AuthedRequest, res) => {
   try {
     const agent = upsertVaultAgent(db, req.user!.id, req.params.vaultId, req.body || {});
+    // Each persistent agent gets its own memory folder: _agent/<mention>/memory/
+    try {
+      ensureAgentNamedMemoryFolders(db, req.params.vaultId, req.user!.id, agent.mention);
+    } catch (error) {
+      console.warn('agent memory folder ensure skipped:', error instanceof Error ? error.message : error);
+    }
     emitVaultEvent(req.params.vaultId, 'vault:vaultAgentUpserted', { agent });
     res.json({ agent });
   } catch (err) {
@@ -1237,6 +1244,9 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
   let requesterIsOwner = true;
   let chatAuthor = '';
   let chatRegistrationId = '';
+  // Memory isolation key: prefer @handle (unique vault identity), then vault agent id.
+  // Never key by displayName alone — that caused shared folders across agents.
+  let agentMemoryKey = '';
 
   if (chatChannelId && registrationId) {
     let resolved: ReturnType<typeof resolveChatAgentRun>;
@@ -1261,6 +1271,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     targetChannelId = route.sourceChannelId;
     chatAuthor = registration.displayName || registration.agentId;
     chatRegistrationId = registration.id;
+    agentMemoryKey = registration.mention || registration.vaultAgentId || registration.agentId || selectedAgent;
   } else {
     const vault = getVault(db, req.params.id, req.user!.id);
     if (!vault) return res.status(404).json({ error: 'Vault not found' });
@@ -1272,6 +1283,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     yoloMode = yolo === true;
     chatAuthor = typeof req.body?.chat?.author === 'string' ? req.body.chat.author.trim() : '';
     chatRegistrationId = registrationId;
+    agentMemoryKey = chatAuthor || selectedAgent;
   }
 
   // Every agent — Claude included — executes on a user's own machine via the
@@ -1345,10 +1357,15 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
         const channelTitle = targetChannelId
           ? (getNote(db, targetChannelId)?.title || '')
           : '';
+        try {
+          if (agentMemoryKey) {
+            ensureAgentNamedMemoryFolders(db, runVault.id, runnerUserId, agentMemoryKey);
+          }
+        } catch { /* best-effort folder mint */ }
         const mem = buildAgentMemoryInjection(db, runVault.id, {
           channelTopic: `${channelTitle} ${prompt}`.slice(0, 400),
           maxChars: 900,
-          agentKey: chatAuthor || selectedAgent,
+          agentKey: agentMemoryKey || selectedAgent,
         });
         if (mem.enabled && mem.text) contextChunks.push(mem.text);
       } catch (error) {
