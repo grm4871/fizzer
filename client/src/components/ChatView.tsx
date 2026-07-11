@@ -163,7 +163,15 @@ export interface RunningChatAgent {
 export interface ChatChannelPresence {
   participants: string[];
   online: string[];
+  owner?: string;
 }
+
+export type SharedChatNote = {
+  id: string;
+  title: string;
+  content: string;
+  content_preview: string;
+};
 
 interface ChatViewProps {
   channelId: string;
@@ -184,10 +192,13 @@ interface ChatViewProps {
   onAddVaultAgentToChannel?: (channelId: string, vaultAgentId: string) => Promise<void> | void;
   onCreateInviteLink: (channelId: string) => Promise<string>;
   onInviteUser: (channelId: string, username: string) => Promise<void>;
+  onRemoveParticipant?: (channelId: string, username: string) => Promise<void>;
+  onLeaveChannel?: (channelId: string) => Promise<void>;
   onSendMessage: (channelId: string, body: string, media?: ChatMediaAttachment[], replyTo?: ChatReplyRef) => void;
   onCancelRun: (runId: number) => void;
   notes?: NoteSummary[];
   onOpenNote?: (id: string) => void;
+  onOpenSharedNote?: (channelId: string, messageId: string, title: string) => Promise<SharedChatNote | null>;
   /** When set, members panel open state is controlled by the app (workspace toolbar). */
   membersOpen?: boolean;
   onMembersOpenChange?: (open: boolean) => void;
@@ -319,15 +330,19 @@ function aliasesEqual(a: string[], b: string[]) {
 }
 
 const ChatMessageText = memo(function ChatMessageText({
+  messageId,
   body,
   mentionableAliases,
   notes = [],
   onOpenNote,
+  onOpenSharedNote,
 }: {
+  messageId: string;
   body: string;
   mentionableAliases: string[];
   notes?: NoteSummary[];
   onOpenNote?: (id: string) => void;
+  onOpenSharedNote?: (messageId: string, title: string) => void;
 }) {
   const withMentions = useCallback((children: ReactNode): ReactNode => {
     if (Array.isArray(children)) {
@@ -406,10 +421,10 @@ const ChatMessageText = memo(function ChatMessageText({
           <button
             key={index}
             type="button"
-            className={`chat-doc-embed${embedded ? '' : ' is-missing'}`}
-            onClick={() => embedded && onOpenNote?.(embedded.id)}
-            disabled={!embedded}
-            title={embedded ? `Open ${embedded.title}` : undefined}
+            className={`chat-doc-embed${embedded || onOpenSharedNote ? '' : ' is-missing'}`}
+            onClick={() => embedded ? onOpenNote?.(embedded.id) : onOpenSharedNote?.(messageId, part.value)}
+            disabled={!embedded && !onOpenSharedNote}
+            title={embedded ? `Open ${embedded.title}` : 'Open shared note'}
             draggable={!!embedded}
             onDragStart={(event) => {
               if (!embedded) return;
@@ -418,7 +433,9 @@ const ChatMessageText = memo(function ChatMessageText({
               event.dataTransfer.effectAllowed = 'copyMove';
             }}
           >
-            <span className="chat-doc-embed-title">{embedded?.title ?? `Missing note: ${part.value}`}</span>
+            <span className="chat-doc-embed-title">
+              {embedded?.title ?? (onOpenSharedNote ? part.value : `Missing note: ${part.value}`)}
+            </span>
             {embedded?.content_preview?.trim() && (
               <span className="chat-doc-embed-preview">
                 {embedded.content_preview.trim().length > 180
@@ -432,6 +449,9 @@ const ChatMessageText = memo(function ChatMessageText({
     </>
   );
 }, (prev, next) =>
+  prev.messageId === next.messageId
+  && prev.onOpenSharedNote === next.onOpenSharedNote
+  &&
   prev.body === next.body
   && aliasesEqual(prev.mentionableAliases, next.mentionableAliases)
   // The notes list only affects bodies that render `![[...]]` embeds; plain
@@ -679,6 +699,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
   mentionableAliases,
   notes,
   onOpenNote,
+  onOpenSharedNote,
   onCancelRun,
   onToggleSelect,
   onContextMenu,
@@ -697,6 +718,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
   mentionableAliases: string[];
   notes: NoteSummary[];
   onOpenNote?: (id: string) => void;
+  onOpenSharedNote?: (messageId: string, title: string) => void;
   onCancelRun: ChatViewProps['onCancelRun'];
   onToggleSelect: (id: string) => void;
   onContextMenu: (event: React.MouseEvent, message: ChatMessage) => void;
@@ -830,7 +852,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
                       ))}
                     </div>
                   )}
-                  {message.body && <ChatMessageText body={message.body} mentionableAliases={mentionableAliases} notes={notes} onOpenNote={onOpenNote} />}
+                  {message.body && <ChatMessageText messageId={message.id} body={message.body} mentionableAliases={mentionableAliases} notes={notes} onOpenNote={onOpenNote} onOpenSharedNote={onOpenSharedNote} />}
                   {(selected || hasRunWidget || hasThoughtBlocks) && (
                     <CascadeRunPanel
                       message={message}
@@ -860,6 +882,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
   // actually render an embed.
   && (prev.notes === next.notes || !groupHasDocEmbed(next.group))
   && prev.onOpenNote === next.onOpenNote
+  && prev.onOpenSharedNote === next.onOpenSharedNote
   && prev.onCancelRun === next.onCancelRun
   && prev.onToggleSelect === next.onToggleSelect
   && prev.onContextMenu === next.onContextMenu
@@ -890,10 +913,13 @@ export const ChatView = memo(function ChatView({
   onAddVaultAgentToChannel,
   onCreateInviteLink,
   onInviteUser,
+  onRemoveParticipant,
+  onLeaveChannel,
   onSendMessage,
   onCancelRun,
   notes = EMPTY_NOTES,
   onOpenNote,
+  onOpenSharedNote,
   membersOpen: membersOpenProp,
   onMembersOpenChange,
   vaultId,
@@ -965,6 +991,7 @@ export const ChatView = memo(function ChatView({
   const [pendingMedia, setPendingMedia] = useState<ChatMediaAttachment[]>([]);
   const [mediaError, setMediaError] = useState('');
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
+  const [sharedNote, setSharedNote] = useState<SharedChatNote | null>(null);
   const messagesRef = useRef<HTMLDivElement | null>(null);
   /** Inner content wrapper — ResizeObserver watches height growth (harness, thinking). */
   const messagesContentRef = useRef<HTMLDivElement | null>(null);
@@ -1074,6 +1101,10 @@ export const ChatView = memo(function ChatView({
     return Array.from(aliases);
   }, [humanUsers, registeredAgents]);
   const activeFormAgent = availableAgents.find((agent) => agent.id === agentForm.agentId);
+  const openSharedNote = useCallback(async (messageId: string, title: string) => {
+    const note = await onOpenSharedNote?.(channelId, messageId, title);
+    if (note) setSharedNote(note);
+  }, [channelId, onOpenSharedNote]);
 
   useEffect(() => {
     if (typeof localStorage === 'undefined') return;
@@ -1613,6 +1644,7 @@ export const ChatView = memo(function ChatView({
                   mentionableAliases={mentionableAliases}
                   notes={notes}
                   onOpenNote={onOpenNote}
+                  onOpenSharedNote={openSharedNote}
                   onCancelRun={onCancelRun}
                   onToggleSelect={toggleMessageSelection}
                   onContextMenu={openMessageContextMenu}
@@ -1878,15 +1910,26 @@ export const ChatView = memo(function ChatView({
         {humanUsers.map((name) => {
           const isSelf = name === currentUser;
           const isOnline = isSelf || onlineUsers.has(name);
+          const isOwner = name === presence.owner;
           return (
           <div className={`chat-user chat-human${isOnline ? '' : ' is-offline'}`} key={name}>
             <div className="chat-user-row">
               <ChatAvatar name={name} kind="human" size="sm" />
               <div className="chat-user-copy">
                 <strong>{name}</strong>
-                <span>{isSelf ? 'you' : isOnline ? 'online' : 'offline'}</span>
+                <span>{isOwner ? 'owner' : isSelf ? 'you' : isOnline ? 'online' : 'offline'}</span>
               </div>
             </div>
+            {presence.owner === currentUser && !isSelf && onRemoveParticipant && (
+              <button type="button" className="chat-remove-agent" title={`Remove @${name}`} onClick={() => void onRemoveParticipant(channelId, name)}>
+                <X size={12} />
+              </button>
+            )}
+            {isSelf && !isOwner && onLeaveChannel && (
+              <button type="button" className="chat-remove-agent" title="Leave channel" onClick={() => void onLeaveChannel(channelId)}>
+                <X size={12} />
+              </button>
+            )}
           </div>
           );
         })}
@@ -2211,6 +2254,21 @@ export const ChatView = memo(function ChatView({
             className="chat-lightbox-image"
             onClick={(event) => event.stopPropagation()}
           />
+        </div>
+      )}
+      {sharedNote && (
+        <div className="chat-lightbox" role="dialog" aria-modal="true" onClick={() => setSharedNote(null)}>
+          <article className="chat-shared-note" onClick={(event) => event.stopPropagation()}>
+            <header>
+              <h2>{sharedNote.title}</h2>
+              <button type="button" className="btn-icon" title="Close" onClick={() => setSharedNote(null)}>
+                <X size={18} />
+              </button>
+            </header>
+            <div className="chat-shared-note-body">
+              <ReactMarkdown remarkPlugins={CHAT_MARKDOWN_PLUGINS}>{sharedNote.content}</ReactMarkdown>
+            </div>
+          </article>
         </div>
       )}
     </section>

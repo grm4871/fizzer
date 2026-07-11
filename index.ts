@@ -286,6 +286,17 @@ ensureRunnerSchema(db);
 }
 ensureFeedSchema(db);
 ensureChatSchema(db);
+db.exec(`
+  CREATE TABLE IF NOT EXISTS chat_note_grants (
+    message_id TEXT NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
+    channel_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+    note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+    granted_by INTEGER NOT NULL REFERENCES users(id),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (message_id, note_id)
+  );
+  CREATE INDEX IF NOT EXISTS chat_note_grants_channel_idx ON chat_note_grants(channel_id, message_id);
+`);
 ensurePublishSchema(db);
 ensureEvolutionSchema(db);
 rebuildSearchIndexes(db);
@@ -320,7 +331,11 @@ function publicUser(user: { id: number; username: string }) {
 }
 
 function signChatInvite(sourceVaultId: string, sourceChannelId: string) {
-  return jwt.sign({ type: 'chat-invite', sourceVaultId, sourceChannelId } satisfies ChatInviteToken, JWT_SECRET);
+  return jwt.sign(
+    { type: 'chat-invite', sourceVaultId, sourceChannelId } satisfies ChatInviteToken,
+    JWT_SECRET,
+    { expiresIn: '7d' },
+  );
 }
 
 function verifyChatInvite(token: string): ChatInviteToken {
@@ -391,11 +406,15 @@ vaultNamespace.on('connection', (socket) => {
       tracked.set(route.sourceChannelId, route.sourceVaultId);
       const online = await getOnlineUsernamesForChannel(route.sourceChannelId);
       const participants = listChatChannelParticipantUsernames(db, route.sourceVaultId, route.sourceChannelId);
+      const owner = db.prepare(`
+        SELECT u.username FROM vaults v JOIN users u ON u.id = v.created_by WHERE v.id = ?
+      `).get(route.sourceVaultId) as { username: string } | undefined;
       socket.emit('vault:chatPresence', {
         vaultId: route.localVaultId,
         channelId: localChannelId,
         online,
         participants,
+        owner: owner?.username || '',
       });
       await emitChatPresence(route.sourceVaultId, route.sourceChannelId);
     } catch {
@@ -427,8 +446,20 @@ vaultNamespace.on('connection', (socket) => {
 });
 
 runsNamespace.on('connection', (socket) => {
-  socket.on('joinRun', (runId: number) => {
-    socket.join(`run:${runId}`);
+  socket.on('joinRun', async (runId: number) => {
+    const user = socket.data.user as { id: number };
+    const id = Number(runId);
+    if (!Number.isFinite(id)) return;
+    const run = getRun(db, id);
+    if (!run) return;
+    const chat = db.prepare('SELECT channel_id FROM chat_messages WHERE run_id = ? LIMIT 1').get(id) as { channel_id: string } | undefined;
+    try {
+      if (chat) assertChatChannel(db, chat.channel_id, user.id);
+      else if (!getVault(db, run.vault_id, user.id)) return;
+      await socket.join(`run:${id}`);
+    } catch {
+      // Unauthorized users never join this run room.
+    }
   });
   socket.on('leaveRun', (runId: number) => {
     socket.leave(`run:${runId}`);
@@ -482,12 +513,16 @@ async function getOnlineUsernamesForChannel(sourceChannelId: string): Promise<st
 async function emitChatPresence(sourceVaultId: string, sourceChannelId: string) {
   const online = await getOnlineUsernamesForChannel(sourceChannelId);
   const participants = listChatChannelParticipantUsernames(db, sourceVaultId, sourceChannelId);
+  const owner = db.prepare(`
+    SELECT u.username FROM vaults v JOIN users u ON u.id = v.created_by WHERE v.id = ?
+  `).get(sourceVaultId) as { username: string } | undefined;
   for (const route of listChatChannelRoutes(db, sourceVaultId, sourceChannelId)) {
     emitVaultEvent(route.localVaultId, 'vault:chatPresence', {
       vaultId: route.localVaultId,
       channelId: route.localChannelId,
       online,
       participants,
+      owner: owner?.username || '',
     });
   }
 }
@@ -630,6 +665,18 @@ const authRateLimit = rateLimit({ windowMs: 15 * 60 * 1000, max: 30 });
 app.post('/api/auth/register', authRateLimit, async (req, res) => {
   const username = String(req.body.username || '').trim().toLowerCase();
   const password = String(req.body.password || '');
+  const inviteToken = String(req.body.inviteToken || '').trim();
+
+  const userCount = (db.prepare('SELECT COUNT(*) AS count FROM users').get() as { count: number }).count;
+  const openRegistration = /^(1|true|yes|on)$/i.test(process.env.CASCADE_ALLOW_OPEN_REGISTRATION || '');
+  if (userCount > 0 && !openRegistration) {
+    if (!inviteToken) return res.status(403).json({ error: 'An invite link is required to create an account' });
+    try {
+      verifyChatInvite(inviteToken);
+    } catch {
+      return res.status(403).json({ error: 'This invite link is invalid or expired' });
+    }
+  }
 
   if (!/^[a-z0-9_]{3,32}$/.test(username)) {
     return res.status(400).json({ error: 'Username must be 3-32 lowercase letters, numbers, or underscores' });
@@ -658,6 +705,19 @@ app.post('/api/auth/login', authRateLimit, async (req, res) => {
   }
 
   res.json({ user: publicUser(user), token: signToken(user) });
+});
+
+app.post('/api/auth/password', requireAuth, authRateLimit, async (req: AuthedRequest, res) => {
+  const currentPassword = String(req.body.currentPassword || '');
+  const newPassword = String(req.body.newPassword || '');
+  if (newPassword.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user!.id) as User | undefined;
+  if (!user || !(await bcrypt.compare(currentPassword, user.password_hash))) {
+    return res.status(401).json({ error: 'Current password is incorrect' });
+  }
+  const passwordHash = await bcrypt.hash(newPassword, 12);
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(passwordHash, user.id);
+  res.json({ ok: true, token: signToken(user) });
 });
 
 app.get('/api/me', requireAuth, (req: AuthedRequest, res) => {
@@ -1301,7 +1361,9 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     selectedAgent = pickAgent(registration.agentId);
     selectedModel = normalizeRunModel(registration.model);
     selectedCwd = normalizeRunCwd(registration.cwd);
-    yoloMode = registration.yolo;
+    // Guests may invoke an explicitly pingable agent, but never with unattended
+    // command approval. Only the owner can exercise the registration's yolo flag.
+    yoloMode = requesterIsOwner && registration.yolo;
     targetChannelId = route.sourceChannelId;
     chatAuthor = registration.displayName || registration.agentId;
     chatRegistrationId = registration.id;
@@ -1571,10 +1633,50 @@ app.get('/api/vaults/:vaultId/channels/:channelId/messages/:messageId', requireA
   }
 });
 
+function refreshChatNoteGrants(userId: number, localVaultId: string, sourceChannelId: string, message: { id: string; body: string }) {
+  db.prepare('DELETE FROM chat_note_grants WHERE message_id = ? AND granted_by = ?').run(message.id, userId);
+  const titles = new Set<string>();
+  const pattern = /!\[\[([^\]\n]+)\]\]/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(message.body)) !== null) {
+    const title = match[1].trim();
+    if (title) titles.add(title);
+  }
+  const findNote = db.prepare(`
+    SELECT id FROM notes WHERE vault_id = ? AND title = ? COLLATE NOCASE AND is_archived = 0
+    ORDER BY updated_at DESC LIMIT 1
+  `);
+  const grant = db.prepare(`
+    INSERT OR IGNORE INTO chat_note_grants (message_id, channel_id, note_id, granted_by)
+    VALUES (?, ?, ?, ?)
+  `);
+  for (const title of titles) {
+    const note = findNote.get(localVaultId, title) as { id: string } | undefined;
+    if (note) grant.run(message.id, sourceChannelId, note.id, userId);
+  }
+}
+
+app.get('/api/vaults/:vaultId/channels/:channelId/messages/:messageId/embeds', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const { route } = assertChatChannel(db, req.params.channelId, req.user!.id);
+    const rows = db.prepare(`
+      SELECT n.id, n.title, n.content, n.content_preview
+      FROM chat_note_grants g
+      JOIN notes n ON n.id = g.note_id
+      WHERE g.channel_id = ? AND g.message_id = ?
+      ORDER BY n.title COLLATE NOCASE
+    `).all(route.sourceChannelId, req.params.messageId);
+    res.json({ notes: rows });
+  } catch {
+    res.status(404).json({ error: 'Message not found' });
+  }
+});
+
 app.post('/api/vaults/:vaultId/channels/:channelId/messages', requireAuth, (req: AuthedRequest, res) => {
   try {
     const { route } = assertChatChannel(db, req.params.channelId, req.user!.id);
     const message = createChatMessage(db, req.user!.id, req.params.vaultId, req.params.channelId, req.body);
+    refreshChatNoteGrants(req.user!.id, req.params.vaultId, route.sourceChannelId, message);
     try {
       indexChatMessageBacklinks(db, route.sourceVaultId, route.sourceChannelId, {
         id: message.id,
@@ -1597,6 +1699,7 @@ app.patch('/api/vaults/:vaultId/channels/:channelId/messages/:messageId', requir
     const { route } = assertChatChannel(db, req.params.channelId, req.user!.id);
     const message = updateChatMessage(db, req.user!.id, req.params.vaultId, req.params.channelId, req.params.messageId, req.body);
     if (!message) return res.status(404).json({ error: 'Message not found' });
+    refreshChatNoteGrants(req.user!.id, req.params.vaultId, route.sourceChannelId, message);
     emitChatMessageEvent(route.sourceVaultId, route.sourceChannelId, 'vault:chatMessageUpdated', message);
     res.json({ message });
   } catch (err) {
@@ -1618,9 +1721,62 @@ app.get('/api/vaults/:vaultId/channels/:channelId/presence', requireAuth, async 
     const { route } = assertChatChannel(db, req.params.channelId, req.user!.id);
     const participants = listChatChannelParticipants(db, req.params.channelId, req.user!.id);
     const online = await getOnlineUsernamesForChannel(route.sourceChannelId);
-    res.json({ participants, online });
+    const owner = db.prepare(`
+      SELECT u.username FROM vaults v JOIN users u ON u.id = v.created_by WHERE v.id = ?
+    `).get(route.sourceVaultId) as { username: string } | undefined;
+    res.json({ participants, online, owner: owner?.username || '' });
   } catch {
     res.status(404).json({ error: 'Chat channel not found' });
+  }
+});
+
+async function evictUserFromChat(sourceChannelId: string, userId: number) {
+  const sockets = await vaultNamespace.in(chatPresenceRoom(sourceChannelId)).fetchSockets();
+  for (const socket of sockets) {
+    const user = socket.data.user as { id?: number } | undefined;
+    if (user?.id !== userId) continue;
+    await socket.leave(chatPresenceRoom(sourceChannelId));
+    (socket.data.chatPresenceChannels as Map<string, string> | undefined)?.delete(sourceChannelId);
+  }
+}
+
+app.delete('/api/vaults/:vaultId/channels/:channelId/members/me', requireAuth, async (req: AuthedRequest, res) => {
+  try {
+    const { route } = assertChatChannel(db, req.params.channelId, req.user!.id);
+    const sourceVault = db.prepare('SELECT created_by FROM vaults WHERE id = ?').get(route.sourceVaultId) as { created_by: number };
+    if (sourceVault.created_by === req.user!.id) return res.status(400).json({ error: 'The channel owner cannot leave' });
+    deleteNoteAssets(db, route.localChannelId);
+    deleteNote(db, route.localChannelId);
+    await evictUserFromChat(route.sourceChannelId, req.user!.id);
+    emitVaultEvent(route.localVaultId, 'vault:noteDeleted', { noteId: route.localChannelId, vaultId: route.localVaultId });
+    await emitChatPresence(route.sourceVaultId, route.sourceChannelId);
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not leave channel' });
+  }
+});
+
+app.delete('/api/vaults/:vaultId/channels/:channelId/members/:username', requireAuth, async (req: AuthedRequest, res) => {
+  try {
+    const { route } = assertChatChannel(db, req.params.channelId, req.user!.id);
+    const sourceVault = db.prepare('SELECT created_by FROM vaults WHERE id = ?').get(route.sourceVaultId) as { created_by: number };
+    if (sourceVault.created_by !== req.user!.id) return res.status(403).json({ error: 'Only the channel owner can remove participants' });
+    const member = db.prepare('SELECT id, username FROM users WHERE username = ? COLLATE NOCASE').get(req.params.username) as { id: number; username: string } | undefined;
+    if (!member || member.id === req.user!.id) return res.status(400).json({ error: 'Participant not found' });
+    const link = db.prepare(`
+      SELECT l.local_channel_id AS channelId, l.local_vault_id AS vaultId
+      FROM chat_channel_links l JOIN vaults v ON v.id = l.local_vault_id
+      WHERE l.source_channel_id = ? AND v.created_by = ? LIMIT 1
+    `).get(route.sourceChannelId, member.id) as { channelId: string; vaultId: string } | undefined;
+    if (!link) return res.status(404).json({ error: 'Participant not found' });
+    deleteNoteAssets(db, link.channelId);
+    deleteNote(db, link.channelId);
+    await evictUserFromChat(route.sourceChannelId, member.id);
+    emitVaultEvent(link.vaultId, 'vault:noteDeleted', { noteId: link.channelId, vaultId: link.vaultId });
+    await emitChatPresence(route.sourceVaultId, route.sourceChannelId);
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not remove participant' });
   }
 });
 
