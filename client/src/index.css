@@ -1203,8 +1203,16 @@ a {
   contain-intrinsic-size: auto 72px;
   contain: layout style;
   position: relative;
+  -webkit-tap-highlight-color: transparent;
 }
-/* Hover via pseudo so large harness children aren't forced to repaint. */
+/* Expanding harness/thinking inside content-visibility rows flashes the whole
+   group on mobile — keep those rows fully painted. */
+.chat-message-group.has-run-widget {
+  content-visibility: visible;
+  contain-intrinsic-size: none;
+}
+/* Hover via pseudo so large harness children aren't forced to repaint.
+   Only real hover pointers — touch sticky-:hover was flashing the row. */
 .chat-message-group::before {
   content: '';
   position: absolute;
@@ -1214,8 +1222,10 @@ a {
   pointer-events: none;
   z-index: 0;
 }
-.chat-message-group:hover::before {
-  opacity: 1;
+@media (hover: hover) and (pointer: fine) {
+  .chat-message-group:hover::before {
+    opacity: 1;
+  }
 }
 .chat-message-group > * {
   position: relative;
@@ -1541,10 +1551,16 @@ a {
   background: #0c0b0a;
   overflow: hidden;
   box-sizing: border-box;
-  /* Isolate expensive terminal paint from parent hover / sibling reflow. */
-  contain: layout style paint;
+  /* layout/style only — paint+content-visibility made thinking folds flash
+     the entire panel on mobile (size jump re-skipped the subtree). */
+  contain: layout style;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+/* Collapsed header-only state can still skip offscreen work. */
+.cascade-run-panel:not(.open) {
   content-visibility: auto;
-  contain-intrinsic-size: auto 40px;
+  contain-intrinsic-size: auto 36px;
 }
 .cascade-run-panel.is-running {
   border-color: hsla(33, 40%, 40%, 0.45);
@@ -1572,15 +1588,23 @@ a {
   font-size: 0.6875rem;
   text-align: left;
   user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
 }
 .crp-toggle:not(:disabled) {
   cursor: pointer;
 }
-.crp-toggle:not(:disabled):is(:hover, :focus-visible) {
+.crp-toggle:not(:disabled):focus-visible {
   color: hsl(35, 12%, 82%);
   background: hsla(22, 8%, 100%, 0.03);
-  /* Keyboard selection should read like hover, not a separate loud border. */
   box-shadow: none;
+}
+@media (hover: hover) and (pointer: fine) {
+  .crp-toggle:not(:disabled):hover {
+    color: hsl(35, 12%, 82%);
+    background: hsla(22, 8%, 100%, 0.03);
+    box-shadow: none;
+  }
 }
 .crp-toggle:disabled {
   cursor: default;
@@ -1633,9 +1657,15 @@ a {
   background: hsla(18, 60%, 42%, 0.18);
   color: hsl(22, 70%, 72%);
 }
-.crp-toggle:not(:disabled):is(:hover, :focus-visible) .crp-stat-chip {
+.crp-toggle:not(:disabled):focus-visible .crp-stat-chip {
   border-color: hsla(33, 35%, 50%, 0.4);
   color: hsl(33, 32%, 78%);
+}
+@media (hover: hover) and (pointer: fine) {
+  .crp-toggle:not(:disabled):hover .crp-stat-chip {
+    border-color: hsla(33, 35%, 50%, 0.4);
+    color: hsl(33, 32%, 78%);
+  }
 }
 .crp-spinner {
   width: 10px;
@@ -1680,6 +1710,14 @@ a {
   padding: 8px 10px 10px;
   scrollbar-width: thin;
   scrollbar-color: hsl(25, 5%, 28%) transparent;
+  /* Avoid outer scroll jump while expanding a fold on short mobile viewports. */
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+@media (max-width: 640px) {
+  .crp-term {
+    max-height: min(420px, 55vh);
+  }
 }
 .crp-term-stream {
   font-family: var(--font-mono);
@@ -1716,17 +1754,30 @@ a {
   grid-template-columns: auto auto minmax(0, 1fr) auto;
   align-items: baseline;
   gap: 6px;
-  padding: 1px 0;
+  padding: 3px 2px;
+  margin: 0 -2px;
+  border-radius: var(--radius-sm);
   text-align: left;
   color: inherit;
   font: inherit;
   cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
 }
 .crp-term-fold:disabled {
   cursor: default;
 }
-.crp-term-fold:not(:disabled):hover .crp-term-tag {
-  color: hsl(35, 14%, 88%);
+/* Local fold feedback only — never restyle the whole harness panel. */
+.crp-term-fold:not(:disabled):active {
+  background: hsla(22, 8%, 100%, 0.04);
+}
+@media (hover: hover) and (pointer: fine) {
+  .crp-term-fold:not(:disabled):hover .crp-term-tag {
+    color: hsl(35, 14%, 88%);
+  }
+  .crp-term-fold:not(:disabled):hover {
+    background: hsla(22, 8%, 100%, 0.03);
+  }
 }
 .crp-term-mark {
   width: 0.9em;

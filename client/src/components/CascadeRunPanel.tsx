@@ -120,7 +120,16 @@ function ThinkingBlock({
 
   return (
     <div className="crp-term-block crp-term-thinking">
-      <button type="button" className="crp-term-fold" onClick={() => setOpen((v) => !v)}>
+      <button
+        type="button"
+        className="crp-term-fold"
+        // Keep fold expand local: don't bubble to message selection / panel chrome.
+        onClick={(event) => {
+          event.stopPropagation();
+          setOpen((v) => !v);
+        }}
+        onPointerDown={(event) => event.stopPropagation()}
+      >
         <span className="crp-term-mark dim">·</span>
         <span className="crp-term-tag dim">thinking</span>
         {!open && (
@@ -139,6 +148,8 @@ function ThinkingBlock({
           onScroll={(event) => {
             pinRef.current = isPinnedToBottom(event.currentTarget);
           }}
+          onClick={(event) => event.stopPropagation()}
+          onPointerDown={(event) => event.stopPropagation()}
         >
           {lines.join('\n')}
         </pre>
@@ -182,7 +193,11 @@ function ToolBlock({
       <button
         type="button"
         className="crp-term-fold"
-        onClick={() => hasBody && setOpen((v) => !v)}
+        onClick={(event) => {
+          event.stopPropagation();
+          if (hasBody) setOpen((v) => !v);
+        }}
+        onPointerDown={(event) => event.stopPropagation()}
         disabled={!hasBody}
       >
         <span className={`crp-term-mark ${markClass}`}>{mark}</span>
@@ -199,6 +214,8 @@ function ToolBlock({
           onScroll={(event) => {
             pinRef.current = isPinnedToBottom(event.currentTarget);
           }}
+          onClick={(event) => event.stopPropagation()}
+          onPointerDown={(event) => event.stopPropagation()}
         >
           {result
             ? indentBlock(result).join('\n')
@@ -420,12 +437,16 @@ export const CascadeRunPanel = memo(function CascadeRunPanel({
     <div
       className={`cascade-run-panel ${effectiveOpen ? 'open' : ''} ${isRunning ? 'is-running' : ''}`}
       onClick={(event) => event.stopPropagation()}
+      onPointerDown={(event) => event.stopPropagation()}
     >
       <div className="crp-header">
         <button
           type="button"
           className="crp-toggle"
-          onClick={() => canExpand && setOpen((v) => !v)}
+          onClick={(event) => {
+            event.stopPropagation();
+            if (canExpand) setOpen((v) => !v);
+          }}
           disabled={!canExpand}
           title={showUsage
             ? statChips.map((c) => c.title || c.label).join('\n')
