@@ -789,10 +789,14 @@ app.delete('/api/notes/:id', requireAuth, (req: AuthedRequest, res) => {
   const vault = getVault(db, existing.vault_id, req.user!.id);
   if (!vault) return res.status(404).json({ error: 'Note not found' });
 
-  deleteNoteAssets(db, req.params.id);
-  deleteNote(db, req.params.id);
-  emitVaultEvent(vault.id, 'vault:noteDeleted', { noteId: req.params.id, vaultId: vault.id, title: existing.title });
-  res.json({ ok: true });
+  try {
+    deleteNoteAssets(db, req.params.id);
+    deleteNote(db, req.params.id);
+    emitVaultEvent(vault.id, 'vault:noteDeleted', { noteId: req.params.id, vaultId: vault.id, title: existing.title });
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not delete note' });
+  }
 });
 
 app.post('/api/notes/:id/move', requireAuth, (req: AuthedRequest, res) => {

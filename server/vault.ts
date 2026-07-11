@@ -564,6 +564,12 @@ export function renameNote(db: Db, noteId: string, newTitleRaw: string): Note {
 }
 
 export function deleteNote(db: Db, noteId: string): void {
+  // Chat tables use ON DELETE CASCADE, but pre-cleaning avoids sporadic 500s when
+  // FTS triggers + shared channel links interact on channel note deletion.
+  db.prepare('DELETE FROM chat_agent_members WHERE channel_id = ?').run(noteId);
+  db.prepare('DELETE FROM chat_messages WHERE channel_id = ?').run(noteId);
+  db.prepare('DELETE FROM chat_channel_links WHERE local_channel_id = ? OR source_channel_id = ?').run(noteId, noteId);
+
   // Remove .md file from disk
   const filePath = resolveNotePath(db, noteId);
   if (filePath) {
