@@ -318,9 +318,47 @@ export default function App() {
   useEffect(() => {
     const token = localStorage.getItem('docs_token');
     if (!token) return;
-    api<{ user: User; owner?: boolean }>('/api/me')
-      .then((data) => { setUser(data.user); setIsOwner(Boolean(data.owner)); void loadVaults(); })
-      .catch(() => localStorage.removeItem('docs_token'));
+    let cancelled = false;
+    let succeeded = false;
+    let attempt = 0;
+    let timer: number | null = null;
+    const tryAuth = () => {
+      api<{ user: User; owner?: boolean }>('/api/me')
+        .then((data) => {
+          if (cancelled) return;
+          succeeded = true;
+          setUser(data.user);
+          setIsOwner(Boolean(data.owner));
+          void loadVaults();
+        })
+        .catch(() => {
+          if (cancelled) return;
+          // A real 401 means the token is invalid/expired — api() already cleared
+          // it, so stop and show the login screen. But a *transient* failure
+          // (offline, mobile cold-start before the network is up, server mid-
+          // deploy) leaves the token in place: keep the session and retry with
+          // backoff instead of logging the user out on a blip.
+          if (!localStorage.getItem('docs_token')) return;
+          attempt += 1;
+          if (attempt > 6) return;
+          timer = window.setTimeout(tryAuth, Math.min(1000 * 2 ** (attempt - 1), 15000));
+        });
+    };
+    // If connectivity returns after the retries gave up, try again — a valid
+    // token shouldn't strand the user on the login screen.
+    const onReconnect = () => {
+      if (cancelled || succeeded || !localStorage.getItem('docs_token')) return;
+      attempt = 0;
+      if (timer != null) window.clearTimeout(timer);
+      tryAuth();
+    };
+    tryAuth();
+    window.addEventListener('online', onReconnect);
+    return () => {
+      cancelled = true;
+      if (timer != null) window.clearTimeout(timer);
+      window.removeEventListener('online', onReconnect);
+    };
   }, [loadVaults]);
 
   useEffect(() => {
