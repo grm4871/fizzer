@@ -3,7 +3,7 @@ import { Activity, Bot, ChevronLeft, ChevronRight, Copy, Hash, ImagePlus, Paperc
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
-import type { NoteSummary } from '../api';
+import { api, type NoteSummary } from '../api';
 import { DOC_EMBED_REGEX, findEmbeddedNote, NOTE_DND_TYPE, noteEmbedMarkdown, splitDocEmbeds } from '../docEmbeds';
 import { escapeRegExp, normalizeMention } from '../chat/mentions';
 import { highlightJSON } from './jsonHighlighter';
@@ -954,6 +954,32 @@ export const ChatView = memo(function ChatView({
   const [agentFormError, setAgentFormError] = useState('');
   const [modelChoice, setModelChoice] = useState('');
   const [customModel, setCustomModel] = useState('');
+  // Channel-wide working directory: when set, every agent in the channel runs
+  // from here (overrides each agent's own cwd, enforced server-side).
+  const [channelCwd, setChannelCwd] = useState('');
+  const [channelCwdSaved, setChannelCwdSaved] = useState(false);
+
+  useEffect(() => {
+    if (!vaultId || !channelId) return;
+    let alive = true;
+    api<{ settings: { cwd: string } }>(`/api/vaults/${vaultId}/channels/${channelId}/settings`)
+      .then((d) => { if (alive) setChannelCwd(d.settings?.cwd ?? ''); })
+      .catch(() => { /* keep current value */ });
+    return () => { alive = false; };
+  }, [vaultId, channelId]);
+
+  const saveChannelCwd = useCallback(async () => {
+    if (!vaultId) return;
+    try {
+      const d = await api<{ settings: { cwd: string } }>(
+        `/api/vaults/${vaultId}/channels/${channelId}/settings`,
+        { method: 'PUT', body: JSON.stringify({ cwd: channelCwd.trim() }) },
+      );
+      setChannelCwd(d.settings?.cwd ?? '');
+      setChannelCwdSaved(true);
+      window.setTimeout(() => setChannelCwdSaved(false), 1500);
+    } catch { /* ignore — transient save failure */ }
+  }, [vaultId, channelId, channelCwd]);
   const createDefaultAgentForm = useCallback((): ChatAgentRegistration => {
     const agent = availableAgents[0];
     return {
@@ -1978,6 +2004,22 @@ export const ChatView = memo(function ChatView({
           </div>
           );
         })}
+
+        <div className="chat-users-title">Working directory</div>
+        <div className="chat-channel-cwd">
+          <input
+            value={channelCwd}
+            onChange={(e) => setChannelCwd(e.target.value)}
+            onBlur={() => void saveChannelCwd()}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } }}
+            placeholder="e.g. ~/project — all agents run here"
+            spellCheck={false}
+            autoCapitalize="off"
+            autoCorrect="off"
+          />
+          {channelCwdSaved && <span className="chat-channel-cwd-saved">saved</span>}
+        </div>
+        <div className="chat-channel-cwd-hint">Overrides each agent's own cwd for this channel.</div>
 
         <div className="chat-users-title">In this channel</div>
         {registeredAgentRows.length === 0 && (

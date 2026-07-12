@@ -108,6 +108,9 @@ import {
   setChatAgentAvatar,
   removeChatAgentMember,
   resolveChatAgentRun,
+  getChannelCwd,
+  getChannelSettings,
+  setChannelCwd,
   type ChatMessage,
 } from './server/chat.js';
 import {
@@ -1454,6 +1457,10 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     selectedAgent = pickAgent(registration.agentId);
     selectedModel = normalizeRunModel(registration.model);
     selectedCwd = normalizeRunCwd(registration.cwd);
+    // A channel-wide cwd (if set) overrides the agent's own cwd, so every agent
+    // in the channel runs from the same directory.
+    const channelCwd = getChannelCwd(db, route.sourceChannelId);
+    if (channelCwd) selectedCwd = normalizeRunCwd(channelCwd);
     // Guests may invoke an explicitly pingable agent, but never with unattended
     // command approval. Only the owner can exercise the registration's yolo flag.
     yoloMode = requesterIsOwner && registration.yolo;
@@ -1804,6 +1811,29 @@ app.get('/api/vaults/:vaultId/channels/:channelId/agents', requireAuth, (req: Au
   try {
     const agents = listChatAgentMembers(db, req.params.channelId, req.user!.id);
     res.json({ agents });
+  } catch {
+    res.status(404).json({ error: 'Chat channel not found' });
+  }
+});
+
+app.get('/api/vaults/:vaultId/channels/:channelId/settings', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    res.json({ settings: getChannelSettings(db, req.params.channelId, req.user!.id) });
+  } catch {
+    res.status(404).json({ error: 'Chat channel not found' });
+  }
+});
+
+app.put('/api/vaults/:vaultId/channels/:channelId/settings', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const settings = setChannelCwd(db, req.params.channelId, req.user!.id, String(req.body?.cwd ?? ''));
+    // Notify other clients on this vault so open channel views pick up the change.
+    emitVaultEvent(req.params.vaultId, 'vault:chatChannelSettings', {
+      vaultId: req.params.vaultId,
+      channelId: req.params.channelId,
+      settings,
+    });
+    res.json({ settings });
   } catch {
     res.status(404).json({ error: 'Chat channel not found' });
   }

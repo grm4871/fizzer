@@ -2188,6 +2188,36 @@ a {
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
+.chat-channel-cwd {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+}
+.chat-channel-cwd input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--text-primary);
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.chat-channel-cwd input:focus {
+  border-color: var(--border-active);
+}
+.chat-channel-cwd-saved {
+  font-size: 0.6875rem;
+  color: var(--success);
+}
+.chat-channel-cwd-hint {
+  padding: 4px 8px 8px;
+  color: var(--text-tertiary);
+  font-size: 0.6875rem;
+  line-height: 1.4;
+}
 .chat-user {
   padding: 5px 8px;
   border-radius: var(--radius-md);

@@ -245,6 +245,12 @@ export function ensureChatSchema(db: Db): void {
       UNIQUE(local_vault_id, source_channel_id)
     );
     CREATE INDEX IF NOT EXISTS chat_channel_links_source_idx ON chat_channel_links(source_channel_id);
+
+    CREATE TABLE IF NOT EXISTS chat_channel_settings (
+      channel_id TEXT PRIMARY KEY REFERENCES notes(id) ON DELETE CASCADE,
+      cwd TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
 
   // Migrations: add columns to pre-existing tables.
@@ -1673,6 +1679,36 @@ export function resolveChatAgentRun(
     route,
     ownerId: sourceVault.created_by,
   };
+}
+
+/**
+ * Channel-level working directory. When set, every agent run in the channel
+ * uses it, overriding each agent's own cwd — a single "global cwd" for the
+ * channel. Stored against the source channel so linked (guest) channels share
+ * the owner's setting. Empty string means "unset — fall back to per-agent cwd".
+ */
+export function getChannelCwd(db: Db, sourceChannelId: string): string {
+  const row = db.prepare('SELECT cwd FROM chat_channel_settings WHERE channel_id = ?')
+    .get(sourceChannelId) as { cwd: string } | undefined;
+  return (row?.cwd ?? '').trim();
+}
+
+/** Read a channel's settings (resolves links to the source channel). */
+export function getChannelSettings(db: Db, channelId: string, userId: number): { cwd: string } {
+  const { route } = assertChatChannel(db, channelId, userId);
+  return { cwd: getChannelCwd(db, route.sourceChannelId) };
+}
+
+/** Set the channel-wide cwd. Applies to the source channel; returns the value. */
+export function setChannelCwd(db: Db, channelId: string, userId: number, cwd: string): { cwd: string } {
+  const { route } = assertChatChannel(db, channelId, userId);
+  const value = String(cwd ?? '').trim();
+  db.prepare(`
+    INSERT INTO chat_channel_settings (channel_id, cwd, updated_at)
+    VALUES (?, ?, datetime('now'))
+    ON CONFLICT(channel_id) DO UPDATE SET cwd = excluded.cwd, updated_at = excluded.updated_at
+  `).run(route.sourceChannelId, value);
+  return { cwd: value };
 }
 
 /** Set one persistent agent identity's picture. Only its vault owner can do so. */
