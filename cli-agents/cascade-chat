@@ -19,6 +19,7 @@ const USAGE = `cascade-chat — read live Cascade chat history
 
 Usage:
   cascade-chat history                 recent messages for the current channel
+  cascade-chat send --message <text>   post a message to the current channel
 
 Options:
   --vault <id>              vault id (default $CASCADE_NOTE_VAULT)
@@ -28,6 +29,8 @@ Options:
   --limit <n>               max messages (default 40)
   --include-reply-context   include parent reply snippets
   --reply-depth <n>         parent chain depth with --include-reply-context (default 1)
+  --message <text>          message body for send
+  --author <name>           author name for send (default inferred from env)
   --url <base>              API base (default $CASCADE_NOTE_URL, else cscd.online)
   --token <jwt>             bearer token (default $CASCADE_NOTE_TOKEN)
   --json                    machine-readable output
@@ -108,10 +111,13 @@ async function getToken(url, args, config) {
   return body.token;
 }
 
-async function api(url, token, method, path) {
+async function api(url, token, method, path, body) {
+  const headers = { authorization: `Bearer ${token}` };
+  if (body !== undefined) headers['content-type'] = 'application/json';
   const res = await fetch(`${url}${path}`, {
     method,
-    headers: { authorization: `Bearer ${token}` },
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
   const text = await res.text();
   let json;
@@ -130,6 +136,20 @@ function optionInt(args, key, fallback) {
   const value = Number(raw);
   if (!Number.isFinite(value) || value < 1) fail(`--${key} must be a positive number.`);
   return Math.floor(value);
+}
+
+function inferAuthor(args, config) {
+  const explicit = optionString(args, 'author', 'CASCADE_CHAT_AUTHOR', config, 'chatAuthor');
+  if (explicit) return explicit;
+  const currentMessage = String(
+    args['current-message']
+    || process.env.CASCADE_CHAT_MESSAGE
+    || configString(config, 'chatMessageId')
+    || ''
+  ).trim();
+  const match = currentMessage.match(/^agent-(.+)-\d+-[a-z0-9]+$/i);
+  if (match) return match[1];
+  return process.env.USER || 'agent';
 }
 
 function bodyPreview(message) {
@@ -223,7 +243,7 @@ async function main() {
     process.stdout.write(USAGE + '\n');
     process.exit(cmd ? 0 : 1);
   }
-  if (cmd !== 'history') fail(`unknown command "${cmd}". Run with --help.`);
+  if (cmd !== 'history' && cmd !== 'send') fail(`unknown command "${cmd}". Run with --help.`);
 
   const config = readHelperConfig();
   const vaultId = optionString(args, 'vault', 'CASCADE_NOTE_VAULT', config, 'vaultId');
@@ -233,6 +253,25 @@ async function main() {
 
   const url = baseUrl(args, config);
   const token = await getToken(url, args, config);
+
+  if (cmd === 'send') {
+    const body = optionString(args, 'message');
+    if (!body) fail('missing message. Pass --message <text>.');
+    const author = inferAuthor(args, config);
+    const id = `agent-${author}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const payload = {
+      id,
+      author,
+      body,
+      createdAt: new Date().toISOString(),
+      agentId: author,
+      status: 'complete',
+    };
+    const { message } = await api(url, token, 'POST', `/api/vaults/${vaultId}/channels/${channelId}/messages`, payload);
+    if (args.json) process.stdout.write(JSON.stringify(message) + '\n');
+    return;
+  }
+
   const { messages = [] } = await api(url, token, 'GET', `/api/vaults/${vaultId}/channels/${channelId}/messages`);
   const selected = selectWindow(messages, args);
   const output = decorateMessages(messages, selected, args);

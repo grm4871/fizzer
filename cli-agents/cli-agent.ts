@@ -139,6 +139,8 @@ interface CliAgentOpts {
   /** Run with permission prompts bypassed ("yolo"). For Codex this widens the
    * sandbox from workspace-write to danger-full-access. */
   yolo?: boolean;
+  /** Explicit child-process environment from the desktop runner. */
+  env?: NodeJS.ProcessEnv;
 }
 
 /** Maps MIME types to file extensions for temp image files. */
@@ -176,15 +178,15 @@ export async function runCliAgent(opts: CliAgentOpts): Promise<CliAgentResult> {
     ? `[Context: ${opts.context}]\n\n${opts.userPrompt}`
     : opts.userPrompt;
   if (opts.agent === 'codex') {
-    return runCodex(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.images || [], opts.runId, opts.model, opts.yolo);
+    return runCodex(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.images || [], opts.runId, opts.model, opts.yolo, opts.env);
   } else if (opts.agent === 'grok') {
-    return runGrok(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.runId, opts.model);
+    return runGrok(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.runId, opts.model, opts.env);
   } else if (opts.agent === 'copilot') {
-    return runCopilot(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.runId, opts.model);
+    return runCopilot(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.runId, opts.model, opts.env);
   } else if (opts.agent === 'hermes') {
-    return runHermes(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.runId);
+    return runHermes(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.runId, opts.env);
   } else {
-    return runAntigravity(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.runId, opts.db, opts.model);
+    return runAntigravity(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.runId, opts.db, opts.model, opts.env);
   }
 }
 
@@ -233,11 +235,12 @@ function driveProcess(
   getSummary: () => string,
   label: string,
   runId?: number,
+  env?: NodeJS.ProcessEnv,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     let child;
     try {
-      child = spawn(bin, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+      child = spawn(bin, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: env || process.env });
       if (runId !== undefined) {
         activeCliProcesses.set(runId, child);
       }
@@ -372,6 +375,7 @@ async function runCodex(
   runId?: number,
   model?: string,
   yolo?: boolean,
+  env?: NodeJS.ProcessEnv,
 ): Promise<CliAgentResult> {
   const { paths: imagePaths, cleanup } = writeTempImages(images);
   // `-i/--image` is variadic, so it must come AFTER the positional prompt (and
@@ -442,7 +446,7 @@ async function runCodex(
   };
 
   try {
-    const summaryText = await driveProcess(CODEX_BIN, args, cwd, onLine, () => summary || 'Completed note operations successfully.', 'Codex', runId);
+    const summaryText = await driveProcess(CODEX_BIN, args, cwd, onLine, () => summary || 'Completed note operations successfully.', 'Codex', runId, env);
     return { summary: summaryText, sessionId };
   } finally {
     cleanup();
@@ -480,6 +484,7 @@ async function runGrok(
   resumeId?: string,
   runId?: number,
   model?: string,
+  env?: NodeJS.ProcessEnv,
 ): Promise<CliAgentResult> {
   const modelArgs = model ? ['--model', model] : [];
   const debugFile = path.join(os.tmpdir(), `cascade-grok-${runId ?? process.pid}-${Date.now()}.jsonl`);
@@ -510,7 +515,7 @@ async function runGrok(
   };
 
   try {
-    const summaryText = await driveProcess(GROK_BIN, args, cwd, onLine, () => text || 'Completed note operations successfully.', 'Grok', runId);
+    const summaryText = await driveProcess(GROK_BIN, args, cwd, onLine, () => text || 'Completed note operations successfully.', 'Grok', runId, env);
     return { summary: summaryText, sessionId };
   } catch (error) {
     const diagnostic = extractGrokDiagnostic(debugFile);
@@ -659,10 +664,10 @@ function discoverAntigravityEnv(): Record<string, string> {
 /**
  * Helper to run a command and return stdout as string.
  */
-function runCommand(bin: string, args: string[], cwd: string): Promise<string> {
+function runCommandWithEnv(bin: string, args: string[], cwd: string, baseEnv?: NodeJS.ProcessEnv): Promise<string> {
   return new Promise((resolve, reject) => {
     const discoveredEnv = discoverAntigravityEnv();
-    const env = { ...process.env, ...discoveredEnv };
+    const env = { ...(baseEnv || process.env), ...discoveredEnv };
 
     const logFile = '/home/jt/Desktop/cascade/debug.log';
     fs.appendFileSync(logFile, `[${new Date().toISOString()}] In-App Executing: ${bin} ${args.join(' ')}\n`);
@@ -709,6 +714,7 @@ async function runAntigravity(
   runId?: number,
   db?: Db,
   model?: string,
+  env?: NodeJS.ProcessEnv,
 ): Promise<CliAgentResult> {
   const bin = process.env.ANTIGRAVITY_BIN || path.join(os.homedir(), '.gemini', 'antigravity', 'bin', 'agentapi');
 
@@ -748,7 +754,7 @@ async function runAntigravity(
 
   let stdoutStr: string;
   try {
-    stdoutStr = await runCommand(bin, args, cwd);
+    stdoutStr = await runCommandWithEnv(bin, args, cwd, env);
   } catch (err) {
     throw new Error(`Failed to run agentapi: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -909,7 +915,7 @@ async function runAntigravity(
 /**
  * Runs the Copilot CLI and translates its JSONL event stream into content blocks.
  */
-async function runCopilot(prompt: string, cwd: string, emit: AgentEmit, resumeId?: string, runId?: number, model?: string): Promise<CliAgentResult> {
+async function runCopilot(prompt: string, cwd: string, emit: AgentEmit, resumeId?: string, runId?: number, model?: string, env?: NodeJS.ProcessEnv): Promise<CliAgentResult> {
   const modelArgs = model ? ['--model', model] : [];
   const baseArgs = ['-p', prompt, '--output-format', 'json', '--yolo', ...modelArgs];
   const args = resumeId ? ['--session-id', resumeId, ...baseArgs] : baseArgs;
@@ -1040,7 +1046,7 @@ async function runCopilot(prompt: string, cwd: string, emit: AgentEmit, resumeId
     }
   };
 
-  const summaryText = await driveProcess(COPILOT_BIN, args, cwd, onLine, () => summary || 'Completed note operations successfully.', 'Copilot', runId);
+  const summaryText = await driveProcess(COPILOT_BIN, args, cwd, onLine, () => summary || 'Completed note operations successfully.', 'Copilot', runId, env);
   return { summary: summaryText, sessionId: sessionId || resumeId };
 }
 
@@ -1056,7 +1062,7 @@ async function runCopilot(prompt: string, cwd: string, emit: AgentEmit, resumeId
  *   - `reasoning.delta` → `{ type: 'thinking', thinking }`
  *   - `session_id`      → captured for conversation resume
  */
-async function runHermes(prompt: string, cwd: string, emit: AgentEmit, resumeId?: string, runId?: number): Promise<CliAgentResult> {
+async function runHermes(prompt: string, cwd: string, emit: AgentEmit, resumeId?: string, runId?: number, env?: NodeJS.ProcessEnv): Promise<CliAgentResult> {
   const baseArgs = ['-z', prompt, '--yolo'];
   const args = resumeId ? ['-r', resumeId, ...baseArgs] : baseArgs;
 
@@ -1088,6 +1094,7 @@ async function runHermes(prompt: string, cwd: string, emit: AgentEmit, resumeId?
     () => text.trim() || 'Completed note operations successfully.',
     'Hermes',
     runId,
+    env,
   );
   return { summary: summaryText, sessionId };
 }
@@ -1102,6 +1109,7 @@ function driveHermesProcess(
   getSummary: () => string,
   label: string,
   runId?: number,
+  env?: NodeJS.ProcessEnv,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     let child;
@@ -1109,7 +1117,7 @@ function driveHermesProcess(
       child = spawn(bin, args, {
         cwd,
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...process.env, HERMES_CASCADE_EVENTS: '1' },
+        env: { ...(env || process.env), HERMES_CASCADE_EVENTS: '1' },
       });
       if (runId !== undefined) {
         activeCliProcesses.set(runId, child);

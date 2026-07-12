@@ -67,22 +67,39 @@ function isDevelopmentMode() {
  * @returns {Electron.Menu | null}
  */
 function buildApplicationMenu() {
-  if (!isDevelopmentMode()) return null;
+  const isMac = process.platform === 'darwin';
+  const dev = isDevelopmentMode();
 
-  return Menu.buildFromTemplate([
-    {
-      label: 'Debug',
-      submenu: [
-        { role: 'reload', label: 'Reload' },
-        { role: 'forceReload', label: 'Force Reload' },
-        { role: 'toggleDevTools', label: 'Toggle DevTools' },
-        { type: 'separator' },
-        { role: 'resetZoom', label: 'Actual Size' },
-        { role: 'zoomIn', label: 'Zoom In' },
-        { role: 'zoomOut', label: 'Zoom Out' },
-      ],
-    },
-  ]);
+  const debugSubmenu = {
+    label: 'Debug',
+    submenu: [
+      { role: 'reload', label: 'Reload' },
+      { role: 'forceReload', label: 'Force Reload' },
+      { role: 'toggleDevTools', label: 'Toggle DevTools' },
+      { type: 'separator' },
+      { role: 'resetZoom', label: 'Actual Size' },
+      { role: 'zoomIn', label: 'Zoom In' },
+      { role: 'zoomOut', label: 'Zoom Out' },
+    ],
+  };
+
+  // macOS routes clipboard shortcuts (Cmd+C/V/X/A) through the application
+  // menu's Edit roles. With no menu installed (setApplicationMenu(null)) those
+  // shortcuts silently stop working, so on macOS we always install a menu with
+  // the standard App/Edit/Window roles. Other platforms handle Ctrl+V in the
+  // web contents directly, so their prior menu behavior is preserved.
+  if (!isMac) {
+    if (!dev) return null;
+    return Menu.buildFromTemplate([debugSubmenu]);
+  }
+
+  const template = [
+    { role: 'appMenu' },
+    { role: 'editMenu' },
+    { role: 'windowMenu' },
+  ];
+  if (dev) template.push(debugSubmenu);
+  return Menu.buildFromTemplate(template);
 }
 
 /**
