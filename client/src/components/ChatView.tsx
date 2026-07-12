@@ -1006,6 +1006,7 @@ export const ChatView = memo(function ChatView({
   const programmaticClearRef = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const draftRef = useRef<HTMLTextAreaElement | null>(null);
+  const mentionCycleRef = useRef<{ matches: string[]; index: number; start: number } | null>(null);
   const sortedMessages = useMemo(() => {
     // Index-stable sort: never invent order for messages missing seq. Treating
     // missing seq as MAX_SAFE_INTEGER put an already-persisted agent shell
@@ -1591,6 +1592,42 @@ export const ChatView = memo(function ChatView({
     setReplyTarget(null);
   }
 
+  // Tab-complete an "@handle" from the mentionable list. Repeated Tab cycles
+  // through the matches for the same partial. Returns true when it handled the key.
+  function completeMention(textarea: HTMLTextAreaElement): boolean {
+    const value = textarea.value;
+    const cursor = textarea.selectionStart ?? value.length;
+    const match = /@([\w-]*)$/.exec(value.slice(0, cursor));
+    if (!match) return false;
+    const start = cursor - match[0].length;
+    const cycle = mentionCycleRef.current;
+    const canCycle = Boolean(cycle
+      && cycle.start === start
+      && value.slice(start, cursor) === `@${cycle.matches[cycle.index]}`);
+    let next: { matches: string[]; index: number; start: number };
+    if (canCycle && cycle) {
+      next = { matches: cycle.matches, index: (cycle.index + 1) % cycle.matches.length, start: cycle.start };
+    } else {
+      const partial = match[1].toLowerCase();
+      const matches = mentionableAliases.filter((alias) => alias.toLowerCase().startsWith(partial));
+      if (matches.length === 0) return false;
+      next = { matches, index: 0, start };
+    }
+    mentionCycleRef.current = next;
+    const chosen = `@${next.matches[next.index]}`;
+    const caret = start + chosen.length;
+    setDraft(`${value.slice(0, start)}${chosen}${value.slice(cursor)}`);
+    requestAnimationFrame(() => {
+      textarea.focus();
+      textarea.setSelectionRange(caret, caret);
+    });
+    return true;
+  }
+
+  function isCompletingMention(textarea: HTMLTextAreaElement): boolean {
+    const cursor = textarea.selectionStart ?? textarea.value.length;
+    return /@[\w-]*$/.test(textarea.value.slice(0, cursor));
+  }
   const canSend = draft.trim().length > 0 || pendingMedia.length > 0;
 
   return (
@@ -1742,7 +1779,10 @@ export const ChatView = memo(function ChatView({
               placeholder={replyTarget ? `Reply to @${replyTarget.mention}` : `Message #${channelName}`}
               spellCheck
               rows={1}
-              onChange={(e) => setDraft(e.target.value)}
+              onChange={(e) => {
+                setDraft(e.target.value);
+                mentionCycleRef.current = null;
+              }}
               onPaste={handlePaste}
               onDragOver={(e) => {
                 if (!e.dataTransfer.types.includes(NOTE_DND_TYPE)) return;
@@ -1757,6 +1797,11 @@ export const ChatView = memo(function ChatView({
                 insertEmbedInDraft(noteId, e.currentTarget);
               }}
               onKeyDown={(e) => {
+                if (e.key === 'Tab' && !e.shiftKey && isCompletingMention(e.currentTarget)) {
+                  e.preventDefault();
+                  completeMention(e.currentTarget);
+                  return;
+                }
                 if (e.key === 'Escape' && replyTarget) {
                   e.preventDefault();
                   setReplyTarget(null);

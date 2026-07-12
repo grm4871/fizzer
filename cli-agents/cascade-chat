@@ -188,6 +188,20 @@ function optionInt(args, key, fallback) {
   return Math.floor(value);
 }
 
+function inferAuthor(args, config) {
+  const explicit = optionString(args, 'author', 'CASCADE_CHAT_AUTHOR', config, 'chatAuthor');
+  if (explicit) return explicit;
+  const currentMessage = String(
+    args['current-message']
+    || process.env.CASCADE_CHAT_MESSAGE
+    || configString(config, 'chatMessageId')
+    || ''
+  ).trim();
+  const match = currentMessage.match(/^agent-(.+)-\d+-[a-z0-9]+$/i);
+  if (match) return match[1];
+  return process.env.USER || 'agent';
+}
+
 function bodyPreview(message) {
   const body = String(message.body || '').replace(/\s+/g, ' ').trim();
   if (body) return body.length > 240 ? `${body.slice(0, 239)}...` : body;
@@ -291,7 +305,6 @@ async function main() {
 
   const url = baseUrl(args, config, { ignoreArgsUrl: cmd === 'avatar' });
   const token = await getToken(url, args, config);
-
   if (cmd === 'avatar') {
     const registrationId = configString(config, 'registrationId');
     if (!registrationId) fail('avatar can only be used from a registered agent chat run.');
@@ -372,7 +385,9 @@ async function main() {
     if (!body) fail('missing message. Pass --message <text> or pipe text on stdin.');
     const registrationId = configString(config, 'registrationId');
     const agentId = configString(config, 'agentId');
+    const inferredAuthor = inferAuthor(args, config);
     const author = optionString(args, 'author', 'CASCADE_CHAT_AUTHOR', config, 'chatAuthor')
+      || inferredAuthor
       || (registrationId ? '' : 'Agent');
     const idPrefix = agentId || (author && author !== 'Agent' ? author.toLowerCase().replace(/\s+/g, '-') : 'msg');
     const message = {
@@ -392,7 +407,6 @@ async function main() {
     process.stdout.write(`sent ${sent.id || message.id}\n`);
     return;
   }
-
   const { messages = [] } = await api(url, token, 'GET', `/api/vaults/${vaultId}/channels/${channelId}/messages`);
   const selected = selectWindow(messages, args);
   const output = decorateMessages(messages, selected, args);

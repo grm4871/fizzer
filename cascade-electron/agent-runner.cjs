@@ -36,6 +36,8 @@ const CHAT_BREVITY_CONTEXT = "Shared chat — reply briefly and naturally.";
 const noteApi = { url: '', token: '' };
 const HELPER_CONFIG_PATH = path.join(os.homedir(), '.cascade', 'agent-helper-context.json');
 const RUN_CONTEXT_DIR = path.join(os.homedir(), '.cascade', 'run-contexts');
+const USER_BIN_DIR = path.join(os.homedir(), '.local', 'bin');
+const HELPER_NAMES = ['cascade-note', 'cascade-chat'];
 
 /** Directory holding the agent helper CLIs; prefer source, fall back to dist. */
 function resolveWrapperDir() {
@@ -51,13 +53,78 @@ function resolveWrapperDir() {
   return candidates[0];
 }
 
-/** Put wrappers on PATH once so agents can invoke live Cascade helpers. */
+function quoteSh(value) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
+function ensureExecutable(file) {
+  try {
+    if (!fs.existsSync(file)) return false;
+    const current = fs.statSync(file).mode;
+    fs.chmodSync(file, current | 0o755);
+    return true;
+  } catch (err) {
+    console.warn('[agent-runner] failed to chmod helper:', file, err?.message || err);
+    return false;
+  }
+}
+
+function ensureUserBinWrapper(name, source) {
+  try {
+    fs.mkdirSync(USER_BIN_DIR, { recursive: true, mode: 0o755 });
+    const target = path.join(USER_BIN_DIR, name);
+    const contents = `#!/bin/sh\nexec node ${quoteSh(source)} "$@"\n`;
+    let existing = '';
+    try { existing = fs.readFileSync(target, 'utf8'); } catch { /* ignore */ }
+    if (existing !== contents) fs.writeFileSync(target, contents, { mode: 0o755 });
+    fs.chmodSync(target, 0o755);
+    return true;
+  } catch (err) {
+    console.warn('[agent-runner] failed to install helper wrapper:', name, err?.message || err);
+    return false;
+  }
+}
+
+function ensureHelperInstall() {
+  const dir = resolveWrapperDir();
+  for (const name of HELPER_NAMES) {
+    const source = path.join(dir, name);
+    if (ensureExecutable(source)) ensureUserBinWrapper(name, source);
+  }
+}
+
+/** Put wrappers on PATH (once) so agents can invoke `cascade-note`/`cascade-chat`. */
 function ensureWrapperOnPath() {
+  ensureHelperInstall();
   const dir = resolveWrapperDir();
   const parts = (process.env.PATH || '').split(path.delimiter);
   if (!parts.includes(dir)) process.env.PATH = [dir, ...parts].join(path.delimiter);
+  if (!parts.includes(USER_BIN_DIR)) process.env.PATH = [USER_BIN_DIR, process.env.PATH || ''].filter(Boolean).join(path.delimiter);
   process.env.CASCADE_HELPER_DIR = dir;
   process.env.CASCADE_HELPER_CONFIG = HELPER_CONFIG_PATH;
+}
+
+function buildAgentEnv(opts) {
+  ensureWrapperOnPath();
+  const env = { ...process.env };
+  if (noteApi.url) env.CASCADE_NOTE_URL = noteApi.url;
+  if (noteApi.token) env.CASCADE_NOTE_TOKEN = noteApi.token;
+  const vaultId = String(opts && opts.vaultId || '').trim();
+  if (vaultId) env.CASCADE_NOTE_VAULT = vaultId;
+  const channelId = String(opts && opts.chatChannelId || opts?.chat?.channelId || '').trim();
+  if (channelId) env.CASCADE_CHAT_CHANNEL = channelId;
+  const messageId = String(opts && opts.chatMessageId || opts?.chat?.messageId || '').trim();
+  if (messageId) env.CASCADE_CHAT_MESSAGE = messageId;
+  env.CASCADE_HELPER_DIR = resolveWrapperDir();
+  env.CASCADE_HELPER_CONFIG = HELPER_CONFIG_PATH;
+  const pathParts = String(env.PATH || '').split(path.delimiter).filter(Boolean);
+  if (!pathParts.includes(env.CASCADE_HELPER_DIR)) {
+    env.PATH = [env.CASCADE_HELPER_DIR, ...pathParts].join(path.delimiter);
+  }
+  if (!pathParts.includes(USER_BIN_DIR)) {
+    env.PATH = [USER_BIN_DIR, env.PATH].filter(Boolean).join(path.delimiter);
+  }
+  return { env, vaultId, channelId, messageId };
 }
 
 /** Set the live API target/token the wrapper should use (call on runner connect). */
@@ -126,7 +193,14 @@ function buildRunHelperEnv(opts) {
     CASCADE_NOTE_TOKEN: noteApi.token || process.env.CASCADE_NOTE_TOKEN || '',
     CASCADE_HELPER_CONFIG: configPath,
     CASCADE_HELPER_DIR: resolveWrapperDir(),
+    PATH: process.env.PATH || '',
   };
+  if (!env.PATH.split(path.delimiter).includes(env.CASCADE_HELPER_DIR)) {
+    env.PATH = [env.CASCADE_HELPER_DIR, env.PATH].filter(Boolean).join(path.delimiter);
+  }
+  if (!env.PATH.split(path.delimiter).includes(USER_BIN_DIR)) {
+    env.PATH = [USER_BIN_DIR, env.PATH].filter(Boolean).join(path.delimiter);
+  }
   if (vaultId) env.CASCADE_NOTE_VAULT = vaultId;
   if (channelId) env.CASCADE_CHAT_CHANNEL = channelId;
   if (messageId) env.CASCADE_CHAT_MESSAGE = messageId;
@@ -410,6 +484,11 @@ async function runClaudeLocally(opts, emit) {
       // Electron's main process is not a Node runtime, so spawn a real `node`
       // from PATH to host the bundled Claude Code CLI.
       executable: 'node',
+      // Pass env explicitly. The SDK REPLACES the subprocess env when `env` is
+      // set, so include process.env + our helper additions so the child (and
+      // the Bash tool inside it) can find `cascade-note` / `cascade-chat` on
+      // PATH and pick up the auth token / vault / channel context.
+      env: { ...process.env, ...helperEnv },
       ...(resumeSessionId ? { resume: resumeSessionId } : {}),
       // Stream token-level deltas so thinking renders live in its block rather
       // than arriving all at once as a finished assistant message.
@@ -686,6 +765,8 @@ async function startLocalAgentRun(opts, sendEvent) {
   setRunHelperEnv(runId, helperEnv);
   const cwd = resolveAgentCwd(opts.cwd, opts.vaultRoot);
 
+  const env = { ...process.env, ...helperEnv };
+
   try {
     const result = await runCliAgent({
       agent,
@@ -698,6 +779,7 @@ async function startLocalAgentRun(opts, sendEvent) {
       yolo: opts.yolo === true,
       runId,
       emit,
+      env,
     });
     emitTerminalStatus(emit, runId, 'completed', result.summary || 'Done.', result.sessionId);
     return { sessionId: result.sessionId };
