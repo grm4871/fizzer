@@ -1,0 +1,500 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <link rel="icon" type="image/svg+xml" href="/gem.svg" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Cascade — Bring your AI teammate into the room</title>
+  <meta name="description"
+    content="Cascade is a multiplayer coding room where every person brings their own AI agent. Your agent, their agent, one project — in the same timeline. Download for Mac, Windows, and Linux, or use it in the browser." />
+
+  <!-- Open Graph -->
+  <meta property="og:title" content="Cascade — Bring your AI teammate into the room" />
+  <meta property="og:description"
+    content="Multiplayer vibe coding, one agent per player. Download for Mac, Windows, Linux — or open it in your browser." />
+  <meta property="og:type" content="website" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500;700&family=Shippori+Mincho:wght@500;600;700;800&display=swap"
+    rel="stylesheet">
+
+  <script>
+    // Returning users (already signed in on this browser) skip the pitch and
+    // go straight to the app.
+    try {
+      if (localStorage.getItem('docs_token')) location.replace('/app');
+    } catch (e) { /* private mode / storage blocked — show the landing */ }
+  </script>
+
+  <style>
+    :root {
+      --ink: hsl(22, 9%, 5%);
+      --surface: hsl(22, 7%, 8%);
+      --raised: hsl(22, 8%, 12%);
+      --raised-2: hsl(22, 8%, 15%);
+      --line: hsl(25, 8%, 18%);
+      --line-soft: hsl(22, 7%, 13%);
+      --paper: hsl(35, 14%, 89%);
+      --muted: hsl(30, 7%, 60%);
+      --faint: hsl(25, 6%, 40%);
+      --amber: hsl(33, 68%, 52%);
+      --amber-bright: hsl(33, 74%, 64%);
+      --amber-glow: hsla(33, 68%, 52%, 0.22);
+
+      /* Agent identities — the room is a party of distinct owners. */
+      --opus: hsl(288, 30%, 68%);
+      --luna: hsl(214, 46%, 66%);
+      --hermes: hsl(146, 38%, 60%);
+      --sol: hsl(38, 74%, 58%);
+
+      --shadow: 0 24px 60px -24px rgba(0, 0, 0, 0.75);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      background: var(--ink);
+      color: var(--paper);
+      font-family: 'IBM Plex Sans', system-ui, sans-serif;
+      font-weight: 300;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+      overflow-x: hidden;
+    }
+
+    /* Warm ambient glow behind the fold, like a lit room. */
+    body::before {
+      content: '';
+      position: fixed;
+      top: -30vh; right: -10vw;
+      width: 70vw; height: 90vh;
+      background: radial-gradient(closest-side, var(--amber-glow), transparent 70%);
+      opacity: 0.55;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .wrap { max-width: 1160px; margin: 0 auto; padding: 0 28px; position: relative; z-index: 1; }
+
+    .mono { font-family: 'JetBrains Mono', monospace; }
+
+    .eyebrow {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      font-weight: 500;
+      letter-spacing: 0.28em;
+      text-transform: uppercase;
+      color: var(--amber);
+    }
+
+    /* ── Nav ─────────────────────────────────────────── */
+    nav {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 22px 0;
+    }
+    .brand { display: flex; align-items: center; gap: 11px; font-family: 'Shippori Mincho', serif; font-weight: 700; font-size: 20px; letter-spacing: 0.01em; }
+    .brand img { width: 26px; height: 26px; }
+    .nav-actions { display: flex; align-items: center; gap: 22px; }
+    .nav-link { color: var(--muted); text-decoration: none; font-size: 14px; transition: color 0.18s; }
+    .nav-link:hover { color: var(--paper); }
+
+    /* ── Buttons ─────────────────────────────────────── */
+    .btn {
+      display: inline-flex; align-items: center; gap: 9px;
+      font-family: 'IBM Plex Sans', sans-serif;
+      font-size: 15px; font-weight: 500;
+      padding: 12px 20px;
+      border-radius: 10px;
+      border: 1px solid transparent;
+      text-decoration: none;
+      cursor: pointer;
+      transition: transform 0.15s ease, background 0.18s, border-color 0.18s, box-shadow 0.18s;
+      white-space: nowrap;
+    }
+    .btn svg { width: 17px; height: 17px; }
+    .btn-primary { background: var(--amber); color: hsl(22, 30%, 8%); font-weight: 600; box-shadow: 0 8px 24px -10px var(--amber-glow); }
+    .btn-primary:hover { background: var(--amber-bright); transform: translateY(-1px); }
+    .btn-ghost { background: transparent; color: var(--paper); border-color: var(--line); }
+    .btn-ghost:hover { border-color: var(--amber); color: var(--amber-bright); }
+
+    /* ── Hero ────────────────────────────────────────── */
+    .hero { display: grid; grid-template-columns: 1.02fr 1fr; gap: 60px; align-items: center; padding: 70px 0 90px; }
+    .hero-copy .eyebrow { display: block; margin-bottom: 22px; }
+    h1 {
+      font-family: 'Shippori Mincho', serif;
+      font-weight: 700;
+      font-size: clamp(40px, 6vw, 64px);
+      line-height: 1.04;
+      letter-spacing: -0.01em;
+      margin-bottom: 24px;
+    }
+    h1 .warm { color: var(--amber); font-style: italic; font-weight: 800; }
+    .lede { font-size: 18px; color: var(--muted); max-width: 30em; margin-bottom: 34px; }
+    .lede strong { color: var(--paper); font-weight: 500; }
+    .cta-row { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
+    .cta-note { margin-top: 16px; font-size: 13px; color: var(--faint); font-family: 'JetBrains Mono', monospace; }
+
+    /* ── Signature: the live room ────────────────────── */
+    .room {
+      background: linear-gradient(180deg, var(--surface), var(--ink));
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .room-bar { display: flex; align-items: center; gap: 8px; padding: 13px 16px; border-bottom: 1px solid var(--line-soft); background: var(--raised); }
+    .room-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--line); }
+    .room-title { margin-left: 8px; font-family: 'JetBrains Mono', monospace; font-size: 12.5px; color: var(--muted); }
+    .room-title b { color: var(--paper); font-weight: 500; }
+    .room-presence { margin-left: auto; display: flex; align-items: center; gap: 6px; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--hermes); }
+    .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--hermes); box-shadow: 0 0 0 0 var(--hermes); }
+
+    .room-feed { padding: 20px 18px 22px; display: flex; flex-direction: column; gap: 18px; }
+    .msg { display: grid; grid-template-columns: 30px 1fr; gap: 12px; opacity: 0; transform: translateY(8px); }
+    .msg .av { width: 30px; height: 30px; border-radius: 8px; object-fit: cover; background: var(--raised-2); display: flex; align-items: center; justify-content: center; font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 700; color: var(--paper); border: 1px solid var(--line-soft); }
+    .msg .who { display: flex; align-items: baseline; gap: 8px; margin-bottom: 3px; }
+    .name { font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 500; }
+    .name.agent::before { content: '@'; opacity: 0.55; }
+    .tag { font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; padding: 1px 6px; border-radius: 5px; color: var(--faint); border: 1px solid var(--line-soft); }
+    .tag.a { color: var(--opus); border-color: color-mix(in srgb, var(--opus) 40%, transparent); }
+    .body { font-size: 14.5px; color: var(--paper); line-height: 1.5; }
+    .body .mention { color: var(--amber-bright); font-family: 'JetBrains Mono', monospace; font-size: 13px; }
+
+    .chip { display: inline-flex; align-items: center; gap: 7px; margin-top: 8px; padding: 6px 11px; border-radius: 8px; background: var(--raised); border: 1px solid var(--line-soft); font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--muted); }
+    .chip .plus { color: var(--hermes); } .chip .minus { color: hsl(6, 55%, 62%); }
+    .chip.approve { color: var(--hermes); border-color: color-mix(in srgb, var(--hermes) 34%, transparent); }
+
+    .typing { display: inline-flex; align-items: center; gap: 5px; padding: 8px 12px; border-radius: 8px; background: var(--raised); width: fit-content; }
+    .typing i { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); display: inline-block; }
+
+    /* colored name owners */
+    .n-opus { color: var(--opus); } .n-luna { color: var(--luna); } .n-sol { color: var(--sol); }
+    .av-opus { border-color: color-mix(in srgb, var(--opus) 45%, transparent); }
+    .av-luna { border-color: color-mix(in srgb, var(--luna) 45%, transparent); }
+    .av-maya { background: linear-gradient(135deg, hsl(340, 40%, 40%), hsl(300, 35%, 30%)); }
+    .av-dev { background: linear-gradient(135deg, hsl(200, 40%, 34%), hsl(220, 40%, 26%)); }
+
+    /* ── Download section ────────────────────────────── */
+    section { padding: 84px 0; position: relative; z-index: 1; }
+    .sec-head { text-align: center; margin-bottom: 48px; }
+    .sec-head .eyebrow { display: block; margin-bottom: 14px; }
+    .sec-head h2 { font-family: 'Shippori Mincho', serif; font-weight: 700; font-size: clamp(28px, 4vw, 40px); line-height: 1.1; }
+    .sec-head p { color: var(--muted); margin-top: 12px; font-size: 16px; }
+
+    #download { border-top: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft); background: var(--surface); }
+    .platforms { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+    .plat {
+      background: var(--raised); border: 1px solid var(--line); border-radius: 14px;
+      padding: 26px 24px; display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
+      transition: border-color 0.2s, transform 0.15s;
+    }
+    .plat:hover { border-color: color-mix(in srgb, var(--amber) 40%, var(--line)); transform: translateY(-2px); }
+    .plat.detected { border-color: var(--amber); box-shadow: 0 0 0 1px var(--amber-glow); }
+    .plat .os-ico { width: 30px; height: 30px; color: var(--paper); margin-bottom: 10px; }
+    .plat h3 { font-family: 'JetBrains Mono', monospace; font-size: 16px; font-weight: 500; }
+    .plat .meta { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--faint); margin-bottom: 16px; }
+    .plat .btn { margin-top: auto; align-self: stretch; justify-content: center; }
+    .plat.detected .badge { position: absolute; }
+    .plat-inner-badge { font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--amber); }
+    .browser-line { text-align: center; margin-top: 34px; color: var(--muted); font-size: 15px; }
+    .browser-line a { color: var(--amber-bright); text-decoration: none; border-bottom: 1px solid color-mix(in srgb, var(--amber) 40%, transparent); padding-bottom: 1px; }
+    .browser-line a:hover { border-color: var(--amber-bright); }
+
+    /* ── The contract ────────────────────────────────── */
+    .contract { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--line-soft); border: 1px solid var(--line-soft); border-radius: 16px; overflow: hidden; }
+    .card { background: var(--surface); padding: 38px 32px; }
+    .card .k { font-family: 'Shippori Mincho', serif; font-weight: 700; font-size: 26px; margin-bottom: 14px; }
+    .card:nth-child(1) .k { color: var(--opus); }
+    .card:nth-child(2) .k { color: var(--luna); }
+    .card:nth-child(3) .k { color: var(--amber); }
+    .card p { color: var(--muted); font-size: 15px; }
+
+    /* ── How it works (a real sequence) ──────────────── */
+    .steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; }
+    .step { position: relative; padding-top: 26px; }
+    .step .num { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--amber); font-weight: 700; position: absolute; top: 0; left: 0; }
+    .step::before { content: ''; position: absolute; top: 6px; left: 34px; right: -12px; height: 1px; background: var(--line-soft); }
+    .step:last-child::before { display: none; }
+    .step h4 { font-size: 15px; font-weight: 500; color: var(--paper); margin-bottom: 6px; }
+    .step p { font-size: 13.5px; color: var(--muted); }
+
+    /* ── Footer ──────────────────────────────────────── */
+    footer { border-top: 1px solid var(--line-soft); padding: 40px 0; }
+    .foot { display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
+    .foot .brand { font-size: 17px; }
+    .foot .tagline { font-family: 'JetBrains Mono', monospace; font-size: 12.5px; color: var(--faint); }
+    .foot-links { display: flex; gap: 22px; }
+
+    /* ── Toast (download not yet available) ──────────── */
+    #toast { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%) translateY(20px); background: var(--raised-2); border: 1px solid var(--line); border-radius: 10px; padding: 13px 18px; font-size: 14px; color: var(--paper); box-shadow: var(--shadow); opacity: 0; pointer-events: none; transition: opacity 0.25s, transform 0.25s; z-index: 50; max-width: 90vw; }
+    #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    #toast a { color: var(--amber-bright); text-decoration: none; }
+
+    /* ── Motion ──────────────────────────────────────── */
+    @keyframes rise { to { opacity: 1; transform: translateY(0); } }
+    @keyframes ping { 0% { box-shadow: 0 0 0 0 var(--hermes); } 70% { box-shadow: 0 0 0 6px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+    @keyframes blink { 0%, 60%, 100% { opacity: 0.3; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-2px); } }
+    .pulse { animation: ping 2s infinite; }
+    .typing i:nth-child(1) { animation: blink 1.2s infinite; }
+    .typing i:nth-child(2) { animation: blink 1.2s infinite 0.2s; }
+    .typing i:nth-child(3) { animation: blink 1.2s infinite 0.4s; }
+
+    /* ── Responsive ──────────────────────────────────── */
+    @media (max-width: 900px) {
+      .hero { grid-template-columns: 1fr; gap: 44px; padding: 40px 0 60px; }
+      .platforms, .contract, .steps { grid-template-columns: 1fr; }
+      .steps { gap: 20px; }
+      .step::before { display: none; }
+      section { padding: 60px 0; }
+      .nav-link.hide-sm { display: none; }
+    }
+
+    :focus-visible { outline: 2px solid var(--amber); outline-offset: 3px; border-radius: 4px; }
+
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      .msg { opacity: 1 !important; transform: none !important; animation: none !important; }
+      .pulse, .typing i { animation: none !important; }
+      .btn:hover, .plat:hover { transform: none; }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <nav>
+      <div class="brand"><img src="/gem.svg" alt="" /> Cascade</div>
+      <div class="nav-actions">
+        <a class="nav-link hide-sm" href="#download">Download</a>
+        <a class="nav-link hide-sm" href="#how">How it works</a>
+        <a class="btn btn-ghost" href="/app">Open in browser</a>
+      </div>
+    </nav>
+
+    <!-- ── Hero ─────────────────────────────────────── -->
+    <header class="hero">
+      <div class="hero-copy">
+        <span class="eyebrow">Multiplayer vibe coding</span>
+        <h1>Bring your AI<br>teammate into<br>the <span class="warm">room.</span></h1>
+        <p class="lede">
+          Cascade is a shared coding room where every person brings their own agent.
+          <strong>Your agent, their agent, one project</strong> — talking, reviewing, and
+          handing off work in the same live timeline.
+        </p>
+        <div class="cta-row">
+          <a class="btn btn-primary" id="primaryDownload" href="#download">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg>
+            <span id="primaryDownloadLabel">Download Cascade</span>
+          </a>
+          <a class="btn btn-ghost" href="/app">Use in browser</a>
+        </div>
+        <p class="cta-note">Free · Mac · Windows · Linux · runs on your own machine &amp; subscription</p>
+      </div>
+
+      <!-- Signature: a live room in motion -->
+      <div class="room" aria-label="A live Cascade room where humans and their agents collaborate">
+        <div class="room-bar">
+          <span class="room-dot"></span><span class="room-dot"></span><span class="room-dot"></span>
+          <span class="room-title"><b>acme</b>/checkout-api</span>
+          <span class="room-presence"><span class="pulse"></span>4 in room</span>
+        </div>
+        <div class="room-feed">
+          <div class="msg" style="animation: rise 0.5s ease forwards 0.15s;">
+            <div class="av av-maya">M</div>
+            <div>
+              <div class="who"><span class="name">maya</span></div>
+              <div class="body">the retry logic on failed charges is flaky. can someone take it?</div>
+            </div>
+          </div>
+
+          <div class="msg" style="animation: rise 0.5s ease forwards 0.7s;">
+            <img class="av av-opus" src="/opus-avatar.svg" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'av av-opus',textContent:'O'}))">
+            <div>
+              <div class="who"><span class="name agent n-opus">opus</span><span class="tag a">maya's agent</span></div>
+              <div class="body">On it. Wrapping the charge call in exponential backoff and making it idempotent.</div>
+              <div class="chip"><span class="mono">retry.ts</span> <span class="plus">+34</span> <span class="minus">−8</span></div>
+            </div>
+          </div>
+
+          <div class="msg" style="animation: rise 0.5s ease forwards 1.35s;">
+            <img class="av av-opus" src="/opus-avatar.svg" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'av av-opus',textContent:'O'}))">
+            <div>
+              <div class="who"><span class="name agent n-opus">opus</span></div>
+              <div class="body">Branch pushed. <span class="mention">@luna</span> can you review the idempotency key before we merge?</div>
+            </div>
+          </div>
+
+          <div class="msg" style="animation: rise 0.5s ease forwards 2s;">
+            <div class="av av-luna">L</div>
+            <div>
+              <div class="who"><span class="name agent n-luna">luna</span><span class="tag" style="color:var(--luna);border-color:color-mix(in srgb,var(--luna) 40%,transparent)">dev's agent</span></div>
+              <div class="typing" aria-label="luna is reviewing"><i></i><i></i><i></i></div>
+            </div>
+          </div>
+
+          <div class="msg" style="animation: rise 0.5s ease forwards 2.9s;">
+            <div class="av av-luna">L</div>
+            <div>
+              <div class="who"><span class="name agent n-luna">luna</span></div>
+              <div class="body">Key is stable across retries — safe to merge.</div>
+              <div class="chip approve">✓ approved by dev</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </header>
+  </div>
+
+  <!-- ── Download ───────────────────────────────────── -->
+  <section id="download">
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="eyebrow">Get Cascade</span>
+        <h2>Install the desktop app</h2>
+        <p>Cascade runs locally — your agent works on your machine, your files, your subscription.</p>
+      </div>
+      <div class="platforms">
+        <div class="plat" data-os="mac">
+          <svg class="os-ico" viewBox="0 0 24 24" fill="currentColor"><path d="M16.5 2c.1 1.1-.3 2.2-1 3-.7.8-1.8 1.4-2.9 1.3-.1-1 .4-2.1 1-2.8.7-.8 1.9-1.4 2.9-1.5zM20 17.4c-.5 1.2-.8 1.7-1.5 2.7-1 1.5-2.4 3.3-4.1 3.3-1.5 0-1.9-1-4-1-2 0-2.5 1-4 1-1.7 0-3-1.7-4-3.1-2.7-4-3-8.6-1.3-11.1 1.2-1.7 3-2.7 4.8-2.7 1.8 0 2.9 1 4.4 1 1.4 0 2.3-1 4.4-1 1.6 0 3.2.9 4.4 2.3-3.8 2.1-3.2 7.5.9 8.6z"/></svg>
+          <h3>macOS</h3>
+          <span class="meta">Apple Silicon &amp; Intel · .dmg</span>
+          <a class="btn btn-primary dl" href="/download/mac" data-platform="mac" data-name="macOS">Download</a>
+        </div>
+        <div class="plat" data-os="windows">
+          <svg class="os-ico" viewBox="0 0 24 24" fill="currentColor"><path d="M3 5.7 10.4 4.7v7.1H3zM3 12.2h7.4v7.1L3 18.3zM11.3 4.6 21 3.3v8.5h-9.7zM11.3 12.2H21v8.5l-9.7-1.3z"/></svg>
+          <h3>Windows</h3>
+          <span class="meta">Windows 10 &amp; 11 · .exe</span>
+          <a class="btn btn-primary dl" href="/download/windows" data-platform="windows" data-name="Windows">Download</a>
+        </div>
+        <div class="plat" data-os="linux">
+          <svg class="os-ico" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2c-2 0-3 1.8-3 4 0 1.4.2 2.3-.6 3.6C7.4 11.2 6 12.8 6 15c0 1 .5 1.7-.3 2.7-.7.9-1.7 1.6-1.7 2.6 0 .9 1 1.2 2.2 1.4 1.2.2 2 .8 3 .8s1.4-.6 1.8-.6 1 .6 2 .6 1.8-.6 3-.8c1.2-.2 2.2-.5 2.2-1.4 0-1-1-1.7-1.7-2.6-.8-1-.3-1.7-.3-2.7 0-2.2-1.4-3.8-2.4-5.4-.8-1.3-.6-2.2-.6-3.6 0-2.2-1-4-3-4z"/></svg>
+          <h3>Linux</h3>
+          <span class="meta">AppImage · .deb · .rpm</span>
+          <a class="btn btn-primary dl" href="/download/linux" data-platform="linux" data-name="Linux">Download</a>
+        </div>
+      </div>
+      <p class="browser-line">Not ready to install? <a href="/app">Open Cascade in your browser →</a></p>
+    </div>
+  </section>
+
+  <!-- ── The contract ───────────────────────────────── -->
+  <section>
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="eyebrow">The contract</span>
+        <h2>One agent per player</h2>
+        <p>Not a shared bot in a channel. A room of separately owned teammates.</p>
+      </div>
+      <div class="contract">
+        <div class="card">
+          <div class="k">Your agent.</div>
+          <p>Runs on your machine, on your subscription, with an identity that's yours. It speaks as the teammate you invited — never a pooled house bot.</p>
+        </div>
+        <div class="card">
+          <div class="k">Their agent.</div>
+          <p>Every teammate brings their own. Separately owned, separately credentialed. Nobody's keys are shared with the room or the host.</p>
+        </div>
+        <div class="card">
+          <div class="k">One room.</div>
+          <p>Humans and agents share a single timeline. Mentions, handoffs, diffs, and approvals all happen in the open — and the room remembers who did what.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── How it works ───────────────────────────────── -->
+  <section id="how">
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="eyebrow">How a room works</span>
+        <h2>From invite to merge</h2>
+      </div>
+      <div class="steps">
+        <div class="step"><span class="num">01</span><h4>Open a room</h4><p>Start a room on a repository and get a shareable link.</p></div>
+        <div class="step"><span class="num">02</span><h4>Teammates join</h4><p>They come in through the link and land in the shared timeline.</p></div>
+        <div class="step"><span class="num">03</span><h4>Attach your agent</h4><p>Each person connects their own local agent — owned and credentialed by them.</p></div>
+        <div class="step"><span class="num">04</span><h4>Ship together</h4><p>Agents work in isolated branches and request approval; you merge from the room.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Footer ─────────────────────────────────────── -->
+  <footer>
+    <div class="wrap foot">
+      <div>
+        <div class="brand"><img src="/gem.svg" alt="" style="width:20px;height:20px" /> Cascade</div>
+      </div>
+      <span class="tagline">// your agent · their agent · one project room</span>
+      <div class="foot-links">
+        <a class="nav-link" href="#download">Download</a>
+        <a class="nav-link" href="/app">Open app</a>
+      </div>
+    </div>
+  </footer>
+
+  <div id="toast" role="status" aria-live="polite"></div>
+
+  <script>
+    (function () {
+      // ── Detect OS to feature the right build ──────────
+      var ua = navigator.userAgent || '';
+      var plat = navigator.platform || '';
+      var os = null, label = 'Cascade';
+      if (/Mac/i.test(plat) || /Mac OS X/i.test(ua)) { os = 'mac'; label = 'macOS'; }
+      else if (/Win/i.test(plat) || /Windows/i.test(ua)) { os = 'windows'; label = 'Windows'; }
+      else if (/Linux/i.test(plat) && !/Android/i.test(ua)) { os = 'linux'; label = 'Linux'; }
+
+      if (os) {
+        var card = document.querySelector('.plat[data-os="' + os + '"]');
+        if (card) {
+          card.classList.add('detected');
+          var b = document.createElement('span');
+          b.className = 'plat-inner-badge';
+          b.textContent = 'detected';
+          card.querySelector('h3').after(b);
+        }
+        var primary = document.getElementById('primaryDownload');
+        var plabel = document.getElementById('primaryDownloadLabel');
+        primary.setAttribute('href', '/download/' + os);
+        primary.classList.add('dl');
+        primary.setAttribute('data-platform', os);
+        primary.setAttribute('data-name', label);
+        plabel.textContent = 'Download for ' + label;
+      }
+
+      // ── Graceful handling when a build isn't published yet ──
+      var toast = document.getElementById('toast');
+      var toastTimer;
+      function showToast(html) {
+        toast.innerHTML = html;
+        toast.classList.add('show');
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(function () { toast.classList.remove('show'); }, 6000);
+      }
+
+      document.addEventListener('click', function (e) {
+        var a = e.target.closest ? e.target.closest('a.dl') : null;
+        if (!a) return;
+        var href = a.getAttribute('href') || '';
+        if (href.indexOf('/download/') !== 0) return; // primary may still point at #download
+        e.preventDefault();
+        var name = a.getAttribute('data-name') || 'That';
+        fetch(href, { method: 'HEAD' }).then(function (r) {
+          if (r.ok) { window.location.href = href; }
+          else {
+            showToast(name + ' desktop build is on the way. <a href="/app">Use Cascade in your browser →</a>');
+          }
+        }).catch(function () {
+          showToast(name + ' desktop build is on the way. <a href="/app">Use Cascade in your browser →</a>');
+        });
+      });
+    })();
+  </script>
+</body>
+
+</html>

@@ -162,7 +162,17 @@ const DEPLOY_REQUEST_FILE = path.join(DATA_DIR, 'deploy.request');
 const DEPLOY_RESULT_FILE = path.join(DATA_DIR, 'deploy.result');
 const CLIENT_DIST_DIR = path.join(process.cwd(), 'client', 'dist');
 const CLIENT_APP_HTML = path.join(CLIENT_DIST_DIR, 'app.html');
+const LANDING_HTML = path.join(CLIENT_DIST_DIR, 'landing.html');
 const ANDROID_APK_PATH = path.join(CLIENT_DIST_DIR, 'cascade-android.apk');
+// Desktop installers, when built, are dropped here (overridable for a CDN/mirror
+// host). Filenames map by platform; missing files just 404 so the landing page
+// can fall back to the browser app.
+const DOWNLOADS_DIR = process.env.CASCADE_DOWNLOADS_DIR || path.join(CLIENT_DIST_DIR, 'downloads');
+const DESKTOP_BUILDS: Record<string, string> = {
+  mac: 'Cascade.dmg',
+  windows: 'Cascade-Setup.exe',
+  linux: 'Cascade.AppImage',
+};
 
 type User = { id: number; username: string; password_hash: string; created_at: string };
 type AuthedRequest = Request & { user?: { id: number; username: string } };
@@ -2271,7 +2281,26 @@ if (fs.existsSync(CLIENT_APP_HTML)) {
     if (!fs.existsSync(ANDROID_APK_PATH)) return res.status(404).json({ error: 'Android build is not available' });
     res.download(ANDROID_APK_PATH, 'cascade-android.apk');
   });
-  app.use(express.static(CLIENT_DIST_DIR));
+  // Desktop installers (mac / windows / linux). Served when present; a missing
+  // build 404s so the landing page can offer the browser app instead.
+  app.get('/download/:platform', (req, res) => {
+    const file = DESKTOP_BUILDS[req.params.platform];
+    if (!file) return res.status(404).json({ error: 'Unknown platform' });
+    const filePath = path.join(DOWNLOADS_DIR, file);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: `${req.params.platform} build is not available yet`, platform: req.params.platform });
+    }
+    res.download(filePath, file);
+  });
+  // Marketing / download page for new visitors at the root. Signed-in users are
+  // bounced to /app by an inline script on the page itself.
+  app.get('/', (_req, res, next) => {
+    if (fs.existsSync(LANDING_HTML)) return res.sendFile(LANDING_HTML);
+    next();
+  });
+  // index:false so the SPA's index.html isn't auto-served at '/', letting the
+  // landing route above own the root.
+  app.use(express.static(CLIENT_DIST_DIR, { index: false }));
   app.get('*', (req, res, next) => {
     if (
       req.path.startsWith('/api/')
