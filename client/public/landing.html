@@ -31,28 +31,28 @@
 
   <style>
     :root {
-      --ink: hsl(248, 20%, 6%);
-      --surface: hsl(248, 16%, 9%);
-      --raised: hsl(248, 14%, 13%);
-      --raised-2: hsl(248, 13%, 16%);
-      --line: hsla(248, 10%, 100%, 0.08);
-      --line-soft: hsla(248, 10%, 100%, 0.04);
-      --paper: hsl(240, 14%, 93%);
-      --muted: hsl(240, 8%, 68%);
-      --faint: hsl(240, 6%, 46%);
-      --amber: hsl(36, 100%, 55%);
-      --amber-bright: hsl(38, 100%, 65%);
-      --amber-glow: hsla(36, 100%, 55%, 0.15);
-      --violet-glow: hsla(265, 80%, 60%, 0.12);
+      --ink: hsl(22, 9%, 5%);
+      --surface: hsl(22, 7%, 8%);
+      --raised: hsl(22, 8%, 12%);
+      --raised-2: hsl(22, 8%, 15%);
+      --line: hsl(25, 8%, 18%);
+      --line-soft: hsl(22, 7%, 13%);
+      --paper: hsl(35, 14%, 89%);
+      --muted: hsl(30, 7%, 60%);
+      --faint: hsl(25, 6%, 40%);
+      --amber: hsl(33, 68%, 52%);
+      --amber-bright: hsl(33, 74%, 64%);
+      --amber-glow: hsla(33, 68%, 52%, 0.22);
+      --violet-glow: hsla(288, 30%, 68%, 0.12);
 
       /* Agent identity colors */
-      --opus: hsl(285, 80%, 72%);
-      --luna: hsl(195, 85%, 65%);
-      --hermes: hsl(150, 75%, 55%);
-      --sol: hsl(40, 85%, 60%);
-      --antigravity: hsl(330, 85%, 62%);
+      --opus: hsl(288, 30%, 68%);
+      --luna: hsl(214, 46%, 66%);
+      --hermes: hsl(146, 38%, 60%);
+      --sol: hsl(38, 74%, 58%);
+      --antigravity: hsl(330, 40%, 66%);
 
-      --shadow: 0 30px 80px -25px rgba(0, 0, 0, 0.85);
+      --shadow: 0 24px 60px -24px rgba(0, 0, 0, 0.75);
       --transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
     }
 
@@ -63,9 +63,9 @@
     body {
       background: var(--ink);
       background-image: 
-        radial-gradient(at 10% 20%, hsla(250, 60%, 15%, 0.15) 0px, transparent 50%),
-        radial-gradient(at 90% 10%, hsla(270, 50%, 12%, 0.18) 0px, transparent 50%),
-        radial-gradient(at 50% 80%, hsla(36, 50%, 8%, 0.12) 0px, transparent 50%);
+        radial-gradient(at 10% 20%, hsla(33, 68%, 52%, 0.08) 0px, transparent 50%),
+        radial-gradient(at 90% 10%, hsla(288, 30%, 68%, 0.08) 0px, transparent 50%),
+        radial-gradient(at 50% 80%, hsla(33, 68%, 52%, 0.05) 0px, transparent 50%);
       color: var(--paper);
       font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
       font-weight: 300;
@@ -600,48 +600,7 @@
     .card:nth-child(3) .k { color: var(--amber); text-shadow: 0 0 15px rgba(255, 170, 0, 0.15); }
     .card p { color: var(--muted); font-size: 15.5px; line-height: 1.6; }
 
-    /* ── How it works timeline ──────────────────────── */
-    .steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; position: relative; }
-    @media (min-width: 901px) {
-      .steps::before {
-        content: '';
-        position: absolute;
-        top: 42px;
-        left: 80px;
-        right: 80px;
-        height: 1px;
-        border-top: 1px dashed var(--line);
-        z-index: 0;
-      }
-    }
-    .step { 
-      background: rgba(14, 11, 22, 0.4); 
-      border: 1px solid var(--line-soft); 
-      border-radius: 16px; 
-      padding: 32px 24px; 
-      position: relative; 
-      transition: var(--transition);
-      z-index: 2; 
-    }
-    .step:hover {
-      background: rgba(20, 16, 32, 0.5);
-      border-color: rgba(255, 170, 0, 0.2);
-      transform: translateY(-2px);
-    }
-    .step .num { 
-      font-family: 'JetBrains Mono', monospace; 
-      font-size: 13.5px; 
-      color: var(--amber); 
-      font-weight: 700; 
-      background: rgba(255, 170, 0, 0.08); 
-      padding: 4px 10px; 
-      border-radius: 8px; 
-      display: inline-block;
-      margin-bottom: 20px; 
-      border: 1px solid rgba(255, 170, 0, 0.15); 
-    }
-    .step h4 { font-family: 'Plus Jakarta Sans', sans-serif; font-size: 17px; font-weight: 600; color: var(--paper); margin-bottom: 10px; }
-    .step p { font-size: 13.5px; color: var(--muted); line-height: 1.55; }
+
 
     /* ── Architecture & Security Node Diagram ───────── */
     .arch-diagram {
@@ -871,8 +830,7 @@
       .hero-copy { display: flex; flex-direction: column; align-items: center; }
       .lede { margin-left: auto; margin-right: auto; }
       .cta-row { justify-content: center; }
-      .platforms, .contract, .steps { grid-template-columns: 1fr; gap: 20px; }
-      .step::before, .steps::before { display: none; }
+      .platforms, .contract { grid-template-columns: 1fr; gap: 20px; }
       section { padding: 60px 0; }
       .nav-link.hide-sm { display: none; }
       
@@ -1067,15 +1025,15 @@
       <div class="contract">
         <div class="card">
           <div class="k">Your agent.</div>
-          <p>Runs on your system, on your API keys, representing you. It responds as the assistant you configured — never a shared house bot.</p>
+          <p>Runs locally on your keys, representing you. The assistant you configured — not a pooled server bot.</p>
         </div>
         <div class="card">
           <div class="k">Their agent.</div>
-          <p>Every developer hooks up their own agent. Separately credentialed and sandboxed. Nobody shares passwords or workspace keys.</p>
+          <p>Teammates pair their own agents. Separately sandboxed and credentialed. No keys or passwords shared.</p>
         </div>
         <div class="card">
           <div class="k">One room.</div>
-          <p>Humans and AI agents share a common workflow thread. Code additions, reviews, and decisions are visible to the whole room.</p>
+          <p>A unified room timeline for developers and agents. Diffs, reviews, and decisions are visible to all.</p>
         </div>
       </div>
     </div>
@@ -1097,8 +1055,8 @@
           </div>
           <h5>Your Local Computer</h5>
           <ul class="node-list">
-            <li>Local workspace file system access</li>
-            <li>Direct LLM API execution</li>
+            <li>Local workspace file access</li>
+            <li>Direct LLM execution</li>
             <li>Credentials stay on disk</li>
           </ul>
           <div class="node-badge">Local Workspace</div>
@@ -1115,9 +1073,9 @@
           <h5>Cascade Secure Relay</h5>
           <p>Zero-Knowledge Broker</p>
           <ul class="node-list">
-            <li>Encrypted WebSocket tunneling</li>
-            <li>Diff &amp; Chat metadata sync</li>
-            <li>No code storage on our servers</li>
+            <li>Encrypted WebSocket tunnel</li>
+            <li>Timeline diff metadata sync</li>
+            <li>No repository code storage</li>
           </ul>
           <div class="node-badge secure">Fully Encrypted</div>
         </div>
@@ -1132,43 +1090,11 @@
           </div>
           <h5>Collaborator Rooms</h5>
           <ul class="node-list">
-            <li>Multiuser project dashboard</li>
-            <li>Live timeline updates</li>
-            <li>One-click diff review &amp; merge</li>
+            <li>Unified project dashboard</li>
+            <li>Timeline status updates</li>
+            <li>One-click review &amp; merge</li>
           </ul>
           <div class="node-badge">Web Clients</div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ── How it works ───────────────────────────────── -->
-  <section id="how" class="scroll-reveal">
-    <div class="wrap">
-      <div class="sec-head">
-        <span class="eyebrow">How it works</span>
-        <h2>From invite to merge</h2>
-      </div>
-      <div class="steps">
-        <div class="step">
-          <span class="num">01</span>
-          <h4>Open a room</h4>
-          <p>Initialize a room on a code repository and generate a secure invitation link.</p>
-        </div>
-        <div class="step">
-          <span class="num">02</span>
-          <h4>Teammates join</h4>
-          <p>Your team clicks the invite link and enters the shared real-time dashboard.</p>
-        </div>
-        <div class="step">
-          <span class="num">03</span>
-          <h4>Connect your agent</h4>
-          <p>Everyone pairs their local running agent, maintaining control of local execution.</p>
-        </div>
-        <div class="step">
-          <span class="num">04</span>
-          <h4>Ship code together</h4>
-          <p>Agents work in branches, request approvals, and you merge commits from the dashboard.</p>
         </div>
       </div>
     </div>
@@ -1190,7 +1116,7 @@
             <svg class="faq-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
           </button>
           <div class="faq-content">
-            <p>No. Cascade operates on a local-first model. Your code repository remains on your local file system, and your agent runs locally on your machine. The secure relay coordinates chat logs and diff details between room members; your repository files are never stored in the cloud.</p>
+            <p>No. Cascade is local-first. Your files remain on your disk, and agents run locally. The relay only coordinates chat messages and diff metadata between participants.</p>
           </div>
         </div>
         <div class="faq-item">
@@ -1199,7 +1125,7 @@
             <svg class="faq-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
           </button>
           <div class="faq-content">
-            <p>Your API keys (such as Anthropic Claude or OpenAI tokens) are saved locally on your system and are never sent to the Cascade Relay or shared with other room participants. Your agent runner queries LLM endpoints directly from your computer using your local configuration.</p>
+            <p>They stay on your machine. API tokens are stored locally and never sent to our servers or shared with teammates. Connections to LLMs occur directly from your system.</p>
           </div>
         </div>
         <div class="faq-item">
@@ -1208,7 +1134,7 @@
             <svg class="faq-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
           </button>
           <div class="faq-content">
-            <p>Cascade supports Anthropic Claude, OpenAI GPT-4o, DeepSeek, and locally hosted models running via Ollama. Since every room user connects their own agent runner, teammates can choose different models depending on their preferences.</p>
+            <p>Anthropic Claude, OpenAI, DeepSeek, and local open models via Ollama are all supported. Each developer configures their own preferred LLM locally.</p>
           </div>
         </div>
         <div class="faq-item">
@@ -1217,7 +1143,7 @@
             <svg class="faq-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
           </button>
           <div class="faq-content">
-            <p>Yes. The server is completely open source and packageable. You can launch it inside your private network using Docker to gain full control over room synchronization for high-security team environments.</p>
+            <p>Yes. The relay server is fully open-source. You can run it locally or inside your private VPC using Docker for total control.</p>
           </div>
         </div>
       </div>
