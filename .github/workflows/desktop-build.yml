@@ -1,0 +1,64 @@
+name: Desktop builds
+
+# Builds the Cascade desktop app (a thin Electron shell that loads cscd.online)
+# on each target OS so native modules — better-sqlite3 in particular — are
+# compiled correctly per platform. Cross-building from one OS produces broken
+# binaries for the others, which is why this runs a matrix on native runners.
+#
+# Trigger by pushing a tag (v*) to cut a release, or run manually from the
+# Actions tab to produce downloadable artifacts without publishing.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.platform }} (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+          - os: macos-latest
+            platform: darwin
+          - os: windows-latest
+            platform: win32
+    defaults:
+      run:
+        working-directory: cascade-electron
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # postinstall runs electron-rebuild for better-sqlite3 against this OS.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Make distributables
+        run: npx electron-forge make --platform ${{ matrix.platform }} --arch x64
+
+      # Keep every run's output downloadable from the run page, tag or not.
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cascade-${{ matrix.platform }}-x64
+          path: cascade-electron/out/make/**/*
+          if-no-files-found: error
+
+      # On a tag, attach the installers/zips to the GitHub Release.
+      - name: Publish to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: cascade-electron/out/make/**/*
+          fail_on_unmatched_files: true
