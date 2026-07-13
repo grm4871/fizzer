@@ -21,6 +21,9 @@ const CLAUDE_DEFAULT_MODEL = process.env.RUNNER_MODEL || 'claude-sonnet-5';
 const CLAUDE_MAX_TURNS = Number(process.env.RUNNER_MAX_TURNS || 100);
 const CLAUDE_THINKING_TOKENS = Number(process.env.RUNNER_THINKING ?? 4000);
 const CLAUDE_CHAT_MAX_TURNS = Number(process.env.RUNNER_CHAT_MAX_TURNS || 30);
+// Extra turn windows a chat run may auto-continue into after hitting the cap
+// (each resumes the same session). Total turns ≈ CHAT_MAX_TURNS × (1 + this).
+const CLAUDE_CHAT_MAX_CONTINUES = Number(process.env.RUNNER_CHAT_MAX_CONTINUES || 3);
 const CLAUDE_CHAT_THINKING_TOKENS = Number(process.env.RUNNER_CHAT_THINKING ?? 1500);
 const CLAUDE_AGENT_CONTEXT = 'You are a local workspace assistant. This checkout is not the live Cascade app: use `cascade-note` for live notes, `cascade-memory` for durable recall, and normal file edits only for local scratch or non-note work. Notes you create via cascade-note are unlisted by default (chat/search/embed only, not the left sidebar). Only pass `--listed` if the user explicitly asks to put a note in the sidebar tree. Respect auth boundaries and only handle secrets the user explicitly provides for this task.';
 
@@ -710,6 +713,16 @@ async function runClaudeLocally(opts, emit) {
       emit(classifySdkMessage(message), message);
       if (message.type === 'result') summary = message.result || message.subtype || summary;
     }
+  } catch (error) {
+    // The SDK throws when the per-query turn cap is hit. Tag it with the live
+    // session id + partial text so the caller can auto-continue (resume the
+    // same session for another turn window) instead of hard-failing.
+    if (error && /maximum number of turns/i.test(error.message || '')) {
+      error.cascadeMaxTurns = true;
+      error.cascadeSessionId = sessionId;
+      error.cascadePartialText = streamedText;
+    }
+    throw error;
   } finally {
     activeClaudeQueries.delete(runId);
   }
@@ -747,14 +760,41 @@ async function startLocalAgentRun(opts, sendEvent) {
   emit('status', { status: 'running' });
 
   if (agent === 'claude-code') {
+    // Auto-continue past the per-query turn cap: hitting maxTurns isn't a
+    // context-window problem (the SDK autocompacts that on its own) — it's a
+    // guardrail on agentic loop length. Rather than hard-fail a long task, we
+    // resume the same session for another turn window, bounded so a runaway
+    // still stops. Only for chat runs; note-pane runs keep the single window.
+    const chatRun = isChatRun(opts);
+    const maxContinues = chatRun ? CLAUDE_CHAT_MAX_CONTINUES : 0;
+    let resume = typeof opts.resumeSessionId === 'string' ? opts.resumeSessionId : undefined;
+    let runPrompt = prompt;
+    let attempt = 0;
     try {
-      const result = await runClaudeLocally({ ...opts, prompt }, emit);
-      emitTerminalStatus(emit, runId, 'completed', result.summary, result.sessionId);
-      return { sessionId: result.sessionId };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      emitTerminalStatus(emit, runId, 'failed', message);
-      throw error;
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        try {
+          const result = await runClaudeLocally({ ...opts, prompt: runPrompt, resumeSessionId: resume }, emit);
+          emitTerminalStatus(emit, runId, 'completed', result.summary, result.sessionId);
+          return { sessionId: result.sessionId };
+        } catch (error) {
+          if (error && error.cascadeMaxTurns && error.cascadeSessionId && attempt < maxContinues) {
+            attempt += 1;
+            resume = error.cascadeSessionId;
+            runPrompt = 'Continue where you left off.';
+            emitHarness(emit, `\x1b[2m# turn limit reached — auto-continuing (${attempt}/${maxContinues})\x1b[0m\r\n`);
+            continue;
+          }
+          const message = error instanceof Error ? error.message : String(error);
+          // Friendlier, actionable message when we truly cap out — the session
+          // persists, so a follow-up ping resumes from here.
+          const friendly = error && error.cascadeMaxTurns
+            ? `Reached the turn limit after ${maxContinues + 1} windows — reply to continue where I left off.`
+            : message;
+          emitTerminalStatus(emit, runId, 'failed', friendly);
+          throw error;
+        }
+      }
     } finally {
       cleanupRunHelperConfig(runId);
     }
