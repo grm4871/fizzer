@@ -18,11 +18,13 @@ let claudeSdkPromise = null;
 // by THIS machine's `claude` login / ANTHROPIC_API_KEY — never the server's.
 // Mirrors the run options the server used to apply in server/runner.ts.
 const CLAUDE_DEFAULT_MODEL = process.env.RUNNER_MODEL || 'claude-sonnet-5';
-const CLAUDE_MAX_TURNS = Number(process.env.RUNNER_MAX_TURNS || 100);
+// Turn caps are off by default (0 = unlimited); the SDK only receives a
+// maxTurns when one of these envs is set to a positive value.
+const CLAUDE_MAX_TURNS = Number(process.env.RUNNER_MAX_TURNS || 0);
 const CLAUDE_THINKING_TOKENS = Number(process.env.RUNNER_THINKING ?? 4000);
-const CLAUDE_CHAT_MAX_TURNS = Number(process.env.RUNNER_CHAT_MAX_TURNS || 30);
-// Extra turn windows a chat run may auto-continue into after hitting the cap
-// (each resumes the same session). Total turns ≈ CHAT_MAX_TURNS × (1 + this).
+const CLAUDE_CHAT_MAX_TURNS = Number(process.env.RUNNER_CHAT_MAX_TURNS || 0);
+// Extra turn windows a chat run may auto-continue into after hitting a cap
+// (each resumes the same session). Only relevant when a cap is set above.
 const CLAUDE_CHAT_MAX_CONTINUES = Number(process.env.RUNNER_CHAT_MAX_CONTINUES || 3);
 // Chat runs stay low-thinking so multiuser pings don't burn long monologues.
 // Override with RUNNER_CHAT_THINKING if a heavy chat agent needs more.
@@ -480,7 +482,8 @@ async function runClaudeLocally(opts, emit) {
     options: {
       cwd,
       model,
-      maxTurns,
+      // Omit maxTurns entirely when unlimited (0) so the SDK imposes no cap.
+      ...(maxTurns > 0 ? { maxTurns } : {}),
       env: { ...process.env, ...helperEnv },
       // "Yolo" bypasses all permission prompts (requires the explicit
       // allowDangerouslySkipPermissions acknowledgement); otherwise auto-accept
@@ -529,7 +532,7 @@ async function runClaudeLocally(opts, emit) {
   let pendingTool = null;
   emitHarness(emit, `\x1b[2m# claude-code ${model} · ${cwd}\x1b[0m\r\n`);
   // Advertise configured turn cap up front so the panel can show turns N/max mid-run.
-  emitCascadeStats(emit, { model, maxTurns });
+  emitCascadeStats(emit, { model, maxTurns: maxTurns > 0 ? maxTurns : undefined });
   try {
     for await (const message of stream) {
       if (message.session_id) sessionId = message.session_id;
@@ -651,7 +654,7 @@ async function runClaudeLocally(opts, emit) {
         }
       } else if (message.type === 'result') {
         emitHarness(emit, `\x1b[2m# result ${message.subtype || message.result || 'done'}\x1b[0m\r\n`);
-        emitCascadeStats(emit, statsFromClaudeResult(message, model, maxTurns));
+        emitCascadeStats(emit, statsFromClaudeResult(message, model, maxTurns > 0 ? maxTurns : undefined));
         // Best-effort: ask the live query for context-window breakdown + plan
         // rate limits. Methods may no-op once the stream is closing.
         try {
