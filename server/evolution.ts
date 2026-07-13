@@ -62,6 +62,15 @@ export function ensureEvolutionSchema(db: Db): void {
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS agent_memory_captures (
+      run_id INTEGER PRIMARY KEY,
+      vault_id TEXT NOT NULL,
+      note_id TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS agent_memory_captures_vault_idx
+      ON agent_memory_captures(vault_id, created_at DESC);
+
     CREATE TABLE IF NOT EXISTS distill_jobs (
       id TEXT PRIMARY KEY,
       vault_id TEXT NOT NULL,
@@ -574,11 +583,14 @@ function ensureIndexNote(db: Db, vaultId: string, userId: number, folderId: stri
   const index = db.prepare(`
     SELECT id FROM notes WHERE vault_id = ? AND folder_id = ? AND title = 'INDEX' COLLATE NOCASE
   `).get(vaultId, folderId) as { id: string } | undefined;
-  if (index) return;
+  if (index) {
+    db.prepare('UPDATE notes SET is_listed = 1 WHERE id = ?').run(index.id);
+    return;
+  }
   createNote(db, vaultId, userId, {
     title: 'INDEX',
     folder_id: folderId,
-    is_listed: false,
+    is_listed: true,
     content: [
       `# ${heading}`,
       '',
@@ -738,7 +750,7 @@ export function createAgentMemoryNote(
   db: Db,
   userId: number,
   vaultId: string,
-  input: { title?: string; body: string; agentKey?: string },
+  input: { title?: string; body: string; agentKey?: string; listed?: boolean },
 ): Note {
   const vault = getVault(db, vaultId, userId);
   if (!vault) throw new Error('Vault not found');
@@ -752,7 +764,7 @@ export function createAgentMemoryNote(
     title,
     folder_id: memoryId,
     content: `${body}\n`,
-    is_listed: false,
+    is_listed: input.listed === true,
   });
   // Prepend pointer to INDEX
   const index = db.prepare(`
@@ -766,6 +778,57 @@ export function createAgentMemoryNote(
       : `${index.content.trimEnd()}\n\n${pointer}\n`;
     updateNote(db, index.id, next);
   }
+  return note;
+}
+
+/** Persist a bounded request/outcome record once for a successful agent run. */
+export function captureAgentRunMemory(
+  db: Db,
+  userId: number,
+  vaultId: string,
+  input: {
+    runId: number;
+    agentKey: string;
+    channelTitle?: string;
+    request: string;
+    outcome: string;
+  },
+): Note | undefined {
+  if (!isAgentMemoryEnabled(db, vaultId)) return undefined;
+  const exists = db.prepare('SELECT 1 AS ok FROM agent_memory_captures WHERE run_id = ?')
+    .get(input.runId) as { ok: number } | undefined;
+  if (exists) return undefined;
+
+  const request = truncateSnippet(input.request, 900);
+  const outcome = truncateSnippet(input.outcome, 1800);
+  if (!request || !outcome) return undefined;
+  const titleSeed = request.replace(/^@[-\w]+\s*/i, '').replace(/\s+/g, ' ').trim();
+  const titleBase = titleSeed.length > 58 ? `${titleSeed.slice(0, 57)}…` : titleSeed;
+  const title = `${titleBase || 'Agent memory'} (${input.runId})`;
+  const channel = truncateSnippet(input.channelTitle || '', 120);
+  const body = [
+    channel ? `Channel: ${channel}` : '',
+    `Captured from completed run ${input.runId}.`,
+    '',
+    '## Request',
+    request,
+    '',
+    '## Outcome',
+    outcome,
+    '',
+    `<!-- cascade-agent-run:${input.runId} -->`,
+  ].filter((line, index) => line || index > 1).join('\n').trim();
+
+  const note = createAgentMemoryNote(db, userId, vaultId, {
+    title,
+    body,
+    agentKey: input.agentKey,
+    listed: true,
+  });
+  db.prepare(`
+    INSERT OR IGNORE INTO agent_memory_captures (run_id, vault_id, note_id)
+    VALUES (?, ?, ?)
+  `).run(input.runId, vaultId, note.id);
   return note;
 }
 

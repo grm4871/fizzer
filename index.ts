@@ -134,6 +134,7 @@ import {
 import {
   backfillChatNoteBacklinks,
   buildAgentMemoryInjection,
+  captureAgentRunMemory,
   createAgentMemoryNote,
   distillChatToNote,
   ensureAgentMemoryFolders,
@@ -565,6 +566,51 @@ function syncRunToChatMessage(runId: number) {
     if (updated) {
       const { route } = assertChatChannel(db, target.channelId, target.userId);
       emitChatMessageEvent(route.sourceVaultId, route.sourceChannelId, 'vault:chatMessageUpdated', updated);
+      if (content.done && !content.status) {
+        try {
+          const responseRow = db.prepare(`
+            SELECT rowid, registration_id FROM chat_messages WHERE id = ? AND channel_id = ?
+          `).get(target.messageId, route.sourceChannelId) as { rowid: number; registration_id: string | null } | undefined;
+          const requestRow = responseRow
+            ? db.prepare(`
+                SELECT body FROM chat_messages
+                WHERE channel_id = ? AND rowid < ?
+                  AND trim(body) != '' AND body != 'Thinking...'
+                ORDER BY rowid DESC LIMIT 1
+              `).get(route.sourceChannelId, responseRow.rowid) as { body: string } | undefined
+            : undefined;
+          const registration = responseRow?.registration_id
+            ? db.prepare(`
+                SELECT mention, agent_id FROM chat_agent_members
+                WHERE id = ? AND channel_id = ?
+              `).get(responseRow.registration_id, route.sourceChannelId) as { mention: string; agent_id: string } | undefined
+            : undefined;
+          const sentRow = responseRow?.registration_id
+            ? db.prepare(`
+                SELECT body FROM chat_messages
+                WHERE channel_id = ? AND registration_id = ? AND rowid > ?
+                  AND trim(body) != '' AND body != 'Thinking...'
+                ORDER BY rowid DESC LIMIT 1
+              `).get(route.sourceChannelId, responseRow.registration_id, responseRow.rowid) as { body: string } | undefined
+            : undefined;
+          const memoryNote = captureAgentRunMemory(db, target.userId, target.vaultId, {
+            runId,
+            agentKey: registration?.mention || registration?.agent_id || updated.agentId || 'agent',
+            channelTitle: getNote(db, route.sourceChannelId)?.title || '',
+            request: requestRow?.body || '',
+            outcome: updated.body || sentRow?.body || '',
+          });
+          if (memoryNote) {
+            emitVaultEvent(target.vaultId, 'vault:noteCreated', {
+              noteId: memoryNote.id,
+              vaultId: target.vaultId,
+              title: memoryNote.title,
+            });
+          }
+        } catch (error) {
+          console.warn('agent memory capture skipped:', error instanceof Error ? error.message : error);
+        }
+      }
     }
   } catch {
     // Channel/message vanished (e.g. deleted mid-run) — drop the target below.
