@@ -13,6 +13,7 @@
 import { Fragment, useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react';
 import { FileText, ExternalLink, X, Hash, Plus } from 'lucide-react';
 import type { Tab } from './TabBar';
+import { NOTE_DND_TYPE } from '../docEmbeds';
 import { isPane, type DropSide, type LayoutNode, type PaneNode, type SplitNode } from '../layout/tree';
 
 const DRAG_MIME = 'application/x-cascade-tab';
@@ -126,6 +127,9 @@ function PaneTabStrip({
   const handleDragStart = (event: DragEvent, tabId: string) => {
     const payload: TabDragPayload = { tabId, fromPaneId: pane.id };
     event.dataTransfer.setData(DRAG_MIME, JSON.stringify(payload));
+    // Let the sidebar accept an open (including unlisted/implicit) note tab as
+    // a note drop. Its move endpoint also promotes unlisted notes to listed.
+    event.dataTransfer.setData(NOTE_DND_TYPE, tabId);
     event.dataTransfer.effectAllowed = 'move';
   };
 

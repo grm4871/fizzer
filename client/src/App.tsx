@@ -38,7 +38,7 @@ import {
   normalizeChatCwd,
   type AgentId,
 } from './chat/agents';
-import { getMentionedRegistrations, normalizeMention, stripRegisteredAgentMentions } from './chat/mentions';
+import { getMentionedRegistrations, normalizeMention, resolveAgentMessageRegistration, stripRegisteredAgentMentions } from './chat/mentions';
 import {
   appendChatRunBlocks,
   appendHarnessLog,
@@ -201,6 +201,9 @@ export default function App() {
   const pendingChatPatchRef = useRef<Map<string, ChatMessage>>(new Map());
   const chatPatchTimerRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const startAgentChatRunRef = useRef<((channelId: string, registration: ChatAgentRegistration, prompt: string, triggeringMessage: ChatMessage) => void) | null>(null);
+  // Direct `cascade-chat send` replies arrive as a new message, rather than as
+  // streamed run text. Keep handoffs idempotent across socket reconnects.
+  const chainedAgentMessageIdsRef = useRef<Set<string>>(new Set());
 
   // Repair focus if the focused pane disappears (e.g. after collapsing a split).
   useEffect(() => {
@@ -1868,6 +1871,27 @@ export default function App() {
           },
         };
       });
+
+      // Agents normally post their real reply through `cascade-chat send`.
+      // Those messages bypass the run-completion chain below because the run
+      // bubble is suppressed to avoid a duplicate reply. Chain from this
+      // settled, agent-authored message instead; never from "Thinking...".
+      if (data.message.status) return;
+      const registrations = chatStateRef.current.registeredAgentsByChannel[data.channelId] ?? [];
+      const source = resolveAgentMessageRegistration(data.message, registrations);
+      if (!source) return;
+      const targets = getMentionedRegistrations(
+        data.message.body,
+        registrations.filter((item) => item.id !== source.id),
+        true,
+      );
+      const prompt = stripRegisteredAgentMentions(data.message.body, registrations) || data.message.body;
+      for (const target of targets) {
+        const key = `${data.message.id}:${target.id}`;
+        if (chainedAgentMessageIdsRef.current.has(key)) continue;
+        chainedAgentMessageIdsRef.current.add(key);
+        startAgentChatRunRef.current?.(data.channelId, target, prompt, data.message);
+      }
     };
     const handleChatMessageUpdated = (data: { vaultId: string; channelId: string; message: ChatMessage }) => {
       if (data.vaultId !== activeVaultId) return;

@@ -19,6 +19,8 @@ describe('isLightweightChatRequest', () => {
     expect(isLightweightChatRequest('fix the scrolling regression in ChatView.tsx')).toBe(false);
     expect(isLightweightChatRequest('implement dark mode and deploy')).toBe(false);
     expect(isLightweightChatRequest('```ts\nconst x = 1\n```')).toBe(false);
+    expect(isLightweightChatRequest('agents pinging other agents broke recently. even when i have the setting on it doesnt happen')).toBe(false);
+    expect(isLightweightChatRequest("the toggle doesn't work")).toBe(false);
   });
 });
 
@@ -26,6 +28,7 @@ describe('formatAgentChatPrompt', () => {
   it('heavy tasks keep multi-step progress guidance', () => {
     const prompt = formatAgentChatPrompt('dev', registration, 'fix the runner and deploy', 'alice', false);
     expect(prompt).toContain('do not stop mid-task');
+    expect(prompt).toContain('continue through the work and verification');
     expect(prompt).toContain('cascade-chat send');
     expect(prompt).not.toContain('Run `cascade-chat history');
   });

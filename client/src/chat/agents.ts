@@ -181,9 +181,10 @@ export function isLightweightChatRequest(request: string): boolean {
   if (/```/.test(t)) return false;
   if (/\/[\w./-]+\.(ts|tsx|js|jsx|cjs|mjs|py|go|rs|java|kt|md|json|yml|yaml|toml|c|cpp|h)\b/i.test(t)) return false;
   // Action-y engineering verbs — not bare nouns like "is the deploy green?"
-  if (/\b(fix|implement|refactor|debug|commit|rebase|merge conflict|stack trace|typeerror|regression|write (a |the )?test|pull request)\b/i.test(t)) {
+  if (/\b(fix|implement|refactor|debug|commit|rebase|merge conflict|stack trace|typeerror|regression|broke|broken|not working|stopped working|fail(?:s|ed|ing)?|write (a |the )?test|pull request)\b/i.test(t)) {
     return false;
   }
+  if (/\b(?:does(?:n't| not)|won't|will not)\s+work\b/i.test(t)) return false;
   if (/\b(please\s+)?deploy(\s+(this|it|to|now|the|please)|\s*$)/i.test(t) && !/\b(is|was|are|the)\s+deploy\b/i.test(t)) {
     return false;
   }
@@ -224,6 +225,6 @@ export function formatAgentChatPrompt(
     return `${header}\n\n${request}`;
   }
 
-  const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. Live multiuser chat: prefer a useful reply soon over a perfect investigation. Use the recent channel context below; fetch more with \`cascade-chat history --include-reply-context\` only when needed. Your private persistent scratchpad is available through \`cascade-note memory list|read|write|update|delete\`; curate it when durable context is worth keeping. Use tools when the task needs code/repo work — not for chitchat. Use \`cascade-chat send --message "text"\` for progress on long work and for the final answer; do not stop mid-task after a progress send. Notes via cascade-note are unlisted by default; \`--listed\` only if asked. Stdout after the final send is discarded — no closing summary.${channelNote}`;
+  const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. Live multiuser chat: prefer a useful reply soon over a perfect investigation. Use the recent channel context below; fetch more with \`cascade-chat history --include-reply-context\` only when needed. Your private persistent scratchpad is available through \`cascade-note memory list|read|write|update|delete\`; curate it when durable context is worth keeping. Use tools when the task needs code/repo work — not for chitchat. An acknowledgment is progress, not completion: when asked to fix, diagnose, or implement something, continue through the work and verification. Use \`cascade-chat send --message "text"\` for progress on long work and for the final answer; do not stop mid-task after a progress send. Notes via cascade-note are unlisted by default; \`--listed\` only if asked. Stdout after the final send is discarded — no closing summary.${channelNote}`;
   return `${header}\n\n${request}`;
 }
