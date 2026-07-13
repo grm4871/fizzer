@@ -59,6 +59,9 @@ export type ChatMessage = {
   harnessLog?: string;
   /** List payloads omit harnessLog; true when a full log exists server-side. */
   hasHarness?: boolean;
+  /** List payloads strip heavy data-URL images; true when the full message has
+   * images the client should hydrate on demand. */
+  hasImages?: boolean;
   images?: string[];
   attachments?: Array<{ name: string; media_type: string; url: string }>;
   replyTo?: ChatReplyRef;
@@ -873,10 +876,13 @@ function rowToMessage(row: ChatMessageRow & { has_harness?: number }, opts?: { d
     ...(() => {
       const images = parseJson<string[]>(row.images_json);
       if (!images?.length) return {};
-      // List: drop giant data-URL payloads; keep short http(s) thumbs.
+      // List: drop giant data-URL payloads; keep short http(s) thumbs. Flag any
+      // stripped images so the client can hydrate the full message on demand
+      // (otherwise image-only messages render blank after a list load).
       if (detail === 'list') {
         const light = images.filter((src) => typeof src === 'string' && !src.startsWith('data:') && src.length < 2048);
-        return light.length ? { images: light } : {};
+        if (light.length === images.length) return { images: light };
+        return light.length ? { images: light, hasImages: true } : { hasImages: true };
       }
       return { images };
     })(),

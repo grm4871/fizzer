@@ -72,6 +72,8 @@ export interface ChatMessage {
   harnessLog?: string;
   /** List API omitted harnessLog but server has one — expand fetches full message. */
   hasHarness?: boolean;
+  /** List API stripped heavy data-URL images — hydrate full message to show them. */
+  hasImages?: boolean;
   images?: string[];
   attachments?: Array<{ name: string; media_type: string; url: string }>;
   replyTo?: ChatReplyRef;
@@ -1066,6 +1068,22 @@ export const ChatView = memo(function ChatView({
   // keep their object identity or ChatGroupRow's memo never hits: reuse the
   // previous group object when the exact same message refs compose it.
   const groupIdentityCacheRef = useRef<Map<string, ChatMessageGroup>>(new Map());
+  // Lazily hydrate messages whose data-URL images the list payload stripped
+  // (flagged hasImages). Keeps the slim list fast to load, then fills images in.
+  const hydratedImageIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!vaultId || !onHydrateMessage) return;
+    for (const message of sortedMessages) {
+      if (!message.hasImages || hydratedImageIdsRef.current.has(message.id)) continue;
+      hydratedImageIdsRef.current.add(message.id);
+      void api<{ message: ChatMessage }>(
+        `/api/vaults/${vaultId}/channels/${message.channelId}/messages/${encodeURIComponent(message.id)}`,
+      )
+        .then((data) => { if (data.message) onHydrateMessage(data.message); })
+        .catch(() => { hydratedImageIdsRef.current.delete(message.id); });
+    }
+  }, [sortedMessages, vaultId, onHydrateMessage]);
+
   const messageGroups = useMemo(() => {
     const fresh = groupChatMessages(sortedMessages);
     const cache = groupIdentityCacheRef.current;

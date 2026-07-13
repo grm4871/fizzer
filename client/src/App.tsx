@@ -784,10 +784,11 @@ export default function App() {
       const next = [...existing];
       next[index] = mergeRemoteChatMessage(existing[index], {
         ...message,
-        // Prefer full harness/blocks from expand fetch.
+        // Prefer full harness/blocks/images from the expand/hydrate fetch.
         harnessLog: message.harnessLog || existing[index].harnessLog,
         blocks: message.blocks?.length ? message.blocks : existing[index].blocks,
         hasHarness: message.hasHarness ?? existing[index].hasHarness,
+        images: message.images?.length ? message.images : existing[index].images,
       });
       return {
         ...prev,
