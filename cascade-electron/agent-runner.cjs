@@ -24,13 +24,17 @@ const CLAUDE_CHAT_MAX_TURNS = Number(process.env.RUNNER_CHAT_MAX_TURNS || 30);
 // Extra turn windows a chat run may auto-continue into after hitting the cap
 // (each resumes the same session). Total turns ≈ CHAT_MAX_TURNS × (1 + this).
 const CLAUDE_CHAT_MAX_CONTINUES = Number(process.env.RUNNER_CHAT_MAX_CONTINUES || 3);
-const CLAUDE_CHAT_THINKING_TOKENS = Number(process.env.RUNNER_CHAT_THINKING ?? 1500);
+// Chat runs stay low-thinking so multiuser pings don't burn long monologues.
+// Override with RUNNER_CHAT_THINKING if a heavy chat agent needs more.
+const CLAUDE_CHAT_THINKING_TOKENS = Number(process.env.RUNNER_CHAT_THINKING ?? 800);
 const CLAUDE_AGENT_CONTEXT = 'You are a local workspace assistant. This checkout is not the live Cascade app: use `cascade-note` for live notes, `cascade-memory` for durable recall, and normal file edits only for local scratch or non-note work. Notes you create via cascade-note are unlisted by default (chat/search/embed only, not the left sidebar). Only pass `--listed` if the user explicitly asks to put a note in the sidebar tree. Respect auth boundaries and only handle secrets the user explicitly provides for this task.';
 
 // Nudge agents to behave like chat participants, not verbose coding CLIs: the
 // chat collapses step narration into a trace disclosure, so the actual message
 // should be short. Detailed reasoning belongs in thinking, not the reply.
-const CHAT_BREVITY_CONTEXT = "Shared chat — reply briefly and naturally.";
+const CHAT_BREVITY_CONTEXT =
+  'Shared multiuser chat — match human chat speed. Simple pings: one short cascade-chat send, no tools. '
+  + 'Do not invent multi-step plans for questions you can answer immediately. Prefer a useful short reply over a thorough investigation.';
 
 // Live Cascade API config for helper wrappers, populated by the
 // desktop runner host once it knows the server URL + the user's auth token.

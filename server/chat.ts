@@ -1073,8 +1073,14 @@ export function listChatMessages(
 }
 
 /** Small, text-only context for a cold agent run. Heavy media and run blocks stay out. */
-export function buildAgentChatContext(messages: ChatMessage[], excludeMessageIds: string | string[] = '', limit = 8): string {
+export function buildAgentChatContext(
+  messages: ChatMessage[],
+  excludeMessageIds: string | string[] = '',
+  limit = 8,
+  maxBodyChars = 320,
+): string {
   const excluded = new Set(Array.isArray(excludeMessageIds) ? excludeMessageIds : [excludeMessageIds]);
+  const maxBody = Math.max(80, maxBodyChars);
   const rows = messages
     .filter((message) => !excluded.has(message.id))
     .filter((message) => {
@@ -1085,9 +1091,9 @@ export function buildAgentChatContext(messages: ChatMessage[], excludeMessageIds
   if (!rows.length) return '';
   return rows.map((message) => {
     const body = message.body.replace(/\s+/g, ' ').trim();
-    const clipped = body.length > 500 ? `${body.slice(0, 499)}…` : body;
+    const clipped = body.length > maxBody ? `${body.slice(0, maxBody - 1)}…` : body;
     const reply = message.replyTo?.preview
-      ? ` (replying to ${message.replyTo.author || message.replyTo.mention || 'message'}: ${message.replyTo.preview.slice(0, 160)})`
+      ? ` (replying to ${message.replyTo.author || message.replyTo.mention || 'message'}: ${message.replyTo.preview.slice(0, 120)})`
       : '';
     return `${message.author}${reply}: ${clipped}`;
   }).join('\n');

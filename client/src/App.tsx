@@ -33,6 +33,7 @@ import {
   agentLabel,
   CHAT_AGENTS,
   formatAgentChatPrompt,
+  isLightweightChatRequest,
   mergeAgentModelPresets,
   normalizeChatCwd,
   type AgentId,
@@ -1399,6 +1400,8 @@ export default function App() {
             messageId: agentMessageId,
             triggeringMessageId: triggeringMessage.id,
             author: registration.displayName || agentLabel(agentId),
+            // Server skips heavy exocortex/memory inject for simple pings.
+            lightweight: isLightweightChatRequest(prompt),
           },
         }),
       });

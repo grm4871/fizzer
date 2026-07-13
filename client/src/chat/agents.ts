@@ -168,6 +168,32 @@ export type AgentPromptRegistration = {
 };
 
 /**
+ * Heuristic: short social / Q&A pings that should not launch a full agent
+ * investigation (no tools, no history fetch, no long plan).
+ * Intentionally conservative — anything that looks like engineering work returns false.
+ */
+export function isLightweightChatRequest(request: string): boolean {
+  const t = String(request || '').trim();
+  if (!t) return true;
+  if (t.length > 320) return false;
+  // Multi-line task briefs / code dumps
+  if ((t.match(/\n/g) || []).length >= 4) return false;
+  if (/```/.test(t)) return false;
+  if (/\/[\w./-]+\.(ts|tsx|js|jsx|cjs|mjs|py|go|rs|java|kt|md|json|yml|yaml|toml|c|cpp|h)\b/i.test(t)) return false;
+  // Action-y engineering verbs — not bare nouns like "is the deploy green?"
+  if (/\b(fix|implement|refactor|debug|commit|rebase|merge conflict|stack trace|typeerror|regression|write (a |the )?test|pull request)\b/i.test(t)) {
+    return false;
+  }
+  if (/\b(please\s+)?deploy(\s+(this|it|to|now|the|please)|\s*$)/i.test(t) && !/\b(is|was|are|the)\s+deploy\b/i.test(t)) {
+    return false;
+  }
+  if (/\b(grep|search the|look through|investigate|dig into|figure out why)\b/i.test(t) && t.length > 60) {
+    return false;
+  }
+  return true;
+}
+
+/**
  * Build the system-ish header the agent receives for a channel reply.
  * When `continuation` is true the CLI session already holds earlier turns —
  * use a short header and skip re-stating helper docs / channel notes.
@@ -182,13 +208,22 @@ export function formatAgentChatPrompt(
   const selfAgent = CHAT_AGENTS.find((candidate) => candidate.id === registration.agentId);
   const selfHandle = registration.mention || registration.agentId;
   const selfName = registration.displayName || selfAgent?.label || registration.agentId;
+  const light = isLightweightChatRequest(request);
 
   if (continuation) {
-    const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. Continue until the request is complete. Use \`cascade-chat send\` for brief progress updates, but do not stop after an update. Send the final response there. Any stdout after \`cascade-chat send\` is discarded, so do not write a closing summary.`;
+    const header = light
+      ? `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. Prefer a quick chat reply: one \`cascade-chat send\` and stop. Tools/history only if this turn clearly needs them. No closing summary after send (stdout is discarded).`
+      : `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. Finish the request with judgment — don't over-research. Use \`cascade-chat send\` for progress on multi-step work; final answer there too. No closing summary after send.`;
     return `${header}\n\n${request}`;
   }
 
   const channelNote = registration.contextPrompt ? ` Channel note: ${registration.contextPrompt}` : '';
-  const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. Use the recent channel context included below to complete the request; fetch more with \`cascade-chat history --include-reply-context\` only when needed. Use \`cascade-chat send --message "text"\` for brief progress updates, but do not stop after an update. Send the final response there. Any stdout after \`cascade-chat send\` is discarded, so do not write a closing summary. Notes you create via cascade-note are unlisted by default (chat/search only); use \`--listed\` only if the user asks to put them in the sidebar.${channelNote}`;
+  if (light) {
+    // Fast multiuser path: no mandatory tool loop; context is already injected when useful.
+    const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. This is a live multiuser chat — match the energy: short natural replies, not an agent report. For simple questions/acks: one \`cascade-chat send --message "..."\` and stop (no tools, no history fetch, no plan). Use tools or \`cascade-chat history\` only if you truly cannot answer from the recent context below. Notes via cascade-note are unlisted by default; \`--listed\` only if asked. Final answer is the cascade-chat send (stdout after it is discarded).${channelNote}`;
+    return `${header}\n\n${request}`;
+  }
+
+  const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. Live multiuser chat: prefer a useful reply soon over a perfect investigation. Use the recent channel context below; fetch more with \`cascade-chat history --include-reply-context\` only when needed. Use tools when the task needs code/repo work — not for chitchat. Use \`cascade-chat send --message "text"\` for progress on long work and for the final answer; do not stop mid-task after a progress send. Notes via cascade-note are unlisted by default; \`--listed\` only if asked. Stdout after the final send is discarded — no closing summary.${channelNote}`;
   return `${header}\n\n${request}`;
 }

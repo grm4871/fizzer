@@ -1422,6 +1422,10 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
   const triggeringMessageId = typeof req.body?.chat?.triggeringMessageId === 'string'
     ? req.body.chat.triggeringMessageId.trim()
     : '';
+  const chatLightweight = req.body?.chat?.lightweight === true
+    || req.body?.chat?.lightweight === 1
+    || req.body?.chat?.lightweight === '1'
+    || req.body?.chat?.lightweight === 'true';
   const registrationId = typeof req.body?.registrationId === 'string' ? req.body.registrationId.trim() : '';
 
   // Resolve the run's execution context. A chat-agent ping always executes on the
@@ -1537,48 +1541,58 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     let effectivePrompt = prompt;
     if (!willResume) {
       const contextChunks: string[] = [];
+      // Lightweight chat pings: tiny recent transcript only — skip exocortex +
+      // memory so simple multiuser replies don't pay a full RAG cold-start.
       if (targetChannelId) {
         try {
           const recent = buildAgentChatContext(
-            listChatMessages(db, targetChannelId, runnerUserId, { limit: 24 }),
+            listChatMessages(db, targetChannelId, runnerUserId, {
+              limit: chatLightweight ? 12 : 24,
+            }),
             [chatMessageId, triggeringMessageId],
+            chatLightweight ? 5 : 8,
           );
           if (recent) contextChunks.push(`Recent channel context:\n${recent}`);
         } catch { /* best-effort context; the request still runs without it */ }
       }
-      try {
-        const recentMessages = targetChannelId
-          ? listChatMessages(db, targetChannelId, runnerUserId).slice(-8).map((message) => `${message.author}: ${message.body}`).join('\n')
-          : '';
-        const recallQuery = [prompt, recentMessages].filter(Boolean).join('\n');
-        const recall = buildRecallContext(
-          recallExocortex(db, runnerUserId, runVault.id, recallQuery, {
-            channelId: targetChannelId || undefined,
-            limit: 3,
-          }),
-          700,
-        );
-        if (recall) contextChunks.push(recall);
-      } catch (error) {
-        console.warn('Exocortex recall skipped:', error instanceof Error ? error.message : error);
-      }
-      try {
-        const channelTitle = targetChannelId
-          ? (getNote(db, targetChannelId)?.title || '')
-          : '';
+      if (!chatLightweight) {
         try {
-          if (agentMemoryKey) {
-            ensureAgentNamedMemoryFolders(db, runVault.id, runnerUserId, agentMemoryKey);
-          }
-        } catch { /* best-effort folder mint */ }
-        const mem = buildAgentMemoryInjection(db, runVault.id, {
-          channelTopic: `${channelTitle} ${prompt}`.slice(0, 400),
-          maxChars: 900,
-          agentKey: agentMemoryKey || selectedAgent,
-        });
-        if (mem.enabled && mem.text) contextChunks.push(mem.text);
-      } catch (error) {
-        console.warn('Agent memory injection skipped:', error instanceof Error ? error.message : error);
+          const recentMessages = targetChannelId
+            ? listChatMessages(db, targetChannelId, runnerUserId, { limit: 12 })
+              .slice(-8)
+              .map((message) => `${message.author}: ${message.body}`)
+              .join('\n')
+            : '';
+          const recallQuery = [prompt, recentMessages].filter(Boolean).join('\n');
+          const recall = buildRecallContext(
+            recallExocortex(db, runnerUserId, runVault.id, recallQuery, {
+              channelId: targetChannelId || undefined,
+              limit: 3,
+            }),
+            700,
+          );
+          if (recall) contextChunks.push(recall);
+        } catch (error) {
+          console.warn('Exocortex recall skipped:', error instanceof Error ? error.message : error);
+        }
+        try {
+          const channelTitle = targetChannelId
+            ? (getNote(db, targetChannelId)?.title || '')
+            : '';
+          try {
+            if (agentMemoryKey) {
+              ensureAgentNamedMemoryFolders(db, runVault.id, runnerUserId, agentMemoryKey);
+            }
+          } catch { /* best-effort folder mint */ }
+          const mem = buildAgentMemoryInjection(db, runVault.id, {
+            channelTopic: `${channelTitle} ${prompt}`.slice(0, 400),
+            maxChars: 900,
+            agentKey: agentMemoryKey || selectedAgent,
+          });
+          if (mem.enabled && mem.text) contextChunks.push(mem.text);
+        } catch (error) {
+          console.warn('Agent memory injection skipped:', error instanceof Error ? error.message : error);
+        }
       }
       if (contextChunks.length) {
         effectivePrompt = `${prompt}\n\n[Context: ${contextChunks.join('\n\n')}]`;

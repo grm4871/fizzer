@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatAgentChatPrompt } from '../chat/agents';
+import { formatAgentChatPrompt, isLightweightChatRequest } from '../chat/agents';
 
 const registration = {
   agentId: 'codex',
@@ -8,18 +8,39 @@ const registration = {
   contextPrompt: '',
 };
 
-describe('formatAgentChatPrompt', () => {
-  it.each([false, true])('tells agents to continue after progress updates (continuation=%s)', (continuation) => {
-    const prompt = formatAgentChatPrompt('dev', registration, 'make the change', 'alice', continuation);
-    expect(prompt).toContain('do not stop after an update');
-    expect(prompt).toContain('complete');
-    expect(prompt).toContain('Send the final response there');
+describe('isLightweightChatRequest', () => {
+  it('treats short social / Q&A pings as lightweight', () => {
+    expect(isLightweightChatRequest('hey is the deploy up?')).toBe(true);
+    expect(isLightweightChatRequest('thanks')).toBe(true);
+    expect(isLightweightChatRequest('is the app more efficient now?')).toBe(true);
   });
 
-  it('uses injected context instead of requiring a history tool round-trip', () => {
-    const prompt = formatAgentChatPrompt('dev', registration, 'make the change', 'alice');
-    expect(prompt).toContain('recent channel context included below');
-    expect(prompt).toContain('only when needed');
+  it('treats engineering tasks as heavy', () => {
+    expect(isLightweightChatRequest('fix the scrolling regression in ChatView.tsx')).toBe(false);
+    expect(isLightweightChatRequest('implement dark mode and deploy')).toBe(false);
+    expect(isLightweightChatRequest('```ts\nconst x = 1\n```')).toBe(false);
+  });
+});
+
+describe('formatAgentChatPrompt', () => {
+  it('heavy tasks keep multi-step progress guidance', () => {
+    const prompt = formatAgentChatPrompt('dev', registration, 'fix the runner and deploy', 'alice', false);
+    expect(prompt).toContain('do not stop mid-task');
+    expect(prompt).toContain('cascade-chat send');
     expect(prompt).not.toContain('Run `cascade-chat history');
+  });
+
+  it('lightweight pings ask for one short send and no tools', () => {
+    const prompt = formatAgentChatPrompt('dev', registration, 'hey is deploy green?', 'alice');
+    expect(prompt).toContain('one');
+    expect(prompt).toContain('no tools');
+    expect(prompt).toContain('cascade-chat send');
+    expect(prompt).toMatch(/multiuser chat/i);
+  });
+
+  it('continuation lightweight stays snappy', () => {
+    const prompt = formatAgentChatPrompt('dev', registration, 'ok cool', 'alice', true);
+    expect(prompt).toContain('quick chat reply');
+    expect(prompt).toContain('cascade-chat send');
   });
 });
