@@ -184,11 +184,11 @@ export function formatAgentChatPrompt(
   const selfName = registration.displayName || selfAgent?.label || registration.agentId;
 
   if (continuation) {
-    const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. Continue until the request is complete. Use \`cascade-chat send\` for brief progress updates, but do not stop after an update. Send the final response there, then leave stdout empty.`;
+    const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. Continue until the request is complete. Use \`cascade-chat send\` for brief progress updates, but do not stop after an update. Send the final response there. Any stdout after \`cascade-chat send\` is discarded, so do not write a closing summary.`;
     return `${header}\n\n${request}`;
   }
 
   const channelNote = registration.contextPrompt ? ` Channel note: ${registration.contextPrompt}` : '';
-  const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. Run \`cascade-chat history --include-reply-context\`, then complete the request. Use \`cascade-chat send --message "text"\` for brief progress updates, but do not stop after an update. Send the final response there, then leave stdout empty. Notes you create via cascade-note are unlisted by default (chat/search only); use \`--listed\` only if the user asks to put them in the sidebar.${channelNote}`;
+  const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. Run \`cascade-chat history --include-reply-context\`, then complete the request. Use \`cascade-chat send --message "text"\` for brief progress updates, but do not stop after an update. Send the final response there. Any stdout after \`cascade-chat send\` is discarded, so do not write a closing summary. Notes you create via cascade-note are unlisted by default (chat/search only); use \`--listed\` only if the user asks to put them in the sidebar.${channelNote}`;
   return `${header}\n\n${request}`;
 }
