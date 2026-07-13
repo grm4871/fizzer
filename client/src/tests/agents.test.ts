@@ -21,6 +21,12 @@ describe('isLightweightChatRequest', () => {
     expect(isLightweightChatRequest('```ts\nconst x = 1\n```')).toBe(false);
     expect(isLightweightChatRequest('agents pinging other agents broke recently. even when i have the setting on it doesnt happen')).toBe(false);
     expect(isLightweightChatRequest("the toggle doesn't work")).toBe(false);
+    expect(isLightweightChatRequest('can you make that happen')).toBe(false);
+    expect(isLightweightChatRequest('alright can you make the swap')).toBe(false);
+    expect(isLightweightChatRequest('can you test it by pinging hermes')).toBe(false);
+    expect(isLightweightChatRequest('wait setting was off. try again')).toBe(false);
+    expect(isLightweightChatRequest('hide this view unless i click an mp3 file')).toBe(false);
+    expect(isLightweightChatRequest('do this here')).toBe(false);
   });
 });
 
@@ -39,6 +45,8 @@ describe('formatAgentChatPrompt', () => {
     expect(prompt).toContain('no tools');
     expect(prompt).toContain('cascade-chat send');
     expect(prompt).toMatch(/multiuser chat/i);
+    expect(prompt).toContain("First resolve the user's intent");
+    expect(prompt).toContain('mentioned @handle');
   });
 
   it('continuation lightweight stays snappy', () => {

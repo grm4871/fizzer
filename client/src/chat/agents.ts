@@ -180,8 +180,15 @@ export function isLightweightChatRequest(request: string): boolean {
   if ((t.match(/\n/g) || []).length >= 4) return false;
   if (/```/.test(t)) return false;
   if (/\/[\w./-]+\.(ts|tsx|js|jsx|cjs|mjs|py|go|rs|java|kt|md|json|yml|yaml|toml|c|cpp|h)\b/i.test(t)) return false;
-  // Action-y engineering verbs — not bare nouns like "is the deploy green?"
-  if (/\b(fix|implement|refactor|debug|commit|rebase|merge conflict|stack trace|typeerror|regression|broke|broken|not working|stopped working|fail(?:s|ed|ing)?|write (a |the )?test|pull request)\b/i.test(t)) {
+  // Requests to change, inspect, or operate something need the full task prompt,
+  // even when phrased conversationally ("can you make that happen?"). Short
+  // wording is not evidence that the requested work itself is lightweight.
+  if (/\b(fix|implement|refactor|debug|add|remove|delete|hide|show|change|update|rewrite|replace|swap|move|rename|build|create|make|test|verify|check|inspect|investigate|retry|try again|ping|commit|push|ship|rebase|merge conflict|stack trace|typeerror|regression|broke|broken|not working|stopped working|fail(?:s|ed|ing)?|write (a |the )?test|pull request)\b/i.test(t)) {
+    return false;
+  }
+  // Context-dependent imperatives are especially dangerous on the fast path:
+  // the agent must first resolve what "this/that/it" refers to from the thread.
+  if (/\b(do (this|that|it)( here)?|make (this|that|it) happen|go ahead|give it another (try|shot))\b/i.test(t)) {
     return false;
   }
   if (/\b(?:does(?:n't| not)|won't|will not)\s+work\b/i.test(t)) return false;
@@ -213,7 +220,7 @@ export function formatAgentChatPrompt(
 
   if (continuation) {
     const header = light
-      ? `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. Prefer a quick chat reply: one \`cascade-chat send\` and stop. Tools/history only if this turn clearly needs them. No closing summary after send (stdout is discarded).`
+      ? `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. First resolve the user's intent and any pronouns/references from the conversation already in your session. A short message can still request real work; if it does, complete that work before replying. Only for a genuine conversational reply or acknowledgment, prefer a quick chat reply: one \`cascade-chat send\` and stop. Tools/history only if the task needs them. Do not confuse a mentioned @handle with the message author. No closing summary after send (stdout is discarded).`
       : `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. Finish the request with judgment — don't over-research. Your private persistent scratchpad is available through \`cascade-note memory list|read|write|update|delete\`; curate it when durable context is worth keeping. Use \`cascade-chat send\` for progress on multi-step work; final answer there too. No closing summary after send.`;
     return `${header}\n\n${request}`;
   }
@@ -221,7 +228,7 @@ export function formatAgentChatPrompt(
   const channelNote = registration.contextPrompt ? ` Channel note: ${registration.contextPrompt}` : '';
   if (light) {
     // Fast multiuser path: no mandatory tool loop; context is already injected when useful.
-    const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. This is a live multiuser chat — match the energy: short natural replies, not an agent report. For simple questions/acks: one \`cascade-chat send --message "..."\` and stop (no tools, no history fetch, no plan). Use tools or \`cascade-chat history\` only if you truly cannot answer from the recent context below. Notes via cascade-note are unlisted by default; \`--listed\` only if asked. Final answer is the cascade-chat send (stdout after it is discarded).${channelNote}`;
+    const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. This is a live multiuser chat — match the energy: short natural replies, not an agent report. First resolve the user's intent and any pronouns/references from the recent context below. A short message can still request real work; if it does, complete that work before replying. Only for a genuine conversational reply or acknowledgment: one \`cascade-chat send --message "..."\` and stop (no tools, no history fetch, no plan). Use tools or \`cascade-chat history\` when the task needs them. Do not confuse a mentioned @handle with the message author named above. Notes via cascade-note are unlisted by default; \`--listed\` only if asked. Final answer is the cascade-chat send (stdout after it is discarded).${channelNote}`;
     return `${header}\n\n${request}`;
   }
 
