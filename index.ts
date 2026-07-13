@@ -38,7 +38,6 @@ import {
   unlistNote,
   removeTag,
   renameNote,
-  searchNotes,
   toggleArchive,
   togglePin,
   updateFolder,
@@ -145,8 +144,8 @@ import {
   listChatNoteBacklinks,
   reresolveChatBacklinksForNote,
   setAgentMemoryEnabled,
-  unifiedSearch,
 } from './server/evolution.js';
+import { searchWithQmd } from './server/qmd-search.js';
 
 const PORT = Number(process.env.API_PORT || 3000);
 /** Single source of truth with desktop-runner (persisted secret when env unset). */
@@ -1087,7 +1086,7 @@ app.post('/api/notes/:id/archive', requireAuth, (req: AuthedRequest, res) => {
 
 // ── Search routes ──────────────────────────────────────────────────
 
-app.get('/api/vaults/:id/search', requireAuth, (req: AuthedRequest, res) => {
+app.get('/api/vaults/:id/search', requireAuth, async (req: AuthedRequest, res) => {
   const vault = getVault(db, req.params.id, req.user!.id);
   if (!vault) return res.status(404).json({ error: 'Vault not found' });
 
@@ -1100,15 +1099,9 @@ app.get('/api/vaults/:id/search', requireAuth, (req: AuthedRequest, res) => {
     : 'notes';
 
   try {
-    // Default remains notes-only for backward compatibility with cascade-note search.
-    if (scope === 'notes') {
-      res.json({ results: searchNotes(db, vault.id, query) });
-      return;
-    }
-    const results = unifiedSearch(db, req.user!.id, vault.id, query, {
+    const results = await searchWithQmd(db, vault.id, query, {
       scope,
       limit: Number(req.query.limit || 40),
-      channelId: typeof req.query.channel === 'string' ? req.query.channel : undefined,
     });
     res.json({ results });
   } catch (error) {

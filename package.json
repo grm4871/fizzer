@@ -45,6 +45,7 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.175",
+    "@tobilu/qmd": "^2.5.3",
     "bcrypt": "^6.0.0",
     "better-sqlite3": "^12.5.0",
     "cors": "^2.8.5",

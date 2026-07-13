@@ -64,7 +64,7 @@ export function SearchOverlay({
       debounceRef.current = setTimeout(async () => {
         try {
           const data = await api<{ results: SearchResult[] }>(
-            `/api/vaults/${vaultId}/search?q=${encodeURIComponent(q)}`,
+            `/api/vaults/${vaultId}/search?scope=all&q=${encodeURIComponent(q)}`,
           );
           setResults(data.results ?? []);
         } catch {
@@ -95,6 +95,11 @@ export function SearchOverlay({
     item?.scrollIntoView({ block: 'nearest' });
   }, [highlightIndex]);
 
+  const selectResult = useCallback((result: SearchResult) => {
+    onSelectNote(result.type === 'chat' && result.channelId ? result.channelId : result.id);
+    onClose();
+  }, [onSelectNote, onClose]);
+
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       switch (e.key) {
@@ -109,8 +114,7 @@ export function SearchOverlay({
         case 'Enter':
           e.preventDefault();
           if (results[highlightIndex]) {
-            onSelectNote(results[highlightIndex].id);
-            onClose();
+            selectResult(results[highlightIndex]);
           }
           break;
         case 'Escape':
@@ -119,7 +123,7 @@ export function SearchOverlay({
           break;
       }
     },
-    [results, highlightIndex, onSelectNote, onClose],
+    [results, highlightIndex, selectResult, onClose],
   );
 
   if (!open) return null;
@@ -145,7 +149,7 @@ export function SearchOverlay({
               setHighlightIndex(0);
             }}
             onKeyDown={handleKeyDown}
-            placeholder="Search across all your notes..."
+            placeholder="Search notes and chats..."
           />
           {loading && <span className="text-tertiary text-xs" style={{ display: 'flex', alignItems: 'center' }}><Loader2 size={14} /></span>}
         </div>
@@ -156,13 +160,11 @@ export function SearchOverlay({
               key={result.id}
               id={`search-result-${result.id}`}
               className={`search-result-item ${index === highlightIndex ? 'highlighted' : ''}`}
-              onClick={() => {
-                onSelectNote(result.id);
-                onClose();
-              }}
+              onClick={() => selectResult(result)}
               onMouseEnter={() => setHighlightIndex(index)}
             >
               <span className="result-title">{result.title || 'Untitled'}</span>
+              {result.type === 'chat' && <span className="text-xs text-tertiary">Chat</span>}
               <span
                 className="result-snippet"
                 dangerouslySetInnerHTML={{
@@ -182,9 +184,9 @@ export function SearchOverlay({
           {!query.trim() && (
             <div className="search-empty">
               <span className="search-empty-icon"><Search size={32} /></span>
-              <span>Search across all your notes</span>
+              <span>Search across notes and chats</span>
               <span className="text-xs text-tertiary">
-                Full-text search with ranked results
+                QMD ranked search
               </span>
             </div>
           )}

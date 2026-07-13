@@ -74,7 +74,11 @@ export type SearchResult = {
   id: string;
   title: string;
   snippet: string;
-  rank: number;
+  rank?: number;
+  score?: number;
+  type?: 'note' | 'chat';
+  channelId?: string;
+  timestamp?: string;
 };
 
 /* ─── API Client ─────────────────────────────────────────── */
