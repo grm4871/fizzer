@@ -29,6 +29,7 @@ Options:
   --vault <id>              vault id (default $CASCADE_NOTE_VAULT)
   --channel <id>            channel id (default $CASCADE_CHAT_CHANNEL)
   --message <text>          message body for send (default: stdin)
+  --raw-message             preserve literal backslash-n sequences in --message
   --url <https-url>         profile picture URL for avatar
   --clear                   remove this agent's profile picture
   --author <name>           author for send (default current agent/user)
@@ -210,6 +211,16 @@ function bodyPreview(message) {
   return '(empty)';
 }
 
+function normalizeInlineMessage(value, preserveEscapes = false) {
+  const text = String(value || '');
+  if (preserveEscapes) return text;
+  // Shell double quotes preserve backslash-n literally. Agents commonly use
+  // those escapes for Markdown paragraphs/lists, so decode them at this CLI
+  // boundary. Stdin remains byte-for-byte and --raw-message is the opt-out for
+  // code discussing a literal "\\n" sequence.
+  return text.replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n');
+}
+
 function replyChain(message, byId, depth) {
   const chain = [];
   let current = message;
@@ -381,7 +392,11 @@ async function main() {
   }
 
   if (cmd === 'send') {
-    const body = String(args.message === true || args.message === undefined ? await readStdin() : args.message).trim();
+    const fromStdin = args.message === true || args.message === undefined;
+    const rawBody = fromStdin ? await readStdin() : args.message;
+    const body = (fromStdin
+      ? String(rawBody)
+      : normalizeInlineMessage(rawBody, args['raw-message'] === true)).trim();
     if (!body) fail('missing message. Pass --message <text> or pipe text on stdin.');
     const registrationId = configString(config, 'registrationId');
     const agentId = configString(config, 'agentId');
