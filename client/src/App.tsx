@@ -1394,7 +1394,12 @@ export default function App() {
           registrationId: registration.id,
           // Link the run to this chat message so the server persists/broadcasts
           // the streamed reply to all clients (see serverOwnedChatMessageIdsRef).
-          chat: { channelId, messageId: agentMessageId, author: registration.displayName || agentLabel(agentId) },
+          chat: {
+            channelId,
+            messageId: agentMessageId,
+            triggeringMessageId: triggeringMessage.id,
+            author: registration.displayName || agentLabel(agentId),
+          },
         }),
       });
 

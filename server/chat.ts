@@ -1062,7 +1062,35 @@ export function listChatMessages(
   return rows.map((row) => ({
     ...reconcileChatMessageRunStatus(db, row, detail),
     channelId: route.localChannelId,
-  }));
+  })).filter((message) => {
+    // A helper-posted agent response leaves its original run row suppressed.
+    // Keep active placeholders, but do not make every future client/agent pay
+    // for terminal empty shells or stale Thinking rows.
+    if (!message.agentId || message.status === 'running') return true;
+    const body = message.body.trim();
+    return body.length > 0 && body !== 'Thinking...';
+  });
+}
+
+/** Small, text-only context for a cold agent run. Heavy media and run blocks stay out. */
+export function buildAgentChatContext(messages: ChatMessage[], excludeMessageIds: string | string[] = '', limit = 8): string {
+  const excluded = new Set(Array.isArray(excludeMessageIds) ? excludeMessageIds : [excludeMessageIds]);
+  const rows = messages
+    .filter((message) => !excluded.has(message.id))
+    .filter((message) => {
+      const body = message.body.trim();
+      return body.length > 0 && body !== 'Thinking...';
+    })
+    .slice(-Math.max(1, limit));
+  if (!rows.length) return '';
+  return rows.map((message) => {
+    const body = message.body.replace(/\s+/g, ' ').trim();
+    const clipped = body.length > 500 ? `${body.slice(0, 499)}…` : body;
+    const reply = message.replyTo?.preview
+      ? ` (replying to ${message.replyTo.author || message.replyTo.mention || 'message'}: ${message.replyTo.preview.slice(0, 160)})`
+      : '';
+    return `${message.author}${reply}: ${clipped}`;
+  }).join('\n');
 }
 
 /** Full single message (includes harness log) — used when expanding a harness panel. */

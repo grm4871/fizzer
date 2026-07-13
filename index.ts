@@ -86,6 +86,7 @@ import { corsOrigin, rateLimit, resolveDeploySecret, resolveJwtSecret } from './
 import {
   assertChatChannel,
   buildAgentChatContentFromRunEvents,
+  buildAgentChatContext,
   CHAT_NOTE_MARKER,
   ensureAgentChatMessage,
   ensureChatSchema,
@@ -1418,6 +1419,9 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
 
   const chatChannelId = typeof req.body?.chat?.channelId === 'string' ? req.body.chat.channelId.trim() : '';
   const chatMessageId = typeof req.body?.chat?.messageId === 'string' ? req.body.chat.messageId.trim() : '';
+  const triggeringMessageId = typeof req.body?.chat?.triggeringMessageId === 'string'
+    ? req.body.chat.triggeringMessageId.trim()
+    : '';
   const registrationId = typeof req.body?.registrationId === 'string' ? req.body.registrationId.trim() : '';
 
   // Resolve the run's execution context. A chat-agent ping always executes on the
@@ -1533,6 +1537,15 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     let effectivePrompt = prompt;
     if (!willResume) {
       const contextChunks: string[] = [];
+      if (targetChannelId) {
+        try {
+          const recent = buildAgentChatContext(
+            listChatMessages(db, targetChannelId, runnerUserId, { limit: 24 }),
+            [chatMessageId, triggeringMessageId],
+          );
+          if (recent) contextChunks.push(`Recent channel context:\n${recent}`);
+        } catch { /* best-effort context; the request still runs without it */ }
+      }
       try {
         const recentMessages = targetChannelId
           ? listChatMessages(db, targetChannelId, runnerUserId).slice(-8).map((message) => `${message.author}: ${message.body}`).join('\n')
