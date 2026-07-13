@@ -1168,6 +1168,8 @@ export const ChatView = memo(function ChatView({
 
   /** Suppress sticky pin for a short window after the user scrolls (RO noise). */
   const userScrollQuietUntilRef = useRef(0);
+  /** Only trusted user gestures may detach sticky-bottom; layout scroll events may not. */
+  const userScrollIntentUntilRef = useRef(0);
 
   /** Pin the scroller to the bottom now, flagging it as a programmatic scroll. */
   const scrollToBottom = useCallback(() => {
@@ -1252,6 +1254,13 @@ export const ChatView = memo(function ChatView({
         wasAtBottomRef.current = false;
         userScrollQuietUntilRef.current = performance.now() + 220;
       }
+      return;
+    }
+    // Content growth, scroll anchoring, and virtualization can emit scroll
+    // events without user input. Those must not silently detach a bottom-pinned
+    // desktop viewport before the agent response arrives.
+    if (performance.now() >= userScrollIntentUntilRef.current) {
+      if (atBottom) wasAtBottomRef.current = true;
       return;
     }
     wasAtBottomRef.current = atBottom;
@@ -1696,9 +1705,11 @@ export const ChatView = memo(function ChatView({
           onTouchStart={() => {
             // User gesture wins over any in-flight programmatic pin.
             programmaticScrollRef.current = false;
+            userScrollIntentUntilRef.current = performance.now() + 500;
           }}
           onWheel={() => {
             programmaticScrollRef.current = false;
+            userScrollIntentUntilRef.current = performance.now() + 180;
           }}
         >
           <div ref={messagesContentRef} className="chat-messages-content">
