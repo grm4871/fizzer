@@ -1643,18 +1643,6 @@ a {
 .cascade-run-panel:not(.open) .crp-header {
   border-bottom: none;
 }
-/* Keep collapsed harness chrome out of the way on desktop; hovering (or
-   keyboard focus) over the message reveals it. Expanded runs stay visible. */
-@media (hover: hover) and (pointer: fine) {
-  .chat-message-group:not(:hover):not(:focus-within) .cascade-run-panel:not(.open):not(.is-running) {
-    max-height: 0;
-    margin-top: 0;
-    border-color: transparent;
-    opacity: 0;
-    overflow: hidden;
-    pointer-events: none;
-  }
-}
 .crp-toggle {
   min-width: 0;
   min-height: 30px;
