@@ -54,7 +54,12 @@ Usage:
   cascade-note append <id|title>         append body  (stdin / --content-file / --content)
   cascade-note backlinks <id|title>      note + chat backlinks for a note
   cascade-note memory show               what agent memory would inject
-  cascade-note memory remember           write a memory note (body via stdin)
+  cascade-note memory list               list this agent's scratchpad notes
+  cascade-note memory read <id|title>    read one scratchpad note
+  cascade-note memory write --title T    create a scratchpad note (body via stdin)
+  cascade-note memory update <id|title>  replace a scratchpad note
+  cascade-note memory delete <id|title>  delete a scratchpad note
+  cascade-note memory remember           alias for memory write
   cascade-note memory enable|disable     toggle agent memory for the vault
 
 Body input (pick one):
@@ -206,6 +211,46 @@ async function resolveNote(url, token, vaultId, ref) {
   fail(`no note matching "${ref}" in vault ${vaultId}.`);
 }
 
+function sanitizeAgentFolderName(name) {
+  return String(name || 'agent')
+    .replace(/^@+/, '')
+    .trim()
+    .replace(/[<>:"/\\|?*\x00-\x1f]+/g, '-')
+    .replace(/\s+/g, '-')
+    .slice(0, 64) || 'agent';
+}
+
+function memoryAgentKey(args, config) {
+  const key = String(args.agent || configString(config, 'agentMemoryKey') || '').trim();
+  if (!key) fail('memory commands need the current agent context, or --agent <handle>.');
+  return key;
+}
+
+async function memoryNotes(url, token, vaultId, args, config) {
+  const key = sanitizeAgentFolderName(memoryAgentKey(args, config)).toLowerCase();
+  const [{ folders = [] }, { notes = [] }] = await Promise.all([
+    api(url, token, 'GET', `/api/vaults/${vaultId}/folders`),
+    api(url, token, 'GET', `/api/vaults/${vaultId}/notes`),
+  ]);
+  const root = folders.find((folder) => !folder.parent_id && String(folder.name).toLowerCase() === '_agent');
+  const agentRoot = root && folders.find((folder) => folder.parent_id === root.id && String(folder.name).toLowerCase() === key);
+  const memory = agentRoot && folders.find((folder) => folder.parent_id === agentRoot.id && String(folder.name).toLowerCase() === 'memory');
+  return memory ? notes.filter((note) => note.folder_id === memory.id) : [];
+}
+
+async function resolveMemoryNote(url, token, vaultId, args, config, ref) {
+  const notes = await memoryNotes(url, token, vaultId, args, config);
+  const byId = notes.find((note) => note.id === ref);
+  if (byId) return byId;
+  const exact = notes.filter((note) => note.title.toLowerCase() === ref.toLowerCase());
+  if (exact.length === 1) return exact[0];
+  if (exact.length > 1) fail(`memory title "${ref}" is ambiguous; pass its id.`);
+  const partial = notes.filter((note) => note.title.toLowerCase().includes(ref.toLowerCase()));
+  if (partial.length === 1) return partial[0];
+  if (partial.length > 1) fail(`"${ref}" matches ${partial.length} memories; pass an id.`);
+  fail(`no memory matching "${ref}" in this agent's scratchpad.`);
+}
+
 async function bodyContent(args) {
   let content;
   if (args['content-file'] !== undefined) {
@@ -295,7 +340,11 @@ async function main() {
       const vaultId = await resolveVault(url, token, args, config);
       if (sub === 'show') {
         const topic = String(args.topic || '').trim();
-        const q = topic ? `?topic=${encodeURIComponent(topic)}` : '';
+        const agent = String(args.agent || configString(config, 'agentMemoryKey') || '').trim();
+        const params = new URLSearchParams();
+        if (topic) params.set('topic', topic);
+        if (agent) params.set('agent', agent);
+        const q = params.size ? `?${params}` : '';
         const data = await api(url, token, 'GET', `/api/vaults/${vaultId}/agent-memory${q}`);
         const inj = data.injection || {};
         const human = [
@@ -309,16 +358,42 @@ async function main() {
           enabled: sub === 'enable',
         });
         out(args, `agent memory ${sub}d`, data);
-      } else if (sub === 'remember') {
+      } else if (sub === 'list') {
+        const notes = await memoryNotes(url, token, vaultId, args, config);
+        out(args, notes.map((note) => `${note.id}  ${note.title}`).join('\n') || '(empty scratchpad)', notes);
+      } else if (sub === 'read') {
+        const ref = args._[2];
+        if (!ref) fail('memory read needs an id or title.');
+        const selected = await resolveMemoryNote(url, token, vaultId, args, config, ref);
+        const { note } = await api(url, token, 'GET', `/api/notes/${selected.id}`);
+        out(args, note.content, note);
+      } else if (sub === 'remember' || sub === 'write') {
         const body = await bodyContent(args);
         const title = typeof args.title === 'string' ? args.title : undefined;
+        if (!title) fail('memory write needs --title.');
         const data = await api(url, token, 'PUT', `/api/vaults/${vaultId}/agent-memory`, {
           remember: body,
           title,
+          agent: memoryAgentKey(args, config),
+          listed: true,
         });
         out(args, `remembered ${data.note?.id || ''}  ${data.note?.title || ''}`, data);
+      } else if (sub === 'update') {
+        const ref = args._[2];
+        if (!ref) fail('memory update needs an id or title.');
+        const selected = await resolveMemoryNote(url, token, vaultId, args, config, ref);
+        const content = await bodyContent(args);
+        const { note } = await api(url, token, 'PUT', `/api/notes/${selected.id}`, { content });
+        out(args, `updated ${note.id}  ${note.title}`, note);
+      } else if (sub === 'delete') {
+        const ref = args._[2];
+        if (!ref) fail('memory delete needs an id or title.');
+        const selected = await resolveMemoryNote(url, token, vaultId, args, config, ref);
+        if (selected.title.toLowerCase() === 'index') fail('INDEX cannot be deleted; update it instead.');
+        const data = await api(url, token, 'DELETE', `/api/notes/${selected.id}`);
+        out(args, `deleted ${selected.id}  ${selected.title}`, data);
       } else {
-        fail(`unknown memory subcommand "${sub}". Use show|remember|enable|disable.`);
+        fail(`unknown memory subcommand "${sub}". Use show|list|read|write|update|delete|enable|disable.`);
       }
       break;
     }

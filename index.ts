@@ -1249,6 +1249,7 @@ app.put('/api/vaults/:id/agent-memory', requireAuth, (req: AuthedRequest, res) =
         body: String(req.body.remember || req.body.body || ''),
         agentKey: typeof req.body.agent === 'string' ? req.body.agent
           : typeof req.body.agentKey === 'string' ? req.body.agentKey : undefined,
+        listed: req.body.listed === true,
       });
       emitVaultEvent(vault.id, 'vault:noteCreated', { noteId: note.id, vaultId: vault.id, title: note.title });
       res.status(201).json({ enabled: isAgentMemoryEnabled(db, vault.id), note });
@@ -1699,6 +1700,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
       chatChannelId: targetChannelId,
       chatMessageId,
       chatAuthor,
+      agentMemoryKey: agentMemoryKey || selectedAgent,
       chatRegistrationId,
       images: cleanImages,
       yolo: yoloMode,

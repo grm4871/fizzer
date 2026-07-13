@@ -151,7 +151,7 @@ function helperConfigPathForRun(runId) {
   return HELPER_CONFIG_PATH;
 }
 
-function writeHelperConfig({ runId, vaultId, channelId, messageId, chatAuthor, agentId, registrationId } = {}) {
+function writeHelperConfig({ runId, vaultId, channelId, messageId, chatAuthor, agentId, agentMemoryKey, registrationId } = {}) {
   const payload = {
     url: noteApi.url || process.env.CASCADE_NOTE_URL || 'https://cscd.online',
     token: noteApi.token || process.env.CASCADE_NOTE_TOKEN || '',
@@ -160,6 +160,7 @@ function writeHelperConfig({ runId, vaultId, channelId, messageId, chatAuthor, a
     chatMessageId: messageId || process.env.CASCADE_CHAT_MESSAGE || '',
     chatAuthor: chatAuthor || process.env.CASCADE_CHAT_AUTHOR || '',
     agentId: agentId || '',
+    agentMemoryKey: agentMemoryKey || '',
     registrationId: registrationId || '',
     runId: Number.isFinite(Number(runId)) ? Number(runId) : undefined,
     helperDir: resolveWrapperDir(),
@@ -185,6 +186,7 @@ function buildRunHelperEnv(opts) {
   const messageId = String(opts && opts.chatMessageId || opts?.chat?.messageId || '').trim();
   const chatAuthor = String(opts && opts.chatAuthor || '').trim();
   const agentId = String(opts && opts.agent || '').trim();
+  const agentMemoryKey = String(opts && opts.agentMemoryKey || '').trim();
   const registrationId = String(opts && opts.chatRegistrationId || '').trim();
   const configPath = writeHelperConfig({
     runId,
@@ -193,6 +195,7 @@ function buildRunHelperEnv(opts) {
     messageId,
     chatAuthor,
     agentId,
+    agentMemoryKey,
     registrationId,
   });
   const env = {

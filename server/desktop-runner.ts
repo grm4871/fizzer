@@ -36,6 +36,7 @@ export type DelegatedRunPayload = {
   chatChannelId?: string;
   chatMessageId?: string;
   chatAuthor?: string;
+  agentMemoryKey?: string;
   chatRegistrationId?: string;
   images?: RunImage[];
   /** Run with permission prompts bypassed ("yolo"). */
