@@ -68,6 +68,14 @@ type ElectronUpdateAPI = {
   onUpdateFailed?: (callback: (payload: { error?: string }) => void) => () => void;
 };
 
+export function isMp3Link(label: string, href: string) {
+  const normalizedLabel = label.trim().toLowerCase();
+  const normalizedHref = href.toLowerCase();
+  return normalizedLabel.endsWith('.mp3')
+    || normalizedHref.includes('audio/mpeg')
+    || normalizedHref.split(/[?#]/)[0].endsWith('.mp3');
+}
+
 export function Sidebar({
   user,
   vaults,
@@ -108,7 +116,6 @@ export function Sidebar({
   const [audioTrackIndex, setAudioTrackIndex] = useState(0);
   const [audioPlaying, setAudioPlaying] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
-  const audioInputRef = useRef<HTMLInputElement>(null);
   const autoplayAudioRef = useRef(false);
   // Drop target highlight: a folder id, or ROOT_DROP_ID for the root area.
   const [dragOverId, setDragOverId] = useState<string | null>(null);
@@ -184,9 +191,32 @@ export function Sidebar({
     });
   }, []);
 
-  useEffect(() => () => {
-    for (const track of audioTracks) URL.revokeObjectURL(track.url);
-  }, [audioTracks]);
+  useEffect(() => {
+    const isAudioAnchor = (anchor: HTMLAnchorElement) => isMp3Link(anchor.textContent || '', anchor.href);
+    const onClick = (event: MouseEvent) => {
+      const target = event.target instanceof Element ? event.target.closest('a') : null;
+      if (!(target instanceof HTMLAnchorElement) || !isAudioAnchor(target)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const links = Array.from(document.querySelectorAll<HTMLAnchorElement>('a')).filter(isAudioAnchor);
+      const seen = new Set<string>();
+      const tracks = links.flatMap((anchor) => {
+        if (!anchor.href || seen.has(anchor.href)) return [];
+        seen.add(anchor.href);
+        return [{
+          name: (anchor.textContent || 'Audio').trim().replace(/\.mp3$/i, ''),
+          url: anchor.href,
+        }];
+      });
+      const index = Math.max(0, tracks.findIndex((track) => track.url === target.href));
+      audioRef.current?.pause();
+      autoplayAudioRef.current = true;
+      setAudioTrackIndex(index);
+      setAudioTracks(tracks);
+    };
+    document.addEventListener('click', onClick, true);
+    return () => document.removeEventListener('click', onClick, true);
+  }, []);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -197,18 +227,6 @@ export function Sidebar({
     }
   }, [audioTrackIndex, audioTracks]);
 
-  function loadAudioFiles(files: FileList | null) {
-    const next = Array.from(files ?? [])
-      .filter((file) => file.type === 'audio/mpeg' || file.name.toLowerCase().endsWith('.mp3'))
-      .map((file) => ({ name: file.name.replace(/\.mp3$/i, ''), url: URL.createObjectURL(file) }));
-    if (next.length === 0) return;
-    audioRef.current?.pause();
-    autoplayAudioRef.current = false;
-    setAudioPlaying(false);
-    setAudioTrackIndex(0);
-    setAudioTracks(next);
-  }
-
   function changeAudioTrack(offset: number, autoplay = audioPlaying) {
     if (audioTracks.length === 0) return;
     autoplayAudioRef.current = autoplay;
@@ -217,10 +235,7 @@ export function Sidebar({
 
   function toggleAudioPlayback() {
     const audio = audioRef.current;
-    if (!audio || audioTracks.length === 0) {
-      audioInputRef.current?.click();
-      return;
-    }
+    if (!audio || audioTracks.length === 0) return;
     if (audio.paused) void audio.play().catch(() => setAudioPlaying(false));
     else audio.pause();
   }
@@ -538,18 +553,7 @@ export function Sidebar({
         )}
       </div>
 
-      <div className="sidebar-audio-player">
-        <input
-          ref={audioInputRef}
-          type="file"
-          accept="audio/mpeg,.mp3"
-          multiple
-          hidden
-          onChange={(event) => {
-            loadAudioFiles(event.target.files);
-            event.target.value = '';
-          }}
-        />
+      {audioTracks.length > 0 && <div className="sidebar-audio-player">
         <audio
           ref={audioRef}
           src={audioTracks[audioTrackIndex]?.url}
@@ -559,10 +563,10 @@ export function Sidebar({
             changeAudioTrack(1, true);
           }}
         />
-        <button className="sidebar-audio-track" onClick={() => audioInputRef.current?.click()} title="Load MP3 files">
+        <div className="sidebar-audio-track" title={audioTracks[audioTrackIndex]?.name}>
           <Music2 size={14} />
-          <span>{audioTracks[audioTrackIndex]?.name || 'Load MP3s'}</span>
-        </button>
+          <span>{audioTracks[audioTrackIndex]?.name}</span>
+        </div>
         <div className="sidebar-audio-controls">
           <button className="btn-icon" disabled={audioTracks.length === 0} onClick={() => changeAudioTrack(-1)} title="Previous track">
             <SkipBack size={15} fill="currentColor" />
@@ -574,7 +578,7 @@ export function Sidebar({
             <SkipForward size={15} fill="currentColor" />
           </button>
         </div>
-      </div>
+      </div>}
 
       {/* Footer */}
       <div className="sidebar-footer">

@@ -317,6 +317,7 @@ class HRWidget extends WidgetType {
 }
 
 const NOTE_IMAGE_MAX_BYTES = 8 * 1024 * 1024;
+const NOTE_AUDIO_MAX_BYTES = 8 * 1024 * 1024;
 
 function imageFileFromDataTransfer(dataTransfer: DataTransfer | null): File | null {
   if (!dataTransfer) return null;
@@ -1361,6 +1362,42 @@ export function NoteEditor({ note, content, onContentChange, onSave, onRename, o
     }
   }, [note, flashPublishNotice]);
 
+  const insertAudioFromFile = useCallback(async (file: File) => {
+    const editorView = viewRef.current;
+    if (!note?.id || !editorView) return false;
+    const isMp3 = file.type === 'audio/mpeg' || file.name.toLowerCase().endsWith('.mp3');
+    if (!isMp3) return false;
+    if (file.size > NOTE_AUDIO_MAX_BYTES) {
+      flashPublishNotice(`MP3 is too large (max ${NOTE_AUDIO_MAX_BYTES / (1024 * 1024)}MB)`);
+      return false;
+    }
+    flashPublishNotice('Uploading MP3...');
+    try {
+      const data = await readFileAsBase64(file);
+      const result = await api<{ url: string }>(`/api/notes/${note.id}/assets`, {
+        method: 'POST',
+        body: JSON.stringify({ media_type: 'audio/mpeg', data, filename: file.name }),
+      });
+      const label = file.name || 'audio.mp3';
+      const from = editorView.state.selection.main.from;
+      const to = editorView.state.selection.main.to;
+      const line = editorView.state.doc.lineAt(from);
+      const prefix = line.text.trim() ? '\n\n' : '';
+      const insert = `${prefix}[${label}](${result.url})\n`;
+      editorView.dispatch({
+        changes: { from, to, insert },
+        selection: { anchor: from + insert.length },
+        scrollIntoView: true,
+      });
+      editorView.focus();
+      flashPublishNotice('MP3 attached');
+      return true;
+    } catch (err) {
+      flashPublishNotice(err instanceof Error ? err.message : 'MP3 upload failed');
+      return false;
+    }
+  }, [note, flashPublishNotice]);
+
   insertImageFromFileRef.current = insertImageFromFile;
 
   const insertNoteEmbed = useCallback((noteId: string, coords?: { x: number; y: number }) => {
@@ -1652,16 +1689,17 @@ export function NoteEditor({ note, content, onContentChange, onSave, onRename, o
         <button id="toolbar-strike" className="toolbar-btn" onClick={() => toolbarAction('strikethrough')} title="Strikethrough"><s>S</s></button>
         <button id="toolbar-code" className="toolbar-btn mono" onClick={() => toolbarAction('code')} title="Inline Code">&lt;/&gt;</button>
         <button id="toolbar-link" className="toolbar-btn" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => toolbarAction('link')} title="Insert Link (Ctrl+K)"><Link2 size={16} /></button>
-        <button id="toolbar-image" className="toolbar-btn" onClick={() => toolbarAction('image')} title="Insert image (paste or drop also works)">🖼</button>
+        <button id="toolbar-image" className="toolbar-btn" onClick={() => toolbarAction('image')} title="Upload image or MP3 (images also support paste/drop)">📎</button>
         <input
           ref={imageInputRef}
           type="file"
-          accept="image/*"
+          accept="image/*,audio/mpeg,.mp3"
           hidden
           onChange={(e) => {
             const file = e.target.files?.[0];
             e.target.value = '';
-            if (file) void insertImageFromFile(file);
+            if (file?.type.startsWith('image/')) void insertImageFromFile(file);
+            else if (file) void insertAudioFromFile(file);
           }}
         />
 

@@ -860,11 +860,8 @@ a {
   border: 0;
   background: transparent;
   color: var(--text-secondary);
-  cursor: pointer;
+  cursor: default;
   text-align: left;
-}
-.sidebar-audio-track:hover {
-  color: var(--text-primary);
 }
 .sidebar-audio-track svg {
   flex: 0 0 auto;

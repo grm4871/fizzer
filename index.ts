@@ -310,7 +310,8 @@ rebuildSearchIndexes(db);
 const app = express();
 const corsOriginOption = corsOrigin();
 app.use(cors({ origin: corsOriginOption, credentials: true }));
-app.use(express.json({ limit: '2mb' }));
+// Media attachments are base64 in JSON; 8MB files expand to ~10.7MB.
+app.use(express.json({ limit: '12mb' }));
 const httpServer = http.createServer(app);
 const io = new Server(httpServer, {
   cors: { origin: corsOriginOption, credentials: true },

@@ -22,6 +22,12 @@ const IMG_EXT: Record<string, string> = {
   'image/svg+xml': 'svg',
 };
 
+const ASSET_EXT: Record<string, string> = {
+  ...IMG_EXT,
+  'audio/mpeg': 'mp3',
+  'audio/mp3': 'mp3',
+};
+
 export function noteAssetsDir(db: Db, noteId: string): string | null {
   const note = getNote(db, noteId);
   if (!note) return null;
@@ -52,19 +58,21 @@ export function uploadNoteAsset(
   if (!vault) throw new Error('Note not found');
 
   const mediaType = String(input.media_type || '').trim().toLowerCase();
-  if (!mediaType.startsWith('image/')) throw new Error('Only image uploads are supported');
+  if (!mediaType.startsWith('image/') && mediaType !== 'audio/mpeg' && mediaType !== 'audio/mp3') {
+    throw new Error('Only image and MP3 uploads are supported');
+  }
 
   const data = String(input.data || '').trim();
-  if (!data) throw new Error('Image data is required');
+  if (!data) throw new Error('Asset data is required');
 
   const buffer = Buffer.from(data, 'base64');
-  if (!buffer.length) throw new Error('Image data is required');
+  if (!buffer.length) throw new Error('Asset data is required');
   if (buffer.length > NOTE_ASSET_MAX_BYTES) {
-    throw new Error(`Image is too large (max ${NOTE_ASSET_MAX_BYTES / (1024 * 1024)}MB)`);
+    throw new Error(`Asset is too large (max ${NOTE_ASSET_MAX_BYTES / (1024 * 1024)}MB)`);
   }
 
   const assetId = crypto.randomBytes(12).toString('base64url');
-  const ext = IMG_EXT[mediaType] || 'bin';
+  const ext = ASSET_EXT[mediaType] || 'bin';
   const dir = noteAssetsDir(db, noteId);
   if (!dir) throw new Error('Note not found');
 
@@ -97,6 +105,7 @@ const MIME_BY_EXT: Record<string, string> = {
   gif: 'image/gif',
   webp: 'image/webp',
   svg: 'image/svg+xml',
+  mp3: 'audio/mpeg',
 };
 
 export function serveNoteAsset(db: Db) {
