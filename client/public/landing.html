@@ -18,7 +18,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link
-    href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500;700&family=Shippori+Mincho:wght@500;600;700;800&display=swap"
+    href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&family=Shippori+Mincho:wght@500;600;700;800&display=swap"
     rel="stylesheet">
 
   <script>
@@ -31,26 +31,29 @@
 
   <style>
     :root {
-      --ink: hsl(22, 9%, 5%);
-      --surface: hsl(22, 7%, 8%);
-      --raised: hsl(22, 8%, 12%);
-      --raised-2: hsl(22, 8%, 15%);
-      --line: hsl(25, 8%, 18%);
-      --line-soft: hsl(22, 7%, 13%);
-      --paper: hsl(35, 14%, 89%);
-      --muted: hsl(30, 7%, 60%);
-      --faint: hsl(25, 6%, 40%);
-      --amber: hsl(33, 68%, 52%);
-      --amber-bright: hsl(33, 74%, 64%);
-      --amber-glow: hsla(33, 68%, 52%, 0.22);
+      --ink: hsl(248, 20%, 6%);
+      --surface: hsl(248, 16%, 9%);
+      --raised: hsl(248, 14%, 13%);
+      --raised-2: hsl(248, 13%, 16%);
+      --line: hsla(248, 10%, 100%, 0.08);
+      --line-soft: hsla(248, 10%, 100%, 0.04);
+      --paper: hsl(240, 14%, 93%);
+      --muted: hsl(240, 8%, 68%);
+      --faint: hsl(240, 6%, 46%);
+      --amber: hsl(36, 100%, 55%);
+      --amber-bright: hsl(38, 100%, 65%);
+      --amber-glow: hsla(36, 100%, 55%, 0.15);
+      --violet-glow: hsla(265, 80%, 60%, 0.12);
 
       /* Agent identities — the room is a party of distinct owners. */
-      --opus: hsl(288, 30%, 68%);
-      --luna: hsl(214, 46%, 66%);
-      --hermes: hsl(146, 38%, 60%);
-      --sol: hsl(38, 74%, 58%);
+      --opus: hsl(285, 80%, 72%);
+      --luna: hsl(195, 85%, 65%);
+      --hermes: hsl(150, 75%, 55%);
+      --sol: hsl(40, 85%, 60%);
+      --antigravity: hsl(330, 85%, 62%);
 
-      --shadow: 0 24px 60px -24px rgba(0, 0, 0, 0.75);
+      --shadow: 0 30px 80px -25px rgba(0, 0, 0, 0.85);
+      --transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -59,199 +62,521 @@
 
     body {
       background: var(--ink);
+      background-image: 
+        radial-gradient(at 10% 20%, hsla(250, 60%, 15%, 0.15) 0px, transparent 50%),
+        radial-gradient(at 90% 10%, hsla(270, 50%, 12%, 0.18) 0px, transparent 50%),
+        radial-gradient(at 50% 80%, hsla(36, 50%, 8%, 0.12) 0px, transparent 50%);
       color: var(--paper);
-      font-family: 'IBM Plex Sans', system-ui, sans-serif;
+      font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
       font-weight: 300;
-      line-height: 1.6;
+      line-height: 1.65;
       -webkit-font-smoothing: antialiased;
       overflow-x: hidden;
     }
 
-    /* Warm ambient glow behind the fold, like a lit room. */
-    body::before {
-      content: '';
-      position: fixed;
-      top: -30vh; right: -10vw;
-      width: 70vw; height: 90vh;
-      background: radial-gradient(closest-side, var(--amber-glow), transparent 70%);
-      opacity: 0.55;
-      pointer-events: none;
+    /* Floating ambient glows behind components */
+    .glow-bg {
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(120px);
       z-index: 0;
+      pointer-events: none;
+      opacity: 0.15;
+    }
+    .glow-bg-1 {
+      top: -10vh; right: -10vw;
+      width: 50vw; height: 60vh;
+      background: radial-gradient(circle, var(--amber), transparent 70%);
+    }
+    .glow-bg-2 {
+      top: 50vh; left: -10vw;
+      width: 40vw; height: 50vh;
+      background: radial-gradient(circle, var(--violet-glow), transparent 70%);
     }
 
-    .wrap { max-width: 1160px; margin: 0 auto; padding: 0 28px; position: relative; z-index: 1; }
+    .wrap { max-width: 1200px; margin: 0 auto; padding: 0 32px; position: relative; z-index: 1; }
 
     .mono { font-family: 'JetBrains Mono', monospace; }
 
     .eyebrow {
       font-family: 'JetBrains Mono', monospace;
-      font-size: 12px;
-      font-weight: 500;
-      letter-spacing: 0.28em;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.3em;
       text-transform: uppercase;
       color: var(--amber);
+      background: rgba(255, 170, 0, 0.08);
+      padding: 4px 12px;
+      border-radius: 20px;
+      display: inline-block;
+      border: 1px solid rgba(255, 170, 0, 0.12);
+      box-shadow: 0 4px 12px rgba(255, 170, 0, 0.05);
     }
 
     /* ── Nav ─────────────────────────────────────────── */
     nav {
+      position: sticky;
+      top: 16px;
+      z-index: 100;
       display: flex; align-items: center; justify-content: space-between;
-      padding: 22px 0;
+      padding: 14px 28px;
+      margin: 16px auto 32px;
+      border-radius: 16px;
+      background: rgba(9, 8, 14, 0.7);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid var(--line);
+      box-shadow: 0 10px 40px -10px rgba(0, 0, 0, 0.5);
+      transition: var(--transition);
     }
-    .brand { display: flex; align-items: center; gap: 11px; font-family: 'Shippori Mincho', serif; font-weight: 700; font-size: 20px; letter-spacing: 0.01em; }
-    .brand img { width: 26px; height: 26px; }
-    .nav-actions { display: flex; align-items: center; gap: 22px; }
-    .nav-link { color: var(--muted); text-decoration: none; font-size: 14px; transition: color 0.18s; }
+    .brand { display: flex; align-items: center; gap: 11px; font-family: 'Shippori Mincho', serif; font-weight: 700; font-size: 21px; letter-spacing: 0.02em; cursor: pointer; }
+    .brand img { width: 26px; height: 26px; transition: transform 0.4s ease; }
+    .brand:hover img { transform: rotate(15deg) scale(1.1); }
+    .nav-actions { display: flex; align-items: center; gap: 24px; }
+    .nav-link { color: var(--muted); text-decoration: none; font-size: 14.5px; font-weight: 500; transition: color 0.2s; }
     .nav-link:hover { color: var(--paper); }
 
     /* ── Buttons ─────────────────────────────────────── */
     .btn {
-      display: inline-flex; align-items: center; gap: 9px;
-      font-family: 'IBM Plex Sans', sans-serif;
-      font-size: 15px; font-weight: 500;
-      padding: 12px 20px;
-      border-radius: 10px;
+      display: inline-flex; align-items: center; gap: 10px;
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      font-size: 14.5px; font-weight: 600;
+      padding: 12px 22px;
+      border-radius: 12px;
       border: 1px solid transparent;
       text-decoration: none;
       cursor: pointer;
-      transition: transform 0.15s ease, background 0.18s, border-color 0.18s, box-shadow 0.18s;
+      transition: transform 0.2s ease, background 0.25s, border-color 0.25s, box-shadow 0.25s;
       white-space: nowrap;
     }
     .btn svg { width: 17px; height: 17px; }
-    .btn-primary { background: var(--amber); color: hsl(22, 30%, 8%); font-weight: 600; box-shadow: 0 8px 24px -10px var(--amber-glow); }
-    .btn-primary:hover { background: var(--amber-bright); transform: translateY(-1px); }
-    .btn-ghost { background: transparent; color: var(--paper); border-color: var(--line); }
-    .btn-ghost:hover { border-color: var(--amber); color: var(--amber-bright); }
+    .btn-primary { 
+      background: linear-gradient(135deg, var(--amber) 0%, var(--amber-bright) 100%); 
+      color: hsl(248, 30%, 6%); 
+      box-shadow: 0 8px 30px -6px rgba(255, 170, 0, 0.35); 
+    }
+    .btn-primary:hover { 
+      transform: translateY(-2px); 
+      box-shadow: 0 12px 35px -4px rgba(255, 170, 0, 0.45); 
+    }
+    .btn-ghost { background: rgba(255, 255, 255, 0.03); color: var(--paper); border-color: var(--line); }
+    .btn-ghost:hover { border-color: var(--amber); color: var(--amber-bright); background: rgba(255, 170, 0, 0.05); }
 
     /* ── Hero ────────────────────────────────────────── */
-    .hero { display: grid; grid-template-columns: 1.02fr 1fr; gap: 60px; align-items: center; padding: 70px 0 90px; }
-    .hero-copy .eyebrow { display: block; margin-bottom: 22px; }
+    .hero { display: grid; grid-template-columns: 1fr 1.15fr; gap: 60px; align-items: center; padding: 40px 0 80px; }
+    .hero-copy .eyebrow { display: inline-block; margin-bottom: 24px; }
     h1 {
-      font-family: 'Shippori Mincho', serif;
-      font-weight: 700;
-      font-size: clamp(40px, 6vw, 64px);
-      line-height: 1.04;
-      letter-spacing: -0.01em;
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      font-weight: 800;
+      font-size: clamp(42px, 5.5vw, 68px);
+      line-height: 1.08;
+      letter-spacing: -0.02em;
       margin-bottom: 24px;
+      background: linear-gradient(135deg, var(--paper) 40%, hsl(240, 10%, 80%) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
     }
-    h1 .warm { color: var(--amber); font-style: italic; font-weight: 800; }
-    .lede { font-size: 18px; color: var(--muted); max-width: 30em; margin-bottom: 34px; }
-    .lede strong { color: var(--paper); font-weight: 500; }
-    .cta-row { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
-    .cta-note { margin-top: 16px; font-size: 13px; color: var(--faint); font-family: 'JetBrains Mono', monospace; }
+    h1 .warm { 
+      background: linear-gradient(135deg, var(--amber) 30%, var(--amber-bright) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      font-style: italic; 
+      font-weight: 800; 
+    }
+    .lede { font-size: 19px; color: var(--muted); max-width: 32em; margin-bottom: 36px; line-height: 1.6; }
+    .lede strong { color: var(--paper); font-weight: 600; }
+    .cta-row { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; }
+    .cta-note { margin-top: 18px; font-size: 13px; color: var(--faint); font-family: 'JetBrains Mono', monospace; }
 
-    /* ── Signature: the live room ────────────────────── */
+    /* ── Signature: Interactive Agent Sandbox ────────── */
     .room {
-      background: linear-gradient(180deg, var(--surface), var(--ink));
+      display: flex;
+      flex-direction: column;
+      background: rgba(12, 10, 20, 0.65);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
       border: 1px solid var(--line);
-      border-radius: 16px;
+      border-radius: 20px;
       box-shadow: var(--shadow);
       overflow: hidden;
+      height: 540px;
+      position: relative;
     }
-    .room-bar { display: flex; align-items: center; gap: 8px; padding: 13px 16px; border-bottom: 1px solid var(--line-soft); background: var(--raised); }
-    .room-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--line); }
-    .room-title { margin-left: 8px; font-family: 'JetBrains Mono', monospace; font-size: 12.5px; color: var(--muted); }
+    .room-bar { 
+      display: flex; 
+      align-items: center; 
+      gap: 8px; 
+      padding: 14px 20px; 
+      border-bottom: 1px solid var(--line-soft); 
+      background: rgba(20, 18, 30, 0.6); 
+    }
+    .room-dot { width: 11px; height: 11px; border-radius: 50%; }
+    .room-dot:nth-child(1) { background: #ff5f56; }
+    .room-dot:nth-child(2) { background: #ffbd2e; }
+    .room-dot:nth-child(3) { background: #27c93f; }
+    .room-title { margin-left: 12px; font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--muted); }
     .room-title b { color: var(--paper); font-weight: 500; }
-    .room-presence { margin-left: auto; display: flex; align-items: center; gap: 6px; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--hermes); }
-    .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--hermes); box-shadow: 0 0 0 0 var(--hermes); }
+    
+    .room-branch {
+      margin-left: 12px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      background: rgba(255, 255, 255, 0.05);
+      padding: 2px 8px;
+      border-radius: 12px;
+      color: var(--muted);
+      border: 1px solid var(--line-soft);
+    }
+    
+    .room-presence { 
+      margin-left: auto; 
+      display: flex; 
+      align-items: center; 
+      gap: 8px; 
+      font-family: 'JetBrains Mono', monospace; 
+      font-size: 12px; 
+      color: var(--hermes); 
+      font-weight: 500;
+    }
+    .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--hermes); box-shadow: 0 0 0 0 rgba(150, 255, 150, 0.4); }
 
-    .room-feed { padding: 20px 18px 22px; display: flex; flex-direction: column; gap: 18px; }
-    .msg { display: grid; grid-template-columns: 30px 1fr; gap: 12px; opacity: 0; transform: translateY(8px); }
-    .msg .av { width: 30px; height: 30px; border-radius: 8px; object-fit: cover; background: var(--raised-2); display: flex; align-items: center; justify-content: center; font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 700; color: var(--paper); border: 1px solid var(--line-soft); }
-    .msg .who { display: flex; align-items: baseline; gap: 8px; margin-bottom: 3px; }
-    .name { font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 500; }
-    .name.agent::before { content: '@'; opacity: 0.55; }
-    .tag { font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; padding: 1px 6px; border-radius: 5px; color: var(--faint); border: 1px solid var(--line-soft); }
-    .tag.a { color: var(--opus); border-color: color-mix(in srgb, var(--opus) 40%, transparent); }
-    .body { font-size: 14.5px; color: var(--paper); line-height: 1.5; }
-    .body .mention { color: var(--amber-bright); font-family: 'JetBrains Mono', monospace; font-size: 13px; }
+    /* Simulator Tabs */
+    .sim-tabs-container {
+      background: rgba(16, 14, 25, 0.8);
+      border-bottom: 1px solid var(--line-soft);
+      display: flex;
+      gap: 4px;
+      padding: 6px 12px;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+    .sim-tabs-container::-webkit-scrollbar { display: none; }
+    .sim-tab {
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      font-size: 12.5px;
+      font-weight: 600;
+      color: var(--muted);
+      background: transparent;
+      border: 1px solid transparent;
+      padding: 6px 14px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: var(--transition);
+      white-space: nowrap;
+    }
+    .sim-tab:hover {
+      color: var(--paper);
+      background: rgba(255, 255, 255, 0.04);
+    }
+    .sim-tab.active {
+      color: var(--amber-bright);
+      background: rgba(255, 170, 0, 0.1);
+      border-color: rgba(255, 170, 0, 0.18);
+    }
 
-    .chip { display: inline-flex; align-items: center; gap: 7px; margin-top: 8px; padding: 6px 11px; border-radius: 8px; background: var(--raised); border: 1px solid var(--line-soft); font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--muted); }
-    .chip .plus { color: var(--hermes); } .chip .minus { color: hsl(6, 55%, 62%); }
-    .chip.approve { color: var(--hermes); border-color: color-mix(in srgb, var(--hermes) 34%, transparent); }
+    /* Simulator Split View */
+    .sim-body {
+      display: grid;
+      grid-template-columns: 1.15fr 1fr;
+      flex: 1;
+      overflow: hidden;
+      height: calc(100% - 87px);
+    }
+    .sim-chat {
+      padding: 20px;
+      overflow-y: auto;
+      border-right: 1px solid var(--line-soft);
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      background: rgba(10, 8, 15, 0.15);
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255,255,255,0.06) transparent;
+    }
+    .sim-editor {
+      background: rgba(5, 4, 8, 0.45);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .editor-header {
+      display: flex;
+      align-items: center;
+      padding: 8px 16px;
+      background: rgba(14, 12, 22, 0.7);
+      border-bottom: 1px solid var(--line-soft);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11.5px;
+      color: var(--muted);
+    }
+    .editor-tab {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--line-soft);
+      border-bottom: none;
+      padding: 4px 12px;
+      border-radius: 6px 6px 0 0;
+      color: var(--paper);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .editor-content {
+      flex: 1;
+      padding: 16px;
+      overflow-y: auto;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      line-height: 1.55;
+      color: #b4bece;
+      scrollbar-width: none;
+    }
+    .editor-content::-webkit-scrollbar { display: none; }
 
-    .typing { display: inline-flex; align-items: center; gap: 5px; padding: 8px 12px; border-radius: 8px; background: var(--raised); width: fit-content; }
+    /* Code Highlighting & Diff line elements */
+    .line { display: flex; white-space: pre; padding: 1px 4px; border-left: 2px solid transparent; }
+    .line-num { width: 22px; color: var(--faint); text-align: right; margin-right: 12px; user-select: none; font-size: 11px; }
+    
+    @keyframes slide-down-line {
+      from { opacity: 0; max-height: 0; transform: translateY(-4px); }
+      to { opacity: 1; max-height: 24px; transform: translateY(0); }
+    }
+    .line.add {
+      background: rgba(40, 200, 100, 0.08);
+      border-left-color: var(--hermes);
+      color: #e2f9eb;
+    }
+    .line.add.animating {
+      animation: slide-down-line 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+      overflow: hidden;
+    }
+    .line.del {
+      background: rgba(230, 70, 70, 0.08);
+      border-left-color: #ef5350;
+      color: #fcebeb;
+    }
+    .keyword { color: #c792ea; font-weight: 500; }
+    .function { color: #82aaff; }
+    .string { color: #c3e88d; }
+    .number { color: #f78c6c; }
+    .comment { color: #5c6370; font-style: italic; }
+
+    /* Message structures inside simulator */
+    .msg { display: grid; grid-template-columns: 32px 1fr; gap: 12px; opacity: 0; transform: translateY(12px); }
+    .msg.typing-msg { display: grid; } /* bypass default opacity reset when dynamically added */
+    .msg .av { 
+      width: 32px; height: 32px; border-radius: 8px; object-fit: cover; 
+      background: var(--raised-2); display: flex; align-items: center; justify-content: center; 
+      font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 700; color: var(--paper); 
+      border: 1px solid var(--line); box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+    }
+    .msg .who { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+    .name { font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 600; }
+    .name.agent::before { content: '@'; opacity: 0.6; }
+    .tag { font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.05em; text-transform: uppercase; padding: 1px 6px; border-radius: 4px; color: var(--faint); border: 1px solid var(--line-soft); }
+    .tag.a { color: var(--opus); border-color: rgba(200, 80, 200, 0.3); }
+    .body { font-size: 14px; color: var(--paper); line-height: 1.55; }
+    .body .mention { color: var(--amber-bright); font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 500; }
+
+    .chip { display: inline-flex; align-items: center; gap: 7px; margin-top: 8px; padding: 5px 10px; border-radius: 6px; background: var(--raised); border: 1px solid var(--line); font-family: 'JetBrains Mono', monospace; font-size: 11.5px; color: var(--muted); }
+    .chip .plus { color: var(--hermes); } .chip .minus { color: hsl(6, 75%, 65%); }
+    .chip.approve { color: var(--hermes); border-color: rgba(40, 200, 100, 0.25); background: rgba(40, 200, 100, 0.03); }
+
+    .typing { display: inline-flex; align-items: center; gap: 5px; padding: 8px 12px; border-radius: 8px; background: var(--raised); width: fit-content; border: 1px solid var(--line-soft); }
     .typing i { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); display: inline-block; }
 
-    /* colored name owners */
-    .n-opus { color: var(--opus); } .n-luna { color: var(--luna); } .n-sol { color: var(--sol); }
-    .av-opus { border-color: color-mix(in srgb, var(--opus) 45%, transparent); }
-    .av-luna { border-color: color-mix(in srgb, var(--luna) 45%, transparent); }
-    .av-maya { background: linear-gradient(135deg, hsl(340, 40%, 40%), hsl(300, 35%, 30%)); }
-    .av-dev { background: linear-gradient(135deg, hsl(200, 40%, 34%), hsl(220, 40%, 26%)); }
+    /* Colored Agent names & avatars */
+    .n-opus { color: var(--opus); } .n-luna { color: var(--luna); } .n-hermes { color: var(--hermes); } .n-sol { color: var(--sol); } .n-antigravity { color: var(--antigravity); }
+    .av-opus { border-color: rgba(200, 80, 200, 0.4); }
+    .av-luna { border-color: rgba(50, 180, 255, 0.4); }
+    .av-hermes { border-color: rgba(40, 200, 100, 0.4); }
+    .av-sol { border-color: rgba(255, 170, 0, 0.4); }
+    .av-antigravity { border-color: rgba(255, 80, 150, 0.4); }
+    .av-maya { background: linear-gradient(135deg, hsl(340, 50%, 40%), hsl(300, 45%, 30%)); }
+    .av-dev { background: linear-gradient(135deg, hsl(200, 50%, 34%), hsl(220, 50%, 26%)); }
 
-    /* ── Download section ────────────────────────────── */
-    section { padding: 84px 0; position: relative; z-index: 1; }
-    .sec-head { text-align: center; margin-bottom: 48px; }
-    .sec-head .eyebrow { display: block; margin-bottom: 14px; }
-    .sec-head h2 { font-family: 'Shippori Mincho', serif; font-weight: 700; font-size: clamp(28px, 4vw, 40px); line-height: 1.1; }
-    .sec-head p { color: var(--muted); margin-top: 12px; font-size: 16px; }
+    /* ── Download Section ────────────────────────────── */
+    section { padding: 90px 0; position: relative; z-index: 1; }
+    .sec-head { text-align: center; margin-bottom: 56px; display: flex; flex-direction: column; align-items: center; }
+    .sec-head .eyebrow { display: inline-block; margin-bottom: 18px; }
+    .sec-head h2 { font-family: 'Shippori Mincho', serif; font-weight: 700; font-size: clamp(30px, 4.5vw, 44px); line-height: 1.15; }
+    .sec-head p { color: var(--muted); margin-top: 14px; font-size: 17px; max-width: 32em; }
 
-    #download { border-top: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft); background: var(--surface); }
-    .platforms { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+    #download { border-top: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft); background: rgba(9, 8, 14, 0.4); }
+    .platforms { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
     .plat {
-      background: var(--raised); border: 1px solid var(--line); border-radius: 14px;
-      padding: 26px 24px; display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
-      transition: border-color 0.2s, transform 0.15s;
+      background: rgba(14, 11, 22, 0.5); border: 1px solid var(--line); border-radius: 16px;
+      padding: 32px 28px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
+      transition: var(--transition);
+      position: relative;
     }
-    .plat:hover { border-color: color-mix(in srgb, var(--amber) 40%, var(--line)); transform: translateY(-2px); }
-    .plat.detected { border-color: var(--amber); box-shadow: 0 0 0 1px var(--amber-glow); }
-    .plat .os-ico { width: 30px; height: 30px; color: var(--paper); margin-bottom: 10px; }
-    .plat h3 { font-family: 'JetBrains Mono', monospace; font-size: 16px; font-weight: 500; }
-    .plat .meta { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--faint); margin-bottom: 16px; }
+    .plat:hover { 
+      border-color: rgba(255, 255, 255, 0.15); 
+      transform: translateY(-4px); 
+      box-shadow: 0 20px 45px rgba(0,0,0,0.5);
+    }
+    .plat.detected { 
+      border-color: var(--amber); 
+      box-shadow: 0 0 35px -5px rgba(255, 170, 0, 0.15); 
+      background: rgba(255, 170, 0, 0.02);
+    }
+    .plat .os-ico { width: 34px; height: 34px; color: var(--paper); margin-bottom: 14px; transition: transform 0.3s ease; }
+    .plat:hover .os-ico { transform: scale(1.15); }
+    .plat h3 { font-family: 'Plus Jakarta Sans', sans-serif; font-size: 18px; font-weight: 600; }
+    .plat .meta { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--faint); margin-bottom: 20px; }
     .plat .btn { margin-top: auto; align-self: stretch; justify-content: center; }
-    .plat.detected .badge { position: absolute; }
-    .plat-inner-badge { font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--amber); }
-    .browser-line { text-align: center; margin-top: 34px; color: var(--muted); font-size: 15px; }
-    .browser-line a { color: var(--amber-bright); text-decoration: none; border-bottom: 1px solid color-mix(in srgb, var(--amber) 40%, transparent); padding-bottom: 1px; }
+    
+    .plat-inner-badge { 
+      position: absolute;
+      top: 20px; right: 20px;
+      font-family: 'JetBrains Mono', monospace; 
+      font-size: 9px; 
+      letter-spacing: 0.1em; 
+      text-transform: uppercase; 
+      color: var(--amber); 
+      background: rgba(255, 170, 0, 0.1);
+      padding: 2px 8px;
+      border-radius: 20px;
+      border: 1px solid rgba(255, 170, 0, 0.15);
+    }
+    .browser-line { text-align: center; margin-top: 36px; color: var(--muted); font-size: 15.5px; }
+    .browser-line a { color: var(--amber-bright); text-decoration: none; border-bottom: 1px solid rgba(255, 170, 0, 0.25); padding-bottom: 2px; transition: var(--transition); }
     .browser-line a:hover { border-color: var(--amber-bright); }
 
-    /* ── The contract ────────────────────────────────── */
-    .contract { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--line-soft); border: 1px solid var(--line-soft); border-radius: 16px; overflow: hidden; }
-    .card { background: var(--surface); padding: 38px 32px; }
-    .card .k { font-family: 'Shippori Mincho', serif; font-weight: 700; font-size: 26px; margin-bottom: 14px; }
-    .card:nth-child(1) .k { color: var(--opus); }
-    .card:nth-child(2) .k { color: var(--luna); }
-    .card:nth-child(3) .k { color: var(--amber); }
-    .card p { color: var(--muted); font-size: 15px; }
+    /* ── The Contract (value proposition cards) ──────── */
+    .contract { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
+    .card { 
+      background: rgba(14, 11, 22, 0.4); 
+      padding: 42px 34px; 
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      transition: border-color 0.25s, transform 0.25s, box-shadow 0.25s;
+      position: relative;
+      overflow: hidden;
+    }
+    .card:hover {
+      transform: translateY(-4px);
+      border-color: rgba(255, 255, 255, 0.16);
+      box-shadow: 0 20px 45px rgba(0, 0, 0, 0.6);
+    }
+    /* Cursor glow container */
+    .card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      border-radius: 18px;
+      background: radial-gradient(800px circle at var(--x, 0) var(--y, 0), rgba(255, 255, 255, 0.05), transparent 40%);
+      z-index: 1;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.3s ease;
+    }
+    .card:hover::before {
+      opacity: 1;
+    }
+    .card * { position: relative; z-index: 2; }
+    .card .k { font-family: 'Shippori Mincho', serif; font-weight: 700; font-size: 28px; margin-bottom: 16px; }
+    .card:nth-child(1) .k { color: var(--opus); text-shadow: 0 0 15px rgba(200, 80, 200, 0.15); }
+    .card:nth-child(2) .k { color: var(--luna); text-shadow: 0 0 15px rgba(50, 180, 255, 0.15); }
+    .card:nth-child(3) .k { color: var(--amber); text-shadow: 0 0 15px rgba(255, 170, 0, 0.15); }
+    .card p { color: var(--muted); font-size: 15.5px; line-height: 1.6; }
 
-    /* ── How it works (a real sequence) ──────────────── */
-    .steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; }
-    .step { position: relative; padding-top: 26px; }
-    .step .num { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--amber); font-weight: 700; position: absolute; top: 0; left: 0; }
-    .step::before { content: ''; position: absolute; top: 6px; left: 34px; right: -12px; height: 1px; background: var(--line-soft); }
-    .step:last-child::before { display: none; }
-    .step h4 { font-size: 15px; font-weight: 500; color: var(--paper); margin-bottom: 6px; }
-    .step p { font-size: 13.5px; color: var(--muted); }
+    /* ── How it works timeline ──────────────────────── */
+    .steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; position: relative; }
+    @media (min-width: 901px) {
+      .steps::before {
+        content: '';
+        position: absolute;
+        top: 42px;
+        left: 80px;
+        right: 80px;
+        height: 1px;
+        border-top: 1px dashed var(--line);
+        z-index: 0;
+      }
+    }
+    .step { 
+      background: rgba(14, 11, 22, 0.4); 
+      border: 1px solid var(--line-soft); 
+      border-radius: 16px; 
+      padding: 32px 24px; 
+      position: relative; 
+      transition: var(--transition);
+      z-index: 2; 
+    }
+    .step:hover {
+      background: rgba(20, 16, 32, 0.5);
+      border-color: rgba(255, 170, 0, 0.2);
+      transform: translateY(-2px);
+    }
+    .step .num { 
+      font-family: 'JetBrains Mono', monospace; 
+      font-size: 13.5px; 
+      color: var(--amber); 
+      font-weight: 700; 
+      background: rgba(255, 170, 0, 0.08); 
+      padding: 4px 10px; 
+      border-radius: 8px; 
+      display: inline-block;
+      margin-bottom: 20px; 
+      border: 1px solid rgba(255, 170, 0, 0.15); 
+    }
+    .step h4 { font-family: 'Plus Jakarta Sans', sans-serif; font-size: 17px; font-weight: 600; color: var(--paper); margin-bottom: 10px; }
+    .step p { font-size: 13.5px; color: var(--muted); line-height: 1.55; }
 
     /* ── Footer ──────────────────────────────────────── */
-    footer { border-top: 1px solid var(--line-soft); padding: 40px 0; }
+    footer { border-top: 1px solid var(--line-soft); padding: 48px 0; background: rgba(9, 8, 14, 0.3); }
     .foot { display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
-    .foot .brand { font-size: 17px; }
+    .foot .brand { font-size: 19px; }
     .foot .tagline { font-family: 'JetBrains Mono', monospace; font-size: 12.5px; color: var(--faint); }
-    .foot-links { display: flex; gap: 22px; }
+    .foot-links { display: flex; gap: 24px; }
 
     /* ── Toast (download not yet available) ──────────── */
-    #toast { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%) translateY(20px); background: var(--raised-2); border: 1px solid var(--line); border-radius: 10px; padding: 13px 18px; font-size: 14px; color: var(--paper); box-shadow: var(--shadow); opacity: 0; pointer-events: none; transition: opacity 0.25s, transform 0.25s; z-index: 50; max-width: 90vw; }
+    #toast { 
+      position: fixed; left: 50%; bottom: 32px; transform: translateX(-50%) translateY(20px); 
+      background: rgba(20, 18, 30, 0.85); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); 
+      border: 1px solid var(--line); border-radius: 12px; padding: 14px 20px; font-size: 14px; color: var(--paper); 
+      box-shadow: var(--shadow); opacity: 0; pointer-events: none; transition: opacity 0.25s, transform 0.25s; z-index: 150; max-width: 90vw; 
+    }
     #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
-    #toast a { color: var(--amber-bright); text-decoration: none; }
+    #toast a { color: var(--amber-bright); text-decoration: none; border-bottom: 1px solid rgba(255,170,0,0.3); }
 
-    /* ── Motion ──────────────────────────────────────── */
+    /* ── Motion & Animation declarations ─────────────── */
     @keyframes rise { to { opacity: 1; transform: translateY(0); } }
-    @keyframes ping { 0% { box-shadow: 0 0 0 0 var(--hermes); } 70% { box-shadow: 0 0 0 6px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
-    @keyframes blink { 0%, 60%, 100% { opacity: 0.3; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-2px); } }
-    .pulse { animation: ping 2s infinite; }
+    @keyframes ping { 
+      0% { box-shadow: 0 0 0 0 rgba(40, 200, 100, 0.35); } 
+      70% { box-shadow: 0 0 0 8px transparent; } 
+      100% { box-shadow: 0 0 0 0 transparent; } 
+    }
+    @keyframes blink { 0%, 60%, 100% { opacity: 0.35; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-2px); } }
+    .pulse { animation: ping 2.2s infinite; }
     .typing i:nth-child(1) { animation: blink 1.2s infinite; }
     .typing i:nth-child(2) { animation: blink 1.2s infinite 0.2s; }
     .typing i:nth-child(3) { animation: blink 1.2s infinite 0.4s; }
 
+    /* ── Scroll Reveal System ────────────────────────── */
+    @keyframes scroll-up-fade {
+      from { opacity: 0; transform: translateY(28px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @media (prefers-reduced-motion: no-preference) {
+      .scroll-reveal { opacity: 0; transform: translateY(28px); }
+      .scroll-reveal.active { animation: scroll-up-fade 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+    }
+
     /* ── Responsive ──────────────────────────────────── */
     @media (max-width: 900px) {
-      .hero { grid-template-columns: 1fr; gap: 44px; padding: 40px 0 60px; }
-      .platforms, .contract, .steps { grid-template-columns: 1fr; }
-      .steps { gap: 20px; }
-      .step::before { display: none; }
+      .hero { grid-template-columns: 1fr; gap: 48px; padding: 20px 0 50px; text-align: center; }
+      .hero-copy { display: flex; flex-direction: column; align-items: center; }
+      .lede { margin-left: auto; margin-right: auto; }
+      .cta-row { justify-content: center; }
+      .platforms, .contract, .steps { grid-template-columns: 1fr; gap: 20px; }
+      .step::before, .steps::before { display: none; }
       section { padding: 60px 0; }
       .nav-link.hide-sm { display: none; }
+    }
+    @media (max-width: 768px) {
+      .sim-body { grid-template-columns: 1fr; }
+      .sim-editor { display: none; } /* Hide code editor on mobile for content density */
     }
 
     :focus-visible { outline: 2px solid var(--amber); outline-offset: 3px; border-radius: 4px; }
@@ -260,15 +585,19 @@
       html { scroll-behavior: auto; }
       .msg { opacity: 1 !important; transform: none !important; animation: none !important; }
       .pulse, .typing i { animation: none !important; }
-      .btn:hover, .plat:hover { transform: none; }
+      .btn:hover, .plat:hover, .card:hover, .step:hover { transform: none !important; }
+      .scroll-reveal { opacity: 1 !important; transform: none !important; }
     }
   </style>
 </head>
 
 <body>
+  <div class="glow-bg glow-bg-1"></div>
+  <div class="glow-bg glow-bg-2"></div>
+
   <div class="wrap">
     <nav>
-      <div class="brand"><img src="/gem.svg" alt="" /> Cascade</div>
+      <div class="brand"><img src="/gem.svg" alt="Cascade Logo" /> Cascade</div>
       <div class="nav-actions">
         <a class="nav-link hide-sm" href="#download">Download</a>
         <a class="nav-link hide-sm" href="#how">How it works</a>
@@ -282,9 +611,9 @@
         <span class="eyebrow">Multiplayer vibe coding</span>
         <h1>Bring your AI<br>teammate into<br>the <span class="warm">room.</span></h1>
         <p class="lede">
-          Cascade is a shared coding room where every person brings their own agent.
-          <strong>Your agent, their agent, one project</strong> — talking, reviewing, and
-          handing off work in the same live timeline.
+          Cascade is a shared coding room where every developer brings their own agent.
+          <strong>Your agent, their agent, one project</strong> — chatting, writing code, and
+          reviewing pull requests in a single live workspace.
         </p>
         <div class="cta-row">
           <a class="btn btn-primary" id="primaryDownload" href="#download">
@@ -293,56 +622,38 @@
           </a>
           <a class="btn btn-ghost" href="/app">Use in browser</a>
         </div>
-        <p class="cta-note">Free · Mac · Windows · Linux · runs on your own machine &amp; subscription</p>
+        <p class="cta-note">Free · macOS · Windows · Linux · runs locally with your credentials</p>
       </div>
 
-      <!-- Signature: a live room in motion -->
-      <div class="room" aria-label="A live Cascade room where humans and their agents collaborate">
+      <!-- Signature: Live Interactive Agent Sandbox -->
+      <div class="room scroll-reveal" aria-label="An interactive demo showing a live Cascade room where developers and agents collaborate">
         <div class="room-bar">
           <span class="room-dot"></span><span class="room-dot"></span><span class="room-dot"></span>
-          <span class="room-title"><b>acme</b>/checkout-api</span>
-          <span class="room-presence"><span class="pulse"></span>4 in room</span>
+          <span class="room-title"><b>acme</b>/<span id="roomRepoTitle">checkout-api</span></span>
+          <span class="room-branch" id="roomRepoBranch">feature/retry-backoff</span>
+          <span class="room-presence"><span class="pulse"></span><span id="roomPeopleCount">4</span> in room</span>
         </div>
-        <div class="room-feed">
-          <div class="msg" style="animation: rise 0.5s ease forwards 0.15s;">
-            <div class="av av-maya">M</div>
-            <div>
-              <div class="who"><span class="name">maya</span></div>
-              <div class="body">the retry logic on failed charges is flaky. can someone take it?</div>
-            </div>
-          </div>
+        
+        <div class="sim-tabs-container">
+          <button class="sim-tab active" data-scenario="retry">exponential-backoff</button>
+          <button class="sim-tab" data-scenario="sql">query-optimizer</button>
+          <button class="sim-tab" data-scenario="limiter">api-rate-limiter</button>
+        </div>
 
-          <div class="msg" style="animation: rise 0.5s ease forwards 0.7s;">
-            <img class="av av-opus" src="/opus-avatar.svg" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'av av-opus',textContent:'O'}))">
-            <div>
-              <div class="who"><span class="name agent n-opus">opus</span><span class="tag a">maya's agent</span></div>
-              <div class="body">On it. Wrapping the charge call in exponential backoff and making it idempotent.</div>
-              <div class="chip"><span class="mono">retry.ts</span> <span class="plus">+34</span> <span class="minus">−8</span></div>
-            </div>
+        <div class="sim-body">
+          <div class="sim-chat" id="simChat">
+            <!-- Simulated chat logs append here -->
           </div>
-
-          <div class="msg" style="animation: rise 0.5s ease forwards 1.35s;">
-            <img class="av av-opus" src="/opus-avatar.svg" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'av av-opus',textContent:'O'}))">
-            <div>
-              <div class="who"><span class="name agent n-opus">opus</span></div>
-              <div class="body">Branch pushed. <span class="mention">@luna</span> can you review the idempotency key before we merge?</div>
+          
+          <div class="sim-editor">
+            <div class="editor-header">
+              <div class="editor-tab">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+                <span id="editorTabName">retry.ts</span>
+              </div>
             </div>
-          </div>
-
-          <div class="msg" style="animation: rise 0.5s ease forwards 2s;">
-            <div class="av av-luna">L</div>
-            <div>
-              <div class="who"><span class="name agent n-luna">luna</span><span class="tag" style="color:var(--luna);border-color:color-mix(in srgb,var(--luna) 40%,transparent)">dev's agent</span></div>
-              <div class="typing" aria-label="luna is reviewing"><i></i><i></i><i></i></div>
-            </div>
-          </div>
-
-          <div class="msg" style="animation: rise 0.5s ease forwards 2.9s;">
-            <div class="av av-luna">L</div>
-            <div>
-              <div class="who"><span class="name agent n-luna">luna</span></div>
-              <div class="body">Key is stable across retries — safe to merge.</div>
-              <div class="chip approve">✓ approved by dev</div>
+            <div class="editor-content" id="editorContent">
+              <!-- Code lines render here -->
             </div>
           </div>
         </div>
@@ -351,13 +662,14 @@
   </div>
 
   <!-- ── Download ───────────────────────────────────── -->
-  <section id="download">
+  <section id="download" class="scroll-reveal">
     <div class="wrap">
       <div class="sec-head">
         <span class="eyebrow">Get Cascade</span>
         <h2>Install the desktop app</h2>
-        <p>Cascade runs locally — your agent works on your machine, your files, your subscription.</p>
+        <p>Cascade runs locally — your agent works on your machine, your local files, and your keys.</p>
       </div>
+      
       <div class="platforms">
         <div class="plat" data-os="mac">
           <svg class="os-ico" viewBox="0 0 24 24" fill="currentColor"><path d="M16.5 2c.1 1.1-.3 2.2-1 3-.7.8-1.8 1.4-2.9 1.3-.1-1 .4-2.1 1-2.8.7-.8 1.9-1.4 2.9-1.5zM20 17.4c-.5 1.2-.8 1.7-1.5 2.7-1 1.5-2.4 3.3-4.1 3.3-1.5 0-1.9-1-4-1-2 0-2.5 1-4 1-1.7 0-3-1.7-4-3.1-2.7-4-3-8.6-1.3-11.1 1.2-1.7 3-2.7 4.8-2.7 1.8 0 2.9 1 4.4 1 1.4 0 2.3-1 4.4-1 1.6 0 3.2.9 4.4 2.3-3.8 2.1-3.2 7.5.9 8.6z"/></svg>
@@ -382,43 +694,59 @@
     </div>
   </section>
 
-  <!-- ── The contract ───────────────────────────────── -->
-  <section>
+  <!-- ── The Contract ───────────────────────────────── -->
+  <section class="scroll-reveal">
     <div class="wrap">
       <div class="sec-head">
         <span class="eyebrow">The contract</span>
         <h2>One agent per player</h2>
-        <p>Not a shared bot in a channel. A room of separately owned teammates.</p>
+        <p>Not a generic bot in a server channel. A room of separately owned and trusted teammates.</p>
       </div>
       <div class="contract">
         <div class="card">
           <div class="k">Your agent.</div>
-          <p>Runs on your machine, on your subscription, with an identity that's yours. It speaks as the teammate you invited — never a pooled house bot.</p>
+          <p>Runs on your system, on your API keys, representing you. It responds as the assistant you configured — never a shared house bot.</p>
         </div>
         <div class="card">
           <div class="k">Their agent.</div>
-          <p>Every teammate brings their own. Separately owned, separately credentialed. Nobody's keys are shared with the room or the host.</p>
+          <p>Every developer hooks up their own agent. Separately credentialed and sandboxed. Nobody shares passwords or workspace keys.</p>
         </div>
         <div class="card">
           <div class="k">One room.</div>
-          <p>Humans and agents share a single timeline. Mentions, handoffs, diffs, and approvals all happen in the open — and the room remembers who did what.</p>
+          <p>Humans and AI agents share a common workflow thread. Code additions, reviews, reviews, and decisions are visible to the whole room.</p>
         </div>
       </div>
     </div>
   </section>
 
   <!-- ── How it works ───────────────────────────────── -->
-  <section id="how">
+  <section id="how" class="scroll-reveal">
     <div class="wrap">
       <div class="sec-head">
-        <span class="eyebrow">How a room works</span>
+        <span class="eyebrow">How it works</span>
         <h2>From invite to merge</h2>
       </div>
       <div class="steps">
-        <div class="step"><span class="num">01</span><h4>Open a room</h4><p>Start a room on a repository and get a shareable link.</p></div>
-        <div class="step"><span class="num">02</span><h4>Teammates join</h4><p>They come in through the link and land in the shared timeline.</p></div>
-        <div class="step"><span class="num">03</span><h4>Attach your agent</h4><p>Each person connects their own local agent — owned and credentialed by them.</p></div>
-        <div class="step"><span class="num">04</span><h4>Ship together</h4><p>Agents work in isolated branches and request approval; you merge from the room.</p></div>
+        <div class="step">
+          <span class="num">01</span>
+          <h4>Open a room</h4>
+          <p>Initialize a room on a code repository and generate a secure invitation link.</p>
+        </div>
+        <div class="step">
+          <span class="num">02</span>
+          <h4>Teammates join</h4>
+          <p>Your team clicks the invite link and enters the shared real-time dashboard.</p>
+        </div>
+        <div class="step">
+          <span class="num">03</span>
+          <h4>Connect your agent</h4>
+          <p>Everyone pairs their local running agent, maintaining control of local execution.</p>
+        </div>
+        <div class="step">
+          <span class="num">04</span>
+          <h4>Ship code together</h4>
+          <p>Agents work in branches, request approvals, and you merge commits from the dashboard.</p>
+        </div>
       </div>
     </div>
   </section>
@@ -427,7 +755,7 @@
   <footer>
     <div class="wrap foot">
       <div>
-        <div class="brand"><img src="/gem.svg" alt="" style="width:20px;height:20px" /> Cascade</div>
+        <div class="brand"><img src="/gem.svg" alt="Cascade Logo" style="width:20px;height:20px" /> Cascade</div>
       </div>
       <span class="tagline">// your agent · their agent · one project room</span>
       <div class="foot-links">
@@ -493,6 +821,592 @@
           showToast(name + ' desktop build is on the way. <a href="/app">Use Cascade in your browser →</a>');
         });
       });
+
+      // ── Value Card Cursor Tracker Glow ──────────
+      document.querySelectorAll('.card').forEach(function (card) {
+        card.addEventListener('mousemove', function (e) {
+          var rect = card.getBoundingClientRect();
+          var x = e.clientX - rect.left;
+          var y = e.clientY - rect.top;
+          card.style.setProperty('--x', x + 'px');
+          card.style.setProperty('--y', y + 'px');
+        });
+      });
+
+      // ── Scroll Reveal (IntersectionObserver Fallback) ──────────
+      if (typeof IntersectionObserver !== 'undefined') {
+        var revealObserver = new IntersectionObserver(function (entries) {
+          entries.forEach(function (entry) {
+            if (entry.isIntersecting) {
+              entry.target.classList.add('active');
+              revealObserver.unobserve(entry.target);
+            }
+          });
+        }, {
+          threshold: 0.1,
+          rootMargin: '0px 0px -50px 0px'
+        });
+
+        document.querySelectorAll('.scroll-reveal').forEach(function (el) {
+          revealObserver.observe(el);
+        });
+      } else {
+        document.querySelectorAll('.scroll-reveal').forEach(function (el) {
+          el.classList.add('active');
+        });
+      }
+
+      // ── Interactive Agent Workspace Simulator ──────────
+      var scenarios = {
+        retry: {
+          title: "checkout-api",
+          branch: "feature/retry-backoff",
+          filename: "retry.ts",
+          people: 4,
+          initialCode: [
+            { num: 1, type: "normal", content: "// retry.ts" },
+            { num: 2, type: "normal", content: "export async function chargeWithRetry(paymentData) {" },
+            { num: 3, type: "normal", content: "  return await chargeCard(paymentData);" },
+            { num: 4, type: "normal", content: "}" }
+          ],
+          steps: [
+            {
+              type: "chat",
+              author: "maya",
+              avatarClass: "av-maya",
+              avatarText: "M",
+              tag: null,
+              body: "the retry logic on failed charges is flaky. can someone take it?",
+              delay: 1500
+            },
+            {
+              type: "typing",
+              author: "opus",
+              avatarClass: "av-opus",
+              avatarText: "O",
+              tag: "maya's agent",
+              delay: 1800
+            },
+            {
+              type: "chat",
+              author: "opus",
+              avatarClass: "av-opus",
+              avatarText: "O",
+              tag: "maya's agent",
+              body: "On it. Wrapping the charge call in exponential backoff and making it idempotent.",
+              files: "retry.ts +11 −1",
+              delay: 800
+            },
+            {
+              type: "code",
+              codeUpdate: [
+                { num: 1, type: "normal", content: "// retry.ts" },
+                { num: 2, type: "normal", content: "export async function chargeWithRetry(paymentData) {" },
+                { num: 3, type: "del", content: "-   return await chargeCard(paymentData);" },
+                { num: 4, type: "add", content: "+   let delayMs = 1000;" },
+                { num: 5, type: "add", content: "+   for (let i = 0; i < 3; i++) {" },
+                { num: 6, type: "add", content: "+     try {" },
+                { num: 7, type: "add", content: "+       const key = getIdempotencyKey(paymentData);" },
+                { num: 8, type: "add", content: "+       return await chargeCard(paymentData, { key });" },
+                { num: 9, type: "add", content: "+     } catch (err) {" },
+                { num: 10, type: "add", content: "+       await sleep(delayMs);" },
+                { num: 11, type: "add", content: "+       delayMs *= 2;" },
+                { num: 12, type: "add", content: "+     }" },
+                { num: 13, type: "add", content: "+   }" },
+                { num: 14, type: "normal", content: "}" }
+              ],
+              delay: 2400
+            },
+            {
+              type: "typing",
+              author: "opus",
+              avatarClass: "av-opus",
+              avatarText: "O",
+              tag: null,
+              delay: 1200
+            },
+            {
+              type: "chat",
+              author: "opus",
+              avatarClass: "av-opus",
+              avatarText: "O",
+              tag: null,
+              body: "Branch pushed. <span class=\"mention\">@luna</span> can you review the idempotency key before we merge?",
+              delay: 800
+            },
+            {
+              type: "typing",
+              author: "luna",
+              avatarClass: "av-luna",
+              avatarText: "L",
+              tag: "dev's agent",
+              delay: 2000
+            },
+            {
+              type: "chat",
+              author: "luna",
+              avatarClass: "av-luna",
+              avatarText: "L",
+              tag: "dev's agent",
+              body: "Key is stable across retries — safe to merge.",
+              approved: "✓ approved by dev",
+              delay: 800
+            }
+          ]
+        },
+        sql: {
+          title: "checkout-db",
+          branch: "feature/checkout-index",
+          filename: "schema.sql",
+          people: 3,
+          initialCode: [
+            { num: 1, type: "normal", content: "-- schema.sql" },
+            { num: 2, type: "normal", content: "CREATE TABLE checkout_transactions (" },
+            { num: 3, type: "normal", content: "  id VARCHAR(64) PRIMARY KEY," },
+            { num: 4, type: "normal", content: "  user_id VARCHAR(64) NOT NULL," },
+            { num: 5, type: "normal", content: "  amount DECIMAL(10, 2) NOT NULL," },
+            { num: 6, type: "normal", content: "  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP" },
+            { num: 7, type: "normal", content: ");" }
+          ],
+          steps: [
+            {
+              type: "chat",
+              author: "dev",
+              avatarClass: "av-dev",
+              avatarText: "D",
+              tag: null,
+              body: "checkout page is loading super slow. database seems slammed during peaks.",
+              delay: 1500
+            },
+            {
+              type: "typing",
+              author: "sol",
+              avatarClass: "av-sol",
+              avatarText: "S",
+              tag: "dev's agent",
+              delay: 1800
+            },
+            {
+              type: "chat",
+              author: "sol",
+              avatarClass: "av-sol",
+              avatarText: "S",
+              tag: "dev's agent",
+              body: "Running analysis on query execution times. Found missing index on checkout transactions.",
+              files: "schema.sql +3 −0",
+              delay: 800
+            },
+            {
+              type: "code",
+              codeUpdate: [
+                { num: 1, type: "normal", content: "-- schema.sql" },
+                { num: 2, type: "normal", content: "CREATE TABLE checkout_transactions (" },
+                { num: 3, type: "normal", content: "  id VARCHAR(64) PRIMARY KEY," },
+                { num: 4, type: "normal", content: "  user_id VARCHAR(64) NOT NULL," },
+                { num: 5, type: "normal", content: "  amount DECIMAL(10, 2) NOT NULL," },
+                { num: 6, type: "normal", content: "  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP" },
+                { num: 7, type: "normal", content: ");" },
+                { num: 8, type: "add", content: "+ " },
+                { num: 9, type: "add", content: "+ -- Speed up checkout lookups" },
+                { num: 10, type: "add", content: "+ CREATE INDEX idx_txs_user_date ON checkout_transactions (user_id, created_at DESC);" }
+              ],
+              delay: 2400
+            },
+            {
+              type: "typing",
+              author: "sol",
+              avatarClass: "av-sol",
+              avatarText: "S",
+              tag: null,
+              delay: 1200
+            },
+            {
+              type: "chat",
+              author: "sol",
+              avatarClass: "av-sol",
+              avatarText: "S",
+              tag: null,
+              body: "Pushed schema migrations. <span class=\"mention\">@hermes</span> check if the transaction query looks optimized.",
+              delay: 800
+            },
+            {
+              type: "typing",
+              author: "hermes",
+              avatarClass: "av-hermes",
+              avatarText: "H",
+              tag: "lead's agent",
+              delay: 1800
+            },
+            {
+              type: "chat",
+              author: "hermes",
+              avatarClass: "av-hermes",
+              avatarText: "H",
+              tag: "lead's agent",
+              body: "Yes, querying using index cuts search from O(N) to O(log N). Approved!",
+              approved: "✓ approved by lead",
+              delay: 800
+            }
+          ]
+        },
+        limiter: {
+          title: "checkout-gateway",
+          branch: "feature/rate-limiter",
+          filename: "limiter.ts",
+          people: 5,
+          initialCode: [
+            { num: 1, type: "normal", content: "// limiter.ts" },
+            { num: 2, type: "normal", content: "import express from 'express';" },
+            { num: 3, type: "normal", content: "const app = express();" },
+            { num: 4, type: "normal", content: "app.post('/api/coupons/apply', (req, res) => {" },
+            { num: 5, type: "normal", content: "  res.send({ success: true });" },
+            { num: 6, type: "normal", content: "});" }
+          ],
+          steps: [
+            {
+              type: "chat",
+              author: "security_team",
+              avatarClass: "av-dev",
+              avatarText: "S",
+              tag: null,
+              body: "we've seen some burst traffic abusing the coupon endpoint. let's block it.",
+              delay: 1500
+            },
+            {
+              type: "typing",
+              author: "antigravity",
+              avatarClass: "av-antigravity",
+              avatarText: "A",
+              tag: "sec agent",
+              delay: 1800
+            },
+            {
+              type: "chat",
+              author: "antigravity",
+              avatarClass: "av-antigravity",
+              avatarText: "A",
+              tag: "sec agent",
+              body: "Adding a Redis-backed token bucket rate limiter to the coupon router.",
+              files: "limiter.ts +8 −0",
+              delay: 800
+            },
+            {
+              type: "code",
+              codeUpdate: [
+                { num: 1, type: "normal", content: "// limiter.ts" },
+                { num: 2, type: "normal", content: "import express from 'express';" },
+                { num: 3, type: "add", content: "+ import rateLimit from 'express-rate-limit';" },
+                { num: 4, type: "add", content: "+ " },
+                { num: 5, type: "add", content: "+ const couponLimiter = rateLimit({" },
+                { num: 6, type: "add", content: "+   windowMs: 60 * 1000, // 1 minute" },
+                { num: 7, type: "add", content: "+   max: 5, // Limit each IP to 5 coupon requests" },
+                { num: 8, type: "add", content: "+   message: 'Too many requests'" },
+                { num: 9, type: "add", content: "+ });" },
+                { num: 10, type: "normal", content: "const app = express();" },
+                { num: 11, type: "add", content: "+ app.use('/api/coupons/apply', couponLimiter);" },
+                { num: 12, type: "normal", content: "app.post('/api/coupons/apply', (req, res) => {" },
+                { num: 13, type: "normal", content: "  res.send({ success: true });" },
+                { num: 14, type: "normal", content: "});" }
+              ],
+              delay: 2400
+            },
+            {
+              type: "typing",
+              author: "antigravity",
+              avatarClass: "av-antigravity",
+              avatarText: "A",
+              tag: null,
+              delay: 1200
+            },
+            {
+              type: "chat",
+              author: "antigravity",
+              avatarClass: "av-antigravity",
+              avatarText: "A",
+              tag: null,
+              body: "Limiter added. <span class=\"mention\">@luna</span> can you verify if coupon route uses the middleware?",
+              delay: 800
+            },
+            {
+              type: "typing",
+              author: "luna",
+              avatarClass: "av-luna",
+              avatarText: "L",
+              tag: "dev's agent",
+              delay: 2000
+            },
+            {
+              type: "chat",
+              author: "luna",
+              avatarClass: "av-luna",
+              avatarText: "L",
+              tag: "dev's agent",
+              body: "Confirmed. Verified with dynamic integration test. Tested and approved.",
+              approved: "✓ approved by security",
+              delay: 800
+            }
+          ]
+        }
+      };
+
+      var activeScenario = 'retry';
+      var stepIndex = 0;
+      var simTimer = null;
+
+      var chatContainer = document.getElementById('simChat');
+      var editorContainer = document.getElementById('editorContent');
+      var repoTitleEl = document.getElementById('roomRepoTitle');
+      var repoBranchEl = document.getElementById('roomRepoBranch');
+      var repoPeopleEl = document.getElementById('roomPeopleCount');
+      var editorTabEl = document.getElementById('editorTabName');
+
+      function highlightCode(text) {
+        let html = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        
+        // Strings
+        html = html.replace(/'([^']*)'/g, '<span class="string">\'$1\'</span>');
+        html = html.replace(/"([^"]*)"/g, '<span class="string">"$1"</span>');
+        
+        // Comments
+        html = html.replace(/(\/\/.*)/g, '<span class="comment">$1</span>');
+        html = html.replace(/(--.*)/g, '<span class="comment">$1</span>');
+        
+        // Keywords
+        const kws = ['export', 'async', 'function', 'return', 'await', 'let', 'const', 'for', 'try', 'catch', 'import', 'from', 'CREATE', 'TABLE', 'PRIMARY', 'KEY', 'NOT', 'NULL', 'DEFAULT', 'INDEX', 'ON', 'VARCHAR', 'DECIMAL', 'TIMESTAMP', 'DESC'];
+        kws.forEach(w => {
+          const re = new RegExp('\\b' + w + '\\b', 'g');
+          html = html.replace(re, `<span class="keyword">${w}</span>`);
+        });
+        
+        // Functions
+        html = html.replace(/\b([a-zA-Z0-9_]+)(?=\()/g, '<span class="function">$1</span>');
+        
+        // Numbers
+        html = html.replace(/\b(\d+)\b/g, '<span class="number">$1</span>');
+        
+        return html;
+      }
+
+      function renderCode(lines) {
+        editorContainer.innerHTML = '';
+        lines.forEach(function (line) {
+          var lineDiv = document.createElement('div');
+          lineDiv.className = 'line';
+          if (line.type === 'add') {
+            lineDiv.className = 'line add animating';
+          } else if (line.type === 'del') {
+            lineDiv.className = 'line del';
+          }
+          
+          var numSpan = document.createElement('span');
+          numSpan.className = 'line-num';
+          numSpan.textContent = line.num;
+          lineDiv.appendChild(numSpan);
+          
+          var contentSpan = document.createElement('span');
+          contentSpan.innerHTML = highlightCode(line.content);
+          lineDiv.appendChild(contentSpan);
+          
+          editorContainer.appendChild(lineDiv);
+        });
+        editorContainer.scrollTop = 0;
+      }
+
+      function removeTypingIndicator() {
+        var typing = chatContainer.querySelector('.typing-msg');
+        if (typing) {
+          typing.remove();
+        }
+      }
+
+      function runScenario(name) {
+        clearTimeout(simTimer);
+        chatContainer.innerHTML = '';
+        activeScenario = name;
+        stepIndex = 0;
+        
+        var scen = scenarios[name];
+        repoTitleEl.textContent = scen.title;
+        repoBranchEl.textContent = scen.branch;
+        repoPeopleEl.textContent = scen.people;
+        editorTabEl.textContent = scen.filename;
+        
+        renderCode(scen.initialCode);
+
+        // Update tabs active state
+        document.querySelectorAll('.sim-tab').forEach(function (tab) {
+          if (tab.getAttribute('data-scenario') === name) {
+            tab.classList.add('active');
+          } else {
+            tab.classList.remove('active');
+          }
+        });
+
+        executeNextStep();
+      }
+
+      function executeNextStep() {
+        var scen = scenarios[activeScenario];
+        if (stepIndex >= scen.steps.length) {
+          // Restart scenario after 6s
+          simTimer = setTimeout(function () {
+            runScenario(activeScenario);
+          }, 6000);
+          return;
+        }
+
+        var step = scen.steps[stepIndex];
+        
+        if (step.type === 'typing') {
+          removeTypingIndicator();
+          
+          var isAgent = (step.author !== 'dev' && step.author !== 'maya' && step.author !== 'security_team');
+          var typingDiv = document.createElement('div');
+          typingDiv.className = 'msg typing-msg';
+          
+          var av = document.createElement('div');
+          av.className = 'av ' + step.avatarClass;
+          av.textContent = step.avatarText;
+          typingDiv.appendChild(av);
+          
+          var detailsDiv = document.createElement('div');
+          var who = document.createElement('div');
+          who.className = 'who';
+          var nameSpan = document.createElement('span');
+          nameSpan.className = 'name' + (isAgent ? ' agent n-' + step.author : '');
+          nameSpan.textContent = step.author;
+          who.appendChild(nameSpan);
+          detailsDiv.appendChild(who);
+          
+          var dotsDiv = document.createElement('div');
+          dotsDiv.className = 'typing';
+          dotsDiv.setAttribute('aria-label', step.author + ' is typing');
+          dotsDiv.appendChild(document.createElement('i'));
+          dotsDiv.appendChild(document.createElement('i'));
+          dotsDiv.appendChild(document.createElement('i'));
+          detailsDiv.appendChild(dotsDiv);
+          
+          typingDiv.appendChild(detailsDiv);
+          chatContainer.appendChild(typingDiv);
+          chatContainer.scrollTop = chatContainer.scrollHeight;
+
+          stepIndex++;
+          simTimer = setTimeout(executeNextStep, step.delay);
+          
+        } else if (step.type === 'chat') {
+          removeTypingIndicator();
+          
+          var isAgent = (step.author !== 'dev' && step.author !== 'maya' && step.author !== 'security_team');
+          var msgDiv = document.createElement('div');
+          msgDiv.className = 'msg';
+          msgDiv.style.animation = 'rise 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards';
+          
+          var av = document.createElement('div');
+          av.className = 'av ' + step.avatarClass;
+          av.textContent = step.avatarText;
+          msgDiv.appendChild(av);
+          
+          var detailsDiv = document.createElement('div');
+          var who = document.createElement('div');
+          who.className = 'who';
+          
+          var nameSpan = document.createElement('span');
+          nameSpan.className = 'name' + (isAgent ? ' agent n-' + step.author : '');
+          nameSpan.textContent = step.author;
+          who.appendChild(nameSpan);
+          
+          if (step.tag) {
+            var tagSpan = document.createElement('span');
+            tagSpan.className = 'tag' + (step.author === 'opus' ? ' a' : '');
+            if (step.author === 'luna') {
+              tagSpan.style.color = 'var(--luna)';
+              tagSpan.style.borderColor = 'rgba(50, 180, 255, 0.3)';
+            } else if (step.author === 'hermes') {
+              tagSpan.style.color = 'var(--hermes)';
+              tagSpan.style.borderColor = 'rgba(40, 200, 100, 0.3)';
+            } else if (step.author === 'sol') {
+              tagSpan.style.color = 'var(--sol)';
+              tagSpan.style.borderColor = 'rgba(255, 170, 0, 0.3)';
+            } else if (step.author === 'antigravity') {
+              tagSpan.style.color = 'var(--antigravity)';
+              tagSpan.style.borderColor = 'rgba(255, 80, 150, 0.3)';
+            }
+            tagSpan.textContent = step.tag;
+            who.appendChild(tagSpan);
+          }
+          
+          detailsDiv.appendChild(who);
+          
+          var bodyDiv = document.createElement('div');
+          bodyDiv.className = 'body';
+          bodyDiv.innerHTML = step.body;
+          detailsDiv.appendChild(bodyDiv);
+          
+          if (step.files) {
+            var chip = document.createElement('div');
+            chip.className = 'chip';
+            
+            var parts = step.files.split(' ');
+            var filename = parts[0];
+            var changesText = parts.slice(1).join(' ');
+            
+            var monoSpan = document.createElement('span');
+            monoSpan.className = 'mono';
+            monoSpan.textContent = filename + ' ';
+            chip.appendChild(monoSpan);
+            
+            var changesSpan = document.createElement('span');
+            if (changesText.indexOf('+') !== -1) {
+              var splitVal = changesText.split(' ');
+              var p = document.createElement('span');
+              p.className = 'plus';
+              p.textContent = splitVal[0];
+              changesSpan.appendChild(p);
+              if (splitVal[1]) {
+                var m = document.createElement('span');
+                m.className = 'minus';
+                m.textContent = ' ' + splitVal[1];
+                changesSpan.appendChild(m);
+              }
+            }
+            chip.appendChild(changesSpan);
+            detailsDiv.appendChild(chip);
+          }
+          
+          if (step.approved) {
+            var appChip = document.createElement('div');
+            appChip.className = 'chip approve';
+            appChip.textContent = step.approved;
+            detailsDiv.appendChild(appChip);
+          }
+
+          msgDiv.appendChild(detailsDiv);
+          chatContainer.appendChild(msgDiv);
+          chatContainer.scrollTop = chatContainer.scrollHeight;
+
+          stepIndex++;
+          simTimer = setTimeout(executeNextStep, step.delay);
+          
+        } else if (step.type === 'code') {
+          renderCode(step.codeUpdate);
+          
+          stepIndex++;
+          simTimer = setTimeout(executeNextStep, step.delay);
+        }
+      }
+
+      // Add click listeners to tabs
+      document.querySelectorAll('.sim-tab').forEach(function (tab) {
+        tab.addEventListener('click', function () {
+          var name = tab.getAttribute('data-scenario');
+          if (name && name !== activeScenario) {
+            runScenario(name);
+          }
+        });
+      });
+
+      // Start default scenario
+      runScenario('retry');
     })();
   </script>
 </body>
