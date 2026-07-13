@@ -837,7 +837,62 @@ a {
   background: var(--border);
 }
 
-/* Sidebar footer */
+/* Sidebar audio player + footer */
+.sidebar-audio-player {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-surface);
+}
+.sidebar-audio-player audio {
+  display: none;
+}
+.sidebar-audio-track {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  text-align: left;
+}
+.sidebar-audio-track:hover {
+  color: var(--text-primary);
+}
+.sidebar-audio-track svg {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+.sidebar-audio-track span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.75rem;
+}
+.sidebar-audio-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+.sidebar-audio-controls .btn-icon {
+  width: 27px;
+  height: 27px;
+}
+.sidebar-audio-controls .btn-icon:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.sidebar-audio-play {
+  color: var(--accent);
+}
 .sidebar-footer {
   display: flex;
   align-items: center;

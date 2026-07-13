@@ -17,14 +17,14 @@
  * @component
  */
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import type { Vault, Folder, NoteSummary } from '../api';
 import { NOTE_DND_TYPE, noteEmbedMarkdown } from '../docEmbeds';
 import { CHAT_NOTE_MARKER } from './ChatView';
 import {
   Folder as FolderIcon, FolderOpen, FileText, Pin, Gem, Edit2, FolderPlus,
   Search, ChevronRight, PanelLeftClose, LogOut, Trash2, FilePlus, FolderInput, Pencil, RefreshCw,
-  Hash, Unlink, ShieldCheck,
+  Hash, Unlink, ShieldCheck, SkipBack, Play, Pause, SkipForward, Music2,
 } from 'lucide-react';
 
 const FOLDER_DND_TYPE = 'application/x-cascade-folder';
@@ -104,6 +104,12 @@ export function Sidebar({
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [editingValue, setEditingValue] = useState('');
   const [updating, setUpdating] = useState(false);
+  const [audioTracks, setAudioTracks] = useState<Array<{ name: string; url: string }>>([]);
+  const [audioTrackIndex, setAudioTrackIndex] = useState(0);
+  const [audioPlaying, setAudioPlaying] = useState(false);
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const audioInputRef = useRef<HTMLInputElement>(null);
+  const autoplayAudioRef = useRef(false);
   // Drop target highlight: a folder id, or ROOT_DROP_ID for the root area.
   const [dragOverId, setDragOverId] = useState<string | null>(null);
 
@@ -177,6 +183,47 @@ export function Sidebar({
       alert('Desktop update failed: ' + (payload?.error || 'Unknown error'));
     });
   }, []);
+
+  useEffect(() => () => {
+    for (const track of audioTracks) URL.revokeObjectURL(track.url);
+  }, [audioTracks]);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio || !audioTracks[audioTrackIndex]) return;
+    audio.load();
+    if (autoplayAudioRef.current) {
+      void audio.play().catch(() => setAudioPlaying(false));
+    }
+  }, [audioTrackIndex, audioTracks]);
+
+  function loadAudioFiles(files: FileList | null) {
+    const next = Array.from(files ?? [])
+      .filter((file) => file.type === 'audio/mpeg' || file.name.toLowerCase().endsWith('.mp3'))
+      .map((file) => ({ name: file.name.replace(/\.mp3$/i, ''), url: URL.createObjectURL(file) }));
+    if (next.length === 0) return;
+    audioRef.current?.pause();
+    autoplayAudioRef.current = false;
+    setAudioPlaying(false);
+    setAudioTrackIndex(0);
+    setAudioTracks(next);
+  }
+
+  function changeAudioTrack(offset: number, autoplay = audioPlaying) {
+    if (audioTracks.length === 0) return;
+    autoplayAudioRef.current = autoplay;
+    setAudioTrackIndex((current) => (current + offset + audioTracks.length) % audioTracks.length);
+  }
+
+  function toggleAudioPlayback() {
+    const audio = audioRef.current;
+    if (!audio || audioTracks.length === 0) {
+      audioInputRef.current?.click();
+      return;
+    }
+    if (audio.paused) void audio.play().catch(() => setAudioPlaying(false));
+    else audio.pause();
+  }
 
   function toggleFolder(folderId: string) {
     setExpandedFolders((prev) => {
@@ -489,6 +536,44 @@ export function Sidebar({
             No notes yet. Create one to get started.
           </div>
         )}
+      </div>
+
+      <div className="sidebar-audio-player">
+        <input
+          ref={audioInputRef}
+          type="file"
+          accept="audio/mpeg,.mp3"
+          multiple
+          hidden
+          onChange={(event) => {
+            loadAudioFiles(event.target.files);
+            event.target.value = '';
+          }}
+        />
+        <audio
+          ref={audioRef}
+          src={audioTracks[audioTrackIndex]?.url}
+          onPlay={() => setAudioPlaying(true)}
+          onPause={() => setAudioPlaying(false)}
+          onEnded={() => {
+            changeAudioTrack(1, true);
+          }}
+        />
+        <button className="sidebar-audio-track" onClick={() => audioInputRef.current?.click()} title="Load MP3 files">
+          <Music2 size={14} />
+          <span>{audioTracks[audioTrackIndex]?.name || 'Load MP3s'}</span>
+        </button>
+        <div className="sidebar-audio-controls">
+          <button className="btn-icon" disabled={audioTracks.length === 0} onClick={() => changeAudioTrack(-1)} title="Previous track">
+            <SkipBack size={15} fill="currentColor" />
+          </button>
+          <button className="btn-icon sidebar-audio-play" onClick={toggleAudioPlayback} title={audioPlaying ? 'Pause' : 'Play'}>
+            {audioPlaying ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" />}
+          </button>
+          <button className="btn-icon" disabled={audioTracks.length === 0} onClick={() => changeAudioTrack(1)} title="Next track">
+            <SkipForward size={15} fill="currentColor" />
+          </button>
+        </div>
       </div>
 
       {/* Footer */}
