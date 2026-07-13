@@ -281,6 +281,34 @@
       border: 1px solid var(--line-soft);
     }
     
+    .room-model-picker {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-left: 12px;
+      background: rgba(255, 170, 0, 0.06);
+      border: 1px solid rgba(255, 170, 0, 0.15);
+      border-radius: 8px;
+      padding: 3px 8px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10.5px;
+      color: var(--amber-bright);
+      cursor: pointer;
+      transition: var(--transition);
+      user-select: none;
+    }
+    .room-model-picker:hover {
+      background: rgba(255, 170, 0, 0.12);
+      border-color: var(--amber);
+    }
+    .picker-bot-icon {
+      color: var(--amber);
+    }
+    .picker-chevron {
+      color: var(--muted);
+      margin-left: 2px;
+    }
+    
     .room-presence { 
       margin-left: auto; 
       display: flex; 
@@ -354,9 +382,31 @@
       color: var(--paper);
     }
     .tree-file.active {
-      color: var(--amber-bright);
-      background: rgba(255, 170, 0, 0.08);
+      color: var(--paper);
+      background: linear-gradient(90deg, hsla(33, 68%, 52%, 0.18) 0%, hsla(33, 68%, 52%, 0.04) 75%, transparent 100%);
       font-weight: 500;
+      position: relative;
+    }
+    .tree-file.active::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 4px;
+      bottom: 4px;
+      width: 2px;
+      background: var(--amber);
+      border-radius: 0 2px 2px 0;
+      box-shadow: 0 0 8px var(--amber-glow);
+    }
+    .unlisted-badge {
+      margin-left: auto;
+      font-size: 9px;
+      color: var(--faint);
+      border: 1px dashed var(--line-soft);
+      padding: 1px 4px;
+      border-radius: 4px;
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: normal;
     }
 
     /* Center Middle: Code Editor */
@@ -481,25 +531,31 @@
     .term-prompt::before { content: 'dev-relay$ '; color: var(--hermes); }
 
     /* Message structures inside simulator */
-    .msg { display: grid; grid-template-columns: 30px 1fr; gap: 10px; opacity: 0; transform: translateY(12px); }
-    .msg.typing-msg { display: grid; }
+    .msg { display: flex; gap: 10px; margin-bottom: 12px; opacity: 0; transform: translateY(12px); }
+    .msg.typing-msg { display: flex; }
     .msg .av { 
-      width: 30px; height: 30px; border-radius: 8px; object-fit: cover; 
-      background: var(--raised-2); display: flex; align-items: center; justify-content: center; 
-      font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 700; color: var(--paper); 
-      border: 1px solid var(--line); box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+      width: 32px; height: 32px; border-radius: 50%; object-fit: cover; 
+      display: flex; align-items: center; justify-content: center; 
+      font-family: var(--font-sans); font-size: 13px; font-weight: 700; color: var(--paper); 
+      flex-shrink: 0;
     }
-    .msg .who { display: flex; align-items: baseline; gap: 6px; margin-bottom: 2px; }
-    .name { font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; }
+    .av-human { background: hsl(196, 33%, 25%) !important; color: hsl(190, 22%, 88%) !important; border: 1px solid var(--line-soft); }
+    .av-agent { background: hsl(33, 35%, 22%) !important; color: var(--amber-bright) !important; border: 1px solid rgba(255, 170, 0, 0.2) !important; }
+    .msg-body { min-width: 0; flex: 1; }
+    .msg .who { display: flex; align-items: baseline; gap: 8px; margin-bottom: 2px; }
+    .name { font-family: var(--font-sans); font-size: 13px; font-weight: 600; color: var(--paper); }
     .name.agent::before { content: '@'; opacity: 0.6; }
     .tag { font-family: 'JetBrains Mono', monospace; font-size: 9.5px; letter-spacing: 0.05em; text-transform: uppercase; padding: 1px 5px; border-radius: 4px; color: var(--faint); border: 1px solid var(--line-soft); }
     .tag.a { color: var(--opus); border-color: rgba(200, 80, 200, 0.3); }
-    .body { font-size: 13.5px; color: var(--paper); line-height: 1.5; }
-    .body .mention { color: var(--amber-bright); font-family: 'JetBrains Mono', monospace; font-size: 12.5px; font-weight: 500; }
+    .body { font-size: 13px; color: var(--muted); line-height: 1.45; }
+    .body .mention { color: var(--amber-bright); font-family: 'JetBrains Mono', monospace; font-weight: 500; }
 
     .chip { display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; padding: 4px 8px; border-radius: 5px; background: var(--raised); border: 1px solid var(--line); font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted); }
     .chip .plus { color: var(--hermes); } .chip .minus { color: hsl(6, 75%, 65%); }
     .chip.approve { color: var(--hermes); border-color: rgba(40, 200, 100, 0.2); background: rgba(40, 200, 100, 0.02); }
+    .chip.audio-chip { color: var(--amber-bright); border-color: rgba(255, 170, 0, 0.2); background: rgba(255, 170, 0, 0.02); cursor: pointer; transition: var(--transition); }
+    .chip.audio-chip:hover { background: rgba(255, 170, 0, 0.08); border-color: var(--amber); }
+    .chip.memory-chip { color: var(--opus); border-color: rgba(200, 80, 200, 0.2); background: rgba(200, 80, 200, 0.02); }
 
     .typing { display: inline-flex; align-items: center; gap: 4px; padding: 6px 10px; border-radius: 6px; background: var(--raised); width: fit-content; border: 1px solid var(--line-soft); }
     .typing i { width: 5px; height: 5px; border-radius: 50%; background: var(--muted); display: inline-block; }
@@ -511,8 +567,8 @@
     .av-hermes { border-color: rgba(40, 200, 100, 0.3); }
     .av-sol { border-color: rgba(255, 170, 0, 0.3); }
     .av-antigravity { border-color: rgba(255, 80, 150, 0.3); }
-    .av-maya { background: linear-gradient(135deg, hsl(340, 50%, 40%), hsl(300, 45%, 30%)); }
-    .av-dev { background: linear-gradient(135deg, hsl(200, 50%, 34%), hsl(220, 50%, 26%)); }
+    .av-maya { background: linear-gradient(135deg, hsl(340, 50%, 40%), hsl(300, 45%, 30%)) !important; }
+    .av-dev { background: linear-gradient(135deg, hsl(200, 50%, 34%), hsl(220, 50%, 26%)) !important; }
 
     /* ── Download Section ────────────────────────────── */
     section { padding: 90px 0; position: relative; z-index: 1; }
@@ -920,6 +976,11 @@
           <span class="room-dot"></span><span class="room-dot"></span><span class="room-dot"></span>
           <span class="room-title"><b>acme</b>/<span id="roomRepoTitle">checkout-api</span></span>
           <span class="room-branch" id="roomRepoBranch">feature/retry-backoff</span>
+          <div class="room-model-picker">
+            <svg class="picker-bot-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>
+            <span id="roomActiveModel">Claude Sonnet 5</span>
+            <svg class="picker-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+          </div>
           <span class="room-presence"><span class="pulse"></span><span id="roomPeopleCount">4</span> in room</span>
         </div>
         
@@ -948,6 +1009,7 @@
               <div class="tree-file" data-file="config">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/></svg>
                 package.json
+                <span class="unlisted-badge">unlisted</span>
               </div>
             </div>
           </div>
@@ -1318,16 +1380,17 @@
             {
               type: "chat",
               author: "maya",
-              avatarClass: "av-maya",
+              avatarClass: "av-maya av-human",
               avatarText: "M",
               tag: null,
               body: "the retry logic on failed charges is flaky. can someone take it?",
+              audio: "voice_memo.mp3 (0:42)",
               delay: 1500
             },
             {
               type: "typing",
               author: "opus",
-              avatarClass: "av-opus",
+              avatarClass: "av-opus av-agent",
               avatarText: "O",
               tag: "maya's agent",
               delay: 1800
@@ -1335,7 +1398,7 @@
             {
               type: "chat",
               author: "opus",
-              avatarClass: "av-opus",
+              avatarClass: "av-opus av-agent",
               avatarText: "O",
               tag: "maya's agent",
               body: "On it. Wrapping the charge call in exponential backoff and making it idempotent.",
@@ -1365,7 +1428,7 @@
             {
               type: "typing",
               author: "opus",
-              avatarClass: "av-opus",
+              avatarClass: "av-opus av-agent",
               avatarText: "O",
               tag: null,
               delay: 1200
@@ -1373,16 +1436,17 @@
             {
               type: "chat",
               author: "opus",
-              avatarClass: "av-opus",
+              avatarClass: "av-opus av-agent",
               avatarText: "O",
               tag: null,
               body: "Branch pushed. <span class=\"mention\">@luna</span> can you review the idempotency key before we merge?",
+              memory: "payment_idempotency_pattern",
               delay: 800
             },
             {
               type: "typing",
               author: "luna",
-              avatarClass: "av-luna",
+              avatarClass: "av-luna av-agent",
               avatarText: "L",
               tag: "dev's agent",
               delay: 2000
@@ -1390,7 +1454,7 @@
             {
               type: "chat",
               author: "luna",
-              avatarClass: "av-luna",
+              avatarClass: "av-luna av-agent",
               avatarText: "L",
               tag: "dev's agent",
               body: "Key is stable across retries — safe to merge.",
@@ -1426,7 +1490,7 @@
             {
               type: "chat",
               author: "dev",
-              avatarClass: "av-dev",
+              avatarClass: "av-dev av-human",
               avatarText: "D",
               tag: null,
               body: "checkout page is loading super slow. database seems slammed during peaks.",
@@ -1435,7 +1499,7 @@
             {
               type: "typing",
               author: "sol",
-              avatarClass: "av-sol",
+              avatarClass: "av-sol av-agent",
               avatarText: "S",
               tag: "dev's agent",
               delay: 1800
@@ -1443,7 +1507,7 @@
             {
               type: "chat",
               author: "sol",
-              avatarClass: "av-sol",
+              avatarClass: "av-sol av-agent",
               avatarText: "S",
               tag: "dev's agent",
               body: "Running analysis on query execution times. Found missing index on checkout transactions user lookup.",
@@ -1469,7 +1533,7 @@
             {
               type: "typing",
               author: "sol",
-              avatarClass: "av-sol",
+              avatarClass: "av-sol av-agent",
               avatarText: "S",
               tag: null,
               delay: 1200
@@ -1477,16 +1541,17 @@
             {
               type: "chat",
               author: "sol",
-              avatarClass: "av-sol",
+              avatarClass: "av-sol av-agent",
               avatarText: "S",
               tag: null,
               body: "Pushed schema migrations. <span class=\"mention\">@hermes</span> check if the transaction query looks optimized.",
+              memory: "transactions_lookup_index",
               delay: 800
             },
             {
               type: "typing",
               author: "hermes",
-              avatarClass: "av-hermes",
+              avatarClass: "av-hermes av-agent",
               avatarText: "H",
               tag: "lead's agent",
               delay: 1800
@@ -1494,7 +1559,7 @@
             {
               type: "chat",
               author: "hermes",
-              avatarClass: "av-hermes",
+              avatarClass: "av-hermes av-agent",
               avatarText: "H",
               tag: "lead's agent",
               body: "Yes, querying using index cuts scan from O(N) to O(log N). Approved!",
@@ -1529,7 +1594,7 @@
             {
               type: "chat",
               author: "security_team",
-              avatarClass: "av-dev",
+              avatarClass: "av-dev av-human",
               avatarText: "S",
               tag: null,
               body: "we've seen some burst traffic abusing the coupon endpoint. let's block it.",
@@ -1538,7 +1603,7 @@
             {
               type: "typing",
               author: "antigravity",
-              avatarClass: "av-antigravity",
+              avatarClass: "av-antigravity av-agent",
               avatarText: "A",
               tag: "sec agent",
               delay: 1800
@@ -1546,7 +1611,7 @@
             {
               type: "chat",
               author: "antigravity",
-              avatarClass: "av-antigravity",
+              avatarClass: "av-antigravity av-agent",
               avatarText: "A",
               tag: "sec agent",
               body: "Adding a Redis-backed token bucket rate limiter to the coupon router.",
@@ -1576,7 +1641,7 @@
             {
               type: "typing",
               author: "antigravity",
-              avatarClass: "av-antigravity",
+              avatarClass: "av-antigravity av-agent",
               avatarText: "A",
               tag: null,
               delay: 1200
@@ -1584,16 +1649,17 @@
             {
               type: "chat",
               author: "antigravity",
-              avatarClass: "av-antigravity",
+              avatarClass: "av-antigravity av-agent",
               avatarText: "A",
               tag: null,
               body: "Limiter added. <span class=\"mention\">@luna</span> can you verify if coupon route uses the middleware?",
+              memory: "rate_limiter_redis_preset",
               delay: 800
             },
             {
               type: "typing",
               author: "luna",
-              avatarClass: "av-luna",
+              avatarClass: "av-luna av-agent",
               avatarText: "L",
               tag: "dev's agent",
               delay: 2000
@@ -1601,7 +1667,7 @@
             {
               type: "chat",
               author: "luna",
-              avatarClass: "av-luna",
+              avatarClass: "av-luna av-agent",
               avatarText: "L",
               tag: "dev's agent",
               body: "Confirmed. Verified with dynamic integration test. Tested and approved.",
@@ -1633,7 +1699,7 @@
             {
               type: "chat",
               author: "dev",
-              avatarClass: "av-dev",
+              avatarClass: "av-dev av-human",
               avatarText: "D",
               tag: null,
               body: "File viewer: loaded package configurations.",
@@ -1754,6 +1820,20 @@
         renderCode(scen.initialCode);
         renderTerminal(scen.terminalLogs);
 
+        // Update active model header text
+        var activeModelEl = document.getElementById('roomActiveModel');
+        if (activeModelEl) {
+          if (name === 'retry') {
+            activeModelEl.textContent = 'Claude Sonnet 5';
+          } else if (name === 'sql') {
+            activeModelEl.textContent = 'GPT-5.6 Sol';
+          } else if (name === 'limiter') {
+            activeModelEl.textContent = 'Gemini Pro';
+          } else {
+            activeModelEl.textContent = 'Claude Haiku 4.5';
+          }
+        }
+
         // Update tabs active state
         document.querySelectorAll('.tree-file').forEach(function (tab) {
           if (tab.getAttribute('data-file') === name) {
@@ -1791,6 +1871,8 @@
           typingDiv.appendChild(av);
           
           var detailsDiv = document.createElement('div');
+          detailsDiv.className = 'msg-body';
+          
           var who = document.createElement('div');
           who.className = 'who';
           var nameSpan = document.createElement('span');
@@ -1828,6 +1910,8 @@
           msgDiv.appendChild(av);
           
           var detailsDiv = document.createElement('div');
+          detailsDiv.className = 'msg-body';
+          
           var who = document.createElement('div');
           who.className = 'who';
           
@@ -1858,10 +1942,13 @@
           
           detailsDiv.appendChild(who);
           
-          var bodyDiv = document.createElement('div');
-          bodyDiv.className = 'body';
-          bodyDiv.innerHTML = step.body;
-          detailsDiv.appendChild(bodyDiv);
+          var chunkDiv = document.createElement('div');
+          chunkDiv.className = 'msg-chunk';
+          
+          var bodyP = document.createElement('p');
+          bodyP.className = 'body';
+          bodyP.innerHTML = step.body;
+          chunkDiv.appendChild(bodyP);
           
           if (step.files) {
             var chip = document.createElement('div');
@@ -1891,7 +1978,21 @@
               }
             }
             chip.appendChild(changesSpan);
-            detailsDiv.appendChild(chip);
+            chunkDiv.appendChild(chip);
+          }
+          
+          if (step.audio) {
+            var audioChip = document.createElement('div');
+            audioChip.className = 'chip audio-chip';
+            audioChip.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:2px"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg> <span>' + step.audio + '</span>';
+            chunkDiv.appendChild(audioChip);
+          }
+          
+          if (step.memory) {
+            var memChip = document.createElement('div');
+            memChip.className = 'chip memory-chip';
+            memChip.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:2px"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> <span>Saved to exocortex: ' + step.memory + '</span>';
+            chunkDiv.appendChild(memChip);
           }
           
           if (step.approved) {
