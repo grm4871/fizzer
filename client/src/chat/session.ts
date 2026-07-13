@@ -114,6 +114,7 @@ export function readLegacyLocalChatAgentMembers(): Record<string, ChatAgentRegis
             displayName: typeof registration.displayName === 'string' && registration.displayName.trim()
               ? registration.displayName.trim()
               : agentLabel(registration.agentId as AgentId),
+            avatarUrl: typeof registration.avatarUrl === 'string' ? registration.avatarUrl : '',
             mention,
             model: typeof registration.model === 'string' ? registration.model : '',
             cwd: typeof registration.cwd === 'string' ? normalizeChatCwd(registration.cwd) : '',
