@@ -922,6 +922,58 @@
       .scroll-reveal { opacity: 1 !important; transform: none !important; }
       .flow-dot { animation: none !important; }
     }
+
+    /* Quiet, product-faithful treatment. No aurora gradients or fake IDE chrome. */
+    body { background: #0d0c0b; background-image: none; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+    body::after, .glow-bg, .cli-installer { display: none; }
+    nav { top: 0; margin-top: 0; border-radius: 0; background: rgba(13,12,11,.94); box-shadow: none; border-width: 0 0 1px; padding-inline: 0; }
+    .eyebrow { padding: 0; border: 0; border-radius: 0; background: none; box-shadow: none; letter-spacing: .16em; }
+    h1, h1 .warm { background: none; -webkit-text-fill-color: var(--paper); font-style: normal; letter-spacing: -.045em; }
+    .btn { border-radius: 6px; box-shadow: none; }
+    .btn-primary { background: var(--paper); color: var(--ink); box-shadow: none; }
+    .btn-primary:hover { box-shadow: none; transform: translateY(-1px); }
+    .room { height: 520px; border-radius: 8px; background: #11100f; box-shadow: 0 28px 70px rgba(0,0,0,.42); backdrop-filter: none; }
+    .room-bar { height: 43px; padding: 0 14px; background: #171513; }
+    .demo-gem { width: 18px; height: 18px; }
+    .room-title { margin-left: 2px; }
+    .ide-workspace { height: calc(100% - 43px); }
+    .ide-sidebar { width: 24%; padding: 12px 9px 10px; background: #151311; }
+    .demo-actions { display: flex; gap: 6px; margin-bottom: 13px; color: var(--muted); }
+    .demo-actions span { display: grid; place-items: center; width: 26px; height: 24px; border: 1px solid var(--line); border-radius: 4px; }
+    .tree-folder, .tree-file { font-family: inherit; font-size: 11px; }
+    .tree-file { margin-left: 3px; padding: 6px 7px; }
+    .tree-file.active { background: #2a241d; }
+    .demo-user { margin-top: auto; padding: 9px 5px 0; border-top: 1px solid var(--line-soft); font-size: 10px; color: var(--muted); }
+    .demo-user span { display: inline-grid; place-items: center; width: 21px; height: 21px; margin-right: 6px; border-radius: 50%; background: #33291f; color: var(--amber-bright); font-size: 8px; }
+    .ide-center { width: 43%; background: #12110f; }
+    .editor-tabs { height: 34px; padding: 6px 8px 0; background: #161412; }
+    .editor-tab { font-family: inherit; font-size: 10px; border-radius: 4px 4px 0 0; }
+    .editor-content { padding: 28px 26px; font-family: inherit; color: var(--paper); }
+    .demo-note h2 { font: 700 25px/1.2 'Shippori Mincho', serif; margin-bottom: 4px; }
+    .demo-meta { color: var(--faint); font-size: 9px; margin-bottom: 25px; }
+    .demo-note h3 { margin: 20px 0 7px; font-size: 11px; }
+    .demo-note p { color: var(--muted); font-size: 11px; line-height: 1.65; }
+    .demo-note label { display: block; margin: 7px 0; color: var(--muted); font-size: 10px; }
+    .demo-note input { accent-color: var(--amber); margin-right: 6px; }
+    .inline-agent { margin: 16px 0; padding: 9px 10px; border-left: 2px solid var(--amber); background: #191613; color: var(--muted); font-size: 9px; }
+    .inline-agent span { color: var(--amber-bright); }
+    .ide-right { width: 33%; background: #0f0e0d; }
+    .chat-header { justify-content: space-between; background: #161412; text-transform: none; letter-spacing: 0; color: var(--paper); }
+    .chat-header span { color: var(--faint); font-weight: 400; }
+    .sim-chat { gap: 17px; padding: 17px 14px; }
+    .demo-message { padding-left: 9px; border-left: 2px solid #403b35; }
+    .demo-message b { font-size: 10px; color: var(--paper); }
+    .demo-message b i { margin-left: 5px; color: var(--amber); font: 500 8px 'JetBrains Mono', monospace; }
+    .demo-message p { margin-top: 3px; color: var(--muted); font-size: 10px; line-height: 1.5; }
+    .demo-message.agent { border-color: var(--amber); }
+    .demo-message.incoming { animation: demo-arrive 7s ease-in-out infinite; }
+    .demo-composer { margin: 0 10px 10px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 5px; color: var(--faint); font-size: 9px; }
+    .demo-composer span { float: right; color: var(--muted); }
+    @keyframes demo-arrive { 0%,18% { opacity: 0; transform: translateY(5px); } 26%,88% { opacity: 1; transform: none; } 100% { opacity: 0; } }
+    #download { background: #100f0e; }
+    .plat, .card, .arch-node, .faq-item { border-radius: 6px; background: #12110f; box-shadow: none; }
+    .card::before { display: none; }
+    .plat:hover, .card:hover { transform: none; box-shadow: none; }
   </style>
 </head>
 
@@ -943,12 +995,11 @@
     <!-- ── Hero ─────────────────────────────────────── -->
     <header class="hero">
       <div class="hero-copy">
-        <span class="eyebrow">Multiplayer vibe coding</span>
-        <h1>Bring your AI<br>teammate into<br>the <span class="warm">room.</span></h1>
+        <span class="eyebrow">A shared thinking space</span>
+        <h1>Work together.<br>Bring your agents.</h1>
         <p class="lede">
-          Cascade is a shared coding room where every developer brings their own agent.
-          <strong>Your agent, their agent, one project</strong> — chatting, writing code, and
-          reviewing pull requests in a single live workspace.
+          Cascade puts shared notes, live chat, and everyone&rsquo;s AI agents in one place.
+          <strong>Talk in the room, shape the document beside it, and keep the result.</strong>
         </p>
         <div class="cta-row">
           <a class="btn btn-primary" id="primaryDownload" href="#download">
@@ -969,76 +1020,63 @@
         <p class="cta-note">Free · macOS · Windows · Linux · runs locally with your credentials</p>
       </div>
 
-      <!-- Signature: Immersive Multi-File IDE Sandbox Mockup -->
-      <div class="room scroll-reveal" aria-label="An interactive demo showing a live Cascade room where developers and agents collaborate">
-        <!-- Room top bar -->
+      <!-- A faithful miniature of the Cascade notes + chat workspace. -->
+      <div class="room scroll-reveal" aria-label="A Cascade workspace with notes and a live agent chat">
         <div class="room-bar">
-          <span class="room-dot"></span><span class="room-dot"></span><span class="room-dot"></span>
-          <span class="room-title"><b>acme</b>/<span id="roomRepoTitle">checkout-api</span></span>
-          <span class="room-branch" id="roomRepoBranch">feature/retry-backoff</span>
-          <div class="room-model-picker">
-            <svg class="picker-bot-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>
-            <span id="roomActiveModel">Claude Sonnet 5</span>
-            <svg class="picker-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-          </div>
-          <span class="room-presence"><span class="pulse"></span><span id="roomPeopleCount">4</span> in room</span>
+          <img src="/gem.svg" alt="" class="demo-gem">
+          <span class="room-title"><b>Fieldwork</b></span>
+          <span class="room-presence"><span class="pulse"></span>3 here</span>
         </div>
         
         <!-- IDE split layout container -->
         <div class="ide-workspace">
           <!-- 1. Left Sidebar: File explorer tree -->
           <div class="ide-sidebar">
-            <div class="sidebar-title">Workspace</div>
+            <div class="demo-actions"><span>＋</span><span>⌕</span></div>
+            <div class="sidebar-title">Notes</div>
             <div class="file-tree">
-              <div class="tree-folder">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-                src
-              </div>
-              <div class="tree-file active" data-file="retry">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/></svg>
-                retry.ts
-              </div>
-              <div class="tree-file" data-file="sql">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/></svg>
-                schema.sql
-              </div>
-              <div class="tree-file" data-file="limiter">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/></svg>
-                limiter.ts
-              </div>
-              <div class="tree-file" data-file="config">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/></svg>
-                package.json
-                <span class="unlisted-badge">unlisted</span>
-              </div>
+              <div class="tree-folder">⌄ Research</div>
+              <div class="tree-file active">◇ Launch brief</div>
+              <div class="tree-file">◇ Interview notes</div>
+              <div class="tree-file"># launch-room</div>
+              <div class="tree-folder">› Archive</div>
             </div>
+            <div class="demo-user"><span>AS</span> asdfasdf</div>
           </div>
 
           <!-- 2. Center: Code Editor Pane -->
           <div class="ide-center">
             <div class="editor-tabs">
-              <div class="editor-tab active">
-                <span id="editorTabName">retry.ts</span>
-              </div>
+              <div class="editor-tab active">Launch brief</div>
             </div>
             <div class="editor-content" id="editorContent">
-              <!-- Code lines will populate here -->
+              <article class="demo-note">
+                <h2>Launch brief</h2>
+                <p class="demo-meta">Edited together · a moment ago</p>
+                <h3>What we&rsquo;re making</h3>
+                <p>A room where a team can think in public with the agents they already use.</p>
+                <div class="inline-agent"><span>@sol</span> tightened this paragraph from the discussion.</div>
+                <h3>Decisions</h3>
+                <label><input type="checkbox" checked disabled> Notes and chat stay side by side</label>
+                <label><input type="checkbox" checked disabled> Agents participate as named members</label>
+                <label><input type="checkbox" disabled> Record the walkthrough</label>
+              </article>
             </div>
           </div>
 
           <!-- 3. Right: Chat Console -->
           <div class="ide-right">
-            <div class="chat-header">Shared Room Feed</div>
+            <div class="chat-header"># launch-room <span>4 members</span></div>
             <div class="sim-chat" id="simChat">
-              <!-- Simulated chat messages will populate here -->
+              <div class="demo-message"><b>asdfasdf</b><p>the page should feel like the product, not a developer tool</p></div>
+              <div class="demo-message agent"><b>Sol <i>agent</i></b><p>Agreed. I&rsquo;m moving the story into the shared note and keeping the room visible beside it.</p></div>
+              <div class="demo-message"><b>Maya</b><p>@luna can you pull the interview language into the brief?</p></div>
+              <div class="demo-message agent incoming"><b>Luna <i>agent</i></b><p>Added the strongest line under “What we&rsquo;re making.”</p></div>
             </div>
+            <div class="demo-composer">Message #launch-room <span>＋</span></div>
           </div>
         </div>
 
-        <!-- 4. Bottom: Terminal Output -->
-        <div class="ide-bottom" id="terminalPane">
-          <!-- Terminal log output will show here -->
-        </div>
       </div>
     </header>
   </div>
@@ -1355,6 +1393,9 @@
       }
 
       // ── Interactive Agent Workspace Simulator ──────────
+      // The product miniature above is deliberately document/chat driven.
+      // Its only motion is the incoming agent message CSS animation.
+      return;
       var scenarios = {
         retry: {
           title: "checkout-api",
