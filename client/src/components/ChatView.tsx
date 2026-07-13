@@ -77,6 +77,14 @@ export interface ChatMessage {
   images?: string[];
   attachments?: Array<{ name: string; media_type: string; url: string }>;
   replyTo?: ChatReplyRef;
+  changeRequest?: {
+    files: Array<{ path: string; additions: number; deletions: number }>;
+    commit?: string;
+    ref?: string;
+    approvals: Array<{ userId: number; username: string }>;
+    mergedAt?: string;
+    mergedBy?: string;
+  };
 }
 
 /** Desktop runner health from GET /api/me/desktop-runner */
@@ -138,6 +146,8 @@ export interface VaultAgent {
   model: string;
   cwd: string;
   contextPrompt: string;
+  ownerUserId: number;
+  ownerUsername: string;
   channelIds?: string[];
   createdAt?: string;
   updatedAt?: string;
@@ -698,6 +708,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
   selectedMessageId,
   avatarKind,
   avatarUrl,
+  ownerLabel,
   mentionableAliases,
   notes,
   onOpenNote,
@@ -717,6 +728,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
   selectedMessageId: string | null;
   avatarKind: 'agent' | 'human';
   avatarUrl?: string;
+  ownerLabel?: string;
   mentionableAliases: string[];
   notes: NoteSummary[];
   onOpenNote?: (id: string) => void;
@@ -792,6 +804,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
           <div className="chat-message-body">
             <div className="chat-message-meta">
               <strong>{head.author}</strong>
+              {ownerLabel && <span className="chat-agent-owner">{ownerLabel}'s agent</span>}
               <time dateTime={tail.createdAt}>{formatTime(tail.createdAt)}</time>
               {tail.status === 'running' && <span className="chat-message-status">working</span>}
               {tail.status === 'failed' && <span className="chat-message-status is-error">failed</span>}
@@ -855,6 +868,40 @@ const ChatGroupRow = memo(function ChatGroupRow({
                     </div>
                   )}
                   {message.body && <ChatMessageText messageId={message.id} body={message.body} mentionableAliases={mentionableAliases} notes={notes} onOpenNote={onOpenNote} onOpenSharedNote={onOpenSharedNote} />}
+                  {message.changeRequest && (
+                    <div className="chat-change-request">
+                      <div className="chat-change-files">
+                        {message.changeRequest.files.map((file) => (
+                          <button type="button" className="chat-change-chip" key={file.path} title="Copy file path"
+                            onClick={(event) => { event.stopPropagation(); void navigator.clipboard.writeText(file.path); }}>
+                            <span>{file.path}</span>
+                            <b className="is-add">+{file.additions}</b>
+                            <b className="is-delete">−{file.deletions}</b>
+                          </button>
+                        ))}
+                      </div>
+                      <div className="chat-change-actions">
+                        {message.changeRequest.commit && <code>{message.changeRequest.commit.slice(0, 8)}</code>}
+                        {message.changeRequest.approvals.map((approval) => (
+                          <span key={approval.userId} className="chat-change-approved">✓ {approval.username}</span>
+                        ))}
+                        {message.changeRequest.mergedAt ? (
+                          <span className="chat-change-merged">Merged by {message.changeRequest.mergedBy}</span>
+                        ) : vaultId ? (
+                          <>
+                            <button type="button" onClick={(event) => {
+                              event.stopPropagation();
+                              void api(`/api/vaults/${vaultId}/channels/${message.channelId}/messages/${message.id}/approve`, { method: 'POST' });
+                            }}>Approve</button>
+                            <button type="button" onClick={(event) => {
+                              event.stopPropagation();
+                              void api(`/api/vaults/${vaultId}/channels/${message.channelId}/messages/${message.id}/merge`, { method: 'POST' });
+                            }}>Merge</button>
+                          </>
+                        ) : null}
+                      </div>
+                    </div>
+                  )}
                   {(selected || hasRunWidget || hasThoughtBlocks) && (
                     <CascadeRunPanel
                       message={message}
@@ -879,6 +926,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
   prev.group === next.group
   && prev.selectedMessageId === next.selectedMessageId
   && prev.avatarKind === next.avatarKind
+  && prev.ownerLabel === next.ownerLabel
   && prev.mentionableAliases === next.mentionableAliases
   // Same trick as ChatMessageText: note churn only invalidates groups that
   // actually render an embed.
@@ -1117,6 +1165,13 @@ export const ChatView = memo(function ChatView({
       ? registeredAgents.find((agent) => agent.id === message.registrationId)
       : registeredAgents.find((agent) => agent.agentId === message.agentId || agent.displayName === message.author);
     return registration?.avatarUrl || '';
+  };
+  const getMessageOwnerLabel = (message: ChatMessage) => {
+    const registration = message.registrationId
+      ? registeredAgents.find((agent) => agent.id === message.registrationId)
+      : registeredAgents.find((agent) => agent.agentId === message.agentId || agent.displayName === message.author);
+    const identity = vaultAgents.find((agent) => agent.id === registration?.vaultAgentId);
+    return identity?.ownerUsername || '';
   };
   const onlineUsers = useMemo(() => new Set(presence.online), [presence.online]);
   const humanMessageAuthors = useMemo(() => {
@@ -1736,6 +1791,7 @@ export const ChatView = memo(function ChatView({
                   selectedMessageId={groupSelected ? selectedMessageId : null}
                   avatarKind={getMessageAvatarKind(head)}
                   avatarUrl={getMessageAvatarUrl(head)}
+                  ownerLabel={getMessageOwnerLabel(head)}
                   mentionableAliases={mentionableAliases}
                   notes={notes}
                   onOpenNote={onOpenNote}
@@ -2117,6 +2173,7 @@ export const ChatView = memo(function ChatView({
                         <strong>{va.displayName || va.mention}</strong>
                         <span>
                           @{va.mention} · {va.model || va.agentId}
+                          {va.ownerUsername ? ` · ${va.ownerUsername}'s agent` : ''}
                           {inChannel ? ' · already here' : nCh > 0 ? ` · ${nCh} ch` : ''}
                         </span>
                       </span>

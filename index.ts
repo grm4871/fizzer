@@ -95,6 +95,8 @@ import {
   getChatMessage,
   createChatMessage,
   updateChatMessage,
+  approveChatChangeRequest,
+  mergeChatChangeRequest,
   settleChatMessagesForRun,
   listChatAgentMembers,
   listChatChannelParticipants,
@@ -1879,6 +1881,28 @@ app.patch('/api/vaults/:vaultId/channels/:channelId/messages/:messageId', requir
     const message = updateChatMessage(db, req.user!.id, req.params.vaultId, req.params.channelId, req.params.messageId, req.body);
     if (!message) return res.status(404).json({ error: 'Message not found' });
     refreshChatNoteGrants(req.user!.id, req.params.vaultId, route.sourceChannelId, message);
+    emitChatMessageEvent(route.sourceVaultId, route.sourceChannelId, 'vault:chatMessageUpdated', message);
+    res.json({ message });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+app.post('/api/vaults/:vaultId/channels/:channelId/messages/:messageId/approve', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const { route } = assertChatChannel(db, req.params.channelId, req.user!.id);
+    const message = approveChatChangeRequest(db, req.user!.id, req.params.vaultId, req.params.channelId, req.params.messageId);
+    emitChatMessageEvent(route.sourceVaultId, route.sourceChannelId, 'vault:chatMessageUpdated', message);
+    res.json({ message });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+app.post('/api/vaults/:vaultId/channels/:channelId/messages/:messageId/merge', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const { route } = assertChatChannel(db, req.params.channelId, req.user!.id);
+    const message = mergeChatChangeRequest(db, req.user!.id, req.params.vaultId, req.params.channelId, req.params.messageId);
     emitChatMessageEvent(route.sourceVaultId, route.sourceChannelId, 'vault:chatMessageUpdated', message);
     res.json({ message });
   } catch (err) {

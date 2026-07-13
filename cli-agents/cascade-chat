@@ -29,6 +29,7 @@ Options:
   --vault <id>              vault id (default $CASCADE_NOTE_VAULT)
   --channel <id>            channel id (default $CASCADE_CHAT_CHANNEL)
   --message <text>          message body for send (default: stdin)
+  --changes-file <path>     JSON change request metadata for send
   --raw-message             preserve literal backslash-n sequences in --message
   --url <https-url>         profile picture URL for avatar
   --clear                   remove this agent's profile picture
@@ -405,6 +406,21 @@ async function main() {
       || inferredAuthor
       || (registrationId ? '' : 'Agent');
     const idPrefix = agentId || (author && author !== 'Agent' ? author.toLowerCase().replace(/\s+/g, '-') : 'msg');
+    let changeRequest;
+    if (typeof args['changes-file'] === 'string') {
+      const parsed = JSON.parse(fs.readFileSync(path.resolve(args['changes-file']), 'utf8'));
+      if (!parsed || !Array.isArray(parsed.files)) fail('--changes-file must contain a JSON object with a files array.');
+      changeRequest = {
+        files: parsed.files.map((file) => ({
+          path: String(file.path || ''),
+          additions: Math.max(0, Number(file.additions) || 0),
+          deletions: Math.max(0, Number(file.deletions) || 0),
+        })).filter((file) => file.path),
+        ...(parsed.commit ? { commit: String(parsed.commit) } : {}),
+        ...(parsed.ref ? { ref: String(parsed.ref) } : {}),
+        approvals: [],
+      };
+    }
     const message = {
       id: `agent-${idPrefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       channelId,
@@ -413,6 +429,7 @@ async function main() {
       createdAt: new Date().toISOString(),
       ...(agentId ? { agentId } : {}),
       ...(registrationId ? { registrationId } : {}),
+      ...(changeRequest ? { changeRequest } : {}),
     };
     const result = await api(url, token, 'POST', `/api/vaults/${vaultId}/channels/${channelId}/messages`, message);
     const sent = result.message || message;

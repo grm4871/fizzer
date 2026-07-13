@@ -8,6 +8,7 @@
  */
 
 import crypto from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import type Database from 'better-sqlite3';
 import { getNote, getVault, type Vault } from './vault.js';
 
@@ -20,6 +21,16 @@ export type ChatReplyRef = {
   author: string;
   mention: string;
   preview: string;
+};
+
+export type ChatFileChange = { path: string; additions: number; deletions: number };
+export type ChatChangeRequest = {
+  files: ChatFileChange[];
+  commit?: string;
+  ref?: string;
+  approvals: Array<{ userId: number; username: string }>;
+  mergedAt?: string;
+  mergedBy?: string;
 };
 
 export type ChatBlock = {
@@ -65,6 +76,7 @@ export type ChatMessage = {
   images?: string[];
   attachments?: Array<{ name: string; media_type: string; url: string }>;
   replyTo?: ChatReplyRef;
+  changeRequest?: ChatChangeRequest;
 };
 
 /** Max messages returned by the default channel list (newest first window). */
@@ -121,6 +133,8 @@ export type VaultAgent = {
   model: string;
   cwd: string;
   contextPrompt: string;
+  ownerUserId: number;
+  ownerUsername: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -154,6 +168,7 @@ type ChatMessageRow = {
   images_json: string | null;
   attachments_json: string | null;
   reply_to_json: string | null;
+  change_request_json: string | null;
 };
 
 type RunStatusRow = {
@@ -186,7 +201,8 @@ export function ensureChatSchema(db: Db): void {
       harness_log TEXT,
       images_json TEXT,
       attachments_json TEXT,
-      reply_to_json TEXT
+      reply_to_json TEXT,
+      change_request_json TEXT
     );
     CREATE INDEX IF NOT EXISTS chat_messages_channel_idx ON chat_messages(channel_id, created_at);
     CREATE VIRTUAL TABLE IF NOT EXISTS chat_messages_fts USING fts5(author, body, content='chat_messages', content_rowid='rowid');
@@ -232,6 +248,7 @@ export function ensureChatSchema(db: Db): void {
       model TEXT NOT NULL DEFAULT '',
       cwd TEXT NOT NULL DEFAULT '',
       context_prompt TEXT NOT NULL DEFAULT '',
+      owner_user_id INTEGER REFERENCES users(id),
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       UNIQUE(vault_id, mention)
@@ -261,6 +278,9 @@ export function ensureChatSchema(db: Db): void {
   if (!messageCols.some((col) => col.name === 'harness_log')) {
     db.exec('ALTER TABLE chat_messages ADD COLUMN harness_log TEXT');
   }
+  if (!messageCols.some((col) => col.name === 'change_request_json')) {
+    db.exec('ALTER TABLE chat_messages ADD COLUMN change_request_json TEXT');
+  }
   const memberCols = db.prepare("PRAGMA table_info(chat_agent_members)").all() as Array<{ name: string }>;
   if (!memberCols.some((col) => col.name === 'yolo')) {
     db.exec('ALTER TABLE chat_agent_members ADD COLUMN yolo INTEGER NOT NULL DEFAULT 0');
@@ -284,6 +304,12 @@ export function ensureChatSchema(db: Db): void {
   if (!vaultAgentCols.some((col) => col.name === 'avatar_url')) {
     db.exec("ALTER TABLE vault_agents ADD COLUMN avatar_url TEXT NOT NULL DEFAULT ''");
   }
+  if (!vaultAgentCols.some((col) => col.name === 'owner_user_id')) {
+    db.exec('ALTER TABLE vault_agents ADD COLUMN owner_user_id INTEGER REFERENCES users(id)');
+  }
+  db.exec(`UPDATE vault_agents SET owner_user_id = (
+    SELECT created_by FROM vaults WHERE vaults.id = vault_agents.vault_id
+  ) WHERE owner_user_id IS NULL`);
   db.exec(`
     INSERT INTO chat_messages_fts(rowid, author, body)
     SELECT cm.rowid, cm.author, cm.body
@@ -328,6 +354,8 @@ type VaultAgentRow = {
   model: string;
   cwd: string;
   context_prompt: string;
+  owner_user_id: number;
+  owner_username?: string;
   created_at: string;
   updated_at: string;
 };
@@ -343,6 +371,8 @@ function rowToVaultAgent(row: VaultAgentRow): VaultAgent {
     model: row.model,
     cwd: row.cwd,
     contextPrompt: row.context_prompt,
+    ownerUserId: row.owner_user_id,
+    ownerUsername: row.owner_username || '',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -676,7 +706,9 @@ export function listVaultAgents(db: Db, userId: number, vaultId: string): VaultA
   const vault = getVault(db, vaultId, userId);
   if (!vault) throw new Error('Vault not found');
   const rows = db.prepare(`
-    SELECT * FROM vault_agents WHERE vault_id = ? ORDER BY display_name ASC, mention ASC
+    SELECT va.*, u.username AS owner_username
+    FROM vault_agents va LEFT JOIN users u ON u.id = va.owner_user_id
+    WHERE va.vault_id = ? ORDER BY va.display_name ASC, va.mention ASC
   `).all(vaultId) as VaultAgentRow[];
   return rows.map((row) => {
     const channelIds = (db.prepare(`
@@ -744,7 +776,12 @@ export function upsertVaultAgent(
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(id, vaultId, agentId, displayName, avatarUrl, mention, model, cwd, contextPrompt);
   }
-  return rowToVaultAgent(db.prepare('SELECT * FROM vault_agents WHERE id = ?').get(id) as VaultAgentRow);
+  db.prepare('UPDATE vault_agents SET owner_user_id = COALESCE(owner_user_id, ?) WHERE id = ?').run(userId, id);
+  return rowToVaultAgent(db.prepare(`
+    SELECT va.*, u.username AS owner_username
+    FROM vault_agents va LEFT JOIN users u ON u.id = va.owner_user_id
+    WHERE va.id = ?
+  `).get(id) as VaultAgentRow);
 }
 
 export function deleteVaultAgent(db: Db, userId: number, vaultId: string, vaultAgentId: string): boolean {
@@ -894,6 +931,10 @@ function rowToMessage(row: ChatMessageRow & { has_harness?: number }, opts?: { d
       const replyTo = parseJson<ChatReplyRef>(row.reply_to_json);
       return replyTo ? { replyTo } : {};
     })(),
+    ...(() => {
+      const changeRequest = parseJson<ChatChangeRequest>(row.change_request_json);
+      return changeRequest ? { changeRequest } : {};
+    })(),
   };
 }
 
@@ -914,6 +955,7 @@ function messageToRow(vaultId: string, channelId: string, message: ChatMessage):
     images_json: serializeJson(message.images),
     attachments_json: serializeJson(message.attachments),
     reply_to_json: serializeJson(message.replyTo),
+    change_request_json: serializeJson(message.changeRequest),
   };
 }
 
@@ -1048,7 +1090,7 @@ export function listChatMessages(
     : db.prepare(`
         SELECT id, channel_id, vault_id, author, body, created_at,
           status, agent_id, registration_id, run_id,
-          blocks_json, images_json, attachments_json, reply_to_json,
+          blocks_json, images_json, attachments_json, reply_to_json, change_request_json,
           rowid,
           CASE WHEN harness_log IS NOT NULL AND length(harness_log) > 0 THEN 1 ELSE 0 END AS has_harness
         FROM chat_messages
@@ -1191,7 +1233,8 @@ function persistChatMessageRow(db: Db, vaultId: string, channelId: string, messa
       harness_log = ?,
       images_json = ?,
       attachments_json = ?,
-      reply_to_json = ?
+      reply_to_json = ?,
+      change_request_json = ?
     WHERE id = ? AND channel_id = ?
   `).run(
     row.author,
@@ -1206,6 +1249,7 @@ function persistChatMessageRow(db: Db, vaultId: string, channelId: string, messa
     row.images_json,
     row.attachments_json,
     row.reply_to_json,
+    row.change_request_json,
     message.id,
     channelId,
   );
@@ -1269,10 +1313,16 @@ export function createChatMessage(
   // Agent helper sends include registrationId; treat it as authoritative so
   // concurrent runs can't mis-attribute messages when helper context races.
   if (registrationId) {
-    const row = db
-      .prepare('SELECT display_name, agent_id FROM chat_agent_members WHERE id = ? AND channel_id = ?')
-      .get(registrationId, route.sourceChannelId) as { display_name: string; agent_id: string } | undefined;
+    const row = db.prepare(`
+      SELECT m.display_name, m.agent_id, va.owner_user_id
+      FROM chat_agent_members m
+      JOIN vault_agents va ON va.id = m.vault_agent_id
+      WHERE m.id = ? AND m.channel_id = ?
+    `).get(registrationId, route.sourceChannelId) as {
+      display_name: string; agent_id: string; owner_user_id: number;
+    } | undefined;
     if (row) {
+      if (row.owner_user_id !== userId) throw new Error('Only an agent owner can post as that agent');
       author = row.display_name?.trim() || row.agent_id;
       agentId = row.agent_id;
     }
@@ -1289,6 +1339,18 @@ export function createChatMessage(
     body: String(input.body ?? ''),
     createdAt: input.createdAt || new Date().toISOString(),
   };
+  if (input.changeRequest) {
+    message.changeRequest = {
+      files: input.changeRequest.files.slice(0, 100).map((file) => ({
+        path: String(file.path || '').slice(0, 500),
+        additions: Math.max(0, Math.floor(Number(file.additions) || 0)),
+        deletions: Math.max(0, Math.floor(Number(file.deletions) || 0)),
+      })).filter((file) => file.path.length > 0),
+      ...(input.changeRequest.commit ? { commit: String(input.changeRequest.commit).slice(0, 80) } : {}),
+      ...(input.changeRequest.ref ? { ref: String(input.changeRequest.ref).slice(0, 200) } : {}),
+      approvals: [],
+    };
+  }
 
   const row = messageToRow(route.sourceVaultId, route.sourceChannelId, message);
 
@@ -1324,8 +1386,8 @@ export function createChatMessage(
     INSERT INTO chat_messages (
       id, channel_id, vault_id, author, body, created_at,
       status, agent_id, registration_id, run_id,
-      blocks_json, harness_log, images_json, attachments_json, reply_to_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      blocks_json, harness_log, images_json, attachments_json, reply_to_json, change_request_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     row.id,
     row.channel_id,
@@ -1342,6 +1404,7 @@ export function createChatMessage(
     row.images_json,
     row.attachments_json,
     row.reply_to_json,
+    row.change_request_json,
   );
 
   // Carry the persistence order so the create broadcast orders identically to a
@@ -1410,9 +1473,64 @@ export function updateChatMessage(
   if ('replyTo' in patchRecord) {
     next.replyTo = patch.replyTo === null || patch.replyTo === undefined ? undefined : patch.replyTo;
   }
-
   return {
     ...persistChatMessageRow(db, route.sourceVaultId, route.sourceChannelId, next),
+    channelId: route.localChannelId,
+  };
+}
+
+export function approveChatChangeRequest(
+  db: Db, userId: number, vaultId: string, channelId: string, messageId: string,
+): ChatMessage {
+  const { route } = assertChatChannel(db, channelId, userId);
+  const row = db.prepare('SELECT *, rowid FROM chat_messages WHERE id = ? AND channel_id = ?')
+    .get(messageId, route.sourceChannelId) as ChatMessageRow | undefined;
+  if (!row) throw new Error('Change request not found');
+  const message = rowToMessage(row);
+  if (!message.changeRequest) throw new Error('Message is not a change request');
+  const user = db.prepare('SELECT username FROM users WHERE id = ?').get(userId) as { username: string };
+  const approvals = message.changeRequest.approvals.filter((approval) => approval.userId !== userId);
+  approvals.push({ userId, username: user.username });
+  return {
+    ...persistChatMessageRow(db, route.sourceVaultId, route.sourceChannelId, {
+      ...message,
+      changeRequest: { ...message.changeRequest, approvals },
+    }),
+    channelId: route.localChannelId,
+  };
+}
+
+export function mergeChatChangeRequest(
+  db: Db, userId: number, vaultId: string, channelId: string, messageId: string,
+): ChatMessage {
+  const { route } = assertChatChannel(db, channelId, userId);
+  const sourceVault = db.prepare('SELECT * FROM vaults WHERE id = ?').get(route.sourceVaultId) as Vault | undefined;
+  if (!sourceVault || sourceVault.created_by !== userId) throw new Error('Only the repository owner can merge');
+  const row = db.prepare('SELECT *, rowid FROM chat_messages WHERE id = ? AND channel_id = ?')
+    .get(messageId, route.sourceChannelId) as ChatMessageRow | undefined;
+  if (!row) throw new Error('Change request not found');
+  const message = rowToMessage(row);
+  const request = message.changeRequest;
+  if (!request || request.mergedAt) throw new Error('Change request is unavailable');
+  if (!request.approvals.length) throw new Error('At least one approval is required');
+  const ref = String(request.ref || request.commit || '').trim();
+  if (!ref || ref.startsWith('-') || ref.includes('..') || !/^[A-Za-z0-9_./-]+$/.test(ref)) {
+    throw new Error('Change request has an invalid git ref');
+  }
+  const configured = db.prepare('SELECT cwd FROM chat_channel_settings WHERE channel_id = ?')
+    .get(route.sourceChannelId) as { cwd: string } | undefined;
+  const cwd = configured?.cwd?.trim() || sourceVault.root_path;
+  execFileSync('git', ['-C', cwd, 'merge', '--ff-only', ref], { timeout: 120_000, stdio: 'pipe' });
+  const user = db.prepare('SELECT username FROM users WHERE id = ?').get(userId) as { username: string };
+  return {
+    ...persistChatMessageRow(db, route.sourceVaultId, route.sourceChannelId, {
+      ...message,
+      changeRequest: {
+        ...request,
+        mergedAt: new Date().toISOString(),
+        mergedBy: user.username,
+      },
+    }),
     channelId: route.localChannelId,
   };
 }

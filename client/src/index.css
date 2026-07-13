@@ -3634,3 +3634,34 @@ a {
 .json-token-punctuation {
   color: var(--text-tertiary);
 }
+.chat-agent-owner {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.chat-change-request {
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-subtle);
+}
+
+.chat-change-files, .chat-change-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chat-change-actions { margin-top: 7px; align-items: center; }
+.chat-change-chip {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  max-width: 100%;
+  font: inherit;
+}
+.chat-change-chip span { overflow: hidden; text-overflow: ellipsis; }
+.chat-change-chip .is-add { color: var(--success); }
+.chat-change-chip .is-delete { color: var(--danger); }
+.chat-change-approved, .chat-change-merged { color: var(--success); font-size: 12px; }
