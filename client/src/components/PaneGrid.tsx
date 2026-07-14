@@ -11,7 +11,7 @@
  */
 
 import { Fragment, useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react';
-import { FileText, ExternalLink, X, Hash, Plus } from 'lucide-react';
+import { FileText, ExternalLink, X, Hash, PanelLeftClose, PanelLeftOpen, Plus } from 'lucide-react';
 import type { Tab } from './TabBar';
 import { NOTE_DND_TYPE } from '../docEmbeds';
 import { isPane, type DropSide, type LayoutNode, type PaneNode, type SplitNode } from '../layout/tree';
@@ -35,6 +35,10 @@ interface PaneGridProps {
   onResize: (splitId: string, sizes: number[]) => void;
   onCreateNote?: (paneId: string) => void;
   onCreateChat?: (paneId: string) => void;
+  sidebarOpen: boolean;
+  onToggleSidebar: () => void;
+  /** Only the first (top-left) pane owns the global sidebar toggle. */
+  showSidebarToggle?: boolean;
   onPopOut?: (tabId: string) => void;
   /** A tab was dragged and released outside any pane; `screenX/screenY` are the
    *  drop point in screen pixels so the parent can pop it out at the cursor. */
@@ -91,6 +95,9 @@ function PaneTabStrip({
   onCreateChat,
   onPopOut,
   onDetachTab,
+  sidebarOpen,
+  onToggleSidebar,
+  showSidebarToggle,
 }: {
   pane: PaneNode;
   openTabs: Tab[];
@@ -102,6 +109,9 @@ function PaneTabStrip({
   onCreateChat?: (paneId: string) => void;
   onPopOut?: (tabId: string) => void;
   onDetachTab?: (tabId: string, screenX: number, screenY: number) => void;
+  sidebarOpen: boolean;
+  onToggleSidebar: () => void;
+  showSidebarToggle?: boolean;
 }) {
   const tabs = pane.tabIds
     .map((id) => openTabs.find((t) => t.id === id))
@@ -154,6 +164,18 @@ function PaneTabStrip({
       onDragOver={allowDrop}
       onDrop={(e) => handleStripDrop(e)}
     >
+      {showSidebarToggle && (
+        <button
+          id="sidebar-toggle-tab-btn"
+          type="button"
+          className="tab-sidebar-toggle"
+          onClick={onToggleSidebar}
+          title={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
+          aria-label={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
+        >
+          {sidebarOpen ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
+        </button>
+      )}
       {tabs.map((tab, index) => (
         <button
           key={tab.id}
@@ -270,6 +292,9 @@ function Pane({
   onCreateChat,
   onPopOut,
   onDetachTab,
+  sidebarOpen,
+  onToggleSidebar,
+  showSidebarToggle,
   renderContent,
 }: { pane: PaneNode } & Omit<PaneGridProps, 'node' | 'onResize'>) {
   const contentRef = useRef<HTMLDivElement | null>(null);
@@ -335,6 +360,9 @@ function Pane({
         onCreateChat={onCreateChat}
         onPopOut={onPopOut}
         onDetachTab={onDetachTab}
+        sidebarOpen={sidebarOpen}
+        onToggleSidebar={onToggleSidebar}
+        showSidebarToggle={showSidebarToggle}
       />
       <div
         ref={(el) => {
@@ -427,7 +455,7 @@ function Split({ split, ...rest }: { split: SplitNode } & Omit<PaneGridProps, 'n
             className="pane-split-child"
             style={{ display: 'flex', flexGrow: split.sizes[index] ?? 1, flexBasis: 0, minWidth: 0, minHeight: 0, overflow: 'hidden' }}
           >
-            <PaneGrid node={child} {...rest} />
+            <PaneGrid node={child} {...rest} showSidebarToggle={Boolean(rest.showSidebarToggle && index === 0)} />
           </div>
           {index < split.children.length - 1 && (
             <div
@@ -445,7 +473,7 @@ function Split({ split, ...rest }: { split: SplitNode } & Omit<PaneGridProps, 'n
 }
 
 export function PaneGrid(props: PaneGridProps) {
-  const { node, ...rest } = props;
-  if (isPane(node)) return <Pane pane={node} {...rest} />;
-  return <Split split={node} {...rest} />;
+  const { node, showSidebarToggle = true, ...rest } = props;
+  if (isPane(node)) return <Pane pane={node} {...rest} showSidebarToggle={showSidebarToggle} />;
+  return <Split split={node} {...rest} showSidebarToggle={showSidebarToggle} />;
 }

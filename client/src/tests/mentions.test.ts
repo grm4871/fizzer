@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveAgentMessageRegistration } from '../chat/mentions';
+import { precedingMessageBatchText, resolveAgentMessageRegistration } from '../chat/mentions';
 
 const registrations = [
   { id: 'terra-reg', agentId: 'codex', displayName: 'Terra', mention: 'terra', taggableByAgents: true },
@@ -18,5 +18,26 @@ describe('resolveAgentMessageRegistration', () => {
   it('does not infer a source from ambiguous or human messages', () => {
     expect(resolveAgentMessageRegistration({ author: 'Terra' }, registrations)).toBeUndefined();
     expect(resolveAgentMessageRegistration({ agentId: 'codex', author: 'Unknown' }, registrations)).toBeUndefined();
+  });
+});
+
+describe('precedingMessageBatchText', () => {
+  it('collects the contiguous same-author batch for a later bare agent ping', () => {
+    const messages = [
+      { author: 'alice', body: 'older request' },
+      { author: 'bob', body: 'interrupting reply' },
+      { author: 'alice', body: 'first part' },
+      { author: 'alice', body: 'second part' },
+    ];
+
+    expect(precedingMessageBatchText(messages, { author: 'alice', body: '@terra' }))
+      .toBe('first part\nsecond part');
+  });
+
+  it('does not cross an author or agent-identity boundary', () => {
+    expect(precedingMessageBatchText(
+      [{ author: 'Terra', body: 'agent output', agentId: 'codex', registrationId: 'terra-reg' }],
+      { author: 'Terra', body: '@sol', agentId: 'codex', registrationId: 'sol-reg' },
+    )).toBe('');
   });
 });

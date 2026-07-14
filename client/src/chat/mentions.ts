@@ -77,3 +77,28 @@ export function stripRegisteredAgentMentions(
   }
   return next.replace(/\s+/g, ' ').trim();
 }
+
+type BatchableChatMessage = {
+  author: string;
+  body: string;
+  registrationId?: string;
+  agentId?: string;
+};
+
+/** Text from the contiguous message batch immediately before `nextMessage`.
+ * Uses the same author/agent identity boundary as the chat's visual grouping. */
+export function precedingMessageBatchText(
+  messages: BatchableChatMessage[],
+  nextMessage: BatchableChatMessage,
+) {
+  const bodies: string[] = [];
+  const nextKey = nextMessage.registrationId ?? nextMessage.agentId ?? null;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    const messageKey = message.registrationId ?? message.agentId ?? null;
+    if (message.author.trim() !== nextMessage.author.trim() || messageKey !== nextKey) break;
+    const body = message.body.trim();
+    if (body) bodies.unshift(body);
+  }
+  return bodies.join('\n').trim();
+}

@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { Activity, Bot, ChevronLeft, ChevronRight, Copy, Hash, ImagePlus, Paperclip, Plus, Reply, Send, Square, UserPlus, X } from 'lucide-react';
+import { Bot, Copy, Hash, ImagePlus, Paperclip, Plus, Reply, Send, Square, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
@@ -8,6 +8,7 @@ import { DOC_EMBED_REGEX, findEmbeddedNote, NOTE_DND_TYPE, noteEmbedMarkdown, sp
 import { escapeRegExp, normalizeMention } from '../chat/mentions';
 import { highlightJSON } from './jsonHighlighter';
 import { CascadeRunPanel } from './CascadeRunPanel';
+import { ChatSidebarButtons } from './ChatSidebarButtons';
 import { hasRunActivity } from '../chat/harnessActivity';
 
 export const CHAT_NOTE_MARKER = 'cascade://chat-channel';
@@ -1403,9 +1404,9 @@ export const ChatView = memo(function ChatView({
     setAgentMenuOpen(true);
   }
 
-  function openAgentMenu(event: React.MouseEvent) {
-    event.stopPropagation();
-    setInviteOpen(false);
+  function openAgentMenu() {
+    setUsersCollapsed(false);
+    setSidebarMode('users');
     if (agentMenuOpen) {
       setAgentMenuOpen(false);
       setEditingRegistrationId(null);
@@ -1418,14 +1419,20 @@ export const ChatView = memo(function ChatView({
     openAgentEditor();
   }
 
-  function toggleInvite(event: React.MouseEvent) {
-    event.stopPropagation();
-    setAgentMenuOpen(false);
-    setEditingRegistrationId(null);
-    setAgentFormError('');
-    setAgentPanelMode('picker');
+  function toggleInvite() {
+    setUsersCollapsed(false);
+    setSidebarMode('users');
     setInviteStatus('');
     setInviteOpen((value) => !value);
+  }
+
+  function toggleActivity() {
+    if (usersCollapsed) {
+      setUsersCollapsed(false);
+      setSidebarMode('runs');
+      return;
+    }
+    setSidebarMode((mode) => (mode === 'runs' ? 'users' : 'runs'));
   }
 
   function editRegisteredAgent(event: React.MouseEvent, registration: ChatAgentRegistration) {
@@ -1708,26 +1715,28 @@ export const ChatView = memo(function ChatView({
   function completeMention(textarea: HTMLTextAreaElement): boolean {
     const value = textarea.value;
     const cursor = textarea.selectionStart ?? value.length;
-    const match = /@([\w-]*)$/.exec(value.slice(0, cursor));
-    if (!match) return false;
-    const start = cursor - match[0].length;
     const cycle = mentionCycleRef.current;
+    const cycleToken = cycle ? `@${cycle.matches[cycle.index]} ` : '';
     const canCycle = Boolean(cycle
-      && cycle.start === start
-      && value.slice(start, cursor) === `@${cycle.matches[cycle.index]}`);
+      && cursor === cycle.start + cycleToken.length
+      && value.slice(cycle.start, cursor) === cycleToken);
     let next: { matches: string[]; index: number; start: number };
     if (canCycle && cycle) {
       next = { matches: cycle.matches, index: (cycle.index + 1) % cycle.matches.length, start: cycle.start };
     } else {
+      const match = /@([\w-]*)$/.exec(value.slice(0, cursor));
+      if (!match) return false;
+      const start = cursor - match[0].length;
       const partial = match[1].toLowerCase();
       const matches = mentionableAliases.filter((alias) => alias.toLowerCase().startsWith(partial));
       if (matches.length === 0) return false;
       next = { matches, index: 0, start };
     }
     mentionCycleRef.current = next;
-    const chosen = `@${next.matches[next.index]}`;
-    const caret = start + chosen.length;
-    setDraft(`${value.slice(0, start)}${chosen}${value.slice(cursor)}`);
+    // Append a trailing space so the caret lands ready for the message text.
+    const chosen = `@${next.matches[next.index]} `;
+    const caret = next.start + chosen.length;
+    setDraft(`${value.slice(0, next.start)}${chosen}${value.slice(cursor)}`);
     requestAnimationFrame(() => {
       textarea.focus();
       textarea.setSelectionRange(caret, caret);
@@ -1737,9 +1746,25 @@ export const ChatView = memo(function ChatView({
 
   function isCompletingMention(textarea: HTMLTextAreaElement): boolean {
     const cursor = textarea.selectionStart ?? textarea.value.length;
-    return /@[\w-]*$/.test(textarea.value.slice(0, cursor));
+    const value = textarea.value;
+    if (/@[\w-]*$/.test(value.slice(0, cursor))) return true;
+    // Keep Tab-cycling alive right after we inserted "@handle " (with its space).
+    const cycle = mentionCycleRef.current;
+    if (!cycle) return false;
+    const cycleToken = `@${cycle.matches[cycle.index]} `;
+    return cursor === cycle.start + cycleToken.length
+      && value.slice(cycle.start, cursor) === cycleToken;
   }
   const canSend = draft.trim().length > 0 || pendingMedia.length > 0;
+
+  useLayoutEffect(() => {
+    const textarea = draftRef.current;
+    if (!textarea) return;
+    textarea.style.height = 'auto';
+    const nextHeight = Math.min(textarea.scrollHeight, 180);
+    textarea.style.height = `${nextHeight}px`;
+    textarea.style.overflowY = textarea.scrollHeight > 180 ? 'auto' : 'hidden';
+  }, [draft]);
 
   return (
     <section className="chat-view">
@@ -1931,10 +1956,7 @@ export const ChatView = memo(function ChatView({
           <button className="btn-icon" onClick={submit} title="Send message" disabled={!canSend}>
             <Send size={17} />
           </button>
-          <span className="chat-current-user">
-            {currentUser}
-            {mediaError && <span className="chat-media-error">{mediaError}</span>}
-          </span>
+          {mediaError && <span className="chat-media-error">{mediaError}</span>}
         </footer>
       </div>
 
@@ -1955,40 +1977,17 @@ export const ChatView = memo(function ChatView({
         className={`chat-users${usersCollapsed ? ' is-collapsed' : ''}`}
         aria-label={sidebarMode === 'runs' ? 'Running agents' : 'Chat users'}
       >
-        <div className="chat-users-header">
-          <button
-            type="button"
-            className="chat-users-collapse-btn"
-            onClick={() => setUsersCollapsed((value) => !value)}
-            title={usersCollapsed ? 'Expand users' : 'Minimize users'}
-            aria-label={usersCollapsed ? 'Expand chat users' : 'Minimize chat users'}
-          >
-            {usersCollapsed ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
-          </button>
-          <button type="button" className={`chat-invite-btn${inviteOpen ? ' active' : ''}`} onClick={toggleInvite} title="Invite user">
-            <UserPlus size={14} />
-          </button>
-          <button type="button" className="chat-add-agent-btn" onClick={openAgentMenu} title="Add agent">
-            <Bot size={14} />
-            <Plus size={12} />
-          </button>
-          <button
-            type="button"
-            className={`chat-runs-toggle-btn${sidebarMode === 'runs' ? ' active' : ''}`}
-            onClick={() => {
-              setSidebarMode((mode) => (mode === 'runs' ? 'users' : 'runs'));
-              if (sidebarMode === 'runs') return;
-              setAgentMenuOpen(false);
-              setEditingRegistrationId(null);
-            }}
-            title={sidebarMode === 'runs' ? 'Show users' : 'Show running agents'}
-          >
-            <Activity size={14} />
-            {runningAgents.length > 0 && (
-              <span className="chat-runs-count">{runningAgents.length}</span>
-            )}
-          </button>
-        </div>
+        <ChatSidebarButtons
+          collapsed={usersCollapsed}
+          inviteSelected={inviteOpen}
+          agentSelected={agentMenuOpen}
+          activitySelected={sidebarMode === 'runs'}
+          runningCount={runningAgents.length}
+          onToggleCollapsed={() => setUsersCollapsed((value) => !value)}
+          onInvite={toggleInvite}
+          onAgent={openAgentMenu}
+          onActivity={toggleActivity}
+        />
 
         {!usersCollapsed && (sidebarMode === 'runs' ? (
           <>

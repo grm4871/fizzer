@@ -483,6 +483,16 @@ export function Sidebar({
     );
   }
 
+  const quickActions = [
+    { id: 'new-note', title: 'New note', icon: <Edit2 size={16} />, onClick: onNewNote },
+    { id: 'new-folder', title: 'New folder', icon: <FolderPlus size={16} />, onClick: () => { void createFolder(null); } },
+    { id: 'new-channel', title: 'New channel', icon: <Hash size={16} />, onClick: () => { void createChannel(null); } },
+    { id: 'search', title: 'Search', icon: <Search size={16} />, onClick: onSearch },
+  ];
+  const actionButtons = (location: string) => quickActions.map((action) => (
+    <button key={action.id} id={`${action.id}-btn-${location}`} className="btn-icon" onClick={action.onClick} title={action.title}>{action.icon}</button>
+  ));
+
   return (
     <aside className="sidebar" id="sidebar" style={{ gridColumn: 1 }}>
       {/* Header */}
@@ -490,26 +500,11 @@ export function Sidebar({
         <div className="vault-name">
           <span className="vault-icon"><Gem size={20} /></span>
         </div>
-        <button id="sidebar-collapse-btn" className="btn-icon" onClick={onCollapse} title="Collapse sidebar">
-          <PanelLeftClose size={16} />
-        </button>
+        <div className="sidebar-actions sidebar-actions-desktop">{actionButtons('desktop')}</div>
+        <button className="btn-icon sidebar-mobile-collapse" onClick={onCollapse} title="Collapse sidebar"><PanelLeftClose size={16} /></button>
       </div>
 
-      {/* Quick actions */}
-      <div className="sidebar-actions">
-        <button id="new-note-btn" className="btn-icon" onClick={onNewNote} title="New note">
-          <Edit2 size={16} />
-        </button>
-        <button id="new-folder-btn" className="btn-icon" onClick={() => createFolder(null)} title="New folder">
-          <FolderPlus size={16} />
-        </button>
-        <button id="new-channel-btn" className="btn-icon" onClick={() => void createChannel(null)} title="New channel">
-          <Hash size={16} />
-        </button>
-        <button id="search-btn" className="btn-icon" onClick={onSearch} title="Search">
-          <Search size={16} />
-        </button>
-      </div>
+      <div className="sidebar-actions sidebar-actions-mobile">{actionButtons('mobile')}</div>
 
       {/* Vault selector */}
       {vaults.length > 1 && (

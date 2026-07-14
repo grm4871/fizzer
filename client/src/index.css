@@ -481,7 +481,7 @@ a {
 .sidebar-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   padding: 14px 14px;
   border-bottom: 1px solid var(--border);
   min-height: 50px;
@@ -504,8 +504,13 @@ a {
   display: flex;
   align-items: center;
   gap: 2px;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border);
+  min-width: 0;
+  padding: 0;
+  margin-left: 14px;
+}
+.sidebar-actions-mobile,
+.sidebar-mobile-collapse {
+  display: none;
 }
 
 .sidebar-vault-select {
@@ -935,6 +940,21 @@ a {
 .tab-bar::-webkit-scrollbar {
   height: 0;
 }
+.tab-sidebar-toggle {
+  width: 38px;
+  min-width: 38px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-right: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.tab-sidebar-toggle:hover {
+  background: var(--bg-raised);
+  color: var(--text-primary);
+}
 .tab-item {
   display: flex;
   align-items: center;
@@ -1226,6 +1246,9 @@ a {
 }
 /* Members toolbar toggle is mobile-only (mirrors folder sidebar expand). */
 .chat-members-toolbar-btn {
+  display: none;
+}
+.workspace-toolbar {
   display: none;
 }
 .chat-users-backdrop {
@@ -1935,7 +1958,7 @@ a {
 .crp-term-pre {
   margin: 2px 0 4px;
   padding: 0;
-  max-height: 200px;
+  max-height: 180px;
   overflow: auto;
   overscroll-behavior-y: auto;
   -webkit-overflow-scrolling: touch;
@@ -2073,8 +2096,8 @@ a {
 .chat-composer textarea {
   width: 100%;
   min-height: 38px;
-  max-height: 132px;
-  resize: vertical;
+  max-height: 200px;
+  resize: none;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--bg-base);
@@ -2098,17 +2121,13 @@ a {
   opacity: 0.45;
   cursor: not-allowed;
 }
-.chat-current-user {
+.chat-media-error {
   grid-column: 1 / -1;
   display: flex;
   align-items: center;
-  gap: 8px;
-  color: var(--text-tertiary);
+  color: var(--danger);
   font-size: 0.6875rem;
   line-height: 1;
-}
-.chat-media-error {
-  color: var(--danger);
 }
 .chat-msg-images {
   display: flex;
@@ -2346,66 +2365,6 @@ a {
   text-align: left;
   cursor: pointer;
 }
-.chat-users-header {
-  display: flex;
-  justify-content: flex-end;
-  gap: 4px;
-  padding: 0 4px 6px;
-}
-.chat-users.is-collapsed .chat-users-header {
-  flex-direction: column;
-  align-items: center;
-  padding: 0;
-}
-.chat-runs-toggle-btn,
-.chat-invite-btn,
-.chat-users-collapse-btn {
-  position: relative;
-  width: auto;
-  min-height: 24px;
-  padding: 3px 6px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-surface);
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-.chat-runs-toggle-btn:hover,
-.chat-invite-btn:hover,
-.chat-users-collapse-btn:hover,
-.chat-invite-btn.active,
-.chat-runs-toggle-btn.active {
-  border-color: var(--border-active);
-  background: var(--bg-raised);
-  color: var(--text-primary);
-}
-.chat-users-collapse-btn {
-  width: 28px;
-}
-.chat-invite-btn.active {
-  color: var(--accent-hover);
-}
-.chat-runs-toggle-btn.active {
-  color: var(--accent-hover);
-}
-.chat-runs-count {
-  position: absolute;
-  top: -5px;
-  right: -5px;
-  min-width: 14px;
-  height: 14px;
-  padding: 0 3px;
-  border-radius: 999px;
-  background: var(--accent);
-  color: var(--bg-base);
-  font-size: 0.5625rem;
-  font-weight: 700;
-  line-height: 14px;
-  text-align: center;
-}
 .chat-runs-empty {
   padding: 12px 8px;
   color: var(--text-tertiary);
@@ -2590,40 +2549,6 @@ a {
 .chat-run-row-stop:disabled {
   opacity: 0.35;
   cursor: default;
-}
-.chat-add-agent-btn {
-  width: auto;
-  min-height: 24px;
-  padding: 3px 6px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 1px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-surface);
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-.chat-users.is-collapsed .chat-add-agent-btn,
-.chat-users.is-collapsed .chat-invite-btn,
-.chat-users.is-collapsed .chat-runs-toggle-btn {
-  width: 28px;
-  padding: 3px;
-}
-.chat-add-agent-btn svg:first-child {
-  color: var(--accent-hover);
-}
-.chat-add-agent-btn svg:last-child {
-  color: var(--text-tertiary);
-}
-.chat-add-agent-btn:hover {
-  border-color: var(--border-active);
-  background: var(--bg-raised);
-  color: var(--text-primary);
-}
-.chat-add-agent-btn:hover svg:last-child {
-  color: var(--accent);
 }
 .chat-remove-agent {
   width: 22px;
@@ -3139,10 +3064,26 @@ a {
   .sidebar-header {
     min-height: 46px;
     padding: 10px 12px;
+    justify-content: space-between;
   }
 
-  .sidebar-actions {
+  .sidebar-actions-desktop {
+    display: none;
+  }
+
+  .sidebar-mobile-collapse {
+    display: inline-flex;
+  }
+
+  .sidebar-actions-mobile {
+    display: flex;
+    margin-left: 0;
     padding: 7px 8px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .tab-sidebar-toggle {
+    display: none;
   }
 
   .tree-item {
@@ -3189,18 +3130,8 @@ a {
     display: none;
   }
 
-  .chat-users:not(.is-collapsed) .chat-users-header {
-    flex-direction: row;
-    align-items: center;
-    padding: 0 4px 6px;
-  }
-
-  .chat-users:not(.is-collapsed) .chat-users-collapse-btn {
-    /* Matches sidebar collapse affordance on the open panel. */
-    display: inline-flex;
-  }
-
   .workspace-toolbar {
+    display: flex;
     min-height: 44px;
     padding: 5px 8px !important;
   }
@@ -3302,7 +3233,7 @@ a {
 
   .chat-composer textarea {
     min-height: 42px;
-    max-height: 112px;
+    max-height: 180px;
     font-size: 1rem;
     resize: none;
   }

@@ -38,7 +38,7 @@ import {
   normalizeChatCwd,
   type AgentId,
 } from './chat/agents';
-import { getMentionedRegistrations, normalizeMention, resolveAgentMessageRegistration, stripRegisteredAgentMentions } from './chat/mentions';
+import { getMentionedRegistrations, normalizeMention, precedingMessageBatchText, resolveAgentMessageRegistration, stripRegisteredAgentMentions } from './chat/mentions';
 import {
   appendChatRunBlocks,
   appendHarnessLog,
@@ -1614,7 +1614,12 @@ export default function App() {
         ),
       ];
       if (targetAgents.length === 0) return;
-      const prompt = stripRegisteredAgentMentions(mentionSource, registrations) || mentionSource || 'Please review the attached media.';
+      const directPrompt = stripRegisteredAgentMentions(mentionSource, registrations);
+      // A bare @agent after a same-author message batch means "handle that batch".
+      // Usually plain text has already merged into outgoingMessage; the explicit
+      // fallback also covers grouped messages that could not be physically merged.
+      const batchPrompt = directPrompt ? '' : precedingMessageBatchText(messages, candidate);
+      const prompt = directPrompt || batchPrompt || mentionSource || 'Please review the attached media.';
       const runImages = mediaToRunImages(media);
       const agentsWithoutImages = new Set<AgentId>(['grok', 'antigravity', 'copilot', 'hermes']);
       for (const registration of targetAgents) {
@@ -2519,24 +2524,15 @@ export default function App() {
 
       {/* Workspace */}
       <div className="workspace flex flex-col flex-1" style={{ height: '100%', overflow: 'hidden' }}>
-        <div className="workspace-toolbar" style={{ display: 'flex', alignItems: 'center', background: 'var(--bg-surface)', padding: '4px 8px', paddingTop: 'calc(4px + env(safe-area-inset-top))', gap: 4, borderBottom: '1px solid var(--border)' }}>
-          {!sidebarOpen && (
-            <button
-              id="sidebar-expand-btn"
-              className="btn-icon"
-              onClick={() => {
-                setSidebarOpen(true);
-                // One mobile drawer at a time (same idea as exclusive sidebars).
-                if (window.matchMedia('(max-width: 900px)').matches) setChatMembersOpen(false);
-              }}
-              title="Expand sidebar"
-            >
-              <PanelLeftOpen size={16} />
-            </button>
-          )}
-          <div style={{ flex: 1, minWidth: 0 }} />
-          {focusedIsChat && !chatMembersOpen && (
-            <button
+        {(!sidebarOpen || (focusedIsChat && !chatMembersOpen)) && (
+          <div className="workspace-toolbar" style={{ alignItems: 'center', background: 'var(--bg-surface)', padding: '4px 8px', paddingTop: 'calc(4px + env(safe-area-inset-top))', gap: 4, borderBottom: '1px solid var(--border)' }}>
+            {!sidebarOpen && (
+              <button id="sidebar-expand-btn" className="btn-icon" onClick={() => { setSidebarOpen(true); setChatMembersOpen(false); }} title="Expand sidebar">
+                <PanelLeftOpen size={16} />
+              </button>
+            )}
+            <div style={{ flex: 1, minWidth: 0 }} />
+            {focusedIsChat && !chatMembersOpen && <button
               id="chat-members-expand-btn"
               type="button"
               className="btn-icon chat-members-toolbar-btn"
@@ -2548,9 +2544,9 @@ export default function App() {
               aria-label="Show channel members"
             >
               <Users size={16} />
-            </button>
-          )}
-        </div>
+            </button>}
+          </div>
+        )}
 
         <div className="flex-1" style={{ position: 'relative', display: 'flex', overflow: 'hidden' }}>
           <PaneGrid
@@ -2565,6 +2561,14 @@ export default function App() {
             onCreateNote={handleCreateNoteInPane}
             onCreateChat={handleCreateChatInPane}
             onDetachTab={handleDetachTab}
+            sidebarOpen={sidebarOpen}
+            onToggleSidebar={() => {
+              setSidebarOpen((open) => {
+                const next = !open;
+                if (next && window.matchMedia('(max-width: 900px)').matches) setChatMembersOpen(false);
+                return next;
+              });
+            }}
             renderContent={renderTabContent}
           />
         </div>
