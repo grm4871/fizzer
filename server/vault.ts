@@ -238,7 +238,7 @@ function prepopulateWalkthrough(vault: Vault): void {
 export function createVault(db: Db, userId: number, opts: { name: string; root_path?: string }): Vault {
   const id = crypto.randomUUID();
   const name = String(opts.name || 'My Vault').trim() || 'My Vault';
-  const rootPath = path.resolve(String(opts.root_path || path.join(VAULTS_BASE_DIR, sanitizeFilename(name))));
+  const rootPath = path.resolve(String(opts.root_path || path.join(VAULTS_BASE_DIR, String(userId), sanitizeFilename(name))));
 
   fs.mkdirSync(rootPath, { recursive: true });
 
