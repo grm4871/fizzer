@@ -2045,12 +2045,18 @@ export function listOmpModels(): string[] {
     });
     if (result.status === 0 && result.stdout) {
       const ids: string[] = [];
+      let provider = '';
       for (const line of result.stdout.split(/\r?\n/)) {
-        const m = line.match(/^\s*[│|]\s*([a-zA-Z0-9._-]+)\s*[│|]/);
-        if (m) {
-          const modelId = m[1].trim();
+        const providerMatch = line.match(/^([a-zA-Z0-9._-]+)\s+\(\d+\)\s*$/);
+        if (providerMatch) {
+          provider = providerMatch[1];
+          continue;
+        }
+        const modelMatch = line.match(/^\s*[│|]\s*([a-zA-Z0-9._-]+)\s*[│|]/);
+        if (provider && modelMatch) {
+          const modelId = modelMatch[1].trim();
           if (modelId !== 'model' && !modelId.startsWith('──')) {
-            ids.push(modelId);
+            ids.push(`${provider}/${modelId}`);
           }
         }
       }

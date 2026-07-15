@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatAgentChatPrompt, isLightweightChatRequest } from '../chat/agents';
+import { CHAT_AGENT_MODEL_PRESETS, formatAgentChatPrompt, isLightweightChatRequest } from '../chat/agents';
 
 const registration = {
   agentId: 'codex',
@@ -27,6 +27,16 @@ describe('isLightweightChatRequest', () => {
     expect(isLightweightChatRequest('wait setting was off. try again')).toBe(false);
     expect(isLightweightChatRequest('hide this view unless i click an mp3 file')).toBe(false);
     expect(isLightweightChatRequest('do this here')).toBe(false);
+  });
+});
+
+describe('OMP model presets', () => {
+  it('uses provider-qualified ids for the major authenticated catalogs', () => {
+    const ids = CHAT_AGENT_MODEL_PRESETS.omp.map(({ id }) => id);
+    expect(ids).toContain('openai-codex/gpt-5.6-sol');
+    expect(ids).toContain('anthropic/claude-sonnet-5');
+    expect(ids).toContain('google-antigravity/gemini-3.5-flash');
+    expect(ids.every((id) => id.includes('/'))).toBe(true);
   });
 });
 
