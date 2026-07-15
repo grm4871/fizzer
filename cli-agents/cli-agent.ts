@@ -161,8 +161,9 @@ const CODEX_BIN = process.env.CODEX_BIN || 'codex';
 const GROK_BIN = process.env.GROK_BIN || 'grok';
 const COPILOT_BIN = process.env.COPILOT_BIN || 'copilot';
 const HERMES_BIN = process.env.HERMES_BIN || 'hermes';
+const OMP_BIN = process.env.OMP_BIN || 'omp';
 
-export type CliAgentId = 'codex' | 'grok' | 'antigravity' | 'copilot' | 'hermes';
+export type CliAgentId = 'codex' | 'grok' | 'antigravity' | 'copilot' | 'hermes' | 'omp';
 
 const CLI_AGENT_LABELS: Record<CliAgentId, string> = {
   codex: 'Codex',
@@ -170,6 +171,7 @@ const CLI_AGENT_LABELS: Record<CliAgentId, string> = {
   antigravity: 'Antigravity',
   copilot: 'Copilot',
   hermes: 'Hermes',
+  omp: 'OMP',
 };
 
 export function getCliAgentBin(agent: CliAgentId): string {
@@ -182,6 +184,8 @@ export function getCliAgentBin(agent: CliAgentId): string {
       return COPILOT_BIN;
     case 'hermes':
       return HERMES_BIN;
+    case 'omp':
+      return OMP_BIN;
     case 'antigravity':
       return process.env.ANTIGRAVITY_BIN || path.join(os.homedir(), '.gemini', 'antigravity', 'bin', 'agentapi');
   }
@@ -224,7 +228,7 @@ function assertCliAgentAvailable(agent: CliAgentId): void {
 }
 
 interface CliAgentOpts {
-  agent: 'codex' | 'grok' | 'antigravity' | 'copilot' | 'hermes';
+  agent: 'codex' | 'grok' | 'antigravity' | 'copilot' | 'hermes' | 'omp';
   /** Minimal IDE-style context (selected note + vault). Prepended to the prompt. */
   context: string;
   userPrompt: string;
@@ -286,6 +290,8 @@ export async function runCliAgent(opts: CliAgentOpts): Promise<CliAgentResult> {
     return runCopilot(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.runId, opts.model, opts.env);
   } else if (opts.agent === 'hermes') {
     return runHermes(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.runId, opts.env);
+  } else if (opts.agent === 'omp') {
+    return runOmp(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.images || [], opts.runId, opts.model, opts.env);
   } else {
     return runAntigravity(
       prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.runId, opts.db, opts.model, opts.yolo, opts.env,
@@ -1880,4 +1886,178 @@ function driveHermesProcess(
       }
     });
   });
+}
+// ═══════════════════════════════════════════════════════════════
+// OMP AGENT
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Runs the OMP CLI and translates its JSONL event stream into content blocks.
+ */
+async function runOmp(
+  prompt: string,
+  cwd: string,
+  emit: AgentEmit,
+  resumeId?: string,
+  images: CliImage[] = [],
+  runId?: number,
+  model?: string,
+  env?: NodeJS.ProcessEnv,
+): Promise<CliAgentResult> {
+  const { paths: imagePaths, cleanup } = writeTempImages(images);
+  const imageArgs = imagePaths.map((p) => `@${p}`);
+  const modelArgs = model ? ['--model', model] : [];
+  const baseArgs = [prompt, '--mode', 'json', '--allow-home', ...imageArgs, ...modelArgs];
+  const args = resumeId ? ['--resume', resumeId, ...baseArgs] : baseArgs;
+
+  let summary = '';
+  let reasoningText = '';
+  let sessionId: string | undefined = resumeId;
+  const emittedTool = new Set<string>();
+  let emittedText = false;
+  let lastWasText = false;
+
+  const getToolFriendlyName = (name: string) => {
+    if (name === 'read' || name === 'view_file') return 'View File';
+    if (name === 'write' || name === 'write_to_file' || name === 'create') return 'Write File';
+    if (name === 'edit' || name === 'replace_file_content' || name === 'multi_replace_file_content') return 'Edit File';
+    if (name === 'grep' || name === 'grep_search') return 'Search Workspace';
+    if (name === 'bash' || name === 'run_command') return 'Bash';
+    return name;
+  };
+
+  const onLine = (line: string) => {
+    try {
+      if (line.startsWith('{')) {
+        const ev = JSON.parse(line);
+        switch (ev.type) {
+          case 'session':
+            if (ev.id) sessionId = ev.id;
+            break;
+          case 'message_update':
+            if (ev.assistantMessageEvent) {
+              const ame = ev.assistantMessageEvent;
+              if (ame.type === 'thinking_delta' && ame.delta) {
+                reasoningText += ame.delta;
+                emit('text', { message: { content: [{ type: 'thinking', thinking: ame.delta }] } });
+                lastWasText = false;
+              } else if (ame.type === 'text_delta' && ame.delta) {
+                const sep = (!lastWasText && emittedText) ? '\n\n' : '';
+                summary += sep + ame.delta;
+                emit('text', { message: { content: [{ type: 'text', text: sep + ame.delta }] } });
+                emittedText = true;
+                lastWasText = true;
+              } else if (ame.type === 'toolcall_end' && ame.toolCall) {
+                const tc = ame.toolCall;
+                if (tc.id && !emittedTool.has(tc.id)) {
+                  emittedTool.add(tc.id);
+                  emit('text', {
+                    message: {
+                      content: [{
+                        type: 'tool_use',
+                        id: tc.id,
+                        name: getToolFriendlyName(tc.name),
+                        input: tc.arguments || {}
+                      }]
+                    }
+                  });
+                  lastWasText = false;
+                }
+              }
+            }
+            break;
+          case 'tool_execution_start':
+            if (ev.toolCallId && !emittedTool.has(ev.toolCallId)) {
+              emittedTool.add(ev.toolCallId);
+              emit('text', {
+                message: {
+                  content: [{
+                    type: 'tool_use',
+                    id: ev.toolCallId,
+                    name: getToolFriendlyName(ev.toolName),
+                    input: ev.args || {}
+                  }]
+                }
+              });
+              lastWasText = false;
+            }
+            break;
+          case 'tool_execution_end':
+            if (ev.toolCallId) {
+              const out = ev.result?.content ?? ev.result?.detailedContent ?? '';
+              let contentText = '';
+              if (Array.isArray(out)) {
+                contentText = out.map(o => typeof o === 'object' && o !== null ? (o.text || JSON.stringify(o)) : String(o)).join('\n');
+              } else if (typeof out === 'string') {
+                contentText = out;
+              } else if (out && typeof out === 'object') {
+                contentText = JSON.stringify(out);
+              }
+              const isError = ev.isError === true || ev.success === false;
+              emit('user', {
+                message: {
+                  content: [{
+                    type: 'tool_result',
+                    tool_use_id: ev.toolCallId,
+                    content: truncate(String(contentText || out), 8000),
+                    is_error: isError
+                  }]
+                }
+              });
+              lastWasText = false;
+            }
+            break;
+        }
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  try {
+    const summaryText = await driveProcess(
+      OMP_BIN,
+      args,
+      cwd,
+      onLine,
+      () => summary || 'Completed note operations successfully.',
+      'OMP',
+      runId,
+      emit,
+      env
+    );
+    return { summary: summaryText, sessionId };
+  } finally {
+    cleanup();
+  }
+}
+
+/**
+ * Returns available models from OMP CLI.
+ */
+export function listOmpModels(): string[] {
+  try {
+    const bin = getCliAgentBin('omp');
+    const result = spawnSync(bin, ['models'], {
+      encoding: 'utf8',
+      timeout: 5000,
+      env: process.env,
+    });
+    if (result.status === 0 && result.stdout) {
+      const ids: string[] = [];
+      for (const line of result.stdout.split(/\r?\n/)) {
+        const m = line.match(/^\s*[│|]\s*([a-zA-Z0-9._-]+)\s*[│|]/);
+        if (m) {
+          const modelId = m[1].trim();
+          if (modelId !== 'model' && !modelId.startsWith('──')) {
+            ids.push(modelId);
+          }
+        }
+      }
+      return ids;
+    }
+  } catch {
+    // ignore
+  }
+  return [];
 }

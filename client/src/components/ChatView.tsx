@@ -1009,6 +1009,7 @@ export const ChatView = memo(function ChatView({
   // from here (overrides each agent's own cwd, enforced server-side).
   const [channelCwd, setChannelCwd] = useState('');
   const [channelCwdSaved, setChannelCwdSaved] = useState(false);
+  const [channelSettingsOpen, setChannelSettingsOpen] = useState(false);
 
   useEffect(() => {
     if (!vaultId || !channelId) return;
@@ -1989,6 +1990,31 @@ export const ChatView = memo(function ChatView({
           onActivity={toggleActivity}
         />
 
+        {!usersCollapsed && sidebarMode === 'users' && channelSettingsOpen && (
+          <div className="chat-channel-settings-panel">
+            <div className="chat-channel-settings-heading">
+              <strong>Agent settings</strong>
+              <button type="button" onClick={() => setChannelSettingsOpen(false)} aria-label="Close settings"><X size={12} /></button>
+            </div>
+            <label htmlFor={`chat-cwd-${channelId}`}>Working directory</label>
+            <div className="chat-channel-cwd">
+              <input
+                id={`chat-cwd-${channelId}`}
+                value={channelCwd}
+                onChange={(e) => setChannelCwd(e.target.value)}
+                onBlur={() => void saveChannelCwd()}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } }}
+                placeholder="~/project"
+                spellCheck={false}
+                autoCapitalize="off"
+                autoCorrect="off"
+              />
+              {channelCwdSaved && <span className="chat-channel-cwd-saved">saved</span>}
+            </div>
+            <p>Overrides each agent's own working directory in this channel.</p>
+          </div>
+        )}
+
         {!usersCollapsed && (sidebarMode === 'runs' ? (
           <>
             <div className="chat-users-title">Desktop runner</div>
@@ -2065,6 +2091,7 @@ export const ChatView = memo(function ChatView({
           </form>
         )}
 
+        <div className="chat-users-title">People</div>
         {humanUsers.map((name) => {
           const isSelf = name === currentUser;
           const isOnline = isSelf || onlineUsers.has(name);
@@ -2092,23 +2119,7 @@ export const ChatView = memo(function ChatView({
           );
         })}
 
-        <div className="chat-users-title">Working directory</div>
-        <div className="chat-channel-cwd">
-          <input
-            value={channelCwd}
-            onChange={(e) => setChannelCwd(e.target.value)}
-            onBlur={() => void saveChannelCwd()}
-            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } }}
-            placeholder="e.g. ~/project — all agents run here"
-            spellCheck={false}
-            autoCapitalize="off"
-            autoCorrect="off"
-          />
-          {channelCwdSaved && <span className="chat-channel-cwd-saved">saved</span>}
-        </div>
-        <div className="chat-channel-cwd-hint">Overrides each agent's own cwd for this channel.</div>
-
-        <div className="chat-users-title">In this channel</div>
+        <div className="chat-users-title">Agents in this channel</div>
         {registeredAgentRows.length === 0 && (
           <div className="chat-runs-empty">No agents yet — add from vault</div>
         )}

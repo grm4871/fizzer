@@ -3,7 +3,7 @@
  * Keep in sync with server AgentId / CLI agent lists where applicable.
  */
 
-export type AgentId = 'claude-code' | 'codex' | 'grok' | 'antigravity' | 'copilot' | 'hermes';
+export type AgentId = 'claude-code' | 'codex' | 'grok' | 'antigravity' | 'copilot' | 'hermes' | 'omp';
 
 export const CHAT_AGENTS: Array<{ id: AgentId; label: string }> = [
   { id: 'claude-code', label: 'Claude' },
@@ -12,6 +12,7 @@ export const CHAT_AGENTS: Array<{ id: AgentId; label: string }> = [
   { id: 'antigravity', label: 'Antigravity' },
   { id: 'copilot', label: 'Copilot' },
   { id: 'hermes', label: 'Hermes' },
+  { id: 'omp', label: 'OMP' },
 ];
 
 /**
@@ -64,6 +65,12 @@ export const CHAT_AGENT_MODEL_PRESETS: Record<AgentId, { id: string; label: stri
     { id: 'gpt-5.2', label: 'GPT-5.2' },
   ],
   hermes: [],
+  omp: [
+    { id: 'claude-3-7-sonnet-20250219', label: 'Claude 3.7 Sonnet' },
+    { id: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet' },
+    { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
+    { id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash' },
+  ],
 };
 
 /**

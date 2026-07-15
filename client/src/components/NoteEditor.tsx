@@ -3,7 +3,7 @@ import type { Note, NoteSummary } from '../api';
 import { api, formatRelativeDate, type NotePublishInfo } from '../api';
 import { findEmbeddedNote, normalizeDocEmbedTarget, NOTE_DND_TYPE, noteEmbedMarkdown } from '../docEmbeds';
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, placeholder as cmPlaceholder, Decoration, type DecorationSet, WidgetType, drawSelection } from '@codemirror/view';
-import { EditorState, type Extension, RangeSetBuilder, Prec, StateField } from '@codemirror/state';
+import { EditorState, type Extension, RangeSetBuilder, Prec, StateField, StateEffect } from '@codemirror/state';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { syntaxHighlighting, HighlightStyle, indentOnInput, bracketMatching, defaultHighlightStyle } from '@codemirror/language';
 import { defaultKeymap, indentWithTab, history, historyKeymap } from '@codemirror/commands';
@@ -1600,7 +1600,17 @@ export function NoteEditor({ note, content, onContentChange, onSave, onRename, o
       view.destroy();
       viewRef.current = null;
     };
-  }, [note?.id, extensions]);
+  }, [note?.id]);
+
+  // Reconfigure extensions dynamically when they change
+  useEffect(() => {
+    const view = viewRef.current;
+    if (view) {
+      view.dispatch({
+        effects: StateEffect.reconfigure.of(extensions),
+      });
+    }
+  }, [extensions]);
 
   // Update content when note changes externally
   useEffect(() => {

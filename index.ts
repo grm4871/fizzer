@@ -1451,7 +1451,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     return res.status(400).json({ error: 'Prompt is required' });
   }
 
-  const validAgents = ['claude-code', 'codex', 'grok', 'antigravity', 'copilot', 'hermes'] as const satisfies readonly AgentId[];
+  const validAgents = ['claude-code', 'codex', 'grok', 'antigravity', 'copilot', 'hermes', 'omp'] as const satisfies readonly AgentId[];
   const removedModelPresets = new Set([
     'codex-flash',
     'codex-pro',

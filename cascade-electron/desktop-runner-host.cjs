@@ -104,8 +104,11 @@ function probeLocalModels() {
   try {
     // Prefer compiled dist (production); fall back to tsx source for dev.
     let listAntigravityModels = null;
+    let listOmpModels = null;
     try {
-      ({ listAntigravityModels } = require(path.join(__dirname, '..', 'dist', 'cli-agents', 'cli-agent.js')));
+      const cliAgentMod = require(path.join(__dirname, '..', 'dist', 'cli-agents', 'cli-agent.js'));
+      listAntigravityModels = cliAgentMod.listAntigravityModels;
+      listOmpModels = cliAgentMod.listOmpModels;
     } catch {
       try {
         // Dynamic import of TS not available in CJS sync probe — use curl inline
@@ -120,8 +123,15 @@ function probeLocalModels() {
       // Minimal fallback when dist not built yet
       models.antigravity = ['flash_lite', 'flash', 'pro'];
     }
+    if (typeof listOmpModels === 'function') {
+      const ompModels = listOmpModels();
+      if (Array.isArray(ompModels) && ompModels.length) models.omp = ompModels;
+    } else {
+      models.omp = ['claude-3-7-sonnet-20250219', 'claude-3-5-sonnet-20241022', 'gemini-2.5-pro', 'gemini-3.5-flash'];
+    }
   } catch {
     models.antigravity = ['flash_lite', 'flash', 'pro'];
+    models.omp = ['claude-3-7-sonnet-20250219', 'claude-3-5-sonnet-20241022', 'gemini-2.5-pro', 'gemini-3.5-flash'];
   }
   return models;
 }

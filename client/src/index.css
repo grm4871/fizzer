@@ -2237,13 +2237,13 @@ a {
   color: var(--text-primary);
 }
 .chat-users {
-  width: 224px;
-  flex: 0 0 224px;
+  width: 244px;
+  flex: 0 0 244px;
   min-height: 0;
   overflow-y: auto;
   border-left: 1px solid var(--border);
   background: transparent;
-  padding: 14px 8px;
+  padding: 0 8px 14px;
 }
 .chat-users.is-collapsed {
   width: 42px;
@@ -2365,6 +2365,7 @@ a {
   text-align: left;
   cursor: pointer;
 }
+
 .chat-runs-empty {
   padding: 12px 8px;
   color: var(--text-tertiary);

@@ -20,7 +20,7 @@ import {
   isDelegatedRun,
 } from './desktop-runner.js';
 
-export type AgentId = 'claude-code' | 'codex' | 'grok' | 'antigravity' | 'copilot' | 'hermes';
+export type AgentId = 'claude-code' | 'codex' | 'grok' | 'antigravity' | 'copilot' | 'hermes' | 'omp';
 
 type Db = Database.Database;
 

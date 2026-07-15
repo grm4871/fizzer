@@ -2441,11 +2441,9 @@ export default function App() {
           <button id="auth-submit" type="submit">
             {authMode === 'login' ? 'Log in' : authMode === 'register' ? 'Create account' : 'Set new password'}
           </button>
-          {(hasInvite || authMode === 'register') && (
-            <button id="auth-toggle-mode" type="button" className="link-button" onClick={() => { setAuthError(''); setAuthNotice(''); setAuthMode(authMode === 'login' ? 'register' : 'login'); }}>
-              {authMode === 'login' ? 'Create account for this invite' : 'Already have an account? Log in'}
-            </button>
-          )}
+          <button id="auth-toggle-mode" type="button" className="link-button" onClick={() => { setAuthError(''); setAuthNotice(''); setAuthMode(authMode === 'login' ? 'register' : 'login'); }}>
+            {authMode === 'login' ? (hasInvite ? 'Create account for this invite' : 'Create account') : 'Already have an account? Log in'}
+          </button>
           {authMode === 'login' && (
             <button type="button" className="link-button" onClick={() => { setAuthError(''); setAuthNotice(''); setAuthMode('reset'); }}>
               Forgot password?

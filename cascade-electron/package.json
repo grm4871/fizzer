@@ -16,8 +16,7 @@
   "dependencies": {
     "better-sqlite3": "^12.5.0",
     "express": "^4.18.2",
-    "socket.io-client": "^4.8.3",
-    "uuid": "^9.0.0"
+    "socket.io-client": "^4.8.3"
   },
   "devDependencies": {
     "@electron-forge/cli": "^7.2.0",
@@ -29,7 +28,7 @@
     "@electron-forge/plugin-auto-unpack-natives": "^7.2.0",
     "@electron/rebuild": "^4.0.2",
     "concurrently": "^9.1.2",
-    "electron": "39.2.7",
+    "electron": "39.8.10",
     "electron-reload": "^2.0.0-alpha.1",
     "nodemon": "^3.1.10"
   }
