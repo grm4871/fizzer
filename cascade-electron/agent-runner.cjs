@@ -48,6 +48,15 @@ const noteApi = { url: '', token: '' };
 const HELPER_CONFIG_PATH = path.join(os.homedir(), '.cascade', 'agent-helper-context.json');
 const RUN_CONTEXT_DIR = path.join(os.homedir(), '.cascade', 'run-contexts');
 const USER_BIN_DIR = path.join(os.homedir(), '.local', 'bin');
+// Electron launched from a desktop entry does not inherit the user's login
+// shell PATH. Include the conventional per-user CLI locations so agents
+// installed with Bun/npm (for example OMP in ~/.bun/bin) are discoverable.
+const USER_EXEC_DIRS = [
+  USER_BIN_DIR,
+  path.join(os.homedir(), '.bun', 'bin'),
+  path.join(os.homedir(), '.npm-global', 'bin'),
+  path.join(os.homedir(), 'node_modules', '.bin'),
+];
 const HELPER_NAMES = ['cascade-note', 'cascade-chat'];
 
 /** Directory holding the agent helper CLIs; prefer source, fall back to dist. */
@@ -110,7 +119,11 @@ function ensureWrapperOnPath() {
   const dir = resolveWrapperDir();
   const parts = (process.env.PATH || '').split(path.delimiter);
   if (!parts.includes(dir)) process.env.PATH = [dir, ...parts].join(path.delimiter);
-  if (!parts.includes(USER_BIN_DIR)) process.env.PATH = [USER_BIN_DIR, process.env.PATH || ''].filter(Boolean).join(path.delimiter);
+  for (const binDir of USER_EXEC_DIRS) {
+    if (!parts.includes(binDir) && fs.existsSync(binDir)) {
+      process.env.PATH = [binDir, process.env.PATH || ''].filter(Boolean).join(path.delimiter);
+    }
+  }
   process.env.CASCADE_HELPER_DIR = dir;
   process.env.CASCADE_HELPER_CONFIG = HELPER_CONFIG_PATH;
 }
@@ -212,8 +225,10 @@ function buildRunHelperEnv(opts) {
   if (!env.PATH.split(path.delimiter).includes(env.CASCADE_HELPER_DIR)) {
     env.PATH = [env.CASCADE_HELPER_DIR, env.PATH].filter(Boolean).join(path.delimiter);
   }
-  if (!env.PATH.split(path.delimiter).includes(USER_BIN_DIR)) {
-    env.PATH = [USER_BIN_DIR, env.PATH].filter(Boolean).join(path.delimiter);
+  for (const binDir of USER_EXEC_DIRS) {
+    if (fs.existsSync(binDir) && !env.PATH.split(path.delimiter).includes(binDir)) {
+      env.PATH = [binDir, env.PATH].filter(Boolean).join(path.delimiter);
+    }
   }
   if (vaultId) env.CASCADE_NOTE_VAULT = vaultId;
   if (channelId) env.CASCADE_CHAT_CHANNEL = channelId;
