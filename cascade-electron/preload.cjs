@@ -78,12 +78,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   // ── Desktop agent runner relay ──────────────────────────────
-  /** Connect the main-process /runners socket after login. */
+  /** Configure main-process helper env (token/url) after login. */
   setRunnerToken: ({ token, apiUrl }) => ipcRenderer.invoke('runner:setToken', { token, apiUrl }),
   clearRunnerToken: () => ipcRenderer.invoke('runner:clearToken'),
   getRunnerStatus: () => ipcRenderer.invoke('runner:status'),
+  /** Probe local CLI model lists for runner:register. */
+  getRunnerModels: () => ipcRenderer.invoke('runner:models'),
   readClipboardImage: () => ipcRenderer.invoke('clipboard:readImage'),
-  // Legacy direct IPC runs (still used internally by the main-process relay).
+  // Local CLI execution (renderer hosts /runners; main spawns agents).
   startAgentRun: (opts) => ipcRenderer.invoke('agent:start', opts),
   cancelAgentRun: (runId) => ipcRenderer.invoke('agent:cancel', runId),
   onAgentEvent: (callback) => {

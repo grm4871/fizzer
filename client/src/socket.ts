@@ -67,7 +67,9 @@ type ClientEvents = {
 export function connectVaultSocket(): Socket<ServerEvents, ClientEvents> {
   return io(`${API_BASE}/vault`, {
     auth: { token: localStorage.getItem('docs_token') },
-    transports: ['websocket', 'polling'],
+    // Polling first: some networks/middleboxes break the websocket upgrade
+    // while HTTPS long-poll still works. engine.io upgrades to WS when able.
+    transports: ['polling', 'websocket'],
     reconnection: true,
     reconnectionAttempts: Infinity,
     reconnectionDelay: 2000,
@@ -82,7 +84,7 @@ export function connectVaultSocket(): Socket<ServerEvents, ClientEvents> {
 export function connectRunsSocket(): Socket {
   return io(`${API_BASE}/runs`, {
     auth: { token: localStorage.getItem('docs_token') },
-    transports: ['websocket', 'polling'],
+    transports: ['polling', 'websocket'],
     reconnection: true,
     reconnectionAttempts: Infinity,
     reconnectionDelay: 2000,

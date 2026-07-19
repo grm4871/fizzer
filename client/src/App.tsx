@@ -1369,15 +1369,14 @@ export default function App() {
       };
 
       runSocket = connectRunsSocket();
+      // Wait for a successful transport only. engine.io may emit connect_error
+      // while falling back (websocket → polling); rejecting on the first one
+      // is what wrote the raw "websocket error" string into chat.
       await new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error('Runs socket connect timeout')), 10000);
-        runSocket!.on('connect', () => {
+        const timer = setTimeout(() => reject(new Error('Runs socket connect timeout')), 15000);
+        runSocket!.once('connect', () => {
           clearTimeout(timer);
           resolve();
-        });
-        runSocket!.on('connect_error', (error) => {
-          clearTimeout(timer);
-          reject(error);
         });
       });
 

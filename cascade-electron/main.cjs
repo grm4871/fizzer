@@ -32,7 +32,7 @@ if (explicitUserDataDir) {
 
 const db = require('./database.cjs');
 const { startLocalAgentRun, cancelLocalAgentRun } = require('./agent-runner.cjs');
-const { connectDesktopRunner, disconnectDesktopRunner, isDesktopRunnerConnected } = require('./desktop-runner-host.cjs');
+const { connectDesktopRunner, disconnectDesktopRunner, isDesktopRunnerConnected, probeLocalModels } = require('./desktop-runner-host.cjs');
 
 // Suppress GLib-GObject and GTK warnings on Linux.
 if (process.platform === 'linux') {
@@ -538,30 +538,40 @@ ipcMain.handle('agent:cancel', async (_event, runId) => {
   }
 });
 
-/** Start the main-process /runners relay (called after login). */
+/** Configure helper env for local agent children (renderer owns /runners socket). */
 ipcMain.handle('runner:setToken', async (_event, { token, apiUrl } = {}) => {
   try {
     return connectDesktopRunner(token, apiUrl);
   } catch (error) {
-    console.error('[IPC] Failed to connect desktop runner:', error);
+    console.error('[IPC] Failed to configure desktop runner:', error);
     return { success: false, error: error.message };
   }
 });
 
-/** Stop the main-process /runners relay (called on logout). */
+/** Clear helper env on logout. */
 ipcMain.handle('runner:clearToken', async () => {
   try {
     disconnectDesktopRunner();
     return { success: true };
   } catch (error) {
-    console.error('[IPC] Failed to disconnect desktop runner:', error);
+    console.error('[IPC] Failed to clear desktop runner:', error);
     return { success: false, error: error.message };
   }
 });
 
 ipcMain.handle('runner:status', async () => ({
+  // Token present means main is configured; socket online is renderer-side.
   connected: isDesktopRunnerConnected(),
 }));
+
+ipcMain.handle('runner:models', async () => {
+  try {
+    return { models: probeLocalModels() };
+  } catch (error) {
+    console.error('[IPC] Failed to probe runner models:', error);
+    return { models: {} };
+  }
+});
 
 ipcMain.handle('clipboard:readImage', async () => {
   const image = clipboard.readImage();
