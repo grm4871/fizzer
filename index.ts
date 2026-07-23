@@ -144,10 +144,15 @@ import { searchWithQmd } from './server/qmd-search.js';
 import {
   appendJournalEntry,
   buildScratchpadInjection,
+  createSkillNote,
   ensureScratchpadPolicies,
   ensureScratchpadSchema,
+  getNoteStatsForVault,
   listJournalEntries,
+  listSkillNotes,
   markJournalConsolidated,
+  promoteNote,
+  recordNoteOutcome,
   scratchpadStatus,
 } from './server/scratchpad.js';
 
@@ -1129,6 +1134,51 @@ app.get('/api/vaults/:id/scratchpad/status', requireAuth, (req: AuthedRequest, r
   res.json({ status: scratchpadStatus(db, vault.id, agentKey) });
 });
 
+app.post('/api/vaults/:id/scratchpad/skills', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const note = createSkillNote(db, req.user!.id, req.params.id, {
+      title: String(req.body?.title || ''),
+      body: String(req.body?.body || ''),
+      agentKey: req.body?.agentKey,
+    });
+    res.status(201).json({ note: { id: note.id, title: note.title } });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not save skill' });
+  }
+});
+
+app.get('/api/vaults/:id/scratchpad/skills', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const agentKey = typeof req.query.agent === 'string' ? req.query.agent : undefined;
+    res.json({ skills: listSkillNotes(db, req.user!.id, req.params.id, agentKey) });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not list skills' });
+  }
+});
+
+app.post('/api/vaults/:id/scratchpad/outcome', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const outcome = recordNoteOutcome(db, req.user!.id, req.params.id, {
+      noteRef: String(req.body?.noteRef || ''),
+      result: req.body?.result,
+    });
+    res.json({ outcome });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not record outcome' });
+  }
+});
+
+app.post('/api/vaults/:id/scratchpad/promote', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const { note, kind } = promoteNote(db, req.user!.id, req.params.id, {
+      noteRef: String(req.body?.noteRef || ''),
+    });
+    res.json({ note: { id: note.id, title: note.title }, kind });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not promote note' });
+  }
+});
+
 // ── Backlinks routes ───────────────────────────────────────────────
 
 app.get('/api/notes/:id/backlinks', requireAuth, (req: AuthedRequest, res) => {
@@ -1589,10 +1639,27 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
               ensureAgentNamedMemoryFolders(db, runVault.id, runnerUserId, agentMemoryKey);
             }
           } catch { /* best-effort folder mint */ }
+          const topic = `${channelTitle} ${prompt}`.slice(0, 400);
+          // Hybrid semantic+lexical ranking (QMD, local embeddings) so memory
+          // recall fires on paraphrases, not just literal keyword overlap.
+          // Bounded: a slow or cold index degrades to keyword matching.
+          let rankedNoteIds: string[] | undefined;
+          try {
+            const hits = await Promise.race([
+              searchWithQmd(db, runVault.id, topic, { scope: 'notes', limit: 24 }),
+              new Promise<Awaited<ReturnType<typeof searchWithQmd>>>((resolve) => {
+                setTimeout(() => resolve([]), 4000);
+              }),
+            ]);
+            const ids = hits.filter((hit) => hit.type === 'note').map((hit) => hit.id);
+            if (ids.length) rankedNoteIds = ids;
+          } catch { /* keyword fallback inside buildAgentMemoryInjection */ }
           const mem = buildAgentMemoryInjection(db, runVault.id, {
-            channelTopic: `${channelTitle} ${prompt}`.slice(0, 400),
+            channelTopic: topic,
             maxChars: 900,
             agentKey: agentMemoryKey || selectedAgent,
+            rankedNoteIds,
+            noteStats: getNoteStatsForVault(db, runVault.id),
           });
           if (mem.enabled && mem.text) contextChunks.push(mem.text);
         } catch (error) {
@@ -1603,7 +1670,8 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
           ensureScratchpadPolicies(db, runVault.id, runnerUserId, scratchpadKey);
           const scratchpad = buildScratchpadInjection(db, runVault.id, {
             agentKey: scratchpadKey,
-            maxChars: 1200,
+            userId: runnerUserId,
+            maxChars: 1400,
           });
           if (scratchpad) contextChunks.push(scratchpad);
         } catch (error) {

@@ -17,13 +17,19 @@ import path from 'node:path';
 const DEFAULT_URL = 'https://cscd.online';
 const KINDS = ['observation', 'outcome', 'dead-end', 'decision', 'todo'];
 
-const USAGE = `cascade-scratchpad - append-only agent work journal
+const USAGE = `cascade-scratchpad - agent work journal, skills, and outcome tracking
 
 Usage:
   cascade-scratchpad jot [text...]             append a journal entry (stdin ok)
   cascade-scratchpad journal                   list journal entries
   cascade-scratchpad done --through <id>       mark entries consolidated
   cascade-scratchpad status                    unconsolidated count + last consolidation
+  cascade-scratchpad skill write --title T     save an executable procedure (body via stdin;
+                                               first line = when to use it, rest = the steps)
+  cascade-scratchpad skill list                list your skills + shared skills (with win rates)
+  cascade-scratchpad outcome <note-title>      record result of applying a note/skill
+                                               (--win | --loss | --neutral)
+  cascade-scratchpad promote <note-title>      share a memory/skill note with all agents
 
 Options:
   --kind <k>         observation | outcome | dead-end | decision | todo (jot; default observation)
@@ -32,6 +38,9 @@ Options:
   --since <id>       journal: entries with id > <id>
   --limit <n>        journal: max entries (default 100)
   --through <id>     done: consolidate entries up to and including <id>
+  --title <t>        skill write: skill title
+  --content <text>   skill write: inline body (stdin is safer)
+  --win|--loss|--neutral  outcome: how applying the note went
   --vault <id>       vault id (default $CASCADE_NOTE_VAULT)
   --url <base>       API base (default $CASCADE_NOTE_URL, else cscd.online)
   --token <jwt>      bearer token (default $CASCADE_NOTE_TOKEN)
@@ -39,6 +48,7 @@ Options:
 
 Jot liberally: entries are append-only and cost nothing to curate later.
 Dead ends ("tried X, failed because Y") are the most valuable entries.
+Read a skill's full body with: cascade-note get <title>
 
 Env: CASCADE_NOTE_URL, CASCADE_NOTE_TOKEN, CASCADE_NOTE_USER,
      CASCADE_NOTE_PASS, CASCADE_NOTE_VAULT, CASCADE_RUN_ID, CASCADE_HELPER_CONFIG`;
@@ -49,6 +59,9 @@ function parseArgs(argv) {
     const a = argv[i];
     if (a === '--json') args.json = true;
     else if (a === '--unconsolidated') args.unconsolidated = true;
+    else if (a === '--win') args.result = 'win';
+    else if (a === '--loss') args.result = 'loss';
+    else if (a === '--neutral') args.result = 'neutral';
     else if (a === '-h' || a === '--help') args.help = true;
     else if (a.startsWith('--')) {
       const key = a.slice(2);
@@ -183,7 +196,7 @@ async function main() {
     process.stdout.write(USAGE + '\n');
     process.exit(cmd ? 0 : 1);
   }
-  if (!['jot', 'journal', 'done', 'status'].includes(cmd)) {
+  if (!['jot', 'journal', 'done', 'status', 'skill', 'outcome', 'promote'].includes(cmd)) {
     fail(`unknown command "${cmd}". Run with --help.`);
   }
 
@@ -234,6 +247,57 @@ async function main() {
       agentKey,
     });
     print(args, `consolidated ${result.marked} entr${result.marked === 1 ? 'y' : 'ies'} through #${throughId}`, result);
+    return;
+  }
+
+  if (cmd === 'skill') {
+    const sub = args._[1];
+    if (sub === 'write') {
+      const title = String(args.title || '').trim();
+      if (!title) fail('skill write needs --title.');
+      const body = (typeof args.content === 'string' ? args.content : String(await readStdin())).trim();
+      if (!body) fail('skill write needs a body via stdin or --content (first line: when to use it).');
+      const { note } = await api(url, token, 'POST', `/api/vaults/${vaultId}/scratchpad/skills`, {
+        title,
+        body,
+        agentKey,
+      });
+      print(args, `skill saved: ${note.title}`, note);
+      return;
+    }
+    if (sub === 'list') {
+      const params = new URLSearchParams();
+      if (agentKey) params.set('agent', agentKey);
+      const { skills = [] } = await api(url, token, 'GET', `/api/vaults/${vaultId}/scratchpad/skills?${params}`);
+      const human = skills.length
+        ? skills.map((s) => {
+            const stats = s.stats && s.stats.uses > 0 ? ` (won ${s.stats.wins}/${s.stats.uses})` : '';
+            return `${s.shared ? '[shared] ' : ''}${s.title}${stats}\n    ${s.description}`;
+          }).join('\n')
+        : '(no skills yet)';
+      print(args, human, skills);
+      return;
+    }
+    fail('skill needs a subcommand: write | list.');
+  }
+
+  if (cmd === 'outcome') {
+    const noteRef = args._.slice(1).join(' ').trim();
+    if (!noteRef) fail('outcome needs a note title or id.');
+    if (!args.result) fail('outcome needs --win, --loss, or --neutral.');
+    const { outcome } = await api(url, token, 'POST', `/api/vaults/${vaultId}/scratchpad/outcome`, {
+      noteRef,
+      result: args.result,
+    });
+    print(args, `recorded ${args.result} for "${outcome.title}" (now ${outcome.wins}/${outcome.uses} wins)`, outcome);
+    return;
+  }
+
+  if (cmd === 'promote') {
+    const noteRef = args._.slice(1).join(' ').trim();
+    if (!noteRef) fail('promote needs a note title or id.');
+    const result = await api(url, token, 'POST', `/api/vaults/${vaultId}/scratchpad/promote`, { noteRef });
+    print(args, `promoted ${result.kind} "${result.note.title}" to shared agent ${result.kind === 'skill' ? 'skills' : 'memory'}`, result);
     return;
   }
 

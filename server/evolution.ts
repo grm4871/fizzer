@@ -652,11 +652,24 @@ export type AgentMemoryInjection = {
   truncated: boolean;
 };
 
-/** Build injection text for session start (INDEX + keyword-matched memory notes). */
+/**
+ * Build injection text for session start (INDEX + topic-matched memory notes).
+ *
+ * Selection tiers: `rankedNoteIds` (semantic+lexical hybrid ranking from QMD,
+ * computed by the caller — fixes paraphrase misses that literal keyword
+ * matching can't) → keyword substring match → recency. `noteStats` adds
+ * win/loss labels so the agent can weigh how a remembered strategy has fared.
+ */
 export function buildAgentMemoryInjection(
   db: Db,
   vaultId: string,
-  opts: { channelTopic?: string; maxChars?: number; agentKey?: string } = {},
+  opts: {
+    channelTopic?: string;
+    maxChars?: number;
+    agentKey?: string;
+    rankedNoteIds?: string[];
+    noteStats?: Map<string, { uses: number; wins: number; losses: number }>;
+  } = {},
 ): AgentMemoryInjection {
   if (!isAgentMemoryEnabled(db, vaultId)) {
     return { enabled: false, text: '', noteIds: [], truncated: false };
@@ -699,11 +712,24 @@ export function buildAgentMemoryInjection(
 
   const indexNote = notes.find((n) => n.title.toLowerCase() === 'index');
   const others = notes.filter((n) => n.title.toLowerCase() !== 'index');
-  const matched = topicTerms.length
+
+  // Tier 1: hybrid semantic/lexical rank from the caller (QMD), when present.
+  const rankIndex = new Map((opts.rankedNoteIds || []).map((id, i) => [id, i]));
+  const semantic = others
+    .filter((n) => rankIndex.has(n.id))
+    .sort((a, b) => (rankIndex.get(a.id) ?? 0) - (rankIndex.get(b.id) ?? 0));
+  // Tier 2: literal keyword match (fallback when no ranking is available).
+  const seen = new Set(semantic.map((n) => n.id));
+  const keyword = topicTerms.length
     ? others.filter((n) => {
+        if (seen.has(n.id)) return false;
         const hay = `${n.title}\n${n.content}`.toLowerCase();
         return topicTerms.some((t) => hay.includes(t));
       })
+    : [];
+  // Tier 3: recency, only when nothing matched at all.
+  const matched = semantic.length + keyword.length > 0
+    ? [...semantic, ...keyword]
     : others.slice(0, 8);
 
   const ordered = [
@@ -721,7 +747,9 @@ export function buildAgentMemoryInjection(
       .replace(/\s+/g, ' ')
       .trim()
       .slice(0, 600);
-    const chunk = `\n- [[${note.title}]]: ${body}`;
+    const stats = opts.noteStats?.get(note.id);
+    const record = stats && stats.uses > 0 ? ` [won ${stats.wins}/${stats.uses}]` : '';
+    const chunk = `\n- [[${note.title}]]${record}: ${body}`;
     if (used + chunk.length > maxChars) {
       truncated = true;
       break;

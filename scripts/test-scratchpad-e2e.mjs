@@ -11,7 +11,10 @@
  *   4. the server spawns no runs of its own — only client-requested runs are
  *      ever delegated;
  *   5. consolidating via the API (as the agent's `cascade-scratchpad done`
- *      would) zeroes the journal and clears the nudge on the next boot.
+ *      would) zeroes the journal and clears the nudge on the next boot;
+ *   6. skills: a saved skill appears in the boot injection with its win/loss
+ *      record after outcomes are reported;
+ *   7. promotion: a promoted skill becomes visible to a different agent key.
  *
  * Requires a built server (npm run build); pass --build to build first.
  */
@@ -220,7 +223,35 @@ async function main() {
     if (status.unconsolidated !== 0) throw new Error(`Expected 0 unconsolidated after done, got ${status.unconsolidated}`);
     console.log('[e2e] OK consolidation zeroed the journal');
 
-    // ── 5. Nudge clears on the next boot ─────────────────────────────
+    // ── 5. Skills + outcome counters ─────────────────────────────────
+    await fetchJson(`${API_BASE}/api/vaults/${vault.id}/scratchpad/skills`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({
+        title: 'Deploy and verify',
+        body: 'Use when asked to ship changes.\n1. commit + push\n2. ./.private/deploy-cscd-online.sh --wait\n3. curl /api/health',
+        agentKey: AGENT_KEY,
+      }),
+    });
+    for (const result of ['win', 'win', 'loss']) {
+      await fetchJson(`${API_BASE}/api/vaults/${vault.id}/scratchpad/outcome`, {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({ noteRef: 'Deploy and verify', result }),
+      });
+    }
+    const { skills } = await fetchJson(
+      `${API_BASE}/api/vaults/${vault.id}/scratchpad/skills?agent=${AGENT_KEY}`,
+      { headers: auth },
+    );
+    const skill = (skills || []).find((s) => s.title === 'Deploy and verify');
+    if (!skill) throw new Error('Saved skill missing from listing');
+    if (!skill.stats || skill.stats.uses !== 3 || skill.stats.wins !== 2 || skill.stats.losses !== 1) {
+      throw new Error(`Skill stats wrong: ${JSON.stringify(skill.stats)}`);
+    }
+    console.log('[e2e] OK skill saved with outcome counters (2/3 wins)');
+
+    // ── 6. Nudge cleared + skill in boot injection ───────────────────
     await fetchJson(`${API_BASE}/api/vaults/${vault.id}/runs`, {
       method: 'POST',
       headers: auth,
@@ -236,7 +267,33 @@ async function main() {
     if (third.prompt.includes('Consolidation is due')) {
       throw new Error('Due nudge still present after consolidation');
     }
-    console.log('[e2e] OK due nudge cleared after consolidation');
+    if (!third.prompt.includes('[[Deploy and verify]]') || !third.prompt.includes('(won 2/3)')) {
+      throw new Error('Third run prompt missing skill listing with win record');
+    }
+    console.log('[e2e] OK due nudge cleared; skill + win record in boot injection');
+
+    // ── 7. Promotion: another agent key inherits the shared skill ────
+    const before = await fetchJson(
+      `${API_BASE}/api/vaults/${vault.id}/scratchpad/skills?agent=codex`,
+      { headers: auth },
+    );
+    if ((before.skills || []).some((s) => s.title === 'Deploy and verify')) {
+      throw new Error('Skill visible to other agent before promotion');
+    }
+    await fetchJson(`${API_BASE}/api/vaults/${vault.id}/scratchpad/promote`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({ noteRef: 'Deploy and verify' }),
+    });
+    const after = await fetchJson(
+      `${API_BASE}/api/vaults/${vault.id}/scratchpad/skills?agent=codex`,
+      { headers: auth },
+    );
+    const promoted = (after.skills || []).find((s) => s.title === 'Deploy and verify');
+    if (!promoted || !promoted.shared) {
+      throw new Error('Promoted skill not visible to other agent as shared');
+    }
+    console.log('[e2e] OK promoted skill inherited by a different agent key');
 
     console.log('[e2e] All scratchpad tests passed');
   } finally {
