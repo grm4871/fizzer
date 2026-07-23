@@ -127,15 +127,8 @@ import {
 } from './server/publish.js';
 import { deleteNoteAssets, serveNoteAsset, uploadNoteAsset } from './server/noteAssets.js';
 import {
-  buildRecallContext,
-  createMemoryNote,
-  getMemoryNote,
-  recallExocortex,
-} from './server/exocortex.js';
-import {
   backfillChatNoteBacklinks,
   buildAgentMemoryInjection,
-  captureAgentRunMemory,
   createAgentMemoryNote,
   distillChatToNote,
   ensureAgentMemoryFolders,
@@ -148,6 +141,15 @@ import {
   setAgentMemoryEnabled,
 } from './server/evolution.js';
 import { searchWithQmd } from './server/qmd-search.js';
+import {
+  appendJournalEntry,
+  buildScratchpadInjection,
+  ensureScratchpadPolicies,
+  ensureScratchpadSchema,
+  listJournalEntries,
+  markJournalConsolidated,
+  scratchpadStatus,
+} from './server/scratchpad.js';
 
 const PORT = Number(process.env.API_PORT || 3000);
 /** Single source of truth with desktop-runner (persisted secret when env unset). */
@@ -315,6 +317,7 @@ db.exec(`
 `);
 ensurePublishSchema(db);
 ensureEvolutionSchema(db);
+ensureScratchpadSchema(db);
 rebuildSearchIndexes(db);
 
 // ── Express & Socket.io setup ──────────────────────────────────────
@@ -578,51 +581,6 @@ function syncRunToChatMessage(runId: number) {
     if (updated) {
       const { route } = assertChatChannel(db, target.channelId, target.userId);
       emitChatMessageEvent(route.sourceVaultId, route.sourceChannelId, 'vault:chatMessageUpdated', updated);
-      if (content.done && !content.status) {
-        try {
-          const responseRow = db.prepare(`
-            SELECT rowid, registration_id FROM chat_messages WHERE id = ? AND channel_id = ?
-          `).get(target.messageId, route.sourceChannelId) as { rowid: number; registration_id: string | null } | undefined;
-          const requestRow = responseRow
-            ? db.prepare(`
-                SELECT body FROM chat_messages
-                WHERE channel_id = ? AND rowid < ?
-                  AND trim(body) != '' AND body != 'Thinking...'
-                ORDER BY rowid DESC LIMIT 1
-              `).get(route.sourceChannelId, responseRow.rowid) as { body: string } | undefined
-            : undefined;
-          const registration = responseRow?.registration_id
-            ? db.prepare(`
-                SELECT mention, agent_id FROM chat_agent_members
-                WHERE id = ? AND channel_id = ?
-              `).get(responseRow.registration_id, route.sourceChannelId) as { mention: string; agent_id: string } | undefined
-            : undefined;
-          const sentRow = responseRow?.registration_id
-            ? db.prepare(`
-                SELECT body FROM chat_messages
-                WHERE channel_id = ? AND registration_id = ? AND rowid > ?
-                  AND trim(body) != '' AND body != 'Thinking...'
-                ORDER BY rowid DESC LIMIT 1
-              `).get(route.sourceChannelId, responseRow.registration_id, responseRow.rowid) as { body: string } | undefined
-            : undefined;
-          const memoryNote = captureAgentRunMemory(db, target.userId, target.vaultId, {
-            runId,
-            agentKey: registration?.mention || registration?.agent_id || updated.agentId || 'agent',
-            channelTitle: getNote(db, route.sourceChannelId)?.title || '',
-            request: requestRow?.body || '',
-            outcome: updated.body || sentRow?.body || '',
-          });
-          if (memoryNote) {
-            emitVaultEvent(target.vaultId, 'vault:noteCreated', {
-              noteId: memoryNote.id,
-              vaultId: target.vaultId,
-              title: memoryNote.title,
-            });
-          }
-        } catch (error) {
-          console.warn('agent memory capture skipped:', error instanceof Error ? error.message : error);
-        }
-      }
     }
   } catch {
     // Channel/message vanished (e.g. deleted mid-run) — drop the target below.
@@ -1122,40 +1080,53 @@ app.get('/api/vaults/:id/search', requireAuth, async (req: AuthedRequest, res) =
   }
 });
 
-app.get('/api/vaults/:id/exocortex/recall', requireAuth, (req: AuthedRequest, res) => {
-  try {
-    const q = String(req.query.q || '').trim();
-    const channelId = typeof req.query.channel === 'string' ? req.query.channel.trim() : undefined;
-    const limit = Number(req.query.limit || 8);
-    const results = recallExocortex(db, req.user!.id, req.params.id, q, { channelId, limit });
-    res.json({ results });
-  } catch (error) {
-    res.status(400).json({ error: error instanceof Error ? error.message : 'Recall failed' });
-  }
-});
+// ── Scratchpad (agent journal) routes ──────────────────────────────
 
-app.post('/api/vaults/:id/exocortex/memories', requireAuth, (req: AuthedRequest, res) => {
+app.post('/api/vaults/:id/scratchpad/journal', requireAuth, (req: AuthedRequest, res) => {
   try {
-    const note = createMemoryNote(db, req.user!.id, req.params.id, {
+    const entry = appendJournalEntry(db, req.user!.id, req.params.id, {
       body: String(req.body?.body || ''),
-      type: req.body?.type,
-      scope: req.body?.scope,
-      source: req.body?.source,
-      title: req.body?.title,
-      createdBy: req.user!.username,
+      kind: req.body?.kind,
+      agentKey: req.body?.agentKey,
+      runId: req.body?.runId,
     });
-    res.status(201).json({ note });
+    res.status(201).json({ entry });
   } catch (error) {
-    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not create memory' });
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not append journal entry' });
   }
 });
 
-app.delete('/api/exocortex/memories/:id', requireAuth, (req: AuthedRequest, res) => {
-  const note = getMemoryNote(db, req.user!.id, req.params.id);
-  if (!note) return res.status(404).json({ error: 'Memory not found' });
-  deleteNoteAssets(db, note.id);
-  deleteNote(db, note.id);
-  res.json({ ok: true });
+app.get('/api/vaults/:id/scratchpad/journal', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const entries = listJournalEntries(db, req.user!.id, req.params.id, {
+      agentKey: typeof req.query.agent === 'string' ? req.query.agent : undefined,
+      unconsolidatedOnly: req.query.unconsolidated === '1' || req.query.unconsolidated === 'true',
+      sinceId: req.query.since ? Number(req.query.since) : undefined,
+      limit: req.query.limit ? Number(req.query.limit) : undefined,
+    });
+    res.json({ entries });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not list journal' });
+  }
+});
+
+app.post('/api/vaults/:id/scratchpad/consolidate', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const marked = markJournalConsolidated(db, req.user!.id, req.params.id, {
+      throughId: Number(req.body?.throughId),
+      agentKey: req.body?.agentKey,
+    });
+    res.json({ ok: true, marked });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not mark consolidated' });
+  }
+});
+
+app.get('/api/vaults/:id/scratchpad/status', requireAuth, (req: AuthedRequest, res) => {
+  const vault = getVault(db, req.params.id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Vault not found' });
+  const agentKey = typeof req.query.agent === 'string' ? req.query.agent : undefined;
+  res.json({ status: scratchpadStatus(db, vault.id, agentKey) });
 });
 
 // ── Backlinks routes ───────────────────────────────────────────────
@@ -1567,12 +1538,12 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     : [];
 
   try {
-    // Prompt may still get exocortex context for cold starts only.
+    // Prompt may still get memory/scratchpad context for cold starts only.
     const preliminaryConversationId =
       typeof conversation_id === 'string' && conversation_id ? conversation_id : undefined;
 
     // Peek at whether this turn will resume a prior CLI session. Continuations
-    // skip expensive/noisy exocortex injection — the session already holds context.
+    // skip expensive/noisy memory injection — the session already holds context.
     let willResume = false;
     if (preliminaryConversationId) {
       const prior = db.prepare(`
@@ -1594,8 +1565,8 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     let effectivePrompt = prompt;
     if (!willResume) {
       const contextChunks: string[] = [];
-      // Lightweight chat pings: tiny recent transcript only — skip exocortex +
-      // memory so simple multiuser replies don't pay a full RAG cold-start.
+      // Lightweight chat pings: tiny recent transcript only — skip memory
+      // injection so simple multiuser replies don't pay a full cold-start.
       if (targetChannelId) {
         try {
           const recent = buildAgentChatContext(
@@ -1609,25 +1580,6 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
         } catch { /* best-effort context; the request still runs without it */ }
       }
       if (!chatLightweight) {
-        try {
-          const recentMessages = targetChannelId
-            ? listChatMessages(db, targetChannelId, runnerUserId, { limit: 12 })
-              .slice(-8)
-              .map((message) => `${message.author}: ${message.body}`)
-              .join('\n')
-            : '';
-          const recallQuery = [prompt, recentMessages].filter(Boolean).join('\n');
-          const recall = buildRecallContext(
-            recallExocortex(db, runnerUserId, runVault.id, recallQuery, {
-              channelId: targetChannelId || undefined,
-              limit: 3,
-            }),
-            700,
-          );
-          if (recall) contextChunks.push(recall);
-        } catch (error) {
-          console.warn('Exocortex recall skipped:', error instanceof Error ? error.message : error);
-        }
         try {
           const channelTitle = targetChannelId
             ? (getNote(db, targetChannelId)?.title || '')
@@ -1645,6 +1597,17 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
           if (mem.enabled && mem.text) contextChunks.push(mem.text);
         } catch (error) {
           console.warn('Agent memory injection skipped:', error instanceof Error ? error.message : error);
+        }
+        try {
+          const scratchpadKey = agentMemoryKey || selectedAgent;
+          ensureScratchpadPolicies(db, runVault.id, runnerUserId, scratchpadKey);
+          const scratchpad = buildScratchpadInjection(db, runVault.id, {
+            agentKey: scratchpadKey,
+            maxChars: 1200,
+          });
+          if (scratchpad) contextChunks.push(scratchpad);
+        } catch (error) {
+          console.warn('Scratchpad injection skipped:', error instanceof Error ? error.message : error);
         }
       }
       if (contextChunks.length) {

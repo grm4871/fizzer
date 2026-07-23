@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 /**
- * @file cascade-memory - Exocortex memory helper for local agents.
+ * @file cascade-scratchpad - Append-only work journal for local agents.
  *
- * Uses the live Cascade API, like cascade-note and cascade-chat, so memories are
- * indexed and visible in the running app instead of being raw local file edits.
+ * The cheap half of the scratchpad: `jot` during work with zero curation
+ * decisions; a librarian run reads the journal later and distills it into
+ * memory notes (see `cascade-note memory`). Uses the live Cascade API like
+ * the other cascade-* helpers.
  */
 
 'use strict';
@@ -13,37 +15,40 @@ import os from 'node:os';
 import path from 'node:path';
 
 const DEFAULT_URL = 'https://cscd.online';
+const KINDS = ['observation', 'outcome', 'dead-end', 'decision', 'todo'];
 
-const USAGE = `cascade-memory - read/write Cascade Exocortex memories
+const USAGE = `cascade-scratchpad - append-only agent work journal
 
 Usage:
-  cascade-memory recall <query>                recall memories, notes, and chat
-  cascade-memory remember [--title T]          create a memory from stdin or --content
-  cascade-memory forget <note-id>              delete a memory note
+  cascade-scratchpad jot [text...]             append a journal entry (stdin ok)
+  cascade-scratchpad journal                   list journal entries
+  cascade-scratchpad done --through <id>       mark entries consolidated
+  cascade-scratchpad status                    unconsolidated count + last consolidation
 
 Options:
+  --kind <k>         observation | outcome | dead-end | decision | todo (jot; default observation)
+  --agent <key>      agent key (default: this run's agent)
+  --unconsolidated   journal: only entries not yet consolidated
+  --since <id>       journal: entries with id > <id>
+  --limit <n>        journal: max entries (default 100)
+  --through <id>     done: consolidate entries up to and including <id>
   --vault <id>       vault id (default $CASCADE_NOTE_VAULT)
-  --channel <id>     channel scope/filter (default $CASCADE_CHAT_CHANNEL)
-  --type <kind>      fact | decision | preference | reference (default fact)
-  --scope <scope>    vault | global | channel:<id> (default channel:<current> if available, else vault)
-  --source <id>      source chat message id or note id
-  --title <title>    memory note title
-  --limit <n>        recall limit (default 8)
-  --content <text>   inline body (stdin is safer for markdown)
-  --content-file <p> read body from a file
   --url <base>       API base (default $CASCADE_NOTE_URL, else cscd.online)
   --token <jwt>      bearer token (default $CASCADE_NOTE_TOKEN)
   --json             machine-readable output
 
+Jot liberally: entries are append-only and cost nothing to curate later.
+Dead ends ("tried X, failed because Y") are the most valuable entries.
+
 Env: CASCADE_NOTE_URL, CASCADE_NOTE_TOKEN, CASCADE_NOTE_USER,
-     CASCADE_NOTE_PASS, CASCADE_NOTE_VAULT, CASCADE_CHAT_CHANNEL,
-     CASCADE_HELPER_CONFIG`;
+     CASCADE_NOTE_PASS, CASCADE_NOTE_VAULT, CASCADE_RUN_ID, CASCADE_HELPER_CONFIG`;
 
 function parseArgs(argv) {
   const args = { _: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--json') args.json = true;
+    else if (a === '--unconsolidated') args.unconsolidated = true;
     else if (a === '-h' || a === '--help') args.help = true;
     else if (a.startsWith('--')) {
       const key = a.slice(2);
@@ -58,7 +63,7 @@ function parseArgs(argv) {
 }
 
 function fail(msg, code = 1) {
-  process.stderr.write(`cascade-memory: ${msg}\n`);
+  process.stderr.write(`cascade-scratchpad: ${msg}\n`);
   process.exit(code);
 }
 
@@ -89,18 +94,6 @@ function readHelperConfig() {
 
 function configString(config, key) {
   return String(config && config[key] || '').trim();
-}
-
-function optionString(args, key, envKey, config, configKey) {
-  return String(args[key] || configString(config, configKey) || (envKey ? process.env[envKey] : '') || '').trim();
-}
-
-function optionInt(args, key, fallback) {
-  const raw = args[key];
-  if (raw === undefined || raw === true || raw === '') return fallback;
-  const value = Number(raw);
-  if (!Number.isFinite(value) || value < 1) fail(`--${key} must be a positive number.`);
-  return Math.floor(value);
 }
 
 function baseUrl(args, config) {
@@ -143,13 +136,23 @@ async function api(url, token, method, requestPath, body) {
 }
 
 async function resolveVault(url, token, args, config) {
-  const explicit = optionString(args, 'vault', 'CASCADE_NOTE_VAULT', config, 'vaultId');
+  const explicit = String(args.vault || configString(config, 'vaultId') || process.env.CASCADE_NOTE_VAULT || '').trim();
   if (explicit) return explicit;
   const { vaults = [] } = await api(url, token, 'GET', '/api/vaults');
   if (vaults.length === 0) fail('no vaults found for this account.');
   if (vaults.length === 1) return vaults[0].id;
   const list = vaults.map((v) => `  ${v.id}  ${v.name}`).join('\n');
   fail(`multiple vaults - pass --vault <id>:\n${list}`);
+}
+
+function resolveAgentKey(args, config) {
+  return String(
+    args.agent
+    || configString(config, 'agentMemoryKey')
+    || configString(config, 'chatAuthor')
+    || configString(config, 'agentId')
+    || '',
+  ).replace(/^@+/, '').trim();
 }
 
 async function readStdin() {
@@ -163,22 +166,14 @@ async function readStdin() {
   });
 }
 
-async function bodyContent(args) {
-  if (args['content-file'] !== undefined) {
-    if (typeof args['content-file'] !== 'string') fail('--content-file needs a file path.');
-    try { return fs.readFileSync(args['content-file'], 'utf8'); }
-    catch (err) { fail(`cannot read --content-file: ${errorMessage(err)}`); }
-  }
-  if (args.content !== undefined) {
-    if (typeof args.content !== 'string') fail('--content needs a value.');
-    return args.content;
-  }
-  return readStdin();
-}
-
 function print(args, human, obj) {
   if (args.json) process.stdout.write(JSON.stringify(obj) + '\n');
   else process.stdout.write(human + '\n');
+}
+
+function formatEntry(entry) {
+  const flag = entry.consolidatedAt ? ' ' : '*';
+  return `${flag}#${entry.id} [${entry.kind}] ${entry.createdAt}${entry.agentKey ? ` @${entry.agentKey}` : ''}\n    ${entry.body.replace(/\n/g, '\n    ')}`;
 }
 
 async function main() {
@@ -188,44 +183,71 @@ async function main() {
     process.stdout.write(USAGE + '\n');
     process.exit(cmd ? 0 : 1);
   }
-  if (!['recall', 'remember', 'forget'].includes(cmd)) fail(`unknown command "${cmd}". Run with --help.`);
+  if (!['jot', 'journal', 'done', 'status'].includes(cmd)) {
+    fail(`unknown command "${cmd}". Run with --help.`);
+  }
 
   const config = readHelperConfig();
   const url = baseUrl(args, config);
   const token = await getToken(url, args, config);
   const vaultId = await resolveVault(url, token, args, config);
-  const channelId = optionString(args, 'channel', 'CASCADE_CHAT_CHANNEL', config, 'chatChannelId');
+  const agentKey = resolveAgentKey(args, config);
 
-  if (cmd === 'recall') {
-    const query = args._.slice(1).join(' ').trim();
-    if (!query) fail('recall needs a query.');
-    const params = new URLSearchParams({ q: query, limit: String(optionInt(args, 'limit', 8)) });
-    if (channelId) params.set('channel', channelId);
-    const { results = [] } = await api(url, token, 'GET', `/api/vaults/${vaultId}/exocortex/recall?${params}`);
-    print(args, results.map((hit) => `${hit.kind}: ${hit.title}\n    ${hit.snippet || ''}`).join('\n') || '(no matches)', results);
-    return;
-  }
-
-  if (cmd === 'remember') {
-    const body = String(await bodyContent(args)).trim();
-    if (!body) fail('remember needs a body via stdin, --content-file, or --content.');
-    const scope = String(args.scope || (channelId ? `channel:${channelId}` : 'vault')).trim();
+  if (cmd === 'jot') {
+    const inline = args._.slice(1).join(' ').trim();
+    const body = (inline || String(await readStdin())).trim();
+    if (!body) fail('jot needs text (arguments or stdin).');
+    const kind = String(args.kind || 'observation');
+    if (!KINDS.includes(kind)) fail(`--kind must be one of: ${KINDS.join(', ')}`);
+    const runIdRaw = Number(configString(config, 'runId') || process.env.CASCADE_RUN_ID);
     const payload = {
       body,
-      type: String(args.type || 'fact'),
-      scope,
-      ...(args.source && typeof args.source === 'string' ? { source: args.source } : {}),
-      ...(args.title && typeof args.title === 'string' ? { title: args.title } : {}),
+      kind,
+      agentKey,
+      ...(Number.isFinite(runIdRaw) && runIdRaw > 0 ? { runId: runIdRaw } : {}),
     };
-    const { note } = await api(url, token, 'POST', `/api/vaults/${vaultId}/exocortex/memories`, payload);
-    print(args, `remembered ${note.id}  ${note.title}`, note);
+    const { entry } = await api(url, token, 'POST', `/api/vaults/${vaultId}/scratchpad/journal`, payload);
+    print(args, `jotted #${entry.id} [${entry.kind}]`, entry);
     return;
   }
 
-  const id = String(args._[1] || '').trim();
-  if (!id) fail('forget needs a memory note id.');
-  await api(url, token, 'DELETE', `/api/exocortex/memories/${encodeURIComponent(id)}`);
-  print(args, `forgot ${id}`, { ok: true, id });
+  if (cmd === 'journal') {
+    const params = new URLSearchParams();
+    if (agentKey) params.set('agent', agentKey);
+    if (args.unconsolidated) params.set('unconsolidated', '1');
+    if (args.since) params.set('since', String(args.since));
+    if (args.limit) params.set('limit', String(args.limit));
+    const { entries = [] } = await api(url, token, 'GET', `/api/vaults/${vaultId}/scratchpad/journal?${params}`);
+    print(
+      args,
+      entries.length ? entries.map(formatEntry).join('\n') : '(journal empty)',
+      entries,
+    );
+    return;
+  }
+
+  if (cmd === 'done') {
+    const throughId = Number(args.through);
+    if (!Number.isFinite(throughId) || throughId <= 0) fail('done needs --through <entry id>.');
+    const result = await api(url, token, 'POST', `/api/vaults/${vaultId}/scratchpad/consolidate`, {
+      throughId,
+      agentKey,
+    });
+    print(args, `consolidated ${result.marked} entr${result.marked === 1 ? 'y' : 'ies'} through #${throughId}`, result);
+    return;
+  }
+
+  // status
+  const params = new URLSearchParams();
+  if (agentKey) params.set('agent', agentKey);
+  const { status } = await api(url, token, 'GET', `/api/vaults/${vaultId}/scratchpad/status?${params}`);
+  print(
+    args,
+    `unconsolidated: ${status.unconsolidated}`
+      + (status.oldestUnconsolidatedAt ? `\noldest: ${status.oldestUnconsolidatedAt}` : '')
+      + (status.lastConsolidationAt ? `\nlast consolidation: ${status.lastConsolidationAt}` : ''),
+    status,
+  );
 }
 
 main().catch((err) => fail(errorMessage(err)));

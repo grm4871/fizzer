@@ -29,7 +29,7 @@ const CLAUDE_CHAT_MAX_CONTINUES = Number(process.env.RUNNER_CHAT_MAX_CONTINUES |
 // Chat runs stay low-thinking so multiuser pings don't burn long monologues.
 // Override with RUNNER_CHAT_THINKING if a heavy chat agent needs more.
 const CLAUDE_CHAT_THINKING_TOKENS = Number(process.env.RUNNER_CHAT_THINKING ?? 800);
-const CLAUDE_AGENT_CONTEXT = 'You are a local workspace assistant. This checkout is not the live Cascade app: use `cascade-note` for live notes, `cascade-memory` for durable recall, and normal file edits only for local scratch or non-note work. Notes you create via cascade-note are unlisted by default (chat/search/embed only, not the left sidebar). Only pass `--listed` if the user explicitly asks to put a note in the sidebar tree. Respect auth boundaries and only handle secrets the user explicitly provides for this task.';
+const CLAUDE_AGENT_CONTEXT = 'You are a local workspace assistant. This checkout is not the live Cascade app: use `cascade-note` for live notes (`cascade-note memory` for durable recall), `cascade-scratchpad jot` for work-journal entries, and normal file edits only for local scratch or non-note work. Notes you create via cascade-note are unlisted by default (chat/search/embed only, not the left sidebar). Only pass `--listed` if the user explicitly asks to put a note in the sidebar tree. Respect auth boundaries and only handle secrets the user explicitly provides for this task.';
 
 // Nudge agents to behave like chat participants, not verbose coding CLIs: the
 // chat collapses step narration into a trace disclosure, so the actual message
@@ -57,7 +57,7 @@ const USER_EXEC_DIRS = [
   path.join(os.homedir(), '.npm-global', 'bin'),
   path.join(os.homedir(), 'node_modules', '.bin'),
 ];
-const HELPER_NAMES = ['cascade-note', 'cascade-chat'];
+const HELPER_NAMES = ['cascade-note', 'cascade-chat', 'cascade-scratchpad'];
 
 /** Directory holding the agent helper CLIs; prefer source, fall back to dist. */
 function resolveWrapperDir() {
@@ -283,7 +283,7 @@ function noteCapabilityContext(opts) {
   const helperDir = resolveWrapperDir();
   const vaultId = String(opts && opts.vaultId || '').trim();
   const vaultLine = vaultId ? ` Vault: ${vaultId}.` : '';
-  return `Live notes: \`cascade-note\` (not local .md; creates unlisted by default — use \`--listed\` only if the user asks for sidebar); durable memory: \`cascade-memory\`.${vaultLine} Helpers on PATH and in ${helperDir}.`;
+  return `Live notes: \`cascade-note\` (not local .md; creates unlisted by default — use \`--listed\` only if the user asks for sidebar); durable memory: \`cascade-note memory\`; work journal: \`cascade-scratchpad jot\` (append-only — jot observations, outcomes, and dead ends as you work; consolidate into memory notes when the boot context says it is due).${vaultLine} Helpers on PATH and in ${helperDir}.`;
 }
 
 
@@ -510,7 +510,7 @@ async function runClaudeLocally(opts, emit) {
       // Even without yolo, let agents run the wrapper commands unprompted so
       // they can pull channel history/notes, use memory, and send chat messages.
       // Everything else still respects acceptEdits.
-      allowedTools: ['Bash(cascade-chat *)', 'Bash(cascade-note *)', 'Bash(cascade-memory *)'],
+      allowedTools: ['Bash(cascade-chat *)', 'Bash(cascade-note *)', 'Bash(cascade-scratchpad *)'],
       // Electron's main process is not a Node runtime, so spawn a real `node`
       // from PATH to host the bundled Claude Code CLI.
       executable: 'node',

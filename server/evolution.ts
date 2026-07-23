@@ -3,7 +3,7 @@
  *
  * 1. Note ⇄ Chat backlinks (message references → note)
  * 2. Chat → note distillation (create / append / merge-with-confirm)
- * 3. Agent memory helpers (_agent/memory + Exocortex INDEX injection)
+ * 3. Agent memory helpers (_agent/memory + INDEX injection)
  * 4. Unified search across notes + chat (FTS hybrid, scope filter)
  *
  * Vector embeddings (true semantic) deferred until an embedding provider is
@@ -61,15 +61,6 @@ export function ensureEvolutionSchema(db: Db): void {
       agent_memory_enabled INTEGER NOT NULL DEFAULT 1,
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
-
-    CREATE TABLE IF NOT EXISTS agent_memory_captures (
-      run_id INTEGER PRIMARY KEY,
-      vault_id TEXT NOT NULL,
-      note_id TEXT NOT NULL,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-    CREATE INDEX IF NOT EXISTS agent_memory_captures_vault_idx
-      ON agent_memory_captures(vault_id, created_at DESC);
 
     CREATE TABLE IF NOT EXISTS distill_jobs (
       id TEXT PRIMARY KEY,
@@ -550,7 +541,6 @@ export function distillChatToNote(
 
 const AGENT_ROOT = '_agent';
 const AGENT_MEMORY = 'memory';
-const EXOCORTEX_FOLDER = 'Exocortex';
 
 function getOrCreateNamedFolder(db: Db, vaultId: string, name: string, parentId: string | null): { id: string; name: string } {
   const existing = parentId
@@ -686,10 +676,9 @@ export function buildAgentMemoryInjection(
   const namedMemory = namedRoot
     ? folders.find((f) => f.parent_id === namedRoot.id && f.name.toLowerCase() === AGENT_MEMORY)
     : undefined;
-  const exocortex = folders.find((f) => !f.parent_id && f.name.toLowerCase() === EXOCORTEX_FOLDER.toLowerCase());
 
   // Prefer per-agent memory first (higher priority via sort order of folderIds query — we'll boost later).
-  const folderIds = [namedMemory?.id, sharedMemory?.id, exocortex?.id].filter(Boolean) as string[];
+  const folderIds = [namedMemory?.id, sharedMemory?.id].filter(Boolean) as string[];
   if (folderIds.length === 0) {
     return { enabled: true, text: '', noteIds: [], truncated: false };
   }
@@ -778,57 +767,6 @@ export function createAgentMemoryNote(
       : `${index.content.trimEnd()}\n\n${pointer}\n`;
     updateNote(db, index.id, next);
   }
-  return note;
-}
-
-/** Persist a bounded request/outcome record once for a successful agent run. */
-export function captureAgentRunMemory(
-  db: Db,
-  userId: number,
-  vaultId: string,
-  input: {
-    runId: number;
-    agentKey: string;
-    channelTitle?: string;
-    request: string;
-    outcome: string;
-  },
-): Note | undefined {
-  if (!isAgentMemoryEnabled(db, vaultId)) return undefined;
-  const exists = db.prepare('SELECT 1 AS ok FROM agent_memory_captures WHERE run_id = ?')
-    .get(input.runId) as { ok: number } | undefined;
-  if (exists) return undefined;
-
-  const request = truncateSnippet(input.request, 900);
-  const outcome = truncateSnippet(input.outcome, 1800);
-  if (!request || !outcome) return undefined;
-  const titleSeed = request.replace(/^@[-\w]+\s*/i, '').replace(/\s+/g, ' ').trim();
-  const titleBase = titleSeed.length > 58 ? `${titleSeed.slice(0, 57)}…` : titleSeed;
-  const title = `${titleBase || 'Agent memory'} (${input.runId})`;
-  const channel = truncateSnippet(input.channelTitle || '', 120);
-  const body = [
-    channel ? `Channel: ${channel}` : '',
-    `Captured from completed run ${input.runId}.`,
-    '',
-    '## Request',
-    request,
-    '',
-    '## Outcome',
-    outcome,
-    '',
-    `<!-- cascade-agent-run:${input.runId} -->`,
-  ].filter((line, index) => line || index > 1).join('\n').trim();
-
-  const note = createAgentMemoryNote(db, userId, vaultId, {
-    title,
-    body,
-    agentKey: input.agentKey,
-    listed: true,
-  });
-  db.prepare(`
-    INSERT OR IGNORE INTO agent_memory_captures (run_id, vault_id, note_id)
-    VALUES (?, ?, ?)
-  `).run(input.runId, vaultId, note.id);
   return note;
 }
 

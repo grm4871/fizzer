@@ -117,8 +117,8 @@ function friendlyToolName(name: string): string {
   if (!n) return 'Tool';
   // cascade helpers
   if (/cascade-chat/i.test(n)) return 'Chat';
+  if (/cascade-scratchpad/i.test(n)) return 'Journal';
   if (/cascade-note/i.test(n)) return 'Note';
-  if (/cascade-memory/i.test(n)) return 'Memory';
   // common CLI names
   const map: Record<string, string> = {
     Bash: 'Bash',
