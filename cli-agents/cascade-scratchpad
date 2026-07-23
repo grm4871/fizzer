@@ -271,8 +271,11 @@ async function main() {
       const { skills = [] } = await api(url, token, 'GET', `/api/vaults/${vaultId}/scratchpad/skills?${params}`);
       const human = skills.length
         ? skills.map((s) => {
-            const stats = s.stats && s.stats.uses > 0 ? ` (won ${s.stats.wins}/${s.stats.uses})` : '';
-            return `${s.shared ? '[shared] ' : ''}${s.title}${stats}\n    ${s.description}`;
+            const decided = s.stats ? s.stats.wins + s.stats.losses : 0;
+            const record = s.stats && s.stats.uses > 0
+              ? (decided > 0 ? ` (won ${s.stats.wins}/${decided})` : ` (used ${s.stats.uses}x)`)
+              : '';
+            return `${s.shared ? '[shared] ' : ''}${s.title}${record}\n    ${s.description}`;
           }).join('\n')
         : '(no skills yet)';
       print(args, human, skills);
@@ -288,6 +291,7 @@ async function main() {
     const { outcome } = await api(url, token, 'POST', `/api/vaults/${vaultId}/scratchpad/outcome`, {
       noteRef,
       result: args.result,
+      agentKey,
     });
     print(args, `recorded ${args.result} for "${outcome.title}" (now ${outcome.wins}/${outcome.uses} wins)`, outcome);
     return;
@@ -296,7 +300,7 @@ async function main() {
   if (cmd === 'promote') {
     const noteRef = args._.slice(1).join(' ').trim();
     if (!noteRef) fail('promote needs a note title or id.');
-    const result = await api(url, token, 'POST', `/api/vaults/${vaultId}/scratchpad/promote`, { noteRef });
+    const result = await api(url, token, 'POST', `/api/vaults/${vaultId}/scratchpad/promote`, { noteRef, agentKey });
     print(args, `promoted ${result.kind} "${result.note.title}" to shared agent ${result.kind === 'skill' ? 'skills' : 'memory'}`, result);
     return;
   }

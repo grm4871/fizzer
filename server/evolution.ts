@@ -748,7 +748,13 @@ export function buildAgentMemoryInjection(
       .trim()
       .slice(0, 600);
     const stats = opts.noteStats?.get(note.id);
-    const record = stats && stats.uses > 0 ? ` [won ${stats.wins}/${stats.uses}]` : '';
+    // Neutral applications count as usage, not evidence — only wins+losses
+    // form the denominator (mirrors formatWinRecord in scratchpad.ts, not
+    // imported to avoid a module cycle).
+    const decided = stats ? stats.wins + stats.losses : 0;
+    const record = stats && stats.uses > 0
+      ? (decided > 0 ? ` [won ${stats.wins}/${decided}]` : ` [used ${stats.uses}×]`)
+      : '';
     const chunk = `\n- [[${note.title}]]${record}: ${body}`;
     if (used + chunk.length > maxChars) {
       truncated = true;

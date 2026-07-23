@@ -82,6 +82,15 @@ export function ensureScratchpadSchema(db: Db): void {
     CREATE INDEX IF NOT EXISTS scratchpad_note_stats_vault_idx
       ON scratchpad_note_stats(vault_id);
   `);
+  // Sweep stats orphaned by note deletions that predate delete-time pruning.
+  try {
+    db.prepare('DELETE FROM scratchpad_note_stats WHERE note_id NOT IN (SELECT id FROM notes)').run();
+  } catch { /* notes table may not exist yet in partial test schemas */ }
+}
+
+/** Drop a note's outcome stats (call when the note is deleted). */
+export function deleteNoteStats(db: Db, noteId: string): void {
+  db.prepare('DELETE FROM scratchpad_note_stats WHERE note_id = ?').run(noteId);
 }
 
 export type JournalEntry = {
@@ -247,16 +256,67 @@ function getOrCreateChildFolder(db: Db, vaultId: string, name: string, parentId:
   return { id: folder.id };
 }
 
-/** Resolve a note by id or title (case-insensitive) within a vault. */
-function resolveNoteRef(db: Db, vaultId: string, ref: string): Note | undefined {
+/** Lookup (never create) the agent-scoped and shared memory/skills folder ids. */
+function findAgentFolderIds(db: Db, vaultId: string, agentKey: string): { own: Set<string>; shared: Set<string> } {
+  const own = new Set<string>();
+  const shared = new Set<string>();
+  const child = db.prepare(`
+    SELECT id FROM folders WHERE vault_id = ? AND parent_id = ? AND name = ? COLLATE NOCASE
+  `);
+  const root = db.prepare(`
+    SELECT id FROM folders WHERE vault_id = ? AND parent_id IS NULL AND name = ? COLLATE NOCASE
+  `).get(vaultId, AGENT_ROOT) as { id: string } | undefined;
+  if (!root) return { own, shared };
+  for (const name of ['memory', SKILLS_FOLDER]) {
+    const folder = child.get(vaultId, root.id, name) as { id: string } | undefined;
+    if (folder) shared.add(folder.id);
+  }
+  const key = normalizeAgentKey(agentKey);
+  if (key) {
+    const agentRoot = child.get(vaultId, root.id, key) as { id: string } | undefined;
+    if (agentRoot) {
+      for (const name of ['memory', SKILLS_FOLDER]) {
+        const folder = child.get(vaultId, agentRoot.id, name) as { id: string } | undefined;
+        if (folder) own.add(folder.id);
+      }
+    }
+  }
+  return { own, shared };
+}
+
+/**
+ * Resolve a note by id, or by title scoped to the calling agent. Titles are
+ * not unique across folders, and outcome attribution crediting the wrong note
+ * is the worst failure this system can have — so title matches prefer the
+ * agent's own memory/skills folders, then the shared ones, and refuse with
+ * the candidate ids when still ambiguous.
+ */
+function resolveNoteRef(db: Db, vaultId: string, ref: string, agentKey?: string): Note | undefined {
   const trimmed = String(ref || '').trim();
   if (!trimmed) return undefined;
   const byId = getNote(db, trimmed);
   if (byId && byId.vault_id === vaultId) return byId;
-  const byTitle = db.prepare(`
-    SELECT id FROM notes WHERE vault_id = ? AND title = ? COLLATE NOCASE LIMIT 1
-  `).get(vaultId, trimmed) as { id: string } | undefined;
-  return byTitle ? getNote(db, byTitle.id) : undefined;
+
+  const rows = db.prepare(`
+    SELECT id, folder_id FROM notes WHERE vault_id = ? AND title = ? COLLATE NOCASE
+  `).all(vaultId, trimmed) as Array<{ id: string; folder_id: string | null }>;
+  if (rows.length === 0) return undefined;
+  if (rows.length === 1) return getNote(db, rows[0].id);
+
+  // Scope preference needs a caller identity — with no agent key, guessing
+  // between same-titled notes is exactly the misattribution to avoid.
+  const key = normalizeAgentKey(agentKey || '');
+  if (key) {
+    const { own, shared } = findAgentFolderIds(db, vaultId, key);
+    for (const scope of [own, shared]) {
+      const inScope = rows.filter((r) => r.folder_id && scope.has(r.folder_id));
+      if (inScope.length === 1) return getNote(db, inScope[0].id);
+      if (inScope.length > 1) break; // ambiguous even within one scope
+    }
+  }
+  throw new Error(
+    `Ambiguous title "${trimmed}" matches ${rows.length} notes — use a note id: ${rows.map((r) => r.id).join(', ')}`,
+  );
 }
 
 /** Per-agent skills folder `_agent/<key>/skills` (shared `_agent/skills` when key empty). */
@@ -277,6 +337,24 @@ export type SkillSummary = {
   shared: boolean;
   stats?: { uses: number; wins: number; losses: number };
 };
+
+/**
+ * Human label for a note's outcome record. Neutral applications count as
+ * usage but not as evidence — `(won 0/10)` when all ten were neutral would
+ * read as ten losses and get a good note retired.
+ */
+export function formatWinRecord(stats?: { uses: number; wins: number; losses: number }): string {
+  if (!stats || stats.uses === 0) return '';
+  const decided = stats.wins + stats.losses;
+  if (decided === 0) return `used ${stats.uses}×`;
+  return `won ${stats.wins}/${decided}`;
+}
+
+/** Laplace-smoothed win rate: a fluke 1-0 shouldn't outrank a proven 40-2. */
+function smoothedWinRate(stats?: { uses: number; wins: number; losses: number }): number {
+  if (!stats) return 0.5; // unknown — prior only
+  return (stats.wins + 1) / (stats.wins + stats.losses + 2);
+}
 
 function skillDescription(content: string): string {
   const line = content
@@ -305,9 +383,13 @@ export function createSkillNote(
   if (!body) throw new Error('Skill body is required');
   const { skillsId } = ensureSkillsFolder(db, vault.id, userId, normalizeAgentKey(input.agentKey));
   const existing = db.prepare(`
-    SELECT id FROM notes WHERE vault_id = ? AND folder_id = ? AND title = ? COLLATE NOCASE
-  `).get(vault.id, skillsId, title) as { id: string } | undefined;
+    SELECT id, content FROM notes WHERE vault_id = ? AND folder_id = ? AND title = ? COLLATE NOCASE
+  `).get(vault.id, skillsId, title) as { id: string; content: string } | undefined;
   if (existing) {
+    // A rewritten skill is a new procedure: its old win/loss record is
+    // evidence about content that no longer exists, so reset it rather than
+    // let a fixed skill get retired on its predecessor's losses.
+    if (existing.content.trim() !== body) deleteNoteStats(db, existing.id);
     return updateNote(db, existing.id, `${body}\n`);
   }
   // Skills are listed on purpose: procedures are the part of agent memory the
@@ -349,26 +431,35 @@ export function listSkillNotes(db: Db, userId: number, vaultId: string, agentKey
 
   const placeholders = folders.map(() => '?').join(',');
   const rows = db.prepare(`
-    SELECT n.id, n.title, n.content, n.folder_id,
+    SELECT n.id, n.title, n.content, n.folder_id, n.updated_at,
            s.uses AS uses, s.wins AS wins, s.losses AS losses
     FROM notes n
     LEFT JOIN scratchpad_note_stats s ON s.note_id = n.id
     WHERE n.vault_id = ? AND n.folder_id IN (${placeholders}) AND n.is_archived = 0
-    ORDER BY COALESCE(s.wins, 0) - COALESCE(s.losses, 0) DESC, n.updated_at DESC
   `).all(vault.id, ...folders.map((f) => f.id)) as Array<{
-    id: string; title: string; content: string; folder_id: string;
+    id: string; title: string; content: string; folder_id: string; updated_at: string;
     uses: number | null; wins: number | null; losses: number | null;
   }>;
   const sharedIds = new Set(folders.filter((f) => f.shared).map((f) => f.id));
-  return rows.map((row) => ({
+  const skills = rows.map((row) => ({
     id: row.id,
     title: row.title,
     description: skillDescription(row.content),
     shared: sharedIds.has(row.folder_id),
+    updatedAt: row.updated_at,
     ...(row.uses != null
       ? { stats: { uses: row.uses, wins: row.wins || 0, losses: row.losses || 0 } }
       : {}),
   }));
+  return skills
+    .sort((a, b) => {
+      const rate = smoothedWinRate(b.stats) - smoothedWinRate(a.stats);
+      if (Math.abs(rate) > 1e-9) return rate;
+      const decided = ((b.stats?.wins || 0) + (b.stats?.losses || 0)) - ((a.stats?.wins || 0) + (a.stats?.losses || 0));
+      if (decided !== 0) return decided;
+      return b.updatedAt.localeCompare(a.updatedAt);
+    })
+    .map(({ updatedAt: _updatedAt, ...skill }) => skill);
 }
 
 export type OutcomeResult = 'win' | 'loss' | 'neutral';
@@ -378,11 +469,11 @@ export function recordNoteOutcome(
   db: Db,
   userId: number,
   vaultId: string,
-  input: { noteRef: string; result: OutcomeResult },
+  input: { noteRef: string; result: OutcomeResult; agentKey?: string },
 ): { noteId: string; title: string; uses: number; wins: number; losses: number } {
   const vault = getVault(db, vaultId, userId);
   if (!vault) throw new Error('Vault not found');
-  const note = resolveNoteRef(db, vault.id, input.noteRef);
+  const note = resolveNoteRef(db, vault.id, input.noteRef, input.agentKey);
   if (!note) throw new Error(`Note not found: ${input.noteRef}`);
   const result: OutcomeResult = input.result === 'win' || input.result === 'loss' ? input.result : 'neutral';
   db.prepare(`
@@ -417,11 +508,11 @@ export function promoteNote(
   db: Db,
   userId: number,
   vaultId: string,
-  input: { noteRef: string },
+  input: { noteRef: string; agentKey?: string },
 ): { note: Note; kind: 'memory' | 'skill' } {
   const vault = getVault(db, vaultId, userId);
   if (!vault) throw new Error('Vault not found');
-  const note = resolveNoteRef(db, vault.id, input.noteRef);
+  const note = resolveNoteRef(db, vault.id, input.noteRef, input.agentKey);
   if (!note) throw new Error(`Note not found: ${input.noteRef}`);
   if (!note.folder_id) throw new Error('Note is not in an agent folder');
   const folder = db.prepare('SELECT id, name, parent_id FROM folders WHERE id = ?')
@@ -587,8 +678,8 @@ export function buildScratchpadInjection(
       const skills = listSkillNotes(db, opts.userId, vaultId, key).slice(0, 8);
       if (skills.length) {
         const skillLines = skills.map((s) => {
-          const stats = s.stats && s.stats.uses > 0 ? ` (won ${s.stats.wins}/${s.stats.uses})` : '';
-          return `  - [[${s.title}]]${s.shared ? ' [shared]' : ''} — ${s.description}${stats}`;
+          const record = formatWinRecord(s.stats);
+          return `  - [[${s.title}]]${s.shared ? ' [shared]' : ''} — ${s.description}${record ? ` (${record})` : ''}`;
         });
         lines.push(`Skills (read the full note with \`cascade-note get <title>\` before applying):\n${skillLines.join('\n')}`);
       }

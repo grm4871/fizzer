@@ -82,7 +82,11 @@ async function main() {
     throw new Error('dist/index.js missing — run with --build or npm run build first');
   }
 
-  try { fs.unlinkSync(DB_PATH); } catch { /* fresh anyway */ }
+  // Remove WAL/SHM too — a stale -wal beside a fresh .db resurrects the
+  // previous run's data on open.
+  for (const suffix of ['', '-wal', '-shm']) {
+    try { fs.unlinkSync(`${DB_PATH}${suffix}`); } catch { /* fresh anyway */ }
+  }
   console.log('[e2e] Starting server on', API_BASE);
   const server = spawn('node', ['dist/index.js'], {
     cwd: root,
@@ -111,10 +115,13 @@ async function main() {
     });
     const auth = { Authorization: `Bearer ${token}` };
 
+    // Unique name per run: vault roots live on disk keyed by user id + name,
+    // and user ids restart at 1 in a fresh DB — a reused name resurrects the
+    // previous run's notes via the createVault rescan.
     const { vault } = await fetchJson(`${API_BASE}/api/vaults`, {
       method: 'POST',
       headers: auth,
-      body: JSON.stringify({ name: 'Scratchpad E2E' }),
+      body: JSON.stringify({ name: `Scratchpad E2E ${Date.now()}` }),
     });
 
     // Fake desktop runner: auto-complete every delegated run, record payloads.
@@ -294,6 +301,70 @@ async function main() {
       throw new Error('Promoted skill not visible to other agent as shared');
     }
     console.log('[e2e] OK promoted skill inherited by a different agent key');
+
+    // ── 8. Title collision: outcome credits the agent-scoped note ────
+    // Same title now exists shared (promoted) AND per-agent (new one below).
+    await fetchJson(`${API_BASE}/api/vaults/${vault.id}/scratchpad/skills`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({
+        title: 'Deploy and verify',
+        body: 'Grok-specific variant.\n1. do it the grok way',
+        agentKey: AGENT_KEY,
+      }),
+    });
+    await fetchJson(`${API_BASE}/api/vaults/${vault.id}/scratchpad/outcome`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({ noteRef: 'Deploy and verify', result: 'win', agentKey: AGENT_KEY }),
+    });
+    const collided = await fetchJson(
+      `${API_BASE}/api/vaults/${vault.id}/scratchpad/skills?agent=${AGENT_KEY}`,
+      { headers: auth },
+    );
+    const ownVariant = (collided.skills || []).find((s) => s.title === 'Deploy and verify' && !s.shared);
+    const sharedVariant = (collided.skills || []).find((s) => s.title === 'Deploy and verify' && s.shared);
+    if (!ownVariant?.stats || ownVariant.stats.uses !== 1 || ownVariant.stats.wins !== 1) {
+      throw new Error(`Own-scope outcome misattributed: ${JSON.stringify(ownVariant?.stats)}`);
+    }
+    if (!sharedVariant?.stats || sharedVariant.stats.uses !== 3) {
+      throw new Error(`Shared note stats corrupted by scoped outcome: ${JSON.stringify(sharedVariant?.stats)}`);
+    }
+    console.log('[e2e] OK outcome scoped to own note; shared note untouched');
+
+    // Without an agent scope the same title is ambiguous — must refuse.
+    let refused = false;
+    try {
+      await fetchJson(`${API_BASE}/api/vaults/${vault.id}/scratchpad/outcome`, {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({ noteRef: 'Deploy and verify', result: 'win' }),
+      });
+    } catch (error) {
+      refused = String(error.message).includes('Ambiguous');
+    }
+    if (!refused) throw new Error('Ambiguous unscoped outcome was not refused');
+    console.log('[e2e] OK ambiguous unscoped outcome refused with candidates');
+
+    // ── 9. Rewriting a skill resets its record ───────────────────────
+    await fetchJson(`${API_BASE}/api/vaults/${vault.id}/scratchpad/skills`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({
+        title: 'Deploy and verify',
+        body: 'Grok-specific variant, FIXED.\n1. do it the corrected grok way',
+        agentKey: AGENT_KEY,
+      }),
+    });
+    const rewritten = await fetchJson(
+      `${API_BASE}/api/vaults/${vault.id}/scratchpad/skills?agent=${AGENT_KEY}`,
+      { headers: auth },
+    );
+    const fresh = (rewritten.skills || []).find((s) => s.title === 'Deploy and verify' && !s.shared);
+    if (fresh?.stats) {
+      throw new Error(`Rewritten skill kept stale stats: ${JSON.stringify(fresh.stats)}`);
+    }
+    console.log('[e2e] OK rewritten skill starts with a clean record');
 
     console.log('[e2e] All scratchpad tests passed');
   } finally {

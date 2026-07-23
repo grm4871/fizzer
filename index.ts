@@ -145,6 +145,7 @@ import {
   appendJournalEntry,
   buildScratchpadInjection,
   createSkillNote,
+  deleteNoteStats,
   ensureScratchpadPolicies,
   ensureScratchpadSchema,
   getNoteStatsForVault,
@@ -157,6 +158,9 @@ import {
 } from './server/scratchpad.js';
 
 const PORT = Number(process.env.API_PORT || 3000);
+// Budget for the boot-time semantic rerank of agent memory (0 disables it).
+const SCRATCHPAD_QMD_TIMEOUT_MS = Math.max(0, Number(process.env.SCRATCHPAD_QMD_TIMEOUT_MS ?? 4000));
+const qmdTimeoutWarned = new Set<string>();
 /** Single source of truth with desktop-runner (persisted secret when env unset). */
 const JWT_SECRET = resolveJwtSecret();
 const DB_PATH = process.env.DOCS_DB_PATH || path.join(process.cwd(), 'docs.db');
@@ -983,6 +987,7 @@ app.delete('/api/notes/:id', requireAuth, (req: AuthedRequest, res) => {
 
   try {
     deleteNoteAssets(db, req.params.id);
+    deleteNoteStats(db, req.params.id);
     deleteNote(db, req.params.id);
     emitVaultEvent(vault.id, 'vault:noteDeleted', { noteId: req.params.id, vaultId: vault.id, title: existing.title });
     res.json({ ok: true });
@@ -1161,6 +1166,7 @@ app.post('/api/vaults/:id/scratchpad/outcome', requireAuth, (req: AuthedRequest,
     const outcome = recordNoteOutcome(db, req.user!.id, req.params.id, {
       noteRef: String(req.body?.noteRef || ''),
       result: req.body?.result,
+      agentKey: req.body?.agentKey,
     });
     res.json({ outcome });
   } catch (error) {
@@ -1172,6 +1178,7 @@ app.post('/api/vaults/:id/scratchpad/promote', requireAuth, (req: AuthedRequest,
   try {
     const { note, kind } = promoteNote(db, req.user!.id, req.params.id, {
       noteRef: String(req.body?.noteRef || ''),
+      agentKey: req.body?.agentKey,
     });
     res.json({ note: { id: note.id, title: note.title }, kind });
   } catch (error) {
@@ -1643,17 +1650,28 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
           // Hybrid semantic+lexical ranking (QMD, local embeddings) so memory
           // recall fires on paraphrases, not just literal keyword overlap.
           // Bounded: a slow or cold index degrades to keyword matching.
+          // QMD re-syncs the corpus per call, so notes written moments ago
+          // are rankable on the next boot (lexically at once; semantically
+          // once the background embed catches up).
           let rankedNoteIds: string[] | undefined;
-          try {
-            const hits = await Promise.race([
-              searchWithQmd(db, runVault.id, topic, { scope: 'notes', limit: 24 }),
-              new Promise<Awaited<ReturnType<typeof searchWithQmd>>>((resolve) => {
-                setTimeout(() => resolve([]), 4000);
-              }),
-            ]);
-            const ids = hits.filter((hit) => hit.type === 'note').map((hit) => hit.id);
-            if (ids.length) rankedNoteIds = ids;
-          } catch { /* keyword fallback inside buildAgentMemoryInjection */ }
+          if (SCRATCHPAD_QMD_TIMEOUT_MS > 0) {
+            try {
+              const started = Date.now();
+              const hits = await Promise.race([
+                searchWithQmd(db, runVault.id, topic, { scope: 'notes', limit: 24 }),
+                new Promise<Awaited<ReturnType<typeof searchWithQmd>>>((resolve) => {
+                  setTimeout(() => resolve([]), SCRATCHPAD_QMD_TIMEOUT_MS);
+                }),
+              ]);
+              const elapsed = Date.now() - started;
+              if (hits.length === 0 && elapsed >= SCRATCHPAD_QMD_TIMEOUT_MS && !qmdTimeoutWarned.has(runVault.id)) {
+                qmdTimeoutWarned.add(runVault.id);
+                console.warn(`[scratchpad] semantic rerank timed out after ${elapsed}ms for vault ${runVault.id}; keyword fallback (warns once per vault)`);
+              }
+              const ids = hits.filter((hit) => hit.type === 'note').map((hit) => hit.id);
+              if (ids.length) rankedNoteIds = ids;
+            } catch { /* keyword fallback inside buildAgentMemoryInjection */ }
+          }
           const mem = buildAgentMemoryInjection(db, runVault.id, {
             channelTopic: topic,
             maxChars: 900,
