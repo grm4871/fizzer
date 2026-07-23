@@ -62,6 +62,8 @@ describe('formatAgentChatPrompt', () => {
     expect(prompt).toContain('recall');
     expect(prompt).toMatch(/jot liberally mid-task/i);
     expect(prompt).toMatch(/do not save it for the end/i);
+    expect(prompt).toMatch(/cascade-scratchpad open/i);
+    expect(prompt).toMatch(/close <id>/i);
   });
 
   it('lightweight pings ask for one short send and no tools', () => {

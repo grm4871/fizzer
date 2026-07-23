@@ -405,6 +405,64 @@ async function main() {
     }
     console.log('[e2e] OK mid-task recall surfaces relevant skill, filters irrelevant query');
 
+    // ── 11. Open threads: intentional trail + boot injection + close ──
+    const { thread } = await fetchJson(`${API_BASE}/api/vaults/${vault.id}/scratchpad/threads`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({
+        intent: 'continue: finish open-thread boot surface',
+        blockedOn: 'needed e2e coverage',
+        nextTry: 'assert injection then close',
+        pointer: 'journal#demo',
+        agentKey: AGENT_KEY,
+      }),
+    });
+    if (!thread?.id || thread.intent !== 'continue: finish open-thread boot surface') {
+      throw new Error(`open thread create failed: ${JSON.stringify(thread)}`);
+    }
+    const listed = await fetchJson(
+      `${API_BASE}/api/vaults/${vault.id}/scratchpad/threads?agent=${AGENT_KEY}`,
+      { headers: auth },
+    );
+    if (!(listed.threads || []).some((t) => t.id === thread.id && !t.closedAt)) {
+      throw new Error('opened thread missing from list');
+    }
+    const { status: openStatus } = await fetchJson(
+      `${API_BASE}/api/vaults/${vault.id}/scratchpad/status?agent=${AGENT_KEY}`,
+      { headers: auth },
+    );
+    if (openStatus.openThreads < 1) {
+      throw new Error(`status.openThreads expected >=1, got ${openStatus.openThreads}`);
+    }
+    await fetchJson(`${API_BASE}/api/vaults/${vault.id}/runs`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({ prompt: 'Fourth run open threads', agent: 'grok', note_id: null }),
+    });
+    const fourth = await waitFor(
+      () => delegations.find((d) => d.prompt.includes('Fourth run open threads')),
+      'fourth delegation',
+    );
+    if (!fourth.prompt.includes('Open threads') || !fourth.prompt.includes(`#${thread.id}`)) {
+      throw new Error('Fourth run prompt missing open thread injection');
+    }
+    if (!fourth.prompt.includes('open threads:')) {
+      throw new Error('Fourth run prompt missing open threads count in journal line');
+    }
+    await fetchJson(`${API_BASE}/api/vaults/${vault.id}/scratchpad/threads/${thread.id}/close`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({ agentKey: AGENT_KEY, reason: 'e2e done' }),
+    });
+    const afterClose = await fetchJson(
+      `${API_BASE}/api/vaults/${vault.id}/scratchpad/threads?agent=${AGENT_KEY}`,
+      { headers: auth },
+    );
+    if ((afterClose.threads || []).some((t) => t.id === thread.id)) {
+      throw new Error('closed thread still listed as open');
+    }
+    console.log('[e2e] OK open threads create/list/boot/close');
+
     console.log('[e2e] All scratchpad tests passed');
   } finally {
     for (const socket of runnerSockets) {

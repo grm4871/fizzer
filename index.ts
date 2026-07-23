@@ -144,14 +144,17 @@ import { searchWithQmd } from './server/qmd-search.js';
 import {
   appendJournalEntry,
   buildScratchpadInjection,
+  closeOpenThread,
   createSkillNote,
   deleteNoteStats,
   ensureScratchpadPolicies,
   ensureScratchpadSchema,
   getNoteStatsForVault,
   listJournalEntries,
+  listOpenThreads,
   listSkillNotes,
   markJournalConsolidated,
+  openThread,
   promoteNote,
   recallScratchpad,
   recordNoteOutcome,
@@ -1138,6 +1141,49 @@ app.get('/api/vaults/:id/scratchpad/status', requireAuth, (req: AuthedRequest, r
   if (!vault) return res.status(404).json({ error: 'Vault not found' });
   const agentKey = typeof req.query.agent === 'string' ? req.query.agent : undefined;
   res.json({ status: scratchpadStatus(db, vault.id, agentKey) });
+});
+
+// Open threads: thin intentional trail of unfinished work (not a journal dump).
+app.get('/api/vaults/:id/scratchpad/threads', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const threads = listOpenThreads(db, req.user!.id, req.params.id, {
+      agentKey: typeof req.query.agent === 'string' ? req.query.agent : undefined,
+      includeClosed: req.query.closed === '1' || req.query.closed === 'true',
+      limit: req.query.limit ? Number(req.query.limit) : undefined,
+    });
+    res.json({ threads });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not list open threads' });
+  }
+});
+
+app.post('/api/vaults/:id/scratchpad/threads', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const thread = openThread(db, req.user!.id, req.params.id, {
+      intent: String(req.body?.intent || ''),
+      blockedOn: req.body?.blockedOn,
+      nextTry: req.body?.nextTry,
+      pointer: req.body?.pointer,
+      agentKey: req.body?.agentKey,
+      runId: req.body?.runId,
+    });
+    res.status(201).json({ thread });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not open thread' });
+  }
+});
+
+app.post('/api/vaults/:id/scratchpad/threads/:threadId/close', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const thread = closeOpenThread(db, req.user!.id, req.params.id, {
+      threadId: Number(req.params.threadId),
+      agentKey: req.body?.agentKey,
+      reason: req.body?.reason,
+    });
+    res.json({ thread });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not close thread' });
+  }
 });
 
 app.post('/api/vaults/:id/scratchpad/skills', requireAuth, (req: AuthedRequest, res) => {

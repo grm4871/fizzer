@@ -17,13 +17,15 @@ import path from 'node:path';
 const DEFAULT_URL = 'https://cscd.online';
 const KINDS = ['observation', 'outcome', 'dead-end', 'decision', 'todo'];
 
-const USAGE = `cascade-scratchpad - agent work journal, skills, and outcome tracking
+const USAGE = `cascade-scratchpad - agent work journal, skills, open threads, and outcomes
 
 Usage:
   cascade-scratchpad jot [text...]             append a journal entry (stdin / --text / --content ok)
   cascade-scratchpad journal                   list journal entries
   cascade-scratchpad done --through <id>       mark entries consolidated
-  cascade-scratchpad status                    unconsolidated count + last consolidation
+  cascade-scratchpad status                    unconsolidated count + open threads + last consolidation
+  cascade-scratchpad open [intent...]          list open threads, or open one (intent via args/--text)
+  cascade-scratchpad close <id>                close an open thread (--reason optional)
   cascade-scratchpad skill write --title T     save an executable procedure (body via stdin;
                                                first line = when to use it, rest = the steps)
   cascade-scratchpad skill list                list your skills + shared skills (with win rates)
@@ -34,14 +36,19 @@ Usage:
 
 Options:
   --kind <k>         observation | outcome | dead-end | decision | todo (jot; default observation)
-  --text <t>         jot: inline body (alias of --content; positional args / stdin also ok)
+  --text <t>         jot/open: inline body (alias of --content; positional args / stdin also ok)
+  --blocked <t>      open: what is blocking (optional)
+  --next <t>         open: next try (optional)
+  --pointer <t>      open: pointer e.g. journal#31, path, command (optional)
+  --reason <t>       close: why this thread is done/abandoned (optional)
+  --closed           open list: include closed threads
   --agent <key>      agent key (default: this run's agent)
   --unconsolidated   journal: only entries not yet consolidated
   --since <id>       journal: entries with id > <id>
-  --limit <n>        journal: max entries (default 100)
+  --limit <n>        journal/open: max entries (default 100 / 50)
   --through <id>     done: consolidate entries up to and including <id>
   --title <t>        skill write: skill title
-  --content <text>   skill write / jot: inline body (stdin is safer for multiline)
+  --content <text>   skill write / jot / open: inline body (stdin is safer for multiline)
   --win|--loss|--neutral  outcome: how applying the note went
   --vault <id>       vault id (default $CASCADE_NOTE_VAULT)
   --url <base>       API base (default $CASCADE_NOTE_URL, else cscd.online)
@@ -49,8 +56,9 @@ Options:
   --json             machine-readable output
 
 Jot liberally mid-task: entries are append-only and cost nothing to curate later.
-Dead ends ("tried X, failed because Y") are the most valuable entries.
-Read a skill's full body with: cascade-note get <title>
+Dead ends ("tried X, failed because Y") are the most valuable journal entries.
+Open threads are a thin intentional trail (continue/blocked/next) — max ~7 live;
+close ruthlessly. Read a skill's full body with: cascade-note get <title>
 
 Env: CASCADE_NOTE_URL, CASCADE_NOTE_TOKEN, CASCADE_NOTE_USER,
      CASCADE_NOTE_PASS, CASCADE_NOTE_VAULT, CASCADE_RUN_ID, CASCADE_HELPER_CONFIG`;
@@ -198,7 +206,7 @@ async function main() {
     process.stdout.write(USAGE + '\n');
     process.exit(cmd ? 0 : 1);
   }
-  if (!['jot', 'journal', 'done', 'status', 'skill', 'outcome', 'promote', 'recall'].includes(cmd)) {
+  if (!['jot', 'journal', 'done', 'status', 'skill', 'outcome', 'promote', 'recall', 'open', 'close'].includes(cmd)) {
     fail(`unknown command "${cmd}". Run with --help.`);
   }
 
@@ -336,6 +344,66 @@ async function main() {
     return;
   }
 
+  if (cmd === 'open') {
+    const positional = args._.slice(1).join(' ').trim();
+    const flagBody = (() => {
+      for (const key of ['text', 'content']) {
+        const v = args[key];
+        if (v === true) fail(`--${key} needs a value.`);
+        if (typeof v === 'string' && v.trim()) return v.trim();
+      }
+      return '';
+    })();
+    const intent = (positional || flagBody || '').trim();
+    if (!intent) {
+      // list
+      const params = new URLSearchParams();
+      if (agentKey) params.set('agent', agentKey);
+      if (args.closed) params.set('closed', '1');
+      if (args.limit) params.set('limit', String(args.limit));
+      const { threads = [] } = await api(url, token, 'GET', `/api/vaults/${vaultId}/scratchpad/threads?${params}`);
+      const human = threads.length
+        ? threads.map((t) => {
+            const flag = t.closedAt ? ' ' : '*';
+            const bits = [`${flag}#${t.id} ${t.intent}`];
+            if (t.blockedOn) bits.push(`blocked: ${t.blockedOn}`);
+            if (t.nextTry) bits.push(`next: ${t.nextTry}`);
+            if (t.pointer) bits.push(`ptr: ${t.pointer}`);
+            if (t.closedAt) bits.push(`closed ${t.closedAt}${t.closeReason ? ` (${t.closeReason})` : ''}`);
+            return bits.join(' | ');
+          }).join('\n')
+        : '(no open threads)';
+      print(args, human, threads);
+      return;
+    }
+    const runIdRaw = Number(configString(config, 'runId') || process.env.CASCADE_RUN_ID);
+    const payload = {
+      intent,
+      blockedOn: typeof args.blocked === 'string' ? args.blocked : '',
+      nextTry: typeof args.next === 'string' ? args.next : '',
+      pointer: typeof args.pointer === 'string' ? args.pointer : '',
+      agentKey,
+      ...(Number.isFinite(runIdRaw) && runIdRaw > 0 ? { runId: runIdRaw } : {}),
+    };
+    const { thread } = await api(url, token, 'POST', `/api/vaults/${vaultId}/scratchpad/threads`, payload);
+    print(args, `opened #${thread.id}: ${thread.intent}`, thread);
+    return;
+  }
+
+  if (cmd === 'close') {
+    const idRaw = args._[1] || args.id;
+    const threadId = Number(idRaw);
+    if (!Number.isFinite(threadId) || threadId <= 0) fail('close needs a thread id: close <id> [--reason "…"].');
+    const reason = typeof args.reason === 'string' ? args.reason
+      : (typeof args.text === 'string' ? args.text : undefined);
+    const { thread } = await api(url, token, 'POST', `/api/vaults/${vaultId}/scratchpad/threads/${threadId}/close`, {
+      agentKey,
+      reason,
+    });
+    print(args, `closed #${thread.id}${thread.closeReason ? ` (${thread.closeReason})` : ''}`, thread);
+    return;
+  }
+
   // status
   const params = new URLSearchParams();
   if (agentKey) params.set('agent', agentKey);
@@ -343,6 +411,7 @@ async function main() {
   print(
     args,
     `unconsolidated: ${status.unconsolidated}`
+      + (status.openThreads != null ? `\nopen threads: ${status.openThreads}` : '')
       + (status.oldestUnconsolidatedAt ? `\noldest: ${status.oldestUnconsolidatedAt}` : '')
       + (status.lastConsolidationAt ? `\nlast consolidation: ${status.lastConsolidationAt}` : ''),
     status,

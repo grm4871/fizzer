@@ -17,7 +17,7 @@
  * agent may rewrite — the capture/consolidation rules are themselves
  * agent-editable memory, with note versioning as the audit trail.
  *
- * On top of the journal, three learning-loop extensions (all agent-driven):
+ * On top of the journal, four learning-loop extensions (all agent-driven):
  *  - Skills — executable procedures in `_agent/<key>/skills/` (shared:
  *    `_agent/skills/`). Consolidation may emit a *recipe* instead of prose;
  *    the boot injection lists skill titles + descriptions and the agent reads
@@ -28,6 +28,10 @@
  *    accumulated evidence; consolidation retires notes that keep losing.
  *  - Promotion — `cascade-scratchpad promote <note>` moves a per-agent memory
  *    or skill note into the shared `_agent/` folders so every agent inherits.
+ *  - Open threads — a thin intentional trail of unfinished work
+ *    (`cascade-scratchpad open` / `close`). Not a diary: at most a handful of
+ *    living "continue / blocked / next" items injected at boot so a cold run
+ *    can pick up without re-deriving from chat archaeology.
  */
 
 import type Database from 'better-sqlite3';
@@ -41,6 +45,11 @@ export type JournalKind = typeof JOURNAL_KINDS[number];
 
 const POLICIES_TITLE = 'POLICIES';
 const MAX_BODY_CHARS = 4000;
+const MAX_THREAD_FIELD = 500;
+/** Cap living open threads per agent so the boot surface stays a trail, not a kanban. */
+const MAX_OPEN_THREADS = Math.max(1, Math.min(Number(process.env.SCRATCHPAD_MAX_OPEN_THREADS || 7), 20));
+/** Boot injects at most this many open threads (newest first). */
+const BOOT_OPEN_THREADS = Math.max(1, Math.min(Number(process.env.SCRATCHPAD_BOOT_OPEN_THREADS || 5), MAX_OPEN_THREADS));
 
 // "Consolidation due" thresholds for the boot-injection nudge (env-tunable).
 // Default 3 (was 10): short multiuser chat runs rarely hit 10 jots before
@@ -83,6 +92,23 @@ export function ensureScratchpadSchema(db: Db): void {
     );
     CREATE INDEX IF NOT EXISTS scratchpad_note_stats_vault_idx
       ON scratchpad_note_stats(vault_id);
+
+    CREATE TABLE IF NOT EXISTS agent_open_threads (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      vault_id TEXT NOT NULL,
+      agent_key TEXT NOT NULL DEFAULT '',
+      intent TEXT NOT NULL,
+      blocked_on TEXT NOT NULL DEFAULT '',
+      next_try TEXT NOT NULL DEFAULT '',
+      pointer TEXT NOT NULL DEFAULT '',
+      run_id INTEGER,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      closed_at TEXT,
+      close_reason TEXT
+    );
+    CREATE INDEX IF NOT EXISTS agent_open_threads_open_idx
+      ON agent_open_threads(vault_id, agent_key, closed_at, id);
   `);
   // Sweep stats orphaned by note deletions that predate delete-time pruning.
   try {
@@ -217,6 +243,7 @@ export type ScratchpadStatus = {
   unconsolidated: number;
   oldestUnconsolidatedAt: string | null;
   lastConsolidationAt: string | null;
+  openThreads: number;
 };
 
 export function scratchpadStatus(db: Db, vaultId: string, agentKey?: string): ScratchpadStatus {
@@ -230,12 +257,175 @@ export function scratchpadStatus(db: Db, vaultId: string, agentKey?: string): Sc
   const state = db.prepare(`
     SELECT last_consolidation_at FROM scratchpad_state WHERE vault_id = ? AND agent_key = ?
   `).get(vaultId, key) as { last_consolidation_at: string | null } | undefined;
+  const openRow = db.prepare(`
+    SELECT COUNT(*) AS n FROM agent_open_threads
+    WHERE vault_id = ? ${key ? 'AND agent_key = ?' : ''} AND closed_at IS NULL
+  `).get(...params) as { n: number };
   return {
     agentKey: key,
     unconsolidated: row?.n ?? 0,
     oldestUnconsolidatedAt: row?.oldest ?? null,
     lastConsolidationAt: state?.last_consolidation_at ?? null,
+    openThreads: openRow?.n ?? 0,
   };
+}
+
+// ── Open threads (intentional unfinished trail) ────────────────────
+
+export type OpenThread = {
+  id: number;
+  vaultId: string;
+  agentKey: string;
+  intent: string;
+  blockedOn: string;
+  nextTry: string;
+  pointer: string;
+  runId: number | null;
+  createdAt: string;
+  updatedAt: string;
+  closedAt: string | null;
+  closeReason: string | null;
+};
+
+type OpenThreadRow = {
+  id: number;
+  vault_id: string;
+  agent_key: string;
+  intent: string;
+  blocked_on: string;
+  next_try: string;
+  pointer: string;
+  run_id: number | null;
+  created_at: string;
+  updated_at: string;
+  closed_at: string | null;
+  close_reason: string | null;
+};
+
+function toOpenThread(row: OpenThreadRow): OpenThread {
+  return {
+    id: row.id,
+    vaultId: row.vault_id,
+    agentKey: row.agent_key,
+    intent: row.intent,
+    blockedOn: row.blocked_on || '',
+    nextTry: row.next_try || '',
+    pointer: row.pointer || '',
+    runId: row.run_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    closedAt: row.closed_at,
+    closeReason: row.close_reason,
+  };
+}
+
+function clipThreadField(value: unknown, label: string, required = false): string {
+  const text = String(value || '').trim().slice(0, MAX_THREAD_FIELD);
+  if (required && !text) throw new Error(`${label} is required`);
+  return text;
+}
+
+export function listOpenThreads(
+  db: Db,
+  userId: number,
+  vaultId: string,
+  opts: { agentKey?: string; includeClosed?: boolean; limit?: number } = {},
+): OpenThread[] {
+  const vault = getVault(db, vaultId, userId);
+  if (!vault) throw new Error('Vault not found');
+  const limit = Math.max(1, Math.min(Number(opts.limit || 50), 200));
+  const clauses = ['vault_id = ?'];
+  const params: unknown[] = [vault.id];
+  const agentKey = normalizeAgentKey(opts.agentKey);
+  if (agentKey) {
+    clauses.push('agent_key = ?');
+    params.push(agentKey);
+  }
+  if (!opts.includeClosed) clauses.push('closed_at IS NULL');
+  const rows = db.prepare(`
+    SELECT * FROM agent_open_threads
+    WHERE ${clauses.join(' AND ')}
+    ORDER BY CASE WHEN closed_at IS NULL THEN 0 ELSE 1 END, id DESC
+    LIMIT ?
+  `).all(...params, limit) as OpenThreadRow[];
+  return rows.map(toOpenThread);
+}
+
+export function openThread(
+  db: Db,
+  userId: number,
+  vaultId: string,
+  input: {
+    intent: string;
+    blockedOn?: string;
+    nextTry?: string;
+    pointer?: string;
+    agentKey?: string;
+    runId?: number;
+  },
+): OpenThread {
+  const vault = getVault(db, vaultId, userId);
+  if (!vault) throw new Error('Vault not found');
+  const agentKey = normalizeAgentKey(input.agentKey);
+  const intent = clipThreadField(input.intent, 'intent', true);
+  const blockedOn = clipThreadField(input.blockedOn, 'blockedOn');
+  const nextTry = clipThreadField(input.nextTry, 'nextTry');
+  const pointer = clipThreadField(input.pointer, 'pointer');
+  const openCount = (db.prepare(`
+    SELECT COUNT(*) AS n FROM agent_open_threads
+    WHERE vault_id = ? AND agent_key = ? AND closed_at IS NULL
+  `).get(vault.id, agentKey) as { n: number }).n;
+  if (openCount >= MAX_OPEN_THREADS) {
+    throw new Error(
+      `already have ${openCount} open threads (max ${MAX_OPEN_THREADS}); close one first with cascade-scratchpad close <id>`,
+    );
+  }
+  const runId = Number.isFinite(Number(input.runId)) && Number(input.runId) > 0 ? Number(input.runId) : null;
+  const result = db.prepare(`
+    INSERT INTO agent_open_threads
+      (vault_id, agent_key, intent, blocked_on, next_try, pointer, run_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(vault.id, agentKey, intent, blockedOn, nextTry, pointer, runId);
+  const row = db.prepare('SELECT * FROM agent_open_threads WHERE id = ?')
+    .get(Number(result.lastInsertRowid)) as OpenThreadRow;
+  return toOpenThread(row);
+}
+
+export function closeOpenThread(
+  db: Db,
+  userId: number,
+  vaultId: string,
+  opts: { threadId: number; agentKey?: string; reason?: string },
+): OpenThread {
+  const vault = getVault(db, vaultId, userId);
+  if (!vault) throw new Error('Vault not found');
+  const threadId = Number(opts.threadId);
+  if (!Number.isFinite(threadId) || threadId <= 0) throw new Error('threadId is required');
+  const agentKey = normalizeAgentKey(opts.agentKey);
+  const existing = db.prepare(`
+    SELECT * FROM agent_open_threads WHERE id = ? AND vault_id = ?
+  `).get(threadId, vault.id) as OpenThreadRow | undefined;
+  if (!existing) throw new Error(`open thread #${threadId} not found`);
+  if (agentKey && existing.agent_key && existing.agent_key !== agentKey) {
+    throw new Error(`open thread #${threadId} belongs to @${existing.agent_key}, not @${agentKey}`);
+  }
+  if (existing.closed_at) return toOpenThread(existing);
+  const reason = clipThreadField(opts.reason, 'reason') || 'closed';
+  db.prepare(`
+    UPDATE agent_open_threads
+    SET closed_at = datetime('now'), close_reason = ?, updated_at = datetime('now')
+    WHERE id = ?
+  `).run(reason, threadId);
+  const row = db.prepare('SELECT * FROM agent_open_threads WHERE id = ?').get(threadId) as OpenThreadRow;
+  return toOpenThread(row);
+}
+
+function formatOpenThreadLine(t: OpenThread): string {
+  const bits = [`#${t.id} ${t.intent}`];
+  if (t.blockedOn) bits.push(`blocked: ${t.blockedOn}`);
+  if (t.nextTry) bits.push(`next: ${t.nextTry}`);
+  if (t.pointer) bits.push(`ptr: ${t.pointer}`);
+  return bits.join(' | ');
 }
 
 // ── Skills, outcome stats, promotion ───────────────────────────────
@@ -768,6 +958,20 @@ it is injected into every run's context.
 - During consolidation, use the counters: rewrite or retire notes that keep
   losing (several uses, mostly losses); trust and keep ones that keep winning.
 
+## Open threads (unfinished intentional trail)
+
+- Separate from the journal: open threads are what past-you wanted to *continue*,
+  not every observation. At most a handful live at once.
+- When a run ends unfinished, blocked, or with a clear "next", open a thread:
+  \`cascade-scratchpad open --text "continue: …" [--blocked "…"] [--next "…"] [--pointer journal#N|path]\`.
+  Shape the intent as continue/blocked/next so a cold run can act without
+  re-reading chat history.
+- Do **not** open a thread for every completed task or for noise. Ruthlessly
+  \`cascade-scratchpad close <id> [--reason "…"]\` when done or abandoned —
+  stale threads are worse than none.
+- Boot injects open threads when any exist. Prefer them over archaeology when
+  the user asks what is left or says "continue".
+
 ## Promotion / demotion
 
 - INDEX holds one-line pointers, most useful first. Trim pointers that stopped
@@ -829,16 +1033,36 @@ export function buildScratchpadInjection(
   vaultId: string,
   opts: { agentKey?: string; userId?: number; maxChars?: number } = {},
 ): string {
-  const maxChars = Math.max(300, Math.min(Number(opts.maxChars || 1400), 4000));
+  const maxChars = Math.max(300, Math.min(Number(opts.maxChars || 1600), 4000));
   const key = normalizeAgentKey(opts.agentKey);
   const status = scratchpadStatus(db, vaultId, key);
   const lines = [
-    'Scratchpad is a work journal (use it, do not wait to be asked): jot liberally mid-task with `cascade-scratchpad jot [--kind observation|outcome|dead-end|decision|todo] [--text "…"]` — especially dead ends; do not save jots for the final reply. Before a final reply on a non-trivial fix, still ensure you jotted the root cause or fix path if a future you would re-derive it. When stuck on something familiar: `cascade-scratchpad recall <query>` (empty = nothing relevant; prefer skills over auto-run dumps). After applying a hit: `cascade-scratchpad outcome <title> --win|--loss`.',
-    `Journal: ${status.unconsolidated} unconsolidated entr${status.unconsolidated === 1 ? 'y' : 'ies'}${status.lastConsolidationAt ? `; last consolidation ${status.lastConsolidationAt}` : ''}.`,
+    'Scratchpad is a work journal (use it, do not wait to be asked): jot liberally mid-task with `cascade-scratchpad jot [--kind observation|outcome|dead-end|decision|todo] [--text "…"]` — especially dead ends; do not save jots for the final reply. Before a final reply on a non-trivial fix, still ensure you jotted the root cause or fix path if a future you would re-derive it. When stuck on something familiar: `cascade-scratchpad recall <query>` (empty = nothing relevant; prefer skills over auto-run dumps). After applying a hit: `cascade-scratchpad outcome <title> --win|--loss`. Unfinished intent: `cascade-scratchpad open` / `close <id>` (boot lists open threads).',
+    `Journal: ${status.unconsolidated} unconsolidated entr${status.unconsolidated === 1 ? 'y' : 'ies'}${status.lastConsolidationAt ? `; last consolidation ${status.lastConsolidationAt}` : ''}; open threads: ${status.openThreads}.`,
   ];
   if (isConsolidationDue(status)) {
     lines.push('Consolidation is due: after the user\'s task is done, distill the journal into memory notes / skills per your POLICIES (or delegate), then `cascade-scratchpad done --through <id>`. Do not leave the backlog for "later".');
   }
+  // Open threads go high in the injection — they are the intentional trail for
+  // "continue / what's left", not something to mine from journal chrono.
+  try {
+    const openParams: unknown[] = key ? [vaultId, key] : [vaultId];
+    const openRows = db.prepare(`
+      SELECT * FROM agent_open_threads
+      WHERE vault_id = ? ${key ? 'AND agent_key = ?' : ''} AND closed_at IS NULL
+      ORDER BY id DESC
+      LIMIT ?
+    `).all(...openParams, BOOT_OPEN_THREADS) as OpenThreadRow[];
+    if (openRows.length) {
+      const more = status.openThreads > openRows.length
+        ? ` (+${status.openThreads - openRows.length} more — cascade-scratchpad open)`
+        : '';
+      const threadLines = openRows.map((r) => `  - ${formatOpenThreadLine(toOpenThread(r))}`);
+      lines.push(
+        `Open threads${more} (continue these or close — stale is worse than empty):\n${threadLines.join('\n')}`,
+      );
+    }
+  } catch { /* open threads listing is best-effort */ }
   if (opts.userId != null) {
     try {
       const skills = listSkillNotes(db, opts.userId, vaultId, key).slice(0, 8);
