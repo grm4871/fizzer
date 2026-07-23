@@ -20,7 +20,7 @@ const KINDS = ['observation', 'outcome', 'dead-end', 'decision', 'todo'];
 const USAGE = `cascade-scratchpad - agent work journal, skills, and outcome tracking
 
 Usage:
-  cascade-scratchpad jot [text...]             append a journal entry (stdin ok)
+  cascade-scratchpad jot [text...]             append a journal entry (stdin / --text / --content ok)
   cascade-scratchpad journal                   list journal entries
   cascade-scratchpad done --through <id>       mark entries consolidated
   cascade-scratchpad status                    unconsolidated count + last consolidation
@@ -34,20 +34,21 @@ Usage:
 
 Options:
   --kind <k>         observation | outcome | dead-end | decision | todo (jot; default observation)
+  --text <t>         jot: inline body (alias of --content; positional args / stdin also ok)
   --agent <key>      agent key (default: this run's agent)
   --unconsolidated   journal: only entries not yet consolidated
   --since <id>       journal: entries with id > <id>
   --limit <n>        journal: max entries (default 100)
   --through <id>     done: consolidate entries up to and including <id>
   --title <t>        skill write: skill title
-  --content <text>   skill write: inline body (stdin is safer)
+  --content <text>   skill write / jot: inline body (stdin is safer for multiline)
   --win|--loss|--neutral  outcome: how applying the note went
   --vault <id>       vault id (default $CASCADE_NOTE_VAULT)
   --url <base>       API base (default $CASCADE_NOTE_URL, else cscd.online)
   --token <jwt>      bearer token (default $CASCADE_NOTE_TOKEN)
   --json             machine-readable output
 
-Jot liberally: entries are append-only and cost nothing to curate later.
+Jot liberally mid-task: entries are append-only and cost nothing to curate later.
 Dead ends ("tried X, failed because Y") are the most valuable entries.
 Read a skill's full body with: cascade-note get <title>
 
@@ -208,9 +209,20 @@ async function main() {
   const agentKey = resolveAgentKey(args, config);
 
   if (cmd === 'jot') {
-    const inline = args._.slice(1).join(' ').trim();
-    const body = (inline || String(await readStdin())).trim();
-    if (!body) fail('jot needs text (arguments or stdin).');
+    // Accept positional, --text, --content, or stdin. Agents often guess --text
+    // (same shape as cascade-note --content); reject bare flags so they don't
+    // silently become the body string "true".
+    const positional = args._.slice(1).join(' ').trim();
+    const flagBody = (() => {
+      for (const key of ['text', 'content']) {
+        const v = args[key];
+        if (v === true) fail(`--${key} needs a value (e.g. jot --kind dead-end --text "…").`);
+        if (typeof v === 'string' && v.trim()) return v.trim();
+      }
+      return '';
+    })();
+    const body = (positional || flagBody || String(await readStdin())).trim();
+    if (!body) fail('jot needs text (positional args, --text/--content, or stdin).');
     const kind = String(args.kind || 'observation');
     if (!KINDS.includes(kind)) fail(`--kind must be one of: ${KINDS.join(', ')}`);
     const runIdRaw = Number(configString(config, 'runId') || process.env.CASCADE_RUN_ID);

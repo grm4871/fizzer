@@ -245,7 +245,8 @@ export function formatAgentChatPrompt(
   const chatSendSafety = ' For every chat send, put the complete message in the Bash tool environment as MESSAGE and run `cascade-chat send --message "$MESSAGE"`; never interpolate prose in shell quotes, backticks, or `$()`.';
 
   // Scratchpad habit: only on non-light paths (light = pure ack, no tool loop).
-  const scratchpadHabit = ' Scratchpad: mid-task `cascade-scratchpad recall <query>` when stuck on something familiar; `cascade-scratchpad jot` (esp. `--kind dead-end`) before your final reply if you learned a root cause/fix a future run would re-derive. Empty recall means nothing relevant.';
+  // Emphasize mid-task jots (work journal), not a final-reply-only ritual.
+  const scratchpadHabit = ' Scratchpad is a work journal — jot liberally mid-task with `cascade-scratchpad jot` (esp. `--kind dead-end` for "tried X, failed because Y"); do not save it for the end. When stuck on something familiar: `cascade-scratchpad recall <query>` (empty = nothing relevant). After applying a hit: `cascade-scratchpad outcome <title> --win|--loss`. Before a final reply on a non-trivial fix, still ensure you jotted the root cause/fix if a future run would re-derive it.';
 
   if (continuation) {
     const header = light

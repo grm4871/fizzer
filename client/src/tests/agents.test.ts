@@ -60,6 +60,8 @@ describe('formatAgentChatPrompt', () => {
     expect(prompt).toContain('run `cascade-chat send --message "$MESSAGE"`');
     expect(prompt).toContain('cascade-scratchpad');
     expect(prompt).toContain('recall');
+    expect(prompt).toMatch(/jot liberally mid-task/i);
+    expect(prompt).toMatch(/do not save it for the end/i);
   });
 
   it('lightweight pings ask for one short send and no tools', () => {

@@ -833,7 +833,7 @@ export function buildScratchpadInjection(
   const key = normalizeAgentKey(opts.agentKey);
   const status = scratchpadStatus(db, vaultId, key);
   const lines = [
-    'Scratchpad (use it, do not wait to be asked): `cascade-scratchpad jot [--kind observation|outcome|dead-end|decision|todo] <text>` mid-work — especially dead ends. Before a final reply on a non-trivial fix, jot at least the root cause or fix path if a future you would re-derive it. When stuck on something familiar: `cascade-scratchpad recall <query>` (empty = nothing relevant; prefer skills over auto-run dumps). After applying a hit: `cascade-scratchpad outcome <title> --win|--loss`.',
+    'Scratchpad is a work journal (use it, do not wait to be asked): jot liberally mid-task with `cascade-scratchpad jot [--kind observation|outcome|dead-end|decision|todo] [--text "…"]` — especially dead ends; do not save jots for the final reply. Before a final reply on a non-trivial fix, still ensure you jotted the root cause or fix path if a future you would re-derive it. When stuck on something familiar: `cascade-scratchpad recall <query>` (empty = nothing relevant; prefer skills over auto-run dumps). After applying a hit: `cascade-scratchpad outcome <title> --win|--loss`.',
     `Journal: ${status.unconsolidated} unconsolidated entr${status.unconsolidated === 1 ? 'y' : 'ies'}${status.lastConsolidationAt ? `; last consolidation ${status.lastConsolidationAt}` : ''}.`,
   ];
   if (isConsolidationDue(status)) {
