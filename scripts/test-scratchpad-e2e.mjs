@@ -366,6 +366,37 @@ async function main() {
     }
     console.log('[e2e] OK rewritten skill starts with a clean record');
 
+    // ── 10. Mid-task recall scoped to the agent's memory + skills ────
+    await fetchJson(`${API_BASE}/api/vaults/${vault.id}/scratchpad/skills`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({
+        title: 'Restart the widget pipeline',
+        body: 'Use when the widget pipeline stalls.\n1. flush the widget queue\n2. restart the worker',
+        agentKey: AGENT_KEY,
+      }),
+    });
+    const recall = await fetchJson(
+      `${API_BASE}/api/vaults/${vault.id}/scratchpad/recall?q=${encodeURIComponent('widget pipeline stalled')}&agent=${AGENT_KEY}`,
+      { headers: auth },
+    );
+    const recalledSkill = (recall.hits || []).find((h) => h.title === 'Restart the widget pipeline');
+    if (!recalledSkill) {
+      throw new Error(`Recall did not surface the matching skill: ${JSON.stringify(recall.hits)}`);
+    }
+    if (recalledSkill.kind !== 'skill') {
+      throw new Error(`Recall hit has wrong kind: ${JSON.stringify(recalledSkill)}`);
+    }
+    // Unrelated query should not surface it.
+    const missRecall = await fetchJson(
+      `${API_BASE}/api/vaults/${vault.id}/scratchpad/recall?q=${encodeURIComponent('quarterly tax filing')}&agent=${AGENT_KEY}`,
+      { headers: auth },
+    );
+    if ((missRecall.hits || []).some((h) => h.title === 'Restart the widget pipeline')) {
+      throw new Error('Recall surfaced an irrelevant note for an unrelated query');
+    }
+    console.log('[e2e] OK mid-task recall surfaces relevant skill, filters irrelevant query');
+
     console.log('[e2e] All scratchpad tests passed');
   } finally {
     for (const socket of runnerSockets) {

@@ -27,6 +27,7 @@ Usage:
   cascade-scratchpad skill write --title T     save an executable procedure (body via stdin;
                                                first line = when to use it, rest = the steps)
   cascade-scratchpad skill list                list your skills + shared skills (with win rates)
+  cascade-scratchpad recall <query...>         mid-task: find matching notes/skills when stuck
   cascade-scratchpad outcome <note-title>      record result of applying a note/skill
                                                (--win | --loss | --neutral)
   cascade-scratchpad promote <note-title>      share a memory/skill note with all agents
@@ -196,7 +197,7 @@ async function main() {
     process.stdout.write(USAGE + '\n');
     process.exit(cmd ? 0 : 1);
   }
-  if (!['jot', 'journal', 'done', 'status', 'skill', 'outcome', 'promote'].includes(cmd)) {
+  if (!['jot', 'journal', 'done', 'status', 'skill', 'outcome', 'promote', 'recall'].includes(cmd)) {
     fail(`unknown command "${cmd}". Run with --help.`);
   }
 
@@ -282,6 +283,24 @@ async function main() {
       return;
     }
     fail('skill needs a subcommand: write | list.');
+  }
+
+  if (cmd === 'recall') {
+    const query = args._.slice(1).join(' ').trim() || String(await readStdin()).trim();
+    if (!query) fail('recall needs a query (arguments or stdin).');
+    const params = new URLSearchParams({ q: query });
+    if (agentKey) params.set('agent', agentKey);
+    if (args.limit) params.set('limit', String(args.limit));
+    const { hits = [] } = await api(url, token, 'GET', `/api/vaults/${vaultId}/scratchpad/recall?${params}`);
+    const human = hits.length
+      ? hits.map((h) => {
+          const decided = h.stats ? h.stats.wins + h.stats.losses : 0;
+          const record = h.stats && decided > 0 ? ` (won ${h.stats.wins}/${decided})` : '';
+          return `[${h.kind}${h.shared ? ' shared' : ''}] ${h.title}${record}\n    ${h.snippet}`;
+        }).join('\n')
+      : `(nothing recalled for "${query}")`;
+    print(args, human, hits);
+    return;
   }
 
   if (cmd === 'outcome') {

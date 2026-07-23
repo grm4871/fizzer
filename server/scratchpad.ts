@@ -284,6 +284,108 @@ function findAgentFolderIds(db: Db, vaultId: string, agentKey: string): { own: S
   return { own, shared };
 }
 
+export type RecallHit = {
+  id: string;
+  title: string;
+  snippet: string;
+  kind: 'memory' | 'skill';
+  shared: boolean;
+  stats?: { uses: number; wins: number; losses: number };
+};
+
+/** folder_id -> {kind, shared} for the agent's own + shared memory/skills folders. */
+function recallScopeFolders(db: Db, vaultId: string, agentKey: string): Map<string, { kind: 'memory' | 'skill'; shared: boolean }> {
+  const map = new Map<string, { kind: 'memory' | 'skill'; shared: boolean }>();
+  const child = db.prepare(`
+    SELECT id FROM folders WHERE vault_id = ? AND parent_id = ? AND name = ? COLLATE NOCASE
+  `);
+  const root = db.prepare(`
+    SELECT id FROM folders WHERE vault_id = ? AND parent_id IS NULL AND name = ? COLLATE NOCASE
+  `).get(vaultId, AGENT_ROOT) as { id: string } | undefined;
+  if (!root) return map;
+  const add = (parentId: string, shared: boolean) => {
+    for (const name of ['memory', SKILLS_FOLDER] as const) {
+      const folder = child.get(vaultId, parentId, name) as { id: string } | undefined;
+      if (folder) map.set(folder.id, { kind: name === 'memory' ? 'memory' : 'skill', shared });
+    }
+  };
+  add(root.id, true);
+  const key = normalizeAgentKey(agentKey);
+  if (key) {
+    const agentRoot = child.get(vaultId, root.id, key) as { id: string } | undefined;
+    if (agentRoot) add(agentRoot.id, false);
+  }
+  return map;
+}
+
+/**
+ * On-demand recall: search the agent's memory + skills (own and shared) for the
+ * few notes relevant to `query`, for use *mid-task* when the agent hits a
+ * familiar problem — not just the static boot injection. Ranking prefers the
+ * caller's semantic `rankedIds` (QMD hybrid, computed in the route), then falls
+ * back to lexical term overlap so recall always works even with a cold index.
+ */
+export function recallScratchpad(
+  db: Db,
+  userId: number,
+  vaultId: string,
+  input: { query: string; agentKey?: string; limit?: number; rankedIds?: string[] },
+): RecallHit[] {
+  const vault = getVault(db, vaultId, userId);
+  if (!vault) throw new Error('Vault not found');
+  const query = String(input.query || '').trim();
+  if (!query) return [];
+  const limit = Math.max(1, Math.min(Number(input.limit || 5), 20));
+  const scope = recallScopeFolders(db, vault.id, normalizeAgentKey(input.agentKey));
+  if (scope.size === 0) return [];
+
+  const folderIds = [...scope.keys()];
+  const placeholders = folderIds.map(() => '?').join(',');
+  const inScope = db.prepare(`
+    SELECT id, title, content, folder_id FROM notes
+    WHERE vault_id = ? AND folder_id IN (${placeholders})
+      AND is_archived = 0 AND title <> 'INDEX' COLLATE NOCASE
+  `).all(vault.id, ...folderIds) as Array<{ id: string; title: string; content: string; folder_id: string }>;
+  const byId = new Map(inScope.map((n) => [n.id, n]));
+
+  const ordered: typeof inScope = [];
+  const seen = new Set<string>();
+  for (const id of input.rankedIds || []) {
+    const n = byId.get(id);
+    if (n && !seen.has(id)) { ordered.push(n); seen.add(id); }
+  }
+  if (ordered.length < limit) {
+    const terms = query.toLowerCase().match(/[a-z0-9_]{3,}/g) ?? [];
+    const lex = inScope
+      .filter((n) => !seen.has(n.id))
+      .map((n) => {
+        const hay = `${n.title}\n${n.content}`.toLowerCase();
+        return { n, score: terms.reduce((s, t) => s + (hay.includes(t) ? 1 : 0), 0) };
+      })
+      .filter((x) => x.score > 0)
+      .sort((a, b) => b.score - a.score);
+    for (const { n } of lex) {
+      if (ordered.length >= limit) break;
+      ordered.push(n);
+      seen.add(n.id);
+    }
+  }
+
+  const stats = getNoteStatsForVault(db, vault.id);
+  return ordered.slice(0, limit).map((n) => {
+    const meta = scope.get(n.folder_id)!;
+    const s = stats.get(n.id);
+    return {
+      id: n.id,
+      title: n.title,
+      snippet: n.content.replace(/^---[\s\S]*?---\n/, '').replace(/\s+/g, ' ').trim().slice(0, 240),
+      kind: meta.kind,
+      shared: meta.shared,
+      ...(s ? { stats: s } : {}),
+    };
+  });
+}
+
 /**
  * Resolve a note by id, or by title scoped to the calling agent. Titles are
  * not unique across folders, and outcome attribution crediting the wrong note
@@ -574,6 +676,15 @@ it is injected into every run's context.
   surprising observations, decisions and their reasons, outcomes of risky steps.
 - One entry per fact. Plain prose, no formatting required.
 
+## Recall (mid-task, when you're stuck)
+
+- The boot injection is a *guess* at what's relevant, made before you saw the
+  problem. When you hit a familiar failure or a task you suspect you've handled
+  before, don't re-derive — run \`cascade-scratchpad recall <query>\` to pull the
+  few matching memory notes and skills (searches your own + shared, ranked
+  semantically). Read the full note/skill before applying it, then report the
+  outcome.
+
 ## Consolidation (when the boot context says it is due)
 
 - You do this yourself — no external process will. When the journal backlog is
@@ -667,7 +778,7 @@ export function buildScratchpadInjection(
   const key = normalizeAgentKey(opts.agentKey);
   const status = scratchpadStatus(db, vaultId, key);
   const lines = [
-    'Scratchpad: append work notes with `cascade-scratchpad jot [--kind observation|outcome|dead-end|decision|todo] <text>` — cheap, append-only; they get consolidated into memory notes later. Jot dead ends and surprises especially. After applying a remembered note or skill, report `cascade-scratchpad outcome <title> --win|--loss`.',
+    'Scratchpad: append work notes with `cascade-scratchpad jot [--kind observation|outcome|dead-end|decision|todo] <text>` — cheap, append-only; they get consolidated into memory notes later. Jot dead ends and surprises especially. When you hit a familiar problem mid-task, pull matching notes/skills with `cascade-scratchpad recall <query>` instead of re-deriving. After applying a remembered note or skill, report `cascade-scratchpad outcome <title> --win|--loss`.',
     `Journal: ${status.unconsolidated} unconsolidated entr${status.unconsolidated === 1 ? 'y' : 'ies'}${status.lastConsolidationAt ? `; last consolidation ${status.lastConsolidationAt}` : ''}.`,
   ];
   if (isConsolidationDue(status)) {

@@ -153,6 +153,7 @@ import {
   listSkillNotes,
   markJournalConsolidated,
   promoteNote,
+  recallScratchpad,
   recordNoteOutcome,
   scratchpadStatus,
 } from './server/scratchpad.js';
@@ -1183,6 +1184,37 @@ app.post('/api/vaults/:id/scratchpad/promote', requireAuth, (req: AuthedRequest,
     res.json({ note: { id: note.id, title: note.title }, kind });
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : 'Could not promote note' });
+  }
+});
+
+// Mid-task, on-demand recall over the agent's memory + skills (own + shared).
+// Semantic ranking via QMD (bounded, same as boot); lexical fallback lives in
+// recallScratchpad so a cold/slow index still returns matches.
+app.get('/api/vaults/:id/scratchpad/recall', requireAuth, async (req: AuthedRequest, res) => {
+  const vault = getVault(db, req.params.id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Vault not found' });
+  const query = String(req.query.q || '').trim();
+  if (!query) return res.json({ hits: [] });
+  const agentKey = typeof req.query.agent === 'string' ? req.query.agent : undefined;
+  const limit = req.query.limit ? Number(req.query.limit) : undefined;
+
+  let rankedIds: string[] | undefined;
+  if (SCRATCHPAD_QMD_TIMEOUT_MS > 0) {
+    try {
+      const hits = await Promise.race([
+        searchWithQmd(db, vault.id, query, { scope: 'notes', limit: 40 }),
+        new Promise<Awaited<ReturnType<typeof searchWithQmd>>>((resolve) => {
+          setTimeout(() => resolve([]), SCRATCHPAD_QMD_TIMEOUT_MS);
+        }),
+      ]);
+      const ids = hits.filter((hit) => hit.type === 'note').map((hit) => hit.id);
+      if (ids.length) rankedIds = ids;
+    } catch { /* lexical fallback inside recallScratchpad */ }
+  }
+  try {
+    res.json({ hits: recallScratchpad(db, req.user!.id, vault.id, { query, agentKey, limit, rankedIds }) });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Recall failed' });
   }
 });
 
