@@ -64,6 +64,7 @@ describe('formatAgentChatPrompt', () => {
     expect(prompt).toMatch(/do not save it for the end/i);
     expect(prompt).toMatch(/cascade-scratchpad open/i);
     expect(prompt).toMatch(/close <id>/i);
+    expect(prompt).toMatch(/never ask the user about threads/i);
   });
 
   it('lightweight pings ask for one short send and no tools', () => {

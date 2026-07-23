@@ -246,7 +246,7 @@ export function formatAgentChatPrompt(
 
   // Scratchpad habit: only on non-light paths (light = pure ack, no tool loop).
   // Emphasize mid-task jots (work journal), not a final-reply-only ritual.
-  const scratchpadHabit = ' Scratchpad is a work journal — jot liberally mid-task with `cascade-scratchpad jot` (esp. `--kind dead-end` for "tried X, failed because Y"); do not save it for the end. When stuck on something familiar: `cascade-scratchpad recall <query>` (empty = nothing relevant). After applying a hit: `cascade-scratchpad outcome <title> --win|--loss`. Unfinished intent: `cascade-scratchpad open --text "continue: …"` (optional `--blocked` / `--next` / `--pointer`); `close <id>` when done — boot lists open threads; do not let them rot. Before a final reply on a non-trivial fix, still ensure you jotted the root cause/fix if a future run would re-derive it.';
+  const scratchpadHabit = ' Scratchpad is a work journal — jot liberally mid-task with `cascade-scratchpad jot` (esp. `--kind dead-end` for "tried X, failed because Y"); do not save it for the end. When stuck on something familiar: `cascade-scratchpad recall <query>` (empty = nothing relevant). After applying a hit: `cascade-scratchpad outcome <title> --win|--loss`. Open threads are *your* private trail (users cannot see them): open/close yourself based on what *you* want to continue — never ask the user about threads, never offer "want me to close #N?", never dump thread lists into chat unless they explicitly ask. `cascade-scratchpad open --text "continue: …"` / `close <id>`; boot lists them for you only. Before a final reply on a non-trivial fix, still ensure you jotted the root cause/fix if a future run would re-derive it.';
 
   if (continuation) {
     const header = light

@@ -958,19 +958,24 @@ it is injected into every run's context.
 - During consolidation, use the counters: rewrite or retire notes that keep
   losing (several uses, mostly losses); trust and keep ones that keep winning.
 
-## Open threads (unfinished intentional trail)
+## Open threads (private intentional trail — agent-owned)
 
 - Separate from the journal: open threads are what past-you wanted to *continue*,
   not every observation. At most a handful live at once.
+- **You manage them alone.** Users cannot see threads and should not be asked
+  about them. Never say "want me to close #N?", never list threads in chat
+  unless the user explicitly asks about your scratchpad/threads. Open and
+  close silently as part of doing the work.
 - When a run ends unfinished, blocked, or with a clear "next", open a thread:
   \`cascade-scratchpad open --text "continue: …" [--blocked "…"] [--next "…"] [--pointer journal#N|path]\`.
   Shape the intent as continue/blocked/next so a cold run can act without
   re-reading chat history.
 - Do **not** open a thread for every completed task or for noise. Ruthlessly
   \`cascade-scratchpad close <id> [--reason "…"]\` when done or abandoned —
-  stale threads are worse than none.
-- Boot injects open threads when any exist. Prefer them over archaeology when
-  the user asks what is left or says "continue".
+  stale threads are worse than none. Decide yourself; do not wait for the user.
+- Boot injects open threads when any exist — for *your* continuity, not as
+  something to report. Prefer them over archaeology when the user asks what
+  is left or says "continue", then just do the work.
 
 ## Promotion / demotion
 
@@ -1037,14 +1042,14 @@ export function buildScratchpadInjection(
   const key = normalizeAgentKey(opts.agentKey);
   const status = scratchpadStatus(db, vaultId, key);
   const lines = [
-    'Scratchpad is a work journal (use it, do not wait to be asked): jot liberally mid-task with `cascade-scratchpad jot [--kind observation|outcome|dead-end|decision|todo] [--text "…"]` — especially dead ends; do not save jots for the final reply. Before a final reply on a non-trivial fix, still ensure you jotted the root cause or fix path if a future you would re-derive it. When stuck on something familiar: `cascade-scratchpad recall <query>` (empty = nothing relevant; prefer skills over auto-run dumps). After applying a hit: `cascade-scratchpad outcome <title> --win|--loss`. Unfinished intent: `cascade-scratchpad open` / `close <id>` (boot lists open threads).',
+    'Scratchpad is a work journal (use it, do not wait to be asked): jot liberally mid-task with `cascade-scratchpad jot [--kind observation|outcome|dead-end|decision|todo] [--text "…"]` — especially dead ends; do not save jots for the final reply. Before a final reply on a non-trivial fix, still ensure you jotted the root cause or fix path if a future you would re-derive it. When stuck on something familiar: `cascade-scratchpad recall <query>` (empty = nothing relevant; prefer skills over auto-run dumps). After applying a hit: `cascade-scratchpad outcome <title> --win|--loss`. Open threads are private to you (users cannot see them): manage with `cascade-scratchpad open` / `close <id>` yourself — never ask the user about threads or list them in chat unless they explicitly ask.',
     `Journal: ${status.unconsolidated} unconsolidated entr${status.unconsolidated === 1 ? 'y' : 'ies'}${status.lastConsolidationAt ? `; last consolidation ${status.lastConsolidationAt}` : ''}; open threads: ${status.openThreads}.`,
   ];
   if (isConsolidationDue(status)) {
     lines.push('Consolidation is due: after the user\'s task is done, distill the journal into memory notes / skills per your POLICIES (or delegate), then `cascade-scratchpad done --through <id>`. Do not leave the backlog for "later".');
   }
-  // Open threads go high in the injection — they are the intentional trail for
-  // "continue / what's left", not something to mine from journal chrono.
+  // Open threads go high in the injection — private intentional trail for the
+  // agent only. Never surface this list to the user unprompted.
   try {
     const openParams: unknown[] = key ? [vaultId, key] : [vaultId];
     const openRows = db.prepare(`
@@ -1059,7 +1064,7 @@ export function buildScratchpadInjection(
         : '';
       const threadLines = openRows.map((r) => `  - ${formatOpenThreadLine(toOpenThread(r))}`);
       lines.push(
-        `Open threads${more} (continue these or close — stale is worse than empty):\n${threadLines.join('\n')}`,
+        `Your open threads${more} (private — continue or close yourself; do not ask the user; stale is worse than empty):\n${threadLines.join('\n')}`,
       );
     }
   } catch { /* open threads listing is best-effort */ }

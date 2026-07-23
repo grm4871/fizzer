@@ -443,8 +443,11 @@ async function main() {
       () => delegations.find((d) => d.prompt.includes('Fourth run open threads')),
       'fourth delegation',
     );
-    if (!fourth.prompt.includes('Open threads') || !fourth.prompt.includes(`#${thread.id}`)) {
+    if (!fourth.prompt.includes('open threads') || !fourth.prompt.includes(`#${thread.id}`)) {
       throw new Error('Fourth run prompt missing open thread injection');
+    }
+    if (!fourth.prompt.includes('do not ask the user')) {
+      throw new Error('Fourth run prompt missing private/agent-owned thread guidance');
     }
     if (!fourth.prompt.includes('open threads:')) {
       throw new Error('Fourth run prompt missing open threads count in journal line');
