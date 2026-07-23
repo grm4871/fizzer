@@ -820,58 +820,83 @@ export default function App() {
     }
   }, []);
 
+  // Normal resume: do NOT soft-reload the vault on every window focus (that was
+  // thrashing network + React on alt-tab). Page Visibility only, and a soft
+  // fetch only after a real background stretch or when data is missing.
   useEffect(() => {
+    if (!user) return;
+
+    /** How long away before a soft vault refresh is worth it. */
+    const STALE_AFTER_MS = 60_000;
+    let hiddenAt: number | null =
+      typeof document !== 'undefined' && document.visibilityState === 'hidden'
+        ? Date.now()
+        : null;
+    let lastSoftRefreshAt = 0;
     let resumeTimer: number | null = null;
-    const resyncOnResume = () => {
-      if (!user) return;
-      // Soft re-assert only — never clearRunnerToken here. Focus/visibility
-      // fires constantly and was tearing down the /runners socket mid-agent,
-      // which failed open runs with "Desktop agent runner disconnected."
+
+    const reconnectSocketsIfNeeded = () => {
+      // Never clearRunnerToken here — resume must not tear down /runners mid-agent.
       ensureDesktopRunnerHost();
 
       const vaultId = activeVaultIdRef.current;
       const vaultSocket = vaultSocketRef.current;
-      if (vaultSocket && vaultId) {
-        if (vaultSocket.connected) {
-          vaultSocket.emit('joinVault', vaultId);
-        } else {
-          vaultSocket.connect();
-        }
+      if (vaultSocket && vaultId && !vaultSocket.connected) {
+        vaultSocket.connect();
       }
-      for (const [runId, socket] of runSocketsRef.current) {
-        if (socket.connected) {
-          socket.emit('joinRun', runId);
-        } else {
-          socket.connect();
-        }
+      for (const [, socket] of runSocketsRef.current) {
+        if (!socket.connected) socket.connect();
       }
-      // Soft vault refresh: keep showing cached chat history (no Loading blank).
-      // Debounce — iOS fires focus+visibility together when switching apps.
-      if (vaultId) {
-        if (resumeTimer != null) window.clearTimeout(resumeTimer);
-        resumeTimer = window.setTimeout(() => {
-          resumeTimer = null;
-          void loadVaultData(vaultId, { soft: true });
-        }, 250);
-      }
-      // If the active tab is a chat channel that lost its (unpersisted) messages
-      // while backgrounded, fetch it immediately with a loading state instead of
-      // waiting on the silent soft-refresh — otherwise it shows the empty
-      // "#channel" placeholder on resume.
+    };
+
+    const hydrateActiveChatIfEmpty = () => {
+      // Chat transcripts aren't in localStorage; a cold/backgrounded resume can
+      // restore the tab with an empty channel. ensureChatChannelLoaded is a
+      // no-op when messages+agents are already cached.
       const activeId = focusedPaneRef.current.activeTabId;
       if (activeId && openTabsRef.current.some((t) => t.id === activeId && t.type === 'chat')) {
         ensureChatChannelLoaded(activeId);
       }
     };
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') resyncOnResume();
+
+    const softRefreshIfStale = (awayMs: number) => {
+      const vaultId = activeVaultIdRef.current;
+      if (!vaultId) return;
+      const now = Date.now();
+      if (awayMs < STALE_AFTER_MS && now - lastSoftRefreshAt < STALE_AFTER_MS) return;
+      lastSoftRefreshAt = now;
+      void loadVaultData(vaultId, { soft: true });
     };
-    window.addEventListener('focus', resyncOnResume);
-    document.addEventListener('visibilitychange', onVisible);
+
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        hiddenAt = Date.now();
+        return;
+      }
+      // visible
+      const awayMs = hiddenAt != null ? Date.now() - hiddenAt : 0;
+      hiddenAt = null;
+      reconnectSocketsIfNeeded();
+      hydrateActiveChatIfEmpty();
+      // Coalesce with any twin focus/pageshow events in the same tick.
+      if (resumeTimer != null) window.clearTimeout(resumeTimer);
+      resumeTimer = window.setTimeout(() => {
+        resumeTimer = null;
+        softRefreshIfStale(awayMs);
+      }, 100);
+    };
+
+    const onOnline = () => {
+      reconnectSocketsIfNeeded();
+      softRefreshIfStale(STALE_AFTER_MS);
+    };
+
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('online', onOnline);
     return () => {
       if (resumeTimer != null) window.clearTimeout(resumeTimer);
-      window.removeEventListener('focus', resyncOnResume);
-      document.removeEventListener('visibilitychange', onVisible);
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('online', onOnline);
     };
   }, [user, loadVaultData, ensureChatChannelLoaded]);
 
@@ -1402,7 +1427,7 @@ export default function App() {
             messageId: agentMessageId,
             triggeringMessageId: triggeringMessage.id,
             author: registration.displayName || agentLabel(agentId),
-            // Server skips heavy exocortex/memory inject for simple pings.
+            // Server skips heavy memory injection for simple pings.
             lightweight: isLightweightChatRequest(prompt),
           },
         }),

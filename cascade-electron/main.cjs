@@ -319,6 +319,9 @@ async function createWindow() {
     width: 1200,
     height: 800,
     autoHideMenuBar: !isDevelopmentMode(),
+    // Keep the renderer warm while unfocused so alt-tab back doesn't wait on
+    // Chromium's background timer/rAF throttle before first paint.
+    backgroundThrottling: false,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -359,6 +362,7 @@ function createPaneWindow(descriptor, bounds) {
     x: bounds && bounds.x,
     y: bounds && bounds.y,
     autoHideMenuBar: !isDevelopmentMode(),
+    backgroundThrottling: false,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -551,7 +555,7 @@ ipcMain.handle('runner:setToken', async (_event, { token, apiUrl } = {}) => {
 /** Clear helper env on logout. */
 ipcMain.handle('runner:clearToken', async () => {
   try {
-    disconnectDesktopRunner();
+    await disconnectDesktopRunner();
     return { success: true };
   } catch (error) {
     console.error('[IPC] Failed to clear desktop runner:', error);
