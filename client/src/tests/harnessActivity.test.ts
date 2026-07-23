@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { CascadeRunPanel } from '../components/CascadeRunPanel';
 import {
   buildHarnessActivity,
   hasRunActivity,
@@ -131,5 +134,20 @@ describe('buildHarnessActivity', () => {
     });
     expect(hasRunActivity(m)).toBe(true);
     expect(summarizeActivity(buildHarnessActivity(m), false)).toMatch(/thought/i);
+  });
+});
+
+describe('CascadeRunPanel raw fallback', () => {
+  it('hides a live unstructured protocol preamble until harness activity arrives', () => {
+    const markup = renderToStaticMarkup(createElement(CascadeRunPanel, {
+      message: msg({
+        status: 'running',
+        runId: 1,
+        harnessLog: '{"type":"message_update","assistantMessageEvent":{"type":"text_start"}}\n',
+      }),
+      onCancelRun: () => {},
+    }));
+    expect(markup).toContain('waiting for harness stream…');
+    expect(markup).not.toContain('crp-raw-wrap');
   });
 });

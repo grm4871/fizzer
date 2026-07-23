@@ -36,6 +36,16 @@ describe('OMP model presets', () => {
     expect(ids).toContain('openai-codex/gpt-5.6-sol');
     expect(ids).toContain('anthropic/claude-sonnet-5');
     expect(ids).toContain('google-antigravity/gemini-3.5-flash');
+    expect(ids).toEqual(expect.arrayContaining([
+      'xai-oauth/grok-build',
+      'xai-oauth/grok-build-0.1',
+      'xai-oauth/grok-4.3',
+      'xai-oauth/grok-4.5',
+      'xai-oauth/grok-4.20-multi-agent-0309',
+      'xai-oauth/grok-4.20-0309-reasoning',
+      'xai-oauth/grok-4.20-0309-non-reasoning',
+      'xai-oauth/grok-composer-2.5-fast',
+    ]));
     expect(ids.every((id) => id.includes('/'))).toBe(true);
   });
 });
@@ -47,6 +57,7 @@ describe('formatAgentChatPrompt', () => {
     expect(prompt).toContain('continue through the work and verification');
     expect(prompt).toContain('cascade-chat send');
     expect(prompt).not.toContain('Run `cascade-chat history');
+    expect(prompt).toContain('run `cascade-chat send --message "$MESSAGE"`');
   });
 
   it('lightweight pings ask for one short send and no tools', () => {
@@ -57,11 +68,13 @@ describe('formatAgentChatPrompt', () => {
     expect(prompt).toMatch(/multiuser chat/i);
     expect(prompt).toContain("First resolve the user's intent");
     expect(prompt).toContain('mentioned @handle');
+    expect(prompt).toContain('run `cascade-chat send --message "$MESSAGE"`');
   });
 
   it('continuation lightweight stays snappy', () => {
     const prompt = formatAgentChatPrompt('dev', registration, 'ok cool', 'alice', true);
     expect(prompt).toContain('quick chat reply');
     expect(prompt).toContain('cascade-chat send');
+    expect(prompt).toContain('run `cascade-chat send --message "$MESSAGE"`');
   });
 });

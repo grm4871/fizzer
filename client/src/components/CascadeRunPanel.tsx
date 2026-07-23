@@ -357,6 +357,7 @@ function StructuredTranscript({
   isRunning: boolean;
 }) {
   const { stats, items } = activity;
+  const hasStructured = items.length > 0 || stats.hasThinking;
   const metaLines = buildMetaLines(stats, isRunning);
   const lastIdx = items.length - 1;
 
@@ -374,7 +375,7 @@ function StructuredTranscript({
 
   return (
     <div className="crp-term-stream" role="log" aria-label="Agent harness output">
-      {(stats.command || stats.model || stats.cwd) && (
+      {hasStructured && (stats.command || stats.model || stats.cwd) && (
         <div className="crp-term-line meta">
           {stats.command
             ? <span className="dim">$ {stats.command}</span>
@@ -556,7 +557,9 @@ export const CascadeRunPanel = memo(function CascadeRunPanel({
   if (!isRunning && !canExpand) return null;
 
   const hasStructured = Boolean(activity && (activity.items.length > 0 || activity.stats.hasThinking));
-  const useRaw = Boolean(activity && (showRaw || (!hasStructured && activity.stats.hasRaw)));
+  // Raw CLI/JSONL is a diagnostic fallback, not a live transcript. Showing it
+  // before structured events arrive flashes prompts and protocol frames.
+  const useRaw = Boolean(activity && (showRaw || (!isRunning && !hasStructured && activity.stats.hasRaw)));
 
   return (
     <div

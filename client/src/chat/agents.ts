@@ -80,6 +80,14 @@ export const CHAT_AGENT_MODEL_PRESETS: Record<AgentId, { id: string; label: stri
     { id: 'google-antigravity/gemini-3-flash', label: 'Antigravity · Gemini 3 Flash' },
     { id: 'google-antigravity/claude-sonnet-4-6', label: 'Antigravity · Claude Sonnet 4.6' },
     { id: 'google-antigravity/claude-opus-4-6', label: 'Antigravity · Claude Opus 4.6' },
+    { id: 'xai-oauth/grok-build', label: 'Grok · Build' },
+    { id: 'xai-oauth/grok-build-0.1', label: 'Grok · Build 0.1' },
+    { id: 'xai-oauth/grok-4.3', label: 'Grok · 4.3' },
+    { id: 'xai-oauth/grok-4.5', label: 'Grok · 4.5' },
+    { id: 'xai-oauth/grok-4.20-multi-agent-0309', label: 'Grok · 4.20 Multi-Agent' },
+    { id: 'xai-oauth/grok-4.20-0309-reasoning', label: 'Grok · 4.20 Reasoning' },
+    { id: 'xai-oauth/grok-4.20-0309-non-reasoning', label: 'Grok · 4.20 Non-Reasoning' },
+    { id: 'xai-oauth/grok-composer-2.5-fast', label: 'Grok · Composer 2.5 Fast' },
   ],
 };
 
@@ -234,21 +242,22 @@ export function formatAgentChatPrompt(
   const selfHandle = registration.mention || registration.agentId;
   const selfName = registration.displayName || selfAgent?.label || registration.agentId;
   const light = isLightweightChatRequest(request);
+  const chatSendSafety = ' For every chat send, put the complete message in the Bash tool environment as MESSAGE and run `cascade-chat send --message "$MESSAGE"`; never interpolate prose in shell quotes, backticks, or `$()`.';
 
   if (continuation) {
     const header = light
-      ? `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. First resolve the user's intent and any pronouns/references from the conversation already in your session. A short message can still request real work; if it does, complete that work before replying. Only for a genuine conversational reply or acknowledgment, prefer a quick chat reply: one \`cascade-chat send\` and stop. Tools/history only if the task needs them. Do not confuse a mentioned @handle with the message author. No closing summary after send (stdout is discarded).`
-      : `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. Finish the request with judgment — don't over-research. Your private persistent scratchpad is available through \`cascade-note memory list|read|write|update|delete\`; curate it when durable context is worth keeping. Use \`cascade-chat send\` for progress on multi-step work; final answer there too. No closing summary after send.`;
+      ? `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. First resolve the user's intent and any pronouns/references from the conversation already in your session. A short message can still request real work; if it does, complete that work before replying. Only for a genuine conversational reply or acknowledgment, prefer a quick chat reply: one \`cascade-chat send\` and stop. Tools/history only if the task needs them. Do not confuse a mentioned @handle with the message author.${chatSendSafety} No closing summary after send (stdout is discarded).`
+      : `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. Finish the request with judgment — don't over-research. Your private persistent scratchpad is available through \`cascade-note memory list|read|write|update|delete\`; curate it when durable context is worth keeping. Use \`cascade-chat send\` for progress on multi-step work; final answer there too.${chatSendSafety} No closing summary after send.`;
     return `${header}\n\n${request}`;
   }
 
   const channelNote = registration.contextPrompt ? ` Channel note: ${registration.contextPrompt}` : '';
   if (light) {
     // Fast multiuser path: no mandatory tool loop; context is already injected when useful.
-    const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. This is a live multiuser chat — match the energy: short natural replies, not an agent report. First resolve the user's intent and any pronouns/references from the recent context below. A short message can still request real work; if it does, complete that work before replying. Only for a genuine conversational reply or acknowledgment: one \`cascade-chat send --message "..."\` and stop (no tools, no history fetch, no plan). Use tools or \`cascade-chat history\` when the task needs them. Do not confuse a mentioned @handle with the message author named above. Notes via cascade-note are unlisted by default; \`--listed\` only if asked. Final answer is the cascade-chat send (stdout after it is discarded).${channelNote}`;
+    const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. This is a live multiuser chat — match the energy: short natural replies, not an agent report. First resolve the user's intent and any pronouns/references from the recent context below. A short message can still request real work; if it does, complete that work before replying. Only for a genuine conversational reply or acknowledgment: one \`cascade-chat send\` and stop (no tools, no history fetch, no plan). Use tools or \`cascade-chat history\` when the task needs them. Do not confuse a mentioned @handle with the message author named above. Notes via cascade-note are unlisted by default; \`--listed\` only if asked.${chatSendSafety} Final answer is the cascade-chat send (stdout after it is discarded).${channelNote}`;
     return `${header}\n\n${request}`;
   }
 
-  const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. Live multiuser chat: prefer a useful reply soon over a perfect investigation. Use the recent channel context below; fetch more with \`cascade-chat history --include-reply-context\` only when needed. Your private persistent scratchpad is available through \`cascade-note memory list|read|write|update|delete\`; curate it when durable context is worth keeping. Use tools when the task needs code/repo work — not for chitchat. An acknowledgment is progress, not completion: when asked to fix, diagnose, or implement something, continue through the work and verification. Use \`cascade-chat send --message "text"\` for progress on long work and for the final answer; do not stop mid-task after a progress send. Notes via cascade-note are unlisted by default; \`--listed\` only if asked. Stdout after the final send is discarded — no closing summary.${channelNote}`;
+  const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. Live multiuser chat: prefer a useful reply soon over a perfect investigation. Use the recent channel context below; fetch more with \`cascade-chat history --include-reply-context\` only when needed. Your private persistent scratchpad is available through \`cascade-note memory list|read|write|update|delete\`; curate it when durable context is worth keeping. Use tools when the task needs code/repo work — not for chitchat. An acknowledgment is progress, not completion: when asked to fix, diagnose, or implement something, continue through the work and verification. Use \`cascade-chat send\` for progress on long work and for the final answer; do not stop mid-task after a progress send. Notes via cascade-note are unlisted by default; \`--listed\` only if asked.${chatSendSafety} Stdout after the final send is discarded — no closing summary.${channelNote}`;
   return `${header}\n\n${request}`;
 }
