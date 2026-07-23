@@ -1160,19 +1160,33 @@ export const ChatView = memo(function ChatView({
   const agentAuthors = useMemo(() => new Set(
     registeredAgentRows.flatMap((agent) => [agent.label, agent.registration.displayName].filter(Boolean)),
   ), [registeredAgentRows]);
+  const registrationById = useMemo(() => {
+    const byId = new Map<string, ChatAgentRegistration>();
+    const byAgentOrName = new Map<string, ChatAgentRegistration>();
+    for (const agent of registeredAgents) {
+      byId.set(agent.id, agent);
+      if (agent.agentId) byAgentOrName.set(agent.agentId, agent);
+      if (agent.displayName) byAgentOrName.set(agent.displayName, agent);
+    }
+    return { byId, byAgentOrName };
+  }, [registeredAgents]);
+  const vaultAgentById = useMemo(() => {
+    const map = new Map<string, VaultAgent>();
+    for (const agent of vaultAgents) map.set(agent.id, agent);
+    return map;
+  }, [vaultAgents]);
+  const resolveMessageRegistration = (message: ChatMessage) =>
+    message.registrationId
+      ? registrationById.byId.get(message.registrationId)
+      : registrationById.byAgentOrName.get(message.agentId ?? '') ?? registrationById.byAgentOrName.get(message.author);
   const getMessageAvatarKind = (message: ChatMessage): 'agent' | 'human' =>
     message.agentId || agentAuthors.has(message.author) ? 'agent' : 'human';
   const getMessageAvatarUrl = (message: ChatMessage) => {
-    const registration = message.registrationId
-      ? registeredAgents.find((agent) => agent.id === message.registrationId)
-      : registeredAgents.find((agent) => agent.agentId === message.agentId || agent.displayName === message.author);
-    return registration?.avatarUrl || '';
+    return resolveMessageRegistration(message)?.avatarUrl || '';
   };
   const getMessageOwnerLabel = (message: ChatMessage) => {
-    const registration = message.registrationId
-      ? registeredAgents.find((agent) => agent.id === message.registrationId)
-      : registeredAgents.find((agent) => agent.agentId === message.agentId || agent.displayName === message.author);
-    const identity = vaultAgents.find((agent) => agent.id === registration?.vaultAgentId);
+    const registration = resolveMessageRegistration(message);
+    const identity = registration?.vaultAgentId ? vaultAgentById.get(registration.vaultAgentId) : undefined;
     return identity?.ownerUsername || '';
   };
   const onlineUsers = useMemo(() => new Set(presence.online), [presence.online]);

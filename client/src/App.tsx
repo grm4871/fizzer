@@ -79,6 +79,10 @@ import { Gem, PanelLeftOpen, Users } from 'lucide-react';
 
 type NoteEntry = { note: Note; draft: string };
 
+function isMobileViewport(): boolean {
+  return typeof window !== 'undefined' && window.matchMedia('(max-width: 900px)').matches;
+}
+
 export default function App() {
   // ═══════════════════════════════════════════════════════════════
   // STATE
@@ -120,7 +124,7 @@ export default function App() {
   // Members panel open. Mobile starts closed (toolbar opens it like the folder
   // sidebar); desktop restores the previous expanded/collapsed rail preference.
   const [chatMembersOpen, setChatMembersOpen] = useState(() => {
-    if (typeof window !== 'undefined' && window.matchMedia('(max-width: 900px)').matches) {
+    if (isMobileViewport()) {
       return false;
     }
     if (typeof localStorage !== 'undefined') {
@@ -218,7 +222,7 @@ export default function App() {
   }, [sidebarWidth]);
 
   useEffect(() => {
-    if (window.matchMedia('(max-width: 900px)').matches) {
+    if (isMobileViewport()) {
       setSidebarOpen(false);
       setChatMembersOpen(false);
     }
@@ -226,7 +230,7 @@ export default function App() {
 
   // Mobile: members only while a chat is focused. Desktop keeps rail preference.
   useEffect(() => {
-    if (!focusedIsChat && window.matchMedia('(max-width: 900px)').matches) {
+    if (!focusedIsChat && isMobileViewport()) {
       setChatMembersOpen(false);
     }
   }, [focusedIsChat]);
@@ -235,7 +239,7 @@ export default function App() {
     if (typeof localStorage === 'undefined') return;
     // Desktop rail preference; mobile always starts closed so skip overwriting
     // with false when the user is on a phone.
-    if (window.matchMedia('(max-width: 900px)').matches) return;
+    if (isMobileViewport()) return;
     localStorage.setItem('cascade_chat_users_collapsed', chatMembersOpen ? '0' : '1');
   }, [chatMembersOpen]);
 
@@ -1822,6 +1826,45 @@ export default function App() {
     }
   }, [loadVaultData]);
 
+  // Per-tab callback caches so NoteEditor (React.memo'd) gets a referentially
+  // stable onContentChange/onSave/onRename each render instead of a fresh
+  // closure — otherwise every App re-render (e.g. on chat stream ticks) busts
+  // the memo for every open note tab, not just the one that changed.
+  const noteChangeHandlers = useRef(new Map<string, (content: string) => void>());
+  const getNoteChangeHandler = useCallback((tabId: string) => {
+    let fn = noteChangeHandlers.current.get(tabId);
+    if (!fn) {
+      fn = (content: string) => handleNoteChange(tabId, content);
+      noteChangeHandlers.current.set(tabId, fn);
+    }
+    return fn;
+  }, [handleNoteChange]);
+
+  const noteSaveHandlers = useRef(new Map<string, () => void>());
+  const getNoteSaveHandler = useCallback((tabId: string) => {
+    let fn = noteSaveHandlers.current.get(tabId);
+    if (!fn) {
+      fn = () => { void saveNoteTab(tabId); };
+      noteSaveHandlers.current.set(tabId, fn);
+    }
+    return fn;
+  }, [saveNoteTab]);
+
+  const noteRenameHandlers = useRef(new Map<string, (title: string) => Promise<void>>());
+  const getNoteRenameHandler = useCallback((tabId: string) => {
+    let fn = noteRenameHandlers.current.get(tabId);
+    if (!fn) {
+      fn = (title: string) => renameNoteTab(tabId, title);
+      noteRenameHandlers.current.set(tabId, fn);
+    }
+    return fn;
+  }, [renameNoteTab]);
+
+  const handleOpenWikilink = useCallback((title: string) => {
+    const target = notesRef.current.find((n) => n.title.toLowerCase() === title.toLowerCase());
+    if (target) openNote(target.id);
+  }, [openNote]);
+
   const visibleChatChannelIds = useMemo(() => {
     const tabIds = Layout.getActiveTabIds(layout);
     return tabIds.filter((tabId) => openTabs.some((tab) => tab.id === tabId && tab.type === 'chat'));
@@ -2413,19 +2456,16 @@ export default function App() {
       <NoteEditor
         note={entry?.note ?? null}
         content={entry?.draft ?? ''}
-        onContentChange={(c) => handleNoteChange(tab.id, c)}
-        onSave={() => saveNoteTab(tab.id)}
-        onRename={(title) => renameNoteTab(tab.id, title)}
+        onContentChange={getNoteChangeHandler(tab.id)}
+        onSave={getNoteSaveHandler(tab.id)}
+        onRename={getNoteRenameHandler(tab.id)}
         onExecuteDirective={handleExecuteDirective}
-        onOpenWikilink={(title) => {
-          const target = notes.find((n) => n.title.toLowerCase() === title.toLowerCase());
-          if (target) openNote(target.id);
-        }}
+        onOpenWikilink={handleOpenWikilink}
         notes={notes}
         onOpenNote={openNote}
       />
     );
-  }, [availableChatAgents, chatState.messagesByChannel, chatState.registeredAgentsByChannel, chatPresenceByChannel, currentUsername, loadingChatChannels, runningChatAgents, runnerHealth, vaultAgents, handleCancelChatRun, handleCreateChatInviteLink, handleInviteChatUser, handleRemoveChatParticipant, handleLeaveChatChannel, handleRegisterChatAgent, handleRemoveChatAgent, handleUpsertVaultAgent, handleDeleteVaultAgent, handleAddVaultAgentToChannel, handleSendChatMessage, noteContents, notes, handleNoteChange, saveNoteTab, renameNoteTab, handleExecuteDirective, openNote, chatMembersOpen, activeVaultId, handleHydrateChatMessage, handleOpenSharedChatNote]);
+  }, [availableChatAgents, chatState.messagesByChannel, chatState.registeredAgentsByChannel, chatPresenceByChannel, currentUsername, loadingChatChannels, runningChatAgents, runnerHealth, vaultAgents, handleCancelChatRun, handleCreateChatInviteLink, handleInviteChatUser, handleRemoveChatParticipant, handleLeaveChatChannel, handleRegisterChatAgent, handleRemoveChatAgent, handleUpsertVaultAgent, handleDeleteVaultAgent, handleAddVaultAgentToChannel, handleSendChatMessage, noteContents, notes, getNoteChangeHandler, getNoteSaveHandler, getNoteRenameHandler, handleExecuteDirective, handleOpenWikilink, openNote, chatMembersOpen, activeVaultId, handleHydrateChatMessage, handleOpenSharedChatNote]);
 
   if (!user) {
     const hasInvite = /^\/invite\/[^/]+$/.test(window.location.pathname);
@@ -2511,24 +2551,24 @@ export default function App() {
           onSelectVault={setActiveVaultId}
           onSelectNote={(id) => {
             openNote(id, 'replace');
-            if (window.matchMedia('(max-width: 900px)').matches) setSidebarOpen(false);
+            if (isMobileViewport()) setSidebarOpen(false);
           }}
           onOpenNoteInNewTab={(id) => {
             openNote(id);
-            if (window.matchMedia('(max-width: 900px)').matches) setSidebarOpen(false);
+            if (isMobileViewport()) setSidebarOpen(false);
           }}
           onNewNote={() => {
             void handleCreateNote();
-            if (window.matchMedia('(max-width: 900px)').matches) setSidebarOpen(false);
+            if (isMobileViewport()) setSidebarOpen(false);
           }}
           onCreateChannel={async (folderId) => {
             const channel = await handleCreateChannel(folderId);
-            if (window.matchMedia('(max-width: 900px)').matches) setSidebarOpen(false);
+            if (isMobileViewport()) setSidebarOpen(false);
             return channel;
           }}
           onNewNoteInFolder={(folderId) => {
             void handleCreateNoteInFolder(folderId);
-            if (window.matchMedia('(max-width: 900px)').matches) setSidebarOpen(false);
+            if (isMobileViewport()) setSidebarOpen(false);
           }}
           onSearch={() => setSearchOpen(true)}
           onCollapse={() => setSidebarOpen(false)}
@@ -2560,7 +2600,7 @@ export default function App() {
               className="btn-icon chat-members-toolbar-btn"
               onClick={() => {
                 setChatMembersOpen(true);
-                if (window.matchMedia('(max-width: 900px)').matches) setSidebarOpen(false);
+                if (isMobileViewport()) setSidebarOpen(false);
               }}
               title="Show channel members"
               aria-label="Show channel members"
@@ -2587,7 +2627,7 @@ export default function App() {
             onToggleSidebar={() => {
               setSidebarOpen((open) => {
                 const next = !open;
-                if (next && window.matchMedia('(max-width: 900px)').matches) setChatMembersOpen(false);
+                if (next && isMobileViewport()) setChatMembersOpen(false);
                 return next;
               });
             }}

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useMemo, useCallback, useState } from 'react';
+import { useEffect, useRef, useMemo, useCallback, useState, memo } from 'react';
 import type { Note, NoteSummary } from '../api';
 import { api, formatRelativeDate, type NotePublishInfo } from '../api';
 import { findEmbeddedNote, normalizeDocEmbedTarget, NOTE_DND_TYPE, noteEmbedMarkdown } from '../docEmbeds';
@@ -1201,7 +1201,7 @@ const checkboxClickHandler = EditorView.domEventHandlers({
 });
 
 /* ─── Component ──────────────────────────────────────────── */
-export function NoteEditor({ note, content, onContentChange, onSave, onRename, onExecuteDirective, onOpenWikilink, notes = [], onOpenNote }: NoteEditorProps) {
+export const NoteEditor = memo(function NoteEditor({ note, content, onContentChange, onSave, onRename, onExecuteDirective, onOpenWikilink, notes = [], onOpenNote }: NoteEditorProps) {
   const [publishInfo, setPublishInfo] = useState<NotePublishInfo>({ published: false });
   const [publishBusy, setPublishBusy] = useState(false);
   const [publishNotice, setPublishNotice] = useState('');
@@ -1808,7 +1808,7 @@ export function NoteEditor({ note, content, onContentChange, onSave, onRename, o
       </div>
     </div>
   );
-}
+});
 
 /* ─── Editor Helpers ─────────────────────────────────────── */
 function toggleInlineFormat(view: EditorView, marker: string) {
