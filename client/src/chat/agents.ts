@@ -244,10 +244,13 @@ export function formatAgentChatPrompt(
   const light = isLightweightChatRequest(request);
   const chatSendSafety = ' For every chat send, put the complete message in the Bash tool environment as MESSAGE and run `cascade-chat send --message "$MESSAGE"`; never interpolate prose in shell quotes, backticks, or `$()`.';
 
+  // Scratchpad habit: only on non-light paths (light = pure ack, no tool loop).
+  const scratchpadHabit = ' Scratchpad: mid-task `cascade-scratchpad recall <query>` when stuck on something familiar; `cascade-scratchpad jot` (esp. `--kind dead-end`) before your final reply if you learned a root cause/fix a future run would re-derive. Empty recall means nothing relevant.';
+
   if (continuation) {
     const header = light
       ? `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. First resolve the user's intent and any pronouns/references from the conversation already in your session. A short message can still request real work; if it does, complete that work before replying. Only for a genuine conversational reply or acknowledgment, prefer a quick chat reply: one \`cascade-chat send\` and stop. Tools/history only if the task needs them. Do not confuse a mentioned @handle with the message author.${chatSendSafety} No closing summary after send (stdout is discarded).`
-      : `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. Finish the request with judgment — don't over-research. Your private persistent scratchpad is available through \`cascade-note memory list|read|write|update|delete\`; curate it when durable context is worth keeping. Use \`cascade-chat send\` for progress on multi-step work; final answer there too.${chatSendSafety} No closing summary after send.`;
+      : `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. Finish the request with judgment — don't over-research. Your private persistent scratchpad is available through \`cascade-scratchpad\` (jot/recall/skill/outcome) and \`cascade-note memory\`; curate it when durable context is worth keeping.${scratchpadHabit} Use \`cascade-chat send\` for progress on multi-step work; final answer there too.${chatSendSafety} No closing summary after send.`;
     return `${header}\n\n${request}`;
   }
 
@@ -258,6 +261,6 @@ export function formatAgentChatPrompt(
     return `${header}\n\n${request}`;
   }
 
-  const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. Live multiuser chat: prefer a useful reply soon over a perfect investigation. Use the recent channel context below; fetch more with \`cascade-chat history --include-reply-context\` only when needed. Your private persistent scratchpad is available through \`cascade-note memory list|read|write|update|delete\`; curate it when durable context is worth keeping. Use tools when the task needs code/repo work — not for chitchat. An acknowledgment is progress, not completion: when asked to fix, diagnose, or implement something, continue through the work and verification. Use \`cascade-chat send\` for progress on long work and for the final answer; do not stop mid-task after a progress send. Notes via cascade-note are unlisted by default; \`--listed\` only if asked.${chatSendSafety} Stdout after the final send is discarded — no closing summary.${channelNote}`;
+  const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. Live multiuser chat: prefer a useful reply soon over a perfect investigation. Use the recent channel context below; fetch more with \`cascade-chat history --include-reply-context\` only when needed. Scratchpad tools: \`cascade-scratchpad\` (jot/recall/skill/outcome) and \`cascade-note memory\` — use them without waiting to be asked.${scratchpadHabit} Use tools when the task needs code/repo work — not for chitchat. An acknowledgment is progress, not completion: when asked to fix, diagnose, or implement something, continue through the work and verification. Use \`cascade-chat send\` for progress on long work and for the final answer; do not stop mid-task after a progress send. Notes via cascade-note are unlisted by default; \`--listed\` only if asked.${chatSendSafety} Stdout after the final send is discarded — no closing summary.${channelNote}`;
   return `${header}\n\n${request}`;
 }

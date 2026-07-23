@@ -43,7 +43,9 @@ const POLICIES_TITLE = 'POLICIES';
 const MAX_BODY_CHARS = 4000;
 
 // "Consolidation due" thresholds for the boot-injection nudge (env-tunable).
-const DUE_MIN_ENTRIES = Math.max(1, Number(process.env.SCRATCHPAD_DUE_ENTRIES || 10));
+// Default 3 (was 10): short multiuser chat runs rarely hit 10 jots before
+// the journal becomes a graveyard — nudge earlier so agents actually consolidate.
+const DUE_MIN_ENTRIES = Math.max(1, Number(process.env.SCRATCHPAD_DUE_ENTRIES || 3));
 const DUE_MAX_AGE_HOURS = Math.max(1, Number(process.env.SCRATCHPAD_DUE_AGE_HOURS || 24));
 
 export function ensureScratchpadSchema(db: Db): void {
@@ -318,12 +320,42 @@ function recallScopeFolders(db: Db, vaultId: string, agentKey: string): Map<stri
   return map;
 }
 
+/** Auto-captured run summaries (post-hoc request/outcome dumps) — useful archive, noisy for mid-task recall. */
+function isAutoRunCapture(title: string, content: string): boolean {
+  if (/Captured from completed run/i.test(content)) return true;
+  if (/##\s*Request\b/i.test(content) && /##\s*Outcome\b/i.test(content)) return true;
+  // Titles look like truncated user pings with a trailing (runId).
+  if (/\(\d{2,}\)\s*$/.test(title) && /Channel:\s*/i.test(content)) return true;
+  return false;
+}
+
+function queryTerms(query: string): string[] {
+  return String(query || '').toLowerCase().match(/[a-z0-9_]{3,}/g) ?? [];
+}
+
+/** Distinct query terms found in haystack. */
+function lexicalHits(terms: string[], haystack: string): number {
+  if (terms.length === 0) return 0;
+  const hay = haystack.toLowerCase();
+  let n = 0;
+  for (const t of terms) {
+    if (hay.includes(t)) n += 1;
+  }
+  return n;
+}
+
 /**
  * On-demand recall: search the agent's memory + skills (own and shared) for the
  * few notes relevant to `query`, for use *mid-task* when the agent hits a
- * familiar problem — not just the static boot injection. Ranking prefers the
- * caller's semantic `rankedIds` (QMD hybrid, computed in the route), then falls
- * back to lexical term overlap so recall always works even with a cold index.
+ * familiar problem — not just the static boot injection.
+ *
+ * Relevance-gated (agent preference from dogfood):
+ *  - Every hit needs real lexical term overlap. Semantic `rankedIds` only
+ *    reorders / boosts candidates that already match; they never pull in
+ *    unrelated notes (QMD is noisy on garbage queries).
+ *  - Skills and agent-authored notes outrank auto-captured run dumps.
+ *  - Auto-captures need stronger term overlap to appear at all.
+ *  - Empty is a valid answer — better than trusting garbage hits.
  */
 export function recallScratchpad(
   db: Db,
@@ -346,41 +378,59 @@ export function recallScratchpad(
     WHERE vault_id = ? AND folder_id IN (${placeholders})
       AND is_archived = 0 AND title <> 'INDEX' COLLATE NOCASE
   `).all(vault.id, ...folderIds) as Array<{ id: string; title: string; content: string; folder_id: string }>;
-  const byId = new Map(inScope.map((n) => [n.id, n]));
 
-  const ordered: typeof inScope = [];
-  const seen = new Set<string>();
-  for (const id of input.rankedIds || []) {
-    const n = byId.get(id);
-    if (n && !seen.has(id)) { ordered.push(n); seen.add(id); }
-  }
-  if (ordered.length < limit) {
-    const terms = query.toLowerCase().match(/[a-z0-9_]{3,}/g) ?? [];
-    const lex = inScope
-      .filter((n) => !seen.has(n.id))
-      .map((n) => {
-        const hay = `${n.title}\n${n.content}`.toLowerCase();
-        return { n, score: terms.reduce((s, t) => s + (hay.includes(t) ? 1 : 0), 0) };
-      })
-      .filter((x) => x.score > 0)
-      .sort((a, b) => b.score - a.score);
-    for (const { n } of lex) {
-      if (ordered.length >= limit) break;
-      ordered.push(n);
-      seen.add(n.id);
-    }
-  }
+  const terms = queryTerms(query);
+  if (terms.length === 0) return [];
 
+  const rankIndex = new Map((input.rankedIds || []).map((id, i) => [id, i]));
   const stats = getNoteStatsForVault(db, vault.id);
-  return ordered.slice(0, limit).map((n) => {
-    const meta = scope.get(n.folder_id)!;
+
+  type Scored = {
+    n: (typeof inScope)[number];
+    score: number;
+    kind: 'memory' | 'skill';
+    shared: boolean;
+    auto: boolean;
+  };
+  const scored: Scored[] = [];
+
+  for (const n of inScope) {
+    const meta = scope.get(n.folder_id);
+    if (!meta) continue;
+    const body = n.content.replace(/^---[\s\S]*?---\n/, '');
+    const auto = meta.kind === 'memory' && isAutoRunCapture(n.title, body);
+    const titleHits = lexicalHits(terms, n.title);
+    const bodyHits = lexicalHits(terms, `${n.title}\n${body}`);
+    // Require at least one term match always; auto-captures need more signal
+    // so they don't dominate mid-task recall over deliberate skills/notes.
+    const minLex = auto ? Math.min(2, terms.length) : 1;
+    if (bodyHits < minLex) continue;
+
+    let score = bodyHits + titleHits * 0.75;
+    if (meta.kind === 'skill') score += 2.5; // procedures beat prose dumps
+    if (!meta.shared) score += 0.5; // prefer own notes over shared
+    if (auto) score -= 2.0;
+    const s = stats.get(n.id);
+    if (s) score += smoothedWinRate(s) * 0.75;
+    const rank = rankIndex.get(n.id);
+    if (rank != null) score += Math.max(0, 1.2 - rank * 0.08);
+
+    scored.push({ n, score, kind: meta.kind, shared: meta.shared, auto });
+  }
+
+  // Absolute floor: a single weak shared auto-capture with one term shouldn't win.
+  const MIN_ACCEPT = 1.0;
+  scored.sort((a, b) => b.score - a.score || a.n.title.localeCompare(b.n.title));
+  const accepted = scored.filter((x) => x.score >= MIN_ACCEPT).slice(0, limit);
+
+  return accepted.map(({ n, kind, shared }) => {
     const s = stats.get(n.id);
     return {
       id: n.id,
       title: n.title,
       snippet: n.content.replace(/^---[\s\S]*?---\n/, '').replace(/\s+/g, ' ').trim().slice(0, 240),
-      kind: meta.kind,
-      shared: meta.shared,
+      kind,
+      shared,
       ...(s ? { stats: s } : {}),
     };
   });
@@ -675,21 +725,26 @@ it is injected into every run's context.
 - Always jot: dead ends (\`--kind dead-end\`: what you tried and why it failed),
   surprising observations, decisions and their reasons, outcomes of risky steps.
 - One entry per fact. Plain prose, no formatting required.
+- Short chat runs still count: if you learned something the *next* ping would
+  re-derive (a root cause, a fix path, a dead end), jot it before your final
+  reply. One \`jot\` is enough; do not write a report.
 
 ## Recall (mid-task, when you're stuck)
 
 - The boot injection is a *guess* at what's relevant, made before you saw the
   problem. When you hit a familiar failure or a task you suspect you've handled
   before, don't re-derive — run \`cascade-scratchpad recall <query>\` to pull the
-  few matching memory notes and skills (searches your own + shared, ranked
-  semantically). Read the full note/skill before applying it, then report the
-  outcome.
+  few matching memory notes and skills. Empty results mean "nothing relevant" —
+  do not invent a match. Prefer **skills** over auto-captured run dumps.
+- Read the full note/skill (\`cascade-note get <title>\`) before applying it,
+  then report the outcome.
 
 ## Consolidation (when the boot context says it is due)
 
 - You do this yourself — no external process will. When the journal backlog is
-  flagged as due, consolidate after finishing the user's actual task (or
-  delegate it to a subagent so it doesn't cost the main thread focus).
+  flagged as due (or you just finished a multi-step fix worth keeping),
+  consolidate after finishing the user's actual task (or delegate it to a
+  subagent so it doesn't cost the main thread focus).
 - Read unconsolidated journal entries oldest-first
   (\`cascade-scratchpad journal --unconsolidated\`); distill durable facts into
   memory notes (\`cascade-note memory write/update\`). Merge into existing notes
@@ -778,11 +833,11 @@ export function buildScratchpadInjection(
   const key = normalizeAgentKey(opts.agentKey);
   const status = scratchpadStatus(db, vaultId, key);
   const lines = [
-    'Scratchpad: append work notes with `cascade-scratchpad jot [--kind observation|outcome|dead-end|decision|todo] <text>` — cheap, append-only; they get consolidated into memory notes later. Jot dead ends and surprises especially. When you hit a familiar problem mid-task, pull matching notes/skills with `cascade-scratchpad recall <query>` instead of re-deriving. After applying a remembered note or skill, report `cascade-scratchpad outcome <title> --win|--loss`.',
+    'Scratchpad (use it, do not wait to be asked): `cascade-scratchpad jot [--kind observation|outcome|dead-end|decision|todo] <text>` mid-work — especially dead ends. Before a final reply on a non-trivial fix, jot at least the root cause or fix path if a future you would re-derive it. When stuck on something familiar: `cascade-scratchpad recall <query>` (empty = nothing relevant; prefer skills over auto-run dumps). After applying a hit: `cascade-scratchpad outcome <title> --win|--loss`.',
     `Journal: ${status.unconsolidated} unconsolidated entr${status.unconsolidated === 1 ? 'y' : 'ies'}${status.lastConsolidationAt ? `; last consolidation ${status.lastConsolidationAt}` : ''}.`,
   ];
   if (isConsolidationDue(status)) {
-    lines.push('Consolidation is due: after the user\'s task is done, distill the journal into memory notes per your POLICIES (or delegate this to a subagent), then run `cascade-scratchpad done --through <id>`.');
+    lines.push('Consolidation is due: after the user\'s task is done, distill the journal into memory notes / skills per your POLICIES (or delegate), then `cascade-scratchpad done --through <id>`. Do not leave the backlog for "later".');
   }
   if (opts.userId != null) {
     try {

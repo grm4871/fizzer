@@ -387,13 +387,21 @@ async function main() {
     if (recalledSkill.kind !== 'skill') {
       throw new Error(`Recall hit has wrong kind: ${JSON.stringify(recalledSkill)}`);
     }
-    // Unrelated query should not surface it.
+    // Unrelated query should not surface it — and should return empty when
+    // nothing lexically matches (no semantic noise dumps).
     const missRecall = await fetchJson(
       `${API_BASE}/api/vaults/${vault.id}/scratchpad/recall?q=${encodeURIComponent('quarterly tax filing')}&agent=${AGENT_KEY}`,
       { headers: auth },
     );
     if ((missRecall.hits || []).some((h) => h.title === 'Restart the widget pipeline')) {
       throw new Error('Recall surfaced an irrelevant note for an unrelated query');
+    }
+    if ((missRecall.hits || []).length > 0) {
+      throw new Error(`Recall should be empty for unrelated query, got: ${JSON.stringify(missRecall.hits)}`);
+    }
+    // Matching query: skill should rank first over any memory prose.
+    if ((recall.hits || [])[0]?.title !== 'Restart the widget pipeline') {
+      throw new Error(`Expected skill first in recall ranking, got: ${JSON.stringify(recall.hits)}`);
     }
     console.log('[e2e] OK mid-task recall surfaces relevant skill, filters irrelevant query');
 
