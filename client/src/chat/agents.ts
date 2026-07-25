@@ -23,6 +23,7 @@ export const CHAT_AGENTS: Array<{ id: AgentId; label: string }> = [
  */
 export const CHAT_AGENT_MODEL_PRESETS: Record<AgentId, { id: string; label: string }[]> = {
   'claude-code': [
+    { id: 'claude-opus-5', label: 'Claude Opus 5' },
     { id: 'claude-sonnet-5', label: 'Claude Sonnet 5' },
     { id: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5' },
     { id: 'claude-opus-4-8', label: 'Claude Opus 4.8' },

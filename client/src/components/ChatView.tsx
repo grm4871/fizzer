@@ -2297,6 +2297,26 @@ export const ChatView = memo(function ChatView({
               />
             </label>
             <label>
+              Cwd
+              <input
+                value={agentForm.cwd}
+                placeholder="Vault root or relative path"
+                spellCheck={false}
+                onChange={(event) => setAgentForm((value) => ({ ...value, cwd: event.target.value }))}
+              />
+            </label>
+            <label>
+              Persona / context
+              <textarea
+                value={agentForm.contextPrompt}
+                placeholder="Standing instructions for this agent"
+                rows={3}
+                onChange={(event) => setAgentForm((value) => ({ ...value, contextPrompt: event.target.value }))}
+              />
+            </label>
+              </>
+            )}
+            <label>
               Model
               {activeFormAgent && activeFormAgent.models.length > 0 ? (
                 <>
@@ -2345,26 +2365,6 @@ export const ChatView = memo(function ChatView({
                 />
               )}
             </label>
-            <label>
-              Cwd
-              <input
-                value={agentForm.cwd}
-                placeholder="Vault root or relative path"
-                spellCheck={false}
-                onChange={(event) => setAgentForm((value) => ({ ...value, cwd: event.target.value }))}
-              />
-            </label>
-            <label>
-              Persona / context
-              <textarea
-                value={agentForm.contextPrompt}
-                placeholder="Standing instructions for this agent"
-                rows={3}
-                onChange={(event) => setAgentForm((value) => ({ ...value, contextPrompt: event.target.value }))}
-              />
-            </label>
-              </>
-            )}
             {(agentPanelMode === 'edit-member' || agentPanelMode === 'create') && (
               <>
             <label className="chat-agent-toggle">
