@@ -1323,6 +1323,26 @@ export default function App() {
                 { suppressChatBody },
               );
               const nextStatus = terminal === 'completed' ? undefined : terminal;
+              // Dual-post suppress: drop the Thinking placeholder entirely so the
+              // live UI never leaves an empty "(message)" shell after cascade-chat
+              // send. (Server list already filters empty terminal agent rows.)
+              if (terminal === 'completed' && suppressChatBody) {
+                setChatState((prev) => {
+                  const existing = prev.messagesByChannel[channelId] ?? [];
+                  const next = existing.filter((message) => message.id !== agentMessageId);
+                  if (next.length === existing.length) return prev;
+                  return {
+                    ...prev,
+                    messagesByChannel: {
+                      ...prev.messagesByChannel,
+                      [channelId]: next,
+                    },
+                  };
+                });
+                agentContextWatermarkRef.current.set(watermarkKey, agentMessageId);
+                finishRun(runId, cleanup);
+                return;
+              }
               applyMessageUpdateNow((message) => ({
                 ...message,
                 body: finalBody,
@@ -1967,8 +1987,29 @@ export default function App() {
     };
     const handleChatMessageUpdated = (data: { vaultId: string; channelId: string; message: ChatMessage }) => {
       if (data.vaultId !== activeVaultId) return;
+      // Terminal empty agent shells (dual-post suppress after cascade-chat send)
+      // must not stick around as blank "(message)" bubbles in the live UI.
+      const remoteBody = String(data.message.body || '').trim();
+      const isEmptyAgentShell = Boolean(
+        data.message.agentId
+        && data.message.status !== 'running'
+        && (!remoteBody || remoteBody === 'Thinking...'),
+      );
       setChatState((prev) => {
         const existing = prev.messagesByChannel[data.channelId] ?? [];
+        if (isEmptyAgentShell) {
+          const next = existing.filter((message) => message.id !== data.message.id);
+          if (next.length === existing.length && !existing.some((m) => m.id === data.message.id)) {
+            return prev; // never insert an empty shell
+          }
+          return {
+            ...prev,
+            messagesByChannel: {
+              ...prev.messagesByChannel,
+              [data.channelId]: next,
+            },
+          };
+        }
         const index = existing.findIndex((message) => message.id === data.message.id);
         if (index === -1) {
           return {

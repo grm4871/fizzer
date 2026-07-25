@@ -86,12 +86,17 @@ function errorMessage(err) {
 }
 
 function helperConfigPath() {
+  // Prefer the explicit per-run config path agent-runner wrote. CASCADE_RUN_ID
+  // alone can point at a missing/stale file when the parent env is polluted,
+  // which used to leave a ghost { usedChatSend: true } and suppress the wrong
+  // run bubble into an empty "(message)" shell.
+  const fromEnv = String(process.env.CASCADE_HELPER_CONFIG || '').trim();
+  if (fromEnv) return fromEnv;
   const runId = String(process.env.CASCADE_RUN_ID || '').trim();
   if (runId) {
     return path.join(os.homedir(), '.cascade', 'run-contexts', `${runId}.json`);
   }
-  return process.env.CASCADE_HELPER_CONFIG
-    || path.join(os.homedir(), '.cascade', 'agent-helper-context.json');
+  return path.join(os.homedir(), '.cascade', 'agent-helper-context.json');
 }
 
 function readHelperConfig() {
@@ -108,10 +113,17 @@ function readHelperConfig() {
 function markChatSendUsed(config) {
   const configPath = helperConfigPath();
   try {
+    const base = config && typeof config === 'object' ? config : {};
+    // Refuse to write a ghost flag-only file — that suppressed empty run bubbles
+    // without a real dual-post (see empty "(message)" shells in chat).
+    const hasContext = Boolean(
+      String(base.chatChannelId || base.vaultId || base.token || process.env.CASCADE_CHAT_CHANNEL || process.env.CASCADE_NOTE_VAULT || '').trim(),
+    );
+    if (!hasContext) return;
     const next = {
-      ...(config && typeof config === 'object' ? config : {}),
+      ...base,
       usedChatSend: true,
-      chatSendCount: Number(config?.chatSendCount || 0) + 1,
+      chatSendCount: Number(base.chatSendCount || 0) + 1,
       updatedAt: new Date().toISOString(),
     };
     fs.mkdirSync(path.dirname(configPath), { recursive: true, mode: 0o700 });

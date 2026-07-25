@@ -1415,6 +1415,24 @@ export function createChatMessage(
   return { ...message, channelId: route.localChannelId };
 }
 
+/**
+ * Hard-delete a chat message (used to drop dual-post run shells after the agent
+ * already posted via cascade-chat send). Returns true when a row was removed.
+ */
+export function deleteChatMessage(
+  db: Db,
+  userId: number,
+  vaultId: string,
+  channelId: string,
+  messageId: string,
+): boolean {
+  const { route } = assertChatChannel(db, channelId, userId);
+  if (route.localVaultId !== vaultId) throw new Error('Chat channel not found');
+  const result = db.prepare('DELETE FROM chat_messages WHERE id = ? AND channel_id = ?')
+    .run(messageId, route.sourceChannelId);
+  return Number(result.changes || 0) > 0;
+}
+
 export function updateChatMessage(
   db: Db,
   userId: number,

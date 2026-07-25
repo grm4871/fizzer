@@ -95,6 +95,7 @@ import {
   getChatMessage,
   createChatMessage,
   updateChatMessage,
+  deleteChatMessage,
   approveChatChangeRequest,
   mergeChatChangeRequest,
   settleChatMessagesForRun,
@@ -582,18 +583,44 @@ function syncRunToChatMessage(runId: number) {
   if (!target) return;
   const content = buildAgentChatContentFromRunEvents(listRunEvents(db, runId));
   try {
-    // Update only — the initiating client creates the placeholder message; if it
-    // hasn't landed yet this no-ops and a later status event retries.
-    const updated = updateChatMessage(db, target.userId, target.vaultId, target.channelId, target.messageId, {
-      body: content.body,
-      blocks: content.blocks.length ? content.blocks : undefined,
-      harnessLog: content.harnessLog || undefined,
-      status: content.status,
-      runId,
-    });
-    if (updated) {
-      const { route } = assertChatChannel(db, target.channelId, target.userId);
-      emitChatMessageEvent(route.sourceVaultId, route.sourceChannelId, 'vault:chatMessageUpdated', updated);
+    // Dual-post suppress: agent already posted via cascade-chat send. Drop the
+    // Thinking placeholder instead of leaving an empty "(message)" shell that
+    // sticks in the live UI until refresh.
+    const dropShell = content.done
+      && content.status !== 'failed'
+      && content.status !== 'canceled'
+      && !String(content.body || '').trim();
+    if (dropShell) {
+      // Broadcast empty first so clients that only listen for updates can prune,
+      // then hard-delete so reloads don't keep a ghost row either.
+      const emptied = updateChatMessage(db, target.userId, target.vaultId, target.channelId, target.messageId, {
+        body: '',
+        blocks: content.blocks.length ? content.blocks : undefined,
+        harnessLog: content.harnessLog || undefined,
+        status: undefined,
+        runId,
+      });
+      if (emptied) {
+        const { route } = assertChatChannel(db, target.channelId, target.userId);
+        emitChatMessageEvent(route.sourceVaultId, route.sourceChannelId, 'vault:chatMessageUpdated', emptied);
+      }
+      try {
+        deleteChatMessage(db, target.userId, target.vaultId, target.channelId, target.messageId);
+      } catch { /* best-effort */ }
+    } else {
+      // Update only — the initiating client creates the placeholder message; if it
+      // hasn't landed yet this no-ops and a later status event retries.
+      const updated = updateChatMessage(db, target.userId, target.vaultId, target.channelId, target.messageId, {
+        body: content.body,
+        blocks: content.blocks.length ? content.blocks : undefined,
+        harnessLog: content.harnessLog || undefined,
+        status: content.status,
+        runId,
+      });
+      if (updated) {
+        const { route } = assertChatChannel(db, target.channelId, target.userId);
+        emitChatMessageEvent(route.sourceVaultId, route.sourceChannelId, 'vault:chatMessageUpdated', updated);
+      }
     }
   } catch {
     // Channel/message vanished (e.g. deleted mid-run) — drop the target below.

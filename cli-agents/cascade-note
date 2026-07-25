@@ -126,12 +126,14 @@ function readStdin() {
 }
 
 function helperConfigPath() {
+  // Prefer agent-runner's explicit per-run path over CASCADE_RUN_ID alone.
+  const fromEnv = String(process.env.CASCADE_HELPER_CONFIG || '').trim();
+  if (fromEnv) return fromEnv;
   const runId = String(process.env.CASCADE_RUN_ID || '').trim();
   if (runId) {
     return path.join(os.homedir(), '.cascade', 'run-contexts', `${runId}.json`);
   }
-  return process.env.CASCADE_HELPER_CONFIG
-    || path.join(os.homedir(), '.cascade', 'agent-helper-context.json');
+  return path.join(os.homedir(), '.cascade', 'agent-helper-context.json');
 }
 
 function readHelperConfig() {

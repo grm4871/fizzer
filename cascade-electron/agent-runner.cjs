@@ -253,7 +253,13 @@ function readUsedChatSend(runId) {
   try {
     const raw = fs.readFileSync(helperConfigPathForRun(id), 'utf8');
     const parsed = JSON.parse(raw);
-    return Boolean(parsed && parsed.usedChatSend);
+    // Ghost files that only contain { usedChatSend: true } (no vault/channel)
+    // must not suppress the run bubble — that left empty "(message)" shells.
+    if (!parsed || !parsed.usedChatSend) return false;
+    const hasContext = Boolean(
+      String(parsed.chatChannelId || parsed.vaultId || parsed.token || '').trim(),
+    );
+    return hasContext;
   } catch {
     return false;
   }
