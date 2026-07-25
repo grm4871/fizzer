@@ -1598,7 +1598,22 @@ export const ChatView = memo(function ChatView({
           });
         }
       } else {
-        // edit-member or fallback create without vault-agent API
+        // edit-member (or fallback create without vault-agent API).
+        // Model is canonical on the vault identity — the membership PUT echoes
+        // it back from vault_agents — so a model change here must go through
+        // onUpsertVaultAgent, else it silently reverts. Membership-only flags
+        // (taggable/reply/pingable/yolo) still persist via onRegisterAgent.
+        if (agentForm.vaultAgentId && onUpsertVaultAgent && model && model !== agentForm.model) {
+          await onUpsertVaultAgent({
+            id: agentForm.vaultAgentId,
+            agentId: agentForm.agentId,
+            displayName: agentForm.displayName.trim(),
+            mention: mention || agentForm.mention,
+            model,
+            cwd: agentForm.cwd.trim(),
+            contextPrompt: agentForm.contextPrompt.trim(),
+          });
+        }
         onRegisterAgent(channelId, {
           ...agentForm,
           id: agentForm.id || createChatAgentRegistrationId(),
