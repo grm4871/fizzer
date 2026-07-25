@@ -1603,7 +1603,7 @@ export const ChatView = memo(function ChatView({
         // it back from vault_agents — so a model change here must go through
         // onUpsertVaultAgent, else it silently reverts. Membership-only flags
         // (taggable/reply/pingable/yolo) still persist via onRegisterAgent.
-        if (agentForm.vaultAgentId && onUpsertVaultAgent && model && model !== agentForm.model) {
+        if (agentForm.vaultAgentId && onUpsertVaultAgent && model) {
           await onUpsertVaultAgent({
             id: agentForm.vaultAgentId,
             agentId: agentForm.agentId,
