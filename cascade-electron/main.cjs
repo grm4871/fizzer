@@ -275,6 +275,15 @@ function configureWindow(win) {
     return { action: 'allow' };
   });
 
+  // No native Electron/Chromium right-click menu (Inspect Element, Back, etc.).
+  // In-app React menus (sidebar/chat) use DOM handlers and still work.
+  win.webContents.on('context-menu', (event) => {
+    event.preventDefault();
+  });
+  win.on('system-context-menu', (event) => {
+    event.preventDefault();
+  });
+
   // Local keyboard shortcuts (only fire while this window is focused).
   win.webContents.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown') return;
