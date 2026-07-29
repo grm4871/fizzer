@@ -11,7 +11,8 @@ import { closeBrackets } from '@codemirror/autocomplete';
 import { languages } from '@codemirror/language-data';
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
 import { tags } from '@lezer/highlight';
-import { FileText, Link2, Box, Globe, ExternalLink } from 'lucide-react';
+import { FileText, Link2, Box, Columns3, Globe, ExternalLink } from 'lucide-react';
+import { KanbanView } from './KanbanView';
 
 /* ═══════════════════════════════════════════════════════════
    NoteEditor — CodeMirror 6 Live Preview Markdown Editor
@@ -1205,6 +1206,7 @@ export const NoteEditor = memo(function NoteEditor({ note, content, onContentCha
   const [publishInfo, setPublishInfo] = useState<NotePublishInfo>({ published: false });
   const [publishBusy, setPublishBusy] = useState(false);
   const [publishNotice, setPublishNotice] = useState('');
+  const [viewMode, setViewMode] = useState<'editor' | 'kanban'>('editor');
   const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const contentRef = useRef(content);
@@ -1219,6 +1221,21 @@ export const NoteEditor = memo(function NoteEditor({ note, content, onContentCha
   // Inline, editable note title (Obsidian-style). Synced from the note.
   const [titleDraft, setTitleDraft] = useState(note?.title ?? '');
   useEffect(() => { setTitleDraft(note?.title ?? ''); }, [note?.id, note?.title]);
+  useEffect(() => {
+    if (!note?.id || typeof localStorage === 'undefined') {
+      setViewMode('editor');
+      return;
+    }
+    setViewMode(localStorage.getItem(`cascade_note_view:${note.id}`) === 'kanban' ? 'kanban' : 'editor');
+  }, [note?.id]);
+
+  const selectViewMode = useCallback((mode: 'editor' | 'kanban') => {
+    setViewMode(mode);
+    if (note?.id && typeof localStorage !== 'undefined') {
+      localStorage.setItem(`cascade_note_view:${note.id}`, mode);
+    }
+    if (mode === 'editor') requestAnimationFrame(() => viewRef.current?.focus());
+  }, [note?.id]);
 
   const commitTitle = useCallback(() => {
     const next = titleDraft.trim();
@@ -1764,6 +1781,27 @@ export const NoteEditor = memo(function NoteEditor({ note, content, onContentCha
             </button>
           </>
         )}
+        <div className="toolbar-spacer" />
+        <div className="editor-view-toggle" role="group" aria-label="Note view">
+          <button
+            type="button"
+            className={`toolbar-btn${viewMode === 'editor' ? ' active' : ''}`}
+            onClick={() => selectViewMode('editor')}
+            title="Markdown view"
+            aria-pressed={viewMode === 'editor'}
+          >
+            <FileText size={15} />
+          </button>
+          <button
+            type="button"
+            className={`toolbar-btn${viewMode === 'kanban' ? ' active' : ''}`}
+            onClick={() => selectViewMode('kanban')}
+            title="Kanban view"
+            aria-pressed={viewMode === 'kanban'}
+          >
+            <Columns3 size={15} />
+          </button>
+        </div>
       </div>
 
       {/* Inline editable title */}
@@ -1782,13 +1820,15 @@ export const NoteEditor = memo(function NoteEditor({ note, content, onContentCha
       />
 
       {/* Editor */}
-      <div className="editor-codemirror" id="editor-codemirror" ref={editorRef} />
+      <div className={`editor-codemirror${viewMode === 'kanban' ? ' is-hidden' : ''}`} id="editor-codemirror" ref={editorRef} />
+      {viewMode === 'kanban' && <KanbanView content={content} onContentChange={onContentChange} />}
 
       {/* Status bar */}
       <div className="editor-status-bar" id="editor-status-bar">
         <span className="status-item">{stats.words} words</span>
         <span className="status-item">{stats.chars} chars</span>
         <span className="status-item">~{stats.readingTime} min read</span>
+        {viewMode === 'kanban' && <span className="status-item">Kanban · Markdown backed</span>}
         {note.updated_at && (
           <span className="status-item status-saved">
             Saved {formatRelativeDate(note.updated_at)}

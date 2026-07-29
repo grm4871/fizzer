@@ -494,6 +494,50 @@ export function canMergeChatMessages(a: ChatMessage, b: ChatMessage) {
   return true;
 }
 
+export function shouldDetachStickyForWheel(deltaY: number) {
+  return deltaY < 0;
+}
+
+export function shouldDetachStickyForTouch(startY: number | null, currentY: number | null) {
+  return startY != null && currentY != null && currentY > startY + 4;
+}
+
+export function getRunningMessageState(messages: ChatMessage[]) {
+  const byAgent = new Map<string, { latestId: string; count: number }>();
+  for (const message of messages) {
+    if (message.status !== 'running') continue;
+    const key = message.registrationId || message.agentId;
+    if (!key) continue;
+    const previous = byAgent.get(key);
+    byAgent.set(key, { latestId: message.id, count: (previous?.count || 0) + 1 });
+  }
+  return byAgent;
+}
+
+export function getSteeringPromptLabels(
+  messages: ChatMessage[],
+  registeredAgents: ChatAgentRegistration[],
+  runningState = getRunningMessageState(messages),
+) {
+  const labels = new Map<string, string>();
+  for (const [key, state] of runningState) {
+    if (state.count <= 1) continue;
+    const registration = registeredAgents.find((item) => item.id === key || item.agentId === key);
+    if (!registration) continue;
+    const mention = normalizeMention(registration.mention || registration.agentId);
+    const latestIndex = messages.findIndex((message) => message.id === state.latestId);
+    for (let index = latestIndex - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (message.agentId) continue;
+      const explicitlyMentions = new RegExp(`(^|\\s)@${escapeRegExp(mention)}(?=\\s|$|[.,!?;:])`, 'i').test(message.body);
+      const repliesToAgent = normalizeMention(message.replyTo?.mention || '') === mention;
+      if (explicitlyMentions || repliesToAgent) labels.set(message.id, mention);
+      break;
+    }
+  }
+  return labels;
+}
+
 export function mediaToRunImages(media: ChatMediaAttachment[]) {
   return media
     .filter((item) => isImageMediaType(item.media_type))
@@ -710,6 +754,9 @@ const ChatGroupRow = memo(function ChatGroupRow({
   avatarKind,
   avatarUrl,
   ownerLabel,
+  latestRunningMessageId,
+  runningSiblingCount,
+  steeringPromptLabels,
   mentionableAliases,
   notes,
   onOpenNote,
@@ -730,6 +777,9 @@ const ChatGroupRow = memo(function ChatGroupRow({
   avatarKind: 'agent' | 'human';
   avatarUrl?: string;
   ownerLabel?: string;
+  latestRunningMessageId?: string;
+  runningSiblingCount: number;
+  steeringPromptLabels: ReadonlyMap<string, string>;
   mentionableAliases: string[];
   notes: NoteSummary[];
   onOpenNote?: (id: string) => void;
@@ -807,13 +857,18 @@ const ChatGroupRow = memo(function ChatGroupRow({
               <strong>{head.author}</strong>
               {ownerLabel && <span className="chat-agent-owner">{ownerLabel}'s agent</span>}
               <time dateTime={tail.createdAt}>{formatTime(tail.createdAt)}</time>
-              {tail.status === 'running' && <span className="chat-message-status">working</span>}
+              {tail.status === 'running' && latestRunningMessageId === tail.id && runningSiblingCount > 1 && (
+                <span className="chat-message-status is-steering">steering · latest</span>
+              )}
+              {tail.status === 'running' && latestRunningMessageId === tail.id && runningSiblingCount <= 1 && <span className="chat-message-status">working</span>}
+              {tail.status === 'running' && latestRunningMessageId !== tail.id && <span className="chat-message-status is-steered">continued below</span>}
               {tail.status === 'failed' && <span className="chat-message-status is-error">failed</span>}
               {tail.status === 'canceled' && <span className="chat-message-status is-error">canceled</span>}
             </div>
             {group.messages.map((message) => {
               const hasRunWidget = message.status === 'running';
               const hasThoughtBlocks = hasExpandableTrace(message);
+              const isLatestRunningMessage = message.status !== 'running' || latestRunningMessageId === message.id;
               const isTappable = hasRunWidget || hasThoughtBlocks;
               const selected = selectedMessageId === message.id;
               return (
@@ -831,6 +886,11 @@ const ChatGroupRow = memo(function ChatGroupRow({
                       <Reply size={12} />
                       <strong>{message.replyTo.author}</strong>
                       <span>{message.replyTo.preview}</span>
+                    </div>
+                  )}
+                  {steeringPromptLabels.has(message.id) && (
+                    <div className="chat-steering-prompt">
+                      ↳ Steering @{steeringPromptLabels.get(message.id)} into the active session
                     </div>
                   )}
                   {message.images && message.images.length > 0 && (
@@ -869,6 +929,9 @@ const ChatGroupRow = memo(function ChatGroupRow({
                     </div>
                   )}
                   {message.body && <ChatMessageText messageId={message.id} body={message.body} mentionableAliases={mentionableAliases} notes={notes} onOpenNote={onOpenNote} onOpenSharedNote={onOpenSharedNote} />}
+                  {message.status === 'running' && !isLatestRunningMessage && (
+                    <div className="chat-steering-handoff">Harness moved to the latest steering response ↓</div>
+                  )}
                   {message.changeRequest && (
                     <div className="chat-change-request">
                       <div className="chat-change-files">
@@ -903,7 +966,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
                       </div>
                     </div>
                   )}
-                  {(selected || hasRunWidget || hasThoughtBlocks) && (
+                  {(selected || ((hasRunWidget || hasThoughtBlocks) && isLatestRunningMessage)) && (
                     <CascadeRunPanel
                       message={message}
                       onCancelRun={onCancelRun}
@@ -928,6 +991,9 @@ const ChatGroupRow = memo(function ChatGroupRow({
   && prev.selectedMessageId === next.selectedMessageId
   && prev.avatarKind === next.avatarKind
   && prev.ownerLabel === next.ownerLabel
+  && prev.latestRunningMessageId === next.latestRunningMessageId
+  && prev.runningSiblingCount === next.runningSiblingCount
+  && prev.steeringPromptLabels === next.steeringPromptLabels
   && prev.mentionableAliases === next.mentionableAliases
   // Same trick as ChatMessageText: note churn only invalidates groups that
   // actually render an embed.
@@ -1084,6 +1150,7 @@ export const ChatView = memo(function ChatView({
   // mistaken for the user scrolling away from the bottom (which would unstick).
   const programmaticScrollRef = useRef(false);
   const programmaticClearRef = useRef<number | null>(null);
+  const touchStartYRef = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const draftRef = useRef<HTMLTextAreaElement | null>(null);
   const mentionCycleRef = useRef<{ matches: string[]; index: number; start: number } | null>(null);
@@ -1153,6 +1220,12 @@ export const ChatView = memo(function ChatView({
     groupIdentityCacheRef.current = nextCache;
     return stable;
   }, [sortedMessages]);
+  const runningMessageState = useMemo(() => {
+    return getRunningMessageState(sortedMessages);
+  }, [sortedMessages]);
+  const steeringPromptLabels = useMemo(() => {
+    return getSteeringPromptLabels(sortedMessages, registeredAgents, runningMessageState);
+  }, [registeredAgents, runningMessageState, sortedMessages]);
   const registeredAgentRows = useMemo(() => registeredAgents.map((registration) => {
     const agent = availableAgents.find((option) => option.id === registration.agentId);
     return agent ? { ...agent, registration } : null;
@@ -1812,14 +1885,29 @@ export const ChatView = memo(function ChatView({
           className="chat-messages"
           role="log"
           aria-label={`${channelName} messages`}
-          onTouchStart={() => {
-            // User gesture wins over any in-flight programmatic pin.
-            programmaticScrollRef.current = false;
-            userScrollIntentUntilRef.current = performance.now() + 500;
+          onTouchStart={(event) => {
+            touchStartYRef.current = event.touches[0]?.clientY ?? null;
           }}
-          onWheel={() => {
-            programmaticScrollRef.current = false;
-            userScrollIntentUntilRef.current = performance.now() + 180;
+          onTouchMove={(event) => {
+            const startY = touchStartYRef.current;
+            const currentY = event.touches[0]?.clientY;
+            // Only a finger moving down means "read older messages". A touch
+            // at the bottom or an upward swipe must not disarm sticky-follow
+            // just before a new agent row changes the layout.
+            if (shouldDetachStickyForTouch(startY, currentY)) {
+              programmaticScrollRef.current = false;
+              userScrollIntentUntilRef.current = performance.now() + 500;
+            }
+          }}
+          onTouchEnd={() => { touchStartYRef.current = null; }}
+          onWheel={(event) => {
+            // Scrolling upward is the only wheel gesture that intentionally
+            // detaches from the live edge. Downward wheel noise at the bottom
+            // previously caused intermittent missed agent auto-scrolls.
+            if (shouldDetachStickyForWheel(event.deltaY)) {
+              programmaticScrollRef.current = false;
+              userScrollIntentUntilRef.current = performance.now() + 180;
+            }
           }}
         >
           <div ref={messagesContentRef} className="chat-messages-content">
@@ -1839,6 +1927,8 @@ export const ChatView = memo(function ChatView({
               const head = group.messages[0];
               const groupSelected = selectedMessageId != null
                 && group.messages.some((message) => message.id === selectedMessageId);
+              const runKey = head.registrationId || head.agentId || '';
+              const runState = runKey ? runningMessageState.get(runKey) : undefined;
               return (
                 <ChatGroupRow
                   key={head.id}
@@ -1847,6 +1937,9 @@ export const ChatView = memo(function ChatView({
                   avatarKind={getMessageAvatarKind(head)}
                   avatarUrl={getMessageAvatarUrl(head)}
                   ownerLabel={getMessageOwnerLabel(head)}
+                  latestRunningMessageId={runState?.latestId}
+                  runningSiblingCount={runState?.count || 0}
+                  steeringPromptLabels={steeringPromptLabels}
                   mentionableAliases={mentionableAliases}
                   notes={notes}
                   onOpenNote={onOpenNote}
