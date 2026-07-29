@@ -42,7 +42,8 @@ systemctl daemon-reload
 systemctl enable --now cascade-deploy.path
 
 echo "Installed. Whenever /var/lib/cascade/deploy.request appears, systemd will run:"
-echo "  $ROOT/deploy/deploy.sh $DOMAIN"
+echo "  git fetch/reset + $ROOT/deploy/remote-update.sh"
+echo "  (CASCADE_DEPLOY_DOMAIN=$DOMAIN is kept for legacy env; bootstrap is deploy/deploy.sh)"
 echo ""
 echo "Deploy token (configure the client with this, sent as 'Authorization: Bearer <token>'):"
 echo "  cat /var/lib/cascade/.cascade/deploy-secret"

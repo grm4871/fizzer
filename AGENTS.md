@@ -12,15 +12,14 @@ Do **not** treat TypeScript or `vite build` success as done. Before finishing an
 
 ## Deploying changes
 
-When asked to deploy changes, always:
+Production deploys use the same GitHub Actions → SSH pattern as Simcluster.
 
-1. **Commit and push** your working tree.
-2. **Run the private deploy script**: `./.private/deploy-cscd-online.sh` (untracked, in `.private/`). It POSTs to the server's `/api/deploy` endpoint with the deploy token; the host watcher then fast-forwards to the pushed commit and runs `deploy/deploy.sh`. (`deploy/deploy.sh` itself needs root and is not run directly.)
-3. **Wait for the deploy to land** (do not assume "queued" means done). Prefer:
-   - `./.private/deploy-cscd-online.sh --wait` (queues then polls until `last` updates or timeout), or
-   - `./.private/deploy-cscd-status.sh` / `GET /api/deploy/status` with the deploy token.
-   Poll every few seconds for up to ~3–5 minutes. Confirm `pending: false` and `last.status` is `ok` (or report `error` + message). Note `last.commit` in your final reply.
-4. Deploy is fragile: the queue can succeed while the host watcher fails, or the agent process can die mid-deploy when the container restarts. Always verify status (or that live `/api/health` + expected commit behavior returned) before claiming ship.
+1. **Commit and push** to `master`. That triggers `.github/workflows/deploy.yml`, which SSHs to the host, `git fetch`/`reset --hard origin/master`, and runs `deploy/remote-update.sh` (docker compose build + up + health check).
+2. **Wait for the Actions run** (do not assume push means live). Prefer the Actions UI, or on the host: `docker compose -f /var/www/cascade-browser/docker-compose.yml ps` and `curl -sf http://127.0.0.1:3000/api/health`. Confirm the expected commit (`git -C /var/www/cascade-browser rev-parse --short HEAD`) before claiming ship.
+3. **Manual / agent fallback** (same update path, no Actions): after push, either:
+   - SSH and run the same remote steps as the workflow, or
+   - `./.private/deploy-cscd-online.sh` (untracked) which POSTs `/api/deploy`; the host `cascade-deploy.path` unit fast-forwards the checkout and runs `deploy/remote-update.sh`. Poll `GET /api/deploy/status` (or `./.private/deploy-cscd-status.sh`) until `pending: false` and `last.status` is `ok`.
+4. First-time host bootstrap (nginx, certbot, `.env`) remains `deploy/deploy.sh <domain>` — not used for routine releases. Required Actions secrets (same names as Simcluster): `DEPLOY_SSH_KEY`, `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_PORT`.
 
 ### After deploy lands — refresh in place (never kill the app)
 

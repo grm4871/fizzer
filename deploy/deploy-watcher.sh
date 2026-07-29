@@ -2,11 +2,12 @@
 #
 # deploy-watcher.sh — host-side half of the agent-driven deploy pipeline.
 #
-# The Cascade server runs inside the container and cannot run docker/nginx/certbot
-# itself, so POST /api/deploy only drops a request file into the shared data volume
+# The Cascade server runs inside the container and cannot run docker itself, so
+# POST /api/deploy only drops a request file into the shared data volume
 # (/var/lib/cascade/deploy.request). This script — run on the HOST, as root, by the
 # cascade-deploy.path systemd unit — picks that request up, fast-forwards the repo
-# to the latest remote commit, and runs deploy/deploy.sh.
+# to the latest remote commit, and runs deploy/remote-update.sh (same path as the
+# GitHub Actions deploy workflow).
 #
 # It can also be run by hand to process a pending request.
 set -euo pipefail
@@ -65,11 +66,13 @@ if ! git reset --hard "$TARGET"; then
   exit 1
 fi
 
-echo "==> Running deploy.sh $DOMAIN"
-if ./deploy/deploy.sh "$DOMAIN"; then
+# Routine updates only rebuild/swap the app container. First-time nginx/TLS
+# bootstrap remains deploy/deploy.sh (run by hand on a new host).
+echo "==> Running remote-update.sh"
+if ./deploy/remote-update.sh; then
   write_result ok "deployed"
   echo "==> Deploy complete: $(git rev-parse --short HEAD)"
 else
-  write_result error "deploy.sh failed"
+  write_result error "remote-update.sh failed"
   exit 1
 fi

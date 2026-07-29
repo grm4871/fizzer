@@ -63,6 +63,21 @@ npm run package          # package the Electron app
 npm run make             # build distributables
 ```
 
+## Production deploy (CI/CD)
+
+Same model as Simcluster: push to `master` runs `.github/workflows/deploy.yml`, which SSHs to the server and runs `deploy/remote-update.sh` (image rebuild + container swap). First-time server setup is still `deploy/deploy.sh <domain>`.
+
+GitHub Actions secrets (mirror the Simcluster repo values):
+
+| Secret | Purpose |
+|--------|---------|
+| `DEPLOY_SSH_KEY` | Private key authorized on the host for deploy SSH |
+| `DEPLOY_HOST` | Server hostname or IP |
+| `DEPLOY_USER` | SSH user (typically `root`) |
+| `DEPLOY_PORT` | SSH port (optional; default 22) |
+
+Desktop Electron installers are built separately by `.github/workflows/desktop-build.yml` on `v*` tags.
+
 ## Git Notes
 
 Do not commit generated or local runtime files such as `node_modules/`, `dist/`, `client/dist/`, `*.db`, or logs. They are ignored by `.gitignore`.
