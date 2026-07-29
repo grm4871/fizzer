@@ -61,45 +61,22 @@ function isDevelopmentMode() {
 }
 
 /**
- * Builds a debug-only application menu with Reload, DevTools, and Zoom
- * controls. Returns `null` in production so the default menu is suppressed.
+ * Application menu. No Debug menu — reload/devtools/zoom live on keyboard
+ * shortcuts in configureWindow (Ctrl/Cmd+R, etc.).
+ *
+ * macOS still needs App/Edit/Window roles so Cmd+C/V/X/A work. Linux/Windows
+ * get no menu bar (clipboard works on webContents without Edit roles).
  *
  * @returns {Electron.Menu | null}
  */
 function buildApplicationMenu() {
-  const isMac = process.platform === 'darwin';
-  const dev = isDevelopmentMode();
+  if (process.platform !== 'darwin') return null;
 
-  const debugSubmenu = {
-    label: 'Debug',
-    submenu: [
-      { role: 'reload', label: 'Reload' },
-      { role: 'forceReload', label: 'Force Reload' },
-      { role: 'toggleDevTools', label: 'Toggle DevTools' },
-      { type: 'separator' },
-      { role: 'resetZoom', label: 'Actual Size' },
-      { role: 'zoomIn', label: 'Zoom In' },
-      { role: 'zoomOut', label: 'Zoom Out' },
-    ],
-  };
-
-  // macOS routes clipboard shortcuts (Cmd+C/V/X/A) through the application
-  // menu's Edit roles. With no menu installed (setApplicationMenu(null)) those
-  // shortcuts silently stop working, so on macOS we always install a menu with
-  // the standard App/Edit/Window roles. Other platforms handle Ctrl+V in the
-  // web contents directly, so their prior menu behavior is preserved.
-  if (!isMac) {
-    if (!dev) return null;
-    return Menu.buildFromTemplate([debugSubmenu]);
-  }
-
-  const template = [
+  return Menu.buildFromTemplate([
     { role: 'appMenu' },
     { role: 'editMenu' },
     { role: 'windowMenu' },
-  ];
-  if (dev) template.push(debugSubmenu);
-  return Menu.buildFromTemplate(template);
+  ]);
 }
 
 /**
