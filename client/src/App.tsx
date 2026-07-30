@@ -45,7 +45,7 @@ import {
   normalizeChatCwd,
   type AgentId,
 } from './chat/agents';
-import { buildQuotedReplyPrompt, getMentionedRegistrations, normalizeMention, precedingMessageBatchText, resolveAgentMessageRegistration, stripRegisteredAgentMentions } from './chat/mentions';
+import { buildQuotedReplyPrompt, getMentionedRegistrations, normalizeMention, precedingMessageBatch, precedingMessageBatchText, resolveAgentMessageRegistration, stripRegisteredAgentMentions } from './chat/mentions';
 import {
   appendChatRunBlocks,
   appendHarnessLog,
@@ -1686,21 +1686,33 @@ export default function App() {
       const batchPrompt = directPrompt || quotedPrompt ? '' : precedingMessageBatchText(messages, candidate);
       const prompt = [quotedPrompt, directPrompt || batchPrompt].filter(Boolean).join('\n\n')
         || typedSource || 'Please review the attached media.';
-      // Replying to a screenshot with "this is broken" attaches no media of its
-      // own — the image is on the quoted message. Forward it, or the agent gets
-      // the words and none of the evidence and guesses at what it cannot see.
+      // "@agent diagnose this" carries no media of its own — the screenshot is on
+      // another message: the one being replied to, or the same-author batch just
+      // before it (the same pointer rule the batch prompt already uses). Without
+      // this the agent gets the words, none of the evidence, and guesses at what
+      // it cannot see.
+      const ownImages = mediaToRunImages(media);
       const quotedMessage = replyTo ? messages.find((message) => message.id === replyTo.messageId) : undefined;
-      let quotedImages = dataUrlsToRunImages(quotedMessage?.images);
-      if (quotedMessage && quotedImages.length === 0 && quotedMessage.hasImages && vaultId) {
-        // The list payload strips heavy data URLs; refetch the one message we need.
-        try {
-          const full = await api<{ message: ChatMessage }>(
-            `/api/vaults/${vaultId}/channels/${channelId}/messages/${encodeURIComponent(quotedMessage.id)}`,
-          );
-          quotedImages = dataUrlsToRunImages(full.message?.images);
-        } catch { /* the quoted text still carries the ask */ }
+      const imageSources = ownImages.length > 0
+        ? []
+        : (quotedMessage ? [quotedMessage] : precedingMessageBatch(messages, candidate));
+      const carriedImages: Array<{ media_type: string; data: string }> = [];
+      for (const source of imageSources) {
+        let images = dataUrlsToRunImages(source.images);
+        if (images.length === 0 && source.hasImages && vaultId) {
+          // The list payload strips heavy data URLs; refetch the one message we need.
+          try {
+            const full = await api<{ message: ChatMessage }>(
+              `/api/vaults/${vaultId}/channels/${channelId}/messages/${encodeURIComponent(source.id)}`,
+            );
+            images = dataUrlsToRunImages(full.message?.images);
+          } catch { /* the quoted/batch text still carries the ask */ }
+        }
+        carriedImages.push(...images);
       }
-      const runImages = [...mediaToRunImages(media), ...quotedImages];
+      // Keep the most recent few: a long screenshot batch would otherwise blow up
+      // the request without adding much the agent can act on.
+      const runImages = [...ownImages, ...carriedImages.slice(-4)];
       const agentsWithoutImages = new Set<AgentId>(['grok', 'antigravity', 'copilot', 'hermes', 'akron-grok']);
       for (const registration of targetAgents) {
         const blind = agentsWithoutImages.has(registration.agentId as AgentId);

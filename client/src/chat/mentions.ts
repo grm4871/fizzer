@@ -137,20 +137,31 @@ type BatchableChatMessage = {
   agentId?: string;
 };
 
-/** Text from the contiguous message batch immediately before `nextMessage`.
- * Uses the same author/agent identity boundary as the chat's visual grouping. */
-export function precedingMessageBatchText(
-  messages: BatchableChatMessage[],
+/** The contiguous message batch immediately before `nextMessage`, using the same
+ * author/agent identity boundary as the chat's visual grouping. */
+export function precedingMessageBatch<T extends BatchableChatMessage>(
+  messages: T[],
   nextMessage: BatchableChatMessage,
 ) {
-  const bodies: string[] = [];
+  const batch: T[] = [];
   const nextKey = nextMessage.registrationId ?? nextMessage.agentId ?? null;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
     const messageKey = message.registrationId ?? message.agentId ?? null;
     if (message.author.trim() !== nextMessage.author.trim() || messageKey !== nextKey) break;
-    const body = message.body.trim();
-    if (body) bodies.unshift(body);
+    batch.unshift(message);
   }
-  return bodies.join('\n').trim();
+  return batch;
+}
+
+/** Text from the contiguous message batch immediately before `nextMessage`. */
+export function precedingMessageBatchText(
+  messages: BatchableChatMessage[],
+  nextMessage: BatchableChatMessage,
+) {
+  return precedingMessageBatch(messages, nextMessage)
+    .map((message) => message.body.trim())
+    .filter(Boolean)
+    .join('\n')
+    .trim();
 }

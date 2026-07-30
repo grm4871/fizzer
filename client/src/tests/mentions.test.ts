@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildQuotedReplyPrompt, precedingMessageBatchText, resolveAgentMessageRegistration } from '../chat/mentions';
+import { buildQuotedReplyPrompt, precedingMessageBatch, precedingMessageBatchText, resolveAgentMessageRegistration } from '../chat/mentions';
 
 const registrations = [
   { id: 'terra-reg', agentId: 'codex', displayName: 'Terra', mention: 'terra', taggableByAgents: true },
@@ -94,5 +94,17 @@ describe('buildQuotedReplyPrompt', () => {
 
   it('returns nothing when there is no quotable text', () => {
     expect(buildQuotedReplyPrompt({ ...replyTo, preview: '' }, [{ id: 'msg-1', body: '   ' }])).toBe('');
+  });
+});
+
+describe('precedingMessageBatch', () => {
+  it('returns only the contiguous same-author run, so an older screenshot is not pulled in', () => {
+    const messages = [
+      { id: 'm1', author: 'asdfasdf', body: 'old screenshot', images: ['data:image/png;base64,OLD'] },
+      { id: 'm2', author: 'Claude', body: 'answer', agentId: 'claude', registrationId: 'reg' },
+      { id: 'm3', author: 'asdfasdf', body: 'this also seems like a failure', images: ['data:image/png;base64,NEW'] },
+    ];
+    const batch = precedingMessageBatch(messages, { author: 'asdfasdf', body: '@claude diagnose and fix' });
+    expect(batch.map((message) => message.id)).toEqual(['m3']);
   });
 });
