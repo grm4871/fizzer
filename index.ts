@@ -147,6 +147,7 @@ import { searchWithQmd } from './server/qmd-search.js';
 import {
   isAgentApiRequestAllowed,
   redactPrivateBlocks,
+  redactPrivatePreview,
   restorePrivateBlocks,
   sanitizeAgentJson,
 } from './server/privacy.js';
@@ -453,7 +454,7 @@ function redactNoteForAgent<T extends { content?: string; content_preview?: stri
     ...note,
     ...(typeof note.content === 'string' ? { content: redactPrivateBlocks(note.content) } : {}),
     ...(typeof note.content_preview === 'string'
-      ? { content_preview: redactPrivateBlocks(note.content_preview) }
+      ? { content_preview: redactPrivatePreview(note.content_preview) }
       : {}),
   };
 }

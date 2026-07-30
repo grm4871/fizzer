@@ -5,6 +5,7 @@ import {
   privateBlocks,
   redactPrivateBlocks,
   redactPrivateBlocksForPublic,
+  redactPrivatePreview,
   restoreAgentPrivateBlocks,
   sanitizeAgentJson,
 } from './privacy.js';
@@ -40,6 +41,17 @@ test('unterminated privacy blocks fail closed', () => {
   const redacted = redactPrivateBlocks('visible\n:::private\nsecret\nstill secret');
   assert.match(redacted, /^visible/);
   assert.doesNotMatch(redacted, /secret/);
+});
+
+test('collapsed note previews fail closed after a private opener', () => {
+  assert.equal(
+    redactPrivatePreview('public :::private API_KEY=super-secret ::: public tail'),
+    'public [Private block hidden from agents]',
+  );
+  assert.doesNotMatch(
+    JSON.stringify(sanitizeAgentJson({ content_preview: ':::private API_KEY=super-secret :::' })),
+    /super-secret/,
+  );
 });
 
 test('agent edits preserve existing private blocks without seeing them', () => {

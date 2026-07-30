@@ -119,6 +119,18 @@ export function redactPrivateBlocks(content: string): string {
   );
 }
 
+/**
+ * `content_preview` is whitespace-collapsed in the database, so line-oriented
+ * closing markers are no longer trustworthy. Once an opener appears, redact
+ * the remainder of the preview (fail closed).
+ */
+export function redactPrivatePreview(content: string): string {
+  const value = String(content || '');
+  const opener = value.search(/:::private\b/i);
+  if (opener < 0) return value;
+  return `${value.slice(0, opener)}${'[Private block hidden from agents]'}`.trim();
+}
+
 export function redactPrivateBlocksForPublic(content: string): string {
   return replaceBlocks(
     String(content || ''),
@@ -173,7 +185,9 @@ export function sanitizeAgentJson<T>(value: T): T {
   if (value && typeof value === 'object') {
     const output: Record<string, unknown> = {};
     for (const [key, item] of Object.entries(value)) {
-      output[key] = sanitizeAgentJson(item);
+      output[key] = key === 'content_preview' && typeof item === 'string'
+        ? redactPrivatePreview(item)
+        : sanitizeAgentJson(item);
     }
     return output as T;
   }
