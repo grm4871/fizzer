@@ -42,6 +42,9 @@ test('chat agents inherit folder ancestry and the nearest project doc', () => {
 
   const context = buildAgentChannelWorkspaceContext(db, 'channel');
 
+  assert.match(context, /user-facing, Obsidian-style workspace for AI-native project management/);
+  assert.match(context, /`cascade-note` CLI on PATH/);
+  assert.match(context, /not a mirror of the process cwd/);
   assert.match(context, /Cascade channel location: projects \/ OC \/ #cubegen/);
   assert.match(context, /Project — obsidiancube/);
   assert.match(context, /ObsidianCube is the umbrella project/);

@@ -1186,7 +1186,14 @@ export function buildAgentChannelWorkspaceContext(
     ...nearestFolders.slice().reverse().map((folder) => folder.name),
     `#${channel.title}`,
   ].join(' / ');
-  const chunks = [`Cascade channel location: ${location}`];
+  const chunks = [
+    'Cascade is the user-facing, Obsidian-style workspace for AI-native project management. '
+      + 'Its vault folders, project docs, notes, and chats are live app data, not a mirror of the process cwd. '
+      + 'Use the `cascade-note` CLI on PATH to list, read, create, or edit live notes '
+      + '(`--listed` and `--folder` place new notes in the sidebar); do not conclude the notes are unavailable '
+      + 'because they are absent from the local filesystem or named tool list.',
+    `Cascade channel location: ${location}`,
+  ];
 
   let remaining = Math.max(0, Math.floor(maxProjectDocChars));
   let documentCount = 0;
