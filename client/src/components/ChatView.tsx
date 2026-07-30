@@ -310,15 +310,6 @@ function planUsageWindows(usage?: PlanUsage | null): PlanUsageWindow[] {
   }];
 }
 
-function formatPlanUsage(usage?: PlanUsage | null) {
-  if (!usage) return '';
-  if (usage.status !== 'ok') return 'usage unavailable';
-  return planUsageWindows(usage)
-    .slice(0, 3)
-    .map((window) => `${window.label} ${Math.round(window.usedPercent)}%`)
-    .join(' · ');
-}
-
 function formatPlanUsageTitle(usage?: PlanUsage | null) {
   if (!usage) return '';
   if (usage.status !== 'ok') return usage.detail || 'Plan usage unavailable';
@@ -332,6 +323,44 @@ function formatPlanUsageTitle(usage?: PlanUsage | null) {
   });
   if (usage.planType) lines.push(`Plan: ${usage.planType}`);
   return lines.join('\n');
+}
+
+function PlanUsageMeters({
+  usage,
+  stacked = false,
+}: {
+  usage: PlanUsage;
+  stacked?: boolean;
+}) {
+  const title = formatPlanUsageTitle(usage);
+  if (usage.status !== 'ok') {
+    return <span className="chat-plan-meters is-unavailable" title={title}>usage unavailable</span>;
+  }
+  const windows = planUsageWindows(usage).slice(0, 3);
+  return (
+    <span className={`chat-plan-meters${stacked ? ' is-stacked' : ''}`} title={title}>
+      {windows.map((window, index) => {
+        const percent = Math.round(window.usedPercent);
+        return (
+          <span
+            className="chat-plan-meter"
+            key={`${window.label}:${index}`}
+            role="progressbar"
+            aria-label={`${window.label} plan usage`}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={percent}
+          >
+            <span className="chat-plan-meter-label">{window.label}</span>
+            <span className="chat-plan-meter-track" aria-hidden="true">
+              <span className="chat-plan-meter-fill" style={{ width: `${percent}%` }} />
+            </span>
+            <span className="chat-plan-meter-value">{percent}%</span>
+          </span>
+        );
+      })}
+    </span>
+  );
 }
 
 function initialFor(name: string) {
@@ -919,11 +948,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
           <div className="chat-message-body">
             <div className="chat-message-meta">
               <strong>{head.author}</strong>
-              {planUsage && (
-                <span className={`chat-plan-usage${planUsage.status === 'ok' ? '' : ' is-unavailable'}`} title={formatPlanUsageTitle(planUsage)}>
-                  {formatPlanUsage(planUsage)}
-                </span>
-              )}
+              {planUsage && <PlanUsageMeters usage={planUsage} />}
               {ownerLabel && <span className="chat-agent-owner">{ownerLabel}'s agent</span>}
               <time dateTime={tail.createdAt}>{formatTime(tail.createdAt)}</time>
               {tail.status === 'running' && latestRunningMessageId === tail.id && runningSiblingCount > 1 && (
@@ -2341,11 +2366,7 @@ export const ChatView = memo(function ChatView({
                 <div className="chat-user-copy">
                   <strong>{agent.registration.displayName || agent.label}</strong>
                   <span>@{agent.registration.mention || agent.id} · {selectedModel || 'no model'}</span>
-                  {planUsage && (
-                    <span className={`chat-agent-plan-usage${planUsage.status === 'ok' ? '' : ' is-unavailable'}`} title={formatPlanUsageTitle(planUsage)}>
-                      {formatPlanUsage(planUsage)}
-                    </span>
-                  )}
+                  {planUsage && <PlanUsageMeters usage={planUsage} stacked />}
                 </div>
               </button>
               <button

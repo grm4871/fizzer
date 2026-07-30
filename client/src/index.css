@@ -1986,16 +1986,51 @@ a {
   color: var(--text-tertiary);
   font-size: 0.6875rem;
 }
-.chat-plan-usage {
-  color: var(--accent-hover);
+.chat-plan-meters {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: var(--text-tertiary);
   font-size: 0.625rem;
-  font-weight: 600;
-  line-height: 1.35;
+  line-height: 1;
+}
+.chat-plan-meters.is-unavailable {
+  color: var(--text-tertiary);
+  font-style: italic;
+}
+.chat-plan-meter {
+  display: grid;
+  grid-template-columns: auto 42px auto;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.chat-plan-meter-label,
+.chat-plan-meter-value {
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-.chat-plan-usage.is-unavailable {
+.chat-plan-meter-label {
   color: var(--text-tertiary);
-  font-weight: 400;
+}
+.chat-plan-meter-value {
+  color: var(--text-secondary);
+}
+.chat-plan-meter-track {
+  display: block;
+  width: 42px;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-tertiary) 18%, transparent);
+}
+.chat-plan-meter-fill {
+  display: block;
+  height: 100%;
+  min-width: 1px;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--text-secondary) 62%, transparent);
 }
 .chat-message-status {
   color: var(--text-tertiary);
@@ -2947,15 +2982,21 @@ a {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.chat-user-copy .chat-agent-plan-usage {
-  margin-top: 2px;
-  color: var(--accent-hover);
-  font-size: 0.625rem;
-  font-weight: 600;
+.chat-user-copy .chat-plan-meters.is-stacked {
+  display: flex;
+  width: 100%;
+  margin-top: 4px;
+  gap: 3px;
+  align-items: stretch;
+  flex-direction: column;
+  overflow: visible;
 }
-.chat-user-copy .chat-agent-plan-usage.is-unavailable {
-  color: var(--text-tertiary);
-  font-weight: 400;
+.chat-user-copy .chat-plan-meters.is-stacked .chat-plan-meter {
+  grid-template-columns: 42px minmax(28px, 1fr) 30px;
+  width: 100%;
+}
+.chat-user-copy .chat-plan-meters.is-stacked .chat-plan-meter-track {
+  width: 100%;
 }
 .chat-agent-user {
   display: flex;
