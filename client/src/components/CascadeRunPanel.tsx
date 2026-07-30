@@ -464,7 +464,7 @@ export const CascadeRunPanel = memo(function CascadeRunPanel({
 }) {
   const isRunning = message.status === 'running';
   const canExpand = hasRunActivity(message);
-  const [open, setOpen] = useState(isRunning);
+  const [open, setOpen] = useState(isRunning || forceOpen);
   const [showRaw, setShowRaw] = useState(false);
   const [hydrating, setHydrating] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -474,11 +474,10 @@ export const CascadeRunPanel = memo(function CascadeRunPanel({
   onContentGrowRef.current = onContentGrow;
   const onHydrateRef = useRef(onHydrateMessage);
   onHydrateRef.current = onHydrateMessage;
-  const effectiveOpen = open || forceOpen;
 
   // List API omits harness_log — pull full message once when the user expands.
   useEffect(() => {
-    if (!effectiveOpen || isRunning) return;
+    if (!open || isRunning) return;
     if (message.harnessLog) return;
     if (!message.hasHarness && !(message.blocks?.some((b) => b.type === 'thinking' || b.type === 'tool_use'))) {
       // Still may want full blocks if list truncated thinking — fetch when hasHarness only
@@ -501,14 +500,14 @@ export const CascadeRunPanel = memo(function CascadeRunPanel({
     return () => {
       cancelled = true;
     };
-  }, [effectiveOpen, isRunning, message.harnessLog, message.hasHarness, message.channelId, message.id, message.blocks, vaultId]);
+  }, [open, isRunning, message.harnessLog, message.hasHarness, message.channelId, message.id, message.blocks, vaultId]);
 
   // Heavy parse only when open or live — collapsed closed panels were parsing
   // full harness logs for every agent message during list scroll.
   const activity = useMemo(() => {
-    if (!isRunning && !effectiveOpen) return null;
+    if (!isRunning && !open) return null;
     return buildHarnessActivity(message);
-  }, [message, isRunning, effectiveOpen]);
+  }, [message, isRunning, open]);
   const summary = useMemo(
     () => (activity ? summarizeActivity(activity, isRunning) : (isRunning ? 'running…' : 'trace')),
     [activity, isRunning],
@@ -519,7 +518,7 @@ export const CascadeRunPanel = memo(function CascadeRunPanel({
   );
   const showUsage = activity ? (hasUsageStats(activity.stats) || statChips.length > 0) : false;
   // Harness body → main chat when already at top/bottom.
-  useScrollChain(bodyRef, Boolean(effectiveOpen && canExpand && activity));
+  useScrollChain(bodyRef, Boolean(open && canExpand && activity));
 
   // Fingerprint content growth (length alone misses same-length edits; items
   // grow thinking in-place without changing items.length).
@@ -542,21 +541,24 @@ export const CascadeRunPanel = memo(function CascadeRunPanel({
     }
   }, [isRunning]);
 
+  // Selecting a message opens its harness, but must not pin it open: gating the
+  // render on `open || forceOpen` made the toggle silently do nothing for as
+  // long as the message stayed selected, so a finished panel could not be closed.
   useEffect(() => {
     if (forceOpen) setOpen(true);
   }, [forceOpen]);
 
   useLayoutEffect(() => {
-    if (!activity || !isRunning || !effectiveOpen || showRaw) return;
+    if (!activity || !isRunning || !open || showRaw) return;
     if (!pinBottomRef.current) return;
     scrollToBottomSoon(bodyRef.current);
-  }, [scrollEpoch, isRunning, effectiveOpen, showRaw, activity]);
+  }, [scrollEpoch, isRunning, open, showRaw, activity]);
 
   // Keep the main chat panel pinned when harness/thinking expands.
   useLayoutEffect(() => {
-    if (!effectiveOpen || !activity) return;
+    if (!open || !activity) return;
     onContentGrowRef.current?.();
-  }, [scrollEpoch, effectiveOpen, activity]);
+  }, [scrollEpoch, open, activity]);
 
   if (!isRunning && !canExpand) return null;
 
@@ -567,7 +569,7 @@ export const CascadeRunPanel = memo(function CascadeRunPanel({
 
   return (
     <div
-      className={`cascade-run-panel ${effectiveOpen ? 'open' : ''} ${isRunning ? 'is-running' : ''}`}
+      className={`cascade-run-panel ${open ? 'open' : ''} ${isRunning ? 'is-running' : ''}`}
       onClick={(event) => event.stopPropagation()}
       onPointerDown={(event) => event.stopPropagation()}
     >
@@ -619,7 +621,7 @@ export const CascadeRunPanel = memo(function CascadeRunPanel({
         )}
       </div>
 
-      {effectiveOpen && canExpand && activity && (
+      {open && canExpand && activity && (
         <div className="crp-shell">
           <div
             className="crp-term"
