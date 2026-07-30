@@ -21,10 +21,12 @@
  *   cascade-note create --title T          # content from --content or stdin
  *   cascade-note edit <id|title>           # replace content (--content/stdin)
  *   cascade-note append <id|title>         # append content (--content/stdin)
+ *   cascade-note rename <id|title> --title T
+ *   cascade-note delete <id|title>
  *
  * Options:
  *   --vault <id>     vault id      (default $CASCADE_NOTE_VAULT, else sole vault)
- *   --title <t>      note title    (create)
+ *   --title <t>      note title    (create / rename)
  *   --content <c>    inline body   (else read stdin)
  *   --folder <id>    folder id     (create)
  *   --url <base>     API base      (default $CASCADE_NOTE_URL, else cscd.online)
@@ -52,6 +54,8 @@ Usage:
   cascade-note create --title T [--listed] body via stdin (recommended) / --content-file / --content
   cascade-note edit <id|title>           replace body (stdin / --content-file / --content)
   cascade-note append <id|title>         append body  (stdin / --content-file / --content)
+  cascade-note rename <id|title> --title T
+  cascade-note delete <id|title>         permanently delete a note
   cascade-note backlinks <id|title>      note + chat backlinks for a note
   cascade-note memory show               what agent memory would inject
   cascade-note memory list               list this agent's scratchpad notes
@@ -69,7 +73,7 @@ Body input (pick one):
 
 Options:
   --vault <id>     vault id   (default $CASCADE_NOTE_VAULT, else sole vault)
-  --title <t>      note title (create / memory)
+  --title <t>      note title (create / rename / memory)
   --folder <id>    folder id  (create)
   --listed         put create in the sidebar tree (default is unlisted / chat-only)
   --unlisted       explicit unlisted (default for create; kept for compatibility)
@@ -453,6 +457,28 @@ async function main() {
       const normalizedContent = content.replace(/\\+`/g, '`');
       const { note } = await api(url, token, 'PUT', `/api/notes/${id}`, { content: normalizedContent });
       out(args, `${cmd === 'append' ? 'appended to' : 'updated'} ${note.id}  ${note.title}`, note);
+      break;
+    }
+    case 'rename': {
+      const ref = args._[1];
+      if (!ref) fail('rename needs a note id or title.');
+      if (args.title !== undefined && typeof args.title !== 'string') fail('--title needs a value.');
+      const title = String(args.title || '').trim();
+      if (!title) fail('rename needs --title <new title>.');
+      const vaultId = await resolveVault(url, token, args, config);
+      const id = await resolveNote(url, token, vaultId, ref);
+      const { note } = await api(url, token, 'POST', `/api/notes/${id}/rename`, { title });
+      out(args, `renamed ${note.id}  ${note.title}`, note);
+      break;
+    }
+    case 'delete': {
+      const ref = args._[1];
+      if (!ref) fail('delete needs a note id or title.');
+      const vaultId = await resolveVault(url, token, args, config);
+      const id = await resolveNote(url, token, vaultId, ref);
+      const { note } = await api(url, token, 'GET', `/api/notes/${id}`);
+      const data = await api(url, token, 'DELETE', `/api/notes/${id}`);
+      out(args, `deleted ${note.id}  ${note.title}`, { ...data, note });
       break;
     }
     default:
