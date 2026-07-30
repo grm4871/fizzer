@@ -236,7 +236,7 @@ function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'\\''`)}'`;
 }
 
-function collectGrokUsage(grokCwd) {
+function collectGrokUsageAttempt(grokCwd, continueSession) {
   if (process.platform !== 'linux') {
     return Promise.reject(new Error('Grok usage probing currently requires the Linux desktop'));
   }
@@ -245,7 +245,7 @@ function collectGrokUsage(grokCwd) {
     let settled = false;
     let settleTimer = null;
     let answeredCursorQuery = false;
-    const mode = grokProbeHasSession ? '--continue ' : '';
+    const mode = continueSession ? '--continue ' : '';
     const command = `stty rows 30 cols 100; exec ${shellQuote(GROK_BIN)} ${mode}--minimal --no-alt-screen`;
     const child = spawn('script', ['-q', '-f', '-e', '-c', command, '/dev/null'], {
       cwd: grokCwd,
@@ -268,10 +268,7 @@ function collectGrokUsage(grokCwd) {
       if (settleTimer) clearTimeout(settleTimer);
       stopChild();
       if (error) reject(error);
-      else {
-        grokProbeHasSession = true;
-        resolve(usage);
-      }
+      else resolve(usage);
     };
     const onData = (chunk) => {
       output += chunk.toString();
@@ -299,7 +296,8 @@ function collectGrokUsage(grokCwd) {
       try {
         finish(null, parseGrokUsageScreen(output));
       } catch (error) {
-        finish(new Error(`Grok usage probe exited ${code}: ${error.message}`));
+        const tail = stripTerminalControls(output).replace(/\s+/g, ' ').trim().slice(-180);
+        finish(new Error(`Grok usage probe exited ${code}: ${error.message}${tail ? ` · ${tail}` : ''}`));
       }
     });
     const sendUsage = setTimeout(() => {
@@ -313,6 +311,30 @@ function collectGrokUsage(grokCwd) {
       }
     }, COMMAND_TIMEOUT_MS);
   });
+}
+
+async function collectGrokUsage(grokCwd) {
+  const firstMode = grokProbeHasSession;
+  try {
+    const usage = await collectGrokUsageAttempt(grokCwd, firstMode);
+    grokProbeHasSession = true;
+    return usage;
+  } catch (firstError) {
+    // Grok can exit during its first leader/session handshake even though the
+    // next launch succeeds immediately. Retry once using the opposite session
+    // mode: fresh after a stale --continue, or --continue after a fresh launch
+    // got far enough to create its probe session.
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    try {
+      const usage = await collectGrokUsageAttempt(grokCwd, !firstMode);
+      grokProbeHasSession = true;
+      return usage;
+    } catch (secondError) {
+      const first = firstError instanceof Error ? firstError.message : String(firstError);
+      const second = secondError instanceof Error ? secondError.message : String(secondError);
+      throw new Error(`${second}; initial attempt: ${first}`);
+    }
+  }
 }
 
 function failedUsage(provider, reason) {
@@ -340,6 +362,7 @@ async function collectPlanUsage({ grokCwd } = {}) {
 
 module.exports = {
   collectPlanUsage,
+  collectGrokUsage,
   parseClaudeUsageText,
   parseCodexRateLimits,
   parseGrokUsageScreen,
