@@ -1141,6 +1141,89 @@ export function buildAgentChatContext(
   }).join('\n');
 }
 
+/**
+ * Give chat agents the note-tree context that a person can see in the sidebar.
+ *
+ * The process cwd is an execution detail and may be the home directory, so it
+ * cannot tell an agent that (for example) #cubegen lives under projects / OC.
+ * Project notes in the channel folder (or an ancestor) are inherited context,
+ * just like an AGENTS.md file applies to descendants in a source tree.
+ */
+export function buildAgentChannelWorkspaceContext(
+  db: Db,
+  channelId: string,
+  maxProjectDocChars = 4_000,
+): string {
+  const channel = db.prepare(`
+    SELECT id, vault_id, folder_id, title
+    FROM notes
+    WHERE id = ?
+  `).get(channelId) as {
+    id: string;
+    vault_id: string;
+    folder_id: string | null;
+    title: string;
+  } | undefined;
+  if (!channel) return '';
+
+  type FolderRow = { id: string; parent_id: string | null; name: string };
+  const nearestFolders: FolderRow[] = [];
+  const seen = new Set<string>();
+  let folderId = channel.folder_id;
+  while (folderId && !seen.has(folderId) && nearestFolders.length < 32) {
+    seen.add(folderId);
+    const folder = db.prepare(`
+      SELECT id, parent_id, name
+      FROM folders
+      WHERE id = ? AND vault_id = ?
+    `).get(folderId, channel.vault_id) as FolderRow | undefined;
+    if (!folder) break;
+    nearestFolders.push(folder);
+    folderId = folder.parent_id;
+  }
+
+  const location = [
+    ...nearestFolders.slice().reverse().map((folder) => folder.name),
+    `#${channel.title}`,
+  ].join(' / ');
+  const chunks = [`Cascade channel location: ${location}`];
+
+  let remaining = Math.max(0, Math.floor(maxProjectDocChars));
+  let documentCount = 0;
+  for (const folder of nearestFolders) {
+    if (remaining <= 0 || documentCount >= 3) break;
+    const notes = db.prepare(`
+      SELECT id, title, content
+      FROM notes
+      WHERE vault_id = ?
+        AND folder_id = ?
+        AND id != ?
+        AND is_archived = 0
+      ORDER BY is_pinned DESC, updated_at DESC, title ASC
+    `).all(channel.vault_id, folder.id, channel.id) as Array<{
+      id: string;
+      title: string;
+      content: string;
+    }>;
+    for (const note of notes) {
+      if (remaining <= 0 || documentCount >= 3) break;
+      if (!/^Project(?:\s*(?:[-—–:])|\s+|$)/i.test(note.title.trim())) continue;
+      const body = String(note.content || '').trim();
+      const clipped = body.length > remaining
+        ? `${body.slice(0, Math.max(0, remaining - 1))}…`
+        : body;
+      chunks.push(
+        `Relevant project doc from ${folder.name} — ${note.title}:`
+        + (clipped ? `\n${clipped}` : ''),
+      );
+      remaining -= Math.min(body.length, remaining);
+      documentCount += 1;
+    }
+  }
+
+  return chunks.join('\n\n');
+}
+
 /** Full single message (includes harness log) — used when expanding a harness panel. */
 export function getChatMessage(
   db: Db,

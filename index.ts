@@ -84,6 +84,7 @@ import { fetchWidgetData } from './server/widgetData.js';
 import { corsOrigin, rateLimit, resolveDeploySecret, resolveJwtSecret } from './server/security.js';
 import {
   assertChatChannel,
+  buildAgentChannelWorkspaceContext,
   buildAgentChatContentFromRunEvents,
   buildAgentChatContext,
   CHAT_NOTE_MARKER,
@@ -1721,8 +1722,21 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     const willResume = Boolean(resumeSessionId);
 
     let effectivePrompt = prompt;
+    const contextChunks: string[] = [];
+    // Folder ancestry and nearby project docs are workspace state, not
+    // conversation history. Include them even when resuming an older CLI
+    // session so existing agents immediately pick up moves and new docs.
+    if (targetChannelId) {
+      try {
+        const workspace = buildAgentChannelWorkspaceContext(
+          db,
+          targetChannelId,
+          chatLightweight ? 1_200 : 4_000,
+        );
+        if (workspace) contextChunks.push(workspace);
+      } catch { /* best-effort context; the request still runs without it */ }
+    }
     if (!willResume) {
-      const contextChunks: string[] = [];
       // Lightweight chat pings: tiny recent transcript only — skip memory
       // injection so simple multiuser replies don't pay a full cold-start.
       if (targetChannelId) {
@@ -1797,9 +1811,9 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
           console.warn('Scratchpad injection skipped:', error instanceof Error ? error.message : error);
         }
       }
-      if (contextChunks.length) {
-        effectivePrompt = `${prompt}\n\n[Context: ${contextChunks.join('\n\n')}]`;
-      }
+    }
+    if (contextChunks.length) {
+      effectivePrompt = `${prompt}\n\n[Context: ${contextChunks.join('\n\n')}]`;
     }
 
     const run = await startRun(db, runVault, note_id || null, effectivePrompt, selectedAgent, {
