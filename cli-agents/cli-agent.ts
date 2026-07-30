@@ -193,9 +193,10 @@ const CODEX_BIN = process.env.CODEX_BIN || 'codex';
 const GROK_BIN = process.env.GROK_BIN || 'grok';
 const COPILOT_BIN = process.env.COPILOT_BIN || 'copilot';
 const HERMES_BIN = process.env.HERMES_BIN || 'hermes';
+const AKRON_BIN = process.env.AKRON_BIN || 'akron';
 const OMP_BIN = process.env.OMP_BIN || 'omp';
 
-export type CliAgentId = 'codex' | 'grok' | 'antigravity' | 'copilot' | 'hermes' | 'omp';
+export type CliAgentId = 'codex' | 'grok' | 'antigravity' | 'copilot' | 'hermes' | 'akron-grok' | 'omp';
 
 const CLI_AGENT_LABELS: Record<CliAgentId, string> = {
   codex: 'Codex',
@@ -203,6 +204,7 @@ const CLI_AGENT_LABELS: Record<CliAgentId, string> = {
   antigravity: 'Antigravity',
   copilot: 'Copilot',
   hermes: 'Hermes',
+  'akron-grok': 'Akron --grok',
   omp: 'OMP',
 };
 
@@ -216,6 +218,8 @@ export function getCliAgentBin(agent: CliAgentId): string {
       return COPILOT_BIN;
     case 'hermes':
       return HERMES_BIN;
+    case 'akron-grok':
+      return AKRON_BIN;
     case 'omp':
       return OMP_BIN;
     case 'antigravity':
@@ -244,10 +248,10 @@ export function getCliAgentAvailability(): Record<CliAgentId, { available: boole
     availability[agent] = available
       ? { available: true, bin }
       : {
-          available: false,
-          bin,
-          message: `${label} ('${bin}') is not installed or not on PATH. CLI agents run in the Cascade desktop app on this computer — install the CLI locally, or set ${agent.toUpperCase().replace('-', '_')}_BIN for the desktop app.`,
-        };
+        available: false,
+        bin,
+        message: `${label} ('${bin}') is not installed or not on PATH. CLI agents run in the Cascade desktop app on this computer — install the CLI locally, or set ${agent === 'akron-grok' ? 'AKRON_BIN' : `${agent.toUpperCase().replace('-', '_')}_BIN`} for the desktop app.`,
+      };
   }
   return availability;
 }
@@ -260,7 +264,7 @@ function assertCliAgentAvailable(agent: CliAgentId): void {
 }
 
 interface CliAgentOpts {
-  agent: 'codex' | 'grok' | 'antigravity' | 'copilot' | 'hermes' | 'omp';
+  agent: 'codex' | 'grok' | 'antigravity' | 'copilot' | 'hermes' | 'akron-grok' | 'omp';
   /** Minimal IDE-style context (selected note + vault). Prepended to the prompt. */
   context: string;
   userPrompt: string;
@@ -322,6 +326,8 @@ export async function runCliAgent(opts: CliAgentOpts): Promise<CliAgentResult> {
     return runCopilot(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.runId, opts.model, opts.env);
   } else if (opts.agent === 'hermes') {
     return runHermes(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.runId, opts.env);
+  } else if (opts.agent === 'akron-grok') {
+    return runAkronGrok(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.runId, opts.env);
   } else if (opts.agent === 'omp') {
     return runOmp(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.images || [], opts.runId, opts.model, opts.env);
   } else {
@@ -1795,6 +1801,54 @@ async function runHermes(prompt: string, cwd: string, emit: AgentEmit, resumeId?
     env,
   );
   return { summary: summaryText, sessionId };
+}
+
+/**
+ * Runs Akron's Grok-backed Hermes loop through its native launcher.
+ *
+ * Akron's `-z` path keeps stdout machine-readable while the launcher's local
+ * Grok bridge supplies inference. The native Akron toolset exposes its typed
+ * `scratchpad` adapter exactly once; Cascade's prompt formatter omits its
+ * parallel cascade-scratchpad instructions for this provider.
+ */
+async function runAkronGrok(prompt: string, cwd: string, emit: AgentEmit, _resumeId?: string, runId?: number, env?: NodeJS.ProcessEnv): Promise<CliAgentResult> {
+  const baseArgs = [
+    '--grok',
+    '-z',
+    prompt,
+    '--yolo',
+  ];
+  // Hermes oneshot owns a fresh session. Cascade injects recent channel
+  // context on each cold run, so do not claim resumability that -z lacks.
+  const args = baseArgs;
+
+  let text = '';
+  const onStdoutLine = (line: string) => {
+    text += line + '\n';
+    emit('text', { message: { content: [{ type: 'text', text: line + '\n' }] } });
+  };
+
+  const onStderrLine = (line: string) => {
+    if (!line.startsWith('{')) return;
+    const ev = JSON.parse(line) as { type?: string; text?: string };
+    if (ev.type === 'reasoning.delta' && ev.text) {
+      emit('text', { message: { content: [{ type: 'thinking', thinking: ev.text }] } });
+    }
+  };
+
+  const summaryText = await driveHermesProcess(
+    AKRON_BIN,
+    args,
+    cwd,
+    onStdoutLine,
+    onStderrLine,
+    () => text.trim() || 'Completed note operations successfully.',
+    'Akron --grok',
+    runId,
+    emit,
+    env,
+  );
+  return { summary: summaryText };
 }
 
 /** Like driveProcess, but also parses Hermes cascade NDJSON events from stderr. */

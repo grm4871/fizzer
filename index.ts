@@ -1584,7 +1584,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     return res.status(400).json({ error: 'Prompt is required' });
   }
 
-  const validAgents = ['claude-code', 'codex', 'grok', 'antigravity', 'copilot', 'hermes', 'omp'] as const satisfies readonly AgentId[];
+  const validAgents = ['claude-code', 'codex', 'grok', 'antigravity', 'copilot', 'hermes', 'akron-grok', 'omp'] as const satisfies readonly AgentId[];
   const removedModelPresets = new Set([
     'codex-flash',
     'codex-pro',
@@ -1661,7 +1661,9 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     targetChannelId = route.sourceChannelId;
     chatAuthor = registration.displayName || registration.agentId;
     chatRegistrationId = registration.id;
-    agentMemoryKey = registration.mention || registration.vaultAgentId || registration.agentId || selectedAgent;
+    agentMemoryKey = selectedAgent === 'akron-grok'
+      ? 'akron'
+      : registration.mention || registration.vaultAgentId || registration.agentId || selectedAgent;
   } else {
     const vault = getVault(db, req.params.id, req.user!.id);
     if (!vault) return res.status(404).json({ error: 'Vault not found' });
@@ -1673,7 +1675,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     yoloMode = yolo === true;
     chatAuthor = typeof req.body?.chat?.author === 'string' ? req.body.chat.author.trim() : '';
     chatRegistrationId = registrationId;
-    agentMemoryKey = chatAuthor || selectedAgent;
+    agentMemoryKey = selectedAgent === 'akron-grok' ? 'akron' : chatAuthor || selectedAgent;
   }
 
   // Every agent — Claude included — executes on a user's own machine via the

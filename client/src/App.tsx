@@ -1675,7 +1675,7 @@ export default function App() {
       const batchPrompt = directPrompt ? '' : precedingMessageBatchText(messages, candidate);
       const prompt = directPrompt || batchPrompt || mentionSource || 'Please review the attached media.';
       const runImages = mediaToRunImages(media);
-      const agentsWithoutImages = new Set<AgentId>(['grok', 'antigravity', 'copilot', 'hermes']);
+      const agentsWithoutImages = new Set<AgentId>(['grok', 'antigravity', 'copilot', 'hermes', 'akron-grok']);
       for (const registration of targetAgents) {
         const imagesForRun = agentsWithoutImages.has(registration.agentId as AgentId) ? [] : runImages;
         void startAgentChatRun(channelId, registration, prompt, trigger, imagesForRun);

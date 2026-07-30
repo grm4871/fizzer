@@ -84,4 +84,16 @@ describe('formatAgentChatPrompt', () => {
     expect(prompt).toContain('cascade-chat send');
     expect(prompt).toContain('run `cascade-chat send --message "$MESSAGE"`');
   });
+
+  it('leaves Akron scratchpad guidance to the native harness tool', () => {
+    const akron = { ...registration, agentId: 'akron-grok', mention: 'akron', displayName: 'Akron' };
+    const fresh = formatAgentChatPrompt('dev', akron, 'fix the runner and deploy', 'alice', false);
+    const continued = formatAgentChatPrompt('dev', akron, 'fix the runner and deploy', 'alice', true);
+
+    for (const prompt of [fresh, continued]) {
+      expect(prompt).toContain('harness-provided `scratchpad` tool');
+      expect(prompt).not.toContain('cascade-scratchpad');
+      expect(prompt).not.toContain('cascade-note memory');
+    }
+  });
 });
