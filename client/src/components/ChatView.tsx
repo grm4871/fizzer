@@ -635,6 +635,18 @@ export function mediaToRunImages(media: ChatMediaAttachment[]) {
     .map(({ media_type, data }) => ({ media_type, data }));
 }
 
+/** Images are stored on a message as data URLs. A reply points at that message
+ * but carries none of its media, so the quoted screenshot has to be re-read
+ * from the quoted message before a run can see it. */
+export function dataUrlsToRunImages(sources: string[] | undefined) {
+  const images: Array<{ media_type: string; data: string }> = [];
+  for (const src of sources ?? []) {
+    const match = /^data:([^;,]+);base64,(.+)$/s.exec(src.trim());
+    if (match && isImageMediaType(match[1])) images.push({ media_type: match[1], data: match[2] });
+  }
+  return images;
+}
+
 interface ChatMessageGroup {
   messages: ChatMessage[];
 }

@@ -13,6 +13,7 @@ import {
   CHAT_NOTE_MARKER,
   ChatView,
   createChatAgentRegistrationId,
+  dataUrlsToRunImages,
   mediaToRunImages,
   type ChatAgentRegistration,
   type ChatBlock,
@@ -1685,11 +1686,30 @@ export default function App() {
       const batchPrompt = directPrompt || quotedPrompt ? '' : precedingMessageBatchText(messages, candidate);
       const prompt = [quotedPrompt, directPrompt || batchPrompt].filter(Boolean).join('\n\n')
         || typedSource || 'Please review the attached media.';
-      const runImages = mediaToRunImages(media);
+      // Replying to a screenshot with "this is broken" attaches no media of its
+      // own — the image is on the quoted message. Forward it, or the agent gets
+      // the words and none of the evidence and guesses at what it cannot see.
+      const quotedMessage = replyTo ? messages.find((message) => message.id === replyTo.messageId) : undefined;
+      let quotedImages = dataUrlsToRunImages(quotedMessage?.images);
+      if (quotedMessage && quotedImages.length === 0 && quotedMessage.hasImages && vaultId) {
+        // The list payload strips heavy data URLs; refetch the one message we need.
+        try {
+          const full = await api<{ message: ChatMessage }>(
+            `/api/vaults/${vaultId}/channels/${channelId}/messages/${encodeURIComponent(quotedMessage.id)}`,
+          );
+          quotedImages = dataUrlsToRunImages(full.message?.images);
+        } catch { /* the quoted text still carries the ask */ }
+      }
+      const runImages = [...mediaToRunImages(media), ...quotedImages];
       const agentsWithoutImages = new Set<AgentId>(['grok', 'antigravity', 'copilot', 'hermes', 'akron-grok']);
       for (const registration of targetAgents) {
-        const imagesForRun = agentsWithoutImages.has(registration.agentId as AgentId) ? [] : runImages;
-        void startAgentChatRun(channelId, registration, prompt, trigger, imagesForRun);
+        const blind = agentsWithoutImages.has(registration.agentId as AgentId);
+        // Tell a text-only agent an image exists rather than let it answer as if
+        // the message were complete.
+        const promptForRun = blind && runImages.length > 0
+          ? `${prompt}\n\n(This message carries ${runImages.length} image(s) you cannot receive — say so instead of guessing.)`
+          : prompt;
+        void startAgentChatRun(channelId, registration, promptForRun, trigger, blind ? [] : runImages);
       }
     })();
   }, [scheduleChatMessagePatch, persistChatMessageToServer, startAgentChatRun, user, handleRegisterChatAgent, appendChatMessage]);

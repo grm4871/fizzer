@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import {
   ChatView,
+  dataUrlsToRunImages,
   getRunningMessageState,
   getSteeringPromptLabels,
   shouldRenderRunPanel,
@@ -116,5 +117,19 @@ describe('chat run panel lifecycle', () => {
     expect(markup).toContain('A complete final answer with nuance.');
     expect(markup).not.toContain('cascade-run-panel');
     expect(markup).not.toContain('Harness');
+  });
+});
+
+describe('dataUrlsToRunImages', () => {
+  it('decodes stored data URLs into run image parts', () => {
+    expect(dataUrlsToRunImages(['data:image/png;base64,AAAA', 'data:image/jpeg;base64,BBBB'])).toEqual([
+      { media_type: 'image/png', data: 'AAAA' },
+      { media_type: 'image/jpeg', data: 'BBBB' },
+    ]);
+  });
+
+  it('skips non-image and non-data sources', () => {
+    expect(dataUrlsToRunImages(['https://example.com/a.png', 'data:text/plain;base64,AAAA'])).toEqual([]);
+    expect(dataUrlsToRunImages(undefined)).toEqual([]);
   });
 });
