@@ -4,54 +4,91 @@
 
 /* Fonts load async via <link> in app.html — CSS @import blocked first paint. */
 
-/* ─── Design Tokens ──────────────────────────────────────── */
+/* ─── Design Tokens ──────────────────────────────────────────
+   Facelift direction: 1980s performance-car marketing. Black
+   moulded plastic, amber instrument backlight, a chrome hairline
+   where a panel catches the light, and the decal stripe set —
+   amber / magenta / ice, widest band first — as the marker for
+   whatever is active. Cool graphite replaces the old warm brown
+   so the amber reads as a lit filament rather than as wood.
+   ──────────────────────────────────────────────────────────── */
 :root {
-  --bg-base: hsl(22, 8%, 7%);
-  --bg-surface: hsl(22, 6%, 10%);
-  --bg-raised: hsl(22, 7%, 14%);
-  --bg-overlay: hsl(22, 8%, 19%);
-  --bg-deep: hsl(22, 8%, 5%);
+  /* Dash black → console → moulded plastic */
+  --bg-base: hsl(225, 12%, 7%);
+  --bg-surface: hsl(226, 13%, 10%);
+  --bg-raised: hsl(226, 14%, 14%);
+  --bg-overlay: hsl(227, 14%, 19%);
+  --bg-deep: hsl(225, 14%, 4%);
 
-  --border: hsl(25, 8%, 19%);
-  --border-active: hsl(33, 65%, 50%);
-  --border-subtle: hsl(22, 7%, 13%);
+  --border: hsl(226, 11%, 20%);
+  --border-active: hsl(38, 92%, 55%);
+  --border-subtle: hsl(226, 12%, 14%);
 
-  --text-primary: hsl(35, 12%, 88%);
-  --text-secondary: hsl(30, 7%, 57%);
-  --text-tertiary: hsl(25, 5%, 38%);
+  /* Chrome, not cream */
+  --text-primary: hsl(222, 14%, 90%);
+  --text-secondary: hsl(222, 9%, 60%);
+  --text-tertiary: hsl(224, 8%, 40%);
 
-  --accent: hsl(33, 68%, 52%);
-  --accent-hover: hsl(33, 72%, 63%);
-  --accent-subtle: hsla(33, 68%, 52%, 0.12);
-  --accent-glow: hsla(33, 68%, 52%, 0.28);
+  /* Turbo amber — instrument backlight */
+  --accent: hsl(38, 92%, 55%);
+  --accent-hover: hsl(40, 96%, 65%);
+  --accent-subtle: hsla(38, 92%, 55%, 0.13);
+  --accent-glow: hsla(38, 92%, 55%, 0.3);
+
+  /* The decal stripe set. Ordered: amber leads, magenta, ice trails. */
+  --decal-1: hsl(38, 92%, 55%);
+  --decal-2: hsl(338, 78%, 55%);
+  --decal-3: hsl(192, 78%, 58%);
+  --decal-stripe: linear-gradient(
+    180deg,
+    var(--decal-1) 0 45%,
+    var(--decal-2) 45% 75%,
+    var(--decal-3) 75% 100%
+  );
+  --decal-stripe-h: linear-gradient(
+    90deg,
+    var(--decal-1) 0 45%,
+    var(--decal-2) 45% 75%,
+    var(--decal-3) 75% 100%
+  );
+
   /* Keyboard focus is intentionally cooler and quieter than the brand accent. */
-  --focus-ring: hsl(205, 62%, 64%);
-  --focus-ring-subtle: hsla(205, 62%, 64%, 0.2);
+  --focus-ring: hsl(192, 78%, 62%);
+  --focus-ring-subtle: hsla(192, 78%, 62%, 0.22);
 
-  --success: hsl(150, 45%, 48%);
-  --success-subtle: hsla(150, 45%, 48%, 0.12);
-  --warning: hsl(55, 75%, 50%);
-  --warning-subtle: hsla(55, 75%, 50%, 0.12);
-  --danger: hsl(5, 62%, 58%);
-  --danger-subtle: hsla(5, 62%, 58%, 0.12);
+  --success: hsl(152, 62%, 48%);
+  --success-subtle: hsla(152, 62%, 48%, 0.13);
+  --warning: hsl(48, 92%, 55%);
+  --warning-subtle: hsla(48, 92%, 55%, 0.13);
+  --danger: hsl(357, 82%, 62%);
+  --danger-subtle: hsla(357, 82%, 62%, 0.13);
 
-  --font-sans: 'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  /* Chakra Petch for badge/label type (squared terminals, real obliques);
+     Saira for body copy; JetBrains Mono for readouts. */
+  --font-display: 'Chakra Petch', 'Saira', ui-sans-serif, system-ui, sans-serif;
+  --font-sans: 'Saira', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Code', Consolas, monospace;
 
-  --radius-sm: 3px;
-  --radius-md: 6px;
-  --radius-lg: 10px;
-  --radius-xl: 14px;
+  /* Wedge geometry: corners are cut, not rounded. */
+  --radius-sm: 0px;
+  --radius-md: 2px;
+  --radius-lg: 3px;
+  --radius-xl: 4px;
+  --chamfer: 7px;
+  --chamfer-sm: 5px;
 
   /* Snappy chrome: long transitions read as hover lag when idle. */
   --transition-fast: 0ms;
   --transition-normal: 80ms ease-out;
   --transition-slow: 140ms ease-out;
 
-  --shadow-sm: 0 1px 3px hsla(0, 0%, 0%, 0.4);
-  --shadow-md: 0 4px 14px hsla(0, 0%, 0%, 0.5);
-  --shadow-lg: 0 10px 40px hsla(0, 0%, 0%, 0.6);
-  --shadow-glow: 0 0 28px hsla(33, 68%, 40%, 0.12);
+  --shadow-sm: 0 1px 3px hsla(0, 0%, 0%, 0.5);
+  --shadow-md: 0 4px 14px hsla(0, 0%, 0%, 0.6);
+  --shadow-lg: 0 10px 40px hsla(0, 0%, 0%, 0.7);
+  --shadow-glow: 0 0 28px hsla(38, 92%, 45%, 0.14);
+
+  /* Chrome hairline along the top edge of a raised panel. */
+  --bevel: inset 0 1px 0 hsla(220, 30%, 82%, 0.09);
 }
 
 /* ─── Global Reset ───────────────────────────────────────── */
@@ -103,12 +140,12 @@ a {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: hsl(25, 7%, 22%);
+  background: hsl(224, 8%, 22%);
   border-radius: 10px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: hsl(25, 8%, 30%);
+  background: hsl(224, 8%, 30%);
 }
 
 ::-webkit-scrollbar-corner {
@@ -117,12 +154,12 @@ a {
 
 * {
   scrollbar-width: thin;
-  scrollbar-color: hsl(25, 7%, 22%) transparent;
+  scrollbar-color: hsl(224, 8%, 22%) transparent;
 }
 
 /* ─── Selection ──────────────────────────────────────────── */
 ::selection {
-  background: hsla(33, 65%, 50%, 0.28);
+  background: hsla(38, 77%, 50%, 0.28);
   color: var(--text-primary);
 }
 
@@ -173,24 +210,30 @@ a {
 
 /* ─── Buttons ────────────────────────────────────────────── */
 .btn {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
-  padding: 7px 14px;
+  padding: 6px 13px;
   border-radius: var(--radius-md);
-  font-size: 0.8125rem;
-  font-weight: 500;
+  font-family: var(--font-display);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
   cursor: pointer;
   transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
   white-space: nowrap;
   user-select: none;
   border: 1px solid var(--border);
   background: var(--bg-raised);
+  box-shadow: var(--bevel);
   color: var(--text-primary);
 }
 .btn:hover:not(:disabled) {
   background: var(--bg-overlay);
+  border-color: hsl(226, 11%, 28%);
 }
 .btn:active:not(:disabled) {
   filter: brightness(0.92);
@@ -199,11 +242,23 @@ a {
   opacity: 0.4;
   cursor: not-allowed;
 }
+/* Primary carries the decal on its leading edge — the one lit control. */
 .btn-primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: hsl(22, 15%, 8%);
-  font-weight: 600;
+  color: hsl(225, 25%, 8%);
+  font-weight: 700;
+  padding-left: 16px;
+  box-shadow: none;
+}
+.btn-primary::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--decal-stripe);
 }
 .btn-primary:hover:not(:disabled) {
   background: var(--accent-hover);
@@ -219,7 +274,7 @@ a {
   color: var(--text-primary);
 }
 .btn-danger {
-  border-color: hsla(5, 40%, 35%, 0.5);
+  border-color: hsla(357, 40%, 35%, 0.5);
   color: var(--danger);
 }
 .btn-danger:hover:not(:disabled) {
@@ -287,17 +342,26 @@ a {
   border-radius: var(--radius-md);
 }
 
-/* ─── Badge / Tag ────────────────────────────────────────── */
+/* ─── Badge / Tag ──────────────────────────────────────────
+   Chamfered like a homologation data plate. The cut corners are
+   the one place the wedge geometry is stated outright. */
 .badge {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 8px;
-  border-radius: 999px;
+  padding: 2px 9px;
+  border-radius: 0;
+  clip-path: polygon(
+    var(--chamfer-sm) 0, 100% 0,
+    100% calc(100% - var(--chamfer-sm)), calc(100% - var(--chamfer-sm)) 100%,
+    0 100%, 0 var(--chamfer-sm)
+  );
+  font-family: var(--font-display);
   font-size: 0.6875rem;
-  font-weight: 500;
+  font-weight: 600;
+  font-style: italic;
   text-transform: uppercase;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.11em;
   background: var(--bg-overlay);
   color: var(--text-secondary);
 }
@@ -305,7 +369,7 @@ a {
   display: inline-block;
   width: 5px;
   height: 5px;
-  border-radius: 50%;
+  border-radius: 0;
   background: var(--accent);
   flex-shrink: 0;
 }
@@ -318,7 +382,10 @@ a {
   display: grid;
   place-items: center;
   padding: 24px;
-  background: var(--bg-base);
+  /* Low amber wash off the bottom edge, like a car lit from below on a stand. */
+  background:
+    radial-gradient(ellipse 80% 45% at 50% 118%, hsla(38, 92%, 50%, 0.1) 0%, transparent 70%),
+    var(--bg-base);
 }
 
 .auth-panel {
@@ -336,22 +403,38 @@ a {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  margin-bottom: 10px;
+  gap: 10px;
+  margin-bottom: 4px;
   color: var(--text-primary);
 }
 .auth-panel h1 {
-  font-size: 1.25rem;
-  font-weight: 500;
+  font-family: var(--font-display);
+  font-size: 1.375rem;
+  font-weight: 700;
+  font-style: italic;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
   line-height: 1;
+  /* Optical: the tracking on the last glyph pushes the group off-centre. */
+  margin-right: -0.16em;
+}
+/* Decal under the wordmark. Widest band leads, as on a door stripe. */
+.auth-brand + .auth-decal {
+  height: 3px;
+  margin-bottom: 16px;
+  background: var(--decal-stripe-h);
 }
 .auth-panel label {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  font-size: 0.8125rem;
-  font-weight: 500;
-  color: var(--text-secondary);
+  font-family: var(--font-display);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  font-style: italic;
+  text-transform: uppercase;
+  letter-spacing: 0.13em;
+  color: var(--text-tertiary);
 }
 .auth-panel input {
   width: 100%;
@@ -364,18 +447,27 @@ a {
   font-size: 0.875rem;
   transition: border-color var(--transition-fast);
 }
-.auth-panel input:focus {
+/* These inputs are underlines, so the focus state thickens the underline
+   rather than boxing the field — a full ring fights the brochure ruling. */
+.auth-panel input:focus,
+.auth-panel input:focus-visible {
+  border-bottom-width: 2px;
   border-color: var(--accent);
+  box-shadow: none;
+  padding-bottom: 9px;
 }
 .auth-panel button[type="submit"] {
   width: 100%;
-  padding: 10px 14px;
+  padding: 11px 14px;
   background: var(--accent);
-  color: hsl(22, 15%, 8%);
+  color: hsl(225, 25%, 8%);
   border: none;
   border-radius: var(--radius-md);
-  font-size: 0.875rem;
-  font-weight: 600;
+  font-family: var(--font-display);
+  font-size: 0.8125rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
   cursor: pointer;
   transition: background var(--transition-fast);
 }
@@ -401,7 +493,7 @@ a {
   padding: 6px 10px;
   background: var(--danger-subtle);
   border-radius: var(--radius-md);
-  border: 1px solid hsla(5, 62%, 58%, 0.2);
+  border: 1px solid hsla(357, 62%, 58%, 0.2);
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -487,9 +579,12 @@ a {
   min-height: 50px;
 }
 .sidebar-header .vault-name {
-  font-weight: 600;
-  font-size: 0.875rem;
-  letter-spacing: -0.01em;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-style: italic;
+  font-size: 0.8125rem;
+  text-transform: uppercase;
+  letter-spacing: 0.11em;
   color: var(--text-primary);
   display: flex;
   align-items: center;
@@ -529,11 +624,24 @@ a {
 }
 
 .sidebar-section-label {
-  padding: 12px 16px 4px;
-  font-size: 0.6875rem;
-  font-weight: 400;
-  letter-spacing: 0.09em;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 16px 5px;
+  font-family: var(--font-display);
+  font-size: 0.625rem;
+  font-weight: 600;
+  font-style: italic;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
   color: var(--text-tertiary);
+}
+/* Hairline runs out from the label to the panel edge — brochure section rule. */
+.sidebar-section-label::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
 }
 .folder-tree {
   flex: 1;
@@ -561,24 +669,24 @@ a {
   min-height: 30px;
 }
 .tree-item:hover {
-  background: linear-gradient(90deg, hsla(33, 68%, 52%, 0.07) 0%, transparent 100%);
+  background: linear-gradient(90deg, hsla(38, 92%, 55%, 0.07) 0%, transparent 100%);
   color: var(--text-primary);
 }
 
-/* Signature element — the cascade: copper glow fades right from the active bar */
+/* Signature element — the decal stripe marks the active row, and the amber
+   band's glow washes right the way an instrument light bleeds across a bezel. */
 .tree-item.active {
-  background: linear-gradient(90deg, hsla(33, 68%, 52%, 0.18) 0%, hsla(33, 68%, 52%, 0.04) 55%, transparent 100%);
+  background: linear-gradient(90deg, hsla(38, 92%, 55%, 0.17) 0%, hsla(38, 92%, 55%, 0.03) 55%, transparent 100%);
   color: var(--text-primary);
 }
 .tree-item.active::before {
   content: '';
   position: absolute;
   left: 0;
-  top: 4px;
-  bottom: 4px;
-  width: 2px;
-  background: var(--accent);
-  border-radius: 0 2px 2px 0;
+  top: 3px;
+  bottom: 3px;
+  width: 3px;
+  background: var(--decal-stripe);
   box-shadow: 0 0 8px var(--accent-glow);
 }
 .tree-item .tree-icon {
@@ -653,7 +761,7 @@ a {
 /* Drop target highlight while dragging a note */
 .tree-item.drag-over {
   background: var(--accent-subtle);
-  box-shadow: inset 0 0 0 1px hsla(33, 68%, 52%, 0.45);
+  box-shadow: inset 0 0 0 1px hsla(38, 80%, 52%, 0.45);
   color: var(--text-primary);
 }
 .sidebar-section-label.drag-over {
@@ -913,10 +1021,10 @@ a {
 .sidebar-footer .user-avatar {
   width: 24px;
   height: 24px;
-  border-radius: 50%;
+  border-radius: var(--radius-md);
   background: var(--accent-subtle);
   color: var(--accent);
-  border: 1px solid hsla(33, 68%, 52%, 0.3);
+  border: 1px solid hsla(38, 80%, 52%, 0.3);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -932,6 +1040,7 @@ a {
   align-items: stretch;
   background: var(--bg-surface);
   border-bottom: 1px solid var(--border);
+  box-shadow: var(--bevel);
   min-height: 38px;
   overflow-x: auto;
   overflow-y: hidden;
@@ -960,12 +1069,15 @@ a {
   align-items: center;
   gap: 6px;
   padding: 0 14px;
-  font-size: 0.8125rem;
+  font-family: var(--font-display);
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.05em;
   color: var(--text-secondary);
   cursor: pointer;
   border: none;
   background: none;
-  border-bottom: 2px solid transparent;
+  border-bottom: 3px solid transparent;
   transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
   white-space: nowrap;
   position: relative;
@@ -973,12 +1085,23 @@ a {
 }
 .tab-item:hover {
   color: var(--text-primary);
-  background: hsla(22, 7%, 14%, 0.5);
+  background: hsla(226, 14%, 16%, 0.6);
 }
+/* The active tab wears the decal along its bottom edge. */
 .tab-item.active {
   color: var(--text-primary);
-  border-bottom-color: var(--accent);
-  background: hsla(33, 60%, 45%, 0.06);
+  font-weight: 600;
+  border-bottom-color: transparent;
+  background: hsla(38, 80%, 48%, 0.07);
+}
+.tab-item.active::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -3px;
+  height: 3px;
+  background: var(--decal-stripe-h);
 }
 .tab-item .tab-title {
   max-width: 160px;
@@ -988,7 +1111,7 @@ a {
 .tab-item .tab-dirty {
   width: 5px;
   height: 5px;
-  border-radius: 50%;
+  border-radius: 0;
   background: var(--accent);
   flex-shrink: 0;
 }
@@ -1021,7 +1144,7 @@ a {
   width: 34px;
   min-width: 34px;
   border: 0;
-  border-bottom: 2px solid transparent;
+  border-bottom: 3px solid transparent;
   background: transparent;
   color: var(--text-tertiary);
   display: flex;
@@ -1031,15 +1154,20 @@ a {
   transition: background-color var(--transition-fast), color var(--transition-fast);
 }
 .tab-new-btn:hover {
-  background: hsla(22, 7%, 14%, 0.5);
+  background: hsla(226, 12%, 14%, 0.5);
   color: var(--text-primary);
 }
 .tab-bar-empty {
   display: flex;
   align-items: center;
   padding: 0 16px;
-  font-size: 0.8125rem;
   color: var(--text-tertiary);
+  font-family: var(--font-display);
+  font-size: 0.75rem;
+  font-weight: 600;
+  font-style: italic;
+  text-transform: uppercase;
+  letter-spacing: 0.13em;
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -1052,7 +1180,7 @@ a {
   min-height: 0;
   overflow: hidden;
   background:
-    radial-gradient(ellipse at 50% 25%, hsla(33, 50%, 20%, 0.05) 0%, transparent 65%),
+    radial-gradient(ellipse at 50% 22%, hsla(38, 60%, 26%, 0.055) 0%, transparent 62%),
     var(--bg-base);
 }
 
@@ -1063,6 +1191,7 @@ a {
   padding: 5px 12px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-surface);
+  box-shadow: var(--bevel);
   flex-shrink: 0;
 }
 .toolbar-btn {
@@ -1072,6 +1201,7 @@ a {
   color: var(--text-tertiary);
   border-radius: var(--radius-sm);
   cursor: pointer;
+  font-family: var(--font-display);
   font-size: 0.8125rem;
   font-weight: 600;
   transition: background-color var(--transition-fast), color var(--transition-fast);
@@ -1113,6 +1243,8 @@ a {
 }
 .editor-view-toggle .toolbar-btn { height: 23px; min-width: 25px; padding: 3px 5px; }
 
+/* Note titles get the badge treatment: heavy squared italic, the way a model
+   name was set on a bootlid. Not uppercased — that's the user's text. */
 .editor-title {
   flex-shrink: 0;
   width: 100%;
@@ -1120,16 +1252,18 @@ a {
   outline: none;
   background: transparent;
   color: var(--text-primary);
-  font-family: var(--font-sans);
-  font-size: 2rem;
-  font-weight: 300;
-  line-height: 1.2;
-  padding: 22px 26px 4px;
-  letter-spacing: -0.02em;
+  font-family: var(--font-display);
+  font-size: 1.875rem;
+  font-weight: 700;
+  font-style: italic;
+  line-height: 1.15;
+  padding: 22px 26px 6px;
+  letter-spacing: 0.01em;
 }
 .editor-title::placeholder {
   color: var(--text-tertiary);
-  font-weight: 300;
+  font-weight: 600;
+  font-style: italic;
 }
 
 .editor-codemirror {
@@ -1159,6 +1293,7 @@ a {
   min-width: min-content;
   height: 100%;
 }
+/* Columns are moulded panels: chrome hairline on top, decal under the header. */
 .kanban-column {
   width: 280px;
   max-height: 100%;
@@ -1167,27 +1302,43 @@ a {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--bg-surface);
+  box-shadow: var(--bevel);
   overflow: hidden;
 }
 .kanban-column > header {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 11px 12px 9px;
   border-bottom: 1px solid var(--border);
 }
+.kanban-column > header::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: -1px;
+  width: 46px;
+  height: 2px;
+  background: var(--decal-stripe-h);
+}
 .kanban-column > header strong {
   color: var(--text-primary);
-  font-size: 0.8125rem;
-  font-weight: 650;
+  font-family: var(--font-display);
+  font-size: 0.75rem;
+  font-weight: 700;
+  font-style: italic;
+  text-transform: uppercase;
+  letter-spacing: 0.11em;
 }
 .kanban-column > header span {
   min-width: 20px;
   padding: 1px 6px;
-  border-radius: 999px;
+  border-radius: 0;
   background: var(--bg-raised);
   color: var(--text-tertiary);
   font: 0.6875rem/18px var(--font-mono);
+  font-variant-numeric: tabular-nums;
   text-align: center;
 }
 .kanban-cards {
@@ -1229,7 +1380,7 @@ a {
   height: 16px;
   margin-top: 1px;
   border: 1px solid var(--border-active);
-  border-radius: 4px;
+  border-radius: 0;
 }
 .kanban-card.is-complete .kanban-card-check { border-color: var(--success); color: var(--success); }
 .kanban-card-delete { padding: 2px; opacity: 0; }
@@ -1289,7 +1440,14 @@ a {
   text-align: center;
 }
 .kanban-empty-icon { font-size: 2rem; color: var(--accent); opacity: 0.7; }
-.kanban-empty strong { color: var(--text-primary); }
+.kanban-empty strong {
+  color: var(--text-primary);
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-style: italic;
+  text-transform: uppercase;
+  letter-spacing: 0.13em;
+}
 .kanban-empty p { margin: 0 0 6px; font-size: 0.8125rem; }
 .kanban-empty button { padding: 7px 10px; }
 .editor-codemirror .cm-editor {
@@ -1314,8 +1472,12 @@ a {
   color: var(--accent);
 }
 .editor-empty .empty-title {
-  font-size: 1rem;
-  font-weight: 400;
+  font-family: var(--font-display);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  font-style: italic;
+  text-transform: uppercase;
+  letter-spacing: 0.13em;
   color: var(--text-secondary);
 }
 .editor-empty .empty-hint {
@@ -1331,36 +1493,57 @@ a {
   font-size: 0.75rem;
 }
 
+/* Instrument cluster: dead-black strip, amber numerals, items separated by
+   tick marks rather than whitespace so it reads as one gauge. */
 .editor-status-bar {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 0;
   padding: 4px 18px;
   border-top: 1px solid var(--border);
-  background: var(--bg-surface);
+  background: var(--bg-deep);
   font-size: 0.6875rem;
   color: var(--text-tertiary);
   flex-shrink: 0;
   min-height: 26px;
   font-family: var(--font-mono);
-  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 .editor-status-bar .status-item {
   display: flex;
   align-items: center;
   gap: 4px;
+  padding: 0 13px;
+  position: relative;
+  color: hsl(38, 55%, 62%);
+}
+.editor-status-bar .status-item:first-child {
+  padding-left: 0;
+}
+.editor-status-bar .status-item + .status-item::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 1px;
+  height: 9px;
+  background: var(--border);
 }
 .editor-status-bar .status-saved {
   color: var(--success);
-  opacity: 0.8;
+  opacity: 0.85;
 }
 .editor-status-bar .status-public {
   border: none;
   background: none;
-  padding: 0;
   color: var(--accent);
   cursor: pointer;
   font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
 }
 .editor-status-bar .status-public:hover {
   text-decoration: underline;
@@ -1405,8 +1588,11 @@ a {
   flex-direction: column;
 }
 .chat-header-copy h2 {
+  font-family: var(--font-display);
   font-size: 0.9375rem;
-  font-weight: 600;
+  font-weight: 700;
+  font-style: italic;
+  letter-spacing: 0.04em;
   line-height: 1.2;
 }
 /* Members toolbar toggle is mobile-only (mirrors folder sidebar expand). */
@@ -1484,7 +1670,7 @@ a {
   content: '';
   position: absolute;
   inset: 0;
-  background: hsla(22, 7%, 14%, 0.42);
+  background: hsla(226, 12%, 14%, 0.42);
   opacity: 0;
   pointer-events: none;
   z-index: 0;
@@ -1503,7 +1689,7 @@ a {
 }
 .chat-message-group.has-run-widget .chat-message-chunk.selected {
   border-radius: var(--radius-sm);
-  background: hsla(22, 7%, 14%, 0.35);
+  background: hsla(226, 12%, 14%, 0.35);
 }
 /* Swipe-left → reply (mobile/touch). Hint sits under the sliding content. */
 .chat-swipe-row {
@@ -1525,7 +1711,7 @@ a {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 50%;
+  border-radius: var(--radius-md);
   background: var(--accent-subtle);
   color: var(--accent);
   pointer-events: none;
@@ -1534,7 +1720,7 @@ a {
 }
 .chat-swipe-row.is-armed .chat-swipe-reply-hint {
   background: var(--accent);
-  color: hsl(22, 15%, 8%);
+  color: hsl(226, 12%, 8%);
 }
 .chat-swipe-content {
   position: relative;
@@ -1558,8 +1744,8 @@ a {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 50%;
-  background: hsl(196, 33%, 25%);
+  border-radius: var(--radius-md);
+  background: hsl(192, 33%, 25%);
   color: hsl(190, 22%, 88%);
   font-size: 0.8125rem;
   font-weight: 700;
@@ -1571,11 +1757,11 @@ a {
   flex-basis: 30px;
 }
 .chat-avatar-agent {
-  background: hsl(33, 35%, 22%);
+  background: hsl(38, 47%, 22%);
   color: var(--accent-hover);
 }
 .chat-avatar-human {
-  background: hsl(196, 33%, 25%);
+  background: hsl(192, 33%, 25%);
   color: hsl(190, 22%, 88%);
 }
 .chat-avatar img {
@@ -1628,7 +1814,7 @@ a {
   margin: 0 0 6px;
   padding: 3px 7px;
   border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--border));
-  border-radius: 999px;
+  border-radius: 0;
   background: var(--accent-subtle);
   color: var(--accent-hover);
   font: 0.6875rem/1.35 var(--font-mono);
@@ -1728,14 +1914,14 @@ a {
   padding: 9px 11px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: hsla(22, 7%, 13%, 0.76);
+  background: hsla(226, 12%, 13%, 0.76);
   color: var(--text-secondary);
   text-align: left;
   cursor: pointer;
 }
 .chat-doc-embed:hover:not(:disabled) {
   border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
-  background: hsla(22, 7%, 16%, 0.86);
+  background: hsla(226, 12%, 16%, 0.86);
 }
 .chat-doc-embed:disabled {
   cursor: default;
@@ -1759,8 +1945,8 @@ a {
   line-height: 1.4;
 }
 .chat-mention {
-  color: hsl(33, 90%, 68%);
-  background: hsla(33, 68%, 52%, 0.22);
+  color: hsl(38, 100%, 68%);
+  background: hsla(38, 80%, 52%, 0.22);
   border-radius: var(--radius-sm);
   padding: 0 2px;
   font-weight: 500;
@@ -1773,7 +1959,7 @@ a {
   padding: 4px 8px;
   border-left: 2px solid var(--accent);
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-  background: hsla(22, 7%, 14%, 0.55);
+  background: hsla(226, 12%, 14%, 0.55);
   color: var(--text-tertiary);
   font-size: 0.75rem;
   line-height: 1.35;
@@ -1800,7 +1986,7 @@ a {
   gap: 8px;
   padding: 6px 8px;
   border-bottom: 1px solid var(--border-subtle);
-  background: hsla(22, 7%, 14%, 0.65);
+  background: hsla(226, 12%, 14%, 0.65);
 }
 .chat-reply-bar-copy {
   min-width: 0;
@@ -1814,7 +2000,7 @@ a {
   font-size: 0.6875rem;
 }
 .chat-reply-bar-label strong {
-  color: hsl(33, 90%, 68%);
+  color: hsl(38, 100%, 68%);
   font-weight: 600;
 }
 .chat-reply-bar-preview {
@@ -1878,7 +2064,7 @@ a {
   margin-top: 8px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  background: #0c0b0a;
+  background: var(--bg-deep);
   overflow: hidden;
   box-sizing: border-box;
   /* layout/style only — paint+content-visibility made thinking folds flash
@@ -1893,15 +2079,15 @@ a {
   contain-intrinsic-size: auto 36px;
 }
 .cascade-run-panel.is-running {
-  border-color: hsla(33, 40%, 40%, 0.45);
+  border-color: hsla(38, 52%, 40%, 0.45);
 }
 .crp-header {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 4px;
   align-items: stretch;
-  border-bottom: 1px solid hsla(25, 8%, 100%, 0.06);
-  background: hsla(22, 8%, 100%, 0.03);
+  border-bottom: 1px solid hsla(224, 8%, 100%, 0.06);
+  background: hsla(226, 12%, 100%, 0.03);
 }
 .cascade-run-panel:not(.open) .crp-header {
   border-bottom: none;
@@ -1913,7 +2099,7 @@ a {
   align-items: center;
   gap: 7px;
   padding: 6px 9px;
-  color: hsl(30, 8%, 62%);
+  color: hsl(222, 9%, 62%);
   font-family: var(--font-mono);
   font-size: 0.6875rem;
   text-align: left;
@@ -1925,14 +2111,14 @@ a {
   cursor: pointer;
 }
 .crp-toggle:not(:disabled):focus-visible {
-  color: hsl(35, 12%, 82%);
-  background: hsla(22, 8%, 100%, 0.03);
+  color: hsl(222, 13%, 82%);
+  background: hsla(226, 12%, 100%, 0.03);
   box-shadow: none;
 }
 @media (hover: hover) and (pointer: fine) {
   .crp-toggle:not(:disabled):hover {
-    color: hsl(35, 12%, 82%);
-    background: hsla(22, 8%, 100%, 0.03);
+    color: hsl(222, 13%, 82%);
+    background: hsla(226, 12%, 100%, 0.03);
     box-shadow: none;
   }
 }
@@ -1940,13 +2126,17 @@ a {
   cursor: default;
 }
 .crp-toggle-icon {
-  color: hsl(33, 50%, 52%);
+  color: hsl(38, 62%, 52%);
   flex-shrink: 0;
 }
 .crp-toggle-label {
   flex-shrink: 0;
-  color: hsl(35, 12%, 78%);
-  font-weight: 500;
+  color: hsl(222, 13%, 78%);
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-style: italic;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
 }
 .crp-toggle-summary {
   flex: 1;
@@ -1954,7 +2144,7 @@ a {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: hsl(25, 5%, 42%);
+  color: hsl(224, 8%, 42%);
   font-variant-numeric: tabular-nums;
 }
 /* Token / context / cost chips on the click-to-expand harness header */
@@ -1974,10 +2164,10 @@ a {
   text-overflow: ellipsis;
   white-space: nowrap;
   padding: 1px 6px;
-  border-radius: 999px;
-  border: 1px solid hsla(33, 30%, 45%, 0.28);
-  background: hsla(33, 28%, 40%, 0.12);
-  color: hsl(33, 28%, 68%);
+  border-radius: 0;
+  border: 1px solid hsla(38, 42%, 45%, 0.28);
+  background: hsla(38, 40%, 40%, 0.12);
+  color: hsl(38, 40%, 68%);
   font-size: 0.625rem;
   font-variant-numeric: tabular-nums;
   line-height: 1.4;
@@ -1985,16 +2175,16 @@ a {
 .crp-stat-chip.is-warn {
   border-color: hsla(18, 70%, 50%, 0.45);
   background: hsla(18, 60%, 42%, 0.18);
-  color: hsl(22, 70%, 72%);
+  color: hsl(38, 82%, 72%);
 }
 .crp-toggle:not(:disabled):focus-visible .crp-stat-chip {
-  border-color: hsla(33, 35%, 50%, 0.4);
-  color: hsl(33, 32%, 78%);
+  border-color: hsla(38, 47%, 50%, 0.4);
+  color: hsl(38, 44%, 78%);
 }
 @media (hover: hover) and (pointer: fine) {
   .crp-toggle:not(:disabled):hover .crp-stat-chip {
-    border-color: hsla(33, 35%, 50%, 0.4);
-    color: hsl(33, 32%, 78%);
+    border-color: hsla(38, 47%, 50%, 0.4);
+    color: hsl(38, 44%, 78%);
   }
 }
 .crp-spinner {
@@ -2005,7 +2195,7 @@ a {
 }
 .crp-chevron {
   flex-shrink: 0;
-  color: hsl(25, 5%, 38%);
+  color: hsl(224, 8%, 38%);
   transition: transform var(--transition-fast);
 }
 .cascade-run-panel.open > .crp-header .crp-chevron {
@@ -2018,7 +2208,7 @@ a {
   gap: 5px;
   margin: 3px 4px 3px 0;
   padding: 4px 8px;
-  border: 1px solid hsla(5, 62%, 58%, 0.28);
+  border: 1px solid hsla(357, 62%, 58%, 0.28);
   border-radius: var(--radius-sm);
   background: var(--danger-subtle);
   color: var(--danger);
@@ -2028,7 +2218,7 @@ a {
   cursor: pointer;
 }
 .crp-stop:hover {
-  background: hsla(5, 62%, 58%, 0.18);
+  background: hsla(357, 62%, 58%, 0.18);
 }
 .crp-shell {
   display: flex;
@@ -2039,7 +2229,7 @@ a {
   overflow: auto;
   padding: 8px 10px 10px;
   scrollbar-width: thin;
-  scrollbar-color: hsl(25, 5%, 28%) transparent;
+  scrollbar-color: hsl(224, 8%, 28%) transparent;
   /* Edge overscroll chains to parent chat without non-passive JS touch handlers. */
   overscroll-behavior-y: auto;
   -webkit-overflow-scrolling: touch;
@@ -2053,7 +2243,7 @@ a {
   font-family: var(--font-mono);
   font-size: 0.71875rem;
   line-height: 1.45;
-  color: hsl(35, 10%, 78%);
+  color: hsl(222, 13%, 78%);
 }
 .crp-term-line {
   white-space: pre-wrap;
@@ -2065,15 +2255,15 @@ a {
 }
 .crp-term-stream .dim,
 .crp-term-pre.dim {
-  color: hsl(25, 5%, 46%);
+  color: hsl(224, 8%, 46%);
 }
 .crp-term-stream .muted,
 .crp-term-pre.muted {
-  color: hsl(30, 6%, 58%);
+  color: hsl(222, 9%, 58%);
 }
 .crp-term-stream .err,
 .crp-term-pre.err {
-  color: hsl(5, 55%, 62%);
+  color: hsl(357, 55%, 62%);
 }
 .crp-term-block {
   margin: 4px 0;
@@ -2099,14 +2289,14 @@ a {
 }
 /* Local fold feedback only — never restyle the whole harness panel. */
 .crp-term-fold:not(:disabled):active {
-  background: hsla(22, 8%, 100%, 0.04);
+  background: hsla(226, 12%, 100%, 0.04);
 }
 @media (hover: hover) and (pointer: fine) {
   .crp-term-fold:not(:disabled):hover .crp-term-tag {
-    color: hsl(35, 14%, 88%);
+    color: hsl(222, 13%, 88%);
   }
   .crp-term-fold:not(:disabled):hover {
-    background: hsla(22, 8%, 100%, 0.03);
+    background: hsla(226, 12%, 100%, 0.03);
   }
 }
 .crp-term-mark {
@@ -2114,16 +2304,16 @@ a {
   flex-shrink: 0;
   font-weight: 600;
 }
-.crp-term-mark.ok { color: hsl(150, 40%, 52%); }
-.crp-term-mark.err { color: hsl(5, 55%, 62%); }
-.crp-term-mark.run { color: hsl(33, 60%, 55%); }
+.crp-term-mark.ok { color: hsl(152, 55%, 52%); }
+.crp-term-mark.err { color: hsl(357, 55%, 62%); }
+.crp-term-mark.run { color: hsl(38, 72%, 55%); }
 .crp-term-tag {
   flex-shrink: 0;
-  color: hsl(35, 12%, 78%);
+  color: hsl(222, 13%, 78%);
   font-weight: 500;
 }
 .crp-term-tag.tool {
-  color: hsl(195, 45%, 62%);
+  color: hsl(192, 45%, 62%);
 }
 .crp-term-tag.dim {
   color: hsl(280, 18%, 58%);
@@ -2133,10 +2323,10 @@ a {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: hsl(25, 5%, 44%);
+  color: hsl(224, 8%, 44%);
 }
 .crp-term-fold-chevron {
-  color: hsl(25, 5%, 34%);
+  color: hsl(224, 8%, 34%);
   transition: transform var(--transition-fast);
   align-self: center;
 }
@@ -2159,7 +2349,7 @@ a {
   scrollbar-width: thin;
 }
 .crp-term-cursor {
-  color: hsl(33, 55%, 52%);
+  color: hsl(38, 67%, 52%);
   animation: crp-blink 1s step-end infinite;
 }
 @keyframes crp-blink {
@@ -2169,17 +2359,17 @@ a {
   display: flex;
   justify-content: flex-end;
   padding: 2px 8px 6px;
-  border-top: 1px solid hsla(25, 8%, 100%, 0.04);
+  border-top: 1px solid hsla(224, 8%, 100%, 0.04);
 }
 .crp-raw-toggle {
   padding: 2px 6px;
-  color: hsl(25, 5%, 40%);
+  color: hsl(224, 8%, 40%);
   font-family: var(--font-mono);
   font-size: 0.625rem;
   cursor: pointer;
 }
 .crp-raw-toggle:hover {
-  color: hsl(30, 8%, 62%);
+  color: hsl(222, 9%, 62%);
 }
 .crp-raw-wrap {
   min-height: 140px;
@@ -2275,7 +2465,7 @@ a {
   height: 18px;
   display: grid;
   place-items: center;
-  border-radius: 50%;
+  border-radius: 0;
   border: 1px solid var(--border);
   background: var(--bg-raised);
   color: var(--text-secondary);
@@ -2334,7 +2524,7 @@ a {
 .chat-lightbox {
   position: fixed;
   inset: 0;
-  background: hsla(22, 8%, 4%, 0.85);
+  background: hsla(226, 12%, 4%, 0.85);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
   z-index: 1300;
@@ -2350,7 +2540,7 @@ a {
   max-height: 100%;
   object-fit: contain;
   border-radius: var(--radius-sm);
-  box-shadow: 0 12px 48px hsla(22, 8%, 2%, 0.6);
+  box-shadow: 0 12px 48px hsla(226, 12%, 2%, 0.6);
   cursor: default;
 }
 
@@ -2393,7 +2583,7 @@ a {
   width: 36px;
   height: 36px;
   border: 1px solid var(--border);
-  border-radius: 50%;
+  border-radius: var(--radius-md);
   background: var(--bg-overlay);
   color: var(--text-primary);
   cursor: pointer;
@@ -2440,12 +2630,23 @@ a {
   padding: 14px 6px;
 }
 .chat-users-title {
-  padding: 10px 8px 5px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 8px 5px;
   color: var(--text-tertiary);
-  font-size: 0.6875rem;
+  font-family: var(--font-display);
+  font-size: 0.625rem;
   font-weight: 600;
-  letter-spacing: 0.04em;
+  font-style: italic;
+  letter-spacing: 0.15em;
   text-transform: uppercase;
+}
+.chat-users-title::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
 }
 .chat-channel-cwd {
   display: flex;
@@ -2485,7 +2686,7 @@ a {
   user-select: none;
 }
 .chat-user:hover {
-  background: hsla(22, 7%, 17%, 0.75);
+  background: hsla(226, 12%, 17%, 0.75);
   color: var(--text-primary);
 }
 .chat-user-row {
@@ -2502,7 +2703,7 @@ a {
   width: 9px;
   height: 9px;
   border: 2px solid var(--bg-base);
-  border-radius: 50%;
+  border-radius: 0;
   background: var(--success);
 }
 .chat-user.is-offline .chat-user-row .chat-avatar::after {
@@ -2537,7 +2738,7 @@ a {
   cursor: pointer;
 }
 .chat-agent-user.is-editing {
-  background: hsla(22, 7%, 17%, 0.75);
+  background: hsla(226, 12%, 17%, 0.75);
   color: var(--text-primary);
 }
 .chat-agent-edit-btn {
@@ -2566,7 +2767,7 @@ a {
   margin: 0 8px 10px;
   padding: 8px;
   border-radius: var(--radius-md);
-  background: hsla(22, 7%, 17%, 0.55);
+  background: hsla(226, 12%, 17%, 0.55);
   font-size: 0.75rem;
   color: var(--text-secondary);
 }
@@ -2582,16 +2783,16 @@ a {
 .chat-runner-dot {
   width: 8px;
   height: 8px;
-  border-radius: 50%;
+  border-radius: 0;
   background: var(--text-tertiary);
   flex-shrink: 0;
 }
 .chat-runner-dot.online {
-  background: #3ecf8e;
-  box-shadow: 0 0 0 2px rgba(62, 207, 142, 0.2);
+  background: var(--success);
+  box-shadow: 0 0 0 2px var(--success-subtle);
 }
 .chat-runner-dot.offline {
-  background: #c45c4a;
+  background: var(--danger);
 }
 .chat-runner-meta,
 .chat-runner-hint {
@@ -2599,7 +2800,7 @@ a {
   line-height: 1.3;
 }
 .chat-runner-error {
-  color: #e07060;
+  color: var(--danger);
   line-height: 1.3;
   word-break: break-word;
 }
@@ -2626,7 +2827,7 @@ a {
 }
 .chat-vault-add-btn:hover {
   color: var(--text-primary);
-  background: hsla(22, 7%, 17%, 0.75);
+  background: hsla(226, 12%, 17%, 0.75);
 }
 .chat-vault-in-ch {
   flex-shrink: 0;
@@ -2656,7 +2857,7 @@ a {
   color: var(--text-secondary);
 }
 .chat-vault-pick-btn:hover:not(:disabled) {
-  background: hsla(22, 7%, 17%, 0.75);
+  background: hsla(226, 12%, 17%, 0.75);
   color: var(--text-primary);
 }
 .chat-vault-pick-btn:disabled {
@@ -2683,7 +2884,7 @@ a {
   color: var(--text-secondary);
 }
 .chat-run-row:hover {
-  background: hsla(22, 7%, 17%, 0.75);
+  background: hsla(226, 12%, 17%, 0.75);
   color: var(--text-primary);
 }
 .chat-run-row-copy {
@@ -2731,9 +2932,9 @@ a {
   cursor: pointer;
 }
 .chat-run-row-stop:hover:not(:disabled) {
-  border-color: var(--danger, #c45);
+  border-color: var(--danger);
   background: hsla(0, 60%, 50%, 0.12);
-  color: var(--danger, #e66);
+  color: var(--danger);
 }
 .chat-run-row-stop:disabled {
   opacity: 0.35;
@@ -2850,7 +3051,7 @@ a {
 }
 .chat-agent-menu-actions button[type="submit"] {
   background: var(--accent);
-  color: hsl(22, 15%, 8%);
+  color: hsl(226, 12%, 8%);
 }
 .chat-agent-menu-actions button:disabled {
   opacity: 0.55;
@@ -2863,7 +3064,7 @@ a {
 .overlay-backdrop {
   position: fixed;
   inset: 0;
-  background: hsla(22, 8%, 4%, 0.75);
+  background: hsla(226, 12%, 4%, 0.75);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
   z-index: 100;
@@ -2885,15 +3086,24 @@ a {
 }
 
 .command-palette {
+  position: relative;
   width: min(560px, 90vw);
-  background: hsla(22, 8%, 11%, 0.97);
+  background: hsla(226, 12%, 11%, 0.97);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
   border: 1px solid var(--border);
+  border-top: 0;
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg), var(--shadow-glow);
   overflow: hidden;
   animation: slideDown var(--transition-normal) ease;
+}
+/* The decal caps the palette — the panel that's currently in command. */
+.command-palette::before {
+  content: '';
+  display: block;
+  height: 3px;
+  background: var(--decal-stripe-h);
 }
 
 .admin-panel {
@@ -2903,7 +3113,7 @@ a {
   flex-direction: column;
   gap: 12px;
   padding: 16px 18px 18px;
-  background: hsla(22, 8%, 11%, 0.98);
+  background: hsla(226, 12%, 11%, 0.98);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
   border: 1px solid var(--border);
@@ -2930,7 +3140,7 @@ a {
   line-height: 1.5;
 }
 .admin-token {
-  background: hsla(22, 8%, 8%, 0.9);
+  background: hsla(226, 12%, 8%, 0.9);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 10px 12px;
@@ -2960,7 +3170,7 @@ a {
   padding: 8px 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: hsla(22, 8%, 9%, 0.6);
+  background: hsla(226, 12%, 9%, 0.6);
 }
 .command-palette-input-wrap {
   display: flex;
@@ -2980,6 +3190,11 @@ a {
   border: none;
   color: var(--text-primary);
   font-size: 0.9375rem;
+  caret-color: var(--accent);
+}
+/* The decal already says this panel has focus; a ring on top is noise. */
+.command-palette-input:focus-visible {
+  box-shadow: none;
 }
 .command-palette-input::placeholder {
   color: var(--text-tertiary);
@@ -2990,6 +3205,7 @@ a {
   padding: 4px;
 }
 .command-palette-item {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -3004,10 +3220,20 @@ a {
   font-size: 0.8125rem;
   transition: background-color var(--transition-fast), color var(--transition-fast);
 }
+/* Same marker as an active sidebar row: decal edge, amber wash falling away. */
 .command-palette-item:hover,
 .command-palette-item.highlighted {
-  background: var(--accent-subtle);
+  background: linear-gradient(90deg, hsla(38, 92%, 55%, 0.15) 0%, hsla(38, 92%, 55%, 0.02) 60%, transparent 100%);
   color: var(--text-primary);
+}
+.command-palette-item.highlighted::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 3px;
+  bottom: 3px;
+  width: 3px;
+  background: var(--decal-stripe);
 }
 .command-palette-item .item-icon {
   flex-shrink: 0;
@@ -3047,16 +3273,23 @@ a {
   justify-content: space-between;
   padding: 8px 16px;
   border-top: 1px solid var(--border);
-  font-size: 0.6875rem;
+  background: var(--bg-deep);
+  font-family: var(--font-display);
+  font-size: 0.625rem;
+  font-style: italic;
+  text-transform: uppercase;
+  letter-spacing: 0.11em;
   color: var(--text-tertiary);
 }
 .command-palette-footer kbd {
   display: inline-block;
   padding: 1px 5px;
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: 0;
   background: var(--bg-raised);
   font-family: var(--font-mono);
+  font-style: normal;
+  letter-spacing: 0;
   font-size: 0.625rem;
 }
 .palette-empty {
@@ -3072,16 +3305,23 @@ a {
 .search-overlay {
   width: min(640px, 90vw);
   max-height: 70vh;
-  background: hsla(22, 8%, 11%, 0.97);
+  background: hsla(226, 12%, 11%, 0.97);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
   border: 1px solid var(--border);
+  border-top: 0;
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg), var(--shadow-glow);
   overflow: hidden;
   animation: slideDown var(--transition-normal) ease;
   display: flex;
   flex-direction: column;
+}
+.search-overlay::before {
+  content: '';
+  flex-shrink: 0;
+  height: 3px;
+  background: var(--decal-stripe-h);
 }
 .search-input-wrap {
   display: flex;
@@ -3101,6 +3341,10 @@ a {
   border: none;
   color: var(--text-primary);
   font-size: 1rem;
+  caret-color: var(--accent);
+}
+.search-input:focus-visible {
+  box-shadow: none;
 }
 .search-input::placeholder {
   color: var(--text-tertiary);
@@ -3111,6 +3355,7 @@ a {
   padding: 8px;
 }
 .search-result-item {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -3126,11 +3371,22 @@ a {
 }
 .search-result-item:hover,
 .search-result-item.highlighted {
-  background: var(--accent-subtle);
+  background: linear-gradient(90deg, hsla(38, 92%, 55%, 0.15) 0%, hsla(38, 92%, 55%, 0.02) 60%, transparent 100%);
+}
+.search-result-item.highlighted::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 3px;
+  bottom: 3px;
+  width: 3px;
+  background: var(--decal-stripe);
 }
 .search-result-item .result-title {
+  font-family: var(--font-display);
   font-size: 0.875rem;
-  font-weight: 500;
+  font-weight: 700;
+  font-style: italic;
 }
 .search-result-item .result-snippet {
   font-size: 0.75rem;
@@ -3548,7 +3804,12 @@ a {
   align-items: center;
   justify-content: center;
   color: var(--text-tertiary);
-  font-size: 0.8125rem;
+  font-family: var(--font-display);
+  font-size: 0.75rem;
+  font-weight: 600;
+  font-style: italic;
+  text-transform: uppercase;
+  letter-spacing: 0.13em;
 }
 
 /* Per-pane tab strip. Reuses .tab-bar/.tab-item; this only adds the focused cue. */
@@ -3698,10 +3959,10 @@ a {
   font-size: 0.78rem;
   font-weight: 600;
   line-height: 1;
-  color: hsl(33, 80%, 72%);
-  background: hsl(22, 9%, 12%);
+  color: hsl(38, 92%, 72%);
+  background: hsl(226, 12%, 12%);
   border: 1px solid var(--accent-glow);
-  border-radius: 999px;
+  border-radius: 0;
   box-shadow: 0 6px 18px hsla(0, 0%, 0%, 0.45);
   cursor: pointer;
   white-space: nowrap;
@@ -3738,7 +3999,7 @@ a {
 
 /* JSON syntax highlighting */
 .json-token-key {
-  color: hsl(28, 90%, 60%);
+  color: hsl(38, 90%, 60%);
   font-weight: 600;
 }
 .json-token-string {
@@ -3749,7 +4010,7 @@ a {
 }
 .json-token-boolean,
 .json-token-null {
-  color: hsl(196, 75%, 65%);
+  color: hsl(192, 75%, 65%);
 }
 .json-token-punctuation {
   color: var(--text-tertiary);

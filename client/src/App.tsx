@@ -2517,6 +2517,7 @@ export default function App() {
             <Gem size={24} aria-hidden="true" />
             <h1>Cascade</h1>
           </div>
+          <div className="auth-decal" aria-hidden="true" />
           {authMode === 'reset' ? (
             <>
               <p className="auth-hint">Paste the reset token the server owner gave you, then choose a new password.</p>
