@@ -18,14 +18,16 @@ let claudeSdkPromise = null;
 // by THIS machine's `claude` login / ANTHROPIC_API_KEY — never the server's.
 // Mirrors the run options the server used to apply in server/runner.ts.
 const CLAUDE_DEFAULT_MODEL = process.env.RUNNER_MODEL || 'claude-sonnet-5';
-// Turn caps are off by default (0 = unlimited); the SDK only receives a
-// maxTurns when one of these envs is set to a positive value.
+// Non-chat turn caps are off by default (0 = unlimited). Chat has its own
+// bounded default below.
 const CLAUDE_MAX_TURNS = Number(process.env.RUNNER_MAX_TURNS || 0);
 const CLAUDE_THINKING_TOKENS = Number(process.env.RUNNER_THINKING ?? 4000);
-const CLAUDE_CHAT_MAX_TURNS = Number(process.env.RUNNER_CHAT_MAX_TURNS || 0);
+// Chat is unattended between user messages. Bound a single request so one
+// deceptively small ping cannot consume dozens of tool/inference turns.
+const CLAUDE_CHAT_MAX_TURNS = Number(process.env.RUNNER_CHAT_MAX_TURNS || 20);
 // Extra turn windows a chat run may auto-continue into after hitting a cap
 // (each resumes the same session). Only relevant when a cap is set above.
-const CLAUDE_CHAT_MAX_CONTINUES = Number(process.env.RUNNER_CHAT_MAX_CONTINUES || 3);
+const CLAUDE_CHAT_MAX_CONTINUES = Number(process.env.RUNNER_CHAT_MAX_CONTINUES || 0);
 // Chat runs stay low-thinking so multiuser pings don't burn long monologues.
 // Override with RUNNER_CHAT_THINKING if a heavy chat agent needs more.
 const CLAUDE_CHAT_THINKING_TOKENS = Number(process.env.RUNNER_CHAT_THINKING ?? 800);
@@ -37,7 +39,8 @@ const CLAUDE_AGENT_CONTEXT = 'You are a local workspace assistant. This checkout
 const CHAT_BREVITY_CONTEXT =
   'Shared multiuser chat — match human chat speed, but resolve the user\'s actual intent before choosing the fast path. '
   + 'Short or context-dependent messages can still request real work; complete that work before replying. '
-  + 'Only genuine conversational pings get one short cascade-chat send with no tools. '
+  + 'For genuine conversation or Q&A, return one short direct final answer with no tools. '
+  + 'Return the final answer normally; keep progress in the run trace instead of posting separate chat messages. '
   + 'Do not confuse a mentioned @handle with the message author. Do not invent multi-step plans for questions you can answer immediately.';
 
 // Live Cascade API config for helper wrappers, populated by the
@@ -543,6 +546,7 @@ async function runClaudeLocally(opts, emit) {
   activeClaudeQueries.set(runId, stream);
   let summary = '';
   let streamedText = '';
+  let latestAssistantText = '';
   let sessionId;
   // Tracks whether the previous streamed block was text, so a new text block
   // (a fresh turn, typically split off by a tool call in between) gets a
@@ -575,7 +579,11 @@ async function runClaudeLocally(opts, emit) {
       // Also tee a human-readable transcript into the harness terminal pane.
       if (message.type === 'stream_event') {
         const ev = message.event;
-        if (ev?.type === 'content_block_start') {
+        if (ev?.type === 'message_start') {
+          // Keep the latest inference's answer separate from earlier progress
+          // narration. The terminal summary becomes the clean chat body.
+          latestAssistantText = '';
+        } else if (ev?.type === 'content_block_start') {
           const block = ev.content_block;
           const blockType = block?.type;
           if (blockType === 'thinking' || blockType === 'redacted_thinking') {
@@ -624,6 +632,7 @@ async function runClaudeLocally(opts, emit) {
             emit('text', { message: { content: [{ type: 'text', text: delta.text }] } });
             emitHarness(emit, delta.text);
             streamedText += delta.text;
+            latestAssistantText += delta.text;
             lastBlockWasText = true;
           } else if (delta?.type === 'input_json_delta' && delta.partial_json) {
             if (pendingTool) pendingTool.json += delta.partial_json;
@@ -761,8 +770,8 @@ async function runClaudeLocally(opts, emit) {
   }
   // Chat runs: prefer the streamed assistant text over a generic SDK result.
   // Non-chat note runs keep the SDK result as the summary for the run list.
-  if (chatRun && streamedText.trim()) {
-    return { summary: streamedText.trim(), sessionId };
+  if (chatRun && (latestAssistantText.trim() || streamedText.trim())) {
+    return { summary: latestAssistantText.trim() || streamedText.trim(), sessionId };
   }
   return { summary: summary || streamedText.trim() || 'Completed note operations successfully.', sessionId };
 }
@@ -824,7 +833,7 @@ async function startLocalAgentRun(opts, sendEvent) {
           const friendly = error && error.cascadeMaxTurns
             ? `Reached the turn limit after ${maxContinues + 1} windows — reply to continue where I left off.`
             : message;
-          emitTerminalStatus(emit, runId, 'failed', friendly);
+          emitTerminalStatus(emit, runId, 'failed', friendly, error?.cascadeSessionId);
           throw error;
         }
       }

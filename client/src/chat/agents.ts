@@ -248,29 +248,28 @@ export function formatAgentChatPrompt(
   const selfName = registration.displayName || selfAgent?.label || registration.agentId;
   const light = isLightweightChatRequest(request);
   const nativeScratchpad = registration.agentId === 'akron-grok';
-  const chatSendSafety = ' For every chat send, put the complete message in the Bash tool environment as MESSAGE and run `cascade-chat send --message "$MESSAGE"`; never interpolate prose in shell quotes, backticks, or `$()`.';
 
-  // Scratchpad habit: only on non-light paths (light = pure ack, no tool loop).
-  // Emphasize mid-task jots (work journal), not a final-reply-only ritual.
-  const scratchpadHabit = ' Scratchpad is a work journal — jot liberally mid-task with `cascade-scratchpad jot` (esp. `--kind dead-end` for "tried X, failed because Y"); do not save it for the end. When stuck on something familiar: `cascade-scratchpad recall <query>` (empty = nothing relevant). After applying a hit: `cascade-scratchpad outcome <title> --win|--loss`. Open threads are *your* private trail (users cannot see them): open/close yourself based on what *you* want to continue — never ask the user about threads, never offer "want me to close #N?", never dump thread lists into chat unless they explicitly ask. `cascade-scratchpad open --text "continue: …"` / `close <id>`; boot lists them for you only. Before a final reply on a non-trivial fix, still ensure you jotted the root cause/fix if a future run would re-derive it.';
+  // Keep persistence available without turning every task into extra tool turns.
+  // Cold-start injection supplies the fuller policy only when a new session needs it.
   const scratchpadGuidance = nativeScratchpad
-    ? ' Use the harness-provided `scratchpad` tool for work-journal entries, recall, skills, and thread state; do not invoke a second scratchpad interface.'
-    : ` Your private persistent scratchpad is available through \`cascade-scratchpad\` (jot/recall/skill/outcome) and \`cascade-note memory\`; curate it when durable context is worth keeping.${scratchpadHabit}`;
+    ? ' Use the harness `scratchpad` only for a durable root cause, decision, or dead end; skip routine progress.'
+    : ' Use `cascade-scratchpad` only for a durable root cause, decision, or dead end that would otherwise be re-derived; skip routine progress and simple Q&A.';
 
   if (continuation) {
     const header = light
-      ? `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. First resolve the user's intent and any pronouns/references from the conversation already in your session. A short message can still request real work; if it does, complete that work before replying. Only for a genuine conversational reply or acknowledgment, prefer a quick chat reply: one \`cascade-chat send\` and stop. Tools/history only if the task needs them. Do not confuse a mentioned @handle with the message author.${chatSendSafety} No closing summary after send (stdout is discarded).`
-      : `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. Finish the request with judgment — don't over-research.${scratchpadGuidance} Use \`cascade-chat send\` for progress on multi-step work; final answer there too.${chatSendSafety} No closing summary after send.`;
+      ? `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. Resolve references from the conversation already in your session. For genuine conversation or Q&A, reply directly with one short final answer and no tools. If it requests real work, complete it first. Do not confuse a mentioned @handle with the author.`
+      : `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. Finish the request with judgment; don't over-research. Reply normally with the final answer. Keep progress in the run trace; do not post separate chat messages.`;
     return `${header}\n\n${request}`;
   }
 
   const channelNote = registration.contextPrompt ? ` Channel note: ${registration.contextPrompt}` : '';
   if (light) {
-    // Fast multiuser path: no mandatory tool loop; context is already injected when useful.
-    const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. This is a live multiuser chat — match the energy: short natural replies, not an agent report. First resolve the user's intent and any pronouns/references from the recent context below. A short message can still request real work; if it does, complete that work before replying. Only for a genuine conversational reply or acknowledgment: one \`cascade-chat send\` and stop (no tools, no history fetch, no plan). Use tools or \`cascade-chat history\` when the task needs them. Do not confuse a mentioned @handle with the message author named above. Notes via cascade-note are unlisted by default; \`--listed\` only if asked.${chatSendSafety} Final answer is the cascade-chat send (stdout after it is discarded).${channelNote}`;
+    // Fast multiuser path: a direct final answer avoids a second inference after
+    // a chat-send tool result. Context is already injected when useful.
+    const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. Live multiuser chat: resolve references from the recent context, then reply directly with one short natural final answer—no tools, history fetch, or plan. If the message actually requests work, complete it first. Do not confuse a mentioned @handle with the author.${channelNote}`;
     return `${header}\n\n${request}`;
   }
 
-  const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. Live multiuser chat: prefer a useful reply soon over a perfect investigation. Use the recent channel context below; fetch more with \`cascade-chat history --include-reply-context\` only when needed.${scratchpadGuidance} Use tools when the task needs code/repo work — not for chitchat. An acknowledgment is progress, not completion: when asked to fix, diagnose, or implement something, continue through the work and verification. Use \`cascade-chat send\` for progress on long work and for the final answer; do not stop mid-task after a progress send. Notes via cascade-note are unlisted by default; \`--listed\` only if asked.${chatSendSafety} Stdout after the final send is discarded — no closing summary.${channelNote}`;
+  const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. Use recent context; fetch more history only when needed. Complete requested work and verification before replying.${scratchpadGuidance} Reply normally with the final answer. Keep progress in the run trace; do not post separate chat messages.${channelNote}`;
   return `${header}\n\n${request}`;
 }

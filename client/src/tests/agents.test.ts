@@ -53,36 +53,29 @@ describe('OMP model presets', () => {
 describe('formatAgentChatPrompt', () => {
   it('heavy tasks keep multi-step progress guidance', () => {
     const prompt = formatAgentChatPrompt('dev', registration, 'fix the runner and deploy', 'alice', false);
-    expect(prompt).toContain('do not stop mid-task');
-    expect(prompt).toContain('continue through the work and verification');
-    expect(prompt).toContain('cascade-chat send');
-    expect(prompt).not.toContain('Run `cascade-chat history');
-    expect(prompt).toContain('run `cascade-chat send --message "$MESSAGE"`');
+    expect(prompt).toContain('verification before replying');
+    expect(prompt).toContain('Keep progress in the run trace');
+    expect(prompt).not.toContain('cascade-chat send');
+    expect(prompt).toContain('Reply normally with the final answer');
     expect(prompt).toContain('cascade-scratchpad');
-    expect(prompt).toContain('recall');
-    expect(prompt).toMatch(/jot liberally mid-task/i);
-    expect(prompt).toMatch(/do not save it for the end/i);
-    expect(prompt).toMatch(/cascade-scratchpad open/i);
-    expect(prompt).toMatch(/close <id>/i);
-    expect(prompt).toMatch(/never ask the user about threads/i);
+    expect(prompt).toMatch(/only for a durable root cause/i);
+    expect(prompt).not.toMatch(/final answer (is|there)/i);
   });
 
-  it('lightweight pings ask for one short send and no tools', () => {
+  it('lightweight pings answer directly without a helper tool round', () => {
     const prompt = formatAgentChatPrompt('dev', registration, 'hey is deploy green?', 'alice');
     expect(prompt).toContain('one');
     expect(prompt).toContain('no tools');
-    expect(prompt).toContain('cascade-chat send');
+    expect(prompt).toContain('reply directly');
+    expect(prompt).not.toContain('cascade-chat send');
     expect(prompt).toMatch(/multiuser chat/i);
-    expect(prompt).toContain("First resolve the user's intent");
     expect(prompt).toContain('mentioned @handle');
-    expect(prompt).toContain('run `cascade-chat send --message "$MESSAGE"`');
   });
 
   it('continuation lightweight stays snappy', () => {
     const prompt = formatAgentChatPrompt('dev', registration, 'ok cool', 'alice', true);
-    expect(prompt).toContain('quick chat reply');
-    expect(prompt).toContain('cascade-chat send');
-    expect(prompt).toContain('run `cascade-chat send --message "$MESSAGE"`');
+    expect(prompt).toContain('one short final answer');
+    expect(prompt).not.toContain('cascade-chat send');
   });
 
   it('leaves Akron scratchpad guidance to the native harness tool', () => {
@@ -90,8 +83,8 @@ describe('formatAgentChatPrompt', () => {
     const fresh = formatAgentChatPrompt('dev', akron, 'fix the runner and deploy', 'alice', false);
     const continued = formatAgentChatPrompt('dev', akron, 'fix the runner and deploy', 'alice', true);
 
+    expect(fresh).toContain('harness `scratchpad`');
     for (const prompt of [fresh, continued]) {
-      expect(prompt).toContain('harness-provided `scratchpad` tool');
       expect(prompt).not.toContain('cascade-scratchpad');
       expect(prompt).not.toContain('cascade-note memory');
     }

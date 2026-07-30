@@ -228,7 +228,7 @@ export function ensureChatSchema(db: Db): void {
       model TEXT NOT NULL DEFAULT '',
       cwd TEXT NOT NULL DEFAULT '',
       context_prompt TEXT NOT NULL DEFAULT '',
-      taggable_by_agents INTEGER NOT NULL DEFAULT 1,
+      taggable_by_agents INTEGER NOT NULL DEFAULT 0,
       reply_to_every_message INTEGER NOT NULL DEFAULT 0,
       pingable_by_others INTEGER NOT NULL DEFAULT 0,
       yolo INTEGER NOT NULL DEFAULT 0,
@@ -609,7 +609,7 @@ function normalizeAgentRegistration(input: Partial<ChatAgentRegistration>, fallb
     model: String(input.model || ''),
     cwd: String(input.cwd || ''),
     contextPrompt: String(input.contextPrompt || ''),
-    taggableByAgents: input.taggableByAgents !== false,
+    taggableByAgents: input.taggableByAgents === true,
     replyToEveryMessage: input.replyToEveryMessage === true,
     pingableByOthers: input.pingableByOthers === true,
     yolo: input.yolo === true,
@@ -818,7 +818,7 @@ export function addVaultAgentToChannel(
   const conversationId = flags.conversationId
     || existing?.conversation_id
     || crypto.randomUUID();
-  const taggable = flags.taggableByAgents !== undefined ? flags.taggableByAgents : (existing ? existing.taggable_by_agents !== 0 : true);
+  const taggable = flags.taggableByAgents !== undefined ? flags.taggableByAgents : (existing ? existing.taggable_by_agents !== 0 : false);
   const replyEvery = flags.replyToEveryMessage !== undefined ? flags.replyToEveryMessage : (existing ? existing.reply_to_every_message !== 0 : false);
   const pingable = flags.pingableByOthers !== undefined ? flags.pingableByOthers : (existing ? existing.pingable_by_others !== 0 : false);
   const yolo = flags.yolo !== undefined ? flags.yolo : (existing ? existing.yolo !== 0 : false);
@@ -1670,8 +1670,8 @@ export type AgentChatContent = {
  * client's stream accumulation, so the agent reply is persisted and broadcast
  * even if the client that started the run disconnects mid-stream.
  *
- * Chat body prefers the streamed assistant **text**, not the CLI/SDK summary
- * (which is often a generic "Done." / tool result string).
+ * Chat body prefers the runner's latest non-generic final summary. The streamed
+ * text can include earlier progress narration from tool turns.
  */
 export function buildAgentChatContentFromRunEvents(
   events: Array<{ type: string; payload_json: string }>,
@@ -1716,8 +1716,8 @@ export function buildAgentChatContentFromRunEvents(
 
   const trimmed = assistantText.trim();
   const done = status !== 'running';
-  // Successful chat body = streamed assistant text. CLI/SDK summary is only a
-  // fallback when nothing useful streamed (and even then, skip generic strings).
+  // Successful chat body = the runner's latest final answer when available.
+  // Accumulated streamed text is a fallback because it may include progress.
   // Full step narration lives in `blocks` / `harnessLog` for the terminal pane.
   // Failures keep the scratchpad and append the reason.
   // If the agent already posted via cascade-chat send, leave the run bubble
@@ -1737,10 +1737,10 @@ export function buildAgentChatContentFromRunEvents(
   } else if (suppressChatBody) {
     body = '';
   } else {
-    if (trimmed) {
-      body = trimmed;
-    } else if (terminalSummary.trim() && !isGenericRunSummary(terminalSummary)) {
+    if (terminalSummary.trim() && !isGenericRunSummary(terminalSummary)) {
       body = terminalSummary.trim();
+    } else if (trimmed) {
+      body = trimmed;
     } else {
       body = terminalSummary.trim() || 'Done.';
     }

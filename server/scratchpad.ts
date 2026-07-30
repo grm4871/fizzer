@@ -1042,11 +1042,11 @@ export function buildScratchpadInjection(
   const key = normalizeAgentKey(opts.agentKey);
   const status = scratchpadStatus(db, vaultId, key);
   const lines = [
-    'Scratchpad is a work journal (use it, do not wait to be asked): jot liberally mid-task with `cascade-scratchpad jot [--kind observation|outcome|dead-end|decision|todo] [--text "…"]` — especially dead ends; do not save jots for the final reply. Before a final reply on a non-trivial fix, still ensure you jotted the root cause or fix path if a future you would re-derive it. When stuck on something familiar: `cascade-scratchpad recall <query>` (empty = nothing relevant; prefer skills over auto-run dumps). After applying a hit: `cascade-scratchpad outcome <title> --win|--loss`. Open threads are private to you (users cannot see them): manage with `cascade-scratchpad open` / `close <id>` yourself — never ask the user about threads or list them in chat unless they explicitly ask.',
+    'Scratchpad is optional persistent memory. Use `cascade-scratchpad jot` only for a reusable root cause, decision, or dead end; skip routine progress and simple Q&A. Use `recall <query>` only when the task looks familiar. Open threads are private: manage them yourself and never ask the user about them.',
     `Journal: ${status.unconsolidated} unconsolidated entr${status.unconsolidated === 1 ? 'y' : 'ies'}${status.lastConsolidationAt ? `; last consolidation ${status.lastConsolidationAt}` : ''}; open threads: ${status.openThreads}.`,
   ];
   if (isConsolidationDue(status)) {
-    lines.push('Consolidation is due: after the user\'s task is done, distill the journal into memory notes / skills per your POLICIES (or delegate), then `cascade-scratchpad done --through <id>`. Do not leave the backlog for "later".');
+    lines.push('Consolidation is due, but do not spend this chat run on it unless the user asks.');
   }
   // Open threads go high in the injection — private intentional trail for the
   // agent only. Never surface this list to the user unprompted.
@@ -1088,4 +1088,3 @@ export function buildScratchpadInjection(
   }
   return lines.join('\n');
 }
-

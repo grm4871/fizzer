@@ -24,6 +24,18 @@ export type AgentId = 'claude-code' | 'codex' | 'grok' | 'antigravity' | 'copilo
 
 type Db = Database.Database;
 
+function nonNegativeNumber(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+// A chat member's conversation id stays stable for continuity, but its backing
+// CLI session is rotated at these bounds. This keeps recent conversational
+// context while preventing multi-day tool transcripts from being reprocessed
+// on every inference. Set either value to 0 to disable that bound.
+const CHAT_SESSION_MAX_RUNS = Math.floor(nonNegativeNumber(process.env.CHAT_SESSION_MAX_RUNS, 6));
+const CHAT_SESSION_MAX_AGE_HOURS = nonNegativeNumber(process.env.CHAT_SESSION_MAX_AGE_HOURS, 24);
+
 let eventSink: ((event: RunEvent) => void) | null = null;
 // Sink that mirrors a run's streamed output into its linked chat message, so the
 // agent reply is persisted/broadcast server-side regardless of which client (if
@@ -294,17 +306,78 @@ export async function startRun(
   return run;
 }
 
+export type ConversationSessionQuery = {
+  vaultId: string;
+  noteId: string | null;
+  agent: AgentId;
+  conversationId: string;
+  boundedChat?: boolean;
+  nowMs?: number;
+};
+
+/**
+ * Find the live CLI session behind a conversation.
+ *
+ * Chat conversations are intentionally bounded even though their conversation
+ * id remains stable. Once the current backing session is old or has handled
+ * enough top-level requests, returning undefined starts a fresh CLI session;
+ * the normal cold-start channel context restores the useful recent discussion.
+ */
+export function findConversationSession(
+  db: Db,
+  query: ConversationSessionQuery,
+): string | undefined {
+  if (!query.conversationId) return undefined;
+  const noteCondition = query.noteId ? 'note_id = ?' : 'note_id IS NULL';
+  const params = query.noteId
+    ? [query.vaultId, query.noteId, query.agent, query.conversationId]
+    : [query.vaultId, query.agent, query.conversationId];
+  const latest = db.prepare(`
+    SELECT session_id, started_at
+    FROM runs
+    WHERE vault_id = ?
+      AND ${noteCondition}
+      AND agent = ?
+      AND conversation_id = ?
+      AND session_id IS NOT NULL
+    ORDER BY id DESC
+    LIMIT 1
+  `).get(...params) as { session_id: string; started_at: string } | undefined;
+  if (!latest?.session_id) return undefined;
+  if (!query.boundedChat) return latest.session_id;
+
+  const segment = db.prepare(`
+    SELECT COUNT(*) AS run_count, MIN(started_at) AS first_started_at
+    FROM runs
+    WHERE vault_id = ?
+      AND ${noteCondition}
+      AND agent = ?
+      AND conversation_id = ?
+      AND session_id = ?
+  `).get(...params, latest.session_id) as { run_count: number; first_started_at: string | null };
+
+  if (CHAT_SESSION_MAX_RUNS > 0 && Number(segment.run_count) >= CHAT_SESSION_MAX_RUNS) {
+    return undefined;
+  }
+  if (CHAT_SESSION_MAX_AGE_HOURS > 0 && segment.first_started_at) {
+    const startedAt = Date.parse(`${segment.first_started_at.replace(' ', 'T')}Z`);
+    const nowMs = Number.isFinite(query.nowMs) ? Number(query.nowMs) : Date.now();
+    if (Number.isFinite(startedAt) && nowMs - startedAt >= CHAT_SESSION_MAX_AGE_HOURS * 3_600_000) {
+      return undefined;
+    }
+  }
+  return latest.session_id;
+}
+
 // Find the session id of the most recent prior run in the same conversation
 // (same vault + note + agent), so the next turn can resume that session.
 export function findPriorSession(db: Db, run: Run): string | undefined {
-  const cond = run.note_id
-    ? 'vault_id = ? AND note_id = ? AND agent = ? AND conversation_id = ? AND session_id IS NOT NULL AND id < ?'
-    : 'vault_id = ? AND note_id IS NULL AND agent = ? AND conversation_id = ? AND session_id IS NOT NULL AND id < ?';
-  const params = run.note_id
-    ? [run.vault_id, run.note_id, run.agent, run.conversation_id, run.id]
-    : [run.vault_id, run.agent, run.conversation_id, run.id];
-  const row = db.prepare(`SELECT session_id FROM runs WHERE ${cond} ORDER BY id DESC LIMIT 1`).get(...params) as { session_id: string } | undefined;
-  return row?.session_id || undefined;
+  return findConversationSession(db, {
+    vaultId: run.vault_id,
+    noteId: run.note_id,
+    agent: run.agent,
+    conversationId: run.conversation_id,
+  });
 }
 
 export function publishRunEvent(db: Db, runId: number, type: string, payload: unknown) {

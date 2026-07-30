@@ -169,7 +169,7 @@ function chatMessageStreamScore(message: ChatMessage): number {
   return statusScore * 1_000_000 + suppressShell + bodyScore + blockScore + harnessScore;
 }
 
-/** Prefer streamed assistant text over a generic CLI/SDK summary for chat body. */
+/** Prefer the runner's latest final answer over accumulated progress text. */
 export function honestAgentChatBody(
   streamedText: string,
   summary: string | undefined,
@@ -189,8 +189,8 @@ export function honestAgentChatBody(
   }
   // Agent already posted via cascade-chat send — leave the run bubble empty.
   if (opts?.suppressChatBody) return '';
-  if (trimmed) return trimmed;
   if (summaryText && !isGeneric) return summaryText;
+  if (trimmed) return trimmed;
   return summaryText || 'Done.';
 }
 

@@ -59,7 +59,7 @@ import {
   listRunEvents,
   startRun,
   cancelRun,
-  findPriorSession,
+  findConversationSession,
   publishRunEvent,
   finishDelegatedRun,
   listOpenDelegatedRuns,
@@ -1706,25 +1706,19 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     const preliminaryConversationId =
       typeof conversation_id === 'string' && conversation_id ? conversation_id : undefined;
 
-    // Peek at whether this turn will resume a prior CLI session. Continuations
-    // skip expensive/noisy memory injection — the session already holds context.
-    let willResume = false;
-    if (preliminaryConversationId) {
-      const prior = db.prepare(`
-        SELECT session_id FROM runs
-        WHERE vault_id = ?
-          AND ${note_id ? 'note_id = ?' : 'note_id IS NULL'}
-          AND agent = ?
-          AND conversation_id = ?
-          AND session_id IS NOT NULL
-        ORDER BY id DESC LIMIT 1
-      `).get(
-        ...(note_id
-          ? [runVault.id, note_id, selectedAgent, preliminaryConversationId]
-          : [runVault.id, selectedAgent, preliminaryConversationId]),
-      ) as { session_id: string } | undefined;
-      willResume = Boolean(prior?.session_id);
-    }
+    // Bound chat sessions by age/run count. A rotation gets the same cold-start
+    // recent-channel context below, while avoiding another pass over a multi-day
+    // CLI transcript. Non-chat note sessions retain their old unbounded behavior.
+    const resumeSessionId = preliminaryConversationId
+      ? findConversationSession(db, {
+          vaultId: runVault.id,
+          noteId: note_id || null,
+          agent: selectedAgent,
+          conversationId: preliminaryConversationId,
+          boundedChat: Boolean(targetChannelId),
+        })
+      : undefined;
+    const willResume = Boolean(resumeSessionId);
 
     let effectivePrompt = prompt;
     if (!willResume) {
@@ -1849,7 +1843,6 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
       });
     }
 
-    const resumeSessionId = findPriorSession(db, run);
     const delegated = delegateRunToDesktop(runnerUserId, {
       runId: run.id,
       vaultId: runVault.id,
