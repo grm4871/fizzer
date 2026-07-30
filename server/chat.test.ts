@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import Database from 'better-sqlite3';
-import { buildAgentChannelWorkspaceContext, CASCADE_AGENT_APP_CONTEXT } from './chat.js';
+import { buildAgentChannelWorkspaceContext, buildAgentChatContext, CASCADE_AGENT_APP_CONTEXT } from './chat.js';
 
 test('the app contract identifies Cascade and the live note helper unambiguously', () => {
   assert.match(CASCADE_AGENT_APP_CONTEXT, /Obsidian-style workspace for AI-native project management/);
@@ -57,4 +57,27 @@ test('chat agents inherit folder ancestry and the nearest project doc', () => {
   assert.match(context, /ObsidianCube is the umbrella project/);
   assert.doesNotMatch(context, /This should not be injected/);
   db.close();
+});
+
+test('injected chat history names attachments and how to open them', () => {
+  const message = (id: string, body: string, extra: Record<string, unknown> = {}) => ({
+    id, channelId: 'c', author: 'asdfasdf', body, createdAt: id, ...extra,
+  }) as never;
+  const context = buildAgentChatContext([
+    message('m1', '', { hasImages: true }),
+    message('m2', 'this also seems like a failure', { images: ['data:image/png;base64,AAAA'] }),
+    message('m3', 'plain text'),
+  ]);
+  // A media-only message used to be filtered out for having an empty body.
+  assert.match(context, /m1/);
+  assert.match(context, /\[attached: 1 image — message m2\]/);
+  assert.match(context, /cascade-chat attachment --message-id <id>/);
+  assert.doesNotMatch(context, /plain text \[attached/);
+});
+
+test('history with no media carries no attachment hint', () => {
+  const context = buildAgentChatContext([
+    { id: 'm1', channelId: 'c', author: 'a', body: 'hello', createdAt: 'm1' },
+  ] as never);
+  assert.equal(context, 'a: hello');
 });

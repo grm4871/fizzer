@@ -22,7 +22,10 @@ export const CASCADE_AGENT_APP_CONTEXT =
   + 'Use `--listed` and `--folder` when placing a new note in the sidebar. '
   + 'Do not replace the helper with an absolute path, inspect a local docs.db, or conclude notes are unavailable '
   + 'because they are absent from the local filesystem or named tool list. '
-  + 'Use normal filesystem tools only for local repository/workspace work the user actually requested.';
+  + 'Use normal filesystem tools only for local repository/workspace work the user actually requested. '
+  + 'Chat messages can carry images and files; the transcript marks them but cannot inline them. '
+  + 'Open one with `cascade-chat attachment --message-id <id>`, which writes the file locally and prints its path — '
+  + 'never answer as if an attachment you were told about does not exist.';
 
 export type ChatReplyRef = {
   messageId: string;
@@ -1131,22 +1134,41 @@ export function buildAgentChatContext(
 ): string {
   const excluded = new Set(Array.isArray(excludeMessageIds) ? excludeMessageIds : [excludeMessageIds]);
   const maxBody = Math.max(80, maxBodyChars);
+  // A screenshot is often the whole message. Dropping media-only rows for having
+  // an empty body left agents arguing about evidence they were never told exists.
+  const mediaCount = (message: ChatMessage) =>
+    (message.images?.length || (message.hasImages ? 1 : 0)) + (message.attachments?.length || 0);
   const rows = messages
     .filter((message) => !excluded.has(message.id))
     .filter((message) => {
       const body = message.body.trim();
-      return body.length > 0 && body !== 'Thinking...';
+      if (body === 'Thinking...') return false;
+      return body.length > 0 || mediaCount(message) > 0;
     })
     .slice(-Math.max(1, limit));
   if (!rows.length) return '';
-  return rows.map((message) => {
+  const lines = rows.map((message) => {
     const body = message.body.replace(/\s+/g, ' ').trim();
     const clipped = body.length > maxBody ? `${body.slice(0, maxBody - 1)}…` : body;
     const reply = message.replyTo?.preview
       ? ` (replying to ${message.replyTo.author || message.replyTo.mention || 'message'}: ${message.replyTo.preview.slice(0, 120)})`
       : '';
-    return `${message.author}${reply}: ${clipped}`;
-  }).join('\n');
+    const images = message.images?.length || (message.hasImages ? 1 : 0);
+    const named = (message.attachments || []).map((item) => item.name).filter(Boolean);
+    const media = [
+      images ? `${images} image${images === 1 ? '' : 's'}` : '',
+      named.length ? named.join(', ') : '',
+    ].filter(Boolean).join(', ');
+    const marker = media ? ` [attached: ${media} — message ${message.id}]` : '';
+    return `${message.author}${reply}: ${clipped}${marker}`;
+  });
+  const anyMedia = rows.some((message) => mediaCount(message) > 0);
+  // The transcript is text-only, so name the way to actually open the file.
+  const hint = anyMedia
+    ? '\n(Attachments above are not inlined here. Open one with '
+      + '`cascade-chat attachment --message-id <id>`, which writes the file locally and prints its path.)'
+    : '';
+  return `${lines.join('\n')}${hint}`;
 }
 
 /**

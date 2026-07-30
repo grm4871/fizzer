@@ -19,6 +19,8 @@ const USAGE = `cascade-chat — read/send live Cascade chat
 
 Usage:
   cascade-chat history                 recent messages for the current channel
+  cascade-chat attachment              write a message's images/files to disk
+                        (--message-id <id>; default: newest message with media)
   cascade-chat send --message <text>    send a standalone message to the channel
   cascade-chat avatar --url <https-url> set this agent's profile picture
                         (also --avatar-url; --url here is the image, not API base)
@@ -34,6 +36,8 @@ Options:
   --url <https-url>         profile picture URL for avatar
   --clear                   remove this agent's profile picture
   --author <name>           author for send (default current agent/user)
+  --message-id <id>         message to open attachments from
+  --out <dir>               directory for written attachments (default temp dir)
   --before-message-id <id>  only messages before this message
   --around-message-id <id>  window centered around this message
   --limit <n>               max messages (default 12)
@@ -224,6 +228,52 @@ function bodyPreview(message) {
   return '(empty)';
 }
 
+/** Media summary for a message, so history never hides that evidence exists. */
+function mediaSummary(message) {
+  const images = Array.isArray(message.images) ? message.images.length : 0;
+  const hidden = !images && message.hasImages ? 1 : 0;
+  const names = (Array.isArray(message.attachments) ? message.attachments : [])
+    .map((item) => item && item.name)
+    .filter(Boolean);
+  const parts = [];
+  const imageCount = images || hidden;
+  if (imageCount) parts.push(`${imageCount} image${imageCount === 1 ? '' : 's'}`);
+  if (names.length) parts.push(names.join(', '));
+  return parts.join(', ');
+}
+
+const IMAGE_EXTENSIONS = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/jpg': 'jpg',
+  'image/gif': 'gif',
+  'image/webp': 'webp',
+  'image/bmp': 'bmp',
+  'image/svg+xml': 'svg',
+};
+
+/** Write one image/attachment source to disk and return its path.
+ * Data URLs are decoded in place; http(s) sources are downloaded. */
+async function writeAttachment(source, dir, base, token) {
+  const dataUrl = /^data:([^;,]+);base64,(.+)$/s.exec(String(source.url || '').trim());
+  if (dataUrl) {
+    const extension = IMAGE_EXTENSIONS[dataUrl[1]] || (dataUrl[1].split('/')[1] || 'bin').replace(/[^\w.-]/g, '');
+    const file = path.join(dir, `${base}.${extension}`);
+    fs.writeFileSync(file, Buffer.from(dataUrl[2], 'base64'));
+    return { path: file, media_type: dataUrl[1], name: source.name || path.basename(file) };
+  }
+  const href = String(source.url || '').trim();
+  if (!/^https?:\/\//i.test(href)) return null;
+  const res = await fetch(href, { headers: { authorization: `Bearer ${token}` } });
+  if (!res.ok) return null;
+  const mediaType = source.media_type || res.headers.get('content-type') || 'application/octet-stream';
+  const named = source.name && /\.[a-z0-9]+$/i.test(source.name);
+  const extension = IMAGE_EXTENSIONS[mediaType.split(';')[0]] || 'bin';
+  const file = path.join(dir, named ? source.name.replace(/[/\\]/g, '_') : `${base}.${extension}`);
+  fs.writeFileSync(file, Buffer.from(await res.arrayBuffer()));
+  return { path: file, media_type: mediaType, name: source.name || path.basename(file) };
+}
+
 function normalizeInlineMessage(value, preserveEscapes = false) {
   const text = String(value || '');
   if (preserveEscapes) return text;
@@ -292,6 +342,9 @@ function decorateMessages(messages, selected, args) {
     replyTo: message.replyTo || null,
     replyContext: includeReplies ? replyChain(message, byId, depth) : undefined,
     images: message.images || [],
+    // The list payload strips heavy data URLs; keep the flag so JSON consumers
+    // can tell "no image" from "image not inlined here".
+    hasImages: Boolean(message.hasImages) || (message.images || []).length > 0,
     attachments: message.attachments || [],
   }));
 }
@@ -306,19 +359,26 @@ function formatHuman(messages) {
     const chain = message.replyContext?.length
       ? `\n  reply_context:\n${message.replyContext.map((item) => `    - ${item.author} (${item.messageId}): ${item.preview}`).join('\n')}`
       : '';
-    return `${header}${reply}${chain}\n  ${bodyPreview(message)}`;
+    // A captioned screenshot used to render as caption-only, so the attachment
+    // marker is separate from the body preview rather than a fallback for it.
+    const media = mediaSummary(message);
+    const attached = media
+      ? `\n  attached: ${media} — open with: cascade-chat attachment --message-id ${message.id}`
+      : '';
+    return `${header}${reply}${chain}\n  ${bodyPreview(message)}${attached}`;
   }).join('\n\n');
 }
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const cmd = args._[0];
-  if (!cmd || args.help) {
+  const raw = args._[0];
+  if (!raw || args.help) {
     process.stdout.write(USAGE + '\n');
-    process.exit(cmd ? 0 : 1);
+    process.exit(raw ? 0 : 1);
   }
-  if (cmd !== 'history' && cmd !== 'send' && cmd !== 'avatar' && cmd !== 'distill' && cmd !== 'search') {
-    fail(`unknown command "${cmd}". Run with --help.`);
+  const cmd = raw === 'attachments' ? 'attachment' : raw;
+  if (!['history', 'send', 'avatar', 'distill', 'search', 'attachment'].includes(cmd)) {
+    fail(`unknown command "${raw}". Run with --help.`);
   }
 
   const config = readHelperConfig();
@@ -400,6 +460,46 @@ async function main() {
       process.stdout.write(
         `distilled (${result.mode}) → ${result.note?.id || ''}  ${result.note?.title || ''}\n`,
       );
+    }
+    return;
+  }
+
+  if (cmd === 'attachment') {
+    // The transcript an agent sees is text; this is how it opens the picture.
+    const { messages = [] } = await api(url, token, 'GET', `/api/vaults/${vaultId}/channels/${channelId}/messages`);
+    const wanted = optionString(args, 'message-id');
+    const target = wanted
+      ? messages.find((message) => message.id === wanted)
+      : [...messages].reverse().find((message) => mediaSummary(message));
+    if (!target) fail(wanted ? `message ${wanted} not found in this channel.` : 'no message with an attachment found.');
+
+    // The list payload strips heavy data URLs, so always read the full message.
+    let full = target;
+    try {
+      const detail = await api(
+        url, token, 'GET',
+        `/api/vaults/${vaultId}/channels/${channelId}/messages/${encodeURIComponent(target.id)}`,
+      );
+      if (detail.message) full = detail.message;
+    } catch { /* fall back to what the list gave us */ }
+
+    const outDir = optionString(args, 'out')
+      || fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-attachment-'));
+    fs.mkdirSync(outDir, { recursive: true });
+    const sources = [
+      ...(full.images || []).map((src, index) => ({ url: src, name: '', index })),
+      ...(full.attachments || []).map((item, index) => ({ ...item, index: (full.images || []).length + index })),
+    ];
+    const written = [];
+    for (const source of sources) {
+      const saved = await writeAttachment(source, outDir, `${target.id}-${source.index}`, token);
+      if (saved) written.push(saved);
+    }
+    if (!written.length) fail(`message ${target.id} has no readable attachment.`);
+    if (args.json) process.stdout.write(JSON.stringify({ messageId: target.id, files: written }) + '\n');
+    else {
+      process.stdout.write(`${target.id} (${target.author}): ${written.length} file(s)\n`);
+      for (const file of written) process.stdout.write(`  ${file.path}  ${file.media_type}\n`);
     }
     return;
   }
