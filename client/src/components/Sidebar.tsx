@@ -366,14 +366,12 @@ export function Sidebar({
           const note = notes.find((n) => n.id === noteId);
           if (!note || (note.is_listed !== 0 && note.folder_id === targetFolderId)) return;
           onMoveNote(noteId, targetFolderId);
-          if (targetFolderId) expandFolder(targetFolderId);
           return;
         }
         if (folderId && !isInvalidFolderTarget(folderId, targetFolderId)) {
           const folder = folders.find((f) => f.id === folderId);
           if (!folder || folder.parent_id === targetFolderId) return;
           onMoveFolder(folderId, targetFolderId, nextFolderPosition(targetFolderId, folderId));
-          if (targetFolderId) expandFolder(targetFolderId);
         }
       },
     };
