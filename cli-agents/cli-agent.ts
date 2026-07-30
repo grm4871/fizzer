@@ -153,8 +153,40 @@ function statsFromUsageBlob(
 // CONFIG
 // ═══════════════════════════════════════════════════════════════
 
-/** Maximum time (ms) a CLI agent process may run before being killed. */
-const CLI_TIMEOUT_MS = Number(process.env.RUNNER_CLI_TIMEOUT || 600_000);
+/**
+ * Inactivity timeout (ms): a CLI agent is killed only after this long with
+ * **no output at all** — not after this long running.
+ *
+ * This was a fixed wall-clock cap, which killed healthy long runs mid-stream:
+ * Codex routinely works well past 10 minutes on one task, and a run that was
+ * actively printing progress still got SIGTERMed. Resetting the timer on every
+ * stdout/stderr chunk keeps the guarantee that matters — a wedged process is
+ * still reaped, because a wedged process emits nothing — without capping how
+ * long useful work may take.
+ *
+ * `RUNNER_CLI_TIMEOUT` is still honoured as an override for compatibility.
+ */
+const CLI_IDLE_TIMEOUT_MS = Number(
+  process.env.RUNNER_CLI_IDLE_TIMEOUT || process.env.RUNNER_CLI_TIMEOUT || 1_800_000,
+);
+
+/**
+ * Idle-timeout handle: `bump()` on every chunk of child output, `clear()` once
+ * the process settles. Fires `onIdle` after CLI_IDLE_TIMEOUT_MS of silence.
+ */
+function createIdleTimer(onIdle: () => void): { bump: () => void; clear: () => void } {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const clear = () => {
+    if (timer) clearTimeout(timer);
+    timer = undefined;
+  };
+  const bump = () => {
+    clear();
+    timer = setTimeout(onIdle, CLI_IDLE_TIMEOUT_MS);
+  };
+  bump();
+  return { bump, clear };
+}
 
 /** Binary names are overridable in case they are not on the runner machine's PATH. */
 const CODEX_BIN = process.env.CODEX_BIN || 'codex';
@@ -376,19 +408,20 @@ function driveProcess(
     let stderr = '';
     let stdoutBuf = '';
     let settled = false;
-    const timer = setTimeout(() => {
+    const idle = createIdleTimer(() => {
       if (!settled) {
         settled = true;
         cleanUpProcess();
         child.kill('SIGTERM');
-        reject(new Error(`${label} timed out after ${CLI_TIMEOUT_MS}ms`));
+        reject(new Error(`${label} produced no output for ${CLI_IDLE_TIMEOUT_MS}ms and was stopped.`));
       }
-    }, CLI_TIMEOUT_MS);
+    });
 
     // Single stdout consumer: tee raw bytes to the harness terminal and split
     // lines for JSONL parsing (readline would contend for the same stream).
     child.stdout.on('data', (d: Buffer | string) => {
       const chunk = d.toString();
+      idle.bump();
       emitHarness(emit, chunk);
       stdoutBuf += chunk;
       let nl = stdoutBuf.indexOf('\n');
@@ -405,6 +438,7 @@ function driveProcess(
 
     child.stderr.on('data', (d: Buffer | string) => {
       const chunk = d.toString();
+      idle.bump();
       stderr += chunk;
       // Dim red for stderr so it is distinguishable in the terminal pane.
       emitHarness(emit, `\x1b[31m${chunk}\x1b[0m`);
@@ -413,7 +447,7 @@ function driveProcess(
     child.on('error', (err) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      idle.clear();
       cleanUpProcess();
       reject(new Error(`${label} ('${bin}') could not be started: ${err.message}. Is it installed and on PATH?`));
     });
@@ -421,7 +455,7 @@ function driveProcess(
     child.on('close', (code) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      idle.clear();
       cleanUpProcess();
       // Flush a trailing partial stdout line (no final newline).
       const trailing = stdoutBuf.trim();
@@ -1805,17 +1839,18 @@ function driveHermesProcess(
     let stdoutBuf = '';
     let stderrBuf = '';
     let settled = false;
-    const timer = setTimeout(() => {
+    const idle = createIdleTimer(() => {
       if (!settled) {
         settled = true;
         cleanUpProcess();
         child.kill('SIGTERM');
-        reject(new Error(`${label} timed out after ${CLI_TIMEOUT_MS}ms`));
+        reject(new Error(`${label} produced no output for ${CLI_IDLE_TIMEOUT_MS}ms and was stopped.`));
       }
-    }, CLI_TIMEOUT_MS);
+    });
 
     child.stdout.on('data', (d: Buffer | string) => {
       const chunk = d.toString();
+      idle.bump();
       emitHarness(emit, chunk);
       stdoutBuf += chunk;
       let nl = stdoutBuf.indexOf('\n');
@@ -1832,6 +1867,7 @@ function driveHermesProcess(
 
     child.stderr.on('data', (d: Buffer | string) => {
       const chunk = d.toString();
+      idle.bump();
       emitHarness(emit, `\x1b[31m${chunk}\x1b[0m`);
       stderrBuf += chunk;
       let nl = stderrBuf.indexOf('\n');
@@ -1855,7 +1891,7 @@ function driveHermesProcess(
     child.on('error', (err) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      idle.clear();
       cleanUpProcess();
       reject(new Error(`${label} ('${bin}') could not be started: ${err.message}. Is it installed and on PATH?`));
     });
@@ -1863,7 +1899,7 @@ function driveHermesProcess(
     child.on('close', (code) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      idle.clear();
       cleanUpProcess();
       const trailingOut = stdoutBuf.trim();
       if (trailingOut) {
