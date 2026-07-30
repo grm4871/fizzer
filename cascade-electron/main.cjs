@@ -33,6 +33,7 @@ if (explicitUserDataDir) {
 const db = require('./database.cjs');
 const { startLocalAgentRun, cancelLocalAgentRun } = require('./agent-runner.cjs');
 const { connectDesktopRunner, disconnectDesktopRunner, isDesktopRunnerConnected, probeLocalModels } = require('./desktop-runner-host.cjs');
+const { collectPlanUsage } = require('./plan-usage.cjs');
 
 // Suppress GLib-GObject and GTK warnings on Linux.
 if (process.platform === 'linux') {
@@ -560,6 +561,17 @@ ipcMain.handle('runner:models', async () => {
   } catch (error) {
     console.error('[IPC] Failed to probe runner models:', error);
     return { models: {} };
+  }
+});
+
+ipcMain.handle('runner:planUsage', async () => {
+  try {
+    const grokCwd = path.join(app.getPath('userData'), 'usage-probe');
+    fs.mkdirSync(grokCwd, { recursive: true });
+    return { usage: await collectPlanUsage({ grokCwd }) };
+  } catch (error) {
+    console.error('[IPC] Failed to probe subscription usage:', error);
+    return { usage: {}, error: error.message };
   }
 });
 

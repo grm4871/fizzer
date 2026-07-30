@@ -1986,6 +1986,17 @@ a {
   color: var(--text-tertiary);
   font-size: 0.6875rem;
 }
+.chat-plan-usage {
+  color: var(--accent-hover);
+  font-size: 0.625rem;
+  font-weight: 600;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+.chat-plan-usage.is-unavailable {
+  color: var(--text-tertiary);
+  font-weight: 400;
+}
 .chat-message-status {
   color: var(--text-tertiary);
   font-size: 0.6875rem;
@@ -2935,6 +2946,16 @@ a {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.chat-user-copy .chat-agent-plan-usage {
+  margin-top: 2px;
+  color: var(--accent-hover);
+  font-size: 0.625rem;
+  font-weight: 600;
+}
+.chat-user-copy .chat-agent-plan-usage.is-unavailable {
+  color: var(--text-tertiary);
+  font-weight: 400;
 }
 .chat-agent-user {
   display: flex;

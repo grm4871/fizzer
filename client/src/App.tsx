@@ -401,6 +401,7 @@ export default function App() {
       lastErrorAt: null,
       lastSeenAt: null,
       models: null,
+      planUsage: null,
     };
     const sameHealth = (a: DesktopRunnerHealth | null, b: DesktopRunnerHealth): boolean => {
       if (!a) return false;
@@ -409,10 +410,9 @@ export default function App() {
       if (a.lastError !== b.lastError) return false;
       if (a.lastErrorAt !== b.lastErrorAt) return false;
       if (a.lastSeenAt !== b.lastSeenAt) return false;
-      if (a.models === b.models) return true;
-      if (!a.models || !b.models) return a.models === b.models;
       try {
-        return JSON.stringify(a.models) === JSON.stringify(b.models);
+        return JSON.stringify(a.models) === JSON.stringify(b.models)
+          && JSON.stringify(a.planUsage) === JSON.stringify(b.planUsage);
       } catch {
         return false;
       }

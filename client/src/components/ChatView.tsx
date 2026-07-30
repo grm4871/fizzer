@@ -89,6 +89,26 @@ export interface ChatMessage {
 }
 
 /** Desktop runner health from GET /api/me/desktop-runner */
+export interface PlanUsageWindow {
+  label: string;
+  usedPercent: number;
+  windowMinutes?: number;
+  resetsAt?: string | null;
+  resetsLabel?: string | null;
+}
+
+export interface PlanUsage {
+  status: 'ok' | 'unknown' | 'error';
+  usedPercent?: number;
+  windowMinutes?: number;
+  resetsAt?: string | null;
+  resetsLabel?: string | null;
+  windows?: PlanUsageWindow[];
+  planType?: string | null;
+  detail?: string | null;
+  fetchedAt?: string;
+}
+
 export interface DesktopRunnerHealth {
   online: boolean;
   activeRuns: number;
@@ -96,6 +116,7 @@ export interface DesktopRunnerHealth {
   lastErrorAt: string | null;
   lastSeenAt: string | null;
   models: Record<string, string[]> | null;
+  planUsage: Record<string, PlanUsage> | null;
 }
 
 export interface ChatBlock {
@@ -270,6 +291,47 @@ function formatTime(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '';
   return CHAT_TIME_FORMATTER.format(date);
+}
+
+function planUsageProviderId(agentId: string) {
+  return agentId === 'akron-grok' ? 'grok' : agentId;
+}
+
+function planUsageWindows(usage?: PlanUsage | null): PlanUsageWindow[] {
+  if (!usage || usage.status !== 'ok') return [];
+  if (usage.windows?.length) return usage.windows;
+  if (typeof usage.usedPercent !== 'number') return [];
+  return [{
+    label: usage.windowMinutes ? `${Math.round(usage.windowMinutes / 60)}h` : 'usage',
+    usedPercent: usage.usedPercent,
+    ...(usage.windowMinutes ? { windowMinutes: usage.windowMinutes } : {}),
+    ...(usage.resetsAt ? { resetsAt: usage.resetsAt } : {}),
+    ...(usage.resetsLabel ? { resetsLabel: usage.resetsLabel } : {}),
+  }];
+}
+
+function formatPlanUsage(usage?: PlanUsage | null) {
+  if (!usage) return '';
+  if (usage.status !== 'ok') return 'usage unavailable';
+  return planUsageWindows(usage)
+    .slice(0, 3)
+    .map((window) => `${window.label} ${Math.round(window.usedPercent)}%`)
+    .join(' · ');
+}
+
+function formatPlanUsageTitle(usage?: PlanUsage | null) {
+  if (!usage) return '';
+  if (usage.status !== 'ok') return usage.detail || 'Plan usage unavailable';
+  const lines = planUsageWindows(usage).map((window) => {
+    let reset = window.resetsLabel || '';
+    if (!reset && window.resetsAt) {
+      const date = new Date(window.resetsAt);
+      if (!Number.isNaN(date.getTime())) reset = CHAT_TIME_FORMATTER.format(date);
+    }
+    return `${window.label}: ${Math.round(window.usedPercent)}% used${reset ? ` · resets ${reset}` : ''}`;
+  });
+  if (usage.planType) lines.push(`Plan: ${usage.planType}`);
+  return lines.join('\n');
 }
 
 function initialFor(name: string) {
@@ -754,6 +816,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
   avatarKind,
   avatarUrl,
   ownerLabel,
+  planUsage,
   latestRunningMessageId,
   runningSiblingCount,
   steeringPromptLabels,
@@ -777,6 +840,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
   avatarKind: 'agent' | 'human';
   avatarUrl?: string;
   ownerLabel?: string;
+  planUsage?: PlanUsage | null;
   latestRunningMessageId?: string;
   runningSiblingCount: number;
   steeringPromptLabels: ReadonlyMap<string, string>;
@@ -855,6 +919,11 @@ const ChatGroupRow = memo(function ChatGroupRow({
           <div className="chat-message-body">
             <div className="chat-message-meta">
               <strong>{head.author}</strong>
+              {planUsage && (
+                <span className={`chat-plan-usage${planUsage.status === 'ok' ? '' : ' is-unavailable'}`} title={formatPlanUsageTitle(planUsage)}>
+                  {formatPlanUsage(planUsage)}
+                </span>
+              )}
               {ownerLabel && <span className="chat-agent-owner">{ownerLabel}'s agent</span>}
               <time dateTime={tail.createdAt}>{formatTime(tail.createdAt)}</time>
               {tail.status === 'running' && latestRunningMessageId === tail.id && runningSiblingCount > 1 && (
@@ -991,6 +1060,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
   && prev.selectedMessageId === next.selectedMessageId
   && prev.avatarKind === next.avatarKind
   && prev.ownerLabel === next.ownerLabel
+  && prev.planUsage === next.planUsage
   && prev.latestRunningMessageId === next.latestRunningMessageId
   && prev.runningSiblingCount === next.runningSiblingCount
   && prev.steeringPromptLabels === next.steeringPromptLabels
@@ -1261,6 +1331,11 @@ export const ChatView = memo(function ChatView({
     const registration = resolveMessageRegistration(message);
     const identity = registration?.vaultAgentId ? vaultAgentById.get(registration.vaultAgentId) : undefined;
     return identity?.ownerUsername || '';
+  };
+  const getMessagePlanUsage = (message: ChatMessage) => {
+    const registration = resolveMessageRegistration(message);
+    const agentId = message.agentId || registration?.agentId || '';
+    return runnerHealth?.planUsage?.[planUsageProviderId(agentId)] || null;
   };
   const onlineUsers = useMemo(() => new Set(presence.online), [presence.online]);
   const humanMessageAuthors = useMemo(() => {
@@ -1937,6 +2012,7 @@ export const ChatView = memo(function ChatView({
                   avatarKind={getMessageAvatarKind(head)}
                   avatarUrl={getMessageAvatarUrl(head)}
                   ownerLabel={getMessageOwnerLabel(head)}
+                  planUsage={getMessagePlanUsage(head)}
                   latestRunningMessageId={runState?.latestId}
                   runningSiblingCount={runState?.count || 0}
                   steeringPromptLabels={steeringPromptLabels}
@@ -2249,6 +2325,7 @@ export const ChatView = memo(function ChatView({
           {registeredAgentRows.map((agent) => {
           const selectedModel = agent.registration.model || agent.models[0]?.id || '';
           const isEditing = editingRegistrationId === agent.registration.id && agentMenuOpen;
+          const planUsage = runnerHealth?.planUsage?.[planUsageProviderId(agent.registration.agentId)] || null;
           return (
             <div
               className={`chat-user chat-agent-user${isEditing ? ' is-editing' : ''}`}
@@ -2264,6 +2341,11 @@ export const ChatView = memo(function ChatView({
                 <div className="chat-user-copy">
                   <strong>{agent.registration.displayName || agent.label}</strong>
                   <span>@{agent.registration.mention || agent.id} · {selectedModel || 'no model'}</span>
+                  {planUsage && (
+                    <span className={`chat-agent-plan-usage${planUsage.status === 'ok' ? '' : ' is-unavailable'}`} title={formatPlanUsageTitle(planUsage)}>
+                      {formatPlanUsage(planUsage)}
+                    </span>
+                  )}
                 </div>
               </button>
               <button

@@ -16,6 +16,7 @@ type RunnerElectronAPI = {
   cancelAgentRun?: (runId: number) => Promise<{ success: boolean; error?: string }>;
   onAgentEvent?: (callback: (payload: AgentEventPayload) => void) => () => void;
   getRunnerModels?: () => Promise<{ models?: Record<string, string[]> }>;
+  getRunnerPlanUsage?: () => Promise<{ usage?: Record<string, unknown> }>;
 };
 
 type AgentEventPayload = {
@@ -43,11 +44,17 @@ type DelegatedRunPayload = {
 };
 
 const TERMINAL_REPLAY_MS = 5 * 60 * 1000;
+const PLAN_USAGE_REFRESH_MS = 5 * 60 * 1000;
+const PLAN_USAGE_MIN_REFRESH_MS = 4 * 60 * 1000;
 
 let socket: Socket | null = null;
 let currentToken = '';
 let apiBase = '';
 let agentEventUnsub: (() => void) | null = null;
+let planUsageTimer: number | null = null;
+let planUsageInFlight: Promise<void> | null = null;
+let lastPlanUsageAt = 0;
+let lastPlanUsage: Record<string, unknown> | null = null;
 const activeRunIds = new Set<number>();
 const recentTerminalEvents = new Map<number, { type: string; payload: unknown; at: number }>();
 
@@ -78,6 +85,7 @@ function emitRunEvent(runId: number, type: string, payload: unknown): void {
       recentTerminalEvents.set(runId, { type, payload, at: Date.now() });
       pruneRecentTerminals();
       activeRunIds.delete(runId);
+      if (socket) window.setTimeout(() => void publishPlanUsage(socket, true), 1_000);
     }
   }
   socket?.emit('runner:runEvent', { runId, type, payload });
@@ -94,10 +102,35 @@ async function probeModels(): Promise<Record<string, string[]>> {
   }
 }
 
+async function publishPlanUsage(activeSocket: Socket, force = false): Promise<void> {
+  const api = runnerElectronAPI();
+  if (!api?.getRunnerPlanUsage || !activeSocket.connected) return;
+  if (!force && Date.now() - lastPlanUsageAt < PLAN_USAGE_MIN_REFRESH_MS) {
+    if (lastPlanUsage) activeSocket.emit('runner:planUsage', { usage: lastPlanUsage });
+    return;
+  }
+  if (planUsageInFlight) return planUsageInFlight;
+  planUsageInFlight = (async () => {
+    try {
+      const result = await api.getRunnerPlanUsage?.();
+      if (!activeSocket.connected || !result?.usage || typeof result.usage !== 'object') return;
+      lastPlanUsageAt = Date.now();
+      lastPlanUsage = result.usage;
+      activeSocket.emit('runner:planUsage', { usage: result.usage });
+    } catch {
+      // Best effort: old desktop builds simply keep plan usage absent.
+    } finally {
+      planUsageInFlight = null;
+    }
+  })();
+  return planUsageInFlight;
+}
+
 async function registerWithServer(activeSocket: Socket): Promise<void> {
   const models = await probeModels();
   const ids = [...activeRunIds].filter((id) => Number.isFinite(id));
   activeSocket.emit('runner:register', { models, activeRunIds: ids });
+  void publishPlanUsage(activeSocket);
   pruneRecentTerminals();
   for (const [runId, entry] of recentTerminalEvents.entries()) {
     if (activeRunIds.has(runId)) continue;
@@ -147,6 +180,10 @@ function ensureAgentEventBridge(): void {
 }
 
 function detachSocket(): void {
+  if (planUsageTimer != null) {
+    window.clearInterval(planUsageTimer);
+    planUsageTimer = null;
+  }
   if (!socket) return;
   socket.removeAllListeners();
   socket.disconnect();
@@ -156,12 +193,19 @@ function detachSocket(): void {
 function disconnectDesktopRunnerSocket(): void {
   currentToken = '';
   apiBase = '';
+  lastPlanUsageAt = 0;
+  lastPlanUsage = null;
   detachSocket();
 }
 
 function wireSocketHandlers(activeSocket: Socket): void {
   activeSocket.on('connect', () => {
     void registerWithServer(activeSocket);
+    if (planUsageTimer != null) window.clearInterval(planUsageTimer);
+    planUsageTimer = window.setInterval(
+      () => void publishPlanUsage(activeSocket),
+      PLAN_USAGE_REFRESH_MS,
+    );
     console.info(
       `[DesktopRunner] Connected to ${apiBase}/runners`
       + (activeRunIds.size ? ` (reclaiming ${activeRunIds.size} active run(s))` : ''),

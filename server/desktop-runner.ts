@@ -58,6 +58,41 @@ type RunnerHooks = {
   onRunsFailedForOwner?: (ownerUserId: number, runIds: number[]) => void;
 };
 
+/**
+ * Subscription usage for one provider, as reported by the desktop runner.
+ *
+ * `usedPercent` is the worst (highest) window the provider exposes, since that
+ * is the window that actually blocks work. `status: 'unknown'` is deliberately
+ * first-class: a provider whose plan usage we cannot read reports unknown
+ * rather than being omitted or defaulted to 0, so the UI can say "unknown"
+ * instead of implying an untouched plan.
+ */
+export type PlanUsageWindow = {
+  label: string;
+  usedPercent: number;
+  windowMinutes?: number;
+  resetsAt?: string | null;
+  resetsLabel?: string | null;
+};
+
+export type PlanUsage = {
+  status: 'ok' | 'unknown' | 'error';
+  usedPercent?: number;
+  /** Window that `usedPercent` refers to, in minutes. */
+  windowMinutes?: number;
+  /** ISO timestamp at which the window resets. */
+  resetsAt?: string | null;
+  /** Provider-rendered reset time when no stable timestamp is exposed. */
+  resetsLabel?: string | null;
+  /** All windows exposed by the provider (for example Claude session + week). */
+  windows?: PlanUsageWindow[];
+  planType?: string | null;
+  /** Human-readable reason when status is not 'ok'. */
+  detail?: string | null;
+  /** When this figure was collected. */
+  fetchedAt?: string;
+};
+
 export type DesktopRunnerHealth = {
   online: boolean;
   activeRuns: number;
@@ -65,6 +100,8 @@ export type DesktopRunnerHealth = {
   lastErrorAt: string | null;
   lastSeenAt: string | null;
   models: Record<string, string[]> | null;
+  /** Subscription usage keyed by agent id (claude-code / codex / grok). */
+  planUsage: Record<string, PlanUsage> | null;
 };
 
 const JWT_SECRET = resolveJwtSecret();
@@ -74,6 +111,8 @@ const delegatedRunOwners = new Map<number, number>();
 const runnerLastError = new Map<number, { message: string; at: string }>();
 /** Last capability probe payload from the desktop (agent → model ids). */
 const runnerModels = new Map<number, Record<string, string[]>>();
+/** Latest subscription usage per user, pushed by the desktop runner. */
+const runnerPlanUsage = new Map<number, Record<string, PlanUsage>>();
 const runnerLastSeen = new Map<number, string>();
 /**
  * Pending fail-on-disconnect timers. Socket.io transport swaps, Electron focus
@@ -220,6 +259,53 @@ export function initDesktopRunners(io: Server, db: Db, hooks: RunnerHooks): void
       runnerLastSeen.set(user.id, new Date().toISOString());
     });
 
+    // Subscription usage per provider. Only the desktop can read these — the
+    // credentials live in the user's CLI config, never on the server.
+    socket.on('runner:planUsage', (payload?: { usage?: Record<string, PlanUsage> }) => {
+      if (payload?.usage && typeof payload.usage === 'object') {
+        const cleaned: Record<string, PlanUsage> = {};
+        for (const [agent, raw] of Object.entries(payload.usage)) {
+          if (agent !== 'claude-code' && agent !== 'codex' && agent !== 'grok') continue;
+          if (!raw || typeof raw !== 'object') continue;
+          const status = raw.status === 'ok' || raw.status === 'error' ? raw.status : 'unknown';
+          const pct = Number(raw.usedPercent);
+          const windows = Array.isArray(raw.windows)
+            ? raw.windows.flatMap((window) => {
+              if (!window || typeof window !== 'object') return [];
+              const windowPct = Number(window.usedPercent);
+              if (!Number.isFinite(windowPct)) return [];
+              return [{
+                label: typeof window.label === 'string' ? window.label.slice(0, 40) : 'usage',
+                usedPercent: Math.max(0, Math.min(100, windowPct)),
+                ...(Number.isFinite(Number(window.windowMinutes))
+                  ? { windowMinutes: Number(window.windowMinutes) }
+                  : {}),
+                ...(typeof window.resetsAt === 'string' ? { resetsAt: window.resetsAt } : {}),
+                ...(typeof window.resetsLabel === 'string' ? { resetsLabel: window.resetsLabel.slice(0, 100) } : {}),
+              }];
+            })
+            : [];
+          cleaned[agent] = {
+            status,
+            // Only trust a percentage on an 'ok' reading; clamp to 0-100 so a
+            // provider quirk can't render a meter off the end of its track.
+            ...(status === 'ok' && Number.isFinite(pct)
+              ? { usedPercent: Math.max(0, Math.min(100, pct)) }
+              : {}),
+            ...(Number.isFinite(Number(raw.windowMinutes)) ? { windowMinutes: Number(raw.windowMinutes) } : {}),
+            ...(typeof raw.resetsAt === 'string' ? { resetsAt: raw.resetsAt } : {}),
+            ...(typeof raw.resetsLabel === 'string' ? { resetsLabel: raw.resetsLabel.slice(0, 100) } : {}),
+            ...(windows.length ? { windows } : {}),
+            ...(typeof raw.planType === 'string' ? { planType: raw.planType } : {}),
+            ...(typeof raw.detail === 'string' ? { detail: raw.detail.slice(0, 300) } : {}),
+            fetchedAt: typeof raw.fetchedAt === 'string' ? raw.fetchedAt.slice(0, 100) : new Date().toISOString(),
+          };
+        }
+        runnerPlanUsage.set(user.id, cleaned);
+      }
+      runnerLastSeen.set(user.id, new Date().toISOString());
+    });
+
     socket.on('runner:runEvent', (data: { runId?: number; type?: string; payload?: unknown }) => {
       const runId = Number(data?.runId);
       if (!Number.isFinite(runId) || !data?.type) return;
@@ -274,6 +360,7 @@ export function getDesktopRunnerStatus(userId: number, db?: Db): DesktopRunnerHe
     lastErrorAt: err?.at ?? null,
     lastSeenAt: runnerLastSeen.get(userId) ?? null,
     models: runnerModels.get(userId) ?? null,
+    planUsage: runnerPlanUsage.get(userId) ?? null,
   };
 }
 

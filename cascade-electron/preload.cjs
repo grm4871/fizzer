@@ -84,6 +84,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getRunnerStatus: () => ipcRenderer.invoke('runner:status'),
   /** Probe local CLI model lists for runner:register. */
   getRunnerModels: () => ipcRenderer.invoke('runner:models'),
+  /** Read locally authenticated Claude, Codex, and Grok plan usage. */
+  getRunnerPlanUsage: () => ipcRenderer.invoke('runner:planUsage'),
   readClipboardImage: () => ipcRenderer.invoke('clipboard:readImage'),
   // Local CLI execution (renderer hosts /runners; main spawns agents).
   startAgentRun: (opts) => ipcRenderer.invoke('agent:start', opts),
