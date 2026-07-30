@@ -87,6 +87,7 @@ import {
   buildAgentChannelWorkspaceContext,
   buildAgentChatContentFromRunEvents,
   buildAgentChatContext,
+  CASCADE_AGENT_APP_CONTEXT,
   CHAT_NOTE_MARKER,
   ensureAgentChatMessage,
   ensureChatSchema,
@@ -1722,7 +1723,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     const willResume = Boolean(resumeSessionId);
 
     let effectivePrompt = prompt;
-    const contextChunks: string[] = [];
+    const contextChunks: string[] = [CASCADE_AGENT_APP_CONTEXT];
     // Folder ancestry and nearby project docs are workspace state, not
     // conversation history. Include them even when resuming an older CLI
     // session so existing agents immediately pick up moves and new docs.

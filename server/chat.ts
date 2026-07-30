@@ -15,6 +15,12 @@ import { getNote, getVault, type Vault } from './vault.js';
 type Db = Database.Database;
 
 export const CHAT_NOTE_MARKER = 'cascade://chat-channel';
+export const CASCADE_AGENT_APP_CONTEXT =
+  'Cascade is a user-facing, Obsidian-style workspace for AI-native project management. '
+  + 'Its notes, folders, project docs, and chats are live app data, not files under the agent process cwd. '
+  + 'Use `cascade-note` by command name to read or write Cascade notes; it is on PATH and pre-authorized. '
+  + 'Do not replace it with an absolute path or inspect a local docs.db. '
+  + 'Use normal filesystem tools only for local repository/workspace work the user actually requested.';
 
 export type ChatReplyRef = {
   messageId: string;

@@ -31,13 +31,18 @@ const CLAUDE_CHAT_MAX_CONTINUES = Number(process.env.RUNNER_CHAT_MAX_CONTINUES |
 // Chat runs stay low-thinking so multiuser pings don't burn long monologues.
 // Override with RUNNER_CHAT_THINKING if a heavy chat agent needs more.
 const CLAUDE_CHAT_THINKING_TOKENS = Number(process.env.RUNNER_CHAT_THINKING ?? 800);
-const CLAUDE_AGENT_CONTEXT = 'You are a local workspace assistant. This checkout is not the live Cascade app: use `cascade-note` for live notes (`cascade-note memory` for durable recall), `cascade-scratchpad jot` for work-journal entries, and normal file edits only for local scratch or non-note work. Notes you create via cascade-note are unlisted by default (chat/search/embed only, not the left sidebar). Only pass `--listed` if the user explicitly asks to put a note in the sidebar tree. Respect auth boundaries and only handle secrets the user explicitly provides for this task.';
+const CASCADE_PRODUCT_CONTEXT =
+  'Cascade is a user-facing, Obsidian-style workspace for AI-native project management. '
+  + 'Its notes, folders, project docs, and chats are live app data, not files under the process cwd. '
+  + 'Use `cascade-note` by command name for live note reads/writes; it is on PATH and pre-authorized. '
+  + 'Never replace it with an absolute path or inspect a local docs.db.';
+const CLAUDE_AGENT_CONTEXT = `${CASCADE_PRODUCT_CONTEXT} You are a local workspace assistant. This checkout is not the live Cascade app: use \`cascade-note\` for live notes (\`cascade-note memory\` for durable recall), \`cascade-scratchpad jot\` for work-journal entries, and normal file edits only for local scratch or non-note work. Notes you create via cascade-note are unlisted by default (chat/search/embed only, not the left sidebar). Only pass \`--listed\` if the user explicitly asks to put a note in the sidebar tree. Respect auth boundaries and only handle secrets the user explicitly provides for this task.`;
 
 // Nudge agents to behave like chat participants, not verbose coding CLIs: the
 // chat collapses step narration into a trace disclosure, so the actual message
 // should be short. Detailed reasoning belongs in thinking, not the reply.
 const CHAT_BREVITY_CONTEXT =
-  'Shared multiuser chat — match human chat speed, but resolve the user\'s actual intent before choosing the fast path. '
+  `${CASCADE_PRODUCT_CONTEXT} Shared multiuser chat — match human chat speed, but resolve the user's actual intent before choosing the fast path. `
   + 'Short or context-dependent messages can still request real work; complete that work before replying. '
   + 'For genuine conversation or Q&A, return one short direct final answer with no tools. '
   + 'Return the final answer normally; keep progress in the run trace instead of posting separate chat messages. '
@@ -295,6 +300,21 @@ function noteCapabilityContext(opts) {
   return `Live notes: \`cascade-note\` (not local .md; creates unlisted by default — use \`--listed\` only if the user asks for sidebar); durable memory: \`cascade-note memory\`; work journal: \`cascade-scratchpad jot\` (append-only — jot observations, outcomes, and dead ends as you work; consolidate into memory notes when the boot context says it is due).${vaultLine} Helpers on PATH and in ${helperDir}.`;
 }
 
+/** Permission rules for helper names plus the absolute paths agents may discover. */
+function helperAllowedTools() {
+  const helperDir = resolveWrapperDir();
+  const commands = new Set();
+  for (const name of HELPER_NAMES) {
+    commands.add(name);
+    commands.add(path.join(helperDir, name));
+    commands.add(path.join(USER_BIN_DIR, name));
+  }
+  return [...commands].flatMap((command) => [
+    `Bash(${command})`,
+    `Bash(${command} *)`,
+  ]);
+}
+
 
 
 // Live Claude SDK query streams, keyed by runId, so cancellation can close them.
@@ -519,7 +539,7 @@ async function runClaudeLocally(opts, emit) {
       // Even without yolo, let agents run the wrapper commands unprompted so
       // they can pull channel history/notes, use memory, and send chat messages.
       // Everything else still respects acceptEdits.
-      allowedTools: ['Bash(cascade-chat *)', 'Bash(cascade-note *)', 'Bash(cascade-scratchpad *)'],
+      allowedTools: helperAllowedTools(),
       // Electron's main process is not a Node runtime, so spawn a real `node`
       // from PATH to host the bundled Claude Code CLI.
       executable: 'node',
@@ -904,6 +924,7 @@ async function cancelLocalAgentRun(runId) {
 module.exports = {
   startLocalAgentRun,
   cancelLocalAgentRun,
+  helperAllowedTools,
   resolveAgentCwd,
   setNoteApiConfig,
 };

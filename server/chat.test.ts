@@ -1,7 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import Database from 'better-sqlite3';
-import { buildAgentChannelWorkspaceContext } from './chat.js';
+import { buildAgentChannelWorkspaceContext, CASCADE_AGENT_APP_CONTEXT } from './chat.js';
+
+test('the app contract identifies Cascade and the live note helper unambiguously', () => {
+  assert.match(CASCADE_AGENT_APP_CONTEXT, /Obsidian-style workspace for AI-native project management/);
+  assert.match(CASCADE_AGENT_APP_CONTEXT, /live app data, not files/);
+  assert.match(CASCADE_AGENT_APP_CONTEXT, /Use `cascade-note` by command name/);
+  assert.match(CASCADE_AGENT_APP_CONTEXT, /pre-authorized/);
+  assert.match(CASCADE_AGENT_APP_CONTEXT, /Do not replace it with an absolute path/);
+});
 
 test('chat agents inherit folder ancestry and the nearest project doc', () => {
   const db = new Database(':memory:');
