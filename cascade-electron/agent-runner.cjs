@@ -18,13 +18,11 @@ let claudeSdkPromise = null;
 // by THIS machine's `claude` login / ANTHROPIC_API_KEY — never the server's.
 // Mirrors the run options the server used to apply in server/runner.ts.
 const CLAUDE_DEFAULT_MODEL = process.env.RUNNER_MODEL || 'claude-sonnet-5';
-// Non-chat turn caps are off by default (0 = unlimited). Chat has its own
-// bounded default below.
+// Turn caps are off by default (0 = unlimited). Either surface can still be
+// bounded explicitly through its environment override.
 const CLAUDE_MAX_TURNS = Number(process.env.RUNNER_MAX_TURNS || 0);
 const CLAUDE_THINKING_TOKENS = Number(process.env.RUNNER_THINKING ?? 4000);
-// Chat is unattended between user messages. Bound a single request so one
-// deceptively small ping cannot consume dozens of tool/inference turns.
-const CLAUDE_CHAT_MAX_TURNS = Number(process.env.RUNNER_CHAT_MAX_TURNS || 20);
+const CLAUDE_CHAT_MAX_TURNS = Number(process.env.RUNNER_CHAT_MAX_TURNS || 0);
 // Extra turn windows a chat run may auto-continue into after hitting a cap
 // (each resumes the same session). Only relevant when a cap is set above.
 const CLAUDE_CHAT_MAX_CONTINUES = Number(process.env.RUNNER_CHAT_MAX_CONTINUES || 0);
