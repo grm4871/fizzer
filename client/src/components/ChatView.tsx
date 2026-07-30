@@ -1039,9 +1039,6 @@ const ChatGroupRow = memo(function ChatGroupRow({
                     </div>
                   )}
                   {message.body && <ChatMessageText messageId={message.id} body={message.body} mentionableAliases={mentionableAliases} notes={notes} onOpenNote={onOpenNote} onOpenSharedNote={onOpenSharedNote} />}
-                  {message.status === 'running' && !isLatestRunningMessage && (
-                    <div className="chat-steering-handoff">Harness moved to the latest steering response ↓</div>
-                  )}
                   {message.changeRequest && (
                     <div className="chat-change-request">
                       <div className="chat-change-files">

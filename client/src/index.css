@@ -2046,13 +2046,6 @@ a {
   background: var(--accent-subtle);
 }
 .chat-message-status.is-steered { color: var(--text-tertiary); }
-.chat-steering-handoff {
-  margin-top: 6px;
-  padding: 5px 8px;
-  border-left: 2px solid var(--accent);
-  color: var(--text-tertiary);
-  font: 0.6875rem/1.35 var(--font-mono);
-}
 .chat-steering-prompt {
   display: inline-flex;
   margin: 0 0 6px;
