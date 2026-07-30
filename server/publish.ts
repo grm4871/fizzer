@@ -7,6 +7,7 @@ import type { Request, Response } from 'express';
 import { marked } from 'marked';
 import type Database from 'better-sqlite3';
 import { getNote, getVault } from './vault.js';
+import { redactPrivateBlocksForPublic } from './privacy.js';
 
 type Db = Database.Database;
 
@@ -49,7 +50,8 @@ function newSlug(): string {
 }
 
 export function sanitizePublicContent(content: string): string {
-  let out = content.replace(/```cascade-widget[\s\S]*?```/g, '_Interactive widget omitted in public view._');
+  let out = redactPrivateBlocksForPublic(content);
+  out = out.replace(/```cascade-widget[\s\S]*?```/g, '_Interactive widget omitted in public view._');
   out = out.replace(/\{\{ai:[^}]+\}\}/g, '');
   out = out.replace(/!\[\[([^\]]+)\]\]/g, '[$1]');
   out = out.replace(/\[\[([^\]]+)\]\]/g, '$1');
@@ -100,7 +102,9 @@ export function publishNote(
   if (!vault) throw new Error('Note not found');
 
   const title = String(snapshot?.title ?? note.title).trim() || note.title;
-  const content = typeof snapshot?.content === 'string' ? snapshot.content : note.content;
+  const content = sanitizePublicContent(
+    typeof snapshot?.content === 'string' ? snapshot.content : note.content,
+  );
 
   const existing = db.prepare('SELECT slug, published_at FROM published_notes WHERE note_id = ?').get(noteId) as { slug: string; published_at: string } | undefined;
   const slug = existing?.slug ?? newSlug();

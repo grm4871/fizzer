@@ -137,4 +137,21 @@ describe('Markdown Decoration Parser Tests', () => {
       to: 8
     }));
   });
+
+  it('collapses private blocks when the cursor is outside and reveals them for editing', () => {
+    const text = 'Visible\n:::private\nAPI_KEY=secret\n:::\nTail';
+    const collapsed = getParsedDecorations(text);
+    expect(collapsed).toContainEqual(expect.objectContaining({
+      type: 'widget',
+      from: 8,
+      to: 37,
+    }));
+
+    const active = getParsedDecorations(text, 22);
+    expect(active).not.toContainEqual(expect.objectContaining({
+      type: 'widget',
+      from: 8,
+      to: 37,
+    }));
+  });
 });

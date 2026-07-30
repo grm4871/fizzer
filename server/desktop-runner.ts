@@ -196,7 +196,8 @@ export function initDesktopRunners(io: Server, db: Db, hooks: RunnerHooks): void
     const token = typeof socket.handshake.auth.token === 'string' ? socket.handshake.auth.token : null;
     if (!token) return next(new Error('Authentication required'));
     try {
-      const decoded = jwt.verify(token, JWT_SECRET) as RunnerUser;
+      const decoded = jwt.verify(token, JWT_SECRET) as RunnerUser & { access?: 'user' | 'agent' };
+      if (decoded.access === 'agent') return next(new Error('This operation requires user access'));
       socket.data.user = { id: decoded.id, username: decoded.username };
       next();
     } catch {

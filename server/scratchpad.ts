@@ -35,6 +35,7 @@
  */
 
 import type Database from 'better-sqlite3';
+import { redactPrivateBlocks } from './privacy.js';
 import { createFolder, createNote, getNote, getVault, moveNote, updateNote, type Note } from './vault.js';
 import { ensureAgentMemoryFolders, ensureAgentNamedMemoryFolders } from './evolution.js';
 
@@ -587,7 +588,7 @@ export function recallScratchpad(
   for (const n of inScope) {
     const meta = scope.get(n.folder_id);
     if (!meta) continue;
-    const body = n.content.replace(/^---[\s\S]*?---\n/, '');
+    const body = redactPrivateBlocks(n.content).replace(/^---[\s\S]*?---\n/, '');
     const auto = meta.kind === 'memory' && isAutoRunCapture(n.title, body);
     const titleHits = lexicalHits(terms, n.title);
     const bodyHits = lexicalHits(terms, `${n.title}\n${body}`);
@@ -618,7 +619,7 @@ export function recallScratchpad(
     return {
       id: n.id,
       title: n.title,
-      snippet: n.content.replace(/^---[\s\S]*?---\n/, '').replace(/\s+/g, ' ').trim().slice(0, 240),
+      snippet: redactPrivateBlocks(n.content).replace(/^---[\s\S]*?---\n/, '').replace(/\s+/g, ' ').trim().slice(0, 240),
       kind,
       shared,
       ...(s ? { stats: s } : {}),
@@ -786,7 +787,7 @@ export function listSkillNotes(db: Db, userId: number, vaultId: string, agentKey
   const skills = rows.map((row) => ({
     id: row.id,
     title: row.title,
-    description: skillDescription(row.content),
+    description: skillDescription(redactPrivateBlocks(row.content)),
     shared: sharedIds.has(row.folder_id),
     updatedAt: row.updated_at,
     ...(row.uses != null
@@ -1082,7 +1083,7 @@ export function buildScratchpadInjection(
   }
   const note = policiesNote(db, vaultId, key);
   if (note) {
-    const body = note.content.replace(/\s+/g, ' ').trim();
+    const body = redactPrivateBlocks(note.content).replace(/\s+/g, ' ').trim();
     const budget = maxChars - lines.join('\n').length - 24;
     if (budget > 120) lines.push(`Your POLICIES note: ${body.slice(0, budget)}`);
   }

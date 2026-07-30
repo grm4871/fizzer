@@ -11,6 +11,7 @@ import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import type Database from 'better-sqlite3';
 import { getNote, getVault, type Vault } from './vault.js';
+import { redactPrivateBlocks } from './privacy.js';
 
 type Db = Database.Database;
 
@@ -1238,7 +1239,7 @@ export function buildAgentChannelWorkspaceContext(
     for (const note of notes) {
       if (remaining <= 0 || documentCount >= 3) break;
       if (!/^Project(?:\s*(?:[-—–:])|\s+|$)/i.test(note.title.trim())) continue;
-      const body = String(note.content || '').trim();
+      const body = redactPrivateBlocks(String(note.content || '')).trim();
       const clipped = body.length > remaining
         ? `${body.slice(0, Math.max(0, remaining - 1))}…`
         : body;

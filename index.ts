@@ -145,6 +145,12 @@ import {
 } from './server/evolution.js';
 import { searchWithQmd } from './server/qmd-search.js';
 import {
+  isAgentApiRequestAllowed,
+  redactPrivateBlocks,
+  restorePrivateBlocks,
+  sanitizeAgentJson,
+} from './server/privacy.js';
+import {
   appendJournalEntry,
   buildScratchpadInjection,
   closeOpenThread,
@@ -195,7 +201,8 @@ const DESKTOP_BUILDS: Record<string, string> = {
 };
 
 type User = { id: number; username: string; password_hash: string; created_at: string };
-type AuthedRequest = Request & { user?: { id: number; username: string } };
+type AuthAccess = 'user' | 'agent';
+type AuthedRequest = Request & { user?: { id: number; username: string; access: AuthAccess } };
 type ChatInviteToken = {
   type: 'chat-invite';
   sourceVaultId: string;
@@ -359,7 +366,15 @@ const vaultNamespace = io.of('/vault');
 // ── Auth helpers ───────────────────────────────────────────────────
 
 function signToken(user: { id: number; username: string }) {
-  return jwt.sign(user, JWT_SECRET, { expiresIn: '30d' });
+  return jwt.sign({ ...user, access: 'user' satisfies AuthAccess }, JWT_SECRET, { expiresIn: '30d' });
+}
+
+function signAgentToken(user: { id: number; username: string }) {
+  return jwt.sign(
+    { id: user.id, username: user.username, access: 'agent' satisfies AuthAccess },
+    JWT_SECRET,
+    { expiresIn: '12h' },
+  );
 }
 
 function publicUser(user: { id: number; username: string }) {
@@ -396,18 +411,58 @@ function verifyChatInvite(token: string): ChatInviteToken {
   };
 }
 
+function agentRouteAllowed(method: string, pathname: string): boolean {
+  return isAgentApiRequestAllowed(method, pathname);
+}
+
 function requireAuth(req: AuthedRequest, res: Response, next: NextFunction) {
   const header = req.headers.authorization;
   const token = header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : null;
   if (!token) return res.status(401).json({ error: 'Authentication required' });
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as { id: number; username: string };
-    req.user = { id: decoded.id, username: decoded.username };
+    const decoded = jwt.verify(token, JWT_SECRET) as { id: number; username: string; access?: AuthAccess };
+    req.user = {
+      id: decoded.id,
+      username: decoded.username,
+      access: decoded.access === 'agent' ? 'agent' : 'user',
+    };
+    if (req.user.access === 'agent' && !agentRouteAllowed(req.method, req.path)) {
+      return res.status(403).json({ error: 'This operation requires user access' });
+    }
+    if (req.user.access === 'agent') {
+      const json = res.json.bind(res);
+      res.json = ((body: unknown) => json(sanitizeAgentJson(body))) as Response['json'];
+    }
     next();
   } catch {
     res.status(401).json({ error: 'Invalid or expired token' });
   }
+}
+
+function isAgentRequest(req: AuthedRequest): boolean {
+  return req.user?.access === 'agent';
+}
+
+function redactNoteForAgent<T extends { content?: string; content_preview?: string }>(
+  req: AuthedRequest,
+  note: T | null | undefined,
+): T | null | undefined {
+  if (!note || !isAgentRequest(req)) return note;
+  return {
+    ...note,
+    ...(typeof note.content === 'string' ? { content: redactPrivateBlocks(note.content) } : {}),
+    ...(typeof note.content_preview === 'string'
+      ? { content_preview: redactPrivateBlocks(note.content_preview) }
+      : {}),
+  };
+}
+
+function requireUserAccess(req: AuthedRequest, res: Response, next: NextFunction) {
+  if (isAgentRequest(req)) {
+    return res.status(403).json({ error: 'This operation requires user access' });
+  }
+  next();
 }
 
 // ── Socket.io auth & namespaces ────────────────────────────────────
@@ -416,7 +471,8 @@ function socketAuth(socket: { handshake: { auth: { token?: unknown } }; data: Re
   const token = typeof socket.handshake.auth.token === 'string' ? socket.handshake.auth.token : null;
   if (!token) return next(new Error('Authentication required'));
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as { id: number; username: string };
+    const decoded = jwt.verify(token, JWT_SECRET) as { id: number; username: string; access?: AuthAccess };
+    if (decoded.access === 'agent') return next(new Error('This operation requires user access'));
     socket.data.user = { id: decoded.id, username: decoded.username };
     next();
   } catch {
@@ -872,6 +928,12 @@ app.get('/api/me', requireAuth, (req: AuthedRequest, res) => {
   res.json({ user: req.user, owner: isOwner(req.user!.id) });
 });
 
+// The desktop runner gives child agents this short-lived, restricted token
+// instead of the user's full session credential.
+app.post('/api/auth/agent-token', requireAuth, requireUserAccess, (req: AuthedRequest, res) => {
+  res.json({ token: signAgentToken(req.user!) });
+});
+
 // Owner-only: list accounts for the admin panel (no secrets).
 app.get('/api/admin/users', requireAuth, (req: AuthedRequest, res) => {
   if (!isOwner(req.user!.id)) return res.status(403).json({ error: 'Owner only' });
@@ -953,7 +1015,8 @@ app.get('/api/vaults/:id/notes', requireAuth, (req: AuthedRequest, res) => {
   if (req.query.is_archived === 'false') opts.is_archived = false;
   if (typeof req.query.tag === 'string') opts.tag = req.query.tag;
 
-  res.json({ notes: listNotes(db, vault.id, opts) });
+  const notes = listNotes(db, vault.id, opts);
+  res.json({ notes: isAgentRequest(req) ? notes.map((note) => redactNoteForAgent(req, note)) : notes });
 });
 
 app.post('/api/vaults/:id/notes', requireAuth, (req: AuthedRequest, res) => {
@@ -964,7 +1027,7 @@ app.post('/api/vaults/:id/notes', requireAuth, (req: AuthedRequest, res) => {
     createNoteVersion(db, note.id, note.content, 'created');
     try { reresolveChatBacklinksForNote(db, vault.id, note.id, note.title); } catch { /* ignore */ }
     emitVaultEvent(vault.id, 'vault:noteCreated', { noteId: note.id, vaultId: vault.id, title: note.title });
-    res.status(201).json({ note });
+    res.status(201).json({ note: redactNoteForAgent(req, note) });
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : 'Could not create note' });
   }
@@ -976,7 +1039,7 @@ app.get('/api/notes/:id', requireAuth, (req: AuthedRequest, res) => {
   // Verify vault access
   const vault = getVault(db, note.vault_id, req.user!.id);
   if (!vault) return res.status(404).json({ error: 'Note not found' });
-  res.json({ note });
+  res.json({ note: redactNoteForAgent(req, note) });
 });
 
 app.put('/api/notes/:id', requireAuth, (req: AuthedRequest, res) => {
@@ -986,11 +1049,14 @@ app.put('/api/notes/:id', requireAuth, (req: AuthedRequest, res) => {
   if (!vault) return res.status(404).json({ error: 'Note not found' });
 
   try {
-    const content = String(req.body.content ?? existing.content);
+    const proposed = String(req.body.content ?? existing.content);
+    const content = isAgentRequest(req)
+      ? restorePrivateBlocks(proposed, existing.content)
+      : proposed;
     const note = updateNote(db, req.params.id, content);
     createNoteVersion(db, note.id, content, 'auto');
     emitVaultEvent(vault.id, 'vault:noteChanged', { noteId: note.id, vaultId: vault.id, title: note.title });
-    res.json({ note });
+    res.json({ note: redactNoteForAgent(req, note) });
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : 'Could not update note' });
   }
@@ -1006,7 +1072,7 @@ app.post('/api/notes/:id/rename', requireAuth, (req: AuthedRequest, res) => {
     const note = renameNote(db, req.params.id, String(req.body.title ?? ''));
     try { reresolveChatBacklinksForNote(db, vault.id, note.id, note.title); } catch { /* ignore */ }
     emitVaultEvent(vault.id, 'vault:noteChanged', { noteId: note.id, vaultId: vault.id });
-    res.json({ note });
+    res.json({ note: redactNoteForAgent(req, note) });
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : 'Could not rename note' });
   }
@@ -1040,7 +1106,7 @@ app.post('/api/notes/:id/move', requireAuth, (req: AuthedRequest, res) => {
     moveNote(db, req.params.id, folderId);
     const note = getNote(db, req.params.id);
     emitVaultEvent(vault.id, 'vault:noteChanged', { noteId: req.params.id, vaultId: vault.id, title: note?.title ?? existing.title });
-    res.json({ note });
+    res.json({ note: redactNoteForAgent(req, note) });
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : 'Could not move note' });
   }
@@ -1056,7 +1122,7 @@ app.post('/api/notes/:id/unlist', requireAuth, (req: AuthedRequest, res) => {
     unlistNote(db, req.params.id);
     const note = getNote(db, req.params.id);
     emitVaultEvent(vault.id, 'vault:noteChanged', { noteId: req.params.id, vaultId: vault.id, title: note?.title ?? existing.title });
-    res.json({ note });
+    res.json({ note: redactNoteForAgent(req, note) });
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : 'Could not unlink note' });
   }
@@ -1071,7 +1137,7 @@ app.post('/api/notes/:id/pin', requireAuth, (req: AuthedRequest, res) => {
   togglePin(db, req.params.id);
   const note = getNote(db, req.params.id);
   emitVaultEvent(vault.id, 'vault:noteChanged', { noteId: req.params.id, vaultId: vault.id, title: note?.title ?? existing.title });
-  res.json({ note });
+  res.json({ note: redactNoteForAgent(req, note) });
 });
 
 app.post('/api/notes/:id/assets', requireAuth, (req: AuthedRequest, res) => {
@@ -1095,7 +1161,7 @@ app.post('/api/notes/:id/archive', requireAuth, (req: AuthedRequest, res) => {
   toggleArchive(db, req.params.id);
   const note = getNote(db, req.params.id);
   emitVaultEvent(vault.id, 'vault:noteChanged', { noteId: req.params.id, vaultId: vault.id, title: note?.title ?? existing.title });
-  res.json({ note });
+  res.json({ note: redactNoteForAgent(req, note) });
 });
 
 // ── Search routes ──────────────────────────────────────────────────
@@ -1116,6 +1182,7 @@ app.get('/api/vaults/:id/search', requireAuth, async (req: AuthedRequest, res) =
     const results = await searchWithQmd(db, vault.id, query, {
       scope,
       limit: Number(req.query.limit || 40),
+      redactPrivate: isAgentRequest(req),
     });
     res.json({ results });
   } catch (error) {
@@ -1487,7 +1554,7 @@ app.post('/api/notes/:id/tags', requireAuth, (req: AuthedRequest, res) => {
   try {
     addTag(db, req.params.id, vault.id, String(req.body.name || ''), req.body.color);
     const updated = getNote(db, req.params.id);
-    res.json({ note: updated });
+    res.json({ note: redactNoteForAgent(req, updated) });
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : 'Could not add tag' });
   }
@@ -1501,7 +1568,7 @@ app.delete('/api/notes/:id/tags/:tagId', requireAuth, (req: AuthedRequest, res) 
 
   removeTag(db, req.params.id, req.params.tagId);
   const updated = getNote(db, req.params.id);
-  res.json({ note: updated });
+  res.json({ note: redactNoteForAgent(req, updated) });
 });
 
 // ── Version routes ─────────────────────────────────────────────────
@@ -1816,6 +1883,9 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     if (contextChunks.length) {
       effectivePrompt = `${prompt}\n\n[Context: ${contextChunks.join('\n\n')}]`;
     }
+    // Defense in depth: sanitize after all workspace, memory, scratchpad, and
+    // chat context has been assembled, immediately before the model run.
+    effectivePrompt = redactPrivateBlocks(effectivePrompt);
 
     const run = await startRun(db, runVault, note_id || null, effectivePrompt, selectedAgent, {
       conversationId: preliminaryConversationId,

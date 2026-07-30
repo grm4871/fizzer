@@ -24,6 +24,7 @@ import {
   type Vault,
 } from './vault.js';
 import { createNoteVersion } from './versions.js';
+import { redactPrivateBlocks } from './privacy.js';
 import {
   assertChatChannel,
   listChatMessages,
@@ -697,14 +698,17 @@ export function buildAgentMemoryInjection(
   }
 
   const placeholders = folderIds.map(() => '?').join(',');
-  const notes = db.prepare(`
+  const notes = (db.prepare(`
     SELECT id, title, content, folder_id, updated_at
     FROM notes
     WHERE vault_id = ? AND folder_id IN (${placeholders}) AND is_archived = 0
     ORDER BY
       CASE WHEN title = 'INDEX' COLLATE NOCASE THEN 0 ELSE 1 END,
       updated_at DESC
-  `).all(vaultId, ...folderIds) as Array<{ id: string; title: string; content: string }>;
+  `).all(vaultId, ...folderIds) as Array<{ id: string; title: string; content: string }>).map((note) => ({
+    ...note,
+    content: redactPrivateBlocks(note.content),
+  }));
 
   const topicTerms = String(opts.channelTopic || '')
     .toLowerCase()

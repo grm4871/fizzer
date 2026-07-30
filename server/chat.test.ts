@@ -46,7 +46,7 @@ test('chat agents inherit folder ancestry and the nearest project doc', () => {
     'project-doc',
     'oc',
     'Project — obsidiancube',
-    'ObsidianCube is the umbrella project for the tools in this folder.',
+    'ObsidianCube is the umbrella project for the tools in this folder.\n\n:::private\nPROJECT_TOKEN=never-inject-me\n:::',
   );
   insertNote.run('nearby', 'oc', 'Meeting notes', 'This should not be injected.');
 
@@ -55,6 +55,8 @@ test('chat agents inherit folder ancestry and the nearest project doc', () => {
   assert.match(context, /Cascade channel location: projects \/ OC \/ #cubegen/);
   assert.match(context, /Project — obsidiancube/);
   assert.match(context, /ObsidianCube is the umbrella project/);
+  assert.match(context, /Private block hidden from agents/);
+  assert.doesNotMatch(context, /never-inject-me/);
   assert.doesNotMatch(context, /This should not be injected/);
   db.close();
 });

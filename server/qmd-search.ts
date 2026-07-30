@@ -3,6 +3,7 @@ import path from 'node:path';
 import os from 'node:os';
 import type Database from 'better-sqlite3';
 import { createStore, type QMDStore } from '@tobilu/qmd';
+import { redactPrivateBlocks } from './privacy.js';
 
 type Db = Database.Database;
 
@@ -35,7 +36,7 @@ function atomicWrite(file: string, body: string) {
   fs.renameSync(temp, file);
 }
 
-function syncCorpus(db: Db, vaultId: string, root: string) {
+function syncCorpus(db: Db, vaultId: string, root: string, redactPrivate: boolean) {
   const notesDir = path.join(root, 'notes');
   const chatsDir = path.join(root, 'chats');
   fs.mkdirSync(notesDir, { recursive: true });
@@ -50,11 +51,12 @@ function syncCorpus(db: Db, vaultId: string, root: string) {
     `).all(vaultId) as Array<{ id: string; title: string; content: string; updated_at: string }>;
     for (const row of rows) {
       const file = path.join(notesDir, `${safeSegment(row.id)}.md`);
-      const body = `# ${row.title || 'Untitled'}\n\n${row.content || ''}`;
+      const content = redactPrivate ? redactPrivateBlocks(row.content || '') : row.content || '';
+      const body = `# ${row.title || 'Untitled'}\n\n${content}`;
       atomicWrite(file, body);
       keep.add(file);
       docs.set(path.resolve(file), {
-        type: 'note', id: row.id, title: row.title || 'Untitled', body: row.content || '',
+        type: 'note', id: row.id, title: row.title || 'Untitled', body: content,
         snippet: '', score: 0, updatedAt: row.updated_at,
       });
     }
@@ -103,8 +105,8 @@ function snippet(text: string, query: string, max = 240) {
   return `${start > 0 ? '…' : ''}${value}${start + max < clean.length ? '…' : ''}`;
 }
 
-async function openIndex(vaultId: string, root: string) {
-  const existing = indexes.get(vaultId);
+async function openIndex(indexKey: string, root: string) {
+  const existing = indexes.get(indexKey);
   if (existing) return existing;
   const promise: Promise<VaultIndex> = createStore({
     dbPath: path.join(root, 'index.sqlite'),
@@ -115,7 +117,7 @@ async function openIndex(vaultId: string, root: string) {
       },
     },
   }).then((store) => ({ store, fingerprint: '' }));
-  indexes.set(vaultId, promise);
+  indexes.set(indexKey, promise);
   return promise;
 }
 
@@ -123,14 +125,16 @@ export async function searchWithQmd(
   db: Db,
   vaultId: string,
   query: string,
-  opts: { scope?: 'notes' | 'chat' | 'all'; limit?: number } = {},
+  opts: { scope?: 'notes' | 'chat' | 'all'; limit?: number; redactPrivate?: boolean } = {},
 ): Promise<QmdSearchHit[]> {
   const scope = opts.scope || 'all';
   const limit = Math.max(1, Math.min(Number(opts.limit || 40), 100));
-  const root = path.join(QMD_ROOT, safeSegment(vaultId));
+  const variant = opts.redactPrivate ? 'agent' : 'user';
+  const indexKey = `${vaultId}:${variant}`;
+  const root = path.join(QMD_ROOT, safeSegment(vaultId), variant);
   fs.mkdirSync(root, { recursive: true });
-  const corpus = syncCorpus(db, vaultId, root);
-  const index = await openIndex(vaultId, root);
+  const corpus = syncCorpus(db, vaultId, root, Boolean(opts.redactPrivate));
+  const index = await openIndex(indexKey, root);
   while (index.fingerprint !== corpus.fingerprint) {
     if (!index.syncing) {
       const targetFingerprint = corpus.fingerprint;

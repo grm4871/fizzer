@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import dns from 'node:dns/promises';
 import net from 'node:net';
 import type Database from 'better-sqlite3';
+import { redactPrivateBlocks } from './privacy.js';
 
 type Db = Database.Database;
 
@@ -154,7 +155,7 @@ function discoverFeedWatches(db: Db): FeedWatch[] {
   const watches: FeedWatch[] = [];
 
   for (const note of notes) {
-    for (const block of extractWidgetBlocks(note.content)) {
+    for (const block of extractWidgetBlocks(redactPrivateBlocks(note.content))) {
       const meta = parseWidgetMeta(block.source);
       const url = firstString(meta.feed_url, meta.feed, meta.url);
       const notify = parseBoolean(firstString(meta.notify, meta.background, meta.notifications));

@@ -11,7 +11,7 @@ import { closeBrackets } from '@codemirror/autocomplete';
 import { languages } from '@codemirror/language-data';
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
 import { tags } from '@lezer/highlight';
-import { FileText, Link2, Box, Columns3, Globe, ExternalLink } from 'lucide-react';
+import { FileText, Link2, Box, Columns3, Globe, ExternalLink, LockKeyhole } from 'lucide-react';
 import { hasObsidianKanbanMarker, KanbanView } from './KanbanView';
 
 /* ═══════════════════════════════════════════════════════════
@@ -180,6 +180,31 @@ const cascadeTheme = EditorView.theme({
     margin: '14px 0',
     border: 'none',
   },
+  '.cm-private-block': {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    width: '100%',
+    boxSizing: 'border-box',
+    margin: '8px 0',
+    padding: '11px 12px',
+    border: '1px solid hsla(38, 88%, 60%, 0.34)',
+    borderRadius: '4px',
+    background: 'hsla(38, 72%, 45%, 0.08)',
+    color: 'hsl(38, 74%, 72%)',
+    cursor: 'pointer',
+  },
+  '.cm-private-block strong': {
+    display: 'block',
+    fontSize: '0.8rem',
+    letterSpacing: '0.04em',
+  },
+  '.cm-private-block small': {
+    display: 'block',
+    marginTop: '1px',
+    color: 'var(--text-tertiary)',
+    fontSize: '0.7rem',
+  },
   /* Code blocks read as a data plate: dead black, amber rule down the edge */
   '.cm-code-block-line': {
     background: 'var(--bg-deep)',
@@ -340,6 +365,24 @@ class HRWidget extends WidgetType {
     const hr = document.createElement('hr');
     hr.className = 'cm-hr-widget';
     return hr;
+  }
+}
+
+class PrivateBlockWidget extends WidgetType {
+  constructor(private from: number) {
+    super();
+  }
+  toDOM() {
+    const root = document.createElement('div');
+    root.className = 'cm-private-block';
+    root.dataset.privateFrom = String(this.from);
+    root.setAttribute('role', 'button');
+    root.setAttribute('aria-label', 'Private block. Hidden from agents. Click to edit.');
+    root.innerHTML = '<span aria-hidden="true">🔒</span><span><strong>Private block</strong><small>Hidden from agents · click to edit</small></span>';
+    return root;
+  }
+  eq(other: PrivateBlockWidget) {
+    return this.from === other.from;
   }
 }
 
@@ -861,12 +904,41 @@ export function buildDecorations(
     }
   };
 
+  const privateBlocks: { from: number; to: number }[] = [];
+  let privateStart: number | null = null;
+  for (let i = 1; i <= doc.lines; i++) {
+    const line = doc.line(i);
+    const marker = line.text.trim().toLowerCase();
+    if (privateStart === null && marker === ':::private') {
+      privateStart = line.from;
+    } else if (privateStart !== null && marker === ':::') {
+      privateBlocks.push({ from: privateStart, to: line.to });
+      privateStart = null;
+    }
+  }
+  if (privateStart !== null) privateBlocks.push({ from: privateStart, to: doc.length });
+  const inPrivateBlock = (from: number, to: number) =>
+    privateBlocks.some((block) => from >= block.from && to <= block.to);
+  for (const block of privateBlocks) {
+    if (activeLine < doc.lineAt(block.from).number || activeLine > doc.lineAt(block.to).number) {
+      decos.push({
+        from: block.from,
+        to: block.to,
+        deco: Decoration.replace({
+          block: true,
+          widget: new PrivateBlockWidget(block.from),
+        }),
+      });
+    }
+  }
+
   const widgetBlocks: { from: number; to: number; source: string }[] = [];
   let widgetStartLine: number | null = null;
   let widgetStartPos = 0;
   let widgetContentStart = 0;
   for (let i = 1; i <= doc.lines; i++) {
     const line = doc.line(i);
+    if (inPrivateBlock(line.from, line.to)) continue;
     if (widgetStartLine === null && line.text.trim() === '```cascade-widget') {
       widgetStartLine = i;
       widgetStartPos = line.from;
@@ -911,7 +983,7 @@ export function buildDecorations(
   for (let i = 1; i + 1 <= doc.lines; i++) {
     const headerLine = doc.line(i);
     const delimLine = doc.line(i + 1);
-    if (inWidgetBlock(headerLine.from, headerLine.to)) continue;
+    if (inPrivateBlock(headerLine.from, headerLine.to) || inWidgetBlock(headerLine.from, headerLine.to)) continue;
     if (!headerLine.text.includes('|')) continue;
     if (!isTableDelimiter(delimLine.text)) continue;
 
@@ -953,6 +1025,7 @@ export function buildDecorations(
     const line = doc.line(i);
     const text = line.text;
     const isActive = i === activeLine;
+    if (inPrivateBlock(line.from, line.to)) continue;
     if (widgetBlocks.some((block) => line.from >= block.from && line.to <= block.to)) continue;
     if (inTableBlock(line.from, line.to)) continue;
 
@@ -1536,8 +1609,22 @@ export const NoteEditor = memo(function NoteEditor({ note, content, onContentCha
           void insertImageFromFileRef.current(image, view);
           return true;
         },
-        mousedown(event) {
+        mousedown(event, view) {
           const target = event.target as HTMLElement;
+          const privateBlock = target.closest('.cm-private-block') as HTMLElement | null;
+          if (privateBlock) {
+            const from = Number(privateBlock.dataset.privateFrom);
+            if (Number.isFinite(from)) {
+              event.preventDefault();
+              const line = view.state.doc.lineAt(Math.min(from, view.state.doc.length));
+              view.dispatch({
+                selection: { anchor: Math.min(line.to + 1, view.state.doc.length) },
+                scrollIntoView: true,
+              });
+              view.focus();
+              return true;
+            }
+          }
           const docEmbed = target.closest('.cm-doc-embed');
           if (docEmbed) {
             const noteId = docEmbed.getAttribute('data-note-id');
@@ -1721,6 +1808,9 @@ export const NoteEditor = memo(function NoteEditor({ note, content, onContentCha
       case 'widget':
         insertAtCursor(view, sampleWidgetBlock());
         break;
+      case 'private':
+        insertPrivateBlock(view);
+        break;
     }
   }, []);
 
@@ -1777,6 +1867,7 @@ export const NoteEditor = memo(function NoteEditor({ note, content, onContentCha
 
         <button id="toolbar-hr" className="toolbar-btn" onClick={() => toolbarAction('hr')} title="Horizontal Rule">―</button>
         <button id="toolbar-widget" className="toolbar-btn" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => toolbarAction('widget')} title="Insert widget"><Box size={15} /></button>
+        <button id="toolbar-private" className="toolbar-btn" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => toolbarAction('private')} title="Insert private block (hidden from agents)"><LockKeyhole size={15} /></button>
 
         <div className="toolbar-divider" />
 
@@ -1939,6 +2030,19 @@ function insertAtCursor(view: EditorView, text: string) {
   view.dispatch({
     changes: { from, insert: text },
     selection: { anchor: from + text.length },
+  });
+}
+
+function insertPrivateBlock(view: EditorView) {
+  const { from, to } = view.state.selection.main;
+  const selected = view.state.sliceDoc(from, to);
+  const prefix = from > 0 && view.state.sliceDoc(from - 1, from) !== '\n' ? '\n' : '';
+  const body = selected || 'credential=value';
+  const insert = `${prefix}:::private\n${body}\n:::\n`;
+  const bodyFrom = from + prefix.length + ':::private\n'.length;
+  view.dispatch({
+    changes: { from, to, insert },
+    selection: { anchor: bodyFrom, head: bodyFrom + body.length },
   });
 }
 

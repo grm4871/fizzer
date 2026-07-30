@@ -45,7 +45,7 @@ const CHAT_BREVITY_CONTEXT =
 // desktop runner host once it knows the server URL + the user's auth token.
 // Children inherit these via process.env, so the wrapper authenticates against
 // the same live instance the desktop is connected to (cscd.online by default).
-const noteApi = { url: '', token: '' };
+const noteApi = { url: '', token: '', configured: false };
 const HELPER_CONFIG_PATH = path.join(os.homedir(), '.cascade', 'agent-helper-context.json');
 const RUN_CONTEXT_DIR = path.join(os.homedir(), '.cascade', 'run-contexts');
 const USER_BIN_DIR = path.join(os.homedir(), '.local', 'bin');
@@ -132,8 +132,15 @@ function ensureWrapperOnPath() {
 function buildAgentEnv(opts) {
   ensureWrapperOnPath();
   const env = { ...process.env };
-  if (noteApi.url) env.CASCADE_NOTE_URL = noteApi.url;
-  if (noteApi.token) env.CASCADE_NOTE_TOKEN = noteApi.token;
+  if (noteApi.configured) {
+    env.CASCADE_NOTE_URL = noteApi.url;
+    env.CASCADE_NOTE_TOKEN = noteApi.token;
+    delete env.CASCADE_NOTE_USER;
+    delete env.CASCADE_NOTE_PASS;
+  } else {
+    if (noteApi.url) env.CASCADE_NOTE_URL = noteApi.url;
+    if (noteApi.token) env.CASCADE_NOTE_TOKEN = noteApi.token;
+  }
   const vaultId = String(opts && opts.vaultId || '').trim();
   if (vaultId) env.CASCADE_NOTE_VAULT = vaultId;
   const channelId = String(opts && opts.chatChannelId || opts?.chat?.channelId || '').trim();
@@ -154,8 +161,14 @@ function buildAgentEnv(opts) {
 
 /** Set the live API target/token the wrapper should use (call on runner connect). */
 function setNoteApiConfig({ url, token } = {}) {
-  if (typeof url === 'string' && url.trim()) noteApi.url = url.trim().replace(/\/$/, '');
-  if (typeof token === 'string' && token.trim()) noteApi.token = token.trim();
+  if (typeof url === 'string') {
+    noteApi.url = url.trim().replace(/\/$/, '');
+    noteApi.configured = true;
+  }
+  if (typeof token === 'string') {
+    noteApi.token = token.trim();
+    noteApi.configured = true;
+  }
 }
 
 /**
@@ -171,8 +184,8 @@ function helperConfigPathForRun(runId) {
 
 function writeHelperConfig({ runId, vaultId, channelId, messageId, chatAuthor, agentId, agentMemoryKey, registrationId } = {}) {
   const payload = {
-    url: noteApi.url || process.env.CASCADE_NOTE_URL || 'https://cscd.online',
-    token: noteApi.token || process.env.CASCADE_NOTE_TOKEN || '',
+    url: noteApi.configured ? noteApi.url : (noteApi.url || process.env.CASCADE_NOTE_URL || 'https://cscd.online'),
+    token: noteApi.configured ? noteApi.token : (noteApi.token || process.env.CASCADE_NOTE_TOKEN || ''),
     vaultId: vaultId || process.env.CASCADE_NOTE_VAULT || '',
     chatChannelId: channelId || process.env.CASCADE_CHAT_CHANNEL || '',
     chatMessageId: messageId || process.env.CASCADE_CHAT_MESSAGE || '',
@@ -217,8 +230,9 @@ function buildRunHelperEnv(opts) {
     registrationId,
   });
   const env = {
-    CASCADE_NOTE_URL: noteApi.url || process.env.CASCADE_NOTE_URL || 'https://cscd.online',
-    CASCADE_NOTE_TOKEN: noteApi.token || process.env.CASCADE_NOTE_TOKEN || '',
+    CASCADE_NOTE_URL: noteApi.configured ? noteApi.url : (noteApi.url || process.env.CASCADE_NOTE_URL || 'https://cscd.online'),
+    CASCADE_NOTE_TOKEN: noteApi.configured ? noteApi.token : (noteApi.token || process.env.CASCADE_NOTE_TOKEN || ''),
+    ...(noteApi.configured ? { CASCADE_NOTE_USER: '', CASCADE_NOTE_PASS: '' } : {}),
     CASCADE_HELPER_CONFIG: configPath,
     CASCADE_HELPER_DIR: resolveWrapperDir(),
     PATH: process.env.PATH || '',

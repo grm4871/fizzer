@@ -288,13 +288,33 @@ export function startDesktopRunnerHost(opts?: { clearOnStop?: boolean }): () => 
 
   const resolvedBase = resolveApiBase();
 
-  // Main process still needs token/url for cascade-note child env + model probe.
+  // Child agents receive a short-lived, server-restricted credential. Keep the
+  // user's full session token in the renderer for the runner socket only.
   if (api.setRunnerToken) {
-    void api.setRunnerToken({ token, apiUrl: resolvedBase });
+    void api.clearRunnerToken?.();
+    void fetch(`${resolvedBase}/api/auth/agent-token`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(async (response) => {
+        const body = await response.json().catch(() => ({})) as { token?: string; error?: string };
+        if (!response.ok || !body.token) {
+          throw new Error(body.error || 'Could not create restricted agent credential');
+        }
+        return api.setRunnerToken!({ token: body.token, apiUrl: resolvedBase });
+      })
+      .then((result) => {
+        if (!result?.success) throw new Error(result?.error || 'Could not configure restricted agent credential');
+        connectDesktopRunnerSocket(token, resolvedBase);
+      })
+      .catch((error) => {
+        console.error('Desktop runner credential setup failed:', error);
+        void api.clearRunnerToken?.();
+      });
+  } else {
+    // Legacy desktop bridge: socket still lives here so TLS uses Chromium.
+    connectDesktopRunnerSocket(token, resolvedBase);
   }
-
-  // Socket lives here so TLS uses Chromium, not Node.
-  connectDesktopRunnerSocket(token, resolvedBase);
 
   const clearOnStop = opts?.clearOnStop !== false;
   return () => {
