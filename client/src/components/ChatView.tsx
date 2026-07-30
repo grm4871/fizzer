@@ -1472,11 +1472,13 @@ export const ChatView = memo(function ChatView({
     scrollToBottomIfSticky();
   }, [sortedMessages.length, channelId, scrollToBottom, scrollToBottomIfSticky]);
 
-  // When harness/thinking expands layout height without a React dep change
-  // (or after paint), keep the main chat scroller pinned if the user was at bottom.
+  // Keep a bottom-following chat pinned when either its content grows or the
+  // viewport shrinks (for example, when the reply banner mounts above the
+  // composer). Watching content alone leaves the last rows below the fold.
   useEffect(() => {
     const content = messagesContentRef.current;
-    if (!content || typeof ResizeObserver === 'undefined') return;
+    const viewport = messagesRef.current;
+    if ((!content && !viewport) || typeof ResizeObserver === 'undefined') return;
     let roFrame: number | null = null;
     const ro = new ResizeObserver(() => {
       // Coalesce RO storms (markdown/images/fonts) to one rAF — was a scroll jank source.
@@ -1486,7 +1488,8 @@ export const ChatView = memo(function ChatView({
         scrollToBottomIfSticky();
       });
     });
-    ro.observe(content);
+    if (content) ro.observe(content);
+    if (viewport) ro.observe(viewport);
     return () => {
       if (roFrame != null) cancelAnimationFrame(roFrame);
       ro.disconnect();
