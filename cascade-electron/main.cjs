@@ -229,6 +229,15 @@ async function waitForAppUrl(url, timeoutMs = 30000) {
  * window so they behave identically.
  */
 function configureWindow(win) {
+  // Linux/Windows attach the application menu to each window. Even with
+  // Menu.setApplicationMenu(null), a leftover window menu bar (e.g. old Debug)
+  // can stick until we explicitly clear it per-window.
+  if (process.platform !== 'darwin') {
+    try { win.setMenu(null); } catch { /* ignore */ }
+    try { win.setMenuBarVisibility(false); } catch { /* ignore */ }
+    try { win.setAutoHideMenuBar(true); } catch { /* ignore */ }
+  }
+
   // Block navigation to sites outside cscd.online / local dev.
   win.webContents.on('will-navigate', (event, url) => {
     try {
@@ -300,12 +309,15 @@ function configureWindow(win) {
  * In production it loads https://cscd.online; in development the `--APP_URL=` URL.
  */
 async function createWindow() {
+  // Always install (or clear) the app menu before windows open.
   Menu.setApplicationMenu(buildApplicationMenu());
 
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
-    autoHideMenuBar: !isDevelopmentMode(),
+    // Never show a menu bar on Linux/Windows (Debug used to live here in
+    // unpackaged launches). macOS uses the system menu bar via setApplicationMenu.
+    autoHideMenuBar: process.platform !== 'darwin',
     // Keep the renderer warm while unfocused so alt-tab back doesn't wait on
     // Chromium's background timer/rAF throttle before first paint.
     backgroundThrottling: false,
@@ -348,7 +360,7 @@ function createPaneWindow(descriptor, bounds) {
     height: (bounds && bounds.height) || 680,
     x: bounds && bounds.x,
     y: bounds && bounds.y,
-    autoHideMenuBar: !isDevelopmentMode(),
+    autoHideMenuBar: process.platform !== 'darwin',
     backgroundThrottling: false,
     webPreferences: {
       nodeIntegration: false,
