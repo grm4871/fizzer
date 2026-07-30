@@ -44,7 +44,7 @@ import {
   normalizeChatCwd,
   type AgentId,
 } from './chat/agents';
-import { getMentionedRegistrations, normalizeMention, precedingMessageBatchText, resolveAgentMessageRegistration, stripRegisteredAgentMentions } from './chat/mentions';
+import { buildQuotedReplyPrompt, getMentionedRegistrations, normalizeMention, precedingMessageBatchText, resolveAgentMessageRegistration, stripRegisteredAgentMentions } from './chat/mentions';
 import {
   appendChatRunBlocks,
   appendHarnessLog,
@@ -1658,7 +1658,12 @@ export default function App() {
 
       const registrations = chatStateRef.current.registeredAgentsByChannel[channelId] ?? [];
       const implicitMention = replyTo?.mention ? `@${replyTo.mention}` : '';
-      const mentionSource = [implicitMention, trimmed, attachments.map((item) => item.name).join(' ')].filter(Boolean).join(' ');
+      // What the sender actually typed. Kept apart from `implicitMention`, which
+      // exists only to route a reply back to its author: when that author is a
+      // person the "@name" is not part of the ask, and folding it into the prompt
+      // leaves the agent with a bare handle and no question.
+      const typedSource = [trimmed, attachments.map((item) => item.name).join(' ')].filter(Boolean).join(' ');
+      const mentionSource = [implicitMention, typedSource].filter(Boolean).join(' ');
       const mentionedAgents = getMentionedRegistrations(mentionSource, registrations, false);
       const targetAgents = [
         ...mentionedAgents,
@@ -1668,12 +1673,18 @@ export default function App() {
         ),
       ];
       if (targetAgents.length === 0) return;
-      const directPrompt = stripRegisteredAgentMentions(mentionSource, registrations);
+      const directPrompt = stripRegisteredAgentMentions(typedSource, registrations);
+      // A reply carries its ask in the quote, so hand the quoted message to the
+      // agent. Without it a bare "@agent" reply arrives as an empty prompt and
+      // the agent answers "no new ask" at the thing you were pointing at.
+      const quotedPrompt = replyTo ? buildQuotedReplyPrompt(replyTo, messages) : '';
       // A bare @agent after a same-author message batch means "handle that batch".
       // Usually plain text has already merged into outgoingMessage; the explicit
       // fallback also covers grouped messages that could not be physically merged.
-      const batchPrompt = directPrompt ? '' : precedingMessageBatchText(messages, candidate);
-      const prompt = directPrompt || batchPrompt || mentionSource || 'Please review the attached media.';
+      // A quote is the more precise pointer, so it wins over the batch guess.
+      const batchPrompt = directPrompt || quotedPrompt ? '' : precedingMessageBatchText(messages, candidate);
+      const prompt = [quotedPrompt, directPrompt || batchPrompt].filter(Boolean).join('\n\n')
+        || typedSource || 'Please review the attached media.';
       const runImages = mediaToRunImages(media);
       const agentsWithoutImages = new Set<AgentId>(['grok', 'antigravity', 'copilot', 'hermes', 'akron-grok']);
       for (const registration of targetAgents) {

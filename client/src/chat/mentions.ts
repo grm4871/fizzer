@@ -78,6 +78,29 @@ export function stripRegisteredAgentMentions(
   return next.replace(/\s+/g, ' ').trim();
 }
 
+type QuotableReplyRef = {
+  messageId: string;
+  author: string;
+  mention: string;
+  preview: string;
+};
+
+/** Render the message a reply points at, so the quote reaches the agent as the ask.
+ * The stored preview is clipped for the UI, so prefer the full body when the
+ * quoted message is still in the loaded history. */
+export function buildQuotedReplyPrompt(
+  replyTo: QuotableReplyRef,
+  messages: Array<{ id: string; body: string }>,
+  maxChars = 1_200,
+) {
+  const quoted = messages.find((message) => message.id === replyTo.messageId)?.body.trim();
+  const text = (quoted || replyTo.preview || '').trim();
+  if (!text) return '';
+  const clipped = text.length > maxChars ? `${text.slice(0, maxChars - 1)}…` : text;
+  const who = replyTo.author?.trim() || replyTo.mention?.trim() || 'a message';
+  return `Replying to ${who}:\n${clipped.split('\n').map((line) => `> ${line}`).join('\n')}`;
+}
+
 type BatchableChatMessage = {
   author: string;
   body: string;
