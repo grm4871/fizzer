@@ -59,6 +59,39 @@ describe('buildQuotedReplyPrompt', () => {
       .toBe('Replying to alice:\n> first\n> second');
   });
 
+  it('walks the reply chain so the failure being pointed at is not lost', () => {
+    const messages = [
+      { id: 'msg-0', author: 'alice', body: 'the reply banner hides the last message' },
+      {
+        id: 'msg-1',
+        author: 'sol',
+        body: 'fixed and shipped as b0a5c05',
+        replyTo: { messageId: 'msg-0', author: 'alice', mention: 'alice', preview: 'the reply banner…' },
+      },
+    ];
+    expect(buildQuotedReplyPrompt({ ...replyTo, author: 'sol', mention: 'sol' }, messages)).toBe(
+      'Replying to sol:\n> fixed and shipped as b0a5c05\n\n'
+      + '…which was itself replying to alice:\n> the reply banner hides the last message',
+    );
+  });
+
+  it('stops walking at the ancestor limit', () => {
+    const link = (id: string, parent: string) => ({
+      id,
+      body: id,
+      replyTo: { messageId: parent, author: parent, mention: parent, preview: parent },
+    });
+    const messages = [
+      { id: 'msg-4', body: 'msg-4' },
+      link('msg-3', 'msg-4'),
+      link('msg-2', 'msg-3'),
+      link('msg-1', 'msg-2'),
+    ];
+    const prompt = buildQuotedReplyPrompt(replyTo, messages);
+    expect(prompt.match(/replying to/gi)).toHaveLength(3);
+    expect(prompt).not.toContain('msg-4');
+  });
+
   it('returns nothing when there is no quotable text', () => {
     expect(buildQuotedReplyPrompt({ ...replyTo, preview: '' }, [{ id: 'msg-1', body: '   ' }])).toBe('');
   });

@@ -80,25 +80,54 @@ export function stripRegisteredAgentMentions(
 
 type QuotableReplyRef = {
   messageId: string;
-  author: string;
-  mention: string;
-  preview: string;
+  author?: string;
+  mention?: string;
+  preview?: string;
+};
+
+type QuotableMessage = {
+  id: string;
+  body: string;
+  author?: string;
+  replyTo?: QuotableReplyRef;
 };
 
 /** Render the message a reply points at, so the quote reaches the agent as the ask.
  * The stored preview is clipped for the UI, so prefer the full body when the
- * quoted message is still in the loaded history. */
+ * quoted message is still in the loaded history.
+ *
+ * Replies chain: "that's not the failure I'm replying to" happens when the
+ * quoted message is itself an answer, and the thing actually at issue is one
+ * link further up. So walk the reply parents too — the agent needs the thread,
+ * not just the last hop. */
 export function buildQuotedReplyPrompt(
   replyTo: QuotableReplyRef,
-  messages: Array<{ id: string; body: string }>,
+  messages: QuotableMessage[],
   maxChars = 1_200,
+  maxAncestors = 2,
 ) {
-  const quoted = messages.find((message) => message.id === replyTo.messageId)?.body.trim();
-  const text = (quoted || replyTo.preview || '').trim();
-  if (!text) return '';
-  const clipped = text.length > maxChars ? `${text.slice(0, maxChars - 1)}…` : text;
-  const who = replyTo.author?.trim() || replyTo.mention?.trim() || 'a message';
-  return `Replying to ${who}:\n${clipped.split('\n').map((line) => `> ${line}`).join('\n')}`;
+  const byId = new Map(messages.map((message) => [message.id, message]));
+  const quote = (text: string, limit: number) => {
+    const clipped = text.length > limit ? `${text.slice(0, limit - 1)}…` : text;
+    return clipped.split('\n').map((line) => `> ${line}`).join('\n');
+  };
+
+  const sections: string[] = [];
+  const seen = new Set<string>();
+  let ref: QuotableReplyRef | undefined = replyTo;
+  for (let depth = 0; ref && depth <= maxAncestors; depth += 1) {
+    if (seen.has(ref.messageId)) break;
+    seen.add(ref.messageId);
+    const message = byId.get(ref.messageId);
+    const text = (message?.body.trim() || ref.preview?.trim() || '').trim();
+    if (text) {
+      const who = (ref.author || ref.mention || message?.author || '').trim() || 'a message';
+      const header = depth === 0 ? `Replying to ${who}:` : `…which was itself replying to ${who}:`;
+      sections.push(`${header}\n${quote(text, depth === 0 ? maxChars : Math.ceil(maxChars / 3))}`);
+    }
+    ref = message?.replyTo;
+  }
+  return sections.join('\n\n');
 }
 
 type BatchableChatMessage = {
