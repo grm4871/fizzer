@@ -1,7 +1,11 @@
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import {
+  ChatView,
   getRunningMessageState,
   getSteeringPromptLabels,
+  shouldRenderRunPanel,
   shouldDetachStickyForTouch,
   shouldDetachStickyForWheel,
   type ChatAgentRegistration,
@@ -56,5 +60,61 @@ describe('agent steering presentation', () => {
       message('2', { author: 'Sol', agentId: 'codex', registrationId: agent.id, status: 'running' }),
     ];
     expect(getSteeringPromptLabels(messages, [agent]).size).toBe(0);
+  });
+});
+
+describe('chat run panel lifecycle', () => {
+  it('hides a successful completed harness without discarding its trace', () => {
+    const completed = message('1', {
+      author: 'Sol',
+      agentId: 'codex',
+      runId: 42,
+      body: 'A complete final answer.',
+      blocks: [{ type: 'text', text: 'A complete final answer.' }],
+      harnessLog: '# complete run trace\n',
+      hasHarness: true,
+    });
+
+    expect(shouldRenderRunPanel(completed, false, true)).toBe(false);
+    expect(shouldRenderRunPanel(completed, true, true)).toBe(true);
+    expect(completed.harnessLog).toBe('# complete run trace\n');
+    expect(completed.blocks).toEqual([{ type: 'text', text: 'A complete final answer.' }]);
+  });
+
+  it('keeps live and failed run diagnostics visible', () => {
+    expect(shouldRenderRunPanel(message('1', { status: 'running' }), false, true)).toBe(true);
+    expect(shouldRenderRunPanel(message('2', { status: 'running' }), false, false)).toBe(false);
+    expect(shouldRenderRunPanel(message('3', { status: 'failed' }), false, true)).toBe(true);
+    expect(shouldRenderRunPanel(message('4', { status: 'canceled' }), false, true)).toBe(true);
+  });
+
+  it('renders a successful final reply without an automatic Harness view', () => {
+    const markup = renderToStaticMarkup(createElement(ChatView, {
+      channelId: 'channel',
+      channelName: 'cascade-dev',
+      messages: [message('1', {
+        author: 'Sol',
+        agentId: 'codex',
+        runId: 42,
+        body: 'A complete final answer with nuance.',
+        harnessLog: '# complete run trace\n',
+        hasHarness: true,
+      })],
+      currentUser: 'asdfasdf',
+      presence: { participants: [], online: [] },
+      availableAgents: [],
+      registeredAgents: [],
+      runningAgents: [],
+      onRegisterAgent: () => {},
+      onRemoveAgent: () => {},
+      onCreateInviteLink: async () => '',
+      onInviteUser: async () => {},
+      onSendMessage: () => {},
+      onCancelRun: () => {},
+    }));
+
+    expect(markup).toContain('A complete final answer with nuance.');
+    expect(markup).not.toContain('cascade-run-panel');
+    expect(markup).not.toContain('Harness');
   });
 });

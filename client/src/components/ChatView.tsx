@@ -674,6 +674,22 @@ function hasExpandableTrace(message: ChatMessage): boolean {
   return hasRunActivity(message);
 }
 
+/**
+ * Keep the live harness visible while work is happening and surface failures,
+ * but let a successful final answer return to being a normal chat message.
+ * Completed traces remain selectable, so none of the persisted run detail is
+ * discarded or made inaccessible.
+ */
+export function shouldRenderRunPanel(
+  message: ChatMessage,
+  selected: boolean,
+  isLatestRunningMessage: boolean,
+): boolean {
+  if (selected) return true;
+  if (message.status === 'failed' || message.status === 'canceled') return true;
+  return message.status === 'running' && isLatestRunningMessage;
+}
+
 function groupHasDocEmbed(group: ChatMessageGroup): boolean {
   return group.messages.some((message) => message.body && bodyHasDocEmbed(message.body));
 }
@@ -1060,7 +1076,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
                       </div>
                     </div>
                   )}
-                  {(selected || ((hasRunWidget || hasThoughtBlocks) && isLatestRunningMessage)) && (
+                  {shouldRenderRunPanel(message, selected, isLatestRunningMessage) && (
                     <CascadeRunPanel
                       message={message}
                       onCancelRun={onCancelRun}
