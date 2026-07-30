@@ -4251,3 +4251,11 @@ a {
 .chat-change-chip .is-add { color: var(--success); }
 .chat-change-chip .is-delete { color: var(--danger); }
 .chat-change-approved, .chat-change-merged { color: var(--success); font-size: 12px; }
+
+/* Placeholder while the lazily-loaded note editor chunk arrives. Sized to the
+   editor pane so opening a tab does not visibly collapse the layout. */
+.editor-loading {
+  flex: 1;
+  min-height: 0;
+  background: var(--bg-editor, transparent);
+}

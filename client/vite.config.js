@@ -140,6 +140,22 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: path.resolve(__dirname, 'app.html')
+      },
+      output: {
+        // Split the large third-party libs out of the entry chunk. CodeMirror
+        // and xterm already sit behind React.lazy boundaries (note editor / raw
+        // terminal); naming them here keeps them in their own cacheable files
+        // rather than being merged into whichever route pulls them in first.
+        // NOTE: deliberately no rule for @codemirror/@lezer. `language-data`
+        // dynamic-imports each language mode on demand; grouping them under a
+        // manual chunk collapses those imports into one ~1.6 MB eager file and
+        // makes opening a note *worse*. Leave rollup's own splitting alone.
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return;
+          if (id.includes('@xterm')) return 'terminal';
+          if (id.includes('react-markdown') || id.includes('remark') || id.includes('unist')) return 'markdown';
+          if (id.includes('react-router')) return 'react-vendor';
+        }
       }
     }
   },

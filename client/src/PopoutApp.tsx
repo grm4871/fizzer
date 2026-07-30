@@ -13,9 +13,13 @@
  * @component
  */
 
-import { useEffect, useState, type DragEvent } from 'react';
+import { useEffect, useState, lazy, Suspense, type DragEvent } from 'react';
 import type { Tab } from './components/TabBar';
-import { NoteEditor } from './components/NoteEditor';
+
+// Same split as the main app: CodeMirror loads with the editor, not the shell.
+const NoteEditor = lazy(() =>
+  import('./components/NoteEditor').then((m) => ({ default: m.NoteEditor })),
+);
 import { api, type Note } from './api';
 
 type MergeApi = {
@@ -78,7 +82,11 @@ export function PopoutApp({ descriptor }: { descriptor: Tab }) {
   } else if (error) {
     body = <div className="pane-empty">{error}</div>;
   } else {
-    body = <NoteEditor note={note} content={draft} onContentChange={setDraft} onSave={saveNote} />;
+    body = (
+      <Suspense fallback={<div className="editor-loading" />}>
+        <NoteEditor note={note} content={draft} onContentChange={setDraft} onSave={saveNote} />
+      </Suspense>
+    );
   }
 
   return (

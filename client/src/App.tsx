@@ -1,7 +1,13 @@
-import { useEffect, useState, useCallback, useRef, useMemo, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo, lazy, Suspense, type CSSProperties, type ReactNode } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { type Tab } from './components/TabBar';
-import { NoteEditor } from './components/NoteEditor';
+
+// CodeMirror (editor core plus every language mode via @codemirror/language-data)
+// is the heaviest dependency in the app and is only needed once a note tab is
+// actually open — keep it out of the initial chunk.
+const NoteEditor = lazy(() =>
+  import('./components/NoteEditor').then((m) => ({ default: m.NoteEditor })),
+);
 import {
   canMergeChatMessages,
   CHAT_NOTE_MARKER,
@@ -2494,17 +2500,19 @@ export default function App() {
     }
     const entry = noteContents[tab.id];
     return (
-      <NoteEditor
-        note={entry?.note ?? null}
-        content={entry?.draft ?? ''}
-        onContentChange={getNoteChangeHandler(tab.id)}
-        onSave={getNoteSaveHandler(tab.id)}
-        onRename={getNoteRenameHandler(tab.id)}
-        onExecuteDirective={handleExecuteDirective}
-        onOpenWikilink={handleOpenWikilink}
-        notes={notes}
-        onOpenNote={openNote}
-      />
+      <Suspense fallback={<div className="editor-loading" />}>
+        <NoteEditor
+          note={entry?.note ?? null}
+          content={entry?.draft ?? ''}
+          onContentChange={getNoteChangeHandler(tab.id)}
+          onSave={getNoteSaveHandler(tab.id)}
+          onRename={getNoteRenameHandler(tab.id)}
+          onExecuteDirective={handleExecuteDirective}
+          onOpenWikilink={handleOpenWikilink}
+          notes={notes}
+          onOpenNote={openNote}
+        />
+      </Suspense>
     );
   }, [availableChatAgents, chatState.messagesByChannel, chatState.registeredAgentsByChannel, chatPresenceByChannel, currentUsername, loadingChatChannels, runningChatAgents, runnerHealth, vaultAgents, handleCancelChatRun, handleCreateChatInviteLink, handleInviteChatUser, handleRemoveChatParticipant, handleLeaveChatChannel, handleRegisterChatAgent, handleRemoveChatAgent, handleUpsertVaultAgent, handleDeleteVaultAgent, handleAddVaultAgentToChannel, handleSendChatMessage, noteContents, notes, getNoteChangeHandler, getNoteSaveHandler, getNoteRenameHandler, handleExecuteDirective, handleOpenWikilink, openNote, chatMembersOpen, activeVaultId, handleHydrateChatMessage, handleOpenSharedChatNote]);
 

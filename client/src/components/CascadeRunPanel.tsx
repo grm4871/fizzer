@@ -6,7 +6,7 @@
  * the true process/SDK buffer in xterm when needed.
  */
 
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, lazy, Suspense, type RefObject } from 'react';
 import { ChevronRight, Square, TerminalSquare } from 'lucide-react';
 import {
   buildHarnessActivity,
@@ -26,7 +26,11 @@ import {
   type HarnessActivity,
   type RunStats,
 } from '../chat/harnessActivity';
-import { HarnessTerminal } from './HarnessTerminal';
+// xterm is only mounted behind the Raw tab, so it does not belong in the
+// initial chunk — load it when the user actually switches to raw output.
+const HarnessTerminal = lazy(() =>
+  import('./HarnessTerminal').then((m) => ({ default: m.HarnessTerminal })),
+);
 import type { ChatMessage } from './ChatView';
 import { api } from '../api';
 
@@ -627,7 +631,9 @@ export const CascadeRunPanel = memo(function CascadeRunPanel({
           >
             {useRaw ? (
               <div className="crp-raw-wrap">
-                <HarnessTerminal content={activity.rawLog || activity.thinkingText} active={isRunning} />
+                <Suspense fallback={null}>
+                  <HarnessTerminal content={activity.rawLog || activity.thinkingText} active={isRunning} />
+                </Suspense>
               </div>
             ) : (
               <StructuredTranscript activity={activity} isRunning={isRunning} />
