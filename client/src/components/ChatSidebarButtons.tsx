@@ -5,8 +5,8 @@ export type SidebarButtonItem = { id: string; icon: ReactNode; onClick: () => vo
 export const createSidebarButton = (item: SidebarButtonItem) => item;
 
 const styles = `
-.csb{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;padding:0 4px 6px}
-.csb.collapsed{display:flex;flex-direction:column;align-items:center;padding:0}
+.csb{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;padding:7px 4px 6px}
+.csb.collapsed{display:flex;flex-direction:column;align-items:center;padding:7px 0 0}
 .csb button{position:relative;width:100%;min-height:24px;padding:3px 6px;display:inline-flex;align-items:center;justify-content:center;gap:1px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg-surface);color:var(--text-secondary);cursor:pointer}
 .csb.collapsed button{width:28px;padding:3px}
 .csb button:hover,.csb button.selected{border-color:var(--border-active);background:var(--bg-raised)}

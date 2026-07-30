@@ -1,5 +1,23 @@
-import { useMemo, useState, type DragEvent, type FormEvent } from 'react';
-import { Check, GripVertical, Plus, X } from 'lucide-react';
+import {
+  useMemo,
+  useState,
+  type DragEvent,
+  type FormEvent,
+  type KeyboardEvent,
+} from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import {
+  Archive,
+  Check,
+  ChevronDown,
+  GripVertical,
+  MoreVertical,
+  Plus,
+  Search,
+  Trash2,
+  X,
+} from 'lucide-react';
 
 export interface KanbanCard {
   id: string;
@@ -12,6 +30,8 @@ export interface KanbanCard {
 export interface KanbanColumn {
   id: string;
   title: string;
+  rawTitle: string;
+  maxItems: number;
   headingLineIndex: number;
   endLineIndex: number;
   cards: KanbanCard[];
@@ -19,74 +39,208 @@ export interface KanbanColumn {
 
 export interface KanbanBoard {
   columns: KanbanColumn[];
+  archive: KanbanCard[];
+  archiveHeadingLineIndex: number | null;
+  archiveMarkerLineIndex: number | null;
+  hasObsidianMarker: boolean;
 }
 
 const HEADING = /^##\s+(.+?)\s*$/;
-const CARD = /^\s*([-*+])\s+(?:\[([ xX])\]\s+)?(.+?)\s*$/;
+const CARD = /^\s*([-*+])\s+(?:\[([^\]])\]\s+)?(.+?)\s*$/;
+const FRONTMATTER_KEY = /^kanban-plugin\s*:/m;
+const SETTINGS_START = '%% kanban:settings';
+
+function cleanSingleLine(value: string) {
+  return value.replace(/[\r\n]+/g, ' ').trim();
+}
+
+function parseColumnTitle(rawTitle: string) {
+  const match = rawTitle.match(/^(.*?)\s*\((\d+)\)$/);
+  if (!match) return { title: rawTitle.trim(), maxItems: 0 };
+  return { title: match[1].trim(), maxItems: Number(match[2]) };
+}
+
+function parseCard(line: string, lineIndex: number): KanbanCard | null {
+  const match = line.match(CARD);
+  if (!match) return null;
+  return {
+    id: `card-${lineIndex}`,
+    lineIndex,
+    text: match[3].trim(),
+    checked: match[2]?.toLowerCase() === 'x',
+    marker: match[1] as '-' | '*' | '+',
+  };
+}
+
+export function hasObsidianKanbanMarker(content: string) {
+  const frontmatter = content.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+  return Boolean(frontmatter && FRONTMATTER_KEY.test(frontmatter[1]));
+}
 
 export function parseKanbanMarkdown(content: string): KanbanBoard {
   const lines = content.split('\n');
   const columns: KanbanColumn[] = [];
+  const archive: KanbanCard[] = [];
+  let activeColumn: KanbanColumn | null = null;
+  let inArchive = false;
+  let archiveHeadingLineIndex: number | null = null;
+  let archiveMarkerLineIndex: number | null = null;
 
   lines.forEach((line, lineIndex) => {
     const heading = line.match(HEADING);
     if (heading) {
-      const previous = columns.at(-1);
-      if (previous) previous.endLineIndex = lineIndex;
-      columns.push({
+      let previousNonBlank = lineIndex - 1;
+      while (previousNonBlank >= 0 && lines[previousNonBlank].trim() === '') previousNonBlank -= 1;
+      const isArchive = heading[1].trim().toLowerCase() === 'archive'
+        && previousNonBlank >= 0
+        && lines[previousNonBlank].trim() === '***';
+
+      if (activeColumn) {
+        activeColumn.endLineIndex = isArchive ? previousNonBlank : lineIndex;
+      }
+
+      if (isArchive) {
+        activeColumn = null;
+        inArchive = true;
+        archiveHeadingLineIndex = lineIndex;
+        archiveMarkerLineIndex = previousNonBlank;
+        return;
+      }
+
+      inArchive = false;
+      const rawTitle = heading[1].trim();
+      const parsedTitle = parseColumnTitle(rawTitle);
+      activeColumn = {
         id: `column-${lineIndex}`,
-        title: heading[1].trim(),
+        rawTitle,
+        ...parsedTitle,
         headingLineIndex: lineIndex,
         endLineIndex: lines.length,
         cards: [],
-      });
+      };
+      columns.push(activeColumn);
       return;
     }
 
-    const column = columns.at(-1);
-    if (!column) return;
-    const card = line.match(CARD);
+    const card = parseCard(line, lineIndex);
     if (!card) return;
-    const marker = card[1] as '-' | '*' | '+';
-    column.cards.push({
-      id: `card-${lineIndex}`,
-      lineIndex,
-      text: card[3].trim(),
-      checked: card[2]?.toLowerCase() === 'x',
-      marker,
-    });
+    if (inArchive) archive.push(card);
+    else activeColumn?.cards.push(card);
   });
 
-  return { columns };
+  const settingsStart = lines.findIndex((line) => line.trim() === SETTINGS_START);
+  if (settingsStart >= 0 && activeColumn && activeColumn.endLineIndex === lines.length) {
+    activeColumn.endLineIndex = settingsStart;
+  }
+
+  return {
+    columns,
+    archive,
+    archiveHeadingLineIndex,
+    archiveMarkerLineIndex,
+    hasObsidianMarker: hasObsidianKanbanMarker(content),
+  };
 }
 
 function cardLine(text: string, checked = false, marker: '-' | '*' | '+' = '-') {
-  return `${marker} [${checked ? 'x' : ' '}] ${text.trim()}`;
+  return `${marker} [${checked ? 'x' : ' '}] ${cleanSingleLine(text)}`;
+}
+
+function findFrontmatterEnd(lines: string[]) {
+  if (lines[0]?.trim() !== '---') return -1;
+  return lines.findIndex((line, index) => index > 0 && line.trim() === '---');
+}
+
+export function ensureKanbanFrontmatter(content: string): string {
+  const lines = content.split('\n');
+  const frontmatterEnd = findFrontmatterEnd(lines);
+  if (frontmatterEnd >= 0) {
+    const existingIndex = lines
+      .slice(1, frontmatterEnd)
+      .findIndex((line) => /^kanban-plugin\s*:/.test(line));
+    if (existingIndex >= 0) return content;
+    lines.splice(frontmatterEnd, 0, 'kanban-plugin: board');
+    return lines.join('\n');
+  }
+
+  const body = content.trimStart();
+  return `---\nkanban-plugin: board\n---\n\n${body}`;
+}
+
+function settingsFooter() {
+  return [
+    '%% kanban:settings',
+    '```',
+    '{"kanban-plugin":"board"}',
+    '```',
+    '%%',
+  ].join('\n');
 }
 
 export function initializeKanbanMarkdown(content: string): string {
-  const prefix = content.trimEnd();
-  const board = ['## Backlog', '', '## In progress', '', '## Done', ''].join('\n');
-  return prefix ? `${prefix}\n\n${board}` : board;
+  const withFrontmatter = ensureKanbanFrontmatter(content).trimEnd();
+  const board = [
+    '## Backlog',
+    '',
+    '## In progress',
+    '',
+    '## Done',
+    '',
+    settingsFooter(),
+    '',
+  ].join('\n');
+  return `${withFrontmatter}\n\n${board}`;
+}
+
+function firstFooterLine(content: string) {
+  const board = parseKanbanMarkdown(content);
+  if (board.archiveMarkerLineIndex != null) return board.archiveMarkerLineIndex;
+  const settingsIndex = content.split('\n').findIndex((line) => line.trim() === SETTINGS_START);
+  return settingsIndex >= 0 ? settingsIndex : content.split('\n').length;
 }
 
 export function addKanbanCard(content: string, columnId: string, text: string): string {
   const board = parseKanbanMarkdown(content);
   const column = board.columns.find((item) => item.id === columnId);
-  if (!column || !text.trim()) return content;
+  if (!column || !cleanSingleLine(text)) return content;
   const lines = content.split('\n');
-  let insertAt = column.headingLineIndex + 1;
-  if (column.cards.length) insertAt = column.cards.at(-1)!.lineIndex + 1;
-  while (insertAt < column.endLineIndex && lines[insertAt]?.trim() === '') insertAt += 1;
+  let insertAt = (column.cards.at(-1)?.lineIndex ?? column.headingLineIndex) + 1;
+  // Empty Obsidian lanes conventionally keep one blank line below the heading.
+  // For populated lanes, insert directly after the final card so the existing
+  // blank line remains the separator before the next lane.
+  if (!column.cards.length && lines[insertAt]?.trim() === '') insertAt += 1;
   lines.splice(insertAt, 0, cardLine(text));
   return lines.join('\n');
 }
 
 export function addKanbanColumn(content: string, title: string): string {
-  const clean = title.replace(/[\r\n]+/g, ' ').trim();
+  const clean = cleanSingleLine(title);
   if (!clean) return content;
-  const prefix = content.trimEnd();
-  return `${prefix}${prefix ? '\n\n' : ''}## ${clean}\n`;
+  const lines = content.split('\n');
+  const insertAt = firstFooterLine(content);
+  const section = [`## ${clean}`, '', ''];
+  if (insertAt > 0 && lines[insertAt - 1]?.trim() !== '') section.unshift('');
+  lines.splice(insertAt, 0, ...section);
+  return lines.join('\n');
+}
+
+export function renameKanbanCard(content: string, cardId: string, text: string): string {
+  const board = parseKanbanMarkdown(content);
+  const card = [...board.columns.flatMap((column) => column.cards), ...board.archive]
+    .find((item) => item.id === cardId);
+  if (!card || !cleanSingleLine(text)) return content;
+  const lines = content.split('\n');
+  lines[card.lineIndex] = cardLine(text, card.checked, card.marker);
+  return lines.join('\n');
+}
+
+export function renameKanbanColumn(content: string, columnId: string, title: string): string {
+  const column = parseKanbanMarkdown(content).columns.find((item) => item.id === columnId);
+  const clean = cleanSingleLine(title);
+  if (!column || !clean) return content;
+  const lines = content.split('\n');
+  lines[column.headingLineIndex] = `## ${clean}`;
+  return lines.join('\n');
 }
 
 export function toggleKanbanCard(content: string, cardId: string): string {
@@ -100,32 +254,102 @@ export function toggleKanbanCard(content: string, cardId: string): string {
 
 export function deleteKanbanCard(content: string, cardId: string): string {
   const board = parseKanbanMarkdown(content);
-  const card = board.columns.flatMap((column) => column.cards).find((item) => item.id === cardId);
+  const card = [...board.columns.flatMap((column) => column.cards), ...board.archive]
+    .find((item) => item.id === cardId);
   if (!card) return content;
   const lines = content.split('\n');
   lines.splice(card.lineIndex, 1);
   return lines.join('\n');
 }
 
-export function moveKanbanCard(content: string, cardId: string, targetColumnId: string): string {
+export function deleteKanbanColumn(content: string, columnId: string): string {
+  const column = parseKanbanMarkdown(content).columns.find((item) => item.id === columnId);
+  if (!column) return content;
+  const lines = content.split('\n');
+  lines.splice(column.headingLineIndex, column.endLineIndex - column.headingLineIndex);
+  return lines.join('\n');
+}
+
+export function moveKanbanCard(
+  content: string,
+  cardId: string,
+  targetColumnId: string,
+  targetCardId?: string,
+  placement: 'before' | 'after' = 'before',
+): string {
   const board = parseKanbanMarkdown(content);
   const source = board.columns.flatMap((column) => column.cards).find((item) => item.id === cardId);
   const target = board.columns.find((column) => column.id === targetColumnId);
-  if (!source || !target) return content;
+  const targetCard = targetCardId
+    ? target?.cards.find((item) => item.id === targetCardId)
+    : undefined;
+  if (!source || !target || targetCard?.id === source.id) return content;
 
   const lines = content.split('\n');
   const movedLine = lines[source.lineIndex];
-  lines.splice(source.lineIndex, 1);
+  let insertAt: number;
+  if (targetCard) {
+    insertAt = targetCard.lineIndex + (placement === 'after' ? 1 : 0);
+  } else {
+    insertAt = (target.cards.at(-1)?.lineIndex ?? target.headingLineIndex) + 1;
+  }
 
-  const adjustedHeadingIndex = target.headingLineIndex - (source.lineIndex < target.headingLineIndex ? 1 : 0);
-  const adjusted = parseKanbanMarkdown(lines.join('\n')).columns
-    .find((column) => column.headingLineIndex === adjustedHeadingIndex);
-  if (!adjusted) return content;
-  let insertAt = adjusted.headingLineIndex + 1;
-  if (adjusted.cards.length) insertAt = adjusted.cards.at(-1)!.lineIndex + 1;
-  while (insertAt < adjusted.endLineIndex && lines[insertAt]?.trim() === '') insertAt += 1;
+  lines.splice(source.lineIndex, 1);
+  if (source.lineIndex < insertAt) insertAt -= 1;
   lines.splice(insertAt, 0, movedLine);
   return lines.join('\n');
+}
+
+function archiveCardIds(content: string, cardIds: string[]): string {
+  const board = parseKanbanMarkdown(content);
+  const wanted = new Set(cardIds);
+  const cards = board.columns
+    .flatMap((column) => column.cards)
+    .filter((card) => wanted.has(card.id));
+  if (!cards.length) return content;
+
+  const lines = content.split('\n');
+  const archivedLines = cards.map((card) => lines[card.lineIndex]);
+  cards
+    .map((card) => card.lineIndex)
+    .sort((a, b) => b - a)
+    .forEach((lineIndex) => lines.splice(lineIndex, 1));
+
+  let next = lines.join('\n');
+  const nextBoard = parseKanbanMarkdown(next);
+  const nextLines = next.split('\n');
+  if (nextBoard.archiveHeadingLineIndex != null) {
+    let insertAt = nextBoard.archive.at(-1)?.lineIndex ?? nextBoard.archiveHeadingLineIndex;
+    insertAt += 1;
+    while (insertAt < nextLines.length && nextLines[insertAt]?.trim() === '') insertAt += 1;
+    nextLines.splice(insertAt, 0, ...archivedLines);
+    return nextLines.join('\n');
+  }
+
+  const settingsIndex = nextLines.findIndex((line) => line.trim() === SETTINGS_START);
+  const insertAt = settingsIndex >= 0 ? settingsIndex : nextLines.length;
+  const archiveSection = ['***', '', '## Archive', '', ...archivedLines, '', ''];
+  if (insertAt > 0 && nextLines[insertAt - 1]?.trim() !== '') archiveSection.unshift('');
+  nextLines.splice(insertAt, 0, ...archiveSection);
+  next = nextLines.join('\n');
+  return next;
+}
+
+export function archiveKanbanCard(content: string, cardId: string) {
+  return archiveCardIds(content, [cardId]);
+}
+
+export function archiveCompletedKanbanCards(content: string) {
+  const completeIds = parseKanbanMarkdown(content).columns
+    .flatMap((column) => column.cards)
+    .filter((card) => card.checked)
+    .map((card) => card.id);
+  return archiveCardIds(content, completeIds);
+}
+
+export function archiveKanbanColumnCards(content: string, columnId: string) {
+  const column = parseKanbanMarkdown(content).columns.find((item) => item.id === columnId);
+  return column ? archiveCardIds(content, column.cards.map((card) => card.id)) : content;
 }
 
 interface KanbanViewProps {
@@ -133,23 +357,59 @@ interface KanbanViewProps {
   onContentChange: (content: string) => void;
 }
 
+type EditingValue = { id: string; value: string } | null;
+type DropTarget = { cardId: string; placement: 'before' | 'after' } | null;
+
+function CardMarkdown({ text }: { text: string }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        a: ({ children, ...props }) => <a {...props} target="_blank" rel="noreferrer">{children}</a>,
+        p: ({ children }) => <>{children}</>,
+      }}
+    >
+      {text}
+    </ReactMarkdown>
+  );
+}
+
 export function KanbanView({ content, onContentChange }: KanbanViewProps) {
   const board = useMemo(() => parseKanbanMarkdown(content), [content]);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [draggedCardId, setDraggedCardId] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<DropTarget>(null);
+  const [editingCard, setEditingCard] = useState<EditingValue>(null);
+  const [editingColumn, setEditingColumn] = useState<EditingValue>(null);
+  const [collapsedColumns, setCollapsedColumns] = useState<Set<string>>(new Set());
+  const [columnMenu, setColumnMenu] = useState<string | null>(null);
+  const [columnDraft, setColumnDraft] = useState('');
+  const [search, setSearch] = useState('');
 
   if (!board.columns.length) {
     return (
       <div className="kanban-empty">
         <div className="kanban-empty-icon">▦</div>
-        <strong>Turn this note into a board</strong>
-        <p>Columns and cards stay editable as ordinary Markdown.</p>
+        <strong>Turn this note into an Obsidian-compatible board</strong>
+        <p>Lists, cards, archive, and settings remain ordinary portable Markdown.</p>
         <button type="button" onClick={() => onContentChange(initializeKanbanMarkdown(content))}>
-          <Plus size={14} /> Create Backlog, In progress, and Done
+          <Plus size={14} /> Create board
         </button>
       </div>
     );
   }
+
+  const commitCardEdit = () => {
+    if (!editingCard) return;
+    onContentChange(renameKanbanCard(content, editingCard.id, editingCard.value));
+    setEditingCard(null);
+  };
+
+  const commitColumnEdit = () => {
+    if (!editingColumn) return;
+    onContentChange(renameKanbanColumn(content, editingColumn.id, editingColumn.value));
+    setEditingColumn(null);
+  };
 
   const submitCard = (event: FormEvent, column: KanbanColumn) => {
     event.preventDefault();
@@ -159,82 +419,271 @@ export function KanbanView({ content, onContentChange }: KanbanViewProps) {
     setDrafts((current) => ({ ...current, [column.id]: '' }));
   };
 
-  const dropCard = (event: DragEvent, column: KanbanColumn) => {
+  const submitColumn = (event: FormEvent) => {
+    event.preventDefault();
+    if (!columnDraft.trim()) return;
+    onContentChange(addKanbanColumn(content, columnDraft));
+    setColumnDraft('');
+  };
+
+  const dropCardInColumn = (event: DragEvent, column: KanbanColumn) => {
     event.preventDefault();
     const cardId = draggedCardId || event.dataTransfer.getData('text/cascade-kanban-card');
     if (cardId) onContentChange(moveKanbanCard(content, cardId, column.id));
     setDraggedCardId(null);
+    setDropTarget(null);
   };
+
+  const dropCardOnCard = (event: DragEvent, column: KanbanColumn, card: KanbanCard) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const cardId = draggedCardId || event.dataTransfer.getData('text/cascade-kanban-card');
+    if (cardId) {
+      onContentChange(moveKanbanCard(
+        content,
+        cardId,
+        column.id,
+        card.id,
+        dropTarget?.cardId === card.id ? dropTarget.placement : 'before',
+      ));
+    }
+    setDraggedCardId(null);
+    setDropTarget(null);
+  };
+
+  const completedCount = board.columns
+    .flatMap((column) => column.cards)
+    .filter((card) => card.checked).length;
+  const normalizedSearch = search.trim().toLocaleLowerCase();
 
   return (
     <div className="kanban-view" aria-label="Kanban board">
-      <div className="kanban-board">
-        {board.columns.map((column) => (
-          <section
-            className="kanban-column"
-            key={column.id}
-            onDragOver={(event) => event.preventDefault()}
-            onDrop={(event) => dropCard(event, column)}
-          >
-            <header>
-              <strong>{column.title}</strong>
-              <span>{column.cards.length}</span>
-            </header>
-            <div className="kanban-cards">
-              {column.cards.map((card) => (
-                <article
-                  className={`kanban-card${card.checked ? ' is-complete' : ''}`}
-                  key={card.id}
-                  draggable
-                  onDragStart={(event) => {
-                    setDraggedCardId(card.id);
-                    event.dataTransfer.setData('text/cascade-kanban-card', card.id);
-                    event.dataTransfer.effectAllowed = 'move';
-                  }}
-                  onDragEnd={() => setDraggedCardId(null)}
-                >
-                  <GripVertical size={14} className="kanban-card-grip" aria-hidden="true" />
-                  <button
-                    type="button"
-                    className="kanban-card-check"
-                    onClick={() => onContentChange(toggleKanbanCard(content, card.id))}
-                    aria-label={card.checked ? 'Mark incomplete' : 'Mark complete'}
-                  >
-                    {card.checked && <Check size={12} />}
-                  </button>
-                  <span>{card.text}</span>
-                  <button
-                    type="button"
-                    className="kanban-card-delete"
-                    onClick={() => onContentChange(deleteKanbanCard(content, card.id))}
-                    aria-label={`Delete ${card.text}`}
-                  >
-                    <X size={12} />
-                  </button>
-                </article>
-              ))}
-            </div>
-            <form className="kanban-add-card" onSubmit={(event) => submitCard(event, column)}>
-              <input
-                value={drafts[column.id] || ''}
-                onChange={(event) => setDrafts((current) => ({ ...current, [column.id]: event.target.value }))}
-                placeholder="Add a card…"
-                aria-label={`Add card to ${column.title}`}
-              />
-              <button type="submit" aria-label={`Add card to ${column.title}`}><Plus size={14} /></button>
-            </form>
-          </section>
-        ))}
+      <div className="kanban-toolbar">
+        <div className="kanban-search">
+          <Search size={14} aria-hidden="true" />
+          <input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search cards"
+            aria-label="Search Kanban cards"
+          />
+          {search && (
+            <button type="button" onClick={() => setSearch('')} aria-label="Clear search">
+              <X size={12} />
+            </button>
+          )}
+        </div>
+        <span className="kanban-portability">
+          {board.hasObsidianMarker ? 'Obsidian board' : 'Markdown board'}
+        </span>
         <button
           type="button"
-          className="kanban-add-column"
-          onClick={() => {
-            const title = window.prompt('Column name');
-            if (title) onContentChange(addKanbanColumn(content, title));
-          }}
+          className="kanban-archive-complete"
+          disabled={!completedCount}
+          onClick={() => onContentChange(archiveCompletedKanbanCards(content))}
+          title="Move checked cards to the Markdown archive"
         >
-          <Plus size={14} /> Add column
+          <Archive size={14} />
+          Archive completed
+          {completedCount > 0 && <span>{completedCount}</span>}
         </button>
+        {board.archive.length > 0 && (
+          <span className="kanban-archive-count">{board.archive.length} archived</span>
+        )}
+      </div>
+
+      <div className="kanban-board">
+        {board.columns.map((column) => {
+          const collapsed = collapsedColumns.has(column.id);
+          const visibleCards = normalizedSearch
+            ? column.cards.filter((card) => card.text.toLocaleLowerCase().includes(normalizedSearch))
+            : column.cards;
+          const exceeded = column.maxItems > 0 && column.cards.length > column.maxItems;
+          return (
+            <section
+              className={`kanban-column${collapsed ? ' is-collapsed' : ''}`}
+              key={column.id}
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={(event) => dropCardInColumn(event, column)}
+            >
+              <header onDoubleClick={() => setEditingColumn({ id: column.id, value: column.rawTitle })}>
+                <button
+                  type="button"
+                  className="kanban-column-collapse"
+                  onClick={() => setCollapsedColumns((current) => {
+                    const next = new Set(current);
+                    if (next.has(column.id)) next.delete(column.id);
+                    else next.add(column.id);
+                    return next;
+                  })}
+                  aria-label={collapsed ? `Expand ${column.title}` : `Collapse ${column.title}`}
+                >
+                  <ChevronDown size={14} />
+                </button>
+                {editingColumn?.id === column.id ? (
+                  <input
+                    className="kanban-column-title-input"
+                    value={editingColumn.value}
+                    autoFocus
+                    onChange={(event) => setEditingColumn({ id: column.id, value: event.target.value })}
+                    onBlur={commitColumnEdit}
+                    onKeyDown={(event: KeyboardEvent<HTMLInputElement>) => {
+                      if (event.key === 'Enter') commitColumnEdit();
+                      if (event.key === 'Escape') setEditingColumn(null);
+                    }}
+                  />
+                ) : (
+                  <strong>{column.title}</strong>
+                )}
+                <span className={exceeded ? 'is-exceeded' : ''}>
+                  {column.cards.length}{column.maxItems > 0 ? ` / ${column.maxItems}` : ''}
+                </span>
+                <button
+                  type="button"
+                  className="kanban-column-menu-button"
+                  onClick={() => setColumnMenu((current) => current === column.id ? null : column.id)}
+                  aria-label={`More options for ${column.title}`}
+                >
+                  <MoreVertical size={14} />
+                </button>
+                {columnMenu === column.id && (
+                  <div className="kanban-column-menu">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingColumn({ id: column.id, value: column.rawTitle });
+                        setColumnMenu(null);
+                      }}
+                    >
+                      Rename list
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!column.cards.length}
+                      onClick={() => {
+                        onContentChange(archiveKanbanColumnCards(content, column.id));
+                        setColumnMenu(null);
+                      }}
+                    >
+                      <Archive size={13} /> Archive cards
+                    </button>
+                    <button
+                      type="button"
+                      className="is-danger"
+                      onClick={() => {
+                        if (window.confirm(`Delete “${column.title}” and its ${column.cards.length} card(s)?`)) {
+                          onContentChange(deleteKanbanColumn(content, column.id));
+                        }
+                        setColumnMenu(null);
+                      }}
+                    >
+                      <Trash2 size={13} /> Delete list
+                    </button>
+                  </div>
+                )}
+              </header>
+
+              {!collapsed && (
+                <>
+                  <div className="kanban-cards">
+                    {visibleCards.map((card) => (
+                      <article
+                        className={[
+                          'kanban-card',
+                          card.checked ? 'is-complete' : '',
+                          dropTarget?.cardId === card.id ? `is-drop-${dropTarget.placement}` : '',
+                        ].filter(Boolean).join(' ')}
+                        key={card.id}
+                        draggable={editingCard?.id !== card.id}
+                        onDragStart={(event) => {
+                          setDraggedCardId(card.id);
+                          event.dataTransfer.setData('text/cascade-kanban-card', card.id);
+                          event.dataTransfer.effectAllowed = 'move';
+                        }}
+                        onDragOver={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          const rect = event.currentTarget.getBoundingClientRect();
+                          setDropTarget({
+                            cardId: card.id,
+                            placement: event.clientY < rect.top + rect.height / 2 ? 'before' : 'after',
+                          });
+                        }}
+                        onDrop={(event) => dropCardOnCard(event, column, card)}
+                        onDragEnd={() => {
+                          setDraggedCardId(null);
+                          setDropTarget(null);
+                        }}
+                        onDoubleClick={() => setEditingCard({ id: card.id, value: card.text })}
+                      >
+                        <GripVertical size={14} className="kanban-card-grip" aria-hidden="true" />
+                        <button
+                          type="button"
+                          className="kanban-card-check"
+                          onClick={(event) => onContentChange(
+                            event.metaKey || event.ctrlKey
+                              ? archiveKanbanCard(content, card.id)
+                              : toggleKanbanCard(content, card.id),
+                          )}
+                          title="Click to complete · Ctrl/Cmd-click to archive"
+                          aria-label={card.checked ? 'Mark incomplete' : 'Mark complete'}
+                        >
+                          {card.checked && <Check size={12} />}
+                        </button>
+                        {editingCard?.id === card.id ? (
+                          <input
+                            className="kanban-card-title-input"
+                            value={editingCard.value}
+                            autoFocus
+                            onChange={(event) => setEditingCard({ id: card.id, value: event.target.value })}
+                            onBlur={commitCardEdit}
+                            onKeyDown={(event: KeyboardEvent<HTMLInputElement>) => {
+                              if (event.key === 'Enter') commitCardEdit();
+                              if (event.key === 'Escape') setEditingCard(null);
+                            }}
+                          />
+                        ) : (
+                          <div className="kanban-card-title"><CardMarkdown text={card.text} /></div>
+                        )}
+                        <button
+                          type="button"
+                          className="kanban-card-delete"
+                          onClick={() => onContentChange(archiveKanbanCard(content, card.id))}
+                          aria-label={`Archive ${card.text}`}
+                          title="Archive card"
+                        >
+                          <Archive size={12} />
+                        </button>
+                      </article>
+                    ))}
+                    {normalizedSearch && visibleCards.length === 0 && (
+                      <div className="kanban-no-matches">No matching cards</div>
+                    )}
+                  </div>
+                  <form className="kanban-add-card" onSubmit={(event) => submitCard(event, column)}>
+                    <input
+                      value={drafts[column.id] || ''}
+                      onChange={(event) => setDrafts((current) => ({ ...current, [column.id]: event.target.value }))}
+                      placeholder="Add a card…"
+                      aria-label={`Add card to ${column.title}`}
+                    />
+                    <button type="submit" aria-label={`Add card to ${column.title}`}><Plus size={14} /></button>
+                  </form>
+                </>
+              )}
+            </section>
+          );
+        })}
+
+        <form className="kanban-add-column" onSubmit={submitColumn}>
+          <input
+            value={columnDraft}
+            onChange={(event) => setColumnDraft(event.target.value)}
+            placeholder="Add list…"
+            aria-label="New Kanban list name"
+          />
+          <button type="submit" aria-label="Add Kanban list"><Plus size={14} /></button>
+        </form>
       </div>
     </div>
   );

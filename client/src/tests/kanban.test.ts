@@ -2,14 +2,24 @@ import { describe, expect, it } from 'vitest';
 import {
   addKanbanCard,
   addKanbanColumn,
+  archiveCompletedKanbanCards,
+  archiveKanbanCard,
   deleteKanbanCard,
+  ensureKanbanFrontmatter,
+  hasObsidianKanbanMarker,
   initializeKanbanMarkdown,
   moveKanbanCard,
   parseKanbanMarkdown,
+  renameKanbanCard,
+  renameKanbanColumn,
   toggleKanbanCard,
 } from '../components/KanbanView';
 
 const SAMPLE = [
+  '---',
+  'kanban-plugin: board',
+  '---',
+  '',
   '# Project',
   '',
   'Intro text stays untouched.',
@@ -23,6 +33,12 @@ const SAMPLE = [
   '',
   '- [x] Ship prototype',
   '',
+  '%% kanban:settings',
+  '```',
+  '{"kanban-plugin":"board"}',
+  '```',
+  '%%',
+  '',
 ].join('\n');
 
 describe('Markdown-backed Kanban helpers', () => {
@@ -31,34 +47,76 @@ describe('Markdown-backed Kanban helpers', () => {
     expect(board.columns.map((column) => column.title)).toEqual(['Backlog', 'Done']);
     expect(board.columns[0].cards.map((card) => card.text)).toEqual(['Draft brief', 'Plain bullet']);
     expect(board.columns[1].cards[0].checked).toBe(true);
+    expect(board.hasObsidianMarker).toBe(true);
   });
 
-  it('moves a card without losing surrounding prose', () => {
+  it('moves and reorders cards without losing surrounding prose', () => {
     const board = parseKanbanMarkdown(SAMPLE);
     const next = moveKanbanCard(SAMPLE, board.columns[0].cards[0].id, board.columns[1].id);
     expect(next).toContain('Intro text stays untouched.');
     expect(parseKanbanMarkdown(next).columns[1].cards.map((card) => card.text))
       .toEqual(['Ship prototype', 'Draft brief']);
+
+    const movedBoard = parseKanbanMarkdown(next);
+    const reordered = moveKanbanCard(
+      next,
+      movedBoard.columns[1].cards[1].id,
+      movedBoard.columns[1].id,
+      movedBoard.columns[1].cards[0].id,
+    );
+    expect(parseKanbanMarkdown(reordered).columns[1].cards.map((card) => card.text))
+      .toEqual(['Draft brief', 'Ship prototype']);
   });
 
-  it('adds, toggles, and deletes cards as ordinary Markdown', () => {
+  it('adds, renames, toggles, and deletes cards as ordinary Markdown', () => {
     let next = addKanbanCard(SAMPLE, parseKanbanMarkdown(SAMPLE).columns[0].id, 'Review copy');
+    expect(next).toContain('- Plain bullet\n- [ ] Review copy\n\n## Done');
     let card = parseKanbanMarkdown(next).columns[0].cards.find((item) => item.text === 'Review copy')!;
+    next = renameKanbanCard(next, card.id, 'Review final copy');
+    card = parseKanbanMarkdown(next).columns[0].cards.find((item) => item.text === 'Review final copy')!;
     next = toggleKanbanCard(next, card.id);
-    expect(next).toContain('- [x] Review copy');
-    card = parseKanbanMarkdown(next).columns[0].cards.find((item) => item.text === 'Review copy')!;
+    expect(next).toContain('- [x] Review final copy');
+    card = parseKanbanMarkdown(next).columns[0].cards.find((item) => item.text === 'Review final copy')!;
     next = deleteKanbanCard(next, card.id);
-    expect(next).not.toContain('Review copy');
+    expect(next).not.toContain('Review final copy');
   });
 
-  it('initializes a board after existing note content', () => {
+  it('initializes an Obsidian-compatible board around existing note content', () => {
     const next = initializeKanbanMarkdown('# Existing');
-    expect(next).toMatch(/^# Existing\n\n## Backlog/);
+    expect(next).toMatch(/^---\nkanban-plugin: board\n---\n\n# Existing\n\n## Backlog/);
+    expect(next).toContain('%% kanban:settings\n```\n{"kanban-plugin":"board"}');
+    expect(hasObsidianKanbanMarker(next)).toBe(true);
     expect(parseKanbanMarkdown(next).columns).toHaveLength(3);
   });
 
-  it('adds custom columns as h2 sections', () => {
-    const next = addKanbanColumn(SAMPLE, 'Blocked');
-    expect(parseKanbanMarkdown(next).columns.at(-1)?.title).toBe('Blocked');
+  it('adds and renames WIP-limited columns before the settings footer', () => {
+    let next = addKanbanColumn(SAMPLE, 'Blocked (2)');
+    let column = parseKanbanMarkdown(next).columns.at(-1)!;
+    expect(column.title).toBe('Blocked');
+    expect(column.maxItems).toBe(2);
+    expect(next.indexOf('## Blocked (2)')).toBeLessThan(next.indexOf('%% kanban:settings'));
+    next = renameKanbanColumn(next, column.id, 'Waiting (3)');
+    column = parseKanbanMarkdown(next).columns.at(-1)!;
+    expect(column.title).toBe('Waiting');
+    expect(column.maxItems).toBe(3);
+  });
+
+  it('adds the marker to existing frontmatter without replacing metadata', () => {
+    const next = ensureKanbanFrontmatter(['---', 'tags: [project]', '---', '', '# Plan'].join('\n'));
+    expect(next).toContain('tags: [project]\nkanban-plugin: board\n---');
+    expect(hasObsidianKanbanMarker(next)).toBe(true);
+  });
+
+  it('archives cards using the Obsidian thematic-break archive format', () => {
+    const board = parseKanbanMarkdown(SAMPLE);
+    let next = archiveKanbanCard(SAMPLE, board.columns[0].cards[0].id);
+    expect(next).toContain('***\n\n## Archive');
+    expect(parseKanbanMarkdown(next).archive.map((card) => card.text)).toEqual(['Draft brief']);
+    expect(parseKanbanMarkdown(next).columns[0].cards.map((card) => card.text)).toEqual(['Plain bullet']);
+    expect(next.indexOf('## Archive')).toBeLessThan(next.indexOf('%% kanban:settings'));
+
+    next = archiveCompletedKanbanCards(next);
+    expect(parseKanbanMarkdown(next).archive.map((card) => card.text))
+      .toEqual(['Draft brief', 'Ship prototype']);
   });
 });

@@ -12,7 +12,7 @@ import { languages } from '@codemirror/language-data';
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
 import { tags } from '@lezer/highlight';
 import { FileText, Link2, Box, Columns3, Globe, ExternalLink } from 'lucide-react';
-import { KanbanView } from './KanbanView';
+import { hasObsidianKanbanMarker, KanbanView } from './KanbanView';
 
 /* ═══════════════════════════════════════════════════════════
    NoteEditor — CodeMirror 6 Live Preview Markdown Editor
@@ -1249,11 +1249,16 @@ export const NoteEditor = memo(function NoteEditor({ note, content, onContentCha
   useEffect(() => { setTitleDraft(note?.title ?? ''); }, [note?.id, note?.title]);
   useEffect(() => {
     if (!note?.id || typeof localStorage === 'undefined') {
-      setViewMode('editor');
+      setViewMode(hasObsidianKanbanMarker(content) ? 'kanban' : 'editor');
       return;
     }
-    setViewMode(localStorage.getItem(`cascade_note_view:${note.id}`) === 'kanban' ? 'kanban' : 'editor');
-  }, [note?.id]);
+    const savedMode = localStorage.getItem(`cascade_note_view:${note.id}`);
+    if (savedMode === 'kanban' || savedMode === 'editor') {
+      setViewMode(savedMode);
+      return;
+    }
+    setViewMode(hasObsidianKanbanMarker(content) ? 'kanban' : 'editor');
+  }, [content, note?.id]);
 
   const selectViewMode = useCallback((mode: 'editor' | 'kanban') => {
     setViewMode(mode);

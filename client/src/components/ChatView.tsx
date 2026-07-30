@@ -2241,11 +2241,12 @@ export const ChatView = memo(function ChatView({
           );
         })}
 
-        <div className="chat-users-title">Agents in this channel</div>
-        {registeredAgentRows.length === 0 && (
-          <div className="chat-runs-empty">No agents yet — add from vault</div>
-        )}
-        {registeredAgentRows.map((agent) => {
+        <div className="chat-agent-section">
+          <div className="chat-users-title">Agents in this channel</div>
+          {registeredAgentRows.length === 0 && (
+            <div className="chat-runs-empty">No agents yet — add from vault</div>
+          )}
+          {registeredAgentRows.map((agent) => {
           const selectedModel = agent.registration.model || agent.models[0]?.id || '';
           const isEditing = editingRegistrationId === agent.registration.id && agentMenuOpen;
           return (
@@ -2278,9 +2279,9 @@ export const ChatView = memo(function ChatView({
               </button>
             </div>
           );
-        })}
+          })}
 
-        {sidebarMode === 'users' && agentMenuOpen && agentPanelMode === 'picker' && (
+          {sidebarMode === 'users' && agentMenuOpen && agentPanelMode === 'picker' && (
           <div className="chat-agent-menu" onClick={(event) => event.stopPropagation()}>
             <div className="chat-agent-menu-heading">Add agent to #{channelName}</div>
             {vaultAgents.length === 0 ? (
@@ -2352,9 +2353,9 @@ export const ChatView = memo(function ChatView({
               </button>
             </div>
           </div>
-        )}
+          )}
 
-        {sidebarMode === 'users' && agentMenuOpen && agentPanelMode !== 'picker' && (
+          {sidebarMode === 'users' && agentMenuOpen && agentPanelMode !== 'picker' && (
           <form className="chat-agent-menu" onSubmit={(e) => void submitAgentRegistration(e)} onClick={(event) => event.stopPropagation()}>
             <div className="chat-agent-menu-heading">
               {agentPanelMode === 'edit-member' && 'Channel membership'}
@@ -2536,7 +2537,8 @@ export const ChatView = memo(function ChatView({
               </button>
             </div>
           </form>
-        )}
+          )}
+        </div>
           </>
         ))}
       </aside>
