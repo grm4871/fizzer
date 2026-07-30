@@ -17,9 +17,11 @@ type Db = Database.Database;
 export const CHAT_NOTE_MARKER = 'cascade://chat-channel';
 export const CASCADE_AGENT_APP_CONTEXT =
   'Cascade is a user-facing, Obsidian-style workspace for AI-native project management. '
-  + 'Its notes, folders, project docs, and chats are live app data, not files under the agent process cwd. '
-  + 'Use `cascade-note` by command name to read or write Cascade notes; it is on PATH and pre-authorized. '
-  + 'Do not replace it with an absolute path or inspect a local docs.db. '
+  + 'Its vault folders, project docs, notes, and chats are live app data, not a mirror of the agent process cwd. '
+  + 'Use `cascade-note` by command name to list, read, create, or edit live notes; it is on PATH and pre-authorized. '
+  + 'Use `--listed` and `--folder` when placing a new note in the sidebar. '
+  + 'Do not replace the helper with an absolute path, inspect a local docs.db, or conclude notes are unavailable '
+  + 'because they are absent from the local filesystem or named tool list. '
   + 'Use normal filesystem tools only for local repository/workspace work the user actually requested.';
 
 export type ChatReplyRef = {
@@ -1192,14 +1194,7 @@ export function buildAgentChannelWorkspaceContext(
     ...nearestFolders.slice().reverse().map((folder) => folder.name),
     `#${channel.title}`,
   ].join(' / ');
-  const chunks = [
-    'Cascade is the user-facing, Obsidian-style workspace for AI-native project management. '
-      + 'Its vault folders, project docs, notes, and chats are live app data, not a mirror of the process cwd. '
-      + 'Use the `cascade-note` CLI on PATH to list, read, create, or edit live notes '
-      + '(`--listed` and `--folder` place new notes in the sidebar); do not conclude the notes are unavailable '
-      + 'because they are absent from the local filesystem or named tool list.',
-    `Cascade channel location: ${location}`,
-  ];
+  const chunks = [`Cascade channel location: ${location}`];
 
   let remaining = Math.max(0, Math.floor(maxProjectDocChars));
   let documentCount = 0;

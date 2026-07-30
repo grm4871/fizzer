@@ -5,10 +5,12 @@ import { buildAgentChannelWorkspaceContext, CASCADE_AGENT_APP_CONTEXT } from './
 
 test('the app contract identifies Cascade and the live note helper unambiguously', () => {
   assert.match(CASCADE_AGENT_APP_CONTEXT, /Obsidian-style workspace for AI-native project management/);
-  assert.match(CASCADE_AGENT_APP_CONTEXT, /live app data, not files/);
+  assert.match(CASCADE_AGENT_APP_CONTEXT, /live app data, not a mirror/);
   assert.match(CASCADE_AGENT_APP_CONTEXT, /Use `cascade-note` by command name/);
   assert.match(CASCADE_AGENT_APP_CONTEXT, /pre-authorized/);
-  assert.match(CASCADE_AGENT_APP_CONTEXT, /Do not replace it with an absolute path/);
+  assert.match(CASCADE_AGENT_APP_CONTEXT, /`--listed` and `--folder`/);
+  assert.match(CASCADE_AGENT_APP_CONTEXT, /Do not replace the helper with an absolute path/);
+  assert.match(CASCADE_AGENT_APP_CONTEXT, /absent from the local filesystem or named tool list/);
 });
 
 test('chat agents inherit folder ancestry and the nearest project doc', () => {
@@ -50,9 +52,6 @@ test('chat agents inherit folder ancestry and the nearest project doc', () => {
 
   const context = buildAgentChannelWorkspaceContext(db, 'channel');
 
-  assert.match(context, /user-facing, Obsidian-style workspace for AI-native project management/);
-  assert.match(context, /`cascade-note` CLI on PATH/);
-  assert.match(context, /not a mirror of the process cwd/);
   assert.match(context, /Cascade channel location: projects \/ OC \/ #cubegen/);
   assert.match(context, /Project — obsidiancube/);
   assert.match(context, /ObsidianCube is the umbrella project/);
