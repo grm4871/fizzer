@@ -5,6 +5,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+source "$ROOT/deploy/deploy-lock.sh"
+acquire_cascade_deploy_lock "$ROOT"
 cd "$ROOT"
 
 # systemd/root deploys can hit "dubious ownership" on this checkout.

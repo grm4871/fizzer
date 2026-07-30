@@ -27,6 +27,13 @@ RESULT_FILE="$DATA_DIR/deploy.result"
 
 [[ -f "$REQUEST_FILE" ]] || { echo "No deploy request pending."; exit 0; }
 
+# Leave the request file in place while another deploy is active so the status
+# endpoint continues to report pending. The lock covers git sync as well as the
+# Docker swap; otherwise one deploy can rewrite the checkout while another is
+# building from it.
+source "$ROOT/deploy/deploy-lock.sh"
+acquire_cascade_deploy_lock "$ROOT"
+
 # Optional "ref" from the request body (branch, tag, or sha). Empty => current branch's remote.
 REF="$(node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); if (p.ref) process.stdout.write(String(p.ref));" "$REQUEST_FILE" 2>/dev/null || true)"
 

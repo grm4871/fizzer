@@ -16,7 +16,7 @@ Production deploys use the same GitHub Actions → SSH pattern as Simcluster.
 
 1. **Commit and push** to `master`. That triggers `.github/workflows/deploy.yml`, which SSHs to the host, `git fetch`/`reset --hard origin/master`, and runs `deploy/remote-update.sh` (docker compose build + up + health check).
 2. **Wait for the Actions run** (do not assume push means live). Prefer the Actions UI, or on the host: `docker compose -f /var/www/cascade-browser/docker-compose.yml ps` and `curl -sf http://127.0.0.1:3000/api/health`. Confirm the expected commit (`git -C /var/www/cascade-browser rev-parse --short HEAD`) before claiming ship.
-3. **Manual / agent fallback** (same update path, no Actions): after push, either:
+3. **Manual / agent fallback** (same update path, no Actions): use this only after the Actions run has explicitly failed or Actions is unavailable. **Never start it merely because a pushed run is still queued or in progress.** All host deploy paths share a lock, but duplicate deploys still waste time and send misleading failure notifications. After push, either:
    - SSH and run the same remote steps as the workflow, or
    - `./.private/deploy-cscd-online.sh` (untracked) which POSTs `/api/deploy`; the host `cascade-deploy.path` unit fast-forwards the checkout and runs `deploy/remote-update.sh`. Poll `GET /api/deploy/status` (or `./.private/deploy-cscd-status.sh`) until `pending: false` and `last.status` is `ok`.
 4. First-time host bootstrap (nginx, certbot, `.env`) remains `deploy/deploy.sh <domain>` — not used for routine releases. Required Actions secrets (same names as Simcluster): `DEPLOY_SSH_KEY`, `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_PORT`.
