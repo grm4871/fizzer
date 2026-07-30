@@ -229,6 +229,39 @@ export function listRuns(db: Db, vaultId: string) {
   return db.prepare('SELECT * FROM runs WHERE vault_id = ? ORDER BY started_at DESC, id DESC').all(vaultId) as Run[];
 }
 
+export type ActiveSession = Run & {
+  message_id: string | null;
+  channel_id: string | null;
+  channel_title: string | null;
+  author: string | null;
+  registration_id: string | null;
+  mention: string | null;
+};
+
+export function listActiveSessions(db: Db, vaultId: string): ActiveSession[] {
+  return db.prepare(`
+    SELECT r.*,
+      cm.id AS message_id,
+      cm.channel_id AS channel_id,
+      channel.title AS channel_title,
+      cm.author AS author,
+      cm.registration_id AS registration_id,
+      member.mention AS mention
+    FROM runs r
+    LEFT JOIN chat_messages cm ON cm.id = (
+      SELECT message.id
+      FROM chat_messages message
+      WHERE message.run_id = r.id
+      ORDER BY message.created_at DESC
+      LIMIT 1
+    )
+    LEFT JOIN notes channel ON channel.id = cm.channel_id
+    LEFT JOIN chat_agent_members member ON member.id = cm.registration_id
+    WHERE r.vault_id = ? AND r.status IN ('queued', 'running')
+    ORDER BY r.started_at DESC, r.id DESC
+  `).all(vaultId) as ActiveSession[];
+}
+
 export function getRun(db: Db, id: number) {
   return db.prepare('SELECT * FROM runs WHERE id = ?').get(id) as Run | undefined;
 }

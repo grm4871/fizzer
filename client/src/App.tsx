@@ -22,13 +22,13 @@ import {
   type ChatMessage,
   type ChatReplyRef,
   type DesktopRunnerHealth,
-  type RunningChatAgent,
   type SharedChatNote,
   type VaultAgent,
 } from './components/ChatView';
 import { SearchOverlay } from './components/SearchOverlay';
 import { CommandPalette } from './components/CommandPalette';
 import { AdminPanel } from './components/AdminPanel';
+import { SessionManager } from './components/SessionManager';
 import { PaneGrid, type TabDragPayload } from './components/PaneGrid';
 import * as Layout from './layout/tree';
 import type { LayoutNode } from './layout/tree';
@@ -68,7 +68,7 @@ import {
   type ChatState,
   type PersistedSession,
 } from './chat/session';
-import { Gem, PanelLeftOpen, Users } from 'lucide-react';
+import { Activity, Gem, PanelLeftOpen, Users } from 'lucide-react';
 
 /**
  * @file App.tsx — Root component for Cascade
@@ -144,6 +144,7 @@ export default function App() {
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [runnerHealth, setRunnerHealth] = useState<DesktopRunnerHealth | null>(null);
+  const [sessionManagerOpen, setSessionManagerOpen] = useState(false);
   const [vaultAgents, setVaultAgents] = useState<VaultAgent[]>([]);
   // ─── Derived focus state ────────────────────────────────────────
   const focusedPane = Layout.findPane(layout, focusedPaneId) ?? Layout.getFirstPane(layout);
@@ -151,7 +152,6 @@ export default function App() {
   const focusedTab = openTabs.find((tab) => tab.id === activeTabId) ?? null;
   const focusedIsChat = focusedTab?.type === 'chat';
   const currentUsername = user?.username ?? '';
-  const noteTitleById = useMemo(() => new Map(notes.map((note) => [note.id, note.title])), [notes]);
   const availableChatAgents = useMemo(() => CHAT_AGENTS.map((agent) => ({
     id: agent.id,
     label: agent.label,
@@ -160,25 +160,6 @@ export default function App() {
       runnerHealth?.models?.[agent.id] ?? null,
     ),
   })), [runnerHealth?.models]);
-
-  const runningChatAgents = useMemo(() => {
-    const entries: RunningChatAgent[] = [];
-    for (const [channelId, messages] of Object.entries(chatState.messagesByChannel)) {
-      const channelName = noteTitleById.get(channelId) || 'channel';
-      for (const message of messages) {
-        if (message.status !== 'running') continue;
-        entries.push({
-          runId: message.runId,
-          channelId,
-          channelName,
-          author: message.author,
-          messageId: message.id,
-          preview: message.body === 'Thinking...' ? 'Starting…' : message.body.slice(0, 120),
-        });
-      }
-    }
-    return entries;
-  }, [chatState.messagesByChannel, noteTitleById]);
 
   // Refs mirror the latest state so event handlers stay stable (no dep churn)
   // and never read a stale closure during drags / async work.
@@ -2518,7 +2499,6 @@ export default function App() {
           availableAgents={availableChatAgents}
           registeredAgents={chatState.registeredAgentsByChannel[channel.id] ?? []}
           vaultAgents={vaultAgents}
-          runningAgents={runningChatAgents}
           runnerHealth={runnerHealth}
           onRegisterAgent={handleRegisterChatAgent}
           onRemoveAgent={handleRemoveChatAgent}
@@ -2557,7 +2537,7 @@ export default function App() {
         />
       </Suspense>
     );
-  }, [availableChatAgents, chatState.messagesByChannel, chatState.registeredAgentsByChannel, chatPresenceByChannel, currentUsername, loadingChatChannels, runningChatAgents, runnerHealth, vaultAgents, handleCancelChatRun, handleCreateChatInviteLink, handleInviteChatUser, handleRemoveChatParticipant, handleLeaveChatChannel, handleRegisterChatAgent, handleRemoveChatAgent, handleUpsertVaultAgent, handleDeleteVaultAgent, handleAddVaultAgentToChannel, handleSendChatMessage, noteContents, notes, getNoteChangeHandler, getNoteSaveHandler, getNoteRenameHandler, handleExecuteDirective, handleOpenWikilink, openNote, chatMembersOpen, activeVaultId, handleHydrateChatMessage, handleOpenSharedChatNote]);
+  }, [availableChatAgents, chatState.messagesByChannel, chatState.registeredAgentsByChannel, chatPresenceByChannel, currentUsername, loadingChatChannels, runnerHealth, vaultAgents, handleCancelChatRun, handleCreateChatInviteLink, handleInviteChatUser, handleRemoveChatParticipant, handleLeaveChatChannel, handleRegisterChatAgent, handleRemoveChatAgent, handleUpsertVaultAgent, handleDeleteVaultAgent, handleAddVaultAgentToChannel, handleSendChatMessage, noteContents, notes, getNoteChangeHandler, getNoteSaveHandler, getNoteRenameHandler, handleExecuteDirective, handleOpenWikilink, openNote, chatMembersOpen, activeVaultId, handleHydrateChatMessage, handleOpenSharedChatNote]);
 
   if (!user) {
     const hasInvite = /^\/invite\/[^/]+$/.test(window.location.pathname);
@@ -2679,14 +2659,26 @@ export default function App() {
 
       {/* Workspace */}
       <div className="workspace flex flex-col flex-1" style={{ height: '100%', overflow: 'hidden' }}>
-        {(!sidebarOpen || (focusedIsChat && !chatMembersOpen)) && (
-          <div className="workspace-toolbar" style={{ alignItems: 'center', background: 'var(--bg-surface)', padding: '4px 8px', paddingTop: 'calc(4px + env(safe-area-inset-top))', gap: 4, borderBottom: '1px solid var(--border)' }}>
+        <div className="workspace-toolbar" style={{ alignItems: 'center', background: 'var(--bg-surface)', padding: '4px 8px', paddingTop: 'calc(4px + env(safe-area-inset-top))', gap: 4, borderBottom: '1px solid var(--border)' }}>
             {!sidebarOpen && (
               <button id="sidebar-expand-btn" className="btn-icon" onClick={() => { setSidebarOpen(true); setChatMembersOpen(false); }} title="Expand sidebar">
                 <PanelLeftOpen size={16} />
               </button>
             )}
             <div style={{ flex: 1, minWidth: 0 }} />
+            <button
+              id="session-manager-btn"
+              type="button"
+              className="btn-icon workspace-session-btn"
+              onClick={() => setSessionManagerOpen(true)}
+              title="Inspect running AI sessions"
+              aria-label="Inspect running AI sessions"
+            >
+              <Activity size={16} />
+              {Boolean(runnerHealth?.activeRuns) && (
+                <span className="workspace-session-badge">{runnerHealth!.activeRuns}</span>
+              )}
+            </button>
             {focusedIsChat && !chatMembersOpen && <button
               id="chat-members-expand-btn"
               type="button"
@@ -2701,7 +2693,6 @@ export default function App() {
               <Users size={16} />
             </button>}
           </div>
-        )}
 
         <div className="flex-1" style={{ position: 'relative', display: 'flex', overflow: 'hidden' }}>
           <PaneGrid
@@ -2728,6 +2719,18 @@ export default function App() {
           />
         </div>
       </div>
+      <SessionManager
+        open={sessionManagerOpen}
+        vaultId={activeVaultId}
+        runnerOnline={Boolean(runnerHealth?.online)}
+        onClose={() => setSessionManagerOpen(false)}
+        onOpenChat={(channelId) => {
+          openNote(channelId);
+          setSessionManagerOpen(false);
+        }}
+        onCancel={handleCancelChatRun}
+        onInterrogate={(channelId, message) => handleSendChatMessage(channelId, message)}
+      />
 
       <SearchOverlay open={searchOpen} onClose={() => setSearchOpen(false)} vaultId={activeVaultId} onSelectNote={(id) => openNote(id)} />
       <CommandPalette open={commandPaletteOpen} onClose={() => setCommandPaletteOpen(false)} notes={notes} onSelectNote={(id) => openNote(id)} onCreateNote={handleCreateNote} />

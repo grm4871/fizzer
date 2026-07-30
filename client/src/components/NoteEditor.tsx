@@ -384,6 +384,9 @@ class PrivateBlockWidget extends WidgetType {
   eq(other: PrivateBlockWidget) {
     return this.from === other.from;
   }
+  ignoreEvent() {
+    return false;
+  }
 }
 
 const NOTE_IMAGE_MAX_BYTES = 8 * 1024 * 1024;

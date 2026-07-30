@@ -185,15 +185,6 @@ export interface ChatAgentOption {
   models: Array<{ id: string; label: string }>;
 }
 
-export interface RunningChatAgent {
-  runId?: number;
-  channelId: string;
-  channelName: string;
-  author: string;
-  messageId: string;
-  preview: string;
-}
-
 export interface ChatChannelPresence {
   participants: string[];
   online: string[];
@@ -217,7 +208,6 @@ interface ChatViewProps {
   availableAgents: ChatAgentOption[];
   registeredAgents: ChatAgentRegistration[];
   vaultAgents?: VaultAgent[];
-  runningAgents: RunningChatAgent[];
   runnerHealth?: DesktopRunnerHealth | null;
   onRegisterAgent: (channelId: string, registration: ChatAgentRegistration) => void;
   onRemoveAgent: (channelId: string, registrationId: string) => void;
@@ -1143,7 +1133,6 @@ export const ChatView = memo(function ChatView({
   availableAgents,
   registeredAgents,
   vaultAgents = [],
-  runningAgents,
   runnerHealth = null,
   onRegisterAgent,
   onRemoveAgent,
@@ -1165,7 +1154,6 @@ export const ChatView = memo(function ChatView({
   onHydrateMessage,
 }: ChatViewProps) {
   const [draft, setDraft] = useState('');
-  const [sidebarMode, setSidebarMode] = useState<'users' | 'runs'>('users');
   const [usersCollapsedLocal, setUsersCollapsedLocal] = useState(() =>
     typeof localStorage !== 'undefined' && localStorage.getItem('cascade_chat_users_collapsed') === '1'
   );
@@ -1652,18 +1640,8 @@ export const ChatView = memo(function ChatView({
 
   function toggleInvite() {
     setUsersCollapsed(false);
-    setSidebarMode('users');
     setInviteStatus('');
     setInviteOpen((value) => !value);
-  }
-
-  function toggleActivity() {
-    if (usersCollapsed) {
-      setUsersCollapsed(false);
-      setSidebarMode('runs');
-      return;
-    }
-    setSidebarMode((mode) => (mode === 'runs' ? 'users' : 'runs'));
   }
 
   function editRegisteredAgent(event: React.MouseEvent, registration: ChatAgentRegistration) {
@@ -2242,21 +2220,18 @@ export const ChatView = memo(function ChatView({
 
       <aside
         className={`chat-users${usersCollapsed ? ' is-collapsed' : ''}`}
-        aria-label={sidebarMode === 'runs' ? 'Running agents' : 'Chat users'}
+        aria-label="Chat users"
       >
         <ChatSidebarButtons
           collapsed={usersCollapsed}
           inviteSelected={inviteOpen}
           agentSelected={agentMenuOpen}
-          activitySelected={sidebarMode === 'runs'}
-          runningCount={runningAgents.length}
           onToggleCollapsed={() => setUsersCollapsed((value) => !value)}
           onInvite={toggleInvite}
           onAgent={openAgentMenu}
-          onActivity={toggleActivity}
         />
 
-        {!usersCollapsed && sidebarMode === 'users' && channelSettingsOpen && (
+        {!usersCollapsed && channelSettingsOpen && (
           <div className="chat-channel-settings-panel">
             <div className="chat-channel-settings-heading">
               <strong>Agent settings</strong>
@@ -2281,54 +2256,7 @@ export const ChatView = memo(function ChatView({
           </div>
         )}
 
-        {!usersCollapsed && (sidebarMode === 'runs' ? (
-          <>
-            <div className="chat-users-title">Desktop runner</div>
-            <div className={`chat-runner-health ${runnerHealth?.online ? 'is-online' : 'is-offline'}`}>
-              <div className="chat-runner-health-row">
-                <span className={`chat-runner-dot ${runnerHealth?.online ? 'online' : 'offline'}`} />
-                <strong>{runnerHealth?.online ? 'Online' : 'Offline'}</strong>
-              </div>
-              <span className="chat-runner-meta">
-                {runnerHealth?.activeRuns ?? 0} active run{(runnerHealth?.activeRuns ?? 0) === 1 ? '' : 's'}
-              </span>
-              {runnerHealth?.lastError && (
-                <span className="chat-runner-error" title={runnerHealth.lastErrorAt || undefined}>
-                  Last error: {runnerHealth.lastError}
-                </span>
-              )}
-              {!runnerHealth?.online && (
-                <span className="chat-runner-hint">
-                  Open Cascade desktop signed in to the same account to run agents.
-                </span>
-              )}
-            </div>
-            <div className="chat-users-title">Running agents</div>
-            {runningAgents.length === 0 ? (
-              <div className="chat-runs-empty">No agents running</div>
-            ) : (
-              runningAgents.map((run) => (
-                <div className="chat-run-row" key={`${run.channelId}:${run.messageId}`}>
-                  <ChatAvatar name={run.author} kind="agent" size="sm" />
-                  <div className="chat-run-row-copy">
-                    <strong>{run.author}</strong>
-                    <span>#{run.channelName}</span>
-                    <span className="chat-run-row-preview">{run.preview}</span>
-                  </div>
-                  <button
-                    type="button"
-                    className="chat-run-row-stop"
-                    onClick={() => run.runId && onCancelRun(run.runId)}
-                    disabled={!run.runId}
-                    title={run.runId ? 'Force stop' : 'Starting…'}
-                  >
-                    <Square size={11} fill="currentColor" />
-                  </button>
-                </div>
-              ))
-            )}
-          </>
-        ) : (
+        {!usersCollapsed && (
           <>
         {inviteOpen && (
           <form className="chat-invite-menu" onSubmit={submitInvite} onClick={(event) => event.stopPropagation()}>
@@ -2427,7 +2355,7 @@ export const ChatView = memo(function ChatView({
           );
           })}
 
-          {sidebarMode === 'users' && agentMenuOpen && agentPanelMode === 'picker' && (
+          {agentMenuOpen && agentPanelMode === 'picker' && (
           <div className="chat-agent-menu" onClick={(event) => event.stopPropagation()}>
             <div className="chat-agent-menu-heading">Add agent to #{channelName}</div>
             {vaultAgents.length === 0 ? (
@@ -2501,7 +2429,7 @@ export const ChatView = memo(function ChatView({
           </div>
           )}
 
-          {sidebarMode === 'users' && agentMenuOpen && agentPanelMode !== 'picker' && (
+          {agentMenuOpen && agentPanelMode !== 'picker' && (
           <form className="chat-agent-menu" onSubmit={(e) => void submitAgentRegistration(e)} onClick={(event) => event.stopPropagation()}>
             <div className="chat-agent-menu-heading">
               {agentPanelMode === 'edit-member' && 'Channel membership'}
@@ -2686,7 +2614,7 @@ export const ChatView = memo(function ChatView({
           )}
         </div>
           </>
-        ))}
+        )}
       </aside>
 
       {lightboxSrc && (

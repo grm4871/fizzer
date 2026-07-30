@@ -55,6 +55,7 @@ import {
   setRunEventSink,
   setChatSyncSink,
   listRuns,
+  listActiveSessions,
   getRun,
   listRunEvents,
   startRun,
@@ -1646,6 +1647,12 @@ app.get('/api/vaults/:id/runs', requireAuth, (req: AuthedRequest, res) => {
   const vault = getVault(db, req.params.id, req.user!.id);
   if (!vault) return res.status(404).json({ error: 'Vault not found' });
   res.json({ runs: listRuns(db, vault.id) });
+});
+
+app.get('/api/vaults/:id/active-sessions', requireAuth, (req: AuthedRequest, res) => {
+  const vault = getVault(db, req.params.id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Vault not found' });
+  res.json({ sessions: listActiveSessions(db, vault.id) });
 });
 
 app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) => {
