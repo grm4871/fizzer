@@ -275,7 +275,9 @@ function getElectronClipboardAPI(): ElectronClipboardAPI | undefined {
   return (window as unknown as { electronAPI?: ElectronClipboardAPI }).electronAPI;
 }
 
-function isAtScrollBottom(element: HTMLElement, threshold = 24) {
+// Slightly generous: stream/harness growth often leaves a few px of lag for
+// one frame; 24px was flapping sticky under fast agent output.
+function isAtScrollBottom(element: HTMLElement, threshold = 48) {
   return element.scrollHeight - element.scrollTop - element.clientHeight <= threshold;
 }
 
@@ -1449,11 +1451,23 @@ export const ChatView = memo(function ChatView({
     if (!wasAtBottomRef.current && previousChannelIdRef.current === channelId) return;
     programmaticScrollRef.current = true;
     el.scrollTop = el.scrollHeight;
+    // Content often grows in the same frame as the pin (stream tokens, harness).
+    // One follow-up rAF catches the race without a second RO cycle.
+    requestAnimationFrame(() => {
+      const scroller = messagesRef.current;
+      if (!scroller) return;
+      if (performance.now() < userScrollQuietUntilRef.current) return;
+      if (!wasAtBottomRef.current && previousChannelIdRef.current === channelId) return;
+      if (!isAtScrollBottom(scroller)) {
+        programmaticScrollRef.current = true;
+        scroller.scrollTop = scroller.scrollHeight;
+      }
+    });
     if (programmaticClearRef.current != null) clearTimeout(programmaticClearRef.current);
     programmaticClearRef.current = window.setTimeout(() => {
       programmaticClearRef.current = null;
       programmaticScrollRef.current = false;
-    }, 80);
+    }, 120);
   }, [channelId]);
 
   const scrollToBottomIfSticky = useCallback(() => {
@@ -1517,11 +1531,12 @@ export const ChatView = memo(function ChatView({
     const element = messagesRef.current;
     if (!element) return;
     const atBottom = isAtScrollBottom(element);
-    // Programmatic pins set scrollTop then fire scroll events — ignore those
-    // while still at bottom. If the user scrolls away mid-pin, unstick immediately
-    // so history remains readable (mobile was fighting upward scrolls).
+    // Programmatic pins set scrollTop then fire scroll events. Content can also
+    // grow mid-pin (agent stream / harness), leaving !atBottom without any user
+    // gesture — that must NOT clear wasAtBottom or sticky follow dies for the
+    // rest of the run. Only detach mid-pin when a real user intent is active.
     if (programmaticScrollRef.current) {
-      if (!atBottom) {
+      if (!atBottom && performance.now() < userScrollIntentUntilRef.current) {
         programmaticScrollRef.current = false;
         wasAtBottomRef.current = false;
         userScrollQuietUntilRef.current = performance.now() + 220;
