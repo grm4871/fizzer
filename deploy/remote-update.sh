@@ -51,6 +51,23 @@ fi
 export DOCKER_BUILDKIT=1
 export COMPOSE_DOCKER_CLI_BUILD=1
 
+# A canceled/overlapping Compose recreate can leave its temporary backup
+# container (for example <hash>_cascade) behind. The next recreate then fails
+# before it can touch the healthy current container because that backup name is
+# already occupied. Remove only non-running containers for this Compose service;
+# never stop the live app as deploy cleanup.
+mapfile -t STALE_CONTAINERS < <(
+  for status in created exited dead; do
+    docker ps -aq \
+      --filter "label=com.docker.compose.service=cascade" \
+      --filter "status=${status}"
+  done | sort -u
+)
+if [[ "${#STALE_CONTAINERS[@]}" -gt 0 ]]; then
+  echo "==> Removing stale Cascade recreate containers"
+  docker rm "${STALE_CONTAINERS[@]}" >/dev/null
+fi
+
 echo "==> Building new image"
 if [[ "${REFRESH_BASE:-0}" == "1" ]]; then
   docker compose "${COMPOSE_ARGS[@]}" build --pull
