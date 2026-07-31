@@ -204,6 +204,11 @@ export default function App() {
   // Direct `cascade-chat send` replies arrive as a new message, rather than as
   // streamed run text. Keep handoffs idempotent across socket reconnects.
   const chainedAgentMessageIdsRef = useRef<Set<string>>(new Set());
+  // Coalesce concurrent vault/message loads (StrictMode double-mount, socket
+  // storms, ensureChatChannelLoaded racing loadVaultData). Shared promise so
+  // callers await the same network work instead of stacking RTTs.
+  const loadVaultDataInflightRef = useRef<Map<string, Promise<void>>>(new Map());
+  const loadChatMessagesInflightRef = useRef<Map<string, Promise<{ channelId: string; messages: ChatMessage[] }>>>(new Map());
 
   // Repair focus if the focused pane disappears (e.g. after collapsing a split).
   useEffect(() => {
@@ -556,32 +561,42 @@ export default function App() {
     }
     const loadChannels = async (ids: string[]) => {
       const results = await Promise.all(ids.map(async (channelId) => {
-        try {
-          // Slim list payload (no harness logs) — mobile cold load stays small.
-          const data = await api<{ messages: ChatMessage[] }>(
-            `/api/vaults/${vaultId}/channels/${channelId}/messages?detail=list&limit=120`,
-          );
-          let messages = data.messages ?? [];
-          const local = legacyMessages[channelId] ?? [];
-          if (messages.length === 0 && local.length > 0) {
-            for (const message of local) {
-              try {
-                await api(`/api/vaults/${vaultId}/channels/${channelId}/messages`, {
-                  method: 'POST', body: JSON.stringify(message),
-                });
-              } catch { /* Best-effort legacy migration. */ }
-            }
-            const refreshed = await api<{ messages: ChatMessage[] }>(
+        const inflightKey = `${vaultId}:${channelId}`;
+        const existing = loadChatMessagesInflightRef.current.get(inflightKey);
+        if (existing) return existing;
+
+        const fetchOne = (async (): Promise<{ channelId: string; messages: ChatMessage[] }> => {
+          try {
+            // Slim list payload (no harness logs) — mobile cold load stays small.
+            const data = await api<{ messages: ChatMessage[] }>(
               `/api/vaults/${vaultId}/channels/${channelId}/messages?detail=list&limit=120`,
             );
-            messages = refreshed.messages ?? [];
+            let messages = data.messages ?? [];
+            const local = legacyMessages[channelId] ?? [];
+            if (messages.length === 0 && local.length > 0) {
+              for (const message of local) {
+                try {
+                  await api(`/api/vaults/${vaultId}/channels/${channelId}/messages`, {
+                    method: 'POST', body: JSON.stringify(message),
+                  });
+                } catch { /* Best-effort legacy migration. */ }
+              }
+              const refreshed = await api<{ messages: ChatMessage[] }>(
+                `/api/vaults/${vaultId}/channels/${channelId}/messages?detail=list&limit=120`,
+              );
+              messages = refreshed.messages ?? [];
+            }
+            return { channelId, messages };
+          } catch {
+            // Keep whatever we already have on soft failure (resume offline).
+            const cached = chatStateRef.current.messagesByChannel[channelId];
+            return { channelId, messages: cached ?? legacyMessages[channelId] ?? [] };
+          } finally {
+            loadChatMessagesInflightRef.current.delete(inflightKey);
           }
-          return { channelId, messages };
-        } catch {
-          // Keep whatever we already have on soft failure (resume offline).
-          const cached = chatStateRef.current.messagesByChannel[channelId];
-          return { channelId, messages: cached ?? legacyMessages[channelId] ?? [] };
-        }
+        })();
+        loadChatMessagesInflightRef.current.set(inflightKey, fetchOne);
+        return fetchOne;
       }));
       setChatState((prev) => ({
         ...prev,
@@ -709,38 +724,55 @@ export default function App() {
   }, []);
 
   const loadVaultData = useCallback(async (vaultId: string, opts?: { soft?: boolean }) => {
-    try {
-      await perfSpanAsync(
-        'vault.loadVaultData',
-        async () => {
-          const [folderData, noteData] = await Promise.all([
-            api<{ folders: Folder[] }>(`/api/vaults/${vaultId}/folders`),
-            api<{ notes: NoteSummary[] }>(`/api/vaults/${vaultId}/notes`),
-          ]);
-          const nextNotes = noteData.notes || [];
-          setFolders(folderData.folders || []);
-          setNotes(nextNotes);
-          // Chat payloads only for open tabs — switching into a tab hydrates on demand.
-          const openChats = openChatTabIds().filter((id) =>
-            nextNotes.some((n) => n.id === id && n.content_preview.trim().startsWith(CHAT_NOTE_MARKER)),
-          );
-          await Promise.all([
-            loadChatMessages(vaultId, nextNotes, { silent: opts?.soft === true, channelIds: openChats }),
-            loadChatAgentMembers(vaultId, nextNotes, { channelIds: openChats }),
-            loadChatPresence(vaultId, nextNotes, { channelIds: openChats }),
-            loadVaultAgents(vaultId),
-          ]);
-        },
-        {
-          vaultId,
-          soft: opts?.soft === true,
-          openChats: openChatTabIds().length,
-        },
-        200,
-      );
-    } catch (error) {
-      console.error('Error loading vault data:', error);
-    }
+    const soft = opts?.soft === true;
+    const inflightKey = `${vaultId}:${soft ? 'soft' : 'hard'}`;
+    const existing = loadVaultDataInflightRef.current.get(inflightKey);
+    if (existing) return existing;
+
+    const run = (async () => {
+      try {
+        await perfSpanAsync(
+          'vault.loadVaultData',
+          async () => {
+            // Open chat tabs are already typed in the restored session — kick
+            // their message/agent/presence fetches in parallel with folders+notes
+            // so cold start is one RTT, not folders/notes THEN messages.
+            const openChats = openChatTabIds();
+            const silent = soft;
+
+            const foldersP = api<{ folders: Folder[] }>(`/api/vaults/${vaultId}/folders`);
+            const notesP = api<{ notes: NoteSummary[] }>(`/api/vaults/${vaultId}/notes`);
+            const chatP = openChats.length > 0
+              ? Promise.all([
+                  loadChatMessages(vaultId, [], { silent, channelIds: openChats }),
+                  loadChatAgentMembers(vaultId, [], { channelIds: openChats }),
+                  loadChatPresence(vaultId, [], { channelIds: openChats }),
+                ])
+              : Promise.resolve();
+            const vaultAgentsP = loadVaultAgents(vaultId);
+
+            const [folderData, noteData] = await Promise.all([foldersP, notesP]);
+            const nextNotes = noteData.notes || [];
+            setFolders(folderData.folders || []);
+            setNotes(nextNotes);
+            await Promise.all([chatP, vaultAgentsP]);
+          },
+          {
+            vaultId,
+            soft,
+            openChats: openChatTabIds().length,
+          },
+          200,
+        );
+      } catch (error) {
+        console.error('Error loading vault data:', error);
+      } finally {
+        loadVaultDataInflightRef.current.delete(inflightKey);
+      }
+    })();
+
+    loadVaultDataInflightRef.current.set(inflightKey, run);
+    return run;
   }, [loadChatMessages, loadChatAgentMembers, loadChatPresence, loadVaultAgents, openChatTabIds]);
 
   /** Hydrate one chat channel when the user focuses its tab (skip if cached). */
