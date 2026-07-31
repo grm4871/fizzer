@@ -14,6 +14,7 @@ import {
   renameKanbanColumn,
   toggleKanbanCard,
 } from '../components/KanbanView';
+import { mergeKanbanSources } from '../components/SuperkanbanView';
 
 const SAMPLE = [
   '---',
@@ -118,5 +119,21 @@ describe('Markdown-backed Kanban helpers', () => {
     next = archiveCompletedKanbanCards(next);
     expect(parseKanbanMarkdown(next).archive.map((card) => card.text))
       .toEqual(['Draft brief', 'Ship prototype']);
+  });
+
+  it('merges matching column names without changing board or card order', () => {
+    const other = SAMPLE
+      .replace('## Backlog', '##  backlog  ')
+      .replace('Draft brief', 'Second board first')
+      .replace('Plain bullet', 'Second board second');
+    const columns = mergeKanbanSources([
+      { id: 'first', title: 'First board', content: SAMPLE },
+      { id: 'second', title: 'Second board', content: other },
+    ]);
+    expect(columns.map((column) => column.title)).toEqual(['Backlog', 'Done']);
+    expect(columns[0].cards.map((card) => card.text))
+      .toEqual(['Draft brief', 'Plain bullet', 'Second board first', 'Second board second']);
+    expect(columns[0].cards.map((card) => card.sourceTitle))
+      .toEqual(['First board', 'First board', 'Second board', 'Second board']);
   });
 });

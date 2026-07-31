@@ -32,6 +32,7 @@ import { AdminPanel } from './components/AdminPanel';
 import { SessionManager } from './components/SessionManager';
 import { PaneGrid, type TabDragPayload } from './components/PaneGrid';
 import * as Layout from './layout/tree';
+import { SuperkanbanView } from './components/SuperkanbanView';
 import type { LayoutNode } from './layout/tree';
 import { api, type User, type Vault, type Folder, type NoteSummary, type Note } from './api';
 import { connectRunsSocket, connectVaultSocket } from './socket';
@@ -131,6 +132,9 @@ export default function App() {
   const [focusedPaneId, setFocusedPaneId] = useState<string>(persistedSessionRef.current.focusedPaneId);
   // Note bodies, keyed by tab id, so each note pane edits independently.
   const [noteContents, setNoteContents] = useState<Record<string, NoteEntry>>({});
+  const [superkanbanNotes, setSuperkanbanNotes] = useState<Note[]>([]);
+  const [superkanbanLoading, setSuperkanbanLoading] = useState(false);
+  const [superkanbanError, setSuperkanbanError] = useState<string | null>(null);
 
   // UI panels state
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -1951,6 +1955,36 @@ export default function App() {
           body: JSON.stringify({
             id: tabId,
             title: 'Untitled Note',
+  /** Fetch every board body in sidebar order for the read-only aggregate tab. */
+  const loadSuperkanban = useCallback(async () => {
+    // Previews are whitespace-collapsed by the API, so detect the marker here
+    // and validate the complete note body again inside mergeKanbanSources.
+    const boardSummaries = notesRef.current.filter((note) => /kanban-plugin\s*:/.test(note.content_preview));
+    setSuperkanbanLoading(true);
+    setSuperkanbanError(null);
+    try {
+      const fetched = await Promise.all(boardSummaries.map(async (summary) => {
+        const data = await api<{ note: Note }>(`/api/notes/${summary.id}`);
+        return data.note;
+      }));
+      setSuperkanbanNotes(fetched);
+    } catch (error) {
+      console.error('Error loading Superkanban:', error);
+      setSuperkanbanError('Could not load all Kanban boards. Try reopening this tab.');
+    } finally {
+      setSuperkanbanLoading(false);
+    }
+  }, []);
+
+  const openSuperkanban = useCallback((paneId: string) => {
+    const id = `superkanban:${activeVaultIdRef.current ?? 'current'}`;
+    const tab: Tab = { id, title: 'Superkanban', type: 'superkanban', dirty: false };
+    setOpenTabs((prev) => prev.some((item) => item.id === id) ? prev : [...prev, tab]);
+    setLayout(Layout.simplify(Layout.addTabToPane(Layout.removeTab(layoutRef.current, id), paneId, id)));
+    setFocusedPaneId(paneId);
+    void loadSuperkanban();
+  }, [loadSuperkanban]);
+
             content: entry.draft,
             folder_id: entry.note.folder_id ?? undefined,
             // Human-authored drafts stay listed unless this draft was unlisted.
@@ -2477,7 +2511,8 @@ export default function App() {
     const tab = openTabsRef.current.find((t) => t.id === tabId);
     if (tab?.type === 'note' && !noteContentsRef.current[tabId]) void loadNoteContent(tabId);
     if (tab?.type === 'chat') ensureChatChannelLoaded(tabId);
-  }, [loadNoteContent, ensureChatChannelLoaded]);
+    if (tab?.type === 'superkanban') void loadSuperkanban();
+  }, [loadNoteContent, ensureChatChannelLoaded, loadSuperkanban]);
 
   /** Handle a tab dropped onto a pane (drag-tile). */
   const handleDropTab = useCallback((payload: TabDragPayload, targetPaneId: string, side: Layout.DropSide, index?: number) => {
@@ -2652,6 +2687,14 @@ export default function App() {
   /** Render the content of a tab inside its pane. */
   const renderTabContent = useCallback((tab: Tab): ReactNode => {
     if (tab.type === 'chat') {
+    if (tab.type === 'superkanban') {
+      return <SuperkanbanView
+        notes={superkanbanNotes}
+        loading={superkanbanLoading}
+        error={superkanbanError}
+        onOpenNote={openNote}
+      />;
+    }
       const channel = notes.find((note) => note.id === tab.id && note.content_preview.trim().startsWith(CHAT_NOTE_MARKER));
       if (!channel) {
         // Cold start: vault notes not hydrated yet — avoid a flash of "not found".
@@ -2892,6 +2935,7 @@ export default function App() {
               setSidebarOpen((open) => {
                 const next = !open;
                 if (next && isMobileViewport()) setChatMembersOpen(false);
+            onOpenSuperkanban={openSuperkanban}
                 return next;
               });
             }}

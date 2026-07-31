@@ -764,6 +764,17 @@ a {
   box-shadow: inset 0 0 0 1px hsla(38, 80%, 52%, 0.45);
   color: var(--text-primary);
 }
+.tree-item.is-drop-before {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+.tree-item.is-drop-after {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+.tree-item.is-drop-inside {
+  background: var(--accent-subtle);
+  box-shadow: inset 0 0 0 1px hsla(38, 80%, 52%, 0.45);
+  color: var(--text-primary);
+}
 .sidebar-section-label.drag-over {
   background: var(--accent-subtle);
   color: var(--accent);
@@ -1086,6 +1097,12 @@ a {
 .tab-item:hover {
   color: var(--text-primary);
   background: hsla(226, 14%, 16%, 0.6);
+}
+.tab-item.is-drop-before {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.tab-item.is-drop-after {
+  box-shadow: inset -2px 0 0 var(--accent);
 }
 /* The active tab wears the decal along its bottom edge. */
 .tab-item.active {
@@ -1561,6 +1578,35 @@ a {
   color: var(--text-tertiary);
   text-decoration: line-through;
 }
+.superkanban-column .kanban-card { cursor: default; grid-template-columns: minmax(0, 1fr); }
+.superkanban-source {
+  justify-self: start;
+  max-width: 100%;
+  margin-top: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent-hover);
+  font: 0.625rem var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.superkanban-source:hover { text-decoration: underline; }
+.superkanban-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  color: var(--text-tertiary);
+  text-align: center;
+}
+.superkanban-empty strong { color: var(--text-primary); }
+.superkanban-empty p { margin: 0; font-size: 0.8125rem; }
 .kanban-card-title-input { padding: 4px 6px; }
 .kanban-card-grip { margin-top: 2px; color: var(--text-tertiary); opacity: 0.55; }
 .kanban-card-check,

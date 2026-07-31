@@ -12,12 +12,12 @@
  */
 
 import { useState, useEffect } from 'react';
-import { FileText, Columns, X, Plus, Hash } from 'lucide-react';
+import { FileText, Columns, X, Plus, Hash, LayoutDashboard } from 'lucide-react';
 
 export interface Tab {
   id: string;
   title: string;
-  type: 'note' | 'chat';
+  type: 'note' | 'chat' | 'superkanban';
   dirty?: boolean;
 }
 
@@ -102,6 +102,8 @@ export function TabBar({
             <span className="tab-icon">
               {tab.type === 'chat' ? (
                 <Hash size={13} className="text-secondary" style={{ marginRight: '6px' }} />
+              ) : tab.type === 'superkanban' ? (
+                <LayoutDashboard size={13} className="text-tertiary" style={{ marginRight: '6px' }} />
               ) : (
                 <FileText size={13} className="text-tertiary" style={{ marginRight: '6px' }} />
               )}

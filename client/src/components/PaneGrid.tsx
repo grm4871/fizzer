@@ -11,7 +11,7 @@
  */
 
 import { Fragment, useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react';
-import { FileText, ExternalLink, X, Hash, PanelLeftClose, PanelLeftOpen, Plus } from 'lucide-react';
+import { FileText, ExternalLink, X, Hash, LayoutDashboard, PanelLeftClose, PanelLeftOpen, Plus } from 'lucide-react';
 import type { Tab } from './TabBar';
 import { NOTE_DND_TYPE } from '../docEmbeds';
 import { isPane, type DropSide, type LayoutNode, type PaneNode, type SplitNode } from '../layout/tree';
@@ -35,6 +35,7 @@ interface PaneGridProps {
   onResize: (splitId: string, sizes: number[]) => void;
   onCreateNote?: (paneId: string) => void;
   onCreateChat?: (paneId: string) => void;
+  onOpenSuperkanban?: (paneId: string) => void;
   sidebarOpen: boolean;
   onToggleSidebar: () => void;
   /** Only the first (top-left) pane owns the global sidebar toggle. */
@@ -47,6 +48,19 @@ interface PaneGridProps {
 }
 
 const MIN_FRACTION = 0.12;
+
+export function tabInsertionIndex(
+  orderedIds: string[],
+  movingId: string,
+  targetId: string,
+  placement: 'before' | 'after',
+) {
+  if (movingId === targetId) return orderedIds.indexOf(movingId);
+  const withoutMoving = orderedIds.filter((id) => id !== movingId);
+  const targetIndex = withoutMoving.indexOf(targetId);
+  if (targetIndex < 0) return withoutMoving.length;
+  return targetIndex + (placement === 'after' ? 1 : 0);
+}
 
 function readPayload(event: DragEvent): TabDragPayload | null {
   try {
@@ -80,6 +94,7 @@ function sideFromPosition(rect: DOMRect, clientX: number, clientY: number): Drop
 
 function TabIcon({ type }: { type: Tab['type'] }) {
   if (type === 'chat') return <Hash size={13} className="text-secondary" style={{ marginRight: 6 }} />;
+  if (type === 'superkanban') return <LayoutDashboard size={13} className="text-tertiary" style={{ marginRight: 6 }} />;
   return <FileText size={13} className="text-tertiary" style={{ marginRight: 6 }} />;
 }
 
@@ -93,6 +108,7 @@ function PaneTabStrip({
   onDropTab,
   onCreateNote,
   onCreateChat,
+  onOpenSuperkanban,
   onPopOut,
   onDetachTab,
   sidebarOpen,
@@ -107,6 +123,7 @@ function PaneTabStrip({
   onDropTab: PaneGridProps['onDropTab'];
   onCreateNote?: (paneId: string) => void;
   onCreateChat?: (paneId: string) => void;
+  onOpenSuperkanban?: (paneId: string) => void;
   onPopOut?: (tabId: string) => void;
   onDetachTab?: (tabId: string, screenX: number, screenY: number) => void;
   sidebarOpen: boolean;
@@ -118,6 +135,7 @@ function PaneTabStrip({
     .filter((t): t is Tab => Boolean(t));
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; tabId: string } | null>(null);
+  const [tabDropHint, setTabDropHint] = useState<{ tabId: string; placement: 'before' | 'after' } | null>(null);
 
   useEffect(() => {
     const handleGlobalClick = () => setContextMenu(null);
@@ -148,6 +166,7 @@ function PaneTabStrip({
     if (!payload) return;
     event.preventDefault();
     event.stopPropagation();
+    setTabDropHint(null);
     onDropTab(payload, pane.id, 'center', index);
   };
 
@@ -158,11 +177,39 @@ function PaneTabStrip({
     }
   };
 
+  const handleTabDragOver = (event: DragEvent, tabId: string) => {
+    if (!event.dataTransfer.types.includes(DRAG_MIME)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = 'move';
+    const rect = event.currentTarget.getBoundingClientRect();
+    const placement = event.clientX < rect.left + rect.width / 2 ? 'before' : 'after';
+    setTabDropHint((current) => current?.tabId === tabId && current.placement === placement
+      ? current
+      : { tabId, placement });
+  };
+
+  const handleTabDrop = (event: DragEvent, targetTabId: string) => {
+    const payload = readPayload(event);
+    if (!payload) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = event.currentTarget.getBoundingClientRect();
+    const placement = event.clientX < rect.left + rect.width / 2 ? 'before' : 'after';
+    setTabDropHint(null);
+    if (payload.tabId === targetTabId) return;
+    const index = tabInsertionIndex(pane.tabIds, payload.tabId, targetTabId, placement);
+    onDropTab(payload, pane.id, 'center', index);
+  };
+
   return (
     <div
       className={`tab-bar pane-tab-bar${isFocused ? ' is-focused' : ''}`}
       onDragOver={allowDrop}
       onDrop={(e) => handleStripDrop(e)}
+      onDragLeave={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setTabDropHint(null);
+      }}
     >
       {showSidebarToggle && (
         <button
@@ -176,21 +223,24 @@ function PaneTabStrip({
           {sidebarOpen ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
         </button>
       )}
-      {tabs.map((tab, index) => (
+      {tabs.map((tab) => (
         <button
           key={tab.id}
-          className={`tab-item ${tab.id === pane.activeTabId ? 'active' : ''}`}
+          className={`tab-item${tab.id === pane.activeTabId ? ' active' : ''}${
+            tabDropHint?.tabId === tab.id ? ` is-drop-${tabDropHint.placement}` : ''
+          }`}
           draggable
           onDragStart={(e) => handleDragStart(e, tab.id)}
           onDragEnd={(e) => {
+            setTabDropHint(null);
             // dropEffect 'none' = released outside any pane drop target → detach
             // into its own window (the main process ignores in-window releases).
             if (e.dataTransfer.dropEffect === 'none') {
               onDetachTab?.(tab.id, e.screenX, e.screenY);
             }
           }}
-          onDragOver={allowDrop}
-          onDrop={(e) => handleStripDrop(e, index)}
+          onDragOver={(e) => handleTabDragOver(e, tab.id)}
+          onDrop={(e) => handleTabDrop(e, tab.id)}
           onClick={() => onSelectTab(pane.id, tab.id)}
           onContextMenu={(e) => handleContextMenu(e, tab.id)}
           onAuxClick={(e) => {
@@ -238,9 +288,9 @@ function PaneTabStrip({
           onClick={() => onCreateNote(pane.id)}
           onContextMenu={(event) => {
             event.preventDefault();
-            if (onCreateChat) onCreateChat(pane.id);
+            setContextMenu({ x: event.clientX, y: event.clientY, tabId: '' });
           }}
-          title="New note (right-click for chat)"
+          title="New note (right-click for options)"
           aria-label="New note"
         >
           <Plus size={14} />
@@ -255,7 +305,19 @@ function PaneTabStrip({
             left: `${contextMenu.x}px`,
           }}
         >
-          {onPopOut && (
+          {!contextMenu.tabId && onCreateChat && (
+            <button onClick={() => onCreateChat(pane.id)}>
+              <Hash size={13} />
+              New chat
+            </button>
+          )}
+          {!contextMenu.tabId && onOpenSuperkanban && (
+            <button onClick={() => onOpenSuperkanban(pane.id)}>
+              <LayoutDashboard size={13} />
+              Open Superkanban
+            </button>
+          )}
+          {contextMenu.tabId && onPopOut && (
             <button
               onClick={() => {
                 onPopOut(contextMenu.tabId);
@@ -265,14 +327,14 @@ function PaneTabStrip({
               Open in new window
             </button>
           )}
-          <button
-            onClick={() => {
-              onCloseTab(contextMenu.tabId);
-            }}
-          >
-            <X size={13} />
-            Close tab
-          </button>
+          {contextMenu.tabId && <button
+              onClick={() => {
+                onCloseTab(contextMenu.tabId);
+              }}
+            >
+              <X size={13} />
+              Close tab
+            </button>}
         </div>
       )}
     </div>
@@ -290,6 +352,7 @@ function Pane({
   onDropTab,
   onCreateNote,
   onCreateChat,
+  onOpenSuperkanban,
   onPopOut,
   onDetachTab,
   sidebarOpen,
@@ -358,6 +421,7 @@ function Pane({
         onDropTab={onDropTab}
         onCreateNote={onCreateNote}
         onCreateChat={onCreateChat}
+        onOpenSuperkanban={onOpenSuperkanban}
         onPopOut={onPopOut}
         onDetachTab={onDetachTab}
         sidebarOpen={sidebarOpen}
