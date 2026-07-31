@@ -37,11 +37,21 @@ const cascadeTheme = EditorView.theme({
     fontSize: '0.9375rem',
     fontFamily: 'var(--font-sans)',
   },
+  /* CodeMirror's default focused outline rings the entire note — kill it.
+     Keyboard focus is already clear from the caret / active line. */
+  '&.cm-focused': {
+    outline: 'none',
+  },
   '.cm-content': {
     padding: '16px 26px 80px',
     fontFamily: 'var(--font-sans)',
     lineHeight: '1.8',
     caretColor: 'var(--accent)',
+    outline: 'none',
+  },
+  '.cm-content:focus, .cm-content:focus-visible': {
+    outline: 'none',
+    boxShadow: 'none',
   },
   '&.cm-focused .cm-cursor': {
     borderLeftColor: 'var(--accent)',
@@ -49,6 +59,13 @@ const cascadeTheme = EditorView.theme({
   },
   '&.cm-focused .cm-selectionBackground, .cm-selectionBackground': {
     background: 'hsla(38, 92%, 55%, 0.22) !important',
+  },
+  /* Default search match highlight is neon green; tone it down. */
+  '.cm-selectionMatch': {
+    backgroundColor: 'hsla(38, 70%, 50%, 0.18)',
+  },
+  '.cm-selectionMatch-main': {
+    backgroundColor: 'hsla(38, 80%, 50%, 0.28)',
   },
   '.cm-activeLine': {
     background: 'hsla(226, 14%, 16%, 0.5)',

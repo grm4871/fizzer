@@ -1279,6 +1279,32 @@ a {
   visibility: hidden;
   pointer-events: none;
 }
+/* Note body is a large contenteditable — the global :focus-visible ring
+   wraps the entire note and reads as a garish selection chrome. Caret +
+   active line already show focus. */
+.editor-codemirror .cm-editor,
+.editor-codemirror .cm-editor.cm-focused,
+.editor-codemirror .cm-content:focus,
+.editor-codemirror .cm-content:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+.editor-title:focus,
+.editor-title:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+/* Sidebar note rows already use the active decal; a second focus ring is noise. */
+.tree-item:focus,
+.tree-item:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+.tree-item.active:focus,
+.tree-item.active:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
 
 .kanban-view {
   flex: 1;
