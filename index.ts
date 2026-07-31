@@ -192,7 +192,28 @@ const DEPLOY_RESULT_FILE = path.join(DATA_DIR, 'deploy.result');
 const CLIENT_DIST_DIR = path.join(process.cwd(), 'client', 'dist');
 const CLIENT_APP_HTML = path.join(CLIENT_DIST_DIR, 'app.html');
 const LANDING_HTML = path.join(CLIENT_DIST_DIR, 'landing.html');
-const ANDROID_APK_PATH = path.join(CLIENT_DIST_DIR, 'cascade-android.apk');
+// Sideload "Cascade Dev" APK is NOT baked into the Docker image (30MB+ blobs
+// break deploy SSH mid-build). Prefer, in order:
+//   1) client/dist (local `npm run android:apk`)
+//   2) CASCADE_DATA_DIR volume (production: Actions scp → /var/lib/cascade)
+//   3) downloads dir
+// Repo is private — do not redirect to GitHub Releases for anonymous phones.
+function resolveAndroidApkPath(): string | null {
+  const candidates = [
+    path.join(CLIENT_DIST_DIR, 'cascade-android.apk'),
+    path.join(DATA_DIR, 'cascade-android.apk'),
+    path.join(DATA_DIR, 'downloads', 'cascade-android.apk'),
+    path.join(process.env.CASCADE_DOWNLOADS_DIR || path.join(CLIENT_DIST_DIR, 'downloads'), 'cascade-android.apk'),
+  ];
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate)) return candidate;
+    } catch {
+      /* ignore */
+    }
+  }
+  return null;
+}
 // Desktop installers, when built, are dropped here (overridable for a CDN/mirror
 // host). Filenames map by platform; missing files just 404 so the landing page
 // can fall back to the browser app.
@@ -2591,8 +2612,14 @@ app.delete('/api/notes/:id/publish', requireAuth, (req: AuthedRequest, res) => {
 
 if (fs.existsSync(CLIENT_APP_HTML)) {
   app.get('/download/android', (_req, res) => {
-    if (!fs.existsSync(ANDROID_APK_PATH)) return res.status(404).json({ error: 'Android build is not available' });
-    res.download(ANDROID_APK_PATH, 'cascade-android.apk');
+    const apkPath = resolveAndroidApkPath();
+    if (!apkPath) {
+      return res.status(404).json({
+        error: 'Android build is not available',
+        hint: 'Sideload APK is published to the host data volume by deploy; rebuild with npm run android:apk',
+      });
+    }
+    return res.download(apkPath, 'cascade-android.apk');
   });
   // Desktop installers (mac / windows / linux). Served when present; a missing
   // build 404s so the landing page can offer the browser app instead.

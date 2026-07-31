@@ -26,3 +26,9 @@ debug.log
 .cascade/
 deploy-secret
 *.secret
+
+# Android sideload APK — published via `gh release`, not git/Docker.
+client/public/cascade-android.apk
+client/dist/cascade-android.apk
+**/*.apk
+!android/**/gradle-wrapper.jar

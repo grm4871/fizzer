@@ -14,3 +14,7 @@ android
 docs
 scripts/*
 !scripts/copy-cli-agent-wrappers.cjs
+# Sideload APKs live on GitHub Releases — do not COPY into the Docker client
+# build (32MB+ blobs break SSH deploys mid-npm-ci).
+**/*.apk
+client/public/cascade-android.apk

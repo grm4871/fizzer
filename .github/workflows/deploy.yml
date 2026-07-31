@@ -9,6 +9,9 @@ concurrency:
   group: deploy-production
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -26,6 +29,27 @@ jobs:
           mkdir -p ~/.ssh
           PORT="${DEPLOY_PORT:-22}"
           ssh-keyscan -H -p "$PORT" "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+
+      # Cascade Dev sideload APK lives on the host data volume (mounted at /data),
+      # not in the Docker image. Keep deploys slim; phones hit /download/android
+      # which serves /var/lib/cascade/cascade-android.apk.
+      - name: Place Cascade Dev APK on host
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          PORT="${DEPLOY_PORT:-22}"
+          if ! gh release download android-dev -p cascade-android.apk -R "${{ github.repository }}" -O /tmp/cascade-android.apk; then
+            echo "No android-dev release asset yet — skipping APK publish (download will 404 until one exists)."
+            exit 0
+          fi
+          ls -la /tmp/cascade-android.apk
+          ssh -p "$PORT" "${DEPLOY_USER}@${DEPLOY_HOST}" 'mkdir -p /var/lib/cascade'
+          scp -P "$PORT" /tmp/cascade-android.apk "${DEPLOY_USER}@${DEPLOY_HOST}:/var/lib/cascade/cascade-android.apk"
+          ssh -p "$PORT" "${DEPLOY_USER}@${DEPLOY_HOST}" 'ls -la /var/lib/cascade/cascade-android.apk'
 
       - name: Deploy production on server
         env:
