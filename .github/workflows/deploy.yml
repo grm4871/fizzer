@@ -38,8 +38,7 @@ jobs:
           set -euo pipefail
           cd /var/www/cascade-browser
 
-          # The agent fallback uses a host-side systemd watcher. Serialize the
-          # entire sync/build/swap sequence with it, not just Docker Compose.
+          # Serialize the entire sync/build/swap sequence on the host.
           exec {DEPLOY_LOCK_FD}<"$PWD"
           echo "==> Waiting for production deploy lock (up to 900s)"
           flock -w 900 "$DEPLOY_LOCK_FD"
