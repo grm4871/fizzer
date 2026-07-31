@@ -103,9 +103,10 @@ html {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
-  /* Edge-to-edge (Android 15+ forces it): the regions behind the transparent
-     status/navigation bars show this, so match the app so it isn't letterboxed. */
+  /* Edge-to-edge (Android 15+ / Pixel fold): regions behind transparent
+     status/navigation bars must match the app so they aren't letterboxed. */
   background: var(--bg-base);
+  height: 100%;
 }
 
 body {
@@ -114,6 +115,14 @@ body {
   color: var(--text-primary);
   line-height: 1.5;
   overflow: hidden;
+  min-height: 100%;
+  min-height: 100dvh;
+}
+
+#root {
+  min-height: 100%;
+  min-height: 100dvh;
+  background: var(--bg-base);
 }
 
 button, input, textarea, select {
@@ -4644,10 +4653,30 @@ a {
     display: none;
   }
 
+  /* Keep safe-area padding — a bare `padding: … !important` was zeroing the
+     App.tsx top inset and letting status/nav bars show as empty bands on
+     Pixel (including fold outer/inner where insets change on posture). */
   .workspace-toolbar {
     display: flex;
-    min-height: 44px;
-    padding: 5px 8px !important;
+    min-height: calc(44px + env(safe-area-inset-top, 0px));
+    padding-top: calc(5px + env(safe-area-inset-top, 0px)) !important;
+    padding-right: 8px !important;
+    padding-bottom: 5px !important;
+    padding-left: 8px !important;
+    background: var(--bg-surface);
+  }
+
+  .main-area {
+    /* Fill the full visual viewport so fold hinge / system bar regions never
+       show a mismatched native window color behind the WebView. */
+    min-height: 100dvh;
+    background: var(--bg-base);
+  }
+
+  .auth-shell {
+    min-height: 100dvh;
+    padding-top: max(24px, env(safe-area-inset-top, 0px));
+    padding-bottom: max(24px, env(safe-area-inset-bottom, 0px));
   }
 
   .session-manager-backdrop {

@@ -14,15 +14,19 @@
         <item name="windowNoTitle">true</item>
         <item name="android:background">@null</item>
         <!-- Edge-to-edge: transparent system bars over an app-colored window so
-             the top/bottom don't look letterboxed. The web layout pads content
-             with env(safe-area-inset-*). Light bar icons for the dark UI. -->
+             the top/bottom don't look letterboxed (Pixel fold outer/inner screens
+             included). Web layout pads with env(safe-area-inset-*). Dark icons
+             off so light glyphs sit on graphite. -->
         <item name="android:windowBackground">@color/appBackground</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarDividerColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
         <item name="android:enforceStatusBarContrast">false</item>
         <item name="android:enforceNavigationBarContrast">false</item>
+        <!-- Draw into display cutouts / fold hinge gaps instead of black bars. -->
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
     </style>
 
 
