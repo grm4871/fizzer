@@ -27,8 +27,23 @@ jobs:
           DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
         run: |
           mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
           PORT="${DEPLOY_PORT:-22}"
-          ssh-keyscan -H -p "$PORT" "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+          # Transient network blips: retry keyscan a few times before failing.
+          ok=0
+          for i in 1 2 3 4 5; do
+            if ssh-keyscan -T 10 -H -p "$PORT" "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/tmp/keyscan.err; then
+              ok=1
+              break
+            fi
+            echo "ssh-keyscan attempt $i failed:" >&2
+            cat /tmp/keyscan.err >&2 || true
+            sleep $((i * 3))
+          done
+          if [[ "$ok" != "1" ]]; then
+            echo "ssh-keyscan failed after retries" >&2
+            exit 1
+          fi
 
       # Cascade Dev sideload APK lives on the host data volume (mounted at /data),
       # not in the Docker image. Keep deploys slim; phones hit /download/android
