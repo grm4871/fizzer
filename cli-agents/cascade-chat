@@ -302,6 +302,21 @@ function replyChain(message, byId, depth) {
   return chain;
 }
 
+/** Server-side page size for a history request.
+ * The endpoint returns the newest N; the window is then cut locally. Reply
+ * context and --before/--around anchors need older rows than the window itself,
+ * so ask for headroom rather than defaulting to the whole channel. */
+function fetchLimit(args) {
+  const limit = optionInt(args, 'limit', 12);
+  // An anchor can be far back; overshoot once and only widen if we miss it.
+  if (optionString(args, 'before-message-id') || optionString(args, 'around-message-id')) {
+    return Math.min(500, Math.max(120, limit * 4));
+  }
+  // Reply parents are looked up in the fetched pool, not refetched.
+  const headroom = args['include-reply-context'] === true ? optionInt(args, 'reply-depth', 1) * 10 : 4;
+  return Math.min(500, limit + headroom);
+}
+
 function selectWindow(messages, args) {
   const limit = optionInt(args, 'limit', 12);
   const beforeId = optionString(args, 'before-message-id');
@@ -466,22 +481,27 @@ async function main() {
 
   if (cmd === 'attachment') {
     // The transcript an agent sees is text; this is how it opens the picture.
-    const { messages = [] } = await api(url, token, 'GET', `/api/vaults/${vaultId}/channels/${channelId}/messages`);
+    // The list payload strips heavy data URLs, so the file always comes from the
+    // detail endpoint. With an explicit id that is the *only* call needed —
+    // listing the channel first just to confirm the id exists is wasted bytes.
+    const base = `/api/vaults/${vaultId}/channels/${channelId}/messages`;
     const wanted = optionString(args, 'message-id');
-    const target = wanted
-      ? messages.find((message) => message.id === wanted)
-      : [...messages].reverse().find((message) => mediaSummary(message));
-    if (!target) fail(wanted ? `message ${wanted} not found in this channel.` : 'no message with an attachment found.');
+    let messageId = wanted;
+    if (!messageId) {
+      const { messages = [] } = await api(url, token, 'GET', `${base}?limit=120`);
+      const found = [...messages].reverse().find((message) => mediaSummary(message));
+      if (!found) fail('no message with an attachment found.');
+      messageId = found.id;
+    }
 
-    // The list payload strips heavy data URLs, so always read the full message.
-    let full = target;
-    try {
-      const detail = await api(
-        url, token, 'GET',
-        `/api/vaults/${vaultId}/channels/${channelId}/messages/${encodeURIComponent(target.id)}`,
-      );
-      if (detail.message) full = detail.message;
-    } catch { /* fall back to what the list gave us */ }
+    // Own the 404 here: api() would surface it as a raw HTTP status.
+    const res = await fetch(`${url}${base}/${encodeURIComponent(messageId)}`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) fail(`message ${messageId} not found in this channel.`);
+    const target = (await res.json()).message;
+    if (!target) fail(`message ${messageId} not found in this channel.`);
+    const full = target;
 
     const outDir = optionString(args, 'out')
       || fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-attachment-'));
@@ -551,7 +571,14 @@ async function main() {
     process.stdout.write(`sent ${sent.id || message.id}\n`);
     return;
   }
-  const { messages = [] } = await api(url, token, 'GET', `/api/vaults/${vaultId}/channels/${channelId}/messages`);
+  const listPath = `/api/vaults/${vaultId}/channels/${channelId}/messages`;
+  const requested = fetchLimit(args);
+  let { messages = [] } = await api(url, token, 'GET', `${listPath}?limit=${requested}`);
+  // Only pay for the full channel when the anchor really wasn't in the page.
+  const anchor = optionString(args, 'before-message-id') || optionString(args, 'around-message-id');
+  if (anchor && requested < 500 && !messages.some((message) => message.id === anchor)) {
+    ({ messages = [] } = await api(url, token, 'GET', `${listPath}?limit=500`));
+  }
   const selected = selectWindow(messages, args);
   const output = decorateMessages(messages, selected, args);
 
