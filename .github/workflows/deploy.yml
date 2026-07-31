@@ -58,7 +58,13 @@ jobs:
           DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
         run: |
           PORT="${DEPLOY_PORT:-22}"
-          ssh -p "$PORT" "${DEPLOY_USER}@${DEPLOY_HOST}" 'bash -s' <<'REMOTE'
+          # Keepalives: long docker builds were killing the SSH session
+          # (Broken pipe after ~5m) even when the remote build was still fine.
+          ssh -p "$PORT" \
+            -o ServerAliveInterval=20 \
+            -o ServerAliveCountMax=90 \
+            -o TCPKeepAlive=yes \
+            "${DEPLOY_USER}@${DEPLOY_HOST}" 'bash -s' <<'REMOTE'
           set -euo pipefail
           cd /var/www/cascade-browser
 
