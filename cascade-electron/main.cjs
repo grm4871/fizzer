@@ -19,6 +19,7 @@
 const { app, BrowserWindow, ipcMain, session, Menu, shell, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const http = require('http');
 const https = require('https');
 const { spawn } = require('child_process');
@@ -690,6 +691,71 @@ ipcMain.handle('netdoc:getLatestVersionContent', async (event, netdocId) => {
   } catch (error) {
     console.error('[IPC] Failed to get latest version content:', error);
     return { success: false, error: error.message };
+  }
+});
+
+// ── Perf / freeze log (renderer → disk for agents) ───────────
+// JSONL append-only. Primary: userData/logs/cascade-perf.jsonl
+// Mirror: os.tmpdir()/cascade-perf.jsonl (easy for desktop agents).
+const PERF_LOG_MAX_BYTES = 2 * 1024 * 1024;
+
+function getPerfLogPaths() {
+  const primary = path.join(app.getPath('userData'), 'logs', 'cascade-perf.jsonl');
+  const mirror = path.join(os.tmpdir(), 'cascade-perf.jsonl');
+  return { primary, mirror, paths: [primary, mirror] };
+}
+
+function rotatePerfLogIfNeeded(filePath) {
+  try {
+    if (!fs.existsSync(filePath)) return;
+    const st = fs.statSync(filePath);
+    if (st.size < PERF_LOG_MAX_BYTES) return;
+    const text = fs.readFileSync(filePath, 'utf8');
+    // Keep roughly the last half so we don't thrash on every write after cap.
+    const keepFrom = Math.floor(text.length / 2);
+    const cut = text.indexOf('\n', keepFrom);
+    const kept = cut >= 0 ? text.slice(cut + 1) : text.slice(keepFrom);
+    fs.writeFileSync(filePath, kept, 'utf8');
+  } catch (err) {
+    console.warn('[perf] rotate failed', filePath, err?.message || err);
+  }
+}
+
+function appendPerfLogLines(lines) {
+  const rows = (Array.isArray(lines) ? lines : [lines])
+    .map((line) => (typeof line === 'string' ? line : JSON.stringify(line)))
+    .filter((line) => line && line.trim().length > 0);
+  if (rows.length === 0) return getPerfLogPaths();
+
+  const chunk = `${rows.join('\n')}\n`;
+  const { primary, mirror, paths } = getPerfLogPaths();
+  for (const filePath of paths) {
+    try {
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      rotatePerfLogIfNeeded(filePath);
+      fs.appendFileSync(filePath, chunk, 'utf8');
+    } catch (err) {
+      console.warn('[perf] append failed', filePath, err?.message || err);
+    }
+  }
+  return { primary, mirror, paths };
+}
+
+ipcMain.handle('perf:append', async (_event, lines) => {
+  try {
+    return { success: true, ...appendPerfLogLines(lines) };
+  } catch (error) {
+    console.error('[IPC] perf:append failed:', error);
+    return { success: false, error: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle('perf:getPath', async () => {
+  try {
+    const { primary, mirror, paths } = getPerfLogPaths();
+    return { success: true, primary, mirror, paths };
+  } catch (error) {
+    return { success: false, error: error?.message || String(error) };
   }
 });
 

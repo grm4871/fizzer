@@ -104,4 +104,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('app:updateFailed', listener);
     return () => ipcRenderer.removeListener('app:updateFailed', listener);
   },
+
+  // ── Perf / freeze log (disk, agent-readable) ────────────────
+  /** Append JSONL line(s) to cascade-perf.jsonl (userData + /tmp mirror). */
+  appendPerfLog: (lines) => ipcRenderer.invoke('perf:append', lines),
+  /** Resolve on-disk paths for the perf log. */
+  getPerfLogPath: () => ipcRenderer.invoke('perf:getPath'),
 });
