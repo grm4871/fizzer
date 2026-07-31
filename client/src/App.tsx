@@ -210,6 +210,8 @@ export default function App() {
   // Direct `cascade-chat send` replies arrive as a new message, rather than as
   // streamed run text. Keep handoffs idempotent across socket reconnects.
   const chainedAgentMessageIdsRef = useRef<Set<string>>(new Set());
+  // Debounce socket-driven soft vault reloads (note create/change/delete bursts).
+  const socketVaultReloadTimerRef = useRef<number | null>(null);
   // Repair focus if the focused pane disappears (e.g. after collapsing a split).
   useEffect(() => {
     if (!Layout.findPane(layout, focusedPaneId)) {
@@ -560,60 +562,71 @@ export default function App() {
       });
     }
     const loadChannels = async (ids: string[]) => {
-      const results = await Promise.all(ids.map(async (channelId) => {
+      // Apply each channel as it lands so the focused tab can leave
+      // "Loading messages…" without waiting on other open chat tabs.
+      await Promise.all(ids.map(async (channelId) => {
         const inflightKey = `${vaultId}:${channelId}`;
-        const existing = loadChatMessagesInflight.get(inflightKey);
-        if (existing) return existing;
-
-        const fetchOne = (async (): Promise<{ channelId: string; messages: ChatMessage[] }> => {
-          try {
-            // Slim list payload (no harness logs) — mobile cold load stays small.
-            const data = await api<{ messages: ChatMessage[] }>(
-              `/api/vaults/${vaultId}/channels/${channelId}/messages?detail=list&limit=120`,
-            );
-            let messages = data.messages ?? [];
-            const local = legacyMessages[channelId] ?? [];
-            if (messages.length === 0 && local.length > 0) {
-              for (const message of local) {
-                try {
-                  await api(`/api/vaults/${vaultId}/channels/${channelId}/messages`, {
-                    method: 'POST', body: JSON.stringify(message),
-                  });
-                } catch { /* Best-effort legacy migration. */ }
-              }
-              const refreshed = await api<{ messages: ChatMessage[] }>(
+        let fetchOne = loadChatMessagesInflight.get(inflightKey);
+        if (!fetchOne) {
+          fetchOne = (async (): Promise<{ channelId: string; messages: ChatMessage[] }> => {
+            try {
+              // Slim list payload (no harness logs) — mobile cold load stays small.
+              const data = await api<{ messages: ChatMessage[] }>(
                 `/api/vaults/${vaultId}/channels/${channelId}/messages?detail=list&limit=120`,
               );
-              messages = refreshed.messages ?? [];
+              let messages = data.messages ?? [];
+              const local = legacyMessages[channelId] ?? [];
+              if (messages.length === 0 && local.length > 0) {
+                for (const message of local) {
+                  try {
+                    await api(`/api/vaults/${vaultId}/channels/${channelId}/messages`, {
+                      method: 'POST', body: JSON.stringify(message),
+                    });
+                  } catch { /* Best-effort legacy migration. */ }
+                }
+                const refreshed = await api<{ messages: ChatMessage[] }>(
+                  `/api/vaults/${vaultId}/channels/${channelId}/messages?detail=list&limit=120`,
+                );
+                messages = refreshed.messages ?? [];
+              }
+              return { channelId, messages };
+            } catch {
+              // Keep whatever we already have on soft failure (resume offline).
+              const cached = chatStateRef.current.messagesByChannel[channelId];
+              return { channelId, messages: cached ?? legacyMessages[channelId] ?? [] };
+            } finally {
+              loadChatMessagesInflight.delete(inflightKey);
             }
-            return { channelId, messages };
-          } catch {
-            // Keep whatever we already have on soft failure (resume offline).
-            const cached = chatStateRef.current.messagesByChannel[channelId];
-            return { channelId, messages: cached ?? legacyMessages[channelId] ?? [] };
-          } finally {
-            loadChatMessagesInflight.delete(inflightKey);
-          }
-        })();
-        loadChatMessagesInflight.set(inflightKey, fetchOne);
-        return fetchOne;
+          })();
+          loadChatMessagesInflight.set(inflightKey, fetchOne);
+        }
+
+        const { messages } = await fetchOne;
+        setChatState((prev) => {
+          if (prev.messagesByChannel[channelId] === messages) return prev;
+          return {
+            ...prev,
+            messagesByChannel: {
+              ...prev.messagesByChannel,
+              [channelId]: messages,
+            },
+          };
+        });
+        setLoadingChatChannels((prev) => {
+          if (!prev[channelId]) return prev;
+          const next = { ...prev };
+          delete next[channelId];
+          return next;
+        });
       }));
-      setChatState((prev) => ({
-        ...prev,
-        messagesByChannel: Object.fromEntries([
-          ...Object.entries(prev.messagesByChannel),
-          ...results.map(({ channelId, messages }) => [channelId, messages]),
-        ]),
-      }));
-      setLoadingChatChannels((prev) => {
-        const next = { ...prev };
-        for (const id of ids) delete next[id];
-        return next;
-      });
     };
 
-    // Focused/open channels first (usually one); no fan-out to the whole vault.
-    await loadChannels(channelIds);
+    // Focused channel first so progressive apply paints the visible tab ASAP.
+    const focusedId = focusedPaneRef.current.activeTabId;
+    const ordered = focusedId && channelIds.includes(focusedId)
+      ? [focusedId, ...channelIds.filter((id) => id !== focusedId)]
+      : channelIds;
+    await loadChannels(ordered);
   }, [openChatTabIds]);
 
   const persistChatMessageToServer = useCallback(async (
@@ -2225,6 +2238,10 @@ export default function App() {
     socket.on('vault:chatAgentMemberRemoved', handleChatAgentMemberRemoved);
     socket.on('vault:chatPresence', handleChatPresence);
     return () => {
+      if (socketVaultReloadTimerRef.current != null) {
+        window.clearTimeout(socketVaultReloadTimerRef.current);
+        socketVaultReloadTimerRef.current = null;
+      }
       socket.off('connect', joinActiveVault);
       for (const channelId of [...joinedChatChannelsRef.current]) {
         socket.emit('leaveChatChannel', channelId);
@@ -2599,7 +2616,20 @@ export default function App() {
   const renderTabContent = useCallback((tab: Tab): ReactNode => {
     if (tab.type === 'chat') {
       const channel = notes.find((note) => note.id === tab.id && note.content_preview.trim().startsWith(CHAT_NOTE_MARKER));
-      if (!channel) return <div className="pane-empty">Channel not found</div>;
+      if (!channel) {
+        // Cold start: vault notes not hydrated yet — avoid a flash of "not found".
+        const vaultLoading = activeVaultId
+          && (loadVaultDataInflight.has(`${activeVaultId}:hard`)
+            || loadVaultDataInflight.has(`${activeVaultId}:soft`));
+        if (notes.length === 0 || vaultLoading || loadingChatChannels[tab.id]) {
+          return (
+            <div className="pane-empty chat-loading-empty">
+              <strong>Loading messages…</strong>
+            </div>
+          );
+        }
+        return <div className="pane-empty">Channel not found</div>;
+      }
       return (
         <ChatView
           channelId={channel.id}
