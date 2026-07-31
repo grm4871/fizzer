@@ -105,7 +105,6 @@ describe('chat run panel lifecycle', () => {
       presence: { participants: [], online: [] },
       availableAgents: [],
       registeredAgents: [],
-      runningAgents: [],
       onRegisterAgent: () => {},
       onRemoveAgent: () => {},
       onCreateInviteLink: async () => '',

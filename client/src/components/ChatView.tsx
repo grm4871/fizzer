@@ -1625,7 +1625,9 @@ export const ChatView = memo(function ChatView({
 
   function openAgentMenu() {
     setUsersCollapsed(false);
-    setSidebarMode('users');
+    // sidebarMode was removed when the activity panel moved to the top-bar
+    // session manager (0352fd6e) — calling setSidebarMode here threw and
+    // silently killed the Add-agent button.
     if (agentMenuOpen) {
       setAgentMenuOpen(false);
       setEditingRegistrationId(null);
