@@ -92,6 +92,12 @@ function isMobileViewport(): boolean {
   return typeof window !== 'undefined' && window.matchMedia('(max-width: 900px)').matches;
 }
 
+// Module-level (not useRef): survives StrictMode remount and shares across any
+// rapid remount so concurrent loadVaultData / message fetches coalesce to one
+// network round-trip instead of stacking.
+const loadVaultDataInflight = new Map<string, Promise<void>>();
+const loadChatMessagesInflight = new Map<string, Promise<{ channelId: string; messages: ChatMessage[] }>>();
+
 export default function App() {
   // ═══════════════════════════════════════════════════════════════
   // STATE
@@ -204,12 +210,6 @@ export default function App() {
   // Direct `cascade-chat send` replies arrive as a new message, rather than as
   // streamed run text. Keep handoffs idempotent across socket reconnects.
   const chainedAgentMessageIdsRef = useRef<Set<string>>(new Set());
-  // Coalesce concurrent vault/message loads (StrictMode double-mount, socket
-  // storms, ensureChatChannelLoaded racing loadVaultData). Shared promise so
-  // callers await the same network work instead of stacking RTTs.
-  const loadVaultDataInflightRef = useRef<Map<string, Promise<void>>>(new Map());
-  const loadChatMessagesInflightRef = useRef<Map<string, Promise<{ channelId: string; messages: ChatMessage[] }>>>(new Map());
-
   // Repair focus if the focused pane disappears (e.g. after collapsing a split).
   useEffect(() => {
     if (!Layout.findPane(layout, focusedPaneId)) {
@@ -562,7 +562,7 @@ export default function App() {
     const loadChannels = async (ids: string[]) => {
       const results = await Promise.all(ids.map(async (channelId) => {
         const inflightKey = `${vaultId}:${channelId}`;
-        const existing = loadChatMessagesInflightRef.current.get(inflightKey);
+        const existing = loadChatMessagesInflight.get(inflightKey);
         if (existing) return existing;
 
         const fetchOne = (async (): Promise<{ channelId: string; messages: ChatMessage[] }> => {
@@ -592,10 +592,10 @@ export default function App() {
             const cached = chatStateRef.current.messagesByChannel[channelId];
             return { channelId, messages: cached ?? legacyMessages[channelId] ?? [] };
           } finally {
-            loadChatMessagesInflightRef.current.delete(inflightKey);
+            loadChatMessagesInflight.delete(inflightKey);
           }
         })();
-        loadChatMessagesInflightRef.current.set(inflightKey, fetchOne);
+        loadChatMessagesInflight.set(inflightKey, fetchOne);
         return fetchOne;
       }));
       setChatState((prev) => ({
@@ -725,9 +725,17 @@ export default function App() {
 
   const loadVaultData = useCallback(async (vaultId: string, opts?: { soft?: boolean }) => {
     const soft = opts?.soft === true;
-    const inflightKey = `${vaultId}:${soft ? 'soft' : 'hard'}`;
-    const existing = loadVaultDataInflightRef.current.get(inflightKey);
-    if (existing) return existing;
+    // Soft can ride a hard load already in flight (hard is a superset). Hard
+    // only joins another hard — a soft in flight may have skipped loading UI.
+    const hardKey = `${vaultId}:hard`;
+    const softKey = `${vaultId}:soft`;
+    const hardInflight = loadVaultDataInflight.get(hardKey);
+    if (hardInflight) return hardInflight;
+    if (soft) {
+      const softInflight = loadVaultDataInflight.get(softKey);
+      if (softInflight) return softInflight;
+    }
+    const inflightKey = soft ? softKey : hardKey;
 
     const run = (async () => {
       try {
@@ -767,11 +775,11 @@ export default function App() {
       } catch (error) {
         console.error('Error loading vault data:', error);
       } finally {
-        loadVaultDataInflightRef.current.delete(inflightKey);
+        loadVaultDataInflight.delete(inflightKey);
       }
     })();
 
-    loadVaultDataInflightRef.current.set(inflightKey, run);
+    loadVaultDataInflight.set(inflightKey, run);
     return run;
   }, [loadChatMessages, loadChatAgentMembers, loadChatPresence, loadVaultAgents, openChatTabIds]);
 
@@ -780,20 +788,46 @@ export default function App() {
     const vaultId = activeVaultIdRef.current;
     if (!vaultId) return;
     const notesList = notesRef.current;
-    const isChat = notesList.some(
+    // Restored chat tabs are typed in session before notes hydrate — don't wait
+    // for the notes list to admit this is a channel.
+    const isOpenChatTab = openTabsRef.current.some((t) => t.id === channelId && t.type === 'chat');
+    const isChatNote = notesList.some(
       (n) => n.id === channelId && n.content_preview.trim().startsWith(CHAT_NOTE_MARKER),
     );
-    if (!isChat) return;
+    if (!isOpenChatTab && !isChatNote) return;
 
-    const hasMessages = (chatStateRef.current.messagesByChannel[channelId]?.length ?? 0) > 0;
-    const hasAgents = (chatStateRef.current.registeredAgentsByChannel[channelId]?.length ?? 0) > 0;
-    if (hasMessages && hasAgents) return;
+    // Cold-start vault load already hydrates every open chat tab. Joining that
+    // work (via message inflight) is fine, but skip kicking a parallel
+    // agents/presence wave that only races the same endpoints.
+    if (
+      isOpenChatTab
+      && (loadVaultDataInflight.has(`${vaultId}:hard`) || loadVaultDataInflight.has(`${vaultId}:soft`))
+    ) {
+      return;
+    }
+
+    // Key presence (not length): empty channels are a valid cached result.
+    // length===0 used to re-fetch on every notes/focus tick.
+    const messagesCached = Object.prototype.hasOwnProperty.call(
+      chatStateRef.current.messagesByChannel,
+      channelId,
+    );
+    const agentsCached = Object.prototype.hasOwnProperty.call(
+      chatStateRef.current.registeredAgentsByChannel,
+      channelId,
+    );
+    // Messages already fetching for this channel (e.g. vault load) — don't
+    // start a second agents/presence pass; vault load covers those too.
+    if (!messagesCached && loadChatMessagesInflight.has(`${vaultId}:${channelId}`)) {
+      return;
+    }
+    if (messagesCached && agentsCached) return;
 
     const ids = [channelId];
-    if (!hasMessages) {
+    if (!messagesCached) {
       void loadChatMessages(vaultId, notesList, { channelIds: ids });
     }
-    if (!hasAgents) {
+    if (!agentsCached) {
       void loadChatAgentMembers(vaultId, notesList, { channelIds: ids });
     }
     void loadChatPresence(vaultId, notesList, { channelIds: ids });
@@ -2021,19 +2055,29 @@ export default function App() {
     socket.on('connect', joinActiveVault);
     syncChatPresenceRooms(socket);
 
+    // Soft + debounced: note events often arrive in bursts (agent saves, multi-
+    // user edits). A hard full reload per event re-stacked cold-start work and
+    // stretched "Loading messages…". Soft keeps the open transcript visible.
+    const scheduleSoftVaultReload = () => {
+      if (socketVaultReloadTimerRef.current != null) return;
+      socketVaultReloadTimerRef.current = window.setTimeout(() => {
+        socketVaultReloadTimerRef.current = null;
+        if (activeVaultIdRef.current) void loadVaultData(activeVaultIdRef.current, { soft: true });
+      }, 80);
+    };
     const handleNoteChanged = (data: { noteId: string; vaultId: string }) => {
       if (data.vaultId !== activeVaultId) return;
-      void loadVaultData(activeVaultId);
+      scheduleSoftVaultReload();
       // Refresh the body only if the note is open and has no unsaved edits.
       const entry = noteContentsRef.current[data.noteId];
       if (entry && entry.draft === entry.note.content) void loadNoteContent(data.noteId);
     };
     const handleNoteCreated = (data: { vaultId: string }) => {
-      if (data.vaultId === activeVaultId) void loadVaultData(activeVaultId);
+      if (data.vaultId === activeVaultId) scheduleSoftVaultReload();
     };
     const handleNoteDeleted = (data: { noteId: string; vaultId: string }) => {
       if (data.vaultId !== activeVaultId) return;
-      void loadVaultData(activeVaultId);
+      scheduleSoftVaultReload();
       closeTabRef.current(data.noteId);
     };
     const handleFeedNotify = (data: { noteId: string; feedTitle: string; item?: { title?: string } }) => {
