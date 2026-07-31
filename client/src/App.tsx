@@ -1610,49 +1610,49 @@ export default function App() {
   }, [appendChatMessage, updateChatMessage, handleRegisterChatAgent]);
   startAgentChatRunRef.current = startAgentChatRun;
 
-  const handleCancelChatRun = useCallback((runId: number) => {
-    void (async () => {
-      try {
-        if (isLocalRunId(runId)) {
-          // Negative run ids are legacy client-local runs (no longer started here).
-          const cancelled = await cancelLocalAgentRun(runId);
-          if (!cancelled) {
-            setNotice('Could not cancel run');
-            return;
-          }
-        } else {
-          const res = await api<{ success: boolean }>(`/api/runs/${runId}/cancel`, { method: 'POST' });
-          const socket = runSocketsRef.current.get(runId);
-          if (socket) {
-            socket.disconnect();
-            runSocketsRef.current.delete(runId);
-          }
-          if (!res.success) {
-            setNotice('Could not cancel run');
-            return;
-          }
+  const handleCancelChatRun = useCallback(async (runId: number): Promise<boolean> => {
+    try {
+      if (isLocalRunId(runId)) {
+        // Negative run ids are legacy client-local runs (no longer started here).
+        const cancelled = await cancelLocalAgentRun(runId);
+        if (!cancelled) {
+          setNotice('Could not cancel run');
+          return false;
         }
-        setChatState((prev) => ({
-          ...prev,
-          messagesByChannel: Object.fromEntries(
-            Object.entries(prev.messagesByChannel).map(([channelId, messages]) => [
-              channelId,
-              messages.map((message) => (
-                message.runId === runId && message.status === 'running'
-                  ? {
-                      ...message,
-                      body: message.body === 'Thinking...' ? 'Run canceled by user.' : message.body,
-                      status: 'canceled',
-                    }
-                  : message
-              )),
-            ]),
-          ),
-        }));
-      } catch (error) {
-        setNotice(error instanceof Error ? error.message : 'Could not cancel run');
+      } else {
+        const res = await api<{ success: boolean }>(`/api/runs/${runId}/cancel`, { method: 'POST' });
+        const socket = runSocketsRef.current.get(runId);
+        if (socket) {
+          socket.disconnect();
+          runSocketsRef.current.delete(runId);
+        }
+        if (!res.success) {
+          setNotice('Could not cancel run');
+          return false;
+        }
       }
-    })();
+      setChatState((prev) => ({
+        ...prev,
+        messagesByChannel: Object.fromEntries(
+          Object.entries(prev.messagesByChannel).map(([channelId, messages]) => [
+            channelId,
+            messages.map((message) => (
+              message.runId === runId && message.status === 'running'
+                ? {
+                    ...message,
+                    body: message.body === 'Thinking...' ? 'Run canceled by user.' : message.body,
+                    status: 'canceled',
+                  }
+                : message
+            )),
+          ]),
+        ),
+      }));
+      return true;
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not cancel run');
+      return false;
+    }
   }, []);
 
   const handleSendChatMessage = useCallback((
