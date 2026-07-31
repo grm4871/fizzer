@@ -49,12 +49,33 @@ function newSlug(): string {
   return crypto.randomBytes(16).toString('base64url');
 }
 
+function escapeHtmlAttr(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+/** Obsidian-style `![alt|320](url)` → sized HTML so published pages keep resize. */
+function expandSizedImages(markdown: string): string {
+  return markdown.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g, (full, rawAlt: string, url: string) => {
+    const sizeMatch = rawAlt.match(/^(.*?)\|(\d{1,5})(?:x(\d{1,5}))?\s*$/);
+    if (!sizeMatch) return full;
+    const alt = sizeMatch[1].trim();
+    const width = parseInt(sizeMatch[2], 10);
+    if (!Number.isFinite(width) || width <= 0) return full;
+    return `<img src="${escapeHtmlAttr(url)}" alt="${escapeHtmlAttr(alt)}" width="${width}" style="max-width:100%;height:auto" />`;
+  });
+}
+
 export function sanitizePublicContent(content: string): string {
   let out = redactPrivateBlocksForPublic(content);
   out = out.replace(/```cascade-widget[\s\S]*?```/g, '_Interactive widget omitted in public view._');
   out = out.replace(/\{\{ai:[^}]+\}\}/g, '');
   out = out.replace(/!\[\[([^\]]+)\]\]/g, '[$1]');
   out = out.replace(/\[\[([^\]]+)\]\]/g, '$1');
+  out = expandSizedImages(out);
   return out;
 }
 

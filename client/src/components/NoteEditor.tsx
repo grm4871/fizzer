@@ -292,9 +292,15 @@ const cascadeTheme = EditorView.theme({
     lineHeight: '1.45',
   },
   '.cm-md-image-wrap': {
-    display: 'block',
+    position: 'relative',
+    display: 'inline-block',
     margin: '12px 0',
     maxWidth: '100%',
+    verticalAlign: 'top',
+    lineHeight: '0',
+  },
+  '.cm-md-image-wrap.is-resizing': {
+    userSelect: 'none',
   },
   '.cm-md-image': {
     display: 'block',
@@ -303,6 +309,7 @@ const cascadeTheme = EditorView.theme({
     borderRadius: '2px',
     border: '1px solid var(--border)',
     background: 'var(--bg-surface)',
+    cursor: 'default',
   },
   '.cm-md-image.is-loading': {
     minHeight: '120px',
@@ -312,6 +319,44 @@ const cascadeTheme = EditorView.theme({
     padding: '12px',
     color: 'hsl(222, 9%, 55%)',
     fontSize: '0.85rem',
+  },
+  '.cm-md-image-resize': {
+    position: 'absolute',
+    right: '4px',
+    bottom: '4px',
+    width: '14px',
+    height: '14px',
+    borderRadius: '2px',
+    border: '1px solid hsla(38, 92%, 55%, 0.85)',
+    background: 'linear-gradient(135deg, transparent 45%, hsla(38, 92%, 55%, 0.95) 45%, hsla(38, 92%, 55%, 0.95) 55%, transparent 55%), linear-gradient(135deg, transparent 65%, hsla(38, 92%, 55%, 0.75) 65%, hsla(38, 92%, 55%, 0.75) 75%, transparent 75%)',
+    backgroundColor: 'hsla(226, 14%, 12%, 0.85)',
+    cursor: 'nwse-resize',
+    opacity: '0',
+    transition: 'opacity 0.12s ease',
+    boxShadow: '0 0 0 1px hsla(0, 0%, 0%, 0.35)',
+    zIndex: '2',
+  },
+  '.cm-md-image-wrap:hover .cm-md-image-resize, .cm-md-image-wrap.is-resizing .cm-md-image-resize, .cm-md-image-wrap:focus-within .cm-md-image-resize': {
+    opacity: '1',
+  },
+  '.cm-md-image-size': {
+    position: 'absolute',
+    left: '6px',
+    bottom: '6px',
+    padding: '1px 6px',
+    borderRadius: '3px',
+    background: 'hsla(226, 14%, 10%, 0.82)',
+    color: 'hsl(38, 88%, 72%)',
+    fontFamily: 'var(--font-mono)',
+    fontSize: '0.7rem',
+    lineHeight: '1.4',
+    pointerEvents: 'none',
+    opacity: '0',
+    transition: 'opacity 0.12s ease',
+    zIndex: '2',
+  },
+  '.cm-md-image-wrap.is-resizing .cm-md-image-size': {
+    opacity: '1',
   },
 }, { dark: true });
 
@@ -423,19 +468,141 @@ function resolveAssetUrl(url: string): string {
   return `${apiBase}${url.startsWith('/') ? url : `/${url}`}`;
 }
 
+/** Obsidian-style image size in alt: `![caption|320]` or `![caption|320x240]`. */
+const IMAGE_ALT_SIZE_RE = /^(.*?)\|(\d{1,5})(?:x(\d{1,5}))?\s*$/;
+const IMAGE_LINE_RE = /^(\s*)!\[([^\]]*)\]\(([^)]+)\)\s*$/;
+const IMAGE_MIN_WIDTH_PX = 80;
+
+export function parseImageAlt(raw: string): { alt: string; width: number | null } {
+  const m = raw.match(IMAGE_ALT_SIZE_RE);
+  if (!m) return { alt: raw, width: null };
+  const width = Math.max(1, parseInt(m[2], 10));
+  return { alt: m[1], width };
+}
+
+export function formatImageMarkdown(indent: string, alt: string, url: string, width: number | null): string {
+  const cleanAlt = alt.replace(/\|/g, ' ').trim();
+  const altPart = width != null && width > 0 ? `${cleanAlt}|${Math.round(width)}` : cleanAlt;
+  return `${indent}![${altPart}](${url})`;
+}
+
+function clampImageWidth(px: number, maxWidth: number): number {
+  const max = Number.isFinite(maxWidth) && maxWidth > 0 ? maxWidth : 2400;
+  return Math.min(max, Math.max(IMAGE_MIN_WIDTH_PX, Math.round(px)));
+}
+
+function applyImageWidth(img: HTMLImageElement, width: number | null) {
+  if (width != null && width > 0) {
+    img.style.width = `${width}px`;
+    img.style.maxWidth = '100%';
+    img.style.height = 'auto';
+  } else {
+    img.style.width = '';
+    img.style.maxWidth = '100%';
+    img.style.height = 'auto';
+  }
+}
+
+function rewriteImageLineWidth(view: EditorView, wrap: HTMLElement, width: number | null): boolean {
+  let pos: number;
+  try {
+    pos = view.posAtDOM(wrap);
+  } catch {
+    return false;
+  }
+  const line = view.state.doc.lineAt(pos);
+  const match = line.text.match(IMAGE_LINE_RE);
+  if (!match) return false;
+  const [, indent, rawAlt, url] = match;
+  const { alt } = parseImageAlt(rawAlt);
+  const next = formatImageMarkdown(indent, alt, url, width);
+  if (next === line.text) return true;
+  view.dispatch({
+    changes: { from: line.from, to: line.to, insert: next },
+  });
+  return true;
+}
+
 /* ─── Image Widget ───────────────────────────────────────── */
 class ImageWidget extends WidgetType {
-  constructor(private alt: string, private url: string) {
+  constructor(
+    private alt: string,
+    private url: string,
+    private width: number | null = null,
+  ) {
     super();
   }
 
-  toDOM() {
+  toDOM(view: EditorView) {
     const wrap = document.createElement('span');
     wrap.className = 'cm-md-image-wrap';
+    wrap.setAttribute('data-image-url', this.url);
 
     const img = document.createElement('img');
     img.className = 'cm-md-image is-loading';
     img.alt = this.alt || 'image';
+    img.draggable = false;
+    applyImageWidth(img, this.width);
+
+    const handle = document.createElement('span');
+    handle.className = 'cm-md-image-resize';
+    handle.setAttribute('role', 'slider');
+    handle.setAttribute('aria-label', 'Drag to resize image');
+    handle.setAttribute('aria-orientation', 'horizontal');
+    handle.tabIndex = -1;
+
+    const sizeLabel = document.createElement('span');
+    sizeLabel.className = 'cm-md-image-size';
+    sizeLabel.setAttribute('aria-hidden', 'true');
+    if (this.width != null) sizeLabel.textContent = `${this.width}px`;
+
+    const maxWidthFor = () => {
+      const scroller = view.scrollDOM;
+      const contentPad = 52; // .cm-content horizontal padding
+      const available = (scroller?.clientWidth ?? 800) - contentPad;
+      return Math.max(IMAGE_MIN_WIDTH_PX, available);
+    };
+
+    handle.addEventListener('mousedown', (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+
+      const startX = event.clientX;
+      const startW = img.getBoundingClientRect().width || this.width || IMAGE_MIN_WIDTH_PX;
+      const maxW = maxWidthFor();
+      wrap.classList.add('is-resizing');
+      document.body.style.cursor = 'nwse-resize';
+
+      const onMove = (ev: MouseEvent) => {
+        const next = clampImageWidth(startW + (ev.clientX - startX), maxW);
+        applyImageWidth(img, next);
+        sizeLabel.textContent = `${next}px`;
+      };
+
+      const onUp = (ev: MouseEvent) => {
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onUp);
+        wrap.classList.remove('is-resizing');
+        document.body.style.cursor = '';
+        const next = clampImageWidth(startW + (ev.clientX - startX), maxW);
+        applyImageWidth(img, next);
+        sizeLabel.textContent = `${next}px`;
+        rewriteImageLineWidth(view, wrap, next);
+      };
+
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+    });
+
+    // Double-click handle resets to natural size.
+    handle.addEventListener('dblclick', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      applyImageWidth(img, null);
+      sizeLabel.textContent = '';
+      rewriteImageLineWidth(view, wrap, null);
+    });
 
     const resolved = resolveAssetUrl(this.url);
     if (/^https?:\/\//i.test(resolved) && !resolved.includes('/api/notes/')) {
@@ -447,6 +614,8 @@ class ImageWidget extends WidgetType {
         img.alt = 'Failed to load image';
       };
       wrap.appendChild(img);
+      wrap.appendChild(handle);
+      wrap.appendChild(sizeLabel);
       return wrap;
     }
 
@@ -469,11 +638,20 @@ class ImageWidget extends WidgetType {
       });
 
     wrap.appendChild(img);
+    wrap.appendChild(handle);
+    wrap.appendChild(sizeLabel);
     return wrap;
   }
 
   eq(other: ImageWidget) {
-    return this.alt === other.alt && this.url === other.url;
+    return this.alt === other.alt && this.url === other.url && this.width === other.width;
+  }
+
+  ignoreEvent(event: Event) {
+    const target = event.target as HTMLElement | null;
+    if (target?.closest?.('.cm-md-image-resize')) return true;
+    // Allow editor selection on the image body (click-through to edit source line).
+    return false;
   }
 }
 
@@ -1102,14 +1280,15 @@ export function buildDecorations(
 
     if (isActive) continue; // Don't hide/decorate formatting markers on the active line
 
-    const imageMatch = text.trim().match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
+    const imageMatch = text.match(IMAGE_LINE_RE);
     if (imageMatch) {
+      const { alt, width } = parseImageAlt(imageMatch[2]);
       decos.push({
         from: line.from,
         to: line.to,
         deco: Decoration.replace({
           block: true,
-          widget: new ImageWidget(imageMatch[1], imageMatch[2]),
+          widget: new ImageWidget(alt, imageMatch[3], width),
         }),
       });
       continue;
