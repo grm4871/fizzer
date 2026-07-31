@@ -1896,6 +1896,36 @@ export default function App() {
     }
   }, [loadVaultData, closeTab, openChatChannel]);
 
+  /** Fetch every board body in sidebar order for the read-only aggregate tab. */
+  const loadSuperkanban = useCallback(async () => {
+    // Previews are whitespace-collapsed by the API, so detect the marker here
+    // and validate the complete note body again inside mergeKanbanSources.
+    const boardSummaries = notesRef.current.filter((note) => /kanban-plugin\s*:/.test(note.content_preview));
+    setSuperkanbanLoading(true);
+    setSuperkanbanError(null);
+    try {
+      const fetched = await Promise.all(boardSummaries.map(async (summary) => {
+        const data = await api<{ note: Note }>(`/api/notes/${summary.id}`);
+        return data.note;
+      }));
+      setSuperkanbanNotes(fetched);
+    } catch (error) {
+      console.error('Error loading Superkanban:', error);
+      setSuperkanbanError('Could not load all Kanban boards. Try reopening this tab.');
+    } finally {
+      setSuperkanbanLoading(false);
+    }
+  }, []);
+
+  const openSuperkanban = useCallback((paneId: string) => {
+    const id = `superkanban:${activeVaultIdRef.current ?? 'current'}`;
+    const tab: Tab = { id, title: 'Superkanban', type: 'superkanban', dirty: false };
+    setOpenTabs((prev) => prev.some((item) => item.id === id) ? prev : [...prev, tab]);
+    setLayout(Layout.simplify(Layout.addTabToPane(Layout.removeTab(layoutRef.current, id), paneId, id)));
+    setFocusedPaneId(paneId);
+    void loadSuperkanban();
+  }, [loadSuperkanban]);
+
   /**
    * Open a note: ensure it has a tab, focus the pane that already shows it, or
    * place it in the focused pane. `replace` swaps the focused pane's active tab
@@ -1955,36 +1985,6 @@ export default function App() {
           body: JSON.stringify({
             id: tabId,
             title: 'Untitled Note',
-  /** Fetch every board body in sidebar order for the read-only aggregate tab. */
-  const loadSuperkanban = useCallback(async () => {
-    // Previews are whitespace-collapsed by the API, so detect the marker here
-    // and validate the complete note body again inside mergeKanbanSources.
-    const boardSummaries = notesRef.current.filter((note) => /kanban-plugin\s*:/.test(note.content_preview));
-    setSuperkanbanLoading(true);
-    setSuperkanbanError(null);
-    try {
-      const fetched = await Promise.all(boardSummaries.map(async (summary) => {
-        const data = await api<{ note: Note }>(`/api/notes/${summary.id}`);
-        return data.note;
-      }));
-      setSuperkanbanNotes(fetched);
-    } catch (error) {
-      console.error('Error loading Superkanban:', error);
-      setSuperkanbanError('Could not load all Kanban boards. Try reopening this tab.');
-    } finally {
-      setSuperkanbanLoading(false);
-    }
-  }, []);
-
-  const openSuperkanban = useCallback((paneId: string) => {
-    const id = `superkanban:${activeVaultIdRef.current ?? 'current'}`;
-    const tab: Tab = { id, title: 'Superkanban', type: 'superkanban', dirty: false };
-    setOpenTabs((prev) => prev.some((item) => item.id === id) ? prev : [...prev, tab]);
-    setLayout(Layout.simplify(Layout.addTabToPane(Layout.removeTab(layoutRef.current, id), paneId, id)));
-    setFocusedPaneId(paneId);
-    void loadSuperkanban();
-  }, [loadSuperkanban]);
-
             content: entry.draft,
             folder_id: entry.note.folder_id ?? undefined,
             // Human-authored drafts stay listed unless this draft was unlisted.

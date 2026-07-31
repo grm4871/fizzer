@@ -18,6 +18,11 @@ Production deploys use the same GitHub Actions → SSH pattern as Simcluster.
 2. **Wait for the Actions run** (do not assume push means live). Prefer the Actions UI, or on the host: `docker compose -f /var/www/cascade-browser/docker-compose.yml ps` and `curl -sf http://127.0.0.1:3000/api/health`. Confirm the expected commit (`git -C /var/www/cascade-browser rev-parse --short HEAD`) before claiming ship.
 3. First-time host bootstrap (nginx, certbot, `.env`) remains `deploy/deploy.sh <domain>` — not used for routine releases. Required Actions secrets (same names as Simcluster): `DEPLOY_SSH_KEY`, `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_PORT`.
 
+### When a deployment fails
+
+- First verify the client bundle from the exact commit: run `npm run build:client`. A GitHub Actions failure during the host's `docker compose build` can be a client syntax/build error, not an SSH or secret problem. Fix and validate that build before retrying the workflow.
+- Use the Actions log to classify failures: before SSH means repository secrets/connectivity; after SSH means the remote update/build output is the source of truth.
+
 ### After deploy lands — refresh in place (never kill the app)
 
 **Do not** quit, `pkill`, `app.relaunch`, or otherwise terminate the Electron process. That kills every agent run hosted by the desktop. Full app restart is never the deploy follow-up path.
