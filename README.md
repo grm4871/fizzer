@@ -40,6 +40,12 @@ npm run build
 npm test
 ```
 
+## Documentation
+
+The maintained project documentation starts at
+[`docs/README.md`](docs/README.md). It covers local setup, architecture, the
+agent runtime, development and testing, and production operations.
+
 ## Data Locations
 
 Local app data is stored outside the repo:
