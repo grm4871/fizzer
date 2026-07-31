@@ -13,6 +13,7 @@ import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
 import { tags } from '@lezer/highlight';
 import { FileText, Link2, Box, Columns3, Globe, ExternalLink, LockKeyhole } from 'lucide-react';
 import { hasObsidianKanbanMarker, KanbanView } from './KanbanView';
+import { perfSpan } from '../perf';
 
 /* ═══════════════════════════════════════════════════════════
    NoteEditor — CodeMirror 6 Live Preview Markdown Editor
@@ -1080,6 +1081,21 @@ export function buildDecorations(
   enableWidgetAutorun?: (from: number, to: number, source: string) => void,
   notes: NoteSummary[] = [],
 ): DecorationSet {
+  return perfSpan(
+    'note.buildDecorations',
+    () => buildDecorationsInner(state, requestWidgetAgent, fetchWidgetFeed, enableWidgetAutorun, notes),
+    { lines: state.doc.lines, chars: state.doc.length },
+    12,
+  );
+}
+
+function buildDecorationsInner(
+  state: EditorState,
+  requestWidgetAgent?: (prompt: string) => void,
+  fetchWidgetFeed?: (url: string, force?: boolean) => Promise<unknown>,
+  enableWidgetAutorun?: (from: number, to: number, source: string) => void,
+  notes: NoteSummary[] = [],
+): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
   const doc = state.doc;
   const cursorLine = state.selection.main.head;
@@ -1456,15 +1472,40 @@ function createWysiwygDecorations(
   requestWidgetAgent?: (prompt: string) => void,
   fetchWidgetFeed?: (url: string, force?: boolean) => Promise<unknown>,
   enableWidgetAutorun?: (from: number, to: number, source: string) => void,
-  notes: NoteSummary[] = [],
+  /** Live notes list via getter so vault soft-refreshes don't reconfigure CM. */
+  getNotes: () => NoteSummary[] = () => [],
 ) {
   const field = StateField.define<DecorationSet>({
     create(state) {
-      return buildDecorations(state, requestWidgetAgent, fetchWidgetFeed, enableWidgetAutorun, notes);
+      return buildDecorations(state, requestWidgetAgent, fetchWidgetFeed, enableWidgetAutorun, getNotes());
     },
     update(decorations, transaction) {
-      if (transaction.docChanged || transaction.selection) {
-        return buildDecorations(transaction.state, requestWidgetAgent, fetchWidgetFeed, enableWidgetAutorun, notes);
+      // Full rebuild is O(doc). Only do it when the doc changed, or when the
+      // active line changed (live-preview hides markers on the cursor line).
+      // Pure same-line selection moves used to re-scan the whole note every
+      // click/drag and froze large notes for 1–2s.
+      if (transaction.docChanged) {
+        return buildDecorations(
+          transaction.state,
+          requestWidgetAgent,
+          fetchWidgetFeed,
+          enableWidgetAutorun,
+          getNotes(),
+        );
+      }
+      if (transaction.selection) {
+        const prev = transaction.startState;
+        const oldLine = prev.doc.lineAt(prev.selection.main.head).number;
+        const newLine = transaction.state.doc.lineAt(transaction.state.selection.main.head).number;
+        if (oldLine !== newLine) {
+          return buildDecorations(
+            transaction.state,
+            requestWidgetAgent,
+            fetchWidgetFeed,
+            enableWidgetAutorun,
+            getNotes(),
+          );
+        }
       }
       return decorations;
     },
@@ -1515,6 +1556,11 @@ export const NoteEditor = memo(function NoteEditor({ note, content, onContentCha
   const onOpenNoteRef = useRef(onOpenNote);
   const insertImageFromFileRef = useRef<(file: File, view?: EditorView, coords?: { x: number; y: number }) => Promise<boolean>>(async () => false);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  // Keep notes off the extensions dependency graph — setNotes from vault soft
+  // refresh was reconfigure-ing CodeMirror (full destroy/rebuild of plugins)
+  // and freezing the UI for a second or two on every background return.
+  const notesRef = useRef(notes);
+  notesRef.current = notes;
 
   // Inline, editable note title (Obsidian-style). Synced from the note.
   const [titleDraft, setTitleDraft] = useState(note?.title ?? '');
@@ -1723,7 +1769,7 @@ export const NoteEditor = memo(function NoteEditor({ note, content, onContentCha
   const insertNoteEmbed = useCallback((noteId: string, coords?: { x: number; y: number }) => {
     const view = viewRef.current;
     if (!view) return false;
-    const embedded = notes.find((item) => item.id === noteId);
+    const embedded = notesRef.current.find((item) => item.id === noteId);
     if (!embedded) return false;
     const insert = noteEmbedMarkdown(embedded);
     const pos = coords ? view.posAtCoords(coords) : null;
@@ -1739,7 +1785,7 @@ export const NoteEditor = memo(function NoteEditor({ note, content, onContentCha
     });
     view.focus();
     return true;
-  }, [notes]);
+  }, []);
 
   // Keep refs updated
   contentRef.current = content;
@@ -1775,7 +1821,12 @@ export const NoteEditor = memo(function NoteEditor({ note, content, onContentCha
       history(),
       EditorView.lineWrapping,
       cmPlaceholder('Start writing...'),
-      createWysiwygDecorations(requestWidgetAgent, fetchWidgetFeed, enableWidgetAutorun, notes),
+      createWysiwygDecorations(
+        requestWidgetAgent,
+        fetchWidgetFeed,
+        enableWidgetAutorun,
+        () => notesRef.current,
+      ),
       checkboxClickHandler,
       EditorView.domEventHandlers({
         dragover(event) {
@@ -1911,7 +1962,7 @@ export const NoteEditor = memo(function NoteEditor({ note, content, onContentCha
         }
       }),
     ],
-    [requestWidgetAgent, fetchWidgetFeed, enableWidgetAutorun, notes, insertNoteEmbed],
+    [requestWidgetAgent, fetchWidgetFeed, enableWidgetAutorun, insertNoteEmbed],
   );
 
   // Create/destroy editor
@@ -1936,15 +1987,23 @@ export const NoteEditor = memo(function NoteEditor({ note, content, onContentCha
     };
   }, [note?.id]);
 
-  // Reconfigure extensions dynamically when they change
+  // Reconfigure extensions dynamically when they change (callbacks only —
+  // notes are read via notesRef so vault refresh never hits this path).
   useEffect(() => {
     const view = viewRef.current;
     if (view) {
-      view.dispatch({
-        effects: StateEffect.reconfigure.of(extensions),
-      });
+      perfSpan(
+        'note.reconfigureExtensions',
+        () => {
+          view.dispatch({
+            effects: StateEffect.reconfigure.of(extensions),
+          });
+        },
+        { noteId: note?.id, lines: view.state.doc.lines },
+        20,
+      );
     }
-  }, [extensions]);
+  }, [extensions, note?.id]);
 
   // Update content when note changes externally
   useEffect(() => {

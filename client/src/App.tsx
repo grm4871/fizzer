@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef, useMemo, lazy, Suspense, type CSSProperties, type ReactNode } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { type Tab } from './components/TabBar';
+import { perfMark, perfSpan, perfSpanAsync } from './perf';
 
 // CodeMirror (editor core plus every language mode via @codemirror/language-data)
 // is the heaviest dependency in the app and is only needed once a note tab is
@@ -709,23 +710,34 @@ export default function App() {
 
   const loadVaultData = useCallback(async (vaultId: string, opts?: { soft?: boolean }) => {
     try {
-      const [folderData, noteData] = await Promise.all([
-        api<{ folders: Folder[] }>(`/api/vaults/${vaultId}/folders`),
-        api<{ notes: NoteSummary[] }>(`/api/vaults/${vaultId}/notes`),
-      ]);
-      const nextNotes = noteData.notes || [];
-      setFolders(folderData.folders || []);
-      setNotes(nextNotes);
-      // Chat payloads only for open tabs — switching into a tab hydrates on demand.
-      const openChats = openChatTabIds().filter((id) =>
-        nextNotes.some((n) => n.id === id && n.content_preview.trim().startsWith(CHAT_NOTE_MARKER)),
+      await perfSpanAsync(
+        'vault.loadVaultData',
+        async () => {
+          const [folderData, noteData] = await Promise.all([
+            api<{ folders: Folder[] }>(`/api/vaults/${vaultId}/folders`),
+            api<{ notes: NoteSummary[] }>(`/api/vaults/${vaultId}/notes`),
+          ]);
+          const nextNotes = noteData.notes || [];
+          setFolders(folderData.folders || []);
+          setNotes(nextNotes);
+          // Chat payloads only for open tabs — switching into a tab hydrates on demand.
+          const openChats = openChatTabIds().filter((id) =>
+            nextNotes.some((n) => n.id === id && n.content_preview.trim().startsWith(CHAT_NOTE_MARKER)),
+          );
+          await Promise.all([
+            loadChatMessages(vaultId, nextNotes, { silent: opts?.soft === true, channelIds: openChats }),
+            loadChatAgentMembers(vaultId, nextNotes, { channelIds: openChats }),
+            loadChatPresence(vaultId, nextNotes, { channelIds: openChats }),
+            loadVaultAgents(vaultId),
+          ]);
+        },
+        {
+          vaultId,
+          soft: opts?.soft === true,
+          openChats: openChatTabIds().length,
+        },
+        200,
       );
-      await Promise.all([
-        loadChatMessages(vaultId, nextNotes, { silent: opts?.soft === true, channelIds: openChats }),
-        loadChatAgentMembers(vaultId, nextNotes, { channelIds: openChats }),
-        loadChatPresence(vaultId, nextNotes, { channelIds: openChats }),
-        loadVaultAgents(vaultId),
-      ]);
     } catch (error) {
       console.error('Error loading vault data:', error);
     }
@@ -864,6 +876,7 @@ export default function App() {
       const now = Date.now();
       if (awayMs < STALE_AFTER_MS && now - lastSoftRefreshAt < STALE_AFTER_MS) return;
       lastSoftRefreshAt = now;
+      perfMark('vault.softRefresh', { awayMs, vaultId }, true);
       void loadVaultData(vaultId, { soft: true });
     };
 
@@ -1216,9 +1229,11 @@ export default function App() {
         window.clearTimeout(harnessFlushTimer);
         harnessFlushTimer = null;
       }
+      let harnessChars = 0;
       if (pendingHarnessChunks) {
         const chunk = pendingHarnessChunks;
         const harnessRunId = pendingHarnessRunId;
+        harnessChars = chunk.length;
         pendingHarnessChunks = '';
         pendingHarnessRunId = null;
         pendingMessageUpdates.push((message) => ({
@@ -1230,8 +1245,15 @@ export default function App() {
       if (pendingMessageUpdates.length === 0) return;
       const updates = pendingMessageUpdates;
       pendingMessageUpdates = [];
-      updateChatMessage(channelId, agentMessageId, (message) =>
-        updates.reduce((next, update) => update(next), message));
+      perfSpan(
+        'chat.flushMessageUpdates',
+        () => {
+          updateChatMessage(channelId, agentMessageId, (message) =>
+            updates.reduce((next, update) => update(next), message));
+        },
+        { channelId, updates: updates.length, harnessChars },
+        24,
+      );
     };
 
     // CLI streams often emit text, structured blocks, and harness bytes as
