@@ -207,11 +207,18 @@ async function resolveVault(url, token, args, config) {
 /** Resolve a note by exact id, else unique title match within the vault. */
 async function resolveNote(url, token, vaultId, ref) {
   if (/^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(ref)) return ref;
-  const { notes = [] } = await api(url, token, 'GET', `/api/vaults/${vaultId}/notes`);
-  const exact = notes.filter((n) => n.title.toLowerCase() === ref.toLowerCase());
+  // Filter server-side: listing the whole vault to find one title costs a full
+  // note dump per lookup (~120 KB at 228 notes, and it grows linearly).
+  // A server older than these filters ignores the query params and returns the
+  // whole vault, so keep the client-side match as a correctness backstop.
+  const q = `/api/vaults/${vaultId}/notes?`;
+  const needle = ref.toLowerCase();
+  const { notes: exactRows = [] } = await api(url, token, 'GET', `${q}title=${encodeURIComponent(ref)}`);
+  const exact = exactRows.filter((n) => n.title.toLowerCase() === needle);
   if (exact.length === 1) return exact[0].id;
   if (exact.length > 1) fail(`title "${ref}" is ambiguous (${exact.length} notes); pass the note id.`);
-  const partial = notes.filter((n) => n.title.toLowerCase().includes(ref.toLowerCase()));
+  const { notes: partialRows = [] } = await api(url, token, 'GET', `${q}title_contains=${encodeURIComponent(ref)}`);
+  const partial = partialRows.filter((n) => n.title.toLowerCase().includes(needle));
   if (partial.length === 1) return partial[0].id;
   if (partial.length > 1) fail(`"${ref}" matches ${partial.length} notes; pass the note id.`);
   fail(`no note matching "${ref}" in vault ${vaultId}.`);
@@ -234,14 +241,14 @@ function memoryAgentKey(args, config) {
 
 async function memoryNotes(url, token, vaultId, args, config) {
   const key = sanitizeAgentFolderName(memoryAgentKey(args, config)).toLowerCase();
-  const [{ folders = [] }, { notes = [] }] = await Promise.all([
-    api(url, token, 'GET', `/api/vaults/${vaultId}/folders`),
-    api(url, token, 'GET', `/api/vaults/${vaultId}/notes`),
-  ]);
+  const { folders = [] } = await api(url, token, 'GET', `/api/vaults/${vaultId}/folders`);
   const root = folders.find((folder) => !folder.parent_id && String(folder.name).toLowerCase() === '_agent');
   const agentRoot = root && folders.find((folder) => folder.parent_id === root.id && String(folder.name).toLowerCase() === key);
   const memory = agentRoot && folders.find((folder) => folder.parent_id === agentRoot.id && String(folder.name).toLowerCase() === 'memory');
-  return memory ? notes.filter((note) => note.folder_id === memory.id) : [];
+  if (!memory) return [];
+  // Ask for just this folder's notes rather than the whole vault list.
+  const { notes = [] } = await api(url, token, 'GET', `/api/vaults/${vaultId}/notes?folder_id=${encodeURIComponent(memory.id)}`);
+  return notes;
 }
 
 async function resolveMemoryNote(url, token, vaultId, args, config, ref) {

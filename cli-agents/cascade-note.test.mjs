@@ -29,8 +29,17 @@ test('regular notes can be renamed and deleted by title', async (t) => {
     });
 
     res.setHeader('content-type', 'application/json');
-    if (req.method === 'GET' && req.url === '/api/vaults/vault-1/notes') {
-      res.end(JSON.stringify({ notes: [note()] }));
+    const { pathname, searchParams } = new URL(req.url, 'http://localhost');
+    if (req.method === 'GET' && pathname === '/api/vaults/vault-1/notes') {
+      // Mirror the server-side title filters the CLI relies on.
+      const exact = searchParams.get('title');
+      const partial = searchParams.get('title_contains');
+      const matches = [note()].filter((n) => {
+        if (exact !== null) return n.title.toLowerCase() === exact.toLowerCase();
+        if (partial !== null) return n.title.toLowerCase().includes(partial.toLowerCase());
+        return true;
+      });
+      res.end(JSON.stringify({ notes: matches }));
     } else if (req.method === 'GET' && req.url === '/api/notes/note-1') {
       res.end(JSON.stringify({ note: note() }));
     } else if (req.method === 'POST' && req.url === '/api/notes/note-1/rename') {
@@ -83,9 +92,9 @@ test('regular notes can be renamed and deleted by title', async (t) => {
   assert.deepEqual(
     requests.map(({ method, url }) => `${method} ${url}`),
     [
-      'GET /api/vaults/vault-1/notes',
+      'GET /api/vaults/vault-1/notes?title=Old%20title',
       'POST /api/notes/note-1/rename',
-      'GET /api/vaults/vault-1/notes',
+      'GET /api/vaults/vault-1/notes?title=New%20title',
       'GET /api/notes/note-1',
       'DELETE /api/notes/note-1',
     ],

@@ -364,7 +364,7 @@ export function deleteFolder(db: Db, folderId: string): void {
 
 // ── Notes ──────────────────────────────────────────────────────────
 
-export function listNotes(db: Db, vaultId: string, opts?: { folder_id?: string; is_archived?: boolean; tag?: string }): NoteSummary[] {
+export function listNotes(db: Db, vaultId: string, opts?: { folder_id?: string; is_archived?: boolean; tag?: string; title?: string; title_contains?: string }): NoteSummary[] {
   let sql = `
     SELECT n.id, n.vault_id, n.folder_id, n.title, n.content_preview,
            n.is_pinned, n.is_archived, n.is_listed, n.word_count, n.created_at, n.updated_at
@@ -394,6 +394,17 @@ export function listNotes(db: Db, vaultId: string, opts?: { folder_id?: string; 
       WHERE nt.note_id = n.id AND t.name = ? COLLATE NOCASE
     )`;
     params.push(opts.tag);
+  }
+
+  // Title lookups let callers resolve a note by name without listing the vault.
+  if (opts?.title !== undefined) {
+    sql += ' AND n.title = ? COLLATE NOCASE';
+    params.push(opts.title);
+  }
+
+  if (opts?.title_contains) {
+    sql += " AND n.title LIKE ? ESCAPE '\\' COLLATE NOCASE";
+    params.push(`%${opts.title_contains.replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
   }
 
   sql += ' ORDER BY n.is_pinned DESC, n.updated_at DESC';

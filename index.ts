@@ -1011,11 +1011,13 @@ app.get('/api/vaults/:id/notes', requireAuth, (req: AuthedRequest, res) => {
   const vault = getVault(db, req.params.id, req.user!.id);
   if (!vault) return res.status(404).json({ error: 'Vault not found' });
 
-  const opts: { folder_id?: string; is_archived?: boolean; tag?: string } = {};
+  const opts: { folder_id?: string; is_archived?: boolean; tag?: string; title?: string; title_contains?: string } = {};
   if (typeof req.query.folder_id === 'string') opts.folder_id = req.query.folder_id;
   if (req.query.is_archived === 'true') opts.is_archived = true;
   if (req.query.is_archived === 'false') opts.is_archived = false;
   if (typeof req.query.tag === 'string') opts.tag = req.query.tag;
+  if (typeof req.query.title === 'string') opts.title = req.query.title;
+  if (typeof req.query.title_contains === 'string') opts.title_contains = req.query.title_contains;
 
   const notes = listNotes(db, vault.id, opts);
   res.json({ notes: isAgentRequest(req) ? notes.map((note) => redactNoteForAgent(req, note)) : notes });
