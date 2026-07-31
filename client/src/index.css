@@ -3048,6 +3048,15 @@ a {
 .chat-context-menu button:hover svg {
   color: var(--accent);
 }
+.chat-context-menu button.is-danger:hover,
+.chat-context-menu button.is-armed {
+  background: var(--danger-subtle);
+  color: var(--danger);
+}
+.chat-context-menu button.is-danger:hover svg,
+.chat-context-menu button.is-armed svg {
+  color: var(--danger);
+}
 /* ── Harness panel: terminal-style structured transcript ─── */
 .cascade-run-panel {
   width: 100%;

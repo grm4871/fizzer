@@ -30,6 +30,8 @@ type ServerEvents = {
   'vault:chatMessageCreated': (data: { vaultId: string; channelId: string; message: ChatMessagePayload }) => void;
   /** An existing chat message was updated (merge, agent stream, etc.). */
   'vault:chatMessageUpdated': (data: { vaultId: string; channelId: string; message: ChatMessagePayload }) => void;
+  /** A chat message was deleted for everyone with access to the channel. */
+  'vault:chatMessageDeleted': (data: { vaultId: string; channelId: string; messageId: string }) => void;
   /** A chat channel agent member was registered or updated. */
   'vault:chatAgentMemberUpserted': (data: { vaultId: string; channelId: string; registration: ChatAgentMemberPayload }) => void;
   /** A chat channel agent member was removed. */

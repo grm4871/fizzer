@@ -894,6 +894,28 @@ export default function App() {
     });
   }, []);
 
+  const handleDeleteChatMessage = useCallback(async (channelId: string, messageId: string) => {
+    const vaultId = activeVaultIdRef.current;
+    if (!vaultId) return;
+    try {
+      await api(`/api/vaults/${vaultId}/channels/${channelId}/messages/${encodeURIComponent(messageId)}`, {
+        method: 'DELETE',
+      });
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not delete message');
+      return;
+    }
+    // Drop it locally too: the socket broadcast also removes it, but this keeps
+    // the click responsive (and correct if the socket is currently down).
+    setChatState((prev) => {
+      const existing = prev.messagesByChannel[channelId];
+      if (!existing) return prev;
+      const next = existing.filter((message) => message.id !== messageId);
+      if (next.length === existing.length) return prev;
+      return { ...prev, messagesByChannel: { ...prev.messagesByChannel, [channelId]: next } };
+    });
+  }, []);
+
   const handleOpenSharedChatNote = useCallback(async (
     channelId: string,
     messageId: string,
@@ -2192,6 +2214,19 @@ export default function App() {
         };
       });
     };
+    const handleChatMessageDeleted = (data: { vaultId: string; channelId: string; messageId: string }) => {
+      if (data.vaultId !== activeVaultId) return;
+      setChatState((prev) => {
+        const existing = prev.messagesByChannel[data.channelId];
+        if (!existing) return prev;
+        const next = existing.filter((message) => message.id !== data.messageId);
+        if (next.length === existing.length) return prev;
+        return {
+          ...prev,
+          messagesByChannel: { ...prev.messagesByChannel, [data.channelId]: next },
+        };
+      });
+    };
     const handleChatAgentMemberUpserted = (data: { vaultId: string; channelId: string; registration: ChatAgentRegistration }) => {
       if (data.vaultId !== activeVaultId) return;
       setChatState((prev) => {
@@ -2234,6 +2269,7 @@ export default function App() {
     socket.on('vault:feedNotify', handleFeedNotify);
     socket.on('vault:chatMessageCreated', handleChatMessageCreated);
     socket.on('vault:chatMessageUpdated', handleChatMessageUpdated);
+    socket.on('vault:chatMessageDeleted', handleChatMessageDeleted);
     socket.on('vault:chatAgentMemberUpserted', handleChatAgentMemberUpserted);
     socket.on('vault:chatAgentMemberRemoved', handleChatAgentMemberRemoved);
     socket.on('vault:chatPresence', handleChatPresence);
@@ -2255,6 +2291,7 @@ export default function App() {
       socket.off('vault:feedNotify', handleFeedNotify);
       socket.off('vault:chatMessageCreated', handleChatMessageCreated);
       socket.off('vault:chatMessageUpdated', handleChatMessageUpdated);
+      socket.off('vault:chatMessageDeleted', handleChatMessageDeleted);
       socket.off('vault:chatAgentMemberUpserted', handleChatAgentMemberUpserted);
       socket.off('vault:chatAgentMemberRemoved', handleChatAgentMemberRemoved);
       socket.off('vault:chatPresence', handleChatPresence);
@@ -2652,6 +2689,7 @@ export default function App() {
           onRemoveParticipant={handleRemoveChatParticipant}
           onLeaveChannel={handleLeaveChatChannel}
           onSendMessage={handleSendChatMessage}
+          onDeleteMessage={handleDeleteChatMessage}
           onCancelRun={handleCancelChatRun}
           notes={notes}
           onOpenNote={openNote}

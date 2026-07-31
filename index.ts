@@ -143,6 +143,7 @@ import {
   listChatNoteBacklinks,
   reresolveChatBacklinksForNote,
   setAgentMemoryEnabled,
+  tombstoneChatMessageBacklinks,
 } from './server/evolution.js';
 import { searchWithQmd } from './server/qmd-search.js';
 import {
@@ -582,6 +583,16 @@ function emitChatMessageEvent(sourceVaultId: string, sourceChannelId: string, ev
       vaultId: route.localVaultId,
       channelId: route.localChannelId,
       message: { ...message, channelId: route.localChannelId },
+    });
+  }
+}
+
+function emitChatMessageDeleted(sourceVaultId: string, sourceChannelId: string, messageId: string) {
+  for (const route of listChatChannelRoutes(db, sourceVaultId, sourceChannelId)) {
+    emitVaultEvent(route.localVaultId, 'vault:chatMessageDeleted', {
+      vaultId: route.localVaultId,
+      channelId: route.localChannelId,
+      messageId,
     });
   }
 }
@@ -2130,6 +2141,37 @@ app.patch('/api/vaults/:vaultId/channels/:channelId/messages/:messageId', requir
     refreshChatNoteGrants(req.user!.id, req.params.vaultId, route.sourceChannelId, message);
     emitChatMessageEvent(route.sourceVaultId, route.sourceChannelId, 'vault:chatMessageUpdated', message);
     res.json({ message });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+/**
+ * Delete a chat message. You may remove your own messages; the owner of the
+ * channel's source vault (the host of a shared chat) may remove anyone's,
+ * including agent posts.
+ */
+app.delete('/api/vaults/:vaultId/channels/:channelId/messages/:messageId', requireAuth, requireUserAccess, (req: AuthedRequest, res) => {
+  try {
+    const { route } = assertChatChannel(db, req.params.channelId, req.user!.id);
+    const message = getChatMessage(db, req.params.channelId, req.user!.id, req.params.messageId);
+    if (!message) return res.status(404).json({ error: 'Message not found' });
+
+    const host = db.prepare('SELECT created_by AS userId FROM vaults WHERE id = ?')
+      .get(route.sourceVaultId) as { userId: number } | undefined;
+    const isHost = host?.userId === req.user!.id;
+    if (!isHost && message.author !== req.user!.username) {
+      return res.status(403).json({ error: 'You can only delete your own messages' });
+    }
+
+    if (!deleteChatMessage(db, req.user!.id, req.params.vaultId, req.params.channelId, req.params.messageId)) {
+      return res.status(404).json({ error: 'Message not found' });
+    }
+    // Note grants cascade via FK; backlinks are tombstoned so the referenced
+    // notes stop advertising a message that no longer exists.
+    try { tombstoneChatMessageBacklinks(db, req.params.messageId); } catch { /* best-effort */ }
+    emitChatMessageDeleted(route.sourceVaultId, route.sourceChannelId, req.params.messageId);
+    res.json({ ok: true });
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
   }

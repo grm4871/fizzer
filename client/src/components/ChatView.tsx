@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { Bot, Copy, Hash, ImagePlus, Paperclip, Plus, Reply, Send, Square, X } from 'lucide-react';
+import { Bot, Copy, Hash, ImagePlus, Paperclip, Plus, Reply, Send, Square, Trash2, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
@@ -219,6 +219,8 @@ interface ChatViewProps {
   onRemoveParticipant?: (channelId: string, username: string) => Promise<void>;
   onLeaveChannel?: (channelId: string) => Promise<void>;
   onSendMessage: (channelId: string, body: string, media?: ChatMediaAttachment[], replyTo?: ChatReplyRef) => void;
+  /** Delete a message for everyone (own messages, or any when you host the channel). */
+  onDeleteMessage?: (channelId: string, messageId: string) => Promise<void> | void;
   onCancelRun: (runId: number) => void;
   notes?: NoteSummary[];
   onOpenNote?: (id: string) => void;
@@ -1144,6 +1146,7 @@ export const ChatView = memo(function ChatView({
   onRemoveParticipant,
   onLeaveChannel,
   onSendMessage,
+  onDeleteMessage,
   onCancelRun,
   notes = EMPTY_NOTES,
   onOpenNote,
@@ -1244,6 +1247,8 @@ export const ChatView = memo(function ChatView({
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
   const [replyTarget, setReplyTarget] = useState<ChatReplyRef | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; message: ChatMessage } | null>(null);
+  /** Delete is two-step in the context menu rather than a native confirm dialog. */
+  const [deleteArmed, setDeleteArmed] = useState(false);
   const [pendingMedia, setPendingMedia] = useState<ChatMediaAttachment[]>([]);
   const [mediaError, setMediaError] = useState('');
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
@@ -1706,8 +1711,15 @@ export const ChatView = memo(function ChatView({
   const openMessageContextMenu = useCallback((event: React.MouseEvent, message: ChatMessage) => {
     event.preventDefault();
     event.stopPropagation();
+    setDeleteArmed(false);
     setContextMenu({ x: event.clientX, y: event.clientY, message });
   }, []);
+
+  const deleteMessage = useCallback((message: ChatMessage) => {
+    setContextMenu(null);
+    setDeleteArmed(false);
+    void onDeleteMessage?.(message.channelId || channelId, message.id);
+  }, [onDeleteMessage, channelId]);
 
   const toggleMessageSelection = useCallback((id: string) => {
     setSelectedMessageId((current) => (current === id ? null : id));
@@ -2217,6 +2229,16 @@ export const ChatView = memo(function ChatView({
             <Reply size={14} />
             Reply
           </button>
+          {onDeleteMessage && (
+            <button
+              type="button"
+              className={`is-danger${deleteArmed ? ' is-armed' : ''}`}
+              onClick={() => (deleteArmed ? deleteMessage(contextMenu.message) : setDeleteArmed(true))}
+            >
+              <Trash2 size={14} />
+              {deleteArmed ? 'Delete for everyone?' : 'Delete message'}
+            </button>
+          )}
         </div>
       )}
 
