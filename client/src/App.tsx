@@ -68,6 +68,7 @@ import {
   type ChatState,
   type PersistedSession,
 } from './chat/session';
+import { enqueueSessionTurn } from './chat/sessionTurns';
 import { Activity, Gem, PanelLeftOpen, Users } from 'lucide-react';
 
 /**
@@ -190,6 +191,12 @@ export default function App() {
   // rotates the conversationId, so the new key has no watermark and the agent
   // gets a fresh full-context priming.
   const agentContextWatermarkRef = useRef<Map<string, string>>(new Map());
+  // A CLI session cannot safely handle two top-level prompts concurrently.
+  // Keep follow-up pings visible immediately, but do not dispatch the next run
+  // until the preceding run in this exact member conversation has settled and
+  // persisted its session id. This is real steering/continuation, rather than
+  // two cold processes that merely look connected in the transcript.
+  const agentSessionTailRef = useRef<Map<string, Promise<void>>>(new Map());
   const pendingChatPatchRef = useRef<Map<string, ChatMessage>>(new Map());
   const chatPatchTimerRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const startAgentChatRunRef = useRef<((channelId: string, registration: ChatAgentRegistration, prompt: string, triggeringMessage: ChatMessage) => void) | null>(null);
@@ -1185,13 +1192,8 @@ export default function App() {
     const agentId = registration.agentId as AgentId;
     if (!CHAT_AGENTS.some((agent) => agent.id === agentId)) return;
     const channelName = notesRef.current.find((note) => note.id === channelId)?.title || 'chat';
-    // One sticky session per agent: the run resumes (and extends) the member's
-    // conversation, so its earlier turns are already in context. A `/clear`
-    // rotates conversationId, so a fresh key here has no watermark.
     const watermarkKey = `${registration.id}:${registration.conversationId || ''}`;
-    const watermark = agentContextWatermarkRef.current.get(watermarkKey);
-    const continuation = Boolean(watermark);
-    const runPrompt = formatAgentChatPrompt(channelName, registration, prompt, triggeringMessage.author, continuation);
+    const sessionTurn = enqueueSessionTurn(agentSessionTailRef.current, watermarkKey);
     const agentMessageId = `agent-${agentId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
     let runSocket: ReturnType<typeof connectRunsSocket> | null = null;
@@ -1270,6 +1272,16 @@ export default function App() {
     });
 
     try {
+      // The prior terminal event is published only after its session id is
+      // stored server-side. Waiting here therefore guarantees /runs can resume
+      // that same backing session instead of racing into a duplicate cold boot.
+      await sessionTurn.preceding;
+      // One sticky session per agent: the run resumes (and extends) the member's
+      // conversation, so its earlier turns are already in context. A `/clear`
+      // rotates conversationId, so a fresh key here has no watermark.
+      const watermark = agentContextWatermarkRef.current.get(watermarkKey);
+      const continuation = Boolean(watermark);
+      const runPrompt = formatAgentChatPrompt(channelName, registration, prompt, triggeringMessage.author, continuation);
       // Conversation id groups runs for backend session resume (findPriorSession).
       // The actual CLI session_id is resolved server-side — not this value.
       const conversationId = registration.conversationId || undefined;
@@ -1279,6 +1291,7 @@ export default function App() {
 
       const finishRun = (runId: number, cleanup: () => void) => {
         cleanup();
+        sessionTurn.release();
         streamingChatMessageIdsRef.current.delete(agentMessageId);
         serverOwnedChatMessageIdsRef.current.delete(agentMessageId);
         if (!isLocalRunId(runId)) {
@@ -1491,6 +1504,7 @@ export default function App() {
         body: error instanceof Error ? error.message : 'Failed to start agent.',
         status: 'failed',
       }));
+      sessionTurn.release();
     }
   }, [appendChatMessage, updateChatMessage, handleRegisterChatAgent]);
   startAgentChatRunRef.current = startAgentChatRun;

@@ -312,8 +312,6 @@ export function initDesktopRunners(io: Server, db: Db, hooks: RunnerHooks): void
       if (!Number.isFinite(runId) || !data?.type) return;
       if (!acceptRunEventFromOwner(db, runId, user.id)) return;
 
-      hooks.publishRunEvent(db, runId, data.type, data.payload ?? {});
-
       if (data.type === 'status' && data.payload && typeof data.payload === 'object') {
         const status = (data.payload as { status?: string }).status;
         if (status === 'completed' || status === 'failed' || status === 'canceled') {
@@ -332,6 +330,10 @@ export function initDesktopRunners(io: Server, db: Db, hooks: RunnerHooks): void
           clearDelegatedRunRecord(db, runId);
         }
       }
+      // Persist terminal status/session before notifying clients. Steering
+      // clients serialize follow-ups on this event; publishing first let the
+      // next /runs request race ahead of session_id storage and cold-start.
+      hooks.publishRunEvent(db, runId, data.type, data.payload ?? {});
     });
 
     socket.on('disconnect', () => {

@@ -1798,7 +1798,10 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     const willResume = Boolean(resumeSessionId);
 
     let effectivePrompt = prompt;
-    const contextChunks: string[] = [CASCADE_AGENT_APP_CONTEXT];
+    // The resumed CLI session already holds the stable Cascade capability
+    // contract. Re-sending it on every turn wastes context and can make a
+    // correctly resumed follow-up look like another cold system boot.
+    const contextChunks: string[] = willResume ? [] : [CASCADE_AGENT_APP_CONTEXT];
     // Folder ancestry and nearby project docs are workspace state, not
     // conversation history. Include them even when resuming an older CLI
     // session so existing agents immediately pick up moves and new docs.
