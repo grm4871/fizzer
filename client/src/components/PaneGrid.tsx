@@ -11,10 +11,16 @@
  */
 
 import { Fragment, useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { FileText, ExternalLink, X, Hash, LayoutDashboard, PanelLeftClose, PanelLeftOpen, Plus } from 'lucide-react';
 import type { Tab } from './TabBar';
 import { NOTE_DND_TYPE } from '../docEmbeds';
 import { isPane, type DropSide, type LayoutNode, type PaneNode, type SplitNode } from '../layout/tree';
+
+/** Tab-strip context menu. Portaled to body so `.tab-bar` overflow cannot clip it. */
+type TabStripMenu =
+  | { kind: 'new'; x: number; y: number }
+  | { kind: 'tab'; x: number; y: number; tabId: string };
 
 const DRAG_MIME = 'application/x-cascade-tab';
 
@@ -134,23 +140,44 @@ function PaneTabStrip({
     .map((id) => openTabs.find((t) => t.id === id))
     .filter((t): t is Tab => Boolean(t));
 
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; tabId: string } | null>(null);
+  const [contextMenu, setContextMenu] = useState<TabStripMenu | null>(null);
   const [tabDropHint, setTabDropHint] = useState<{ tabId: string; placement: 'before' | 'after' } | null>(null);
 
+  // Only listen while open (and after the opening gesture settles). A permanent
+  // window click listener can dismiss the menu in the same right-click that opened it.
   useEffect(() => {
-    const handleGlobalClick = () => setContextMenu(null);
-    window.addEventListener('click', handleGlobalClick);
-    return () => window.removeEventListener('click', handleGlobalClick);
-  }, []);
+    if (!contextMenu) return;
+    const close = () => setContextMenu(null);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') close();
+    };
+    const timer = window.setTimeout(() => {
+      window.addEventListener('pointerdown', close);
+      window.addEventListener('click', close);
+      window.addEventListener('scroll', close, true);
+    }, 0);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener('pointerdown', close);
+      window.removeEventListener('click', close);
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [contextMenu]);
 
   const handleContextMenu = (e: React.MouseEvent, tabId: string) => {
     e.preventDefault();
+    e.stopPropagation();
     setContextMenu({
+      kind: 'tab',
       x: e.clientX,
       y: e.clientY,
       tabId,
     });
   };
+
+  const closeMenu = () => setContextMenu(null);
 
   const handleDragStart = (event: DragEvent, tabId: string) => {
     const payload: TabDragPayload = { tabId, fromPaneId: pane.id };
@@ -284,11 +311,13 @@ function PaneTabStrip({
       ))}
       {onCreateNote && (
         <button
+          type="button"
           className="tab-new-btn"
           onClick={() => onCreateNote(pane.id)}
           onContextMenu={(event) => {
             event.preventDefault();
-            setContextMenu({ x: event.clientX, y: event.clientY, tabId: '' });
+            event.stopPropagation();
+            setContextMenu({ kind: 'new', x: event.clientX, y: event.clientY });
           }}
           title="New note (right-click for options)"
           aria-label="New note"
@@ -296,41 +325,51 @@ function PaneTabStrip({
           <Plus size={14} />
         </button>
       )}
-      {onOpenSuperkanban && (
-        <button
-          type="button"
-          className="tab-new-btn tab-superkanban-btn"
-          onClick={() => onOpenSuperkanban(pane.id)}
-          title="Open Superkanban"
-          aria-label="Open Superkanban"
-        >
-          <LayoutDashboard size={14} />
-        </button>
-      )}
-      {/* Right-click Context Menu */}
-      {contextMenu && (
+      {/* Portaled: `.tab-bar` uses overflow-x/y that clips in-strip fixed menus. */}
+      {contextMenu && createPortal(
         <div
           className="tab-context-menu"
+          role="menu"
+          aria-label={contextMenu.kind === 'new' ? 'New tab options' : 'Tab options'}
           style={{
             top: `${contextMenu.y}px`,
             left: `${contextMenu.x}px`,
           }}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => event.stopPropagation()}
         >
-          {!contextMenu.tabId && onCreateChat && (
-            <button onClick={() => onCreateChat(pane.id)}>
+          {contextMenu.kind === 'new' && onCreateChat && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                closeMenu();
+                onCreateChat(pane.id);
+              }}
+            >
               <Hash size={13} />
               New chat
             </button>
           )}
-          {!contextMenu.tabId && onOpenSuperkanban && (
-            <button onClick={() => onOpenSuperkanban(pane.id)}>
+          {contextMenu.kind === 'new' && onOpenSuperkanban && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                closeMenu();
+                onOpenSuperkanban(pane.id);
+              }}
+            >
               <LayoutDashboard size={13} />
               Open Superkanban
             </button>
           )}
-          {contextMenu.tabId && onPopOut && (
+          {contextMenu.kind === 'tab' && onPopOut && (
             <button
+              type="button"
+              role="menuitem"
               onClick={() => {
+                closeMenu();
                 onPopOut(contextMenu.tabId);
               }}
             >
@@ -338,15 +377,21 @@ function PaneTabStrip({
               Open in new window
             </button>
           )}
-          {contextMenu.tabId && <button
+          {contextMenu.kind === 'tab' && (
+            <button
+              type="button"
+              role="menuitem"
               onClick={() => {
+                closeMenu();
                 onCloseTab(contextMenu.tabId);
               }}
             >
               <X size={13} />
               Close tab
-            </button>}
-        </div>
+            </button>
+          )}
+        </div>,
+        document.body,
       )}
     </div>
   );
