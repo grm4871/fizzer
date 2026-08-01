@@ -27,6 +27,16 @@ export type MentionableAgent = {
   taggableByAgents: boolean;
 };
 
+export function hasRegistrationForMention(
+  mention: string,
+  registrations: Array<Pick<MentionableAgent, 'agentId' | 'mention'>>,
+): boolean {
+  const target = normalizeMention(mention);
+  return Boolean(target && registrations.some((registration) =>
+    normalizeMention(registration.mention || registration.agentId) === target
+  ));
+}
+
 /** Resolve the channel member behind an agent-authored message. Older desktop
  * helpers did not attach registrationId, so fall back to one unambiguous
  * agentId + display-name match instead of silently dropping agent handoffs. */

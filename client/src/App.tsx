@@ -39,6 +39,7 @@ import { connectRunsSocket, connectVaultSocket } from './socket';
 import { isLocalRunId, cancelLocalAgentRun } from './localAgentRunner';
 import { ensureDesktopRunnerHost, startDesktopRunnerHost } from './desktopRunnerHost';
 import {
+  agentsAfterLoadFailure,
   agentLabel,
   CHAT_AGENTS,
   formatAgentChatPrompt,
@@ -48,7 +49,7 @@ import {
   normalizeChatCwd,
   type AgentId,
 } from './chat/agents';
-import { buildQuotedReplyPrompt, getMentionedRegistrations, normalizeMention, precedingMessageBatch, precedingMessageBatchText, resolveAgentMessageRegistration, stripRegisteredAgentMentions } from './chat/mentions';
+import { buildQuotedReplyPrompt, getMentionedRegistrations, hasRegistrationForMention, normalizeMention, precedingMessageBatch, precedingMessageBatchText, resolveAgentMessageRegistration, stripRegisteredAgentMentions } from './chat/mentions';
 import {
   appendChatRunBlocks,
   appendHarnessLog,
@@ -498,7 +499,17 @@ export default function App() {
         }
         return { channelId, agents };
       } catch {
-        return { channelId, agents: legacyAgents[channelId] ?? [] };
+        // A transient deploy/socket gap must not erase registrations that were
+        // already loaded. Reply refs can still display an author-derived @name
+        // without this list, but routing then finds no agent and silently posts
+        // a reply with no run.
+        return {
+          channelId,
+          agents: agentsAfterLoadFailure(
+            chatStateRef.current.registeredAgentsByChannel[channelId],
+            legacyAgents[channelId],
+          ),
+        };
       }
     }));
 
@@ -1882,7 +1893,31 @@ export default function App() {
         }
       }
 
-      const registrations = chatStateRef.current.registeredAgentsByChannel[channelId] ?? [];
+      let registrations = chatStateRef.current.registeredAgentsByChannel[channelId] ?? [];
+      const replyMention = normalizeMention(replyTo?.mention || '');
+      const hasReplyAgent = hasRegistrationForMention(replyMention, registrations);
+      // The reply banner can derive @name from the quoted author even if agent
+      // member hydration failed during a deploy. Resolve that mismatch from the
+      // authoritative channel roster before routing, rather than silently
+      // posting a reply that starts no run.
+      if (vaultId && replyMention && !hasReplyAgent) {
+        try {
+          const data = await api<{ agents: ChatAgentRegistration[] }>(
+            `/api/vaults/${vaultId}/channels/${channelId}/agents`,
+          );
+          registrations = data.agents ?? [];
+          setChatState((prev) => ({
+            ...prev,
+            registeredAgentsByChannel: {
+              ...prev.registeredAgentsByChannel,
+              [channelId]: registrations,
+            },
+          }));
+        } catch {
+          // Persistence still succeeded. A visible notice below explains why
+          // the reply could not route instead of failing silently.
+        }
+      }
       const implicitMention = replyTo?.mention ? `@${replyTo.mention}` : '';
       // What the sender actually typed. Kept apart from `implicitMention`, which
       // exists only to route a reply back to its author: when that author is a
@@ -1898,7 +1933,10 @@ export default function App() {
           && !mentionedAgents.some((mentioned) => mentioned.id === registration.id)
         ),
       ];
-      if (targetAgents.length === 0) return;
+      if (targetAgents.length === 0) {
+        if (replyMention) setNotice(`Could not route reply to @${replyMention}. Reconnect and try again.`);
+        return;
+      }
       const directPrompt = stripRegisteredAgentMentions(typedSource, registrations);
       // A reply carries its ask in the quote, so hand the quoted message to the
       // agent. Without it a bare "@agent" reply arrives as an empty prompt and
@@ -2231,10 +2269,13 @@ export default function App() {
       // because the desktop missed its create/update broadcasts.
       const channelIds = openChatTabIds();
       if (channelIds.length > 0) {
-        void loadChatMessages(activeVaultId, notesRef.current, {
-          silent: true,
-          channelIds,
-        });
+        void Promise.all([
+          loadChatMessages(activeVaultId, notesRef.current, {
+            silent: true,
+            channelIds,
+          }),
+          loadChatAgentMembers(activeVaultId, notesRef.current, { channelIds }),
+        ]);
       }
     };
     joinActiveVault();
@@ -2448,7 +2489,7 @@ export default function App() {
       socket.off('vault:chatPresence', handleChatPresence);
       socket.disconnect();
     };
-  }, [activeVaultId, loadVaultData, loadNoteContent, loadChatMessages, openChatTabIds, openNote, syncChatPresenceRooms]);
+  }, [activeVaultId, loadVaultData, loadNoteContent, loadChatAgentMembers, loadChatMessages, openChatTabIds, openNote, syncChatPresenceRooms]);
 
   useEffect(() => {
     const socket = vaultSocketRef.current;

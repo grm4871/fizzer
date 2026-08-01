@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  agentsAfterLoadFailure,
   CHAT_AGENT_MODEL_PRESETS,
   formatAgentChatPrompt,
   needsCascadeWorkspaceContext,
@@ -12,6 +13,18 @@ const registration = {
   displayName: 'Terra',
   contextPrompt: '',
 };
+
+describe('agent member hydration', () => {
+  it('preserves loaded registrations when a reconnect fetch fails', () => {
+    const cached = [{ id: 'ocsol', mention: 'ocsol' }];
+    expect(agentsAfterLoadFailure(cached, [])).toBe(cached);
+  });
+
+  it('falls back to legacy registrations only when no server state was loaded', () => {
+    const legacy = [{ id: 'legacy', mention: 'legacy' }];
+    expect(agentsAfterLoadFailure(undefined, legacy)).toBe(legacy);
+  });
+});
 
 describe('selective Cascade context', () => {
   it('requests history only for unresolved references', () => {

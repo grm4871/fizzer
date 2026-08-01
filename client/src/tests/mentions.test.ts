@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildQuotedReplyPrompt, precedingMessageBatch, precedingMessageBatchText, resolveAgentMessageRegistration } from '../chat/mentions';
+import { buildQuotedReplyPrompt, hasRegistrationForMention, precedingMessageBatch, precedingMessageBatchText, resolveAgentMessageRegistration } from '../chat/mentions';
 import { prepareReplyForSend } from '../components/ChatView';
 
 const registrations = [
@@ -16,6 +16,11 @@ describe('reply agent notification', () => {
 
   it('removes routing mention without removing reply context', () => {
     expect(prepareReplyForSend(reply, false)).toEqual({ ...reply, mention: '' });
+  });
+
+  it('detects when an author-derived reply mention needs roster hydration', () => {
+    expect(hasRegistrationForMention('ocsol', [])).toBe(false);
+    expect(hasRegistrationForMention('@sol', registrations)).toBe(true);
   });
 });
 

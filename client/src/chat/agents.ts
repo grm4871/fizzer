@@ -16,6 +16,11 @@ export const CHAT_AGENTS: Array<{ id: AgentId; label: string }> = [
   { id: 'omp', label: 'OMP' },
 ];
 
+/** Preserve authoritative in-memory members across a transient hydration error. */
+export function agentsAfterLoadFailure<T>(cached?: T[], legacy?: T[]): T[] {
+  return cached ?? legacy ?? [];
+}
+
 /**
  * Curated model presets shown in the agent picker.
  * Prefer ids known to work with the local CLI; dead ids (e.g. retired grok-build)
