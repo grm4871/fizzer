@@ -83,3 +83,10 @@ docker compose "${COMPOSE_ARGS[@]}" up -d
 wait_for_app 90
 docker compose "${COMPOSE_ARGS[@]}" ps
 echo "==> Deployed $(git rev-parse --short HEAD 2>/dev/null || echo unknown) (${CONTAINER_NAME})"
+
+# Drop untagged images left behind when cascade:latest is retagged, and trim
+# BuildKit cache older than 72h so deploys don't fill the disk again.
+echo "==> Pruning dangling images and old build cache"
+docker image prune -f >/dev/null || true
+docker builder prune -af --filter "until=72h" >/dev/null || true
+df -h / | awk 'NR==2 {printf "    Disk: %s used, %s free (%s)\n", $3, $4, $5}'
