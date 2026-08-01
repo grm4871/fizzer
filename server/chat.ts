@@ -35,6 +35,17 @@ export type ChatReplyRef = {
   preview: string;
 };
 
+/** Provenance stamped on a message copied into another channel ("forward"). */
+export type ChatForwardRef = {
+  /** Origin message id. Kept for tracing; the copy is independent of it. */
+  messageId: string;
+  /** Origin channel as the forwarder sees it (their local channel id). */
+  channelId: string;
+  channelName: string;
+  author: string;
+  createdAt: string;
+};
+
 export type ChatFileChange = { path: string; additions: number; deletions: number };
 export type ChatChangeRequest = {
   files: ChatFileChange[];
@@ -90,6 +101,8 @@ export type ChatMessage = {
   images?: string[];
   attachments?: Array<{ name: string; media_type: string; url: string }>;
   replyTo?: ChatReplyRef;
+  /** Set when this message was forwarded from another channel. */
+  forwardedFrom?: ChatForwardRef;
   changeRequest?: ChatChangeRequest;
 };
 
@@ -182,6 +195,7 @@ type ChatMessageRow = {
   images_json: string | null;
   attachments_json: string | null;
   reply_to_json: string | null;
+  forwarded_from_json: string | null;
   change_request_json: string | null;
 };
 
@@ -216,6 +230,7 @@ export function ensureChatSchema(db: Db): void {
       images_json TEXT,
       attachments_json TEXT,
       reply_to_json TEXT,
+      forwarded_from_json TEXT,
       change_request_json TEXT
     );
     CREATE INDEX IF NOT EXISTS chat_messages_channel_idx ON chat_messages(channel_id, created_at);
@@ -294,6 +309,9 @@ export function ensureChatSchema(db: Db): void {
   }
   if (!messageCols.some((col) => col.name === 'change_request_json')) {
     db.exec('ALTER TABLE chat_messages ADD COLUMN change_request_json TEXT');
+  }
+  if (!messageCols.some((col) => col.name === 'forwarded_from_json')) {
+    db.exec('ALTER TABLE chat_messages ADD COLUMN forwarded_from_json TEXT');
   }
   const memberCols = db.prepare("PRAGMA table_info(chat_agent_members)").all() as Array<{ name: string }>;
   if (!memberCols.some((col) => col.name === 'yolo')) {
@@ -946,6 +964,10 @@ function rowToMessage(row: ChatMessageRow & { has_harness?: number }, opts?: { d
       return replyTo ? { replyTo } : {};
     })(),
     ...(() => {
+      const forwardedFrom = parseJson<ChatForwardRef>(row.forwarded_from_json);
+      return forwardedFrom ? { forwardedFrom } : {};
+    })(),
+    ...(() => {
       const changeRequest = parseJson<ChatChangeRequest>(row.change_request_json);
       return changeRequest ? { changeRequest } : {};
     })(),
@@ -969,6 +991,7 @@ function messageToRow(vaultId: string, channelId: string, message: ChatMessage):
     images_json: serializeJson(message.images),
     attachments_json: serializeJson(message.attachments),
     reply_to_json: serializeJson(message.replyTo),
+    forwarded_from_json: serializeJson(message.forwardedFrom),
     change_request_json: serializeJson(message.changeRequest),
   };
 }
@@ -1104,7 +1127,8 @@ export function listChatMessages(
     : db.prepare(`
         SELECT id, channel_id, vault_id, author, body, created_at,
           status, agent_id, registration_id, run_id,
-          blocks_json, images_json, attachments_json, reply_to_json, change_request_json,
+          blocks_json, images_json, attachments_json, reply_to_json,
+          forwarded_from_json, change_request_json,
           rowid,
           CASE WHEN harness_log IS NOT NULL AND length(harness_log) > 0 THEN 1 ELSE 0 END AS has_harness
         FROM chat_messages
@@ -1278,6 +1302,60 @@ export function getChatMessage(
   };
 }
 
+/**
+ * Copy a message into another channel, Discord-style. The copy is a normal
+ * message authored by the forwarder (so it is theirs to edit/delete) carrying a
+ * `forwardedFrom` stamp for provenance. Body, images and attachments come
+ * along; run state, harness logs and change requests deliberately do not —
+ * those belong to the run in the origin channel.
+ */
+export function forwardChatMessage(
+  db: Db,
+  userId: number,
+  username: string,
+  input: {
+    fromVaultId: string;
+    fromChannelId: string;
+    messageId: string;
+    toVaultId: string;
+    toChannelId: string;
+    comment?: string;
+  },
+): ChatMessage {
+  const source = getChatMessage(db, input.fromChannelId, userId, input.messageId);
+  if (!source) throw new Error('Message not found');
+  // assertChatChannel throws when the target is not a chat channel the user can see.
+  const { route: target } = assertChatChannel(db, input.toChannelId, userId);
+  if (target.localVaultId !== input.toVaultId) throw new Error('Chat channel not found');
+  if (target.localChannelId === input.fromChannelId) {
+    throw new Error('Cannot forward a message into the same channel');
+  }
+
+  const originNote = getNote(db, input.fromChannelId);
+  const comment = String(input.comment ?? '').trim();
+  const body = comment ? `${comment}\n\n${source.body}` : source.body;
+  if (!body.trim() && !source.images?.length && !source.attachments?.length) {
+    throw new Error('Nothing to forward');
+  }
+
+  return createChatMessage(db, userId, input.toVaultId, input.toChannelId, {
+    id: crypto.randomUUID(),
+    channelId: input.toChannelId,
+    author: username,
+    body,
+    createdAt: new Date().toISOString(),
+    ...(source.images?.length ? { images: source.images } : {}),
+    ...(source.attachments?.length ? { attachments: source.attachments } : {}),
+    forwardedFrom: {
+      messageId: source.id,
+      channelId: input.fromChannelId,
+      channelName: originNote?.title || 'channel',
+      author: source.author,
+      createdAt: source.createdAt,
+    },
+  });
+}
+
 function hasRunOutput(message: ChatMessage): boolean {
   const body = message.body.trim();
   return body.length > 0 && body !== 'Thinking...';
@@ -1350,6 +1428,7 @@ function persistChatMessageRow(db: Db, vaultId: string, channelId: string, messa
       images_json = ?,
       attachments_json = ?,
       reply_to_json = ?,
+      forwarded_from_json = ?,
       change_request_json = ?
     WHERE id = ? AND channel_id = ?
   `).run(
@@ -1365,6 +1444,7 @@ function persistChatMessageRow(db: Db, vaultId: string, channelId: string, messa
     row.images_json,
     row.attachments_json,
     row.reply_to_json,
+    row.forwarded_from_json,
     row.change_request_json,
     message.id,
     channelId,
@@ -1525,8 +1605,9 @@ export function createChatMessage(
     INSERT INTO chat_messages (
       id, channel_id, vault_id, author, body, created_at,
       status, agent_id, registration_id, run_id,
-      blocks_json, harness_log, images_json, attachments_json, reply_to_json, change_request_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      blocks_json, harness_log, images_json, attachments_json, reply_to_json,
+      forwarded_from_json, change_request_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     row.id,
     row.channel_id,
@@ -1543,6 +1624,7 @@ export function createChatMessage(
     row.images_json,
     row.attachments_json,
     row.reply_to_json,
+    row.forwarded_from_json,
     row.change_request_json,
   );
 

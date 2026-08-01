@@ -99,6 +99,7 @@ import {
   createChatMessage,
   updateChatMessage,
   deleteChatMessage,
+  forwardChatMessage,
   approveChatChangeRequest,
   mergeChatChangeRequest,
   settleChatMessagesForRun,
@@ -274,6 +275,7 @@ db.exec(`
     is_pinned INTEGER NOT NULL DEFAULT 0,
     is_archived INTEGER NOT NULL DEFAULT 0,
     is_listed INTEGER NOT NULL DEFAULT 1,
+    position INTEGER NOT NULL DEFAULT 0,
     word_count INTEGER NOT NULL DEFAULT 0,
     created_by INTEGER NOT NULL REFERENCES users(id),
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -315,6 +317,29 @@ db.exec(`
 // ADD COLUMN IF NOT EXISTS, so inspect the schema before applying the migration.
 if (!(db.prepare("PRAGMA table_info(notes)").all() as { name: string }[]).some((column) => column.name === 'is_listed')) {
   db.exec('ALTER TABLE notes ADD COLUMN is_listed INTEGER NOT NULL DEFAULT 1');
+}
+
+// Sidebar order predates note positions. Preserve the order people were
+// already seeing on first migration, then let drag-and-drop own it from there.
+if (!(db.prepare("PRAGMA table_info(notes)").all() as { name: string }[]).some((column) => column.name === 'position')) {
+  db.exec('ALTER TABLE notes ADD COLUMN position INTEGER NOT NULL DEFAULT 0');
+  const rows = db.prepare(`
+    SELECT id, vault_id, folder_id
+    FROM notes
+    WHERE is_listed = 1
+    ORDER BY vault_id, folder_id, is_pinned DESC, updated_at DESC, id
+  `).all() as Array<{ id: string; vault_id: string; folder_id: string | null }>;
+  const positions = new Map<string, number>();
+  const update = db.prepare('UPDATE notes SET position = ? WHERE id = ?');
+  const backfill = db.transaction(() => {
+    for (const row of rows) {
+      const key = `${row.vault_id}:${row.folder_id ?? ''}`;
+      const position = positions.get(key) ?? 0;
+      update.run(position, row.id);
+      positions.set(key, position + 1);
+    }
+  });
+  backfill();
 }
 
 // FTS5 virtual table
@@ -1139,7 +1164,8 @@ app.post('/api/notes/:id/move', requireAuth, (req: AuthedRequest, res) => {
 
   try {
     const folderId = req.body.folder_id !== undefined ? (req.body.folder_id || null) : null;
-    moveNote(db, req.params.id, folderId);
+    const position = Number.isInteger(req.body.position) ? Number(req.body.position) : undefined;
+    moveNote(db, req.params.id, folderId, position);
     const note = getNote(db, req.params.id);
     emitVaultEvent(vault.id, 'vault:noteChanged', { noteId: req.params.id, vaultId: vault.id, title: note?.title ?? existing.title });
     res.json({ note: redactNoteForAgent(req, note) });
@@ -1723,6 +1749,14 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     || req.body?.chat?.lightweight === 1
     || req.body?.chat?.lightweight === '1'
     || req.body?.chat?.lightweight === 'true';
+  const chatContextNeeded = req.body?.chat?.contextNeeded === true
+    || req.body?.chat?.contextNeeded === 1
+    || req.body?.chat?.contextNeeded === '1'
+    || req.body?.chat?.contextNeeded === 'true';
+  const chatWorkspaceNeeded = req.body?.chat?.workspaceNeeded === true
+    || req.body?.chat?.workspaceNeeded === 1
+    || req.body?.chat?.workspaceNeeded === '1'
+    || req.body?.chat?.workspaceNeeded === 'true';
   const registrationId = typeof req.body?.registrationId === 'string' ? req.body.registrationId.trim() : '';
 
   // Resolve the run's execution context. A chat-agent ping always executes on the
@@ -1830,16 +1864,29 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
         })
       : undefined;
     const willResume = Boolean(resumeSessionId);
+    // Hermes already loads the cwd rules, native memory/profile, skills, and
+    // tool schemas. Re-injecting Cascade's general context on top made the same
+    // task materially larger than `hermes -z`. Keep the default path near CLI
+    // parity and add only the chat/workspace context the request actually needs.
+    const hermesChatParity = selectedAgent === 'hermes' && Boolean(targetChannelId);
+    const includeAppContract = !willResume && (!hermesChatParity || chatWorkspaceNeeded);
+    const includeWorkspace = Boolean(targetChannelId)
+      && !willResume
+      && (!hermesChatParity || chatWorkspaceNeeded);
+    const includeRecentChat = Boolean(targetChannelId)
+      && !willResume
+      && (!hermesChatParity || chatContextNeeded);
+    const includeCascadeMemory = !willResume && !chatLightweight && !hermesChatParity;
 
     let effectivePrompt = prompt;
     // The resumed CLI session already holds the stable Cascade capability
     // contract. Re-sending it on every turn wastes context and can make a
     // correctly resumed follow-up look like another cold system boot.
-    const contextChunks: string[] = willResume ? [] : [CASCADE_AGENT_APP_CONTEXT];
-    // Folder ancestry and nearby project docs are workspace state, not
-    // conversation history. Include them even when resuming an older CLI
-    // session so existing agents immediately pick up moves and new docs.
-    if (targetChannelId) {
+    const contextChunks: string[] = includeAppContract ? [CASCADE_AGENT_APP_CONTEXT] : [];
+    // A resumed session already has the prior workspace snapshot and can use
+    // cascade-note when fresh live state matters. Re-sending up to 4k chars on
+    // every steering turn was pure context multiplication.
+    if (includeWorkspace) {
       try {
         const workspace = buildAgentChannelWorkspaceContext(
           db,
@@ -1852,7 +1899,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     if (!willResume) {
       // Lightweight chat pings: tiny recent transcript only — skip memory
       // injection so simple multiuser replies don't pay a full cold-start.
-      if (targetChannelId) {
+      if (includeRecentChat) {
         try {
           const recent = buildAgentChatContext(
             listChatMessages(db, targetChannelId, runnerUserId, {
@@ -1864,7 +1911,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
           if (recent) contextChunks.push(`Recent channel context:\n${recent}`);
         } catch { /* best-effort context; the request still runs without it */ }
       }
-      if (!chatLightweight) {
+      if (includeCascadeMemory) {
         try {
           const channelTitle = targetChannelId
             ? (getNote(db, targetChannelId)?.title || '')
@@ -1935,6 +1982,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     const run = await startRun(db, runVault, note_id || null, effectivePrompt, selectedAgent, {
       conversationId: preliminaryConversationId,
       model: selectedModel,
+      sessionId: resumeSessionId,
     });
 
     // Server single-writer: create/link the running agent message before
@@ -2055,7 +2103,7 @@ app.post('/api/runs/:id/cancel', requireAuth, async (req: AuthedRequest, res) =>
   if (!vault) return res.status(403).json({ error: 'Access denied' });
 
   try {
-    const success = await cancelRun(db, run.id);
+    const success = await cancelRun(db, run.id, { steering: req.body?.steering === true });
     if (success) {
       for (const update of settleChatMessagesForRun(db, run.id)) {
         emitChatMessageEvent(update.vaultId, update.channelId, 'vault:chatMessageUpdated', update.message);
@@ -2193,6 +2241,41 @@ app.delete('/api/vaults/:vaultId/channels/:channelId/messages/:messageId', requi
     try { tombstoneChatMessageBacklinks(db, req.params.messageId); } catch { /* best-effort */ }
     emitChatMessageDeleted(route.sourceVaultId, route.sourceChannelId, req.params.messageId);
     res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+/** Forward a message into another channel (Discord-style). */
+app.post('/api/vaults/:vaultId/channels/:channelId/messages/:messageId/forward', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const toChannelId = String(req.body?.targetChannelId || '').trim();
+    if (!toChannelId) return res.status(400).json({ error: 'targetChannelId is required' });
+    const toVaultId = String(req.body?.targetVaultId || '').trim() || req.params.vaultId;
+
+    const message = forwardChatMessage(db, req.user!.id, req.user!.username, {
+      fromVaultId: req.params.vaultId,
+      fromChannelId: req.params.channelId,
+      messageId: req.params.messageId,
+      toVaultId,
+      toChannelId,
+      comment: typeof req.body?.comment === 'string' ? req.body.comment : undefined,
+    });
+
+    const { route } = assertChatChannel(db, toChannelId, req.user!.id);
+    refreshChatNoteGrants(req.user!.id, toVaultId, route.sourceChannelId, message);
+    try {
+      indexChatMessageBacklinks(db, route.sourceVaultId, route.sourceChannelId, {
+        id: message.id,
+        author: message.author,
+        body: message.body,
+        createdAt: message.createdAt,
+      });
+    } catch (error) {
+      console.warn('chat backlink index skipped:', error instanceof Error ? error.message : error);
+    }
+    emitChatMessageEvent(route.sourceVaultId, route.sourceChannelId, 'vault:chatMessageCreated', message);
+    res.status(201).json({ message });
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
   }

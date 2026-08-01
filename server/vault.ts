@@ -48,6 +48,7 @@ export type NoteSummary = {
   is_pinned: number;
   is_archived: number;
   is_listed: number;
+  position: number;
   word_count: number;
   created_at: string;
   updated_at: string;
@@ -311,7 +312,10 @@ export function updateFolder(db: Db, folderId: string, opts: { name?: string; pa
 
   const name = opts.name !== undefined ? String(opts.name).trim() || folder.name : folder.name;
   const parentId = opts.parent_id !== undefined ? opts.parent_id : folder.parent_id;
-  const position = opts.position !== undefined ? opts.position : folder.position;
+  const requestedPosition = opts.position !== undefined && Number.isFinite(opts.position)
+    ? Math.max(0, Math.trunc(opts.position))
+    : undefined;
+  const position = requestedPosition ?? folder.position;
 
   if (parentId) {
     if (parentId === folderId) throw new Error('Cannot move a folder into itself');
@@ -323,6 +327,36 @@ export function updateFolder(db: Db, folderId: string, opts: { name?: string; pa
   db.prepare(
     'UPDATE folders SET name = ?, parent_id = ?, position = ? WHERE id = ?'
   ).run(name, parentId, position, folderId);
+
+  // Positions are dense within each parent. This makes repeated same-parent
+  // moves deterministic and prevents duplicate positions from falling back to
+  // alphabetical order after a reload.
+  if (parentId !== folder.parent_id || requestedPosition !== undefined) {
+    const targetIds = (db.prepare(`
+      SELECT id FROM folders
+      WHERE vault_id = ? AND parent_id IS ? AND id != ?
+      ORDER BY position ASC, name ASC, id ASC
+    `).all(folder.vault_id, parentId, folderId) as Array<{ id: string }>).map((row) => row.id);
+    const insertAt = requestedPosition === undefined
+      ? targetIds.length
+      : Math.min(requestedPosition, targetIds.length);
+    targetIds.splice(insertAt, 0, folderId);
+
+    const updatePosition = db.prepare('UPDATE folders SET position = ? WHERE id = ?');
+    const resequence = db.transaction((ids: string[]) => {
+      ids.forEach((id, index) => updatePosition.run(index, id));
+    });
+    resequence(targetIds);
+
+    if (folder.parent_id !== parentId) {
+      const sourceIds = (db.prepare(`
+        SELECT id FROM folders
+        WHERE vault_id = ? AND parent_id IS ?
+        ORDER BY position ASC, name ASC, id ASC
+      `).all(folder.vault_id, folder.parent_id) as Array<{ id: string }>).map((row) => row.id);
+      resequence(sourceIds);
+    }
+  }
 
   // Rename directory on disk if path changed
   const newPath = getFolderPath(vault, db, folderId);
@@ -367,7 +401,7 @@ export function deleteFolder(db: Db, folderId: string): void {
 export function listNotes(db: Db, vaultId: string, opts?: { folder_id?: string; is_archived?: boolean; tag?: string; title?: string; title_contains?: string }): NoteSummary[] {
   let sql = `
     SELECT n.id, n.vault_id, n.folder_id, n.title, n.content_preview,
-           n.is_pinned, n.is_archived, n.is_listed, n.word_count, n.created_at, n.updated_at
+           n.is_pinned, n.is_archived, n.is_listed, n.position, n.word_count, n.created_at, n.updated_at
     FROM notes n
     WHERE n.vault_id = ?
   `;
@@ -419,7 +453,7 @@ export function listNotes(db: Db, vaultId: string, opts?: { folder_id?: string; 
 export function getNote(db: Db, noteId: string): Note | undefined {
   const row = db.prepare(`
     SELECT id, vault_id, folder_id, title, content_preview,
-           is_pinned, is_archived, is_listed, word_count, created_at, updated_at
+           is_pinned, is_archived, is_listed, position, word_count, created_at, updated_at
     FROM notes WHERE id = ?
   `).get(noteId) as Omit<NoteSummary, 'tags'> | undefined;
   if (!row) return undefined;
@@ -459,6 +493,12 @@ export function createNote(db: Db, vaultId: string, userId: number, opts: { id?:
   const content = rawContent.replace(/\\+`/g, '`');
   const folderId = opts.folder_id || null;
   const isListed = opts.is_listed === false ? 0 : 1;
+  const nextPosition = isListed
+    ? (db.prepare(`
+        SELECT COALESCE(MAX(position), -1) + 1 AS next
+        FROM notes WHERE vault_id = ? AND folder_id IS ? AND is_listed = 1
+      `).get(vaultId, folderId) as { next: number }).next
+    : 0;
   const preview = makePreview(content);
   const wc = wordCount(content);
 
@@ -485,9 +525,9 @@ export function createNote(db: Db, vaultId: string, userId: number, opts: { id?:
 
   // Insert DB row
   db.prepare(`
-    INSERT INTO notes (id, vault_id, folder_id, title, content, content_preview, is_pinned, is_archived, is_listed, word_count, created_by)
-    VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?)
-  `).run(id, vaultId, folderId, title, content, preview, isListed, wc, userId);
+    INSERT INTO notes (id, vault_id, folder_id, title, content, content_preview, is_pinned, is_archived, is_listed, position, word_count, created_by)
+    VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?)
+  `).run(id, vaultId, folderId, title, content, preview, isListed, nextPosition, wc, userId);
 
   // Index links
   reIndexLinks(db, id, vaultId, content);
@@ -594,16 +634,53 @@ export function deleteNote(db: Db, noteId: string): void {
   db.prepare('DELETE FROM notes WHERE id = ?').run(noteId);
 }
 
-export function moveNote(db: Db, noteId: string, folderId: string | null): void {
+export function moveNote(db: Db, noteId: string, folderId: string | null, requestedPosition?: number): void {
   const note = db.prepare('SELECT * FROM notes WHERE id = ?').get(noteId) as {
-    id: string; vault_id: string; folder_id: string | null; title: string;
+    id: string; vault_id: string; folder_id: string | null; title: string; is_listed: number;
   } | undefined;
   if (!note) throw new Error('Note not found');
+
+  if (folderId) {
+    const folder = db.prepare('SELECT vault_id FROM folders WHERE id = ?').get(folderId) as { vault_id: string } | undefined;
+    if (!folder || folder.vault_id !== note.vault_id) throw new Error('Folder not found');
+  }
 
   const oldPath = resolveNotePath(db, noteId);
 
   // A move into the visible tree is also the explicit "list this note" action.
-  db.prepare('UPDATE notes SET folder_id = ?, is_listed = 1, updated_at = datetime(\'now\') WHERE id = ?').run(folderId, noteId);
+  const targetIds = (db.prepare(`
+    SELECT id FROM notes
+    WHERE vault_id = ? AND folder_id IS ? AND is_listed = 1 AND id != ?
+    ORDER BY position ASC, updated_at DESC, id ASC
+  `).all(note.vault_id, folderId, noteId) as Array<{ id: string }>).map((row) => row.id);
+  const position = requestedPosition === undefined || !Number.isFinite(requestedPosition)
+    ? (note.is_listed && note.folder_id === folderId
+        ? Math.min((db.prepare('SELECT position FROM notes WHERE id = ?').get(noteId) as { position: number }).position, targetIds.length)
+        : targetIds.length)
+    : Math.max(0, Math.min(Math.trunc(requestedPosition), targetIds.length));
+  targetIds.splice(position, 0, noteId);
+
+  const updatePosition = db.prepare('UPDATE notes SET position = ? WHERE id = ?');
+  const resequence = db.transaction((ids: string[]) => {
+    ids.forEach((id, index) => updatePosition.run(index, id));
+  });
+
+  db.prepare(`
+    UPDATE notes
+    SET folder_id = ?, is_listed = 1, position = ?,
+        updated_at = CASE WHEN folder_id IS NOT ? OR is_listed = 0 THEN datetime('now') ELSE updated_at END
+    WHERE id = ?
+  `).run(folderId, position, folderId, noteId);
+  resequence(targetIds);
+
+  if (note.is_listed && note.folder_id !== folderId) {
+    const sourceIds = (db.prepare(`
+      SELECT id FROM notes
+      WHERE vault_id = ? AND folder_id IS ? AND is_listed = 1
+      ORDER BY position ASC, updated_at DESC, id ASC
+    `).all(note.vault_id, note.folder_id) as Array<{ id: string }>).map((row) => row.id);
+    resequence(sourceIds);
+  }
 
   const newPath = resolveNotePath(db, noteId);
 
@@ -829,10 +906,14 @@ export function rescanVault(db: Db, vaultId: string, userId: number): void {
       }
     } else {
       const noteId = crypto.randomUUID();
+      const nextPosition = (db.prepare(`
+        SELECT COALESCE(MAX(position), -1) + 1 AS next
+        FROM notes WHERE vault_id = ? AND folder_id IS ? AND is_listed = 1
+      `).get(vaultId, folderId) as { next: number }).next;
       db.prepare(`
-        INSERT INTO notes (id, vault_id, folder_id, title, content, content_preview, is_pinned, is_archived, word_count, created_by)
-        VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?)
-      `).run(noteId, vaultId, folderId, title, content, preview, wc, userId);
+        INSERT INTO notes (id, vault_id, folder_id, title, content, content_preview, is_pinned, is_archived, position, word_count, created_by)
+        VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?)
+      `).run(noteId, vaultId, folderId, title, content, preview, nextPosition, wc, userId);
       reIndexLinks(db, noteId, vaultId, content);
     }
   }

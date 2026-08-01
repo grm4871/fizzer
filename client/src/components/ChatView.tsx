@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { Bot, Copy, Hash, ImagePlus, Paperclip, Plus, Reply, Send, Square, Trash2, X } from 'lucide-react';
+import { Bot, Copy, Forward, Hash, ImagePlus, Paperclip, Plus, Reply, Send, Square, Trash2, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
@@ -54,6 +54,15 @@ export interface ChatReplyRef {
   preview: string;
 }
 
+/** Provenance stamped on a message forwarded in from another channel. */
+export interface ChatForwardRef {
+  messageId: string;
+  channelId: string;
+  channelName: string;
+  author: string;
+  createdAt: string;
+}
+
 export interface ChatMessage {
   id: string;
   channelId: string;
@@ -78,6 +87,7 @@ export interface ChatMessage {
   images?: string[];
   attachments?: Array<{ name: string; media_type: string; url: string }>;
   replyTo?: ChatReplyRef;
+  forwardedFrom?: ChatForwardRef;
   changeRequest?: {
     files: Array<{ path: string; additions: number; deletions: number }>;
     commit?: string;
@@ -221,6 +231,8 @@ interface ChatViewProps {
   onSendMessage: (channelId: string, body: string, media?: ChatMediaAttachment[], replyTo?: ChatReplyRef) => void;
   /** Delete a message for everyone (own messages, or any when you host the channel). */
   onDeleteMessage?: (channelId: string, messageId: string) => Promise<void> | void;
+  /** Copy a message into another channel. Resolves once the copy is posted. */
+  onForwardMessage?: (channelId: string, messageId: string, targetChannelId: string) => Promise<void>;
   onCancelRun: (runId: number) => void;
   notes?: NoteSummary[];
   onOpenNote?: (id: string) => void;
@@ -231,6 +243,10 @@ interface ChatViewProps {
   vaultId?: string;
   /** Merge a full message (e.g. harness log) after expand-fetch. */
   onHydrateMessage?: (message: ChatMessage) => void;
+  /** When set, scroll to and highlight this message once it's in the list (e.g. from search). */
+  jumpToMessageId?: string;
+  /** Called after a jump target has been consumed so the parent can clear it. */
+  onJumpHandled?: () => void;
 }
 
 // Stable fallback: an inline `= []` default would mint a new identity every
@@ -574,6 +590,8 @@ export function canMergeChatMessages(a: ChatMessage, b: ChatMessage) {
   if (!canGroupChatMessages(a, b)) return false;
   if (a.status === 'running' || b.status === 'running') return false;
   if (a.replyTo || b.replyTo) return false;
+  // A forward carries its own provenance banner; merging would hide it.
+  if (a.forwardedFrom || b.forwardedFrom) return false;
   if ((a.images?.length ?? 0) > 0 || (b.images?.length ?? 0) > 0) return false;
   if ((a.attachments?.length ?? 0) > 0 || (b.attachments?.length ?? 0) > 0) return false;
   return true;
@@ -714,12 +732,14 @@ function SwipeToReply({
   onReply,
   children,
   className = '',
+  messageId,
   onClick,
   onContextMenu,
 }: {
   onReply: () => void;
   children: ReactNode;
   className?: string;
+  messageId?: string;
   onClick?: () => void;
   onContextMenu?: (event: React.MouseEvent) => void;
 }) {
@@ -836,6 +856,7 @@ function SwipeToReply({
     <div
       ref={rootRef}
       className={`chat-swipe-row ${className}`}
+      data-message-id={messageId}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={finish}
@@ -990,6 +1011,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
               return (
                 <SwipeToReply
                   key={message.id}
+                  messageId={message.id}
                   className={`chat-message-chunk ${isTappable ? 'has-run-widget' : ''} ${selected ? 'selected' : ''}`}
                   onReply={() => onReply(message)}
                   onClick={() => {
@@ -1002,6 +1024,16 @@ const ChatGroupRow = memo(function ChatGroupRow({
                       <Reply size={12} />
                       <strong>{message.replyTo.author}</strong>
                       <span>{message.replyTo.preview}</span>
+                    </div>
+                  )}
+                  {message.forwardedFrom && (
+                    <div className="chat-forward-quote">
+                      <Forward size={12} />
+                      <span>
+                        Forwarded from <strong>#{message.forwardedFrom.channelName}</strong>
+                        {' · '}
+                        {message.forwardedFrom.author}
+                      </span>
                     </div>
                   )}
                   {steeringPromptLabels.has(message.id) && (
@@ -1044,7 +1076,9 @@ const ChatGroupRow = memo(function ChatGroupRow({
                       ))}
                     </div>
                   )}
-                  {message.body && <ChatMessageText messageId={message.id} body={message.body} mentionableAliases={mentionableAliases} notes={notes} onOpenNote={onOpenNote} onOpenSharedNote={onOpenSharedNote} />}
+                  {message.body
+                    && !(message.status === 'running' && /^Thinking(?:\.{3}|…)$/.test(message.body.trim()))
+                    && <ChatMessageText messageId={message.id} body={message.body} mentionableAliases={mentionableAliases} notes={notes} onOpenNote={onOpenNote} onOpenSharedNote={onOpenSharedNote} />}
                   {message.changeRequest && (
                     <div className="chat-change-request">
                       <div className="chat-change-files">
@@ -1147,6 +1181,7 @@ export const ChatView = memo(function ChatView({
   onLeaveChannel,
   onSendMessage,
   onDeleteMessage,
+  onForwardMessage,
   onCancelRun,
   notes = EMPTY_NOTES,
   onOpenNote,
@@ -1155,6 +1190,8 @@ export const ChatView = memo(function ChatView({
   onMembersOpenChange,
   vaultId,
   onHydrateMessage,
+  jumpToMessageId,
+  onJumpHandled,
 }: ChatViewProps) {
   const [draft, setDraft] = useState('');
   const [usersCollapsedLocal, setUsersCollapsedLocal] = useState(() =>
@@ -1491,6 +1528,43 @@ export const ChatView = memo(function ChatView({
     scrollToBottomIfSticky();
   }, [sortedMessages.length, channelId, scrollToBottom, scrollToBottomIfSticky]);
 
+  // Jump to a specific message (e.g. clicked from search). Waits until the
+  // target is in this channel's list, force-mounts + highlights its group via
+  // the selection state, then scrolls it to center. Auto-pin-to-bottom is
+  // suppressed so the freshly-opened channel doesn't yank us back down.
+  const jumpHandledRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!jumpToMessageId) { jumpHandledRef.current = null; return; }
+    if (jumpHandledRef.current === jumpToMessageId) return;
+    if (!sortedMessages.some((message) => message.id === jumpToMessageId)) return;
+    jumpHandledRef.current = jumpToMessageId;
+    setSelectedMessageId(jumpToMessageId);
+    wasAtBottomRef.current = false;
+    userScrollQuietUntilRef.current = performance.now() + 1200;
+    const targetId = jumpToMessageId;
+    const scrollToTarget = () => {
+      const scroller = messagesRef.current;
+      if (!scroller) return false;
+      const selector = `[data-message-id="${(window.CSS?.escape ?? String)(targetId)}"]`;
+      const el = scroller.querySelector<HTMLElement>(selector);
+      if (!el) return false;
+      el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      return true;
+    };
+    // The group may still be mounting from its offscreen placeholder; retry a
+    // few frames so scrollIntoView runs against the settled layout.
+    let tries = 0;
+    let timer = 0;
+    const tick = () => {
+      const done = scrollToTarget();
+      tries += 1;
+      if (!done || tries < 4) timer = window.setTimeout(tick, 90);
+    };
+    const raf = requestAnimationFrame(tick);
+    onJumpHandled?.();
+    return () => { cancelAnimationFrame(raf); if (timer) clearTimeout(timer); };
+  }, [jumpToMessageId, sortedMessages, onJumpHandled]);
+
   // Keep a bottom-following chat pinned when either its content grows or the
   // viewport shrinks (for example, when the reply banner mounts above the
   // composer). Watching content alone leaves the last rows below the fold.
@@ -1714,6 +1788,43 @@ export const ChatView = memo(function ChatView({
     setDeleteArmed(false);
     setContextMenu({ x: event.clientX, y: event.clientY, message });
   }, []);
+
+  /** Message queued for forwarding; drives the channel picker overlay. */
+  const [forwardSource, setForwardSource] = useState<ChatMessage | null>(null);
+  const [forwardQuery, setForwardQuery] = useState('');
+  const [forwardError, setForwardError] = useState('');
+  const [forwardingTo, setForwardingTo] = useState<string | null>(null);
+
+  /** Chat channels in this vault, minus the one we are already reading. */
+  const forwardTargets = useMemo(() => {
+    const query = forwardQuery.trim().toLowerCase();
+    return notes
+      .filter((note) => note.content_preview.trim().startsWith(CHAT_NOTE_MARKER))
+      .filter((note) => note.id !== channelId)
+      .filter((note) => !query || note.title.toLowerCase().includes(query))
+      .slice(0, 50);
+  }, [notes, channelId, forwardQuery]);
+
+  const startForward = useCallback((message: ChatMessage) => {
+    setContextMenu(null);
+    setForwardQuery('');
+    setForwardError('');
+    setForwardSource(message);
+  }, []);
+
+  const forwardTo = useCallback(async (targetChannelId: string) => {
+    if (!forwardSource || !onForwardMessage) return;
+    setForwardingTo(targetChannelId);
+    setForwardError('');
+    try {
+      await onForwardMessage(forwardSource.channelId || channelId, forwardSource.id, targetChannelId);
+      setForwardSource(null);
+    } catch (error) {
+      setForwardError(error instanceof Error ? error.message : 'Could not forward message');
+    } finally {
+      setForwardingTo(null);
+    }
+  }, [forwardSource, onForwardMessage, channelId]);
 
   const deleteMessage = useCallback((message: ChatMessage) => {
     setContextMenu(null);
@@ -2229,6 +2340,12 @@ export const ChatView = memo(function ChatView({
             <Reply size={14} />
             Reply
           </button>
+          {onForwardMessage && (
+            <button type="button" onClick={() => startForward(contextMenu.message)}>
+              <Forward size={14} />
+              Forward
+            </button>
+          )}
           {onDeleteMessage && (
             <button
               type="button"
@@ -2640,6 +2757,59 @@ export const ChatView = memo(function ChatView({
           </>
         )}
       </aside>
+
+      {forwardSource && (
+        <div
+          className="chat-forward-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Forward message"
+          onClick={() => setForwardSource(null)}
+        >
+          <div className="chat-forward-panel" onClick={(event) => event.stopPropagation()}>
+            <div className="chat-forward-head">
+              <strong>Forward message</strong>
+              <button type="button" title="Cancel" onClick={() => setForwardSource(null)}>
+                <X size={14} />
+              </button>
+            </div>
+            <div className="chat-forward-preview">
+              <strong>{forwardSource.author}</strong>
+              <span>{buildReplyPreview(forwardSource)}</span>
+            </div>
+            <input
+              className="chat-forward-search"
+              value={forwardQuery}
+              autoFocus
+              placeholder="Search channels…"
+              onChange={(event) => setForwardQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') setForwardSource(null);
+                if (event.key === 'Enter' && forwardTargets[0]) void forwardTo(forwardTargets[0].id);
+              }}
+            />
+            <div className="chat-forward-list">
+              {forwardTargets.length === 0 && (
+                <div className="chat-forward-empty">No other channels</div>
+              )}
+              {forwardTargets.map((target) => (
+                <button
+                  key={target.id}
+                  type="button"
+                  className="chat-forward-target"
+                  disabled={forwardingTo !== null}
+                  onClick={() => void forwardTo(target.id)}
+                >
+                  <Hash size={13} />
+                  <span>{target.title}</span>
+                  {forwardingTo === target.id && <em>sending…</em>}
+                </button>
+              ))}
+            </div>
+            {forwardError && <div className="chat-forward-error">{forwardError}</div>}
+          </div>
+        </div>
+      )}
 
       {lightboxSrc && (
         <div

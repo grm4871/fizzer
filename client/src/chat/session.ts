@@ -177,6 +177,12 @@ export function readLegacyLocalChatMessages(): Record<string, ChatMessage[]> {
             typeof message.replyTo.preview === 'string'
             ? message.replyTo
             : undefined,
+          forwardedFrom: message.forwardedFrom &&
+            typeof message.forwardedFrom === 'object' &&
+            typeof message.forwardedFrom.channelName === 'string' &&
+            typeof message.forwardedFrom.author === 'string'
+            ? message.forwardedFrom
+            : undefined,
         }));
     }
     return messagesByChannel;
