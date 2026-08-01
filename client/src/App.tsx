@@ -2947,13 +2947,13 @@ export default function App() {
             onResize={handleResizeSplit}
             onCreateNote={handleCreateNoteInPane}
             onCreateChat={handleCreateChatInPane}
+            onOpenSuperkanban={openSuperkanban}
             onDetachTab={handleDetachTab}
             sidebarOpen={sidebarOpen}
             onToggleSidebar={() => {
               setSidebarOpen((open) => {
                 const next = !open;
                 if (next && isMobileViewport()) setChatMembersOpen(false);
-            onOpenSuperkanban={openSuperkanban}
                 return next;
               });
             }}

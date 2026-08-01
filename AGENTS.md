@@ -10,12 +10,31 @@ Do **not** treat TypeScript or `vite build` success as done. Before finishing an
 4. After **renaming or removing** a function/hook, grep the repo and `client/dist` for stale references before deploy.
 5. If runtime verification is not possible, say so explicitly and list the exact checks you ran instead (build output, grep, tests).
 
+## The client bundle is not type-checked — verify the served bundle
+
+`npm run build:client` is plain `vite build` (esbuild transform, **no** typecheck), and the root `tsc` excludes `client/`. Nothing in CI type-checks `client/src`. `npx tsc --noEmit -p client/tsconfig.json` currently reports ~12 pre-existing errors, so it cannot simply be wired into the build yet.
+
+Consequence: a misplaced JSX attribute compiles and deploys silently. A prop written **inside** a callback body instead of beside its siblings becomes an assignment statement, the component renders without the prop, and the feature is invisible in production while working perfectly on the branch (this is exactly how the Superkanban `+` menu item shipped missing).
+
+So when a UI feature is "missing in prod but works locally", do not stop at "stale client":
+
+- Fetch what the site actually serves and grep it: `curl -s https://cscd.online/app | grep -o 'assets/main-[A-Za-z0-9_-]*\.js'`, then `curl -s https://cscd.online/assets/main-XXXX.js` and grep for the feature string **and its call site** (prop names survive minification — `grep -o '.\{120\}onOpenSuperkanban.\{160\}'`).
+- Compare the deployed JSX call site against `git show origin/master:<file>`. A prop present in the working tree but absent (or misplaced) on `origin/master` means an uncommitted local fix, not a caching problem.
+
+## GitHub CLI
+
+`gh` is installed and authenticated (account `grm4871`; scopes `repo`, `workflow`, `gist`, `read:org`). Use it instead of guessing at deploy state:
+
+- `gh run list --limit 5` — recent Deploy Production runs with status, commit subject, and duration.
+- `gh run view <id> --log-failed` — the failing step's log.
+- `gh run watch <id>` — block until a deploy finishes.
+
 ## Deploying changes
 
 Production deploys use the same GitHub Actions → SSH pattern as Simcluster.
 
 1. **Commit and push** to `master`. That triggers `.github/workflows/deploy.yml`, which SSHs to the host, `git fetch`/`reset --hard origin/master`, and runs `deploy/remote-update.sh` (docker compose build + up + health check).
-2. **Wait for the Actions run** (do not assume push means live). Prefer the Actions UI, or on the host: `docker compose -f /var/www/cascade-browser/docker-compose.yml ps` and `curl -sf http://127.0.0.1:3000/api/health`. Confirm the expected commit (`git -C /var/www/cascade-browser rev-parse --short HEAD`) before claiming ship.
+2. **Wait for the Actions run** (do not assume push means live) — `gh run watch`, or on the host: `docker compose -f /var/www/cascade-browser/docker-compose.yml ps` and `curl -sf http://127.0.0.1:3000/api/health`. Confirm the expected commit (`git -C /var/www/cascade-browser rev-parse --short HEAD`) before claiming ship. A green deploy only proves the bundle built — for a UI change, also grep the served bundle (above).
 3. First-time host bootstrap (nginx, certbot, `.env`) remains `deploy/deploy.sh <domain>` — not used for routine releases. Required Actions secrets (same names as Simcluster): `DEPLOY_SSH_KEY`, `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_PORT`.
 
 ### When a deployment fails
