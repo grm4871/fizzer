@@ -1745,10 +1745,6 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
   const triggeringMessageId = typeof req.body?.chat?.triggeringMessageId === 'string'
     ? req.body.chat.triggeringMessageId.trim()
     : '';
-  const chatLightweight = req.body?.chat?.lightweight === true
-    || req.body?.chat?.lightweight === 1
-    || req.body?.chat?.lightweight === '1'
-    || req.body?.chat?.lightweight === 'true';
   const chatContextNeeded = req.body?.chat?.contextNeeded === true
     || req.body?.chat?.contextNeeded === 1
     || req.body?.chat?.contextNeeded === '1'
@@ -1876,7 +1872,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     const includeRecentChat = Boolean(targetChannelId)
       && !willResume
       && (!hermesChatParity || chatContextNeeded);
-    const includeCascadeMemory = !willResume && !chatLightweight && !hermesChatParity;
+    const includeCascadeMemory = !willResume && !hermesChatParity;
 
     let effectivePrompt = prompt;
     // The resumed CLI session already holds the stable Cascade capability
@@ -1891,22 +1887,20 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
         const workspace = buildAgentChannelWorkspaceContext(
           db,
           targetChannelId,
-          chatLightweight ? 1_200 : 4_000,
+          4_000,
         );
         if (workspace) contextChunks.push(workspace);
       } catch { /* best-effort context; the request still runs without it */ }
     }
     if (!willResume) {
-      // Lightweight chat pings: tiny recent transcript only — skip memory
-      // injection so simple multiuser replies don't pay a full cold-start.
       if (includeRecentChat) {
         try {
           const recent = buildAgentChatContext(
             listChatMessages(db, targetChannelId, runnerUserId, {
-              limit: chatLightweight ? 12 : 24,
+              limit: 24,
             }),
             [chatMessageId, triggeringMessageId],
-            chatLightweight ? 5 : 8,
+            8,
           );
           if (recent) contextChunks.push(`Recent channel context:\n${recent}`);
         } catch { /* best-effort context; the request still runs without it */ }

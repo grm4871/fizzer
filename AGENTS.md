@@ -1,5 +1,9 @@
 # Agent Instructions
 
+## Release matrix
+
+Use [docs/release-matrix.md](docs/release-matrix.md) for changes being shipped. Run its baseline for every production release, then the rows matching the affected client, agent, desktop, mobile, persistence, or deployment boundaries. Report any applicable row that could not be exercised.
+
 ## Frontend / Electron renderer — mandatory runtime check
 
 Do **not** treat TypeScript or `vite build` success as done. Before finishing any frontend or Electron renderer change:

@@ -71,7 +71,7 @@ A chat run may combine:
 2. the current user request;
 3. current workspace ancestry and project context;
 4. recent channel messages on a cold start;
-5. bounded memory and scratchpad recall for non-lightweight cold starts.
+5. bounded memory and scratchpad recall for cold starts.
 
 Stable application capability context is not re-sent to a resumed session.
 Private note blocks are redacted after all context assembly and immediately

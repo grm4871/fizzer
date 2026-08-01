@@ -35,9 +35,9 @@ const CLAUDE_AGENT_CONTEXT = 'You are a local workspace assistant. This checkout
 // chat collapses step narration into a trace disclosure, so the actual message
 // should be short. Detailed reasoning belongs in thinking, not the reply.
 const CHAT_BREVITY_CONTEXT =
-  'Shared multiuser chat — match human chat speed, but resolve the user\'s actual intent before choosing the fast path. '
+  'Shared multiuser chat — match human chat speed, but resolve the user\'s actual intent before replying. '
   + 'Short or context-dependent messages can still request real work; complete that work before replying. '
-  + 'For genuine conversation or Q&A, return one short direct final answer with no tools. '
+  + 'For genuine conversation or Q&A, return a concise direct final answer. '
   + 'Return the final answer normally; keep progress in the run trace instead of posting separate chat messages. '
   + 'Do not confuse a mentioned @handle with the message author. Do not invent multi-step plans for questions you can answer immediately.';
 

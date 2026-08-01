@@ -42,7 +42,6 @@ import {
   agentLabel,
   CHAT_AGENTS,
   formatAgentChatPrompt,
-  isLightweightChatRequest,
   mergeAgentModelPresets,
   needsCascadeWorkspaceContext,
   needsRecentChatContext,
@@ -1666,8 +1665,6 @@ export default function App() {
             messageId: agentMessageId,
             triggeringMessageId: triggeringMessage.id,
             author: registration.displayName || agentLabel(agentId),
-            // Server skips heavy memory injection for simple pings.
-            lightweight: isLightweightChatRequest(prompt),
             // Hermes already has a large native agent prompt. Only pay for
             // Cascade-specific context when the request genuinely depends on it.
             contextNeeded: needsRecentChatContext(prompt),

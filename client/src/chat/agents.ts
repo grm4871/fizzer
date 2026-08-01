@@ -197,40 +197,6 @@ export type AgentPromptRegistration = {
   contextPrompt: string;
 };
 
-/**
- * Heuristic: short social / Q&A pings that should not launch a full agent
- * investigation (no tools, no history fetch, no long plan).
- * Intentionally conservative — anything that looks like engineering work returns false.
- */
-export function isLightweightChatRequest(request: string): boolean {
-  const t = String(request || '').trim();
-  if (!t) return true;
-  if (t.length > 320) return false;
-  // Multi-line task briefs / code dumps
-  if ((t.match(/\n/g) || []).length >= 4) return false;
-  if (/```/.test(t)) return false;
-  if (/\/[\w./-]+\.(ts|tsx|js|jsx|cjs|mjs|py|go|rs|java|kt|md|json|yml|yaml|toml|c|cpp|h)\b/i.test(t)) return false;
-  // Requests to change, inspect, or operate something need the full task prompt,
-  // even when phrased conversationally ("can you make that happen?"). Short
-  // wording is not evidence that the requested work itself is lightweight.
-  if (/\b(fix|implement|refactor|debug|add|remove|delete|hide|show|change|update|rewrite|replace|swap|move|rename|build|create|make|test|verify|check|inspect|investigate|retry|try again|ping|commit|push|ship|rebase|merge conflict|stack trace|typeerror|regression|broke|broken|not working|stopped working|fail(?:s|ed|ing)?|write (a |the )?test|pull request)\b/i.test(t)) {
-    return false;
-  }
-  // Context-dependent imperatives are especially dangerous on the fast path:
-  // the agent must first resolve what "this/that/it" refers to from the thread.
-  if (/\b(do (this|that|it)( here)?|make (this|that|it) happen|go ahead|give it another (try|shot))\b/i.test(t)) {
-    return false;
-  }
-  if (/\b(?:does(?:n't| not)|won't|will not)\s+work\b/i.test(t)) return false;
-  if (/\b(please\s+)?deploy(\s+(this|it|to|now|the|please)|\s*$)/i.test(t) && !/\b(is|was|are|the)\s+deploy\b/i.test(t)) {
-    return false;
-  }
-  if (/\b(grep|search the|look through|investigate|dig into|figure out why)\b/i.test(t) && t.length > 60) {
-    return false;
-  }
-  return true;
-}
-
 /** True only when the request cannot stand on its own after reply/batch folding. */
 export function needsRecentChatContext(request: string): boolean {
   const text = String(request || '').trim();
@@ -261,7 +227,6 @@ export function formatAgentChatPrompt(
   const selfAgent = CHAT_AGENTS.find((candidate) => candidate.id === registration.agentId);
   const selfHandle = registration.mention || registration.agentId;
   const selfName = registration.displayName || selfAgent?.label || registration.agentId;
-  const light = isLightweightChatRequest(request);
   const nativeScratchpad = registration.agentId === 'akron-grok';
   const compactNativeCli = registration.agentId === 'hermes' || registration.agentId === 'omp';
 
@@ -273,31 +238,18 @@ export function formatAgentChatPrompt(
 
   if (continuation) {
     if (compactNativeCli) {
-      const header = light
-        ? `Cascade #${channelName}: you are @${selfHandle}, replying to ${triggeringAuthor}. Answer briefly.`
-        : `Cascade #${channelName}: you are @${selfHandle}, replying to ${triggeringAuthor}. Complete and verify the request, then give a concise final answer. Keep progress in the run trace.`;
+      const header = `Cascade #${channelName}: you are @${selfHandle}, replying to ${triggeringAuthor}. Complete and verify the request, then give a concise final answer. Keep progress in the run trace.`;
       return `${header}\n\n${request}`;
     }
-    const header = light
-      ? `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. Resolve references from the conversation already in your session. For genuine conversation or Q&A, reply directly with one short final answer and no tools. If it requests real work, complete it first. Do not confuse a mentioned @handle with the author.`
-      : `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. Finish the request with judgment; don't over-research. Reply normally with the final answer. Keep progress in the run trace; do not post separate chat messages.`;
+    const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. Finish the request with judgment; don't over-research. Reply normally with the final answer. Keep progress in the run trace; do not post separate chat messages.`;
     return `${header}\n\n${request}`;
   }
 
   const channelNote = registration.contextPrompt ? ` Channel note: ${registration.contextPrompt}` : '';
   if (compactNativeCli) {
-    const header = light
-      ? `Cascade #${channelName}: you are @${selfHandle}, replying to ${triggeringAuthor}. Answer briefly.${channelNote}`
-      : `Cascade #${channelName}: you are @${selfHandle}, replying to ${triggeringAuthor}. Complete and verify the request, then give a concise final answer. Keep progress in the run trace.${channelNote}`;
+    const header = `Cascade #${channelName}: you are @${selfHandle}, replying to ${triggeringAuthor}. Complete and verify the request, then give a concise final answer. Keep progress in the run trace.${channelNote}`;
     return `${header}\n\n${request}`;
   }
-  if (light) {
-    // Fast multiuser path: a direct final answer avoids a second inference after
-    // a chat-send tool result. Context is already injected when useful.
-    const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. Live multiuser chat: resolve references from the recent context, then reply directly with one short natural final answer—no tools, history fetch, or plan. If the message actually requests work, complete it first. Do not confuse a mentioned @handle with the author.${channelNote}`;
-    return `${header}\n\n${request}`;
-  }
-
   const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. Use recent context; fetch more history only when needed. Complete requested work and verification before replying.${scratchpadGuidance} Reply normally with the final answer. Keep progress in the run trace; do not post separate chat messages.${channelNote}`;
   return `${header}\n\n${request}`;
 }
