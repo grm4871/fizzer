@@ -296,6 +296,17 @@ function PaneTabStrip({
           <Plus size={14} />
         </button>
       )}
+      {onOpenSuperkanban && (
+        <button
+          type="button"
+          className="tab-new-btn tab-superkanban-btn"
+          onClick={() => onOpenSuperkanban(pane.id)}
+          title="Open Superkanban"
+          aria-label="Open Superkanban"
+        >
+          <LayoutDashboard size={14} />
+        </button>
+      )}
       {/* Right-click Context Menu */}
       {contextMenu && (
         <div
