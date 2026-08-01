@@ -114,6 +114,8 @@ const runnerModels = new Map<number, Record<string, string[]>>();
 /** Latest subscription usage per user, pushed by the desktop runner. */
 const runnerPlanUsage = new Map<number, Record<string, PlanUsage>>();
 const runnerLastSeen = new Map<number, string>();
+/** Main-process boot id. A change means Electron itself restarted, not merely its renderer. */
+const runnerInstanceIds = new Map<number, string>();
 /**
  * Pending fail-on-disconnect timers. Socket.io transport swaps, Electron focus
  * resync, and busy main-process event loops cause brief disconnects; killing
@@ -230,6 +232,8 @@ export function initDesktopRunners(io: Server, db: Db, hooks: RunnerHooks): void
       models?: Record<string, string[]>;
       /** Local mid-flight run ids so the server can reclaim ownership after restart. */
       activeRunIds?: number[];
+      /** Stable for renderer reloads; changes only when Electron main restarts. */
+      runnerInstanceId?: string;
     }) => {
       runnersByUser.set(user.id, socket);
       runnerLastSeen.set(user.id, new Date().toISOString());
@@ -244,6 +248,31 @@ export function initDesktopRunners(io: Server, db: Db, hooks: RunnerHooks): void
         runnerModels.set(user.id, cleaned);
       }
       const reclaimed = reclaimActiveRunsFromDesktop(db, user.id, payload?.activeRunIds);
+      const nextInstanceId = typeof payload?.runnerInstanceId === 'string' ? payload.runnerInstanceId : '';
+      const previousInstanceId = runnerInstanceIds.get(user.id);
+      if (nextInstanceId) runnerInstanceIds.set(user.id, nextInstanceId);
+
+      // A renderer reload preserves the main-owned children and reports them
+      // above. A changed main-process id means those omitted runs cannot still
+      // be attached to this Electron process, so settle them immediately and
+      // visibly instead of leaving permanent "running" ghosts.
+      if (previousInstanceId && nextInstanceId && previousInstanceId !== nextInstanceId) {
+        const active = new Set(reclaimed);
+        const interrupted = listOpenDelegatedRuns(db)
+          .filter((row) => row.owner_user_id === user.id && !active.has(row.run_id))
+          .map((row) => row.run_id);
+        const reason = 'Desktop app restarted before this run completed.';
+        for (const runId of interrupted) {
+          delegatedRunOwners.delete(runId);
+          hooks.finishDelegatedRun(db, runId, { status: 'failed', summary: reason });
+          hooks.publishRunEvent(db, runId, 'status', { status: 'failed', summary: reason });
+          clearDelegatedRunRecord(db, runId);
+        }
+        if (interrupted.length > 0) {
+          runnerLastError.set(user.id, { message: reason, at: new Date().toISOString() });
+          hooks.onRunsFailedForOwner?.(user.id, interrupted);
+        }
+      }
       socket.emit('runner:registered', { ok: true, reclaimed });
     });
 
@@ -311,6 +340,16 @@ export function initDesktopRunners(io: Server, db: Db, hooks: RunnerHooks): void
       const runId = Number(data?.runId);
       if (!Number.isFinite(runId) || !data?.type) return;
       if (!acceptRunEventFromOwner(db, runId, user.id)) return;
+
+      // Persist a backing session as soon as the CLI announces it. Steering may
+      // interrupt the active turn before its terminal event; waiting until then
+      // loses the only resume handle and turns the follow-up into a cold run.
+      if (data.type === 'session' && data.payload && typeof data.payload === 'object') {
+        const sessionId = (data.payload as { sessionId?: unknown }).sessionId;
+        if (typeof sessionId === 'string' && sessionId.trim()) {
+          db.prepare('UPDATE runs SET session_id = ? WHERE id = ?').run(sessionId.trim(), runId);
+        }
+      }
 
       if (data.type === 'status' && data.payload && typeof data.payload === 'object') {
         const status = (data.payload as { status?: string }).status;

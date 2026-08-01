@@ -12,7 +12,7 @@
  * - Right-click a note or folder for a context menu (move/delete/rename/new).
  * - Drag a note or folder onto a folder (or the "Notes" header) to move it.
  *
- * Notes are grouped by folder, sorted pinned-first then by last updated.
+ * Notes and folders keep their explicit drag order within each parent.
  *
  * @component
  */
@@ -49,7 +49,7 @@ interface SidebarProps {
   isOwner?: boolean;
   onOpenAdmin?: () => void;
   onDeleteNote: (id: string) => void;
-  onMoveNote: (id: string, folderId: string | null) => void;
+  onMoveNote: (id: string, folderId: string | null, position?: number) => void;
   onUnlistNote: (id: string) => void;
   onMoveFolder: (id: string, parentId: string | null, position: number) => void;
   onCreateFolder: (parentId?: string | null) => Promise<Folder | undefined>;
@@ -67,6 +67,29 @@ type ElectronUpdateAPI = {
   updateAndRestart?: () => Promise<{ success: boolean; refreshing?: boolean; error?: string }>;
   onUpdateFailed?: (callback: (payload: { error?: string }) => void) => () => void;
 };
+
+type DropPlacement = 'before' | 'inside' | 'after';
+
+/** Final insertion index after removing the dragged item from its old slot. */
+export function sidebarInsertionIndex(
+  orderedIds: string[],
+  movingId: string,
+  targetId: string,
+  placement: Exclude<DropPlacement, 'inside'>,
+) {
+  const withoutMoving = orderedIds.filter((id) => id !== movingId);
+  const targetIndex = withoutMoving.indexOf(targetId);
+  if (targetIndex < 0) return withoutMoving.length;
+  return targetIndex + (placement === 'after' ? 1 : 0);
+}
+
+export function sortSidebarNotes(notes: NoteSummary[]) {
+  return [...notes].sort((a, b) =>
+    a.position - b.position
+    || new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+    || a.title.localeCompare(b.title),
+  );
+}
 
 export function isMp3Link(label: string, href: string) {
   const normalizedLabel = label.trim().toLowerCase();
@@ -119,6 +142,7 @@ export function Sidebar({
   const autoplayAudioRef = useRef(false);
   // Drop target highlight: a folder id, or ROOT_DROP_ID for the root area.
   const [dragOverId, setDragOverId] = useState<string | null>(null);
+  const [dropHint, setDropHint] = useState<{ id: string; placement: DropPlacement } | null>(null);
 
   const rootFolders = useMemo(
     () => folders.filter((f) => f.parent_id === null).sort((a, b) => a.position - b.position),
@@ -134,12 +158,7 @@ export function Sidebar({
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(note);
     }
-    for (const [, arr] of map) {
-      arr.sort((a, b) => {
-        if (a.is_pinned !== b.is_pinned) return b.is_pinned - a.is_pinned;
-        return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
-      });
-    }
+    for (const [key, arr] of map) map.set(key, sortSidebarNotes(arr));
     return map;
   }, [listedNotes]);
 
@@ -312,7 +331,10 @@ export function Sidebar({
         if (note) e.dataTransfer.setData('text/plain', noteEmbedMarkdown(note));
         e.dataTransfer.effectAllowed = 'copyMove';
       },
-      onDragEnd: () => setDragOverId(null),
+      onDragEnd: () => {
+        setDragOverId(null);
+        setDropHint(null);
+      },
     };
   }
 
@@ -323,7 +345,10 @@ export function Sidebar({
         e.dataTransfer.setData(FOLDER_DND_TYPE, folderId);
         e.dataTransfer.effectAllowed = 'move';
       },
-      onDragEnd: () => setDragOverId(null),
+      onDragEnd: () => {
+        setDragOverId(null);
+        setDropHint(null);
+      },
     };
   }
 
@@ -341,19 +366,115 @@ export function Sidebar({
     return (childFolders.get(parentId) ?? []).filter((f) => f.id !== movingFolderId).length;
   }
 
-  function dropTargetProps(targetFolderId: string | null) {
-    const key = targetFolderId ?? ROOT_DROP_ID;
+  function rowPlacement(e: React.DragEvent, allowInside: boolean): DropPlacement {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const ratio = rect.height ? (e.clientY - rect.top) / rect.height : 0.5;
+    if (!allowInside) return ratio < 0.5 ? 'before' : 'after';
+    if (ratio < 0.25) return 'before';
+    if (ratio > 0.75) return 'after';
+    return 'inside';
+  }
+
+  function noteDropProps(targetNote: NoteSummary, siblings: NoteSummary[]) {
+    return {
+      onDragOver: (e: React.DragEvent) => {
+        if (!e.dataTransfer.types.includes(NOTE_DND_TYPE)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        e.dataTransfer.dropEffect = 'move';
+        setDragOverId(null);
+        setDropHint({ id: targetNote.id, placement: rowPlacement(e, false) });
+      },
+      onDragLeave: (e: React.DragEvent) => {
+        if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+        setDropHint((current) => (current?.id === targetNote.id ? null : current));
+      },
+      onDrop: (e: React.DragEvent) => {
+        const noteId = e.dataTransfer.getData(NOTE_DND_TYPE);
+        if (!noteId) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (noteId === targetNote.id) {
+          setDropHint(null);
+          return;
+        }
+        const placement = rowPlacement(e, false) as Exclude<DropPlacement, 'inside'>;
+        const position = sidebarInsertionIndex(
+          siblings.map((note) => note.id),
+          noteId,
+          targetNote.id,
+          placement,
+        );
+        setDropHint(null);
+        onMoveNote(noteId, targetNote.folder_id, position);
+      },
+    };
+  }
+
+  function folderDropProps(targetFolder: Folder, siblings: Folder[]) {
     return {
       onDragOver: (e: React.DragEvent) => {
         const isNote = e.dataTransfer.types.includes(NOTE_DND_TYPE);
         const isFolder = e.dataTransfer.types.includes(FOLDER_DND_TYPE);
         if (!isNote && !isFolder) return;
-        if (isFolder) {
-          const folderId = e.dataTransfer.getData(FOLDER_DND_TYPE);
-          if (folderId && isInvalidFolderTarget(folderId, targetFolderId)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        e.dataTransfer.dropEffect = 'move';
+        const placement = isNote ? 'inside' : rowPlacement(e, true);
+        setDragOverId(placement === 'inside' ? targetFolder.id : null);
+        setDropHint({ id: targetFolder.id, placement });
+      },
+      onDragLeave: (e: React.DragEvent) => {
+        if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+        setDragOverId((current) => (current === targetFolder.id ? null : current));
+        setDropHint((current) => (current?.id === targetFolder.id ? null : current));
+      },
+      onDrop: (e: React.DragEvent) => {
+        const noteId = e.dataTransfer.getData(NOTE_DND_TYPE);
+        const folderId = e.dataTransfer.getData(FOLDER_DND_TYPE);
+        if (!noteId && !folderId) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const placement = noteId ? 'inside' : rowPlacement(e, true);
+        setDragOverId(null);
+        setDropHint(null);
+
+        if (noteId) {
+          const targetNotes = notesByFolder.get(targetFolder.id) ?? [];
+          onMoveNote(noteId, targetFolder.id, targetNotes.filter((note) => note.id !== noteId).length);
+          expandFolder(targetFolder.id);
+          return;
         }
+
+        if (!folderId) return;
+        if (placement === 'inside') {
+          if (isInvalidFolderTarget(folderId, targetFolder.id)) return;
+          onMoveFolder(folderId, targetFolder.id, nextFolderPosition(targetFolder.id, folderId));
+          expandFolder(targetFolder.id);
+          return;
+        }
+
+        const position = sidebarInsertionIndex(
+          siblings.map((folder) => folder.id),
+          folderId,
+          targetFolder.id,
+          placement,
+        );
+        onMoveFolder(folderId, targetFolder.parent_id, position);
+      },
+    };
+  }
+
+  function rootDropTargetProps() {
+    const key = ROOT_DROP_ID;
+    return {
+      onDragOver: (e: React.DragEvent) => {
+        const isNote = e.dataTransfer.types.includes(NOTE_DND_TYPE);
+        const isFolder = e.dataTransfer.types.includes(FOLDER_DND_TYPE);
+        if (!isNote && !isFolder) return;
         e.preventDefault();
         e.dataTransfer.dropEffect = 'move';
+        setDropHint(null);
         if (dragOverId !== key) setDragOverId(key);
       },
       onDragLeave: () => setDragOverId((cur) => (cur === key ? null : cur)),
@@ -363,15 +484,11 @@ export function Sidebar({
         const folderId = e.dataTransfer.getData(FOLDER_DND_TYPE);
         setDragOverId(null);
         if (noteId) {
-          const note = notes.find((n) => n.id === noteId);
-          if (!note || (note.is_listed !== 0 && note.folder_id === targetFolderId)) return;
-          onMoveNote(noteId, targetFolderId);
+          onMoveNote(noteId, null, rootNotes.filter((note) => note.id !== noteId).length);
           return;
         }
-        if (folderId && !isInvalidFolderTarget(folderId, targetFolderId)) {
-          const folder = folders.find((f) => f.id === folderId);
-          if (!folder || folder.parent_id === targetFolderId) return;
-          onMoveFolder(folderId, targetFolderId, nextFolderPosition(targetFolderId, folderId));
+        if (folderId) {
+          onMoveFolder(folderId, null, nextFolderPosition(null, folderId));
         }
       },
     };
@@ -379,7 +496,12 @@ export function Sidebar({
 
   // Move-to-root drop handlers, shared by the "Notes" header and the empty
   // area of the folder tree.
-  const rootDropProps = dropTargetProps(null);
+  const rootDropProps = rootDropTargetProps();
+
+  function dropClass(id: string) {
+    if (dropHint?.id !== id) return '';
+    return ` is-drop-${dropHint.placement}`;
+  }
 
   /** Recursively render a folder row with its children. */
   function renderFolder(folder: Folder, depth: number) {
@@ -411,12 +533,12 @@ export function Sidebar({
         ) : (
           <button
             id={`folder-${folder.id}`}
-            className={`tree-item ${dragOverId === folder.id ? 'drag-over' : ''}`}
+            className={`tree-item${dragOverId === folder.id ? ' drag-over' : ''}${dropClass(folder.id)}`}
             style={{ paddingLeft }}
             onClick={() => toggleFolder(folder.id)}
             onContextMenu={(e) => openMenu(e, { x: 0, y: 0, kind: 'folder', id: folder.id })}
             {...folderDragProps(folder.id)}
-            {...dropTargetProps(folder.id)}
+            {...folderDropProps(folder, childFolders.get(folder.parent_id) ?? [])}
           >
             <span className={`tree-chevron ${isExpanded ? 'expanded' : ''}`}><ChevronRight size={14} /></span>
             <span className="tree-icon">{isExpanded ? <FolderOpen size={16} /> : <FolderIcon size={16} />}</span>
@@ -461,11 +583,12 @@ export function Sidebar({
       <button
         key={note.id}
         id={`note-${note.id}`}
-        className={`tree-item ${note.id === activeNoteId ? 'active' : ''}`}
+        className={`tree-item${note.id === activeNoteId ? ' active' : ''}${dropClass(note.id)}`}
         style={{ paddingLeft }}
         onClick={() => onSelectNote(note.id)}
         onContextMenu={(e) => openMenu(e, { x: 0, y: 0, kind: 'note', id: note.id })}
         {...noteDragProps(note.id)}
+        {...noteDropProps(note, notesByFolder.get(note.folder_id) ?? [])}
       >
         <span className="tree-icon">{isChatChannel ? <Hash size={16} /> : <FileText size={16} />}</span>
         <span className="tree-label">{note.title || 'Untitled'}</span>
@@ -519,7 +642,7 @@ export function Sidebar({
       <div
         className={`sidebar-section-label ${dragOverId === ROOT_DROP_ID ? 'drag-over' : ''}`}
         onContextMenu={(e) => openMenu(e, { x: 0, y: 0, kind: 'root' })}
-        {...dropTargetProps(null)}
+        {...rootDropProps}
       >
         Notes
       </div>

@@ -86,7 +86,7 @@ function spawnEnv(runId?: number): NodeJS.ProcessEnv {
 // TYPES
 // ═══════════════════════════════════════════════════════════════
 
-export type AgentEmit = (type: 'text' | 'user' | 'harness', payload: unknown) => void;
+export type AgentEmit = (type: 'text' | 'user' | 'harness' | 'session', payload: unknown) => void;
 export type CliImage = { media_type: string; data: string };
 
 /** Emit a raw harness/terminal chunk (stdout/stderr or formatted SDK lines). */
@@ -628,7 +628,10 @@ async function runCodex(
 
     switch (ev.type) {
       case 'thread.started':
-        if (ev.thread_id) sessionId = ev.thread_id;
+        if (ev.thread_id) {
+          sessionId = ev.thread_id;
+          emit('session', { sessionId });
+        }
         break;
       case 'item.started':
         if (item && isToolItem(item.type)) emitToolUse(item);
@@ -1389,6 +1392,8 @@ async function runAntigravity(
     throw new Error(`No conversationId returned by agentapi: ${stdoutStr.slice(0, 500)}`);
   }
 
+  emit('session', { sessionId: conversationId });
+
   emitHarness(emit, `\x1b[2m# conversation ${conversationId}\x1b[0m\r\n`);
   const transcriptPath = antigravityTranscriptPath(conversationId);
 
@@ -1736,7 +1741,10 @@ async function runCopilot(prompt: string, cwd: string, emit: AgentEmit, resumeId
             }
             break;
           case 'result':
-            if (ev.sessionId) sessionId = ev.sessionId;
+            if (ev.sessionId) {
+              sessionId = ev.sessionId;
+              emit('session', { sessionId });
+            }
             break;
         }
       } else {
@@ -1758,16 +1766,22 @@ async function runCopilot(prompt: string, cwd: string, emit: AgentEmit, resumeId
 // ═══════════════════════════════════════════════════════════════
 
 /**
- * Runs the Hermes CLI (`hermes -z`) and translates its output into content blocks.
+ * Runs the Hermes CLI and translates its output into content blocks.
  *
- * Hermes oneshot keeps stdout machine-readable (final answer only). With
+ * Fresh runs use oneshot, which keeps stdout machine-readable and exposes
+ * Cascade reasoning events. Hermes oneshot currently ignores `--resume`, so
+ * continuations use the equally quiet `hermes chat -Q -q` path that actually
+ * loads and extends the requested session.
+ *
+ * With
  * `HERMES_CASCADE_EVENTS=1` it also streams reasoning deltas as NDJSON on stderr:
  *   - `reasoning.delta` → `{ type: 'thinking', thinking }`
  *   - `session_id`      → captured for conversation resume
  */
 async function runHermes(prompt: string, cwd: string, emit: AgentEmit, resumeId?: string, runId?: number, env?: NodeJS.ProcessEnv): Promise<CliAgentResult> {
-  const baseArgs = ['-z', prompt, '--yolo'];
-  const args = resumeId ? ['-r', resumeId, ...baseArgs] : baseArgs;
+  const args = resumeId
+    ? ['chat', '-Q', '--resume', resumeId, '-q', prompt, '--yolo']
+    : ['-z', prompt, '--yolo'];
 
   let text = '';
   let sessionId: string | undefined = resumeId;
@@ -1779,12 +1793,19 @@ async function runHermes(prompt: string, cwd: string, emit: AgentEmit, resumeId?
   };
 
   const onStderrLine = (line: string) => {
+    const quietSession = /^session_id:\s*(\S+)$/i.exec(line);
+    if (quietSession) {
+      sessionId = quietSession[1];
+      emit('session', { sessionId });
+      return;
+    }
     if (!line.startsWith('{')) return;
     const ev = JSON.parse(line) as { type?: string; text?: string; id?: string };
     if (ev.type === 'reasoning.delta' && ev.text) {
       emit('text', { message: { content: [{ type: 'thinking', thinking: ev.text }] } });
     } else if (ev.type === 'session_id' && ev.id) {
       sessionId = ev.id;
+      emit('session', { sessionId });
     }
   };
 
@@ -1933,7 +1954,7 @@ function driveHermesProcess(
           nl = stderrBuf.indexOf('\n');
           continue;
         }
-        if (trimmed.startsWith('{')) {
+        if (trimmed.startsWith('{') || /^session_id:\s*/i.test(trimmed)) {
           try { onStderrLine(trimmed); } catch { /* ignore a single malformed event */ }
         } else {
           stderr += trimmed + '\n';
@@ -1961,7 +1982,7 @@ function driveHermesProcess(
       }
       const trailingErr = stderrBuf.trim();
       if (trailingErr) {
-        if (trailingErr.startsWith('{')) {
+        if (trailingErr.startsWith('{') || /^session_id:\s*/i.test(trailingErr)) {
           try { onStderrLine(trailingErr); } catch { /* ignore */ }
         } else {
           stderr += trailingErr + '\n';
@@ -2022,7 +2043,10 @@ async function runOmp(
         const ev = JSON.parse(line);
         switch (ev.type) {
           case 'session':
-            if (ev.id) sessionId = ev.id;
+            if (ev.id) {
+              sessionId = ev.id;
+              emit('session', { sessionId });
+            }
             break;
           case 'message_update':
             if (ev.assistantMessageEvent) {

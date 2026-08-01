@@ -589,7 +589,10 @@ async function runClaudeLocally(opts, emit) {
   emitCascadeStats(emit, { model, maxTurns: maxTurns > 0 ? maxTurns : undefined });
   try {
     for await (const message of stream) {
-      if (message.session_id) sessionId = message.session_id;
+      if (message.session_id && message.session_id !== sessionId) {
+        sessionId = message.session_id;
+        emit('session', { sessionId });
+      }
 
       // Subscription rate-limit telemetry (claude.ai plans). Sparse but useful.
       if (message.type === 'rate_limit_event') {

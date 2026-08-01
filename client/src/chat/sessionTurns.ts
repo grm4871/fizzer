@@ -31,3 +31,36 @@ export function enqueueSessionTurn(
     },
   };
 }
+
+/**
+ * Choose the run that a new steering message should interrupt.
+ *
+ * Repeated messages aimed at a run already being stopped are carried forward
+ * to the next serialized turn instead of firing duplicate cancel requests.
+ */
+export function requestSessionSteer(
+  activeRuns: Map<string, number>,
+  interruptedRuns: Map<string, number>,
+  pendingSteers: Set<string>,
+  key: string,
+): number | undefined {
+  const activeRun = activeRuns.get(key);
+  if (activeRun == null || interruptedRuns.get(key) === activeRun) {
+    pendingSteers.add(key);
+    return undefined;
+  }
+  interruptedRuns.set(key, activeRun);
+  return activeRun;
+}
+
+/** Claim one steering message that arrived before the next run became active. */
+export function consumePendingSessionSteer(
+  interruptedRuns: Map<string, number>,
+  pendingSteers: Set<string>,
+  key: string,
+  runId: number,
+): boolean {
+  if (!pendingSteers.delete(key)) return false;
+  interruptedRuns.set(key, runId);
+  return true;
+}

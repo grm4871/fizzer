@@ -231,6 +231,21 @@ export function isLightweightChatRequest(request: string): boolean {
   return true;
 }
 
+/** True only when the request cannot stand on its own after reply/batch folding. */
+export function needsRecentChatContext(request: string): boolean {
+  const text = String(request || '').trim();
+  if (!text) return false;
+  // Quoted replies and folded same-author batches already carry their referent.
+  if (/^Replying to .+?:\s*>/is.test(text)) return false;
+  return /^(?:also\b|continue\b|go ahead\b|same\b|again\b)|\b(?:as (?:i|we|you) said|earlier|above|the previous|that (?:one|thing|request)|this (?:one|thing|request)|do (?:this|that|it)|fix (?:this|that|it)|make (?:this|that|it)|try again|keep going|pick up where)\b/i.test(text);
+}
+
+/** Live-vault operations need Cascade's helper contract; ordinary repo work does not. */
+export function needsCascadeWorkspaceContext(request: string): boolean {
+  const text = String(request || '').trim();
+  return /\bcascade-(?:note|chat|scratchpad)\b|\b(?:live|vault)\s+(?:note|folder|kanban|board|doc(?:umentation)?|workspace)\b|\b(?:note|folder|kanban|board|doc(?:umentation)?)\s+(?:for|in|inside|within)\s+cascade\b|\bthis cascade folder\b/i.test(text);
+}
+
 /**
  * Build the system-ish header the agent receives for a channel reply.
  * When `continuation` is true the CLI session already holds earlier turns —
@@ -248,6 +263,7 @@ export function formatAgentChatPrompt(
   const selfName = registration.displayName || selfAgent?.label || registration.agentId;
   const light = isLightweightChatRequest(request);
   const nativeScratchpad = registration.agentId === 'akron-grok';
+  const compactNativeCli = registration.agentId === 'hermes' || registration.agentId === 'omp';
 
   // Keep persistence available without turning every task into extra tool turns.
   // Cold-start injection supplies the fuller policy only when a new session needs it.
@@ -256,6 +272,12 @@ export function formatAgentChatPrompt(
     : ' Use `cascade-scratchpad` only for a durable root cause, decision, or dead end that would otherwise be re-derived; skip routine progress and simple Q&A.';
 
   if (continuation) {
+    if (compactNativeCli) {
+      const header = light
+        ? `Cascade #${channelName}: you are @${selfHandle}, replying to ${triggeringAuthor}. Answer briefly.`
+        : `Cascade #${channelName}: you are @${selfHandle}, replying to ${triggeringAuthor}. Complete and verify the request, then give a concise final answer. Keep progress in the run trace.`;
+      return `${header}\n\n${request}`;
+    }
     const header = light
       ? `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. Resolve references from the conversation already in your session. For genuine conversation or Q&A, reply directly with one short final answer and no tools. If it requests real work, complete it first. Do not confuse a mentioned @handle with the author.`
       : `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. Finish the request with judgment; don't over-research. Reply normally with the final answer. Keep progress in the run trace; do not post separate chat messages.`;
@@ -263,6 +285,12 @@ export function formatAgentChatPrompt(
   }
 
   const channelNote = registration.contextPrompt ? ` Channel note: ${registration.contextPrompt}` : '';
+  if (compactNativeCli) {
+    const header = light
+      ? `Cascade #${channelName}: you are @${selfHandle}, replying to ${triggeringAuthor}. Answer briefly.${channelNote}`
+      : `Cascade #${channelName}: you are @${selfHandle}, replying to ${triggeringAuthor}. Complete and verify the request, then give a concise final answer. Keep progress in the run trace.${channelNote}`;
+    return `${header}\n\n${request}`;
+  }
   if (light) {
     // Fast multiuser path: a direct final answer avoids a second inference after
     // a chat-send tool result. Context is already injected when useful.

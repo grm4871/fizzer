@@ -1,0 +1,16 @@
+{"q": "Which commit introduced the two-layer scratchpad memory system in Cascade?", "a": "Commit 9ec7e48a (2026-07-23) introduced the two-layer scratchpad memory system."}
+{"q": "What commit added the agent scratchpad journal?", "a": "It was commit 9ec7e48a, landed 2026-07-23."}
+{"q": "What are the five journal entry kinds in cascade-scratchpad?", "a": "The five kinds are: observation, outcome, dead-end, decision, and todo."}
+{"q": "List the cascade-scratchpad jot kinds.", "a": "observation, outcome, dead-end, decision, todo."}
+{"q": "What is the default value of SCRATCHPAD_DUE_ENTRIES?", "a": "The default value of SCRATCHPAD_DUE_ENTRIES is 10."}
+{"q": "After how many unconsolidated entries is consolidation flagged as due?", "a": "After 10 entries \u2014 SCRATCHPAD_DUE_ENTRIES defaults to 10."}
+{"q": "What is the default of SCRATCHPAD_DUE_AGE_HOURS?", "a": "SCRATCHPAD_DUE_AGE_HOURS defaults to 24 hours."}
+{"q": "Which two older memory systems did the scratchpad replace?", "a": "It replaced exocortex (BM25 recall) and the per-run auto-capture system."}
+{"q": "What did the scratchpad system remove in favor of itself?", "a": "It removed two systems: exocortex, which did BM25 recall, and per-run auto-capture."}
+{"q": "What backend is agent 5.5 wired to in Cascade?", "a": "Agent 5.5 is wired to the Codex CLI backend."}
+{"q": "How did agent 5.5 fail?", "a": "It crashed on invoke with 'Codex exited with code 1' while reading from stdin."}
+{"q": "What is the e2e test script for the scratchpad?", "a": "The e2e test is scripts/test-scratchpad-e2e.mjs."}
+{"q": "In the CLS framing, what does the journal correspond to?", "a": "The journal corresponds to the hippocampus \u2014 fast, episodic, high learning rate."}
+{"q": "In the CLS framing, what do the model weights correspond to?", "a": "The weights correspond to the neocortex \u2014 slow, generalizing; left frozen in the current system."}
+{"q": "Why does the server never spawn consolidation runs itself?", "a": "Because server-spawned runs would ride the desktop's Claude subscription login, but the Agent SDK terms require API-key auth."}
+{"q": "What is step 5 of the augmentation ladder?", "a": "Step 5 is a periodic batch fine-tune of the note corpus \u2014 the actual neocortical consolidation step."}

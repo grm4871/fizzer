@@ -90,6 +90,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Local CLI execution (renderer hosts /runners; main spawns agents).
   startAgentRun: (opts) => ipcRenderer.invoke('agent:start', opts),
   cancelAgentRun: (runId) => ipcRenderer.invoke('agent:cancel', runId),
+  getAgentRunState: (afterSeq = 0) => ipcRenderer.invoke('agent:getState', afterSeq),
   onAgentEvent: (callback) => {
     const listener = (_event, payload) => callback(payload);
     ipcRenderer.on('agent:event', listener);

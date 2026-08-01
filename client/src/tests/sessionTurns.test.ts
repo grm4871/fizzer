@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { enqueueSessionTurn } from '../chat/sessionTurns';
+import {
+  consumePendingSessionSteer,
+  enqueueSessionTurn,
+  requestSessionSteer,
+} from '../chat/sessionTurns';
 
 describe('chat session turn serialization', () => {
   it('holds a steering prompt until the active turn releases the same session', async () => {
@@ -28,5 +32,19 @@ describe('chat session turn serialization', () => {
 
     expect(sol.preceding).toBeUndefined();
     expect(supagrok.preceding).toBeUndefined();
+  });
+
+  it('interrupts the active run once and carries an extra steer to the next turn', () => {
+    const active = new Map([['sol:conversation-1', 41]]);
+    const interrupted = new Map<string, number>();
+    const pending = new Set<string>();
+
+    expect(requestSessionSteer(active, interrupted, pending, 'sol:conversation-1')).toBe(41);
+    expect(requestSessionSteer(active, interrupted, pending, 'sol:conversation-1')).toBeUndefined();
+    expect(pending.has('sol:conversation-1')).toBe(true);
+
+    expect(consumePendingSessionSteer(interrupted, pending, 'sol:conversation-1', 42)).toBe(true);
+    expect(interrupted.get('sol:conversation-1')).toBe(42);
+    expect(pending.size).toBe(0);
   });
 });

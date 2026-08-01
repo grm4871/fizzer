@@ -31,8 +31,8 @@ import { CommandPalette } from './components/CommandPalette';
 import { AdminPanel } from './components/AdminPanel';
 import { SessionManager } from './components/SessionManager';
 import { PaneGrid, type TabDragPayload } from './components/PaneGrid';
-import * as Layout from './layout/tree';
 import { SuperkanbanView } from './components/SuperkanbanView';
+import * as Layout from './layout/tree';
 import type { LayoutNode } from './layout/tree';
 import { api, type User, type Vault, type Folder, type NoteSummary, type Note } from './api';
 import { connectRunsSocket, connectVaultSocket } from './socket';
@@ -44,6 +44,8 @@ import {
   formatAgentChatPrompt,
   isLightweightChatRequest,
   mergeAgentModelPresets,
+  needsCascadeWorkspaceContext,
+  needsRecentChatContext,
   normalizeChatCwd,
   type AgentId,
 } from './chat/agents';
@@ -70,7 +72,7 @@ import {
   type ChatState,
   type PersistedSession,
 } from './chat/session';
-import { enqueueSessionTurn } from './chat/sessionTurns';
+import { consumePendingSessionSteer, enqueueSessionTurn, requestSessionSteer } from './chat/sessionTurns';
 import { Activity, Gem, PanelLeftOpen, Users } from 'lucide-react';
 
 /**
@@ -153,6 +155,9 @@ export default function App() {
   });
 
   const [searchOpen, setSearchOpen] = useState(false);
+  // Pending "jump to this chat message" target set when a chat search result is
+  // opened; consumed by the matching ChatView, which scrolls to and highlights it.
+  const [chatJumpTarget, setChatJumpTarget] = useState<{ channelId: string; messageId: string } | null>(null);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [runnerHealth, setRunnerHealth] = useState<DesktopRunnerHealth | null>(null);
@@ -208,6 +213,12 @@ export default function App() {
   // persisted its session id. This is real steering/continuation, rather than
   // two cold processes that merely look connected in the transcript.
   const agentSessionTailRef = useRef<Map<string, Promise<void>>>(new Map());
+  // The actual run currently extending each backing session. A follow-up ping
+  // interrupts this turn, then resumes its early-persisted CLI session from the
+  // new message. Extra pings remain queued in order and interrupt the next turn.
+  const activeAgentSessionRunRef = useRef<Map<string, number>>(new Map());
+  const interruptedAgentSessionRunRef = useRef<Map<string, number>>(new Map());
+  const pendingAgentSteerRef = useRef<Set<string>>(new Set());
   const pendingChatPatchRef = useRef<Map<string, ChatMessage>>(new Map());
   const chatPatchTimerRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const startAgentChatRunRef = useRef<((channelId: string, registration: ChatAgentRegistration, prompt: string, triggeringMessage: ChatMessage) => void) | null>(null);
@@ -920,6 +931,32 @@ export default function App() {
     });
   }, []);
 
+  /** Copy a message into another channel (Discord-style forward). */
+  const handleForwardChatMessage = useCallback(async (
+    channelId: string,
+    messageId: string,
+    targetChannelId: string,
+  ) => {
+    const vaultId = activeVaultIdRef.current;
+    if (!vaultId) throw new Error('No active vault');
+    const data = await api<{ message: ChatMessage }>(
+      `/api/vaults/${vaultId}/channels/${channelId}/messages/${encodeURIComponent(messageId)}/forward`,
+      { method: 'POST', body: JSON.stringify({ targetChannelId }) },
+    );
+    // Show it immediately in a cached target transcript; the socket broadcast
+    // dedupes on id, so this is safe when the channel is also open elsewhere.
+    setChatState((prev) => {
+      const existing = prev.messagesByChannel[targetChannelId];
+      if (!existing || existing.some((message) => message.id === data.message.id)) return prev;
+      return {
+        ...prev,
+        messagesByChannel: { ...prev.messagesByChannel, [targetChannelId]: [...existing, data.message] },
+      };
+    });
+    const target = notesRef.current.find((note) => note.id === targetChannelId);
+    setNotice(`Forwarded to #${target?.title ?? 'channel'}`);
+  }, []);
+
   const handleOpenSharedChatNote = useCallback(async (
     channelId: string,
     messageId: string,
@@ -1316,7 +1353,26 @@ export default function App() {
     const channelName = notesRef.current.find((note) => note.id === channelId)?.title || 'chat';
     const watermarkKey = `${registration.id}:${registration.conversationId || ''}`;
     const sessionTurn = enqueueSessionTurn(agentSessionTailRef.current, watermarkKey);
+    const steeringTurn = Boolean(sessionTurn.preceding);
     const agentMessageId = `agent-${agentId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    if (steeringTurn) {
+      const runToInterrupt = requestSessionSteer(
+        activeAgentSessionRunRef.current,
+        interruptedAgentSessionRunRef.current,
+        pendingAgentSteerRef.current,
+        watermarkKey,
+      );
+      if (runToInterrupt != null) {
+        void api<{ success: boolean }>(`/api/runs/${runToInterrupt}/cancel`, {
+          method: 'POST',
+          body: JSON.stringify({ steering: true }),
+        }).catch(() => {
+          // The terminal event or the normal serialized fallback still releases
+          // the queued turn; a failed interrupt must not create parallel runs.
+        });
+      }
+    }
 
     let runSocket: ReturnType<typeof connectRunsSocket> | null = null;
     let activeRunId: number | null = null;
@@ -1425,8 +1481,15 @@ export default function App() {
       // conversation, so its earlier turns are already in context. A `/clear`
       // rotates conversationId, so a fresh key here has no watermark.
       const watermark = agentContextWatermarkRef.current.get(watermarkKey);
-      const continuation = Boolean(watermark);
-      const runPrompt = formatAgentChatPrompt(channelName, registration, prompt, triggeringMessage.author, continuation);
+      // A steering turn resumes the interrupted CLI session even though the
+      // canceled predecessor intentionally did not advance the normal completed
+      // watermark. Treat it as a continuation so we do not send cold-start
+      // framing into the resumed transcript.
+      const continuation = steeringTurn || Boolean(watermark);
+      const steeredPrompt = steeringTurn
+        ? `Mid-session steering from ${triggeringMessage.author}:\n${prompt}`
+        : prompt;
+      const runPrompt = formatAgentChatPrompt(channelName, registration, steeredPrompt, triggeringMessage.author, continuation);
       // Conversation id groups runs for backend session resume (findPriorSession).
       // The actual CLI session_id is resolved server-side — not this value.
       const conversationId = registration.conversationId || undefined;
@@ -1437,6 +1500,12 @@ export default function App() {
       const finishRun = (runId: number, cleanup: () => void) => {
         cleanup();
         sessionTurn.release();
+        if (activeAgentSessionRunRef.current.get(watermarkKey) === runId) {
+          activeAgentSessionRunRef.current.delete(watermarkKey);
+        }
+        if (interruptedAgentSessionRunRef.current.get(watermarkKey) === runId) {
+          interruptedAgentSessionRunRef.current.delete(watermarkKey);
+        }
         streamingChatMessageIdsRef.current.delete(agentMessageId);
         serverOwnedChatMessageIdsRef.current.delete(agentMessageId);
         if (!isLocalRunId(runId)) {
@@ -1599,11 +1668,16 @@ export default function App() {
             author: registration.displayName || agentLabel(agentId),
             // Server skips heavy memory injection for simple pings.
             lightweight: isLightweightChatRequest(prompt),
+            // Hermes already has a large native agent prompt. Only pay for
+            // Cascade-specific context when the request genuinely depends on it.
+            contextNeeded: needsRecentChatContext(prompt),
+            workspaceNeeded: needsCascadeWorkspaceContext(prompt),
           },
         }),
       });
 
       activeRunId = res.run.id;
+      activeAgentSessionRunRef.current.set(watermarkKey, res.run.id);
       // The run is registered server-side; the server now owns persistence of this
       // message's streamed updates. Skip our own debounced PATCH to avoid duplicate
       // writes — we still update local state for instant display.
@@ -1632,6 +1706,17 @@ export default function App() {
       } catch {
         // Best-effort backfill; live events will still populate going forward.
       }
+      if (consumePendingSessionSteer(
+        interruptedAgentSessionRunRef.current,
+        pendingAgentSteerRef.current,
+        watermarkKey,
+        res.run.id,
+      )) {
+        void api<{ success: boolean }>(`/api/runs/${res.run.id}/cancel`, {
+          method: 'POST',
+          body: JSON.stringify({ steering: true }),
+        }).catch(() => {});
+      }
     } catch (error) {
       // Release server ownership so this client-side failure is persisted by us.
       // If the run was actually created and later succeeds, the server's update
@@ -1644,6 +1729,9 @@ export default function App() {
         runSocket?.disconnect();
       }
       streamingChatMessageIdsRef.current.delete(agentMessageId);
+      if (activeRunId != null && activeAgentSessionRunRef.current.get(watermarkKey) === activeRunId) {
+        activeAgentSessionRunRef.current.delete(watermarkKey);
+      }
       applyMessageUpdateNow((message) => ({
         ...message,
         body: error instanceof Error ? error.message : 'Failed to start agent.',
@@ -2430,9 +2518,12 @@ export default function App() {
     }
   }, [loadVaultData]);
 
-  const handleMoveNote = useCallback(async (noteId: string, folderId: string | null) => {
+  const handleMoveNote = useCallback(async (noteId: string, folderId: string | null, position?: number) => {
     try {
-      await api(`/api/notes/${noteId}/move`, { method: 'POST', body: JSON.stringify({ folder_id: folderId }) });
+      await api(`/api/notes/${noteId}/move`, {
+        method: 'POST',
+        body: JSON.stringify({ folder_id: folderId, ...(position === undefined ? {} : { position }) }),
+      });
       if (activeVaultIdRef.current) await loadVaultData(activeVaultIdRef.current);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Could not move note');
@@ -2751,6 +2842,7 @@ export default function App() {
           onLeaveChannel={handleLeaveChatChannel}
           onSendMessage={handleSendChatMessage}
           onDeleteMessage={handleDeleteChatMessage}
+          onForwardMessage={handleForwardChatMessage}
           onCancelRun={handleCancelChatRun}
           notes={notes}
           onOpenNote={openNote}
@@ -2759,6 +2851,8 @@ export default function App() {
           onMembersOpenChange={setChatMembersOpen}
           vaultId={activeVaultId || undefined}
           onHydrateMessage={handleHydrateChatMessage}
+          jumpToMessageId={chatJumpTarget?.channelId === channel.id ? chatJumpTarget.messageId : undefined}
+          onJumpHandled={() => setChatJumpTarget(null)}
         />
       );
     }
@@ -2778,7 +2872,7 @@ export default function App() {
         />
       </Suspense>
     );
-  }, [availableChatAgents, chatState.messagesByChannel, chatState.registeredAgentsByChannel, chatPresenceByChannel, currentUsername, loadingChatChannels, runnerHealth, vaultAgents, handleCancelChatRun, handleCreateChatInviteLink, handleInviteChatUser, handleRemoveChatParticipant, handleLeaveChatChannel, handleRegisterChatAgent, handleRemoveChatAgent, handleUpsertVaultAgent, handleDeleteVaultAgent, handleAddVaultAgentToChannel, handleSendChatMessage, noteContents, notes, getNoteChangeHandler, getNoteSaveHandler, getNoteRenameHandler, handleExecuteDirective, handleOpenWikilink, openNote, chatMembersOpen, activeVaultId, handleHydrateChatMessage, handleOpenSharedChatNote, superkanbanNotes, superkanbanLoading, superkanbanError]);
+  }, [availableChatAgents, chatState.messagesByChannel, chatState.registeredAgentsByChannel, chatPresenceByChannel, currentUsername, loadingChatChannels, runnerHealth, vaultAgents, handleCancelChatRun, handleCreateChatInviteLink, handleInviteChatUser, handleRemoveChatParticipant, handleLeaveChatChannel, handleRegisterChatAgent, handleRemoveChatAgent, handleUpsertVaultAgent, handleDeleteVaultAgent, handleAddVaultAgentToChannel, handleSendChatMessage, handleForwardChatMessage, noteContents, notes, getNoteChangeHandler, getNoteSaveHandler, getNoteRenameHandler, handleExecuteDirective, handleOpenWikilink, openNote, chatMembersOpen, activeVaultId, handleHydrateChatMessage, handleOpenSharedChatNote, superkanbanNotes, superkanbanLoading, superkanbanError, chatJumpTarget]);
 
   if (!user) {
     const hasInvite = /^\/invite\/[^/]+$/.test(window.location.pathname);
@@ -2974,7 +3068,15 @@ export default function App() {
         onInterrogate={(channelId, message) => handleSendChatMessage(channelId, message)}
       />
 
-      <SearchOverlay open={searchOpen} onClose={() => setSearchOpen(false)} vaultId={activeVaultId} onSelectNote={(id) => openNote(id)} />
+      <SearchOverlay
+        open={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        vaultId={activeVaultId}
+        onSelectNote={(id, messageId) => {
+          openNote(id);
+          if (messageId) setChatJumpTarget({ channelId: id, messageId });
+        }}
+      />
       <CommandPalette open={commandPaletteOpen} onClose={() => setCommandPaletteOpen(false)} notes={notes} onSelectNote={(id) => openNote(id)} onCreateNote={handleCreateNote} />
       {adminOpen && <AdminPanel onClose={() => setAdminOpen(false)} />}
 

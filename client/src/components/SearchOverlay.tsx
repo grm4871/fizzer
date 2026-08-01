@@ -24,7 +24,8 @@ interface SearchOverlayProps {
   open: boolean;
   onClose: () => void;
   vaultId: string | null;
-  onSelectNote: (id: string) => void;
+  /** For chat hits, `messageId` carries the specific message so the view can jump to it. */
+  onSelectNote: (id: string, messageId?: string) => void;
 }
 
 export function SearchOverlay({
@@ -96,7 +97,11 @@ export function SearchOverlay({
   }, [highlightIndex]);
 
   const selectResult = useCallback((result: SearchResult) => {
-    onSelectNote(result.type === 'chat' && result.channelId ? result.channelId : result.id);
+    if (result.type === 'chat' && result.channelId) {
+      onSelectNote(result.channelId, result.id);
+    } else {
+      onSelectNote(result.id);
+    }
     onClose();
   }, [onSelectNote, onClose]);
 

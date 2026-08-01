@@ -162,6 +162,10 @@ export default defineConfig({
   plugins: [botProxyPlugin(), autoRefreshFlagPlugin(), versionGenerationPlugin(), htmlFallbackPlugin(), react()],
   server: {
     port: parseInt(process.env.VITE_PORT) || 5173,
+    // Fail loudly on a port clash. Without this Vite silently falls back to the
+    // next free port while Electron still loads the configured one, so the
+    // desktop window quietly renders whatever else is squatting on it.
+    strictPort: true,
     hmr: disableAutoRefresh ? false : undefined,
     proxy: {
       '/api': {

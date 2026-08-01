@@ -208,7 +208,6 @@ function ThinkingBlock({
         onPointerDown={(event) => event.stopPropagation()}
       >
         <span className="crp-term-mark dim">·</span>
-        <span className="crp-term-tag dim">thinking</span>
         {!open && (
           <span className="crp-term-fold-preview dim">
             {collapsedPreview}

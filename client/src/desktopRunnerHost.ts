@@ -14,6 +14,12 @@ type RunnerElectronAPI = {
   clearRunnerToken?: () => Promise<{ success: boolean }>;
   startAgentRun?: (opts: Record<string, unknown>) => Promise<{ success: boolean; error?: string }>;
   cancelAgentRun?: (runId: number) => Promise<{ success: boolean; error?: string }>;
+  getAgentRunState?: (afterSeq?: number) => Promise<{
+    instanceId?: string;
+    activeRunIds?: number[];
+    events?: AgentEventPayload[];
+    cursor?: number;
+  }>;
   onAgentEvent?: (callback: (payload: AgentEventPayload) => void) => () => void;
   getRunnerModels?: () => Promise<{ models?: Record<string, string[]> }>;
   getRunnerPlanUsage?: () => Promise<{ usage?: Record<string, unknown> }>;
@@ -23,6 +29,7 @@ type AgentEventPayload = {
   runId?: number;
   type?: string;
   payload_json?: string;
+  bridgeSeq?: number;
 };
 
 type DelegatedRunPayload = {
@@ -57,6 +64,59 @@ let lastPlanUsageAt = 0;
 let lastPlanUsage: Record<string, unknown> | null = null;
 const activeRunIds = new Set<number>();
 const recentTerminalEvents = new Map<number, { type: string; payload: unknown; at: number }>();
+const BRIDGE_CURSOR_KEY = 'cascade_runner_bridge_cursor';
+let bridgeInstanceId = '';
+let bridgeCursor = 0;
+
+function loadBridgeCursor(instanceId: string): number {
+  try {
+    const saved = JSON.parse(localStorage.getItem(BRIDGE_CURSOR_KEY) || '{}') as { instanceId?: string; cursor?: number };
+    return saved.instanceId === instanceId && Number.isFinite(Number(saved.cursor)) ? Number(saved.cursor) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function saveBridgeCursor(): void {
+  if (!bridgeInstanceId) return;
+  localStorage.setItem(BRIDGE_CURSOR_KEY, JSON.stringify({ instanceId: bridgeInstanceId, cursor: bridgeCursor }));
+}
+
+function processAgentEvent(event: AgentEventPayload): void {
+  // Main keeps the replay copy. Do not acknowledge an event until there is a
+  // connected server socket to receive it.
+  if (!socket?.connected) return;
+  const seq = Number(event?.bridgeSeq);
+  if (Number.isFinite(seq) && seq <= bridgeCursor) return;
+  const runId = Number(event?.runId);
+  if (!Number.isFinite(runId) || !event?.type || typeof event.payload_json !== 'string') return;
+  try {
+    const payload = JSON.parse(event.payload_json);
+    emitRunEvent(runId, event.type, payload);
+    if (Number.isFinite(seq)) {
+      bridgeCursor = Math.max(bridgeCursor, seq);
+      saveBridgeCursor();
+    }
+  } catch {
+    // Ignore one malformed IPC event; the run status will still settle.
+  }
+}
+
+async function restoreMainProcessRuns(): Promise<void> {
+  const api = runnerElectronAPI();
+  if (!api?.getAgentRunState) return;
+  const initial = await api.getAgentRunState(0);
+  const instanceId = String(initial?.instanceId || '');
+  if (instanceId !== bridgeInstanceId) {
+    bridgeInstanceId = instanceId;
+    bridgeCursor = loadBridgeCursor(instanceId);
+  }
+  const state = bridgeCursor > 0 ? await api.getAgentRunState(bridgeCursor) : initial;
+  for (const runId of state?.activeRunIds || []) {
+    if (Number.isFinite(Number(runId))) activeRunIds.add(Number(runId));
+  }
+  for (const event of state?.events || []) processAgentEvent(event);
+}
 
 function runnerElectronAPI(): RunnerElectronAPI | undefined {
   return (window as unknown as { electronAPI?: RunnerElectronAPI }).electronAPI;
@@ -127,9 +187,10 @@ async function publishPlanUsage(activeSocket: Socket, force = false): Promise<vo
 }
 
 async function registerWithServer(activeSocket: Socket): Promise<void> {
+  await restoreMainProcessRuns();
   const models = await probeModels();
   const ids = [...activeRunIds].filter((id) => Number.isFinite(id));
-  activeSocket.emit('runner:register', { models, activeRunIds: ids });
+  activeSocket.emit('runner:register', { models, activeRunIds: ids, runnerInstanceId: bridgeInstanceId || undefined });
   void publishPlanUsage(activeSocket);
   pruneRecentTerminals();
   for (const [runId, entry] of recentTerminalEvents.entries()) {
@@ -168,14 +229,7 @@ function ensureAgentEventBridge(): void {
   const api = runnerElectronAPI();
   if (!api?.onAgentEvent) return;
   agentEventUnsub = api.onAgentEvent((event) => {
-    const runId = Number(event?.runId);
-    if (!Number.isFinite(runId) || !event?.type || typeof event.payload_json !== 'string') return;
-    try {
-      const payload = JSON.parse(event.payload_json);
-      emitRunEvent(runId, event.type, payload);
-    } catch {
-      // Ignore one malformed IPC event; the run status will still settle.
-    }
+    processAgentEvent(event);
   });
 }
 

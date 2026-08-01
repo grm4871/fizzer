@@ -270,7 +270,11 @@ export function listRunEvents(db: Db, runId: number) {
   return db.prepare('SELECT * FROM run_events WHERE run_id = ? ORDER BY seq ASC').all(runId) as RunEvent[];
 }
 
-export async function cancelRun(db: Db, runId: number): Promise<boolean> {
+export async function cancelRun(
+  db: Db,
+  runId: number,
+  opts: { steering?: boolean } = {},
+): Promise<boolean> {
   const run = getRun(db, runId);
   if (!run) return false;
 
@@ -288,25 +292,27 @@ export async function cancelRun(db: Db, runId: number): Promise<boolean> {
     }
     clearDelegatedRun(runId);
     clearDelegatedRunRecord(db, runId);
+    const summary = opts.steering ? 'Steered into the continuation below.' : 'Run canceled by user.';
     db.prepare(`
       UPDATE runs
-      SET status = 'canceled', finished_at = datetime('now'), summary = 'Run canceled by user.'
+      SET status = 'canceled', finished_at = datetime('now'), summary = ?
       WHERE id = ?
-    `).run(runId);
-    publishRunEvent(db, runId, 'status', { status: 'canceled', summary: 'Run canceled by user.' });
+    `).run(summary, runId);
+    publishRunEvent(db, runId, 'status', { status: 'canceled', summary, steering: opts.steering === true });
     return true;
   }
 
   // No live owner (e.g. server restarted, never reclaimed): mark canceled so
   // stale UI can clear itself.
   if (run.status === 'running' || run.status === 'queued') {
+    const summary = opts.steering ? 'Steered into the continuation below.' : 'Run canceled by user.';
     clearDelegatedRunRecord(db, runId);
     db.prepare(`
       UPDATE runs
-      SET status = 'canceled', finished_at = datetime('now'), summary = 'Run canceled by user.'
+      SET status = 'canceled', finished_at = datetime('now'), summary = ?
       WHERE id = ?
-    `).run(runId);
-    publishRunEvent(db, runId, 'status', { status: 'canceled', summary: 'Run canceled by user.' });
+    `).run(summary, runId);
+    publishRunEvent(db, runId, 'status', { status: 'canceled', summary, steering: opts.steering === true });
     return true;
   }
 
@@ -319,14 +325,14 @@ export async function startRun(
   noteId: string | null,
   prompt: string,
   agent: AgentId = 'claude-code',
-  opts: { conversationId?: string; model?: string } = {},
+  opts: { conversationId?: string; model?: string; sessionId?: string } = {},
 ) {
   const conversationId = opts.conversationId || crypto.randomUUID();
   const model = opts.model || null;
   const result = db.prepare(`
-    INSERT INTO runs (vault_id, note_id, prompt, agent, conversation_id, status, model)
-    VALUES (?, ?, ?, ?, ?, 'queued', ?)
-  `).run(vault.id, noteId, prompt, agent, conversationId, model);
+    INSERT INTO runs (vault_id, note_id, prompt, agent, conversation_id, status, model, session_id)
+    VALUES (?, ?, ?, ?, ?, 'queued', ?, ?)
+  `).run(vault.id, noteId, prompt, agent, conversationId, model, opts.sessionId || null);
 
   const runId = Number(result.lastInsertRowid);
   const run = getRun(db, runId)!;

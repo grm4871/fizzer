@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { CHAT_AGENT_MODEL_PRESETS, formatAgentChatPrompt, isLightweightChatRequest } from '../chat/agents';
+import {
+  CHAT_AGENT_MODEL_PRESETS,
+  formatAgentChatPrompt,
+  isLightweightChatRequest,
+  needsCascadeWorkspaceContext,
+  needsRecentChatContext,
+} from '../chat/agents';
 
 const registration = {
   agentId: 'codex',
@@ -27,6 +33,22 @@ describe('isLightweightChatRequest', () => {
     expect(isLightweightChatRequest('wait setting was off. try again')).toBe(false);
     expect(isLightweightChatRequest('hide this view unless i click an mp3 file')).toBe(false);
     expect(isLightweightChatRequest('do this here')).toBe(false);
+  });
+});
+
+describe('selective Cascade context', () => {
+  it('requests history only for unresolved references', () => {
+    expect(needsRecentChatContext('continue where you left off')).toBe(true);
+    expect(needsRecentChatContext('also fix that thing')).toBe(true);
+    expect(needsRecentChatContext('implement drag ordering in Sidebar.tsx')).toBe(false);
+    expect(needsRecentChatContext('Replying to alice:\n> fix the tab order')).toBe(false);
+  });
+
+  it('requests live workspace context only for live-vault operations', () => {
+    expect(needsCascadeWorkspaceContext('create a live note for the release')).toBe(true);
+    expect(needsCascadeWorkspaceContext('make a kanban inside Cascade')).toBe(true);
+    expect(needsCascadeWorkspaceContext('make a kanban for Cascade')).toBe(true);
+    expect(needsCascadeWorkspaceContext('fix Cascade sidebar ordering in App.tsx')).toBe(false);
   });
 });
 
@@ -88,5 +110,19 @@ describe('formatAgentChatPrompt', () => {
       expect(prompt).not.toContain('cascade-scratchpad');
       expect(prompt).not.toContain('cascade-note memory');
     }
+  });
+
+  it.each([
+    ['hermes', 'hermes', 'Hermes'],
+    ['omp', 'omp', 'OMP'],
+  ])('keeps %s close to its direct CLI prompt', (agentId, mention, displayName) => {
+    const nativeCli = { ...registration, agentId, mention, displayName };
+    const request = 'fix the runner and deploy';
+    const prompt = formatAgentChatPrompt('dev', nativeCli, request, 'alice', false);
+
+    expect(prompt).toContain(request);
+    expect(prompt).toContain('Keep progress in the run trace');
+    expect(prompt).not.toContain('cascade-scratchpad');
+    expect(prompt.length - request.length).toBeLessThan(180);
   });
 });

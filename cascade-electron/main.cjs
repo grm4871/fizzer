@@ -35,6 +35,7 @@ const db = require('./database.cjs');
 const { startLocalAgentRun, cancelLocalAgentRun } = require('./agent-runner.cjs');
 const { connectDesktopRunner, disconnectDesktopRunner, isDesktopRunnerConnected, probeLocalModels } = require('./desktop-runner-host.cjs');
 const { collectPlanUsage } = require('./plan-usage.cjs');
+const { AgentRunState } = require('./agent-run-state.cjs');
 
 // Suppress GLib-GObject and GTK warnings on Linux.
 if (process.platform === 'linux') {
@@ -44,6 +45,7 @@ if (process.platform === 'linux') {
 
 let mainWindow;
 let desktopUpdateInProgress = false;
+const agentRunState = new AgentRunState();
 // Removed: dead `serverProcess` variable — it was declared but never assigned,
 // and the corresponding `if (serverProcess) serverProcess.kill()` in the
 // 'closed' handler was therefore unreachable.
@@ -238,6 +240,24 @@ function configureWindow(win) {
     try { win.setMenuBarVisibility(false); } catch { /* ignore */ }
     try { win.setAutoHideMenuBar(true); } catch { /* ignore */ }
   }
+
+  const logDesktopLifecycle = (name, detail = {}) => {
+    appendPerfLogLines({
+      iso: new Date().toISOString(),
+      t: Date.now(),
+      kind: 'desktop-lifecycle',
+      name,
+      detail: { windowId: win.id, ...detail },
+    });
+  };
+  win.on('unresponsive', () => logDesktopLifecycle('window.unresponsive'));
+  win.on('responsive', () => logDesktopLifecycle('window.responsive'));
+  win.webContents.on('render-process-gone', (_event, details) => {
+    logDesktopLifecycle('renderer.gone', {
+      reason: details?.reason,
+      exitCode: details?.exitCode,
+    });
+  });
 
   // Block navigation to sites outside cscd.online / local dev.
   win.webContents.on('will-navigate', (event, url) => {
@@ -517,12 +537,21 @@ ipcMain.handle('agent:start', async (event, opts) => {
   try {
     const runId = Number(opts?.runId);
     if (!Number.isFinite(runId)) throw new Error('Invalid run id');
-    const sender = event.sender;
+    // A renderer reload can make the server re-assert a delegation. The child
+    // already owned by main must continue; never start a duplicate process.
+    if (!agentRunState.start(runId)) return { success: true, alreadyRunning: true };
     const sendEvent = (payload) => {
-      if (!sender.isDestroyed()) sender.send('agent:event', payload);
+      const eventPayload = agentRunState.record(payload);
+      if (!eventPayload) return;
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+          window.webContents.send('agent:event', eventPayload);
+        }
+      }
     };
     void startLocalAgentRun(opts, sendEvent).catch((error) => {
       console.error('[IPC] Local agent run failed:', error);
+      agentRunState.cancel(runId);
     });
     return { success: true };
   } catch (error) {
@@ -535,12 +564,16 @@ ipcMain.handle('agent:start', async (event, opts) => {
 ipcMain.handle('agent:cancel', async (_event, runId) => {
   try {
     const cancelled = await cancelLocalAgentRun(runId);
+    agentRunState.cancel(runId);
     return { success: cancelled };
   } catch (error) {
     console.error('[IPC] Failed to cancel local agent:', error);
     return { success: false, error: error.message };
   }
 });
+
+/** Restore main-owned runs and missed events after renderer reload/freeze. */
+ipcMain.handle('agent:getState', async (_event, afterSeq = 0) => agentRunState.snapshot(afterSeq));
 
 /** Configure helper env for local agent children (renderer owns /runners socket). */
 ipcMain.handle('runner:setToken', async (_event, { token, apiUrl } = {}) => {

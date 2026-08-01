@@ -59,6 +59,7 @@ function startServer() {
       API_HOST: '127.0.0.1',
       DOCS_DB_PATH: DB_PATH,
       JWT_SECRET: 'e2e-test-secret',
+      CASCADE_ALLOW_OPEN_REGISTRATION: 'true',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -169,6 +170,69 @@ async function main() {
       throw new Error('Expected delegated text event in run history');
     }
     console.log('[e2e] OK run events persisted');
+
+    // ── Steering: persist the session before interrupt, then resume it ────
+    let steeringFirst = null;
+    let steeringSecond = null;
+    runnerSocket.off('run:delegate');
+    runnerSocket.on('run:delegate', (payload) => {
+      if (!steeringFirst) {
+        steeringFirst = payload;
+        runnerSocket.emit('runner:runEvent', {
+          runId: payload.runId,
+          type: 'session',
+          payload: { sessionId: 'desktop-steering-session' },
+        });
+        runnerSocket.emit('runner:runEvent', {
+          runId: payload.runId,
+          type: 'status',
+          payload: { status: 'running' },
+        });
+        return;
+      }
+      steeringSecond = payload;
+      runnerSocket.emit('runner:runEvent', {
+        runId: payload.runId,
+        type: 'status',
+        payload: { status: 'completed', summary: 'Steering resumed.', sessionId: payload.resumeSessionId },
+      });
+    });
+
+    const steeringConversation = `steering-${Date.now()}`;
+    const { run: steeringRun } = await fetchJson(`${API_BASE}/api/vaults/${vault.id}/runs`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({
+        prompt: 'Begin long task',
+        agent: 'codex',
+        note_id: null,
+        conversation_id: steeringConversation,
+      }),
+    });
+    await sleep(250);
+    await fetchJson(`${API_BASE}/api/runs/${steeringRun.id}/cancel`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({ steering: true }),
+    });
+    const { run: steeredRun } = await fetchJson(`${API_BASE}/api/vaults/${vault.id}/runs`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({
+        prompt: 'Mid-session steering: change direction',
+        agent: 'codex',
+        note_id: null,
+        conversation_id: steeringConversation,
+      }),
+    });
+    await sleep(300);
+    if (!steeringSecond || steeringSecond.runId !== steeredRun.id) {
+      throw new Error('Expected steering continuation to be delegated');
+    }
+    if (steeringSecond.resumeSessionId !== 'desktop-steering-session') {
+      throw new Error(`Expected steering resume session, got ${steeringSecond.resumeSessionId || 'none'}`);
+    }
+    console.log('[e2e] OK steering interrupt resumed the early-persisted session');
 
     // ── Disconnect grace: brief blip must not fail an open run ──────────
     let midRunPayload = null;
