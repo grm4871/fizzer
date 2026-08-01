@@ -1,10 +1,23 @@
 import { describe, expect, it } from 'vitest';
 import { buildQuotedReplyPrompt, precedingMessageBatch, precedingMessageBatchText, resolveAgentMessageRegistration } from '../chat/mentions';
+import { prepareReplyForSend } from '../components/ChatView';
 
 const registrations = [
   { id: 'terra-reg', agentId: 'codex', displayName: 'Terra', mention: 'terra', taggableByAgents: true },
   { id: 'sol-reg', agentId: 'codex', displayName: 'Sol', mention: 'sol', taggableByAgents: true },
 ];
+
+describe('reply agent notification', () => {
+  const reply = { messageId: 'msg-agent', author: 'Sol', mention: 'sol', preview: 'Original answer' };
+
+  it('keeps the implicit mention on by default', () => {
+    expect(prepareReplyForSend(reply, true)).toEqual(reply);
+  });
+
+  it('removes routing mention without removing reply context', () => {
+    expect(prepareReplyForSend(reply, false)).toEqual({ ...reply, mention: '' });
+  });
+});
 
 describe('resolveAgentMessageRegistration', () => {
   it('uses the authoritative registration id when present', () => {

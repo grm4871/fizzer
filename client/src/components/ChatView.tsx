@@ -411,6 +411,11 @@ export function buildReplyRef(message: ChatMessage, registeredAgents: ChatAgentR
   };
 }
 
+/** Keep the reply quote while suppressing its implicit agent mention. */
+export function prepareReplyForSend(reply: ChatReplyRef, notifyAgent: boolean): ChatReplyRef {
+  return notifyAgent ? reply : { ...reply, mention: '' };
+}
+
 const CHAT_MARKDOWN_PLUGINS = [remarkGfm, remarkBreaks];
 
 function formatChatMentions(text: string, aliases: string[]): ReactNode[] {
@@ -1283,6 +1288,7 @@ export const ChatView = memo(function ChatView({
   }));
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
   const [replyTarget, setReplyTarget] = useState<ChatReplyRef | null>(null);
+  const [replyNotifiesAgent, setReplyNotifiesAgent] = useState(true);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; message: ChatMessage } | null>(null);
   /** Delete is two-step in the context menu rather than a native confirm dialog. */
   const [deleteArmed, setDeleteArmed] = useState(false);
@@ -1635,6 +1641,7 @@ export const ChatView = memo(function ChatView({
 
   useEffect(() => {
     setReplyTarget(null);
+    setReplyNotifiesAgent(true);
     setContextMenu(null);
   }, [channelId]);
 
@@ -1777,6 +1784,7 @@ export const ChatView = memo(function ChatView({
 
   const startReply = useCallback((message: ChatMessage) => {
     setReplyTarget(buildReplyRef(message, registeredAgents));
+    setReplyNotifiesAgent(true);
     setContextMenu(null);
     // Focus after paint so the reply bar is mounted first (esp. mobile keyboard).
     requestAnimationFrame(() => draftRef.current?.focus());
@@ -2052,7 +2060,10 @@ export const ChatView = memo(function ChatView({
   function submit() {
     const body = draft.trim();
     if (!body && pendingMedia.length === 0) return;
-    onSendMessage(channelId, body, pendingMedia, replyTarget ?? undefined);
+    const reply = replyTarget
+      ? prepareReplyForSend(replyTarget, replyNotifiesAgent)
+      : undefined;
+    onSendMessage(channelId, body, pendingMedia, reply);
     setDraft('');
     setPendingMedia([]);
     setMediaError('');
@@ -2248,11 +2259,25 @@ export const ChatView = memo(function ChatView({
                   </span>
                   <span className="chat-reply-bar-preview">{replyTarget.preview}</span>
                 </div>
+                {registeredAgents.some((agent) => normalizeMention(agent.mention) === normalizeMention(replyTarget.mention)) && (
+                  <button
+                    type="button"
+                    className={`chat-reply-mention-toggle${replyNotifiesAgent ? ' active' : ''}`}
+                    aria-pressed={replyNotifiesAgent}
+                    title={replyNotifiesAgent ? `Turn off notification for @${replyTarget.mention}` : `Notify @${replyTarget.mention}`}
+                    onClick={() => setReplyNotifiesAgent((value) => !value)}
+                  >
+                    @{replyNotifiesAgent ? 'ON' : 'OFF'}
+                  </button>
+                )}
                 <button
                   type="button"
                   className="chat-reply-bar-close"
                   title="Cancel reply"
-                  onClick={() => setReplyTarget(null)}
+                  onClick={() => {
+                    setReplyTarget(null);
+                    setReplyNotifiesAgent(true);
+                  }}
                 >
                   <X size={12} />
                 </button>
@@ -2314,6 +2339,7 @@ export const ChatView = memo(function ChatView({
                 if (e.key === 'Escape' && replyTarget) {
                   e.preventDefault();
                   setReplyTarget(null);
+                  setReplyNotifiesAgent(true);
                   return;
                 }
                 if (e.key === 'Enter' && !e.shiftKey) {

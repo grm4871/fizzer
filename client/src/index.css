@@ -3056,6 +3056,26 @@ a {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.chat-reply-mention-toggle {
+  flex: 0 0 auto;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
+  font-family: var(--font-mono, monospace);
+  font-size: 0.625rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.chat-reply-mention-toggle:hover {
+  background: var(--bg-overlay);
+  color: var(--text-primary);
+}
+.chat-reply-mention-toggle.active {
+  border-color: color-mix(in srgb, var(--accent) 52%, var(--border));
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: hsl(38, 100%, 68%);
+}
 .chat-reply-bar-close {
   width: 22px;
   height: 22px;
