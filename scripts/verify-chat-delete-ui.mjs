@@ -8,9 +8,12 @@
  */
 import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
+import { pickPort } from './lib/test-ports.mjs';
 
-const API_PORT = Number(process.env.TEST_API_PORT || 3096);
-const PREVIEW_PORT = Number(process.env.TEST_PREVIEW_PORT || 4183);
+// Ports come from the OS by default: a leftover dev server on a hardcoded
+// port used to surface as an unexplained startup timeout.
+const API_PORT = Number(process.env.TEST_API_PORT) || await pickPort();
+const PREVIEW_PORT = Number(process.env.TEST_PREVIEW_PORT) || await pickPort();
 const API_BASE = `http://127.0.0.1:${API_PORT}`;
 const APP_URL = `http://127.0.0.1:${PREVIEW_PORT}/app.html`;
 const DB_PATH = `/tmp/cascade-chatdelete-ui-${API_PORT}.db`;
