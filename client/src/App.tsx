@@ -2223,8 +2223,22 @@ export default function App() {
       socket.emit('joinVault', activeVaultId);
       syncChatPresenceRooms(socket);
     };
+    const handleConnect = () => {
+      joinActiveVault();
+      // Socket.IO rooms do not replay events emitted while this renderer was
+      // disconnected. Reconcile every open transcript after a successful
+      // (re)connect so a phone-started run cannot remain phone-only merely
+      // because the desktop missed its create/update broadcasts.
+      const channelIds = openChatTabIds();
+      if (channelIds.length > 0) {
+        void loadChatMessages(activeVaultId, notesRef.current, {
+          silent: true,
+          channelIds,
+        });
+      }
+    };
     joinActiveVault();
-    socket.on('connect', joinActiveVault);
+    socket.on('connect', handleConnect);
     syncChatPresenceRooms(socket);
 
     // Soft + debounced: note events often arrive in bursts (agent saves, multi-
@@ -2415,7 +2429,7 @@ export default function App() {
         window.clearTimeout(socketVaultReloadTimerRef.current);
         socketVaultReloadTimerRef.current = null;
       }
-      socket.off('connect', joinActiveVault);
+      socket.off('connect', handleConnect);
       for (const channelId of [...joinedChatChannelsRef.current]) {
         socket.emit('leaveChatChannel', channelId);
       }
@@ -2434,7 +2448,7 @@ export default function App() {
       socket.off('vault:chatPresence', handleChatPresence);
       socket.disconnect();
     };
-  }, [activeVaultId, loadVaultData, loadNoteContent, openNote, syncChatPresenceRooms]);
+  }, [activeVaultId, loadVaultData, loadNoteContent, loadChatMessages, openChatTabIds, openNote, syncChatPresenceRooms]);
 
   useEffect(() => {
     const socket = vaultSocketRef.current;

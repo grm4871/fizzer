@@ -3,7 +3,8 @@
  * Drives the built client in headless Chromium to confirm the chat forward
  * affordance works end to end: right-click a message → Forward → pick a channel
  * → the copy shows up in that channel with its "Forwarded from" banner and
- * survives a reload.
+ * survives a reload. It also verifies that a renderer reconciles messages
+ * missed during a server/socket disconnect.
  *
  * Build first: `npm run build && npm run build:client`.
  */
@@ -39,19 +40,24 @@ async function must(url, options = {}) {
   return data;
 }
 
-const server = spawn('node', ['dist/index.js'], {
-  cwd: root,
-  env: {
-    ...process.env,
-    API_PORT: String(API_PORT),
-    API_HOST: '127.0.0.1',
-    DOCS_DB_PATH: DB_PATH,
-    JWT_SECRET: 'chatforward-ui-secret',
-    CASCADE_ALLOW_OPEN_REGISTRATION: '1',
-  },
-  stdio: ['ignore', 'pipe', 'pipe'],
-});
-server.stderr.on('data', (c) => process.stderr.write(`[server-err] ${c}`));
+function startServer() {
+  const child = spawn('node', ['dist/index.js'], {
+    cwd: root,
+    env: {
+      ...process.env,
+      API_PORT: String(API_PORT),
+      API_HOST: '127.0.0.1',
+      DOCS_DB_PATH: DB_PATH,
+      JWT_SECRET: 'chatforward-ui-secret',
+      CASCADE_ALLOW_OPEN_REGISTRATION: '1',
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  child.stderr.on('data', (c) => process.stderr.write(`[server-err] ${c}`));
+  return child;
+}
+
+let server = startServer();
 
 const preview = spawn('npm', ['--workspace=client', 'run', 'preview', '--', '--host', '127.0.0.1', '--port', String(PREVIEW_PORT)], {
   cwd: root,
@@ -142,13 +148,46 @@ try {
     throw new Error('forwarded banner lost the original author');
   }
 
+  const preOutageFatal = errors.filter((line) => !line.includes('[VersionCheck]'));
+  if (preOutageFatal.length > 0) {
+    throw new Error(`runtime errors before reconnect test:\n${preOutageFatal.join('\n')}`);
+  }
+  errors.length = 0;
+
+  // Socket.IO rooms do not replay broadcasts missed while disconnected. Keep
+  // the chat open, restart the server, persist a message before the renderer's
+  // reconnect delay elapses, and prove reconnect reconciliation backfills it.
+  await openChannel('qa-source');
+  const stopped = new Promise((resolve) => server.once('exit', resolve));
+  server.kill('SIGTERM');
+  await stopped;
+  await delay(300);
+  server = startServer();
+  await waitForUrl(`${API_BASE}/api/health`);
+  const missedBody = `missed-while-disconnected-${stamp}`;
+  await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channels['qa-source'].id}/messages`, {
+    method: 'POST', headers: auth,
+    body: JSON.stringify({
+      id: `msg-${stamp}-reconnect`,
+      channelId: channels['qa-source'].id,
+      author: 'Phone',
+      body: missedBody,
+      createdAt: new Date().toISOString(),
+    }),
+  });
+  await page.getByText(missedBody, { exact: true }).waitFor({ timeout: 20000 });
+  // The proxy/socket errors recorded during the intentional server outage are
+  // expected. From this recovered point onward, runtime errors are real again.
+  errors.length = 0;
+  await delay(500);
+
   const fatal = errors.filter((line) => !line.includes('[VersionCheck]'));
   if (fatal.length > 0) {
     console.error('[verify-chat-forward-ui] Runtime errors:');
     for (const line of fatal) console.error(`  - ${line}`);
     process.exit(1);
   }
-  console.log('[verify-chat-forward-ui] OK — right-click forward copied the message and it stayed forwarded');
+  console.log('[verify-chat-forward-ui] OK — forwarding persisted and reconnect backfilled a missed cross-client message');
 } catch (error) {
   console.error('[verify-chat-forward-ui] FAILED:', error.message || error);
   process.exitCode = 1;
