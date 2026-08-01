@@ -1107,7 +1107,11 @@ export default function App() {
     }
   }, [loadVaultData, openChatChannel]);
 
-  const appendChatMessage = useCallback((channelId: string, message: ChatMessage) => {
+  const appendChatMessage = useCallback((
+    channelId: string,
+    message: ChatMessage,
+    options: { persist?: boolean } = {},
+  ) => {
     setChatState((prev) => ({
       ...prev,
       messagesByChannel: {
@@ -1116,7 +1120,7 @@ export default function App() {
       },
     }));
     const vaultId = activeVaultIdRef.current;
-    if (vaultId) void persistChatMessageToServer(vaultId, channelId, message);
+    if (vaultId && options.persist !== false) void persistChatMessageToServer(vaultId, channelId, message);
   }, [persistChatMessageToServer]);
 
   const updateChatMessage = useCallback((channelId: string, messageId: string, updater: (message: ChatMessage) => ChatMessage) => {
@@ -1396,13 +1400,27 @@ export default function App() {
       status: 'running',
       agentId,
       registrationId: registration.id,
-    });
+    }, { persist: false });
 
     try {
       // The prior terminal event is published only after its session id is
       // stored server-side. Waiting here therefore guarantees /runs can resume
       // that same backing session instead of racing into a duplicate cold boot.
-      await sessionTurn.preceding;
+      // A predecessor that never publishes a terminal event must not leave this
+      // optimistic shell saying "Thinking..." forever. The server has not been
+      // asked to create a run yet, so it is safe to fail this startup locally.
+      let startupTimeout: number | undefined;
+      await Promise.race([
+        sessionTurn.preceding,
+        new Promise<never>((_resolve, reject) => {
+          startupTimeout = window.setTimeout(
+            () => reject(new Error('Agent run did not start within 60 seconds. Please try again.')),
+            60_000,
+          );
+        }),
+      ]).finally(() => {
+        if (startupTimeout != null) window.clearTimeout(startupTimeout);
+      });
       // One sticky session per agent: the run resumes (and extends) the member's
       // conversation, so its earlier turns are already in context. A `/clear`
       // rotates conversationId, so a fresh key here has no watermark.
