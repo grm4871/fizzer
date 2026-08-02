@@ -567,7 +567,15 @@ async function runCodex(
   // --sandbox, so the sandbox mode is set via -c instead.
   const imageArgs = imagePaths.flatMap((p) => ['-i', p]);
   const modelArgs = model ? ['--model', model] : [];
-  const normalizedEffort = typeof reasoningEffort === 'string' ? reasoningEffort.trim().toLowerCase() : '';
+  // Existing Electron mains hot-reload this compiled module between runs, but
+  // retain their older bridge code. Their per-run environment still identifies
+  // Sol, so preserve the Sol-only pin during that in-place update path.
+  const inheritedEffort = !reasoningEffort && env?.CASCADE_CHAT_AUTHOR?.trim().toLowerCase() === 'sol'
+    ? 'low'
+    : '';
+  const normalizedEffort = typeof reasoningEffort === 'string'
+    ? reasoningEffort.trim().toLowerCase()
+    : inheritedEffort;
   const reasoningEffortArgs = normalizedEffort === 'low' || normalizedEffort === 'medium' || normalizedEffort === 'high' || normalizedEffort === 'xhigh'
     ? ['-c', `model_reasoning_effort="${normalizedEffort}"`]
     : [];
