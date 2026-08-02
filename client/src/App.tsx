@@ -30,6 +30,7 @@ import { SearchOverlay } from './components/SearchOverlay';
 import { CommandPalette } from './components/CommandPalette';
 import { AdminPanel } from './components/AdminPanel';
 import { SessionManager } from './components/SessionManager';
+import { NewsTicker } from './components/NewsTicker';
 import { PaneGrid, type TabDragPayload } from './components/PaneGrid';
 import { SuperkanbanView } from './components/SuperkanbanView';
 import * as Layout from './layout/tree';
@@ -3062,7 +3063,7 @@ export default function App() {
                 <PanelLeftOpen size={16} />
               </button>
             )}
-            <div style={{ flex: 1, minWidth: 0 }} />
+            <NewsTicker />
             <button
               id="session-manager-btn"
               type="button"

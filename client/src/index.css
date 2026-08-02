@@ -1882,6 +1882,62 @@ a {
   display: flex;
   min-height: 34px;
 }
+/* Toolbar news ticker — instrument-cluster message strip. One headline scrolls
+   across, then the next is drawn (see NewsTicker.tsx). */
+.news-ticker {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  padding-left: 6px;
+  /* Fade in at the right edge only — headlines exit under the opaque label. */
+  -webkit-mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 28px), transparent 100%);
+  mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 28px), transparent 100%);
+}
+.news-ticker-label {
+  flex: none;
+  z-index: 1;
+  padding-right: 8px;
+  border-right: 1px solid var(--border);
+  margin-right: 2px;
+  font-size: 0.5625rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  background: var(--bg-surface);
+}
+.news-ticker-track {
+  position: absolute;
+  left: 0;
+  white-space: nowrap;
+  font-size: 0.6875rem;
+  letter-spacing: 0.02em;
+  color: var(--accent);
+  opacity: 0.78;
+  visibility: hidden;
+  will-change: transform;
+}
+.news-ticker-track.is-running {
+  visibility: visible;
+  animation-name: news-ticker-scroll;
+  animation-timing-function: linear;
+  animation-fill-mode: both;
+}
+.news-ticker-track.is-static {
+  position: static;
+  visibility: visible;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@keyframes news-ticker-scroll {
+  from { transform: translateX(var(--news-start, 100%)); }
+  to { transform: translateX(var(--news-end, -100%)); }
+}
+
 .workspace-session-btn {
   position: relative;
 }
