@@ -97,6 +97,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('agent:event', listener);
   },
 
+  // ── Task workspaces (git worktrees) + pull requests ─────────
+  // Isolated per-channel checkouts so parallel agents stop overwriting each
+  // other. Creating, removing, pushing, and opening a PR are all explicit.
+  listWorktrees: (dir) => ipcRenderer.invoke('worktree:list', { dir }),
+  getWorktreeStatus: (dir) => ipcRenderer.invoke('worktree:status', { dir }),
+  createWorktree: (opts) => ipcRenderer.invoke('worktree:create', opts),
+  removeWorktree: (opts) => ipcRenderer.invoke('worktree:remove', opts),
+  createWorktreePullRequest: (opts) => ipcRenderer.invoke('worktree:createPullRequest', opts),
+  getWorktreePullRequest: (dir) => ipcRenderer.invoke('worktree:pullRequest', { dir }),
+
   // ── App Update ──────────────────────────────────────────────
   // Stable bridge name retained for compatibility; updates now refresh in place.
   updateAndRestart: () => ipcRenderer.invoke('app:updateAndRestart'),

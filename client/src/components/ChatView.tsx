@@ -9,6 +9,7 @@ import { escapeRegExp, normalizeMention } from '../chat/mentions';
 import { highlightJSON } from './jsonHighlighter';
 import { CascadeRunPanel } from './CascadeRunPanel';
 import { ChatSidebarButtons } from './ChatSidebarButtons';
+import { ChatWorkspacePanel } from './ChatWorkspacePanel';
 import { hasRunActivity } from '../chat/harnessActivity';
 
 export const CHAT_NOTE_MARKER = 'cascade://chat-channel';
@@ -1246,12 +1247,16 @@ export const ChatView = memo(function ChatView({
     return () => { alive = false; };
   }, [vaultId, channelId]);
 
-  const saveChannelCwd = useCallback(async () => {
+  // `override` lets the workspace panel repoint the channel at a worktree path
+  // without waiting for the input's state round-trip.
+  const saveChannelCwd = useCallback(async (override?: string) => {
     if (!vaultId) return;
+    const next = (override ?? channelCwd).trim();
+    if (override !== undefined) setChannelCwd(next);
     try {
       const d = await api<{ settings: { cwd: string } }>(
         `/api/vaults/${vaultId}/channels/${channelId}/settings`,
-        { method: 'PUT', body: JSON.stringify({ cwd: channelCwd.trim() }) },
+        { method: 'PUT', body: JSON.stringify({ cwd: next }) },
       );
       setChannelCwd(d.settings?.cwd ?? '');
       setChannelCwdSaved(true);
@@ -2399,9 +2404,14 @@ export const ChatView = memo(function ChatView({
           collapsed={usersCollapsed}
           inviteSelected={inviteOpen}
           agentSelected={agentMenuOpen}
+          settingsSelected={channelSettingsOpen}
           onToggleCollapsed={() => setUsersCollapsed((value) => !value)}
           onInvite={toggleInvite}
           onAgent={openAgentMenu}
+          onSettings={() => {
+            setUsersCollapsed(false);
+            setChannelSettingsOpen((open) => !open);
+          }}
         />
 
         {!usersCollapsed && channelSettingsOpen && (
@@ -2426,6 +2436,12 @@ export const ChatView = memo(function ChatView({
               {channelCwdSaved && <span className="chat-channel-cwd-saved">saved</span>}
             </div>
             <p>Overrides each agent's own working directory in this channel.</p>
+            <ChatWorkspacePanel
+              channelId={channelId}
+              channelName={channelName}
+              cwd={channelCwd}
+              onUseWorkspace={(path) => { void saveChannelCwd(path); }}
+            />
           </div>
         )}
 

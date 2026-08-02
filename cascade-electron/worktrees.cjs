@@ -1,0 +1,380 @@
+'use strict';
+
+/**
+ * @file worktrees.cjs — task workspaces (git worktrees) and pull requests
+ *
+ * Cascade runs several agents at once against the same repository. Sharing one
+ * checkout means they overwrite each other's edits, so a channel can instead be
+ * bound to an **isolated task workspace**: a git worktree on its own branch,
+ * created and tracked here in the main process.
+ *
+ * Design constraints (see the vault note "Cascade-native parallel workspaces
+ * and pull requests"):
+ *  - The worktree is a host-local materialization. The durable record is the
+ *    metadata registry in {@link workspacesRoot}, not anything written into the
+ *    working tree (an untracked marker file would show up as a dirty repo).
+ *  - Publishing is always explicit. Nothing here pushes or opens a PR unless
+ *    the caller asked for it.
+ *  - Cleanup never destroys work: a workspace with uncommitted changes or
+ *    commits that exist on no remote is refused unless `force` is passed, and
+ *    the repository's primary checkout is never removable.
+ *
+ * Every git/gh call goes through execFile with an argument array — no shell, so
+ * branch names and paths cannot be injected into a command line.
+ *
+ * @module cascade-electron/worktrees
+ */
+
+const { execFile } = require('child_process');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+const GIT_TIMEOUT_MS = 20000;
+const GH_TIMEOUT_MS = 60000;
+const REGISTRY_FILE = 'workspaces.json';
+
+/** Root for Cascade-managed worktrees. Overridable for tests. */
+function workspacesRoot() {
+  return process.env.CASCADE_WORKTREE_ROOT
+    || path.join(os.homedir(), '.cascade', 'worktrees');
+}
+
+function run(file, args, cwd, timeout = GIT_TIMEOUT_MS) {
+  return new Promise((resolve) => {
+    execFile(file, args, { cwd, timeout, maxBuffer: 8 * 1024 * 1024 }, (error, stdout, stderr) => {
+      resolve({
+        ok: !error,
+        code: error && typeof error.code === 'number' ? error.code : error ? 1 : 0,
+        stdout: String(stdout || '').trim(),
+        stderr: String(stderr || '').trim() || (error ? String(error.message) : ''),
+      });
+    });
+  });
+}
+
+const git = (args, cwd) => run('git', args, cwd);
+const gh = (args, cwd) => run('gh', args, cwd, GH_TIMEOUT_MS);
+
+/**
+ * Branch/directory name for a workspace. Slugs are the only user-controlled
+ * part of a path we create, so they are restricted rather than sanitized: a
+ * rejected slug is easier to explain than a surprising directory.
+ */
+function normalizeSlug(input) {
+  const slug = String(input || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48);
+  if (!slug || !/^[a-z0-9][a-z0-9-]*$/.test(slug)) return null;
+  return slug;
+}
+
+function readRegistry() {
+  const file = path.join(workspacesRoot(), REGISTRY_FILE);
+  try {
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeRegistry(entries) {
+  const root = workspacesRoot();
+  fs.mkdirSync(root, { recursive: true });
+  fs.writeFileSync(path.join(root, REGISTRY_FILE), `${JSON.stringify(entries, null, 2)}\n`);
+}
+
+function rememberWorkspace(entry) {
+  const entries = readRegistry().filter((e) => e.path !== entry.path);
+  entries.push(entry);
+  writeRegistry(entries);
+}
+
+function forgetWorkspace(target) {
+  writeRegistry(readRegistry().filter((e) => e.path !== target));
+}
+
+/** Resolve a directory to its repository root, plus current branch/head. */
+async function resolveRepo(dir) {
+  const expanded = expandHome(dir);
+  if (!expanded || !fs.existsSync(expanded)) return { isRepo: false, error: 'Directory does not exist' };
+  const top = await git(['rev-parse', '--show-toplevel'], expanded);
+  if (!top.ok) return { isRepo: false, error: 'Not a git repository' };
+  const root = top.stdout;
+  const [branch, head, common] = await Promise.all([
+    git(['rev-parse', '--abbrev-ref', 'HEAD'], root),
+    git(['rev-parse', '--short', 'HEAD'], root),
+    git(['rev-parse', '--path-format=absolute', '--git-common-dir'], root),
+  ]);
+  // In a worktree the common dir points at the primary checkout's .git, which
+  // is how we tell "this is the main checkout" from "this is a worktree".
+  const primaryRoot = common.ok ? path.dirname(common.stdout) : root;
+  return {
+    isRepo: true,
+    root,
+    name: path.basename(primaryRoot),
+    branch: branch.ok ? branch.stdout : '',
+    head: head.ok ? head.stdout : '',
+    primaryRoot,
+    isPrimary: path.resolve(primaryRoot) === path.resolve(root),
+  };
+}
+
+function expandHome(dir) {
+  const value = String(dir || '').trim();
+  if (!value) return '';
+  if (value === '~') return os.homedir();
+  if (value.startsWith('~/')) return path.join(os.homedir(), value.slice(2));
+  return path.resolve(value);
+}
+
+/** Default integration branch: origin's HEAD, else main/master, else current. */
+async function defaultBaseBranch(root) {
+  const remote = await git(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], root);
+  if (remote.ok && remote.stdout) return remote.stdout.replace(/^origin\//, '');
+  for (const candidate of ['main', 'master']) {
+    const exists = await git(['rev-parse', '--verify', '--quiet', candidate], root);
+    if (exists.ok) return candidate;
+  }
+  const current = await git(['rev-parse', '--abbrev-ref', 'HEAD'], root);
+  return current.ok ? current.stdout : 'HEAD';
+}
+
+/**
+ * Status of one workspace: what changed, what is committed but unpushed, and
+ * whether the base has moved on underneath it.
+ */
+async function workspaceStatus(dir) {
+  const repo = await resolveRepo(dir);
+  if (!repo.isRepo) return { ok: false, error: repo.error || 'Not a git repository' };
+
+  const entry = readRegistry().find((e) => path.resolve(e.path) === path.resolve(repo.root));
+  const baseRef = entry?.baseBranch || await defaultBaseBranch(repo.root);
+  const baseCommit = entry?.baseCommit || '';
+
+  const [statusOut, upstream, logOut] = await Promise.all([
+    git(['status', '--porcelain'], repo.root),
+    git(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], repo.root),
+    git(['log', '--oneline', '--no-decorate', '-n', '25', `${baseCommit || baseRef}..HEAD`], repo.root),
+  ]);
+
+  const changedFiles = statusOut.ok && statusOut.stdout
+    ? statusOut.stdout.split('\n').map((line) => ({
+      status: line.slice(0, 2).trim(),
+      path: line.slice(3),
+    }))
+    : [];
+  const commits = logOut.ok && logOut.stdout
+    ? logOut.stdout.split('\n').map((line) => {
+      const [sha, ...rest] = line.split(' ');
+      return { sha, subject: rest.join(' ') };
+    })
+    : [];
+
+  // Unpushed = committed here but on no remote branch. That is the state that
+  // makes deleting a worktree lossy, so it is computed explicitly.
+  let unpushed = commits.length;
+  if (upstream.ok && upstream.stdout) {
+    const counts = await git(['rev-list', '--left-right', '--count', `${upstream.stdout}...HEAD`], repo.root);
+    if (counts.ok) unpushed = Number(counts.stdout.split(/\s+/)[1] || 0);
+  }
+
+  let behindBase = 0;
+  if (baseRef) {
+    const counts = await git(['rev-list', '--left-right', '--count', `${baseRef}...HEAD`], repo.root);
+    if (counts.ok) behindBase = Number(counts.stdout.split(/\s+/)[0] || 0);
+  }
+
+  return {
+    ok: true,
+    path: repo.root,
+    repo: repo.name,
+    branch: repo.branch,
+    head: repo.head,
+    isPrimary: repo.isPrimary,
+    baseBranch: baseRef,
+    baseCommit,
+    dirty: changedFiles.length > 0,
+    changedFiles,
+    commits,
+    unpushed,
+    behindBase,
+    hasUpstream: Boolean(upstream.ok && upstream.stdout),
+  };
+}
+
+/**
+ * Every workspace for a repository: the primary checkout plus each worktree
+ * git knows about, annotated with the ones Cascade created.
+ */
+async function listWorkspaces(dir) {
+  const repo = await resolveRepo(dir);
+  if (!repo.isRepo) return { ok: false, error: repo.error || 'Not a git repository' };
+
+  const listed = await git(['worktree', 'list', '--porcelain'], repo.primaryRoot);
+  if (!listed.ok) return { ok: false, error: listed.stderr || 'git worktree list failed' };
+
+  const registry = readRegistry();
+  const workspaces = [];
+  for (const block of listed.stdout.split('\n\n')) {
+    const line = block.split('\n').find((l) => l.startsWith('worktree '));
+    if (!line) continue;
+    const wtPath = line.slice('worktree '.length).trim();
+    const branchLine = block.split('\n').find((l) => l.startsWith('branch '));
+    const entry = registry.find((e) => path.resolve(e.path) === path.resolve(wtPath));
+    workspaces.push({
+      path: wtPath,
+      branch: branchLine ? branchLine.slice('branch refs/heads/'.length).trim() : '(detached)',
+      isPrimary: path.resolve(wtPath) === path.resolve(repo.primaryRoot),
+      managed: Boolean(entry),
+      channelId: entry?.channelId || null,
+      baseBranch: entry?.baseBranch || null,
+      createdAt: entry?.createdAt || null,
+      exists: fs.existsSync(wtPath),
+    });
+  }
+  return { ok: true, repo: repo.name, primaryRoot: repo.primaryRoot, workspaces };
+}
+
+/**
+ * Create an isolated workspace: a new branch off the current base, checked out
+ * into a Cascade-managed directory outside the repository.
+ */
+async function createWorkspace({ dir, slug, baseBranch, channelId } = {}) {
+  const repo = await resolveRepo(dir);
+  if (!repo.isRepo) return { ok: false, error: repo.error || 'Not a git repository' };
+
+  const name = normalizeSlug(slug);
+  if (!name) return { ok: false, error: 'Workspace name must contain letters or numbers' };
+
+  const branch = `cascade/${name}`;
+  const target = path.join(workspacesRoot(), repo.name, name);
+
+  const branchExists = await git(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], repo.primaryRoot);
+  if (branchExists.ok) return { ok: false, error: `Branch ${branch} already exists` };
+  if (fs.existsSync(target)) return { ok: false, error: `Workspace directory already exists: ${target}` };
+
+  const base = baseBranch || await defaultBaseBranch(repo.primaryRoot);
+  const baseSha = await git(['rev-parse', base], repo.primaryRoot);
+  if (!baseSha.ok) return { ok: false, error: `Unknown base branch: ${base}` };
+
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  const created = await git(['worktree', 'add', '-b', branch, target, baseSha.stdout], repo.primaryRoot);
+  if (!created.ok) return { ok: false, error: created.stderr || 'git worktree add failed' };
+
+  rememberWorkspace({
+    path: target,
+    repoRoot: repo.primaryRoot,
+    repo: repo.name,
+    branch,
+    baseBranch: base,
+    baseCommit: baseSha.stdout,
+    channelId: channelId || null,
+    createdAt: new Date().toISOString(),
+  });
+
+  return { ok: true, path: target, branch, baseBranch: base, baseCommit: baseSha.stdout };
+}
+
+/**
+ * Remove a workspace. Refuses anything that would lose work — uncommitted
+ * changes, commits on no remote, or the primary checkout — unless forced.
+ */
+async function removeWorkspace({ dir, force } = {}) {
+  const status = await workspaceStatus(dir);
+  if (!status.ok) return { ok: false, error: status.error };
+  if (status.isPrimary) return { ok: false, error: 'Refusing to remove the repository’s primary checkout' };
+  if (!force && status.dirty) {
+    return { ok: false, error: `${status.changedFiles.length} uncommitted change(s) — commit them or remove with force`, needsForce: true };
+  }
+  if (!force && status.unpushed > 0) {
+    return { ok: false, error: `${status.unpushed} commit(s) exist only here — push them or remove with force`, needsForce: true };
+  }
+
+  const repo = await resolveRepo(dir);
+  const args = ['worktree', 'remove', status.path];
+  if (force) args.push('--force');
+  const removed = await git(args, repo.primaryRoot);
+  if (!removed.ok) return { ok: false, error: removed.stderr || 'git worktree remove failed' };
+  forgetWorkspace(status.path);
+  return { ok: true, path: status.path, branch: status.branch };
+}
+
+/**
+ * Push the workspace branch and open a pull request through `gh`.
+ * Explicit by construction: nothing else in this module pushes.
+ */
+async function createPullRequest({ dir, title, body, draft = true, baseBranch } = {}) {
+  const status = await workspaceStatus(dir);
+  if (!status.ok) return { ok: false, error: status.error };
+  if (!status.commits.length) return { ok: false, error: 'Nothing to review yet — commit something in this workspace first' };
+  if (status.dirty) return { ok: false, error: `${status.changedFiles.length} uncommitted change(s) — commit them before opening a PR` };
+
+  const version = await gh(['--version'], status.path);
+  if (!version.ok) return { ok: false, error: 'GitHub CLI (gh) is not available on this machine' };
+
+  const pushed = await run('git', ['push', '-u', 'origin', status.branch], status.path, GH_TIMEOUT_MS);
+  if (!pushed.ok) return { ok: false, error: pushed.stderr || 'git push failed' };
+
+  const base = baseBranch || status.baseBranch;
+  const args = ['pr', 'create', '--base', base, '--head', status.branch,
+    '--title', title || status.commits[0].subject,
+    '--body', body || ''];
+  if (draft) args.push('--draft');
+  const created = await gh(args, status.path);
+  if (!created.ok) return { ok: false, error: created.stderr || 'gh pr create failed' };
+
+  const url = (created.stdout.match(/https:\/\/\S+/) || [])[0] || created.stdout;
+  return { ok: true, url, branch: status.branch, base, draft };
+}
+
+/** Current PR for the workspace branch, if one exists. */
+async function pullRequestStatus(dir) {
+  const repo = await resolveRepo(dir);
+  if (!repo.isRepo) return { ok: false, error: repo.error || 'Not a git repository' };
+  const viewed = await gh(
+    ['pr', 'view', '--json', 'number,url,title,state,isDraft,mergeable,reviewDecision,statusCheckRollup'],
+    repo.root,
+  );
+  if (!viewed.ok) return { ok: true, pr: null };
+  try {
+    const pr = JSON.parse(viewed.stdout);
+    const checks = Array.isArray(pr.statusCheckRollup) ? pr.statusCheckRollup : [];
+    return {
+      ok: true,
+      pr: {
+        number: pr.number,
+        url: pr.url,
+        title: pr.title,
+        state: pr.state,
+        isDraft: pr.isDraft,
+        mergeable: pr.mergeable,
+        reviewDecision: pr.reviewDecision || null,
+        checks: {
+          total: checks.length,
+          failing: checks.filter((c) => ['FAILURE', 'ERROR', 'TIMED_OUT'].includes(c.conclusion)).length,
+          pending: checks.filter((c) => !c.conclusion).length,
+        },
+      },
+    };
+  } catch {
+    return { ok: true, pr: null };
+  }
+}
+
+module.exports = {
+  workspacesRoot,
+  normalizeSlug,
+  resolveRepo,
+  defaultBaseBranch,
+  listWorkspaces,
+  workspaceStatus,
+  createWorkspace,
+  removeWorkspace,
+  createPullRequest,
+  pullRequestStatus,
+};

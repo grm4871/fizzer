@@ -1,5 +1,5 @@
 import type { MouseEvent, ReactNode } from 'react';
-import { Bot, PanelRightClose, PanelRightOpen, Plus, UserPlus } from 'lucide-react';
+import { Bot, PanelRightClose, PanelRightOpen, Plus, SlidersHorizontal, UserPlus } from 'lucide-react';
 
 export type SidebarButtonItem = { id: string; icon: ReactNode; onClick: () => void; title: string; selected?: boolean; badge?: number };
 export const createSidebarButton = (item: SidebarButtonItem) => item;
@@ -14,8 +14,8 @@ const styles = `
 `;
 
 type Props = {
-  collapsed: boolean; inviteSelected: boolean; agentSelected: boolean;
-  onToggleCollapsed: () => void; onInvite: () => void; onAgent: () => void;
+  collapsed: boolean; inviteSelected: boolean; agentSelected: boolean; settingsSelected: boolean;
+  onToggleCollapsed: () => void; onInvite: () => void; onAgent: () => void; onSettings: () => void;
 };
 
 export function ChatSidebarButtons(p: Props) {
@@ -23,6 +23,9 @@ export function ChatSidebarButtons(p: Props) {
     createSidebarButton({ id: 'collapse', icon: p.collapsed ? <PanelRightOpen size={16} /> : <PanelRightClose size={16} />, onClick: p.onToggleCollapsed, title: p.collapsed ? 'Expand chat users' : 'Minimize chat users' }),
     createSidebarButton({ id: 'invite', icon: <UserPlus size={14} />, onClick: p.onInvite, title: 'Invite user', selected: p.inviteSelected }),
     createSidebarButton({ id: 'agent', icon: <><Bot size={14} /><Plus size={12} color="var(--text-tertiary)" /></>, onClick: p.onAgent, title: 'Add agent', selected: p.agentSelected }),
+    // The agent-settings panel (working directory, task workspaces) had no way
+    // to be opened before this button existed.
+    createSidebarButton({ id: 'settings', icon: <SlidersHorizontal size={14} />, onClick: p.onSettings, title: 'Agent settings', selected: p.settingsSelected }),
   ];
   const click = (event: MouseEvent<HTMLButtonElement>, item: SidebarButtonItem) => { event.stopPropagation(); item.onClick(); };
   return <><style>{styles}</style><div className={`csb${p.collapsed ? ' collapsed' : ''}`}>{buttons.map((item) => (

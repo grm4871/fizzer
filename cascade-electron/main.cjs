@@ -36,6 +36,7 @@ const { startLocalAgentRun, cancelLocalAgentRun } = require('./agent-runner.cjs'
 const { connectDesktopRunner, disconnectDesktopRunner, isDesktopRunnerConnected, probeLocalModels } = require('./desktop-runner-host.cjs');
 const { collectPlanUsage } = require('./plan-usage.cjs');
 const { AgentRunState } = require('./agent-run-state.cjs');
+const worktrees = require('./worktrees.cjs');
 
 // Suppress GLib-GObject and GTK warnings on Linux.
 if (process.platform === 'linux') {
@@ -791,6 +792,16 @@ ipcMain.handle('perf:getPath', async () => {
     return { success: false, error: error?.message || String(error) };
   }
 });
+
+// ── Task workspaces (git worktrees) and pull requests ────────
+// Git and `gh` only ever run in the main process; the renderer sends the
+// channel's working directory and gets structured status back.
+ipcMain.handle('worktree:list', async (_event, { dir } = {}) => worktrees.listWorkspaces(dir));
+ipcMain.handle('worktree:status', async (_event, { dir } = {}) => worktrees.workspaceStatus(dir));
+ipcMain.handle('worktree:create', async (_event, opts = {}) => worktrees.createWorkspace(opts));
+ipcMain.handle('worktree:remove', async (_event, opts = {}) => worktrees.removeWorkspace(opts));
+ipcMain.handle('worktree:createPullRequest', async (_event, opts = {}) => worktrees.createPullRequest(opts));
+ipcMain.handle('worktree:pullRequest', async (_event, { dir } = {}) => worktrees.pullRequestStatus(dir));
 
 // ── Desktop app update ───────────────────────────────────────
 // Keep the original channel name so updated hosted UI remains compatible with

@@ -3980,6 +3980,171 @@ a {
   font-size: 0.6875rem;
   line-height: 1.4;
 }
+/* Task workspaces (git worktrees) inside the channel settings panel. */
+.chat-workspaces {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  margin-top: 6px;
+  border-top: 1px solid var(--border-subtle);
+}
+.chat-workspaces-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-tertiary);
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.chat-workspaces-heading button {
+  margin-left: auto;
+  padding: 2px;
+  color: var(--text-tertiary);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.chat-workspaces-heading button:hover:not(:disabled) {
+  color: var(--accent);
+}
+.chat-workspaces-hint,
+.chat-workspaces-notice {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: 0.6875rem;
+  line-height: 1.4;
+}
+.chat-workspaces-notice {
+  color: var(--accent);
+  word-break: break-word;
+}
+.chat-workspaces-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.chat-workspaces-list li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: var(--bg-base);
+}
+/* The decal stripe marks the workspace this channel's agents actually run in. */
+.chat-workspaces-list li.is-active {
+  border-color: var(--border);
+  border-left: 3px solid transparent;
+  border-image: var(--decal-stripe) 1;
+}
+.chat-workspace-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+.chat-workspace-branch {
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  color: var(--text-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-workspace-tag {
+  flex: none;
+  font-size: 0.5625rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+.chat-workspace-tag.is-status {
+  color: var(--accent);
+  text-transform: none;
+  letter-spacing: 0;
+}
+.chat-workspace-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.chat-workspace-actions button,
+.chat-workspace-new {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 7px;
+  font-size: 0.6875rem;
+  color: var(--text-secondary);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+.chat-workspace-actions button:hover:not(:disabled),
+.chat-workspace-new:hover:not(:disabled) {
+  color: var(--text-primary);
+  border-color: var(--border-active);
+}
+.chat-workspace-actions button:disabled,
+.chat-workspace-new:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.chat-workspace-remove:hover:not(:disabled),
+.chat-workspace-remove.is-armed {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+.chat-workspace-create {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.chat-workspace-create input[type='text'],
+.chat-workspace-create input:not([type]),
+.chat-workspace-create textarea {
+  padding: 5px 7px;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  color: var(--text-primary);
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  resize: vertical;
+}
+.chat-workspace-draft {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-secondary);
+  font-size: 0.6875rem;
+}
+.chat-workspace-review {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.chat-workspace-pr {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.6875rem;
+  color: var(--accent);
+  text-decoration: none;
+}
+.chat-workspace-pr .is-failing {
+  color: var(--danger);
+}
+
 .chat-user {
   padding: 5px 8px;
   border-radius: var(--radius-md);
