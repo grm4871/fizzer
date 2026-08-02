@@ -629,11 +629,21 @@ export default function App() {
         const { messages } = await fetchOne;
         setChatState((prev) => {
           if (prev.messagesByChannel[channelId] === messages) return prev;
+          const cachedById = new Map(
+            (prev.messagesByChannel[channelId] ?? []).map((message) => [message.id, message]),
+          );
+          // Reconnect reconciliation intentionally fetches the slim transcript,
+          // where data-URL images are represented only by `hasImages`. Merge it
+          // over the live cache so a refresh cannot erase already hydrated media.
+          const reconciled = messages.map((message) => {
+            const cached = cachedById.get(message.id);
+            return cached ? mergeRemoteChatMessage(cached, message) : message;
+          });
           return {
             ...prev,
             messagesByChannel: {
               ...prev.messagesByChannel,
-              [channelId]: messages,
+              [channelId]: reconciled,
             },
           };
         });

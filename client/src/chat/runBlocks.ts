@@ -201,26 +201,40 @@ export function mergeRemoteChatMessage(local: ChatMessage, remote: ChatMessage):
   const harnessLog = (local.harnessLog?.length ?? 0) >= (remote.harnessLog?.length ?? 0)
     ? local.harnessLog
     : remote.harnessLog;
+  // A slim transcript response deliberately replaces data-URL images with the
+  // `hasImages` marker. Reconnect/soft-refresh reconciliation must not let that
+  // marker overwrite media this renderer already hydrated, or an attachment
+  // visibly disappears until the whole ChatView is remounted.
+  const retainHydratedImages = (next: ChatMessage): ChatMessage => {
+    const images = next.images?.length
+      ? next.images
+      : next.hasImages
+        ? local.images
+        : undefined;
+    if (!images?.length) return next;
+    const { hasImages: _strippedFromList, ...rest } = next;
+    return { ...rest, images };
+  };
   // Always keep server seq when either side has it — sort depends on it.
   const seq = remote.seq ?? local.seq;
   if (remoteScore >= localScore) {
     const next = harnessLog && harnessLog !== remote.harnessLog
       ? { ...remote, harnessLog }
       : remote;
-    return seq != null && next.seq !== seq ? { ...next, seq } : next;
+    return retainHydratedImages(seq != null && next.seq !== seq ? { ...next, seq } : next);
   }
   if (local.status === 'running' && !remote.status && remote.body.length >= local.body.length) {
-    return {
+    return retainHydratedImages({
       ...remote,
       blocks: remote.blocks?.length ? remote.blocks : local.blocks,
       harnessLog: harnessLog || remote.harnessLog || local.harnessLog,
       ...(seq != null ? { seq } : {}),
-    };
+    });
   }
   const next = harnessLog && harnessLog !== local.harnessLog
     ? { ...local, harnessLog }
     : local;
-  return seq != null && next.seq !== seq ? { ...next, seq } : next;
+  return retainHydratedImages(seq != null && next.seq !== seq ? { ...next, seq } : next);
 }
 
 /** JSON patch body with explicit nulls so the server can clear status/blocks. */

@@ -1064,6 +1064,11 @@ const ChatGroupRow = memo(function ChatGroupRow({
                       ))}
                     </div>
                   )}
+                  {message.hasImages && !message.images?.length && (
+                    <div className="chat-msg-media-loading" role="status">
+                      Loading media…
+                    </div>
+                  )}
                   {message.attachments && message.attachments.length > 0 && (
                     <div className="chat-msg-attachments">
                       {message.attachments.map((attachment, attachmentIndex) => (
@@ -1345,19 +1350,21 @@ export const ChatView = memo(function ChatView({
   // keep their object identity or ChatGroupRow's memo never hits: reuse the
   // previous group object when the exact same message refs compose it.
   const groupIdentityCacheRef = useRef<Map<string, ChatMessageGroup>>(new Map());
-  // Lazily hydrate messages whose data-URL images the list payload stripped
-  // (flagged hasImages). Keeps the slim list fast to load, then fills images in.
-  const hydratedImageIdsRef = useRef<Set<string>>(new Set());
+  // Lazily hydrate messages whose data-URL images the list payload stripped.
+  // Track only in-flight work, not "ever hydrated": a reconnect can replace a
+  // full message with another slim copy and must be allowed to hydrate it again.
+  const hydratingImageIdsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!vaultId || !onHydrateMessage) return;
     for (const message of sortedMessages) {
-      if (!message.hasImages || hydratedImageIdsRef.current.has(message.id)) continue;
-      hydratedImageIdsRef.current.add(message.id);
+      if (!message.hasImages || message.images?.length || hydratingImageIdsRef.current.has(message.id)) continue;
+      hydratingImageIdsRef.current.add(message.id);
       void api<{ message: ChatMessage }>(
         `/api/vaults/${vaultId}/channels/${message.channelId}/messages/${encodeURIComponent(message.id)}`,
       )
         .then((data) => { if (data.message) onHydrateMessage(data.message); })
-        .catch(() => { hydratedImageIdsRef.current.delete(message.id); });
+        .catch(() => {})
+        .finally(() => { hydratingImageIdsRef.current.delete(message.id); });
     }
   }, [sortedMessages, vaultId, onHydrateMessage]);
 

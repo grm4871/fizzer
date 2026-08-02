@@ -1,5 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { honestAgentChatBody } from '../chat/runBlocks';
+import { honestAgentChatBody, mergeRemoteChatMessage } from '../chat/runBlocks';
+import type { ChatMessage } from '../components/ChatView';
+
+function chatMessage(id: string, overrides: Partial<ChatMessage> = {}): ChatMessage {
+  return {
+    id,
+    channelId: 'channel-1',
+    author: 'tester',
+    body: '',
+    createdAt: '2026-08-01T00:00:00.000Z',
+    ...overrides,
+  };
+}
 
 describe('honestAgentChatBody', () => {
   it('uses the latest runner summary instead of accumulated progress text', () => {
@@ -36,5 +48,29 @@ describe('honestAgentChatBody', () => {
     expect(honestAgentChatBody('duplicate', 'duplicate', 'completed', {
       suppressChatBody: true,
     })).toBe('');
+  });
+});
+
+describe('mergeRemoteChatMessage media hydration', () => {
+  it('keeps hydrated images when a reconnect returns a slim transcript row', () => {
+    const image = 'data:image/png;base64,cGVyc2lzdGVk';
+    const local = chatMessage('m1', { body: 'screenshot', images: [image], seq: 1 });
+    const slimRemote = chatMessage('m1', { body: 'screenshot', hasImages: true, seq: 1 });
+
+    const merged = mergeRemoteChatMessage(local, slimRemote);
+
+    expect(merged.images).toEqual([image]);
+    expect(merged.hasImages).toBeUndefined();
+  });
+
+  it('accepts full images when hydrating a slim transcript row', () => {
+    const image = 'data:image/png;base64,aHlkcmF0ZWQ=';
+    const slimLocal = chatMessage('m2', { hasImages: true, seq: 2 });
+    const fullRemote = chatMessage('m2', { images: [image], seq: 2 });
+
+    const merged = mergeRemoteChatMessage(slimLocal, fullRemote);
+
+    expect(merged.images).toEqual([image]);
+    expect(merged.hasImages).toBeUndefined();
   });
 });

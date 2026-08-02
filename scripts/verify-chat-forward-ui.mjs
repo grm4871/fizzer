@@ -97,6 +97,18 @@ try {
       createdAt: new Date().toISOString(),
     }),
   });
+  const persistedImage = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XwFJAAAAAElFTkSuQmCC';
+  await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channels['qa-source'].id}/messages`, {
+    method: 'POST', headers: auth,
+    body: JSON.stringify({
+      id: `msg-${stamp}-media`,
+      channelId: channels['qa-source'].id,
+      author: username,
+      body: 'persisted-media-reload-check',
+      images: [persistedImage],
+      createdAt: new Date().toISOString(),
+    }),
+  });
 
   const { chromium } = await import('playwright');
   browser = await chromium.launch({ headless: true });
@@ -119,6 +131,7 @@ try {
   await openChannel('qa-source');
   const target = page.getByText('forward this one', { exact: false }).first();
   await target.waitFor({ timeout: 20000 });
+  await page.locator('img.chat-msg-image').first().waitFor({ timeout: 20000 });
 
   await target.click({ button: 'right' });
   const forwardItem = page.locator('.chat-context-menu button', { hasText: 'Forward' });
@@ -176,6 +189,13 @@ try {
     }),
   });
   await page.getByText(missedBody, { exact: true }).waitFor({ timeout: 20000 });
+  // Reconnect reconciliation fetches the intentionally slim transcript again.
+  // It must not replace an already hydrated image with the `hasImages` marker.
+  const imageAfterReconnect = page.locator('img.chat-msg-image').first();
+  await imageAfterReconnect.waitFor({ timeout: 10000 });
+  if ((await imageAfterReconnect.getAttribute('src')) !== persistedImage) {
+    throw new Error('persisted chat media disappeared after reconnect reconciliation');
+  }
   // The proxy/socket errors recorded during the intentional server outage are
   // expected. From this recovered point onward, runtime errors are real again.
   errors.length = 0;

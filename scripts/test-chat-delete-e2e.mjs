@@ -134,7 +134,33 @@ async function main() {
     const bSock = await connectVaultSocket(B.token, bLink.vaultId, 'guest');
     await sleep(200);
 
-    // ── Test 1: author deletes their own message; both clients are told.
+    // ── Test 1: media survives the slim reload path for both sides of a
+    // linked multiplayer channel, and either side can hydrate the full image.
+    const mediaId = `msg-${Date.now()}-media`;
+    const image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XwFJAAAAAElFTkSuQmCC';
+    await must(`${API_BASE}/api/vaults/${aVault.id}/channels/${aChannel.id}/messages`, {
+      method: 'POST', headers: A.auth,
+      body: JSON.stringify({
+        id: mediaId,
+        channelId: aChannel.id,
+        author: hostName,
+        body: '',
+        images: [image],
+        createdAt: new Date().toISOString(),
+      }),
+    });
+    const hostList = await must(`${API_BASE}/api/vaults/${aVault.id}/channels/${aChannel.id}/messages?detail=list`, { headers: A.auth });
+    const guestList = await must(`${API_BASE}/api/vaults/${bLink.vaultId}/channels/${bLink.channelId}/messages?detail=list`, { headers: B.auth });
+    const hostSlim = hostList.messages.find((message) => message.id === mediaId);
+    const guestSlim = guestList.messages.find((message) => message.id === mediaId);
+    check('host reload keeps a media hydration marker', hostSlim?.hasImages === true && !hostSlim.images);
+    check('guest reload keeps a media hydration marker', guestSlim?.hasImages === true && !guestSlim.images);
+    const hostFull = await must(`${API_BASE}/api/vaults/${aVault.id}/channels/${aChannel.id}/messages/${mediaId}`, { headers: A.auth });
+    const guestFull = await must(`${API_BASE}/api/vaults/${bLink.vaultId}/channels/${bLink.channelId}/messages/${mediaId}`, { headers: B.auth });
+    check('host can hydrate persisted media', hostFull.message.images?.[0] === image && hostFull.message.channelId === aChannel.id);
+    check('guest can hydrate persisted media through linked ids', guestFull.message.images?.[0] === image && guestFull.message.channelId === bLink.channelId);
+
+    // ── Test 2: author deletes their own message; both clients are told.
     const own = await post(B.auth, bLink.vaultId, bLink.channelId, guestName, 'guest message');
     const del1 = await fetchJson(`${API_BASE}/api/vaults/${bLink.vaultId}/channels/${bLink.channelId}/messages/${own}`, { method: 'DELETE', headers: B.auth });
     check('author can delete their own message', del1.ok);
@@ -143,20 +169,20 @@ async function main() {
     check('host client got chatMessageDeleted', aSock.deleted.some((p) => p.messageId === own && p.channelId === aChannel.id));
     check('guest client got chatMessageDeleted (linked ids)', bSock.deleted.some((p) => p.messageId === own && p.channelId === bLink.channelId));
 
-    // ── Test 2: a non-author, non-host participant is refused.
+    // ── Test 3: a non-author, non-host participant is refused.
     const hostMsg = await post(A.auth, aVault.id, aChannel.id, hostName, 'host message');
     const del2 = await fetchJson(`${API_BASE}/api/vaults/${bLink.vaultId}/channels/${bLink.channelId}/messages/${hostMsg}`, { method: 'DELETE', headers: B.auth });
     check('guest cannot delete the host\'s message (403)', del2.status === 403);
     check('refused message survives', (await listMessageIds(A.auth, aVault.id, aChannel.id)).includes(hostMsg));
 
-    // ── Test 3: the host may delete anyone's message, including agent posts.
+    // ── Test 4: the host may delete anyone's message, including agent posts.
     const agentMsg = await post(A.auth, aVault.id, aChannel.id, 'Claude', 'Claude Code process exited with code 1');
     const del3 = await fetchJson(`${API_BASE}/api/vaults/${aVault.id}/channels/${aChannel.id}/messages/${agentMsg}`, { method: 'DELETE', headers: A.auth });
     check('host can delete an agent message', del3.ok);
     await sleep(200);
     check('agent message is gone', !(await listMessageIds(A.auth, aVault.id, aChannel.id)).includes(agentMsg));
 
-    // ── Test 4: restricted agent tokens cannot delete at all.
+    // ── Test 5: restricted agent tokens cannot delete at all.
     const { token: agentToken } = await must(`${API_BASE}/api/auth/agent-token`, { method: 'POST', headers: A.auth });
     const del4 = await fetchJson(`${API_BASE}/api/vaults/${aVault.id}/channels/${aChannel.id}/messages/${hostMsg}`, {
       method: 'DELETE', headers: { Authorization: `Bearer ${agentToken}` },
@@ -164,7 +190,7 @@ async function main() {
     check('agent token is refused (403)', del4.status === 403);
     check('host message still there after agent attempt', (await listMessageIds(A.auth, aVault.id, aChannel.id)).includes(hostMsg));
 
-    // ── Test 5: unknown message id is a clean 404, not a 500.
+    // ── Test 6: unknown message id is a clean 404, not a 500.
     const del5 = await fetchJson(`${API_BASE}/api/vaults/${aVault.id}/channels/${aChannel.id}/messages/does-not-exist`, { method: 'DELETE', headers: A.auth });
     check('missing message returns 404', del5.status === 404);
 
