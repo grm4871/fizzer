@@ -639,7 +639,12 @@ function normalizeAgentRegistration(input: Partial<ChatAgentRegistration>, fallb
   const id = String(input.id || '').trim() || crypto.randomUUID();
   const mention = normalizeMention(input.mention || '', agentId);
   const requestedEffort = String(input.reasoningEffort || '').trim().toLowerCase();
-  const reasoningEffort = agentId === 'codex' && ['low', 'medium', 'high', 'xhigh'].includes(requestedEffort)
+  const supportedEfforts = agentId === 'codex'
+    ? ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']
+    : agentId === 'claude-code'
+      ? ['low', 'medium', 'high', 'xhigh', 'max']
+      : [];
+  const reasoningEffort = supportedEfforts.includes(requestedEffort)
     ? requestedEffort
     : '';
 
@@ -868,7 +873,12 @@ export function addVaultAgentToChannel(
   const pingable = flags.pingableByOthers !== undefined ? flags.pingableByOthers : (existing ? existing.pingable_by_others !== 0 : false);
   const yolo = flags.yolo !== undefined ? flags.yolo : (existing ? existing.yolo !== 0 : false);
   const requestedEffort = String(flags.reasoningEffort ?? existing?.reasoning_effort ?? '').trim().toLowerCase();
-  const reasoningEffort = va.agent_id === 'codex' && ['low', 'medium', 'high', 'xhigh'].includes(requestedEffort)
+  const supportedEfforts = va.agent_id === 'codex'
+    ? ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']
+    : va.agent_id === 'claude-code'
+      ? ['low', 'medium', 'high', 'xhigh', 'max']
+      : [];
+  const reasoningEffort = supportedEfforts.includes(requestedEffort)
     ? requestedEffort
     : '';
   const memberId = existing?.id || crypto.randomUUID();

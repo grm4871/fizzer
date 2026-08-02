@@ -198,25 +198,33 @@ export interface ChatAgentOption {
   models: Array<{ id: string; label: string }>;
 }
 
-export const CODEX_REASONING_EFFORTS = [
-  { id: '', label: 'Use Codex CLI default' },
+export const REASONING_EFFORTS = [
   { id: 'low', label: 'Low' },
   { id: 'medium', label: 'Medium' },
   { id: 'high', label: 'High' },
   { id: 'xhigh', label: 'Extra high' },
+  { id: 'max', label: 'Max' },
+  { id: 'ultra', label: 'Ultra' },
 ] as const;
 
-export function CodexReasoningEffortSelect({
+export function ReasoningEffortSelect({
+  agentId,
   value,
   onChange,
 }: {
+  agentId: string;
   value: string;
   onChange: (value: string) => void;
 }) {
+  const defaultLabel = agentId === 'claude-code' ? 'Use Claude Code default' : 'Use Codex CLI default';
+  const efforts = agentId === 'claude-code'
+    ? REASONING_EFFORTS.filter((effort) => effort.id !== 'ultra')
+    : REASONING_EFFORTS;
   return (
     <select value={value} onChange={(event) => onChange(event.target.value)}>
-      {CODEX_REASONING_EFFORTS.map((effort) => (
-        <option key={effort.id || 'default'} value={effort.id}>{effort.label}</option>
+      <option value="">{defaultLabel}</option>
+      {efforts.map((effort) => (
+        <option key={effort.id} value={effort.id}>{effort.label}</option>
       ))}
     </select>
   );
@@ -2766,14 +2774,15 @@ export const ChatView = memo(function ChatView({
                 />
               )}
             </label>
-            {agentForm.agentId === 'codex' && (agentPanelMode === 'edit-member' || agentPanelMode === 'create') && (
+            {(agentForm.agentId === 'codex' || agentForm.agentId === 'claude-code') && (agentPanelMode === 'edit-member' || agentPanelMode === 'create') && (
               <label>
                 Reasoning effort
-                <CodexReasoningEffortSelect
+                <ReasoningEffortSelect
+                  agentId={agentForm.agentId}
                   value={agentForm.reasoningEffort || ''}
                   onChange={(reasoningEffort) => setAgentForm((value) => ({ ...value, reasoningEffort }))}
                 />
-                <span className="chat-agent-field-hint">Default follows your local Codex CLI configuration.</span>
+                <span className="chat-agent-field-hint">Default follows the local CLI configuration on the agent owner's desktop.</span>
               </label>
             )}
             {(agentPanelMode === 'edit-member' || agentPanelMode === 'create') && (

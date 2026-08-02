@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import {
   ChatView,
-  CodexReasoningEffortSelect,
+  ReasoningEffortSelect,
   dataUrlsToRunImages,
   getRunningMessageState,
   getSteeringPromptLabels,
@@ -66,9 +66,10 @@ describe('agent steering presentation', () => {
   });
 });
 
-describe('Codex reasoning effort settings', () => {
-  it('offers CLI inheritance plus every supported explicit override', () => {
-    const markup = renderToStaticMarkup(createElement(CodexReasoningEffortSelect, {
+describe('reasoning effort settings', () => {
+  it('offers every supported Codex override including max and ultra', () => {
+    const markup = renderToStaticMarkup(createElement(ReasoningEffortSelect, {
+      agentId: 'codex',
       value: '',
       onChange: () => {},
     }));
@@ -77,6 +78,20 @@ describe('Codex reasoning effort settings', () => {
     expect(markup).toContain('Medium');
     expect(markup).toContain('High');
     expect(markup).toContain('Extra high');
+    expect(markup).toContain('Max');
+    expect(markup).toContain('Ultra');
+  });
+
+  it('offers Claude Code efforts through max without unsupported ultra', () => {
+    const markup = renderToStaticMarkup(createElement(ReasoningEffortSelect, {
+      agentId: 'claude-code',
+      value: '',
+      onChange: () => {},
+    }));
+    expect(markup).toContain('Use Claude Code default');
+    expect(markup).toContain('Extra high');
+    expect(markup).toContain('Max');
+    expect(markup).not.toContain('Ultra');
   });
 });
 

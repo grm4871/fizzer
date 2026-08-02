@@ -570,7 +570,7 @@ async function runCodex(
   const normalizedEffort = typeof reasoningEffort === 'string'
     ? reasoningEffort.trim().toLowerCase()
     : '';
-  const reasoningEffortArgs = normalizedEffort === 'low' || normalizedEffort === 'medium' || normalizedEffort === 'high' || normalizedEffort === 'xhigh'
+  const reasoningEffortArgs = normalizedEffort === 'low' || normalizedEffort === 'medium' || normalizedEffort === 'high' || normalizedEffort === 'xhigh' || normalizedEffort === 'max' || normalizedEffort === 'ultra'
     ? ['-c', `model_reasoning_effort="${normalizedEffort}"`]
     : [];
   const sandbox = yolo ? 'danger-full-access' : 'workspace-write';

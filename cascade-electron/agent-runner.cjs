@@ -458,6 +458,11 @@ function expandHome(input) {
   return value;
 }
 
+function normalizeClaudeEffort(value, fallback = 'medium') {
+  const effort = String(value || '').trim().toLowerCase();
+  return ['low', 'medium', 'high', 'xhigh', 'max'].includes(effort) ? effort : fallback;
+}
+
 function resolveAgentCwd(inputCwd, vaultRoot) {
   const expanded = expandHome(inputCwd);
   if (expanded) {
@@ -506,7 +511,10 @@ async function runClaudeLocally(opts, emit) {
   const model = (typeof opts.model === 'string' && opts.model.trim()) ? opts.model.trim() : CLAUDE_DEFAULT_MODEL;
   const chatRun = isChatRun(opts);
   const maxTurns = chatRun ? CLAUDE_CHAT_MAX_TURNS : CLAUDE_MAX_TURNS;
-  const effort = chatRun ? CLAUDE_CHAT_EFFORT : CLAUDE_EFFORT;
+  const effort = normalizeClaudeEffort(
+    opts.reasoningEffort,
+    normalizeClaudeEffort(chatRun ? CLAUDE_CHAT_EFFORT : CLAUDE_EFFORT),
+  );
   const resumeSessionId = (typeof opts.resumeSessionId === 'string' && opts.resumeSessionId) ? opts.resumeSessionId : undefined;
   const images = Array.isArray(opts.images)
     ? opts.images.filter((im) => im && typeof im.media_type === 'string' && typeof im.data === 'string')
@@ -935,6 +943,7 @@ module.exports = {
   startLocalAgentRun,
   cancelLocalAgentRun,
   helperAllowedTools,
+  normalizeClaudeEffort,
   resolveAgentCwd,
   setNoteApiConfig,
 };

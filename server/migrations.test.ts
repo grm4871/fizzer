@@ -163,12 +163,39 @@ test('Codex reasoning effort persists on a channel registration', () => {
       displayName: 'Sol',
       mention: 'sol',
       model: 'gpt-5.6-sol',
-      reasoningEffort: 'xhigh',
+      reasoningEffort: 'ultra',
     });
-    assert.equal(saved.reasoningEffort, 'xhigh');
+    assert.equal(saved.reasoningEffort, 'ultra');
     const row = db.prepare('SELECT reasoning_effort FROM chat_agent_members WHERE id = ?')
       .get('reg-sol') as { reasoning_effort: string };
-    assert.equal(row.reasoning_effort, 'xhigh');
+    assert.equal(row.reasoning_effort, 'ultra');
+
+    const updated = upsertChatAgentMember(db, 1, 'vault-1', 'chan-1', {
+      ...saved,
+      reasoningEffort: 'max',
+    });
+    assert.equal(updated.reasoningEffort, 'max');
+  });
+});
+
+test('Claude Code reasoning effort persists through max and rejects ultra', () => {
+  withDb((db) => {
+    addChannel(db, 'chan-1', 'general');
+    ensureChatSchema(db);
+    const saved = upsertChatAgentMember(db, 1, 'vault-1', 'chan-1', {
+      id: 'reg-claude',
+      agentId: 'claude-code',
+      displayName: 'Claude',
+      mention: 'claude',
+      model: 'claude-opus-4-6',
+      reasoningEffort: 'max',
+    });
+    assert.equal(saved.reasoningEffort, 'max');
+    const rejected = upsertChatAgentMember(db, 1, 'vault-1', 'chan-1', {
+      ...saved,
+      reasoningEffort: 'ultra',
+    });
+    assert.equal(rejected.reasoningEffort, '');
   });
 });
 
