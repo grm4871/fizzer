@@ -127,14 +127,19 @@ try {
   check('no runtime errors', errors.length === 0, errors.join(' | '));
 
   if (process.env.NEWS_TICKER_SHOT) {
-    // Freeze mid-pass so the shot shows the headline where a reader sees it.
-    await page.locator('.news-ticker-track').evaluate((el) => {
-      const seconds = parseFloat(getComputedStyle(el).animationDuration) || 10;
-      el.style.animationDuration = `${seconds}s`;
-      el.style.animationDelay = `-${seconds * 0.55}s`;
-      el.style.animationPlayState = 'paused';
-    });
-    await page.locator('.workspace-toolbar').screenshot({ path: process.env.NEWS_TICKER_SHOT });
+    // Freeze at chosen points of the pass: mid-bar, and exiting past the label
+    // (where a hard left-edge cut would show).
+    for (const phase of [0.5, 0.88]) {
+      await page.locator('.news-ticker-track').evaluate((el, p) => {
+        const seconds = parseFloat(getComputedStyle(el).animationDuration) || 10;
+        el.style.animationDuration = `${seconds}s`;
+        el.style.animationDelay = `-${seconds * p}s`;
+        el.style.animationPlayState = 'paused';
+      }, phase);
+      await page.locator('.workspace-toolbar').screenshot({
+        path: process.env.NEWS_TICKER_SHOT.replace(/\.png$/, `-${Math.round(phase * 100)}.png`),
+      });
+    }
   }
 } finally {
   await browser?.close();

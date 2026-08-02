@@ -97,17 +97,21 @@ export function NewsTicker() {
   };
 
   return (
-    <div className="news-ticker" ref={viewportRef} aria-live="off" title={`News: ${headline}`}>
+    <div className="news-ticker" aria-live="off" title={`News: ${headline}`}>
       <span className="news-ticker-label">News</span>
-      <span
-        key={headline}
-        ref={trackRef}
-        className={`news-ticker-track${reduced ? ' is-static' : duration ? ' is-running' : ''}`}
-        style={duration && !reduced ? { animationDuration: `${duration}s` } : undefined}
-        onAnimationEnd={reduced ? undefined : handleEnd}
-      >
-        {headline}
-      </span>
+      {/* The label sits outside the masked viewport so only the scrolling text
+          fades at the edges — masking the label too would dim it. */}
+      <div className="news-ticker-viewport" ref={viewportRef}>
+        <span
+          key={headline}
+          ref={trackRef}
+          className={`news-ticker-track${reduced ? ' is-static' : duration ? ' is-running' : ''}`}
+          style={duration && !reduced ? { animationDuration: `${duration}s` } : undefined}
+          onAnimationEnd={reduced ? undefined : handleEnd}
+        >
+          {headline}
+        </span>
+      </div>
     </div>
   );
 }

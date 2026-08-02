@@ -1893,13 +1893,20 @@ a {
   align-items: center;
   overflow: hidden;
   padding-left: 6px;
-  /* Fade in at the right edge only — headlines exit under the opaque label. */
-  -webkit-mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 28px), transparent 100%);
-  mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 28px), transparent 100%);
+}
+/* Only the scrolling text is masked — headlines fade out on the left as they
+   pass the label and fade in on the right, instead of being cut off. */
+.news-ticker-viewport {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  align-self: stretch;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 26px, #000 calc(100% - 30px), transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0, #000 26px, #000 calc(100% - 30px), transparent 100%);
 }
 .news-ticker-label {
   flex: none;
-  z-index: 1;
   padding-right: 8px;
   border-right: 1px solid var(--border);
   margin-right: 2px;
@@ -1908,11 +1915,14 @@ a {
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--text-tertiary);
-  background: var(--bg-surface);
 }
 .news-ticker-track {
   position: absolute;
   left: 0;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
   white-space: nowrap;
   font-size: 0.6875rem;
   letter-spacing: 0.02em;
@@ -1929,6 +1939,7 @@ a {
 }
 .news-ticker-track.is-static {
   position: static;
+  display: block;
   visibility: visible;
   overflow: hidden;
   text-overflow: ellipsis;
