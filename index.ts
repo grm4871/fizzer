@@ -1792,10 +1792,9 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     runnerUserId = ownerId;
     selectedAgent = pickAgent(registration.agentId);
     selectedModel = normalizeRunModel(registration.model);
-    // Sol is intentionally pinned to low Codex reasoning effort.
-    selectedReasoningEffort = selectedAgent === 'codex' && registration.mention.trim().toLowerCase() === 'sol'
-      ? 'low'
-      : undefined;
+    // Leave reasoning effort unset so local CLIs inherit the user's configured
+    // default exactly as they do when invoked directly.
+    selectedReasoningEffort = undefined;
     selectedCwd = normalizeRunCwd(registration.cwd);
     // A channel-wide cwd (if set) overrides the agent's own cwd, so every agent
     // in the channel runs from the same directory.

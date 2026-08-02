@@ -24,12 +24,13 @@ Follow-up steering is serialized per registered agent conversation. A second
 top-level prompt waits for the active turn to settle so the server can persist
 its provider session ID before the next run resumes it.
 
-Backing chat sessions rotate after bounded age or run count. The defaults are
+Backing chat sessions remain continuous by default so the provider harness can
+compact them just as it does in the direct CLI. Optional rotation bounds are
 documented in `.env.example`:
 
 ```text
-CHAT_SESSION_MAX_RUNS=6
-CHAT_SESSION_MAX_AGE_HOURS=24
+CHAT_SESSION_MAX_RUNS=0
+CHAT_SESSION_MAX_AGE_HOURS=0
 ```
 
 A rotation retains the Cascade conversation ID and injects bounded recent

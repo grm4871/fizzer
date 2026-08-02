@@ -30,11 +30,11 @@ function nonNegativeNumber(value: string | undefined, fallback: number): number 
 }
 
 // A chat member's conversation id stays stable for continuity, but its backing
-// CLI session is rotated at these bounds. This keeps recent conversational
-// context while preventing multi-day tool transcripts from being reprocessed
-// on every inference. Set either value to 0 to disable that bound.
-const CHAT_SESSION_MAX_RUNS = Math.floor(nonNegativeNumber(process.env.CHAT_SESSION_MAX_RUNS, 6));
-const CHAT_SESSION_MAX_AGE_HOURS = nonNegativeNumber(process.env.CHAT_SESSION_MAX_AGE_HOURS, 24);
+// CLI session remains continuous by default, matching direct Codex/Claude Code
+// behavior and leaving context compaction to their harnesses. Operators can set
+// either value to impose an explicit rotation policy; 0 disables that bound.
+const CHAT_SESSION_MAX_RUNS = Math.floor(nonNegativeNumber(process.env.CHAT_SESSION_MAX_RUNS, 0));
+const CHAT_SESSION_MAX_AGE_HOURS = nonNegativeNumber(process.env.CHAT_SESSION_MAX_AGE_HOURS, 0);
 
 let eventSink: ((event: RunEvent) => void) | null = null;
 // Sink that mirrors a run's streamed output into its linked chat message, so the

@@ -567,15 +567,9 @@ async function runCodex(
   // --sandbox, so the sandbox mode is set via -c instead.
   const imageArgs = imagePaths.flatMap((p) => ['-i', p]);
   const modelArgs = model ? ['--model', model] : [];
-  // Existing Electron mains hot-reload this compiled module between runs, but
-  // retain their older bridge code. Their per-run environment still identifies
-  // Sol, so preserve the Sol-only pin during that in-place update path.
-  const inheritedEffort = !reasoningEffort && env?.CASCADE_CHAT_AUTHOR?.trim().toLowerCase() === 'sol'
-    ? 'low'
-    : '';
   const normalizedEffort = typeof reasoningEffort === 'string'
     ? reasoningEffort.trim().toLowerCase()
-    : inheritedEffort;
+    : '';
   const reasoningEffortArgs = normalizedEffort === 'low' || normalizedEffort === 'medium' || normalizedEffort === 'high' || normalizedEffort === 'xhigh'
     ? ['-c', `model_reasoning_effort="${normalizedEffort}"`]
     : [];
@@ -630,10 +624,12 @@ async function runCodex(
         const info = (payload.info && typeof payload.info === 'object')
           ? payload.info as Record<string, unknown>
           : payload;
-        const usage = (info.total_token_usage && typeof info.total_token_usage === 'object')
-          ? info.total_token_usage as Record<string, unknown>
-          : (info.last_token_usage && typeof info.last_token_usage === 'object')
-            ? info.last_token_usage as Record<string, unknown>
+        // Resumed Codex sessions report both cumulative and per-turn usage.
+        // Show the latter so Cascade is comparable to an equivalent CLI turn.
+        const usage = (info.last_token_usage && typeof info.last_token_usage === 'object')
+          ? info.last_token_usage as Record<string, unknown>
+          : (info.total_token_usage && typeof info.total_token_usage === 'object')
+            ? info.total_token_usage as Record<string, unknown>
             : info;
         emitCascadeStats(emit, statsFromUsageBlob(usage, { model, numTurns: turnCount || undefined }));
       }

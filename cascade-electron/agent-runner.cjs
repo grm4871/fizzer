@@ -21,14 +21,15 @@ const CLAUDE_DEFAULT_MODEL = process.env.RUNNER_MODEL || 'claude-sonnet-5';
 // Turn caps are off by default (0 = unlimited). Either surface can still be
 // bounded explicitly through its environment override.
 const CLAUDE_MAX_TURNS = Number(process.env.RUNNER_MAX_TURNS || 0);
-const CLAUDE_THINKING_TOKENS = Number(process.env.RUNNER_THINKING ?? 4000);
 const CLAUDE_CHAT_MAX_TURNS = Number(process.env.RUNNER_CHAT_MAX_TURNS || 0);
 // Extra turn windows a chat run may auto-continue into after hitting a cap
 // (each resumes the same session). Only relevant when a cap is set above.
 const CLAUDE_CHAT_MAX_CONTINUES = Number(process.env.RUNNER_CHAT_MAX_CONTINUES || 0);
-// Chat runs stay low-thinking so multiuser pings don't burn long monologues.
-// Override with RUNNER_CHAT_THINKING if a heavy chat agent needs more.
-const CLAUDE_CHAT_THINKING_TOKENS = Number(process.env.RUNNER_CHAT_THINKING ?? 800);
+// Match Claude Code's adaptive reasoning instead of imposing a small fixed
+// thinking budget. The local CLI currently defaults to medium effort; callers
+// can override either surface without introducing a hard token ceiling.
+const CLAUDE_EFFORT = process.env.RUNNER_EFFORT || 'medium';
+const CLAUDE_CHAT_EFFORT = process.env.RUNNER_CHAT_EFFORT || CLAUDE_EFFORT;
 const CLAUDE_AGENT_CONTEXT = 'You are a local workspace assistant. This checkout is not the live Cascade app: use `cascade-note` for live notes (`cascade-note memory` for durable recall), `cascade-scratchpad jot` for work-journal entries, and normal file edits only for local scratch or non-note work. Notes you create via cascade-note are unlisted by default (chat/search/embed only, not the left sidebar). Only pass `--listed` if the user explicitly asks to put a note in the sidebar tree. Respect auth boundaries and only handle secrets the user explicitly provides for this task.';
 
 // Nudge agents to behave like chat participants, not verbose coding CLIs: the
@@ -505,7 +506,7 @@ async function runClaudeLocally(opts, emit) {
   const model = (typeof opts.model === 'string' && opts.model.trim()) ? opts.model.trim() : CLAUDE_DEFAULT_MODEL;
   const chatRun = isChatRun(opts);
   const maxTurns = chatRun ? CLAUDE_CHAT_MAX_TURNS : CLAUDE_MAX_TURNS;
-  const thinkingTokens = chatRun ? CLAUDE_CHAT_THINKING_TOKENS : CLAUDE_THINKING_TOKENS;
+  const effort = chatRun ? CLAUDE_CHAT_EFFORT : CLAUDE_EFFORT;
   const resumeSessionId = (typeof opts.resumeSessionId === 'string' && opts.resumeSessionId) ? opts.resumeSessionId : undefined;
   const images = Array.isArray(opts.images)
     ? opts.images.filter((im) => im && typeof im.media_type === 'string' && typeof im.data === 'string')
@@ -559,9 +560,7 @@ async function runClaudeLocally(opts, emit) {
       // Stream token-level deltas so thinking renders live in its block rather
       // than arriving all at once as a finished assistant message.
       includePartialMessages: true,
-      ...(thinkingTokens > 0
-        ? { thinking: { type: 'enabled', budgetTokens: thinkingTokens } }
-        : {}),
+      effort,
       systemPrompt: {
         type: 'preset',
         preset: 'claude_code',
