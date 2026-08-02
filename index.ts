@@ -1763,6 +1763,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
   let runnerUserId: number;
   let selectedAgent: AgentId;
   let selectedModel: string | undefined;
+  let selectedReasoningEffort: string | undefined;
   let selectedCwd: string | undefined;
   let yoloMode: boolean;
   let targetChannelId = chatChannelId;
@@ -1791,6 +1792,10 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     runnerUserId = ownerId;
     selectedAgent = pickAgent(registration.agentId);
     selectedModel = normalizeRunModel(registration.model);
+    // Sol is intentionally pinned to low Codex reasoning effort.
+    selectedReasoningEffort = selectedAgent === 'codex' && registration.mention.trim().toLowerCase() === 'sol'
+      ? 'low'
+      : undefined;
     selectedCwd = normalizeRunCwd(registration.cwd);
     // A channel-wide cwd (if set) overrides the agent's own cwd, so every agent
     // in the channel runs from the same directory.
@@ -1812,6 +1817,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     runnerUserId = req.user!.id;
     selectedAgent = pickAgent(agent);
     selectedModel = normalizeRunModel(model);
+    selectedReasoningEffort = undefined;
     selectedCwd = normalizeRunCwd(cwd);
     yoloMode = yolo === true;
     chatAuthor = typeof req.body?.chat?.author === 'string' ? req.body.chat.author.trim() : '';
@@ -2023,6 +2029,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
       cwd: selectedCwd,
       vaultRoot: runVault.root_path,
       model: selectedModel,
+      reasoningEffort: selectedReasoningEffort,
       resumeSessionId,
       chatChannelId: targetChannelId,
       chatMessageId,

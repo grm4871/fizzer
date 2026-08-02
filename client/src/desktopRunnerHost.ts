@@ -39,6 +39,7 @@ type DelegatedRunPayload = {
   cwd?: string;
   vaultRoot?: string;
   model?: string;
+  reasoningEffort?: string;
   yolo?: boolean;
   resumeSessionId?: string;
   images?: unknown[];

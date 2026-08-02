@@ -888,6 +888,7 @@ async function startLocalAgentRun(opts, sendEvent) {
       resumeSessionId: typeof opts.resumeSessionId === 'string' ? opts.resumeSessionId : undefined,
       images: Array.isArray(opts.images) ? opts.images : [],
       model: typeof opts.model === 'string' ? opts.model : undefined,
+      reasoningEffort: typeof opts.reasoningEffort === 'string' ? opts.reasoningEffort : undefined,
       yolo: opts.yolo === true,
       runId,
       emit,

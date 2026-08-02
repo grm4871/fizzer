@@ -32,6 +32,8 @@ export type DelegatedRunPayload = {
   cwd?: string;
   vaultRoot?: string;
   model?: string;
+  /** Codex-only override; omitted means defer to the local CLI default. */
+  reasoningEffort?: string;
   resumeSessionId?: string;
   chatChannelId?: string;
   chatMessageId?: string;

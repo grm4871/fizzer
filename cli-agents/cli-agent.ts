@@ -277,6 +277,8 @@ interface CliAgentOpts {
   runId?: number;
   db?: Db;
   model?: string;
+  /** Codex-only reasoning effort override. */
+  reasoningEffort?: string;
   /** Run with permission prompts bypassed ("yolo"). For Codex this widens the
    * sandbox from workspace-write to danger-full-access. */
   yolo?: boolean;
@@ -319,7 +321,7 @@ export async function runCliAgent(opts: CliAgentOpts): Promise<CliAgentResult> {
     ? `[Context: ${opts.context}]\n\n${opts.userPrompt}`
     : opts.userPrompt;
   if (opts.agent === 'codex') {
-    return runCodex(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.images || [], opts.runId, opts.model, opts.yolo, opts.env);
+    return runCodex(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.images || [], opts.runId, opts.model, opts.reasoningEffort, opts.yolo, opts.env);
   } else if (opts.agent === 'grok') {
     return runGrok(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.runId, opts.model, opts.env);
   } else if (opts.agent === 'copilot') {
@@ -555,6 +557,7 @@ async function runCodex(
   images: CliImage[] = [],
   runId?: number,
   model?: string,
+  reasoningEffort?: string,
   yolo?: boolean,
   env?: NodeJS.ProcessEnv,
 ): Promise<CliAgentResult> {
@@ -564,13 +567,17 @@ async function runCodex(
   // --sandbox, so the sandbox mode is set via -c instead.
   const imageArgs = imagePaths.flatMap((p) => ['-i', p]);
   const modelArgs = model ? ['--model', model] : [];
+  const normalizedEffort = typeof reasoningEffort === 'string' ? reasoningEffort.trim().toLowerCase() : '';
+  const reasoningEffortArgs = normalizedEffort === 'low' || normalizedEffort === 'medium' || normalizedEffort === 'high' || normalizedEffort === 'xhigh'
+    ? ['-c', `model_reasoning_effort="${normalizedEffort}"`]
+    : [];
   const sandbox = yolo ? 'danger-full-access' : 'workspace-write';
   const sandboxConfigArgs = yolo
     ? []
     : ['-c', 'sandbox_workspace_write.network_access=true'];
   const args = resumeId
-    ? ['exec', 'resume', '--json', '--skip-git-repo-check', '-c', `sandbox_mode=${sandbox}`, ...sandboxConfigArgs, ...modelArgs, resumeId, prompt, ...imageArgs]
-    : ['exec', '--json', '--skip-git-repo-check', '--sandbox', sandbox, ...sandboxConfigArgs, ...modelArgs, prompt, ...imageArgs];
+    ? ['exec', 'resume', '--json', '--skip-git-repo-check', '-c', `sandbox_mode=${sandbox}`, ...sandboxConfigArgs, ...reasoningEffortArgs, ...modelArgs, resumeId, prompt, ...imageArgs]
+    : ['exec', '--json', '--skip-git-repo-check', '--sandbox', sandbox, ...sandboxConfigArgs, ...reasoningEffortArgs, ...modelArgs, prompt, ...imageArgs];
 
   let summary = '';
   let sessionId: string | undefined;
