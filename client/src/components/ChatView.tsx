@@ -153,6 +153,8 @@ export interface ChatAgentRegistration {
   avatarUrl: string;
   mention: string;
   model: string;
+  /** Optional per-channel Codex reasoning effort pin. Empty uses the CLI default. */
+  reasoningEffort: string;
   cwd: string;
   contextPrompt: string;
   taggableByAgents: boolean;
@@ -194,6 +196,30 @@ export interface ChatAgentOption {
   id: string;
   label: string;
   models: Array<{ id: string; label: string }>;
+}
+
+export const CODEX_REASONING_EFFORTS = [
+  { id: '', label: 'Use Codex CLI default' },
+  { id: 'low', label: 'Low' },
+  { id: 'medium', label: 'Medium' },
+  { id: 'high', label: 'High' },
+  { id: 'xhigh', label: 'Extra high' },
+] as const;
+
+export function CodexReasoningEffortSelect({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <select value={value} onChange={(event) => onChange(event.target.value)}>
+      {CODEX_REASONING_EFFORTS.map((effort) => (
+        <option key={effort.id || 'default'} value={effort.id}>{effort.label}</option>
+      ))}
+    </select>
+  );
 }
 
 export interface ChatChannelPresence {
@@ -1272,6 +1298,7 @@ export const ChatView = memo(function ChatView({
       avatarUrl: '',
       mention: agent?.label.toLowerCase().replace(/\s+/g, '-') ?? '',
       model: agent?.models[0]?.id ?? '',
+      reasoningEffort: '',
       cwd: '',
       contextPrompt: '',
       taggableByAgents: false,
@@ -1288,6 +1315,7 @@ export const ChatView = memo(function ChatView({
     avatarUrl: '',
     mention: availableAgents[0]?.label.toLowerCase().replace(/\s+/g, '-') ?? '',
     model: availableAgents[0]?.models[0]?.id ?? '',
+    reasoningEffort: '',
     cwd: '',
     contextPrompt: '',
     taggableByAgents: false,
@@ -1778,6 +1806,7 @@ export const ChatView = memo(function ChatView({
           avatarUrl: va.avatarUrl,
           mention: va.mention,
           model: va.model,
+          reasoningEffort: '',
           cwd: va.cwd,
           contextPrompt: va.contextPrompt,
           taggableByAgents: false,
@@ -2737,6 +2766,16 @@ export const ChatView = memo(function ChatView({
                 />
               )}
             </label>
+            {agentForm.agentId === 'codex' && (agentPanelMode === 'edit-member' || agentPanelMode === 'create') && (
+              <label>
+                Reasoning effort
+                <CodexReasoningEffortSelect
+                  value={agentForm.reasoningEffort || ''}
+                  onChange={(reasoningEffort) => setAgentForm((value) => ({ ...value, reasoningEffort }))}
+                />
+                <span className="chat-agent-field-hint">Default follows your local Codex CLI configuration.</span>
+              </label>
+            )}
             {(agentPanelMode === 'edit-member' || agentPanelMode === 'create') && (
               <>
             <label className="chat-agent-toggle">

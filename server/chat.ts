@@ -131,6 +131,8 @@ export type ChatAgentRegistration = {
   avatarUrl: string;
   mention: string;
   model: string;
+  /** Optional per-channel Codex effort override. Empty inherits the local CLI config. */
+  reasoningEffort: string;
   cwd: string;
   contextPrompt: string;
   taggableByAgents: boolean;
@@ -255,6 +257,7 @@ export function ensureChatSchema(db: Db): void {
       avatar_url TEXT NOT NULL DEFAULT '',
       mention TEXT NOT NULL DEFAULT '',
       model TEXT NOT NULL DEFAULT '',
+      reasoning_effort TEXT NOT NULL DEFAULT '',
       cwd TEXT NOT NULL DEFAULT '',
       context_prompt TEXT NOT NULL DEFAULT '',
       taggable_by_agents INTEGER NOT NULL DEFAULT 0,
@@ -332,6 +335,9 @@ export function ensureChatSchema(db: Db): void {
   if (!memberCols.some((col) => col.name === 'avatar_url')) {
     db.exec("ALTER TABLE chat_agent_members ADD COLUMN avatar_url TEXT NOT NULL DEFAULT ''");
   }
+  if (!memberCols.some((col) => col.name === 'reasoning_effort')) {
+    db.exec("ALTER TABLE chat_agent_members ADD COLUMN reasoning_effort TEXT NOT NULL DEFAULT ''");
+  }
   const vaultAgentCols = db.prepare("PRAGMA table_info(vault_agents)").all() as Array<{ name: string }>;
   if (!vaultAgentCols.some((col) => col.name === 'avatar_url')) {
     db.exec("ALTER TABLE vault_agents ADD COLUMN avatar_url TEXT NOT NULL DEFAULT ''");
@@ -367,6 +373,7 @@ type ChatAgentMemberRow = {
   avatar_url: string;
   mention: string;
   model: string;
+  reasoning_effort: string;
   cwd: string;
   context_prompt: string;
   taggable_by_agents: number;
@@ -419,6 +426,7 @@ function rowToAgentMember(row: ChatAgentMemberRow): ChatAgentRegistration {
     avatarUrl: row.avatar_url || '',
     mention: row.mention,
     model: row.model,
+    reasoningEffort: row.reasoning_effort || '',
     cwd: row.cwd,
     contextPrompt: row.context_prompt,
     taggableByAgents: row.taggable_by_agents !== 0,
@@ -630,6 +638,10 @@ function normalizeAgentRegistration(input: Partial<ChatAgentRegistration>, fallb
 
   const id = String(input.id || '').trim() || crypto.randomUUID();
   const mention = normalizeMention(input.mention || '', agentId);
+  const requestedEffort = String(input.reasoningEffort || '').trim().toLowerCase();
+  const reasoningEffort = agentId === 'codex' && ['low', 'medium', 'high', 'xhigh'].includes(requestedEffort)
+    ? requestedEffort
+    : '';
 
   return {
     id,
@@ -639,6 +651,7 @@ function normalizeAgentRegistration(input: Partial<ChatAgentRegistration>, fallb
     avatarUrl: String(input.avatarUrl || '').trim(),
     mention,
     model: String(input.model || ''),
+    reasoningEffort,
     cwd: String(input.cwd || ''),
     contextPrompt: String(input.contextPrompt || ''),
     taggableByAgents: input.taggableByAgents === true,
@@ -835,7 +848,7 @@ export function addVaultAgentToChannel(
   vaultId: string,
   channelId: string,
   vaultAgentId: string,
-  flags: Partial<Pick<ChatAgentRegistration, 'taggableByAgents' | 'replyToEveryMessage' | 'pingableByOthers' | 'yolo' | 'conversationId'>> = {},
+  flags: Partial<Pick<ChatAgentRegistration, 'reasoningEffort' | 'taggableByAgents' | 'replyToEveryMessage' | 'pingableByOthers' | 'yolo' | 'conversationId'>> = {},
 ): ChatAgentRegistration {
   const { route } = assertChatChannel(db, channelId, userId);
   if (route.localVaultId !== vaultId) throw new Error('Chat channel not found');
@@ -854,17 +867,21 @@ export function addVaultAgentToChannel(
   const replyEvery = flags.replyToEveryMessage !== undefined ? flags.replyToEveryMessage : (existing ? existing.reply_to_every_message !== 0 : false);
   const pingable = flags.pingableByOthers !== undefined ? flags.pingableByOthers : (existing ? existing.pingable_by_others !== 0 : false);
   const yolo = flags.yolo !== undefined ? flags.yolo : (existing ? existing.yolo !== 0 : false);
+  const requestedEffort = String(flags.reasoningEffort ?? existing?.reasoning_effort ?? '').trim().toLowerCase();
+  const reasoningEffort = va.agent_id === 'codex' && ['low', 'medium', 'high', 'xhigh'].includes(requestedEffort)
+    ? requestedEffort
+    : '';
   const memberId = existing?.id || crypto.randomUUID();
 
   if (existing) {
     db.prepare(`
       UPDATE chat_agent_members SET
-        agent_id = ?, display_name = ?, avatar_url = ?, mention = ?, model = ?, cwd = ?, context_prompt = ?,
+        agent_id = ?, display_name = ?, avatar_url = ?, mention = ?, model = ?, reasoning_effort = ?, cwd = ?, context_prompt = ?,
         taggable_by_agents = ?, reply_to_every_message = ?, pingable_by_others = ?, yolo = ?,
         conversation_id = ?, vault_agent_id = ?, updated_at = datetime('now')
       WHERE id = ? AND channel_id = ?
     `).run(
-      va.agent_id, va.display_name, va.avatar_url, va.mention, va.model, va.cwd, va.context_prompt,
+      va.agent_id, va.display_name, va.avatar_url, va.mention, va.model, reasoningEffort, va.cwd, va.context_prompt,
       taggable ? 1 : 0, replyEvery ? 1 : 0, pingable ? 1 : 0, yolo ? 1 : 0,
       conversationId, va.id, memberId, route.sourceChannelId,
     );
@@ -872,11 +889,11 @@ export function addVaultAgentToChannel(
     db.prepare(`
       INSERT INTO chat_agent_members (
         id, channel_id, vault_id, vault_agent_id, agent_id, display_name, avatar_url, mention,
-        model, cwd, context_prompt, taggable_by_agents, reply_to_every_message, pingable_by_others, yolo, conversation_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        model, reasoning_effort, cwd, context_prompt, taggable_by_agents, reply_to_every_message, pingable_by_others, yolo, conversation_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       memberId, route.sourceChannelId, route.sourceVaultId, va.id,
-      va.agent_id, va.display_name, va.avatar_url, va.mention, va.model, va.cwd, va.context_prompt,
+      va.agent_id, va.display_name, va.avatar_url, va.mention, va.model, reasoningEffort, va.cwd, va.context_prompt,
       taggable ? 1 : 0, replyEvery ? 1 : 0, pingable ? 1 : 0, yolo ? 1 : 0, conversationId,
     );
   }
@@ -2155,6 +2172,7 @@ export function upsertChatAgentMember(
       replyToEveryMessage: input.replyToEveryMessage,
       pingableByOthers: input.pingableByOthers,
       yolo: input.yolo,
+      reasoningEffort: input.reasoningEffort,
       conversationId: input.conversationId,
     });
   }
@@ -2187,6 +2205,7 @@ export function upsertChatAgentMember(
         avatar_url = ?,
         mention = ?,
         model = ?,
+        reasoning_effort = ?,
         cwd = ?,
         context_prompt = ?,
         taggable_by_agents = ?,
@@ -2203,6 +2222,7 @@ export function upsertChatAgentMember(
       member.avatarUrl,
       member.mention,
       member.model,
+      member.reasoningEffort,
       member.cwd,
       member.contextPrompt,
       member.taggableByAgents ? 1 : 0,
@@ -2217,8 +2237,8 @@ export function upsertChatAgentMember(
     db.prepare(`
       INSERT INTO chat_agent_members (
         id, channel_id, vault_id, vault_agent_id, agent_id, display_name, avatar_url, mention,
-        model, cwd, context_prompt, taggable_by_agents, reply_to_every_message, pingable_by_others, yolo, conversation_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        model, reasoning_effort, cwd, context_prompt, taggable_by_agents, reply_to_every_message, pingable_by_others, yolo, conversation_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       member.id,
       route.sourceChannelId,
@@ -2229,6 +2249,7 @@ export function upsertChatAgentMember(
       member.avatarUrl,
       member.mention,
       member.model,
+      member.reasoningEffort,
       member.cwd,
       member.contextPrompt,
       member.taggableByAgents ? 1 : 0,

@@ -120,6 +120,7 @@ export function readLegacyLocalChatAgentMembers(): Record<string, ChatAgentRegis
             avatarUrl: typeof registration.avatarUrl === 'string' ? registration.avatarUrl : '',
             mention,
             model: typeof registration.model === 'string' ? registration.model : '',
+            reasoningEffort: typeof registration.reasoningEffort === 'string' ? registration.reasoningEffort : '',
             cwd: typeof registration.cwd === 'string' ? normalizeChatCwd(registration.cwd) : '',
             contextPrompt: typeof registration.contextPrompt === 'string' ? registration.contextPrompt : '',
             taggableByAgents: typeof registration.taggableByAgents === 'boolean' ? registration.taggableByAgents : true,

@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import {
   ChatView,
+  CodexReasoningEffortSelect,
   dataUrlsToRunImages,
   getRunningMessageState,
   getSteeringPromptLabels,
@@ -21,6 +22,7 @@ const agent: ChatAgentRegistration = {
   avatarUrl: '',
   mention: 'sol',
   model: 'gpt-test',
+  reasoningEffort: '',
   cwd: '',
   contextPrompt: '',
   taggableByAgents: true,
@@ -61,6 +63,20 @@ describe('agent steering presentation', () => {
       message('2', { author: 'Sol', agentId: 'codex', registrationId: agent.id, status: 'running' }),
     ];
     expect(getSteeringPromptLabels(messages, [agent]).size).toBe(0);
+  });
+});
+
+describe('Codex reasoning effort settings', () => {
+  it('offers CLI inheritance plus every supported explicit override', () => {
+    const markup = renderToStaticMarkup(createElement(CodexReasoningEffortSelect, {
+      value: '',
+      onChange: () => {},
+    }));
+    expect(markup).toContain('Use Codex CLI default');
+    expect(markup).toContain('Low');
+    expect(markup).toContain('Medium');
+    expect(markup).toContain('High');
+    expect(markup).toContain('Extra high');
   });
 });
 

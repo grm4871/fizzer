@@ -4476,6 +4476,12 @@ a {
 .chat-agent-menu .chat-model-custom-input {
   margin-top: 6px;
 }
+.chat-agent-field-hint {
+  color: var(--text-muted);
+  font-size: 0.625rem;
+  font-weight: 400;
+  line-height: 1.35;
+}
 .chat-agent-toggle {
   flex-direction: row !important;
   align-items: center;

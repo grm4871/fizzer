@@ -4,7 +4,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
-import { ensureChatSchema, createChatMessage, getChatMessage, forwardChatMessage, CHAT_NOTE_MARKER } from './chat.js';
+import {
+  ensureChatSchema,
+  createChatMessage,
+  getChatMessage,
+  forwardChatMessage,
+  upsertChatAgentMember,
+  CHAT_NOTE_MARKER,
+} from './chat.js';
 
 /**
  * Release matrix — "API, persistence, migrations": a feature that works on a
@@ -91,6 +98,7 @@ test('a fresh database gets every chat_messages column the writers use', () => {
     for (const required of ['harness_log', 'change_request_json', 'forwarded_from_json']) {
       assert.ok(cols.includes(required), `fresh schema is missing ${required}`);
     }
+    assert.ok(columns(db, 'chat_agent_members').includes('reasoning_effort'));
   });
 });
 
@@ -113,6 +121,54 @@ test('an existing database is migrated to the current chat_messages shape', () =
     const legacy = getChatMessage(db, 'chan-1', 1, 'legacy-1');
     assert.equal(legacy?.body, 'said this before the upgrade');
     assert.equal(legacy?.forwardedFrom, undefined);
+  });
+});
+
+test('an existing agent-members table gains the reasoning effort override', () => {
+  withDb((db) => {
+    db.exec(`
+      CREATE TABLE chat_agent_members (
+        id TEXT PRIMARY KEY,
+        channel_id TEXT NOT NULL,
+        vault_id TEXT NOT NULL,
+        vault_agent_id TEXT NOT NULL DEFAULT '',
+        agent_id TEXT NOT NULL,
+        display_name TEXT NOT NULL DEFAULT '',
+        avatar_url TEXT NOT NULL DEFAULT '',
+        mention TEXT NOT NULL DEFAULT '',
+        model TEXT NOT NULL DEFAULT '',
+        cwd TEXT NOT NULL DEFAULT '',
+        context_prompt TEXT NOT NULL DEFAULT '',
+        taggable_by_agents INTEGER NOT NULL DEFAULT 0,
+        reply_to_every_message INTEGER NOT NULL DEFAULT 0,
+        pingable_by_others INTEGER NOT NULL DEFAULT 0,
+        yolo INTEGER NOT NULL DEFAULT 0,
+        conversation_id TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+    `);
+    ensureChatSchema(db);
+    assert.ok(columns(db, 'chat_agent_members').includes('reasoning_effort'));
+  });
+});
+
+test('Codex reasoning effort persists on a channel registration', () => {
+  withDb((db) => {
+    addChannel(db, 'chan-1', 'general');
+    ensureChatSchema(db);
+    const saved = upsertChatAgentMember(db, 1, 'vault-1', 'chan-1', {
+      id: 'reg-sol',
+      agentId: 'codex',
+      displayName: 'Sol',
+      mention: 'sol',
+      model: 'gpt-5.6-sol',
+      reasoningEffort: 'xhigh',
+    });
+    assert.equal(saved.reasoningEffort, 'xhigh');
+    const row = db.prepare('SELECT reasoning_effort FROM chat_agent_members WHERE id = ?')
+      .get('reg-sol') as { reasoning_effort: string };
+    assert.equal(row.reasoning_effort, 'xhigh');
   });
 });
 
