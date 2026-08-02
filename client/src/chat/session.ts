@@ -42,7 +42,7 @@ function sanitizeRestoredTabs(value: unknown): Tab[] {
     .map((tab): Tab | null => {
       if (typeof tab.id !== 'string' || typeof tab.title !== 'string') return null;
       if (tab.type === 'chat') {
-        return { id: tab.id, title: tab.title || 'Channel', type: 'chat', dirty: false };
+        return { id: tab.id, title: tab.title.replace(/^#/, '') || 'Channel', type: 'chat', dirty: false };
       }
       if (tab.type === 'note') {
         return { id: tab.id, title: tab.title, type: 'note', dirty: false };

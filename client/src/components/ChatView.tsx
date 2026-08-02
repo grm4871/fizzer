@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { Bot, Copy, Forward, Hash, ImagePlus, Paperclip, Plus, Reply, Send, Square, Trash2, X } from 'lucide-react';
+import { Bot, Copy, Forward, ImagePlus, Paperclip, Plus, Reply, Send, Square, Trash2, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
@@ -2137,7 +2137,6 @@ export const ChatView = memo(function ChatView({
     <section className="chat-view">
       <div className="chat-main">
         <header className="chat-header">
-          <Hash size={18} />
           <div className="chat-header-copy">
             <h2>{channelName}</h2>
             <span>{sortedMessages.length} messages</span>

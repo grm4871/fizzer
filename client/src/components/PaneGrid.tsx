@@ -250,7 +250,9 @@ function PaneTabStrip({
           {sidebarOpen ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
         </button>
       )}
-      {tabs.map((tab) => (
+      {tabs.map((tab) => {
+        const displayedTitle = tab.type === 'chat' ? tab.title.replace(/^#/, '') : tab.title;
+        return (
         <button
           key={tab.id}
           className={`tab-item${tab.id === pane.activeTabId ? ' active' : ''}${
@@ -276,11 +278,11 @@ function PaneTabStrip({
               onCloseTab(tab.id);
             }
           }}
-          title={tab.title}
+          title={displayedTitle}
         >
           {tab.dirty && <span className="tab-dirty" />}
           <span className="tab-icon"><TabIcon type={tab.type} /></span>
-          <span className="tab-title">{tab.title || 'Untitled'}</span>
+          <span className="tab-title">{displayedTitle || 'Untitled'}</span>
           {onPopOut && (
             <span
               className="tab-popout"
@@ -308,7 +310,8 @@ function PaneTabStrip({
             ×
           </span>
         </button>
-      ))}
+        );
+      })}
       {onCreateNote && (
         <button
           type="button"

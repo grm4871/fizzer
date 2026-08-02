@@ -290,7 +290,7 @@ export default function App() {
     setOpenTabs((prev) => prev.map((tab) => {
       if (tab.type !== 'chat') return tab;
       const note = notes.find((item) => item.id === tab.id && item.content_preview.trim().startsWith(CHAT_NOTE_MARKER));
-      return note ? { ...tab, title: `#${note.title}` } : tab;
+      return note ? { ...tab, title: note.title } : tab;
     }));
   }, [notes]);
 
@@ -1095,7 +1095,7 @@ export default function App() {
 
   const openChatChannel = useCallback((channelId: string, title: string, mode: 'open' | 'replace' = 'open') => {
     const name = title.trim() || 'chat';
-    const tab: Tab = { id: channelId, title: `#${name}`, type: 'chat', dirty: false };
+    const tab: Tab = { id: channelId, title: name, type: 'chat', dirty: false };
 
     setOpenTabs((prev) =>
       prev.some((t) => t.id === channelId)
@@ -1276,6 +1276,7 @@ export default function App() {
                 ...r,
                 agentId: agent.agentId,
                 displayName: agent.displayName,
+                avatarUrl: agent.avatarUrl,
                 mention: agent.mention,
                 model: agent.model,
                 cwd: agent.cwd,
@@ -2191,7 +2192,7 @@ export default function App() {
         body: JSON.stringify({ title }),
       });
       setNoteContents((prev) => (prev[tabId] ? { ...prev, [tabId]: { ...prev[tabId], note: data.note } } : prev));
-      setOpenTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, title: t.type === 'chat' ? `#${data.note.title}` : data.note.title } : t)));
+      setOpenTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, title: data.note.title } : t)));
       if (activeVaultIdRef.current) void loadVaultData(activeVaultIdRef.current);
     } catch (error) {
       window.alert(error instanceof Error ? error.message : 'Could not rename note');
@@ -2444,6 +2445,45 @@ export default function App() {
         };
       });
     };
+    const handleVaultAgentUpserted = (data: { agent: VaultAgent }) => {
+      const agent = data.agent;
+      if (!agent || agent.vaultId !== activeVaultId) return;
+      setVaultAgents((prev) => {
+        const rest = prev.filter((item) => item.id !== agent.id);
+        return [...rest, agent].sort((a, b) => (a.displayName || a.mention).localeCompare(b.displayName || b.mention));
+      });
+      setChatState((prev) => {
+        const next = { ...prev.registeredAgentsByChannel };
+        for (const [channelId, registrations] of Object.entries(next)) {
+          next[channelId] = registrations.map((registration) => (
+            registration.vaultAgentId === agent.id
+              ? {
+                  ...registration,
+                  agentId: agent.agentId,
+                  displayName: agent.displayName,
+                  avatarUrl: agent.avatarUrl,
+                  mention: agent.mention,
+                  model: agent.model,
+                  cwd: agent.cwd,
+                  contextPrompt: agent.contextPrompt,
+                }
+              : registration
+          ));
+        }
+        return { ...prev, registeredAgentsByChannel: next };
+      });
+    };
+    const handleVaultAgentRemoved = (data: { agentId: string }) => {
+      if (!data.agentId) return;
+      setVaultAgents((prev) => prev.filter((agent) => agent.id !== data.agentId));
+      setChatState((prev) => {
+        const next: Record<string, ChatAgentRegistration[]> = {};
+        for (const [channelId, registrations] of Object.entries(prev.registeredAgentsByChannel)) {
+          next[channelId] = registrations.filter((registration) => registration.vaultAgentId !== data.agentId);
+        }
+        return { ...prev, registeredAgentsByChannel: next };
+      });
+    };
     const handleChatAgentMemberRemoved = (data: { vaultId: string; channelId: string; registrationId: string }) => {
       if (data.vaultId !== activeVaultId) return;
       setChatState((prev) => ({
@@ -2475,6 +2515,8 @@ export default function App() {
     socket.on('vault:chatMessageDeleted', handleChatMessageDeleted);
     socket.on('vault:chatAgentMemberUpserted', handleChatAgentMemberUpserted);
     socket.on('vault:chatAgentMemberRemoved', handleChatAgentMemberRemoved);
+    socket.on('vault:vaultAgentUpserted', handleVaultAgentUpserted);
+    socket.on('vault:vaultAgentRemoved', handleVaultAgentRemoved);
     socket.on('vault:chatPresence', handleChatPresence);
     return () => {
       if (socketVaultReloadTimerRef.current != null) {
@@ -2497,6 +2539,8 @@ export default function App() {
       socket.off('vault:chatMessageDeleted', handleChatMessageDeleted);
       socket.off('vault:chatAgentMemberUpserted', handleChatAgentMemberUpserted);
       socket.off('vault:chatAgentMemberRemoved', handleChatAgentMemberRemoved);
+      socket.off('vault:vaultAgentUpserted', handleVaultAgentUpserted);
+      socket.off('vault:vaultAgentRemoved', handleVaultAgentRemoved);
       socket.off('vault:chatPresence', handleChatPresence);
       socket.disconnect();
     };
@@ -2549,7 +2593,7 @@ export default function App() {
         body: JSON.stringify({ title: 'new-channel', content: CHAT_NOTE_MARKER }),
       });
       await loadVaultData(vaultId);
-      const tab: Tab = { id: data.note.id, title: `#${data.note.title || 'new-channel'}`, type: 'chat', dirty: false };
+      const tab: Tab = { id: data.note.id, title: data.note.title || 'new-channel', type: 'chat', dirty: false };
       setOpenTabs((prev) =>
         prev.some((t) => t.id === tab.id)
           ? prev.map((t) => (t.id === tab.id ? { ...t, ...tab } : t))
