@@ -745,7 +745,11 @@ export default function App() {
     } catch (error) {
       // Mission completion can durably remove a queued synthetic wake while a
       // renderer still has one final throttled stream patch. The deletion wins.
-      if (error instanceof ApiError && error.status === 404) return;
+      if (
+        (error instanceof ApiError && error.status === 404)
+        || (typeof error === 'object' && error !== null && 'status' in error && error.status === 404)
+        || (error instanceof Error && error.message === 'Message not found')
+      ) return;
       console.error('Failed to update chat message:', error);
     }
   }, []);
