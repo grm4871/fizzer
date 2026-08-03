@@ -41,13 +41,26 @@ export function ensureVaultMembersSchema(db: Db): void {
     CREATE TABLE IF NOT EXISTS vault_members (
       vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      role TEXT NOT NULL CHECK(role IN ('owner','admin','editor','viewer')),
+      role TEXT NOT NULL DEFAULT 'editor' CHECK(role IN ('owner','admin','editor','viewer')),
       invited_by INTEGER REFERENCES users(id),
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       PRIMARY KEY (vault_id, user_id)
     );
     CREATE INDEX IF NOT EXISTS idx_vault_members_user ON vault_members(user_id);
   `);
+
+  // Older prod tables predated role/invited_by — add missing columns in place.
+  const columns = (db.prepare('PRAGMA table_info(vault_members)').all() as Array<{ name: string }>)
+    .map((row) => row.name);
+  if (columns.length && !columns.includes('role')) {
+    db.exec(`ALTER TABLE vault_members ADD COLUMN role TEXT NOT NULL DEFAULT 'editor'`);
+  }
+  if (columns.length && !columns.includes('invited_by')) {
+    db.exec('ALTER TABLE vault_members ADD COLUMN invited_by INTEGER REFERENCES users(id)');
+  }
+  if (columns.length && !columns.includes('created_at')) {
+    db.exec(`ALTER TABLE vault_members ADD COLUMN created_at TEXT NOT NULL DEFAULT (datetime('now'))`);
+  }
 
   // Backfill: every vault owner is a member. Safe on every boot.
   db.prepare(`

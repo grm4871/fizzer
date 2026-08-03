@@ -59,3 +59,36 @@ test('viewers cannot manage membership', () => {
     db.close();
   }
 });
+
+test('migrates pre-role vault_members tables', () => {
+  const db = new Database(':memory:');
+  try {
+    db.exec(`
+      CREATE TABLE users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT NOT NULL UNIQUE,
+        display_name TEXT NOT NULL DEFAULT '',
+        avatar_url TEXT NOT NULL DEFAULT ''
+      );
+      CREATE TABLE vaults (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        root_path TEXT NOT NULL DEFAULT '',
+        created_by INTEGER NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE vault_members (
+        vault_id TEXT NOT NULL,
+        user_id INTEGER NOT NULL,
+        PRIMARY KEY (vault_id, user_id)
+      );
+      INSERT INTO users (id, username) VALUES (1, 'owner');
+      INSERT INTO vaults (id, name, created_by) VALUES ('v1', 'Main', 1);
+      INSERT INTO vault_members (vault_id, user_id) VALUES ('v1', 1);
+    `);
+    ensureVaultMembersSchema(db);
+    assert.equal(getVaultRole(db, 'v1', 1), 'owner');
+  } finally {
+    db.close();
+  }
+});
