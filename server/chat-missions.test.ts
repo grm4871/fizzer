@@ -21,6 +21,7 @@ import {
   addChatMissionTask,
   attachRunToMissionTaskByDispatch,
   createChatMission,
+  claimMissionCoordinatorWake,
   ensureChatMissionSchema,
   finishChatMission,
   listSchedulableMissionTasks,
@@ -78,7 +79,7 @@ test('scheduler respects dependencies, priority, one-active-task-per-agent, and 
   }
 });
 
-test('scheduler blocks descendants of failed dependencies instead of hanging', () => {
+test('scheduler blocks multi-hop descendants of failed dependencies and wakes review', () => {
   const { db, coordinator, worker } = setup();
   try {
     const root = createChatMessage(db, 1, 'vault-1', 'channel-1', {
@@ -95,12 +96,48 @@ test('scheduler blocks descendants of failed dependencies instead of hanging', (
       coordinatorRegistrationId: coordinator.id, title: 'Child', assignee: worker.id,
       dependsOn: [parent.task.id],
     });
+    const grandchild = addChatMissionTask(db, 1, 'channel-1', mission.mission.id, {
+      coordinatorRegistrationId: coordinator.id, title: 'Grandchild', assignee: worker.id,
+      dependsOn: [child.task.id],
+    });
     updateChatMissionTask(db, 1, 'channel-1', parent.task.id, { status: 'failed', summary: 'Nope.' });
     const result = listSchedulableMissionTasks(db, mission.mission.id);
     assert.deepEqual(result.candidates, []);
     const blocked = result.updates[0]?.mission.tasks.find((task) => task.id === child.task.id);
     assert.equal(blocked?.status, 'blocked');
     assert.match(blocked?.summary || '', /Dependency/);
+    const blockedGrandchild = result.updates[0]?.mission.tasks.find((task) => task.id === grandchild.task.id);
+    assert.equal(blockedGrandchild?.status, 'blocked');
+    assert.ok(claimMissionCoordinatorWake(db, mission.mission.id));
+    assert.equal(claimMissionCoordinatorWake(db, mission.mission.id), null);
+  } finally {
+    db.close();
+  }
+});
+
+test('canceling a running task returns its run for route-level interruption', () => {
+  const { db, coordinator, worker } = setup();
+  try {
+    const root = createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: 'cancel-root', channelId: 'channel-1', author: 'owner', body: 'Run work.',
+      createdAt: '2026-08-03T00:00:00.000Z',
+    });
+    const mission = createChatMission(db, 1, 'vault-1', 'channel-1', {
+      rootMessageId: root.id, coordinatorRegistrationId: coordinator.id, title: 'Cancelable work',
+    });
+    const added = addChatMissionTask(db, 1, 'channel-1', mission.mission.id, {
+      coordinatorRegistrationId: coordinator.id, title: 'Long worker', assignee: worker.id,
+    });
+    const message = createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: `mission-task-${added.task.id}`, channelId: 'channel-1', author: '', body: '@terra Work.',
+      createdAt: '2026-08-03T00:00:01.000Z', registrationId: coordinator.id, missionTaskId: added.task.id,
+    });
+    const dispatch = createChatAgentDispatchForRegistration(db, 1, 'channel-1', message, worker.id);
+    linkMissionTaskDispatch(db, added.task.id, dispatch.id);
+    attachRunToMissionTaskByDispatch(db, dispatch.id, 601);
+    const canceled = updateChatMissionTask(db, 1, 'channel-1', added.task.id, { status: 'canceled' });
+    assert.deepEqual(canceled.canceledTaskRunIds, [601]);
+    assert.equal(canceled.mission.tasks[0]?.status, 'canceled');
   } finally {
     db.close();
   }

@@ -64,6 +64,8 @@ export type MissionProjectionUpdate = {
   removedWakeMessageIds?: string[];
   /** Already-launched stale review runs that should be canceled by the route. */
   canceledWakeRunIds?: number[];
+  /** Live worker runs explicitly canceled through task steering. */
+  canceledTaskRunIds?: number[];
 };
 
 export type MissionWake = MissionProjectionUpdate & {
@@ -413,10 +415,19 @@ export function addChatMissionTask(
   // Tool retries after a lost HTTP response must not fan out a second worker.
   // A coordinator can still rerun work by giving the new task a distinct title.
   const existing = db.prepare(`
-    SELECT id FROM chat_mission_tasks
+    SELECT * FROM chat_mission_tasks
     WHERE mission_id = ? AND assignee_registration_id = ? AND title = ?
     ORDER BY created_at ASC, rowid ASC LIMIT 1
-  `).get(row.id, assignee.id, title) as { id: string } | undefined;
+  `).get(row.id, assignee.id, title) as TaskRow | undefined;
+  const normalizedPrompt = cleanText(input.prompt || title, 12_000);
+  if (existing && (
+    existing.prompt !== normalizedPrompt
+    || existing.depends_on_json !== JSON.stringify(dependencies)
+    || existing.priority !== priority
+    || existing.reasoning_effort !== reasoningEffort
+  )) {
+    throw new Error('A task with this title already exists with different scheduling options; use a distinct title');
+  }
   const taskId = existing?.id || crypto.randomUUID();
   if (!existing) {
     db.prepare(`
@@ -429,7 +440,7 @@ export function addChatMissionTask(
       row.id,
       title,
       assignee.id,
-      cleanText(input.prompt || title, 12_000),
+      normalizedPrompt,
       JSON.stringify(dependencies),
       priority,
       reasoningEffort,
@@ -470,22 +481,28 @@ export function listSchedulableMissionTasks(
 
   for (const mission of missions) {
     let tasks = taskRows(db, mission.id);
-    const byId = new Map(tasks.map((task) => [task.id, task]));
     let changed = false;
-    for (const task of tasks) {
-      if (task.status !== 'pending' || task.dispatch_id) continue;
-      const failedDependency = taskDependencies(task)
-        .map((id) => byId.get(id))
-        .find((dependency) => dependency && ['failed', 'blocked', 'canceled'].includes(dependency.status));
-      if (!failedDependency) continue;
-      db.prepare(`
-        UPDATE chat_mission_tasks
-        SET status = 'blocked', summary = ?, updated_at = datetime('now')
-        WHERE id = ? AND status = 'pending' AND dispatch_id IS NULL
-      `).run(`Dependency “${failedDependency.title}” ended ${failedDependency.status}.`, task.id);
-      changed = true;
+    // Walk to a fixed point so A → B → C cannot strand C pending when A fails.
+    while (true) {
+      const byId = new Map(tasks.map((task) => [task.id, task]));
+      let passChanged = false;
+      for (const task of tasks) {
+        if (task.status !== 'pending' || task.dispatch_id) continue;
+        const failedDependency = taskDependencies(task)
+          .map((id) => byId.get(id))
+          .find((dependency) => dependency && ['failed', 'blocked', 'canceled'].includes(dependency.status));
+        if (!failedDependency) continue;
+        db.prepare(`
+          UPDATE chat_mission_tasks
+          SET status = 'blocked', summary = ?, updated_at = datetime('now')
+          WHERE id = ? AND status = 'pending' AND dispatch_id IS NULL
+        `).run(`Dependency “${failedDependency.title}” ended ${failedDependency.status}.`, task.id);
+        passChanged = true;
+        changed = true;
+      }
+      if (!passChanged) break;
+      tasks = taskRows(db, mission.id);
     }
-    if (changed) tasks = taskRows(db, mission.id);
 
     const occupied = new Set((db.prepare(`
       SELECT DISTINCT t.assignee_registration_id AS id
@@ -555,9 +572,9 @@ export function updateChatMissionTask(
 ): MissionProjectionUpdate {
   const { route } = assertChatChannel(db, channelId, userId);
   const row = db.prepare(`
-    SELECT t.mission_id, m.channel_id, m.created_by, m.status AS mission_status FROM chat_mission_tasks t
+    SELECT t.mission_id, t.run_id, m.channel_id, m.created_by, m.status AS mission_status FROM chat_mission_tasks t
     JOIN chat_missions m ON m.id = t.mission_id WHERE t.id = ?
-  `).get(taskId) as { mission_id: string; channel_id: string; created_by: number; mission_status: ChatMissionStatus } | undefined;
+  `).get(taskId) as { mission_id: string; run_id: number | null; channel_id: string; created_by: number; mission_status: ChatMissionStatus } | undefined;
   if (!row || row.channel_id !== route.sourceChannelId || row.created_by !== userId) {
     throw new Error('Mission task not found');
   }
@@ -576,7 +593,10 @@ export function updateChatMissionTask(
         AND id = (SELECT dispatch_id FROM chat_mission_tasks WHERE id = ?)
     `).run(taskId);
   }
-  return refreshMissionProjection(db, row.mission_id);
+  return {
+    ...refreshMissionProjection(db, row.mission_id),
+    ...(input.status === 'canceled' && row.run_id != null ? { canceledTaskRunIds: [row.run_id] } : {}),
+  };
 }
 
 export function finishChatMission(

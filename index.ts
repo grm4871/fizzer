@@ -2459,12 +2459,14 @@ app.post('/api/vaults/:vaultId/channels/:channelId/missions/:missionId/tasks', r
   }
 });
 
-app.patch('/api/vaults/:vaultId/channels/:channelId/missions/tasks/:taskId', requireAuth, (req: AuthedRequest, res) => {
+app.patch('/api/vaults/:vaultId/channels/:channelId/missions/tasks/:taskId', requireAuth, async (req: AuthedRequest, res) => {
   try {
+    const requestedStatus = String(req.body?.status || '') as never;
     const update = updateChatMissionTask(db, req.user!.id, req.params.channelId, req.params.taskId, {
-      status: String(req.body?.status || '') as never,
+      status: requestedStatus,
       summary: String(req.body?.summary || ''),
     });
+    await Promise.all((update.canceledTaskRunIds || []).map((runId) => cancelRun(db, runId)));
     scheduleMissionWork(update.mission.id);
     const latest = getChatMission(db, req.user!.id, req.params.channelId, update.mission.id);
     res.json({ mission: latest.mission });
