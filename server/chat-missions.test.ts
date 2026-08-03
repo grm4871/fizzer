@@ -356,6 +356,39 @@ test('a reply to a human does not become an accidental agent dispatch', () => {
   }
 });
 
+test('a human coordinator turn supersedes an unclaimed mission review wake', () => {
+  const { db, coordinator } = setup();
+  try {
+    const wake = createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: 'sys-mission-00000000-0000-0000-0000-000000000001-review',
+      channelId: 'channel-1', author: 'Cascade', body: '@sol review the mission',
+      createdAt: '2026-08-03T00:00:00.000Z',
+    });
+    const wakeDispatch = createChatAgentDispatchForRegistration(
+      db, 1, 'channel-1', wake, coordinator.id,
+    );
+    assert.equal(listPendingChatAgentDispatches(db, 1, 'channel-1').length, 1);
+
+    const human = createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: 'human-steer', channelId: 'channel-1', author: 'owner', body: 'Did we fix this?',
+      createdAt: '2026-08-03T00:00:01.000Z',
+    });
+    const [humanDispatch] = createChatAgentDispatches(db, 1, 'channel-1', human);
+
+    assert.equal(humanDispatch.messageId, human.id);
+    assert.deepEqual(
+      listPendingChatAgentDispatches(db, 1, 'channel-1').map((dispatch) => dispatch.id),
+      [humanDispatch.id],
+    );
+    const removed = db.prepare('SELECT COUNT(*) AS count FROM chat_agent_dispatches WHERE id = ?')
+      .get(wakeDispatch.id) as { count: number };
+    assert.equal(removed.count, 0);
+    assert.ok(getChatMessage(db, 'channel-1', 1, wake.id));
+  } finally {
+    db.close();
+  }
+});
+
 test('an explicit blocked report survives a nominally successful worker exit', () => {
   const { db, coordinator, worker } = setup();
   try {

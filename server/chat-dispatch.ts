@@ -204,6 +204,29 @@ export function createChatAgentDispatches(
   if (message.id.startsWith('sys-')) return [];
   const { route } = assertChatChannel(db, channelId, userId);
   const targets = resolveChatAgentTargets(db, userId, channelId, message);
+  const fromAgent = Boolean(message.registrationId || message.agentId);
+
+  // A fresh human turn to the coordinator supersedes any synthetic mission
+  // review wake that has not reached /runs yet. Otherwise the renderer's
+  // serialized session queue launches the stale review first and the human
+  // follow-up can sit behind it until the generic 60-second startup watchdog
+  // falsely reports a failed run. Keep the system message as mission history;
+  // removing only its unclaimed outbox row makes an already-waiting renderer
+  // prune the optimistic shell when it eventually reaches the launch boundary.
+  if (!fromAgent) {
+    const removePendingWake = db.prepare(`
+      DELETE FROM chat_agent_dispatches
+      WHERE channel_id = ?
+        AND registration_id = ?
+        AND run_id IS NULL
+        AND message_id LIKE 'sys-mission-%'
+    `);
+    for (const registration of targets) {
+      if (registration.orchestrator) {
+        removePendingWake.run(route.sourceChannelId, registration.id);
+      }
+    }
+  }
   const insert = db.prepare(`
     INSERT OR IGNORE INTO chat_agent_dispatches
       (id, message_id, channel_id, registration_id)
