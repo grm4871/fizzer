@@ -2888,13 +2888,17 @@ a {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 10px;
+  padding: 24px;
   color: var(--text-tertiary);
   font-size: 0.875rem;
+  line-height: 1.5;
+  text-align: center;
 }
 .chat-empty strong {
-  color: var(--text-secondary);
+  color: var(--text-primary);
   font-size: 1rem;
+  font-weight: 600;
 }
 .chat-loading-dot {
   width: 18px;
@@ -3038,16 +3042,22 @@ a {
 .chat-message-meta {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: 9px;
   min-width: 0;
+  min-height: 20px;
+  line-height: 1.25;
 }
 .chat-message-meta strong {
   color: var(--text-primary);
   font-size: 0.875rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
 }
 .chat-message-meta time {
-  color: var(--text-tertiary);
-  font-size: 0.6875rem;
+  color: color-mix(in srgb, var(--text-secondary) 76%, var(--text-tertiary));
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 .chat-plan-meters {
   display: inline-flex;
@@ -3986,11 +3996,16 @@ a {
   height: 18px;
   display: grid;
   place-items: center;
-  border-radius: 0;
+  border-radius: 50%;
   border: 1px solid var(--border);
   background: var(--bg-raised);
   color: var(--text-secondary);
   cursor: pointer;
+}
+.chat-paste-remove:hover {
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--border) 60%, var(--text-secondary));
+  background: color-mix(in srgb, var(--bg-overlay) 70%, var(--bg-raised));
 }
 .chat-composer textarea {
   width: 100%;
@@ -3998,16 +4013,17 @@ a {
   max-height: 200px;
   resize: none;
   border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  border-radius: 6px;
   background: var(--bg-base);
   color: var(--text-primary);
   padding: 9px 12px;
   font-size: 0.875rem;
-  line-height: 1.35;
+  line-height: 1.4;
+  transition: border-color var(--transition-normal), box-shadow var(--transition-normal);
 }
 .chat-composer textarea:focus {
-  border-color: var(--border);
-  box-shadow: none;
+  border-color: color-mix(in srgb, var(--focus-ring) 55%, var(--border));
+  box-shadow: 0 0 0 3px var(--focus-ring-subtle);
 }
 .chat-composer textarea:focus-visible {
   outline: none;
@@ -4190,8 +4206,8 @@ a {
   min-height: 0;
   overflow-y: auto;
   border-left: 1px solid var(--border);
-  background: transparent;
-  padding: 0 8px 14px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--bg-raised) 55%, transparent), transparent 180px);
+  padding: 4px 8px 16px;
 }
 .chat-users.is-collapsed {
   width: 42px;
@@ -4203,8 +4219,8 @@ a {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 12px 8px 5px;
-  color: var(--text-tertiary);
+  padding: 15px 8px 7px;
+  color: color-mix(in srgb, var(--text-secondary) 74%, var(--text-tertiary));
   font-family: var(--font-display);
   font-size: 0.625rem;
   font-weight: 600;
@@ -4507,21 +4523,24 @@ a {
 }
 
 .chat-user {
+  position: relative;
   padding: 7px 10px;
-  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  border-radius: 7px;
   cursor: default;
   color: var(--text-secondary);
   user-select: none;
-  transition: background var(--transition-fast), color var(--transition-fast);
+  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
 }
 .chat-user:hover {
-  background: hsla(226, 12%, 17%, 0.75);
+  border-color: color-mix(in srgb, var(--border) 78%, transparent);
+  background: color-mix(in srgb, var(--bg-raised) 82%, transparent);
   color: var(--text-primary);
 }
 .chat-user-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
   min-width: 0;
 }
 .chat-user-row .chat-avatar::after {
@@ -4548,14 +4567,15 @@ a {
 .chat-user-copy strong {
   color: inherit;
   font-size: 0.8125rem;
-  font-weight: 600;
+  font-weight: 650;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .chat-user-copy span {
-  color: var(--text-tertiary);
-  font-size: 0.6875rem;
+  color: color-mix(in srgb, var(--text-secondary) 78%, var(--text-tertiary));
+  font-size: 0.7rem;
+  line-height: 1.35;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4601,9 +4621,14 @@ a {
 }
 
 .chat-runs-empty {
-  padding: 12px 8px;
-  color: var(--text-tertiary);
+  margin: 2px 0 6px;
+  padding: 12px 10px;
+  border: 1px dashed color-mix(in srgb, var(--border) 82%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--bg-base) 58%, transparent);
+  color: color-mix(in srgb, var(--text-secondary) 75%, var(--text-tertiary));
   font-size: 0.75rem;
+  line-height: 1.45;
 }
 .chat-runner-health {
   display: flex;
