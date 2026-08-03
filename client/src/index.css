@@ -3328,14 +3328,14 @@ a {
   color: var(--danger);
 }
 
-/* ── Harness panel: terminal-style structured transcript ─── */
+/* ── Embedded agent activity: shared chat-native shell ─── */
 .cascade-run-panel {
   width: 100%;
   max-width: 100%;
   margin-top: 8px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg-deep);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-subtle) 88%, transparent);
   overflow: hidden;
   box-sizing: border-box;
   /* layout/style only — paint+content-visibility made thinking folds flash
@@ -3350,7 +3350,8 @@ a {
   contain-intrinsic-size: auto 36px;
 }
 .cascade-run-panel.is-running {
-  border-color: hsla(38, 52%, 40%, 0.45);
+  border-color: color-mix(in srgb, var(--border) 72%, hsl(38, 52%, 48%));
+  box-shadow: inset 2px 0 0 hsla(38, 58%, 52%, 0.5);
 }
 .crp-header {
   display: grid;
@@ -3358,7 +3359,7 @@ a {
   gap: 4px;
   align-items: stretch;
   border-bottom: 1px solid hsla(224, 8%, 100%, 0.06);
-  background: hsla(226, 12%, 100%, 0.03);
+  background: color-mix(in srgb, var(--surface-raised) 48%, transparent);
 }
 .cascade-run-panel:not(.open) .crp-header {
   border-bottom: none;
@@ -3402,12 +3403,11 @@ a {
 }
 .crp-toggle-label {
   flex-shrink: 0;
-  color: hsl(222, 13%, 78%);
+  color: var(--text-secondary);
   font-family: var(--font-display);
   font-weight: 600;
-  font-style: italic;
   text-transform: uppercase;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.1em;
 }
 .crp-toggle-summary {
   flex: 1;
@@ -5650,19 +5650,17 @@ a {
 
 /* ── Agent work trace: TUI-style collapsed multi-agent chatter ── */
 .chat-work-trace {
-  margin: 4px 0 10px;
+  margin: 8px 0 10px;
   max-width: 720px;
-  border: 1px solid hsla(224, 8%, 100%, 0.07);
-  border-radius: var(--radius-md);
-  background:
-    linear-gradient(180deg, hsla(226, 14%, 100%, 0.03), transparent 42%),
-    var(--bg-deep);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-subtle) 88%, transparent);
   overflow: hidden;
   contain: layout style;
 }
 .chat-work-trace.is-live {
-  border-color: hsla(38, 52%, 40%, 0.42);
-  box-shadow: inset 0 0 0 1px hsla(38, 52%, 40%, 0.08);
+  border-color: color-mix(in srgb, var(--border) 72%, hsl(38, 52%, 48%));
+  box-shadow: inset 2px 0 0 hsla(38, 58%, 52%, 0.5);
 }
 .chat-work-trace-toggle {
   width: 100%;
@@ -5678,6 +5676,7 @@ a {
   cursor: pointer;
   user-select: none;
   -webkit-tap-highlight-color: transparent;
+  background: color-mix(in srgb, var(--surface-raised) 48%, transparent);
 }
 @media (hover: hover) and (pointer: fine) {
   .chat-work-trace-toggle:hover {
@@ -5690,9 +5689,8 @@ a {
   color: hsl(38, 55%, 58%);
   font-family: var(--font-display);
   font-weight: 600;
-  font-style: italic;
   text-transform: uppercase;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.1em;
 }
 .chat-work-trace-summary {
   flex: 0 1 auto;
