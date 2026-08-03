@@ -138,6 +138,26 @@ describe('buildHarnessActivity', () => {
 });
 
 describe('CascadeRunPanel raw fallback', () => {
+  it('treats a raw CLI launch and heartbeat as live activity', () => {
+    const markup = renderToStaticMarkup(createElement(CascadeRunPanel, {
+      message: msg({
+        status: 'running',
+        runId: 1,
+        harnessLog: [
+          '$ akron --grok -z task --yolo',
+          '# cwd /home/jt/Desktop/cascade',
+          '# Akron --grok still working · 15s without provider output',
+        ].join('\n'),
+      }),
+      onCancelRun: () => {},
+      forceOpen: true,
+    }));
+    expect(markup).toContain('crp-toggle-summary">working');
+    expect(markup).toContain('$ akron --grok -z task --yolo');
+    expect(markup).toContain('Akron --grok still working');
+    expect(markup).not.toContain('waiting for harness stream…');
+  });
+
   it('hides a live unstructured protocol preamble until harness activity arrives', () => {
     const markup = renderToStaticMarkup(createElement(CascadeRunPanel, {
       message: msg({

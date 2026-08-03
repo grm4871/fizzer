@@ -117,6 +117,8 @@ describe('formatAgentChatPrompt', () => {
     expect(prompt).toContain('cascade-chat mission start');
     expect(prompt).toContain('cascade-chat mission delegate');
     expect(prompt).toContain('--after <task-id,...>');
+    expect(prompt).toContain('--anonymous');
+    expect(prompt).toContain('parallel clones');
     expect(prompt).toContain('Stay responsive to the user while workers run');
     expect(prompt).toContain('cascade-chat mission finish');
     expect(prompt).toContain('Keep mission summaries short');

@@ -25,7 +25,7 @@ Usage:
   cascade-chat members                  list people-callable agent teammates
   cascade-chat mission start --title T [--objective O]
   cascade-chat mission status [--mission <id|current>]
-  cascade-chat mission delegate --mission <id> --to @agent --task T --message P [--after <task-id,...>] [--priority N] [--effort E]
+  cascade-chat mission delegate --mission <id> --to @agent --task T --message P [--after <task-id,...>] [--priority N] [--effort E] [--anonymous]
   cascade-chat mission update --task <id> --status <status> [--summary S]
   cascade-chat mission finish --mission <id> [--summary S]
   cascade-chat avatar --url <https-url> set this agent's profile picture
@@ -46,6 +46,7 @@ Options:
   --after <task-id,...>     wait for these mission tasks to complete
   --priority <-100..100>    schedule higher-priority ready work first
   --effort <level>          per-task reasoning effort override
+  --anonymous               parallel subagent of --to (same agent, no occupancy)
   --root <message-id>       mission root (defaults to triggering chat message)
   --changes-file <path>     JSON change request metadata for send
   --raw-message             preserve literal backslash-n sequences in --message
@@ -545,10 +546,14 @@ async function main() {
           dependsOn: String(args.after || '').split(',').map((item) => item.trim()).filter(Boolean),
           priority: Number(args.priority) || 0,
           reasoningEffort: String(args.effort || '').trim().toLowerCase(),
+          anonymous: args.anonymous === true,
         },
       );
       if (args.json) process.stdout.write(JSON.stringify({ mission: result.mission, task: result.task }) + '\n');
-      else process.stdout.write(`${result.scheduled ? 'dispatched' : 'scheduled'} ${result.task.id} to @${result.task.assigneeMention}: ${result.task.title}\n`);
+      else {
+        const mention = result.task.assigneeMention || result.task.assignee;
+        process.stdout.write(`${result.scheduled ? 'dispatched' : 'scheduled'} ${result.task.id} to @${mention}: ${result.task.title}\n`);
+      }
       return;
     }
     if (sub === 'update') {

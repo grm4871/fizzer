@@ -48,6 +48,7 @@ type TaskRow = {
   depends_on_json: string;
   priority: number;
   reasoning_effort: string;
+  anonymous: number;
   dispatch_id: string | null;
   run_id: number | null;
   created_at: string;
@@ -83,6 +84,7 @@ export type MissionTaskScheduleCandidate = {
   title: string;
   prompt: string;
   reasoningEffort: string;
+  anonymous: boolean;
 };
 
 export function ensureChatMissionSchema(db: Db): void {
@@ -117,6 +119,7 @@ export function ensureChatMissionSchema(db: Db): void {
       depends_on_json TEXT NOT NULL DEFAULT '[]',
       priority INTEGER NOT NULL DEFAULT 0,
       reasoning_effort TEXT NOT NULL DEFAULT '',
+      anonymous INTEGER NOT NULL DEFAULT 0,
       dispatch_id TEXT,
       run_id INTEGER,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -141,6 +144,9 @@ export function ensureChatMissionSchema(db: Db): void {
   }
   if (!taskColumns.some((column) => column.name === 'reasoning_effort')) {
     db.exec("ALTER TABLE chat_mission_tasks ADD COLUMN reasoning_effort TEXT NOT NULL DEFAULT ''");
+  }
+  if (!taskColumns.some((column) => column.name === 'anonymous')) {
+    db.exec('ALTER TABLE chat_mission_tasks ADD COLUMN anonymous INTEGER NOT NULL DEFAULT 0');
   }
   // Early scheduler builds linked the worker run to its task but omitted the
   // same durable task id from the rendered reply. Repair those existing rows so
@@ -245,11 +251,15 @@ function projectMission(db: Db, row: MissionRow, tasks: TaskRow[]): ChatMission 
     const assignee = byId.get(task.assignee_registration_id);
     const dependsOn = taskDependencies(task);
     const waitingFor = dependsOn.filter((id) => byTaskId.get(id)?.status !== 'completed');
+    const anonymous = Boolean(task.anonymous);
+    const baseMention = assignee?.mention || '';
     return {
       id: task.id,
       title: task.title,
-      assignee: assignee?.displayName || assignee?.mention || 'Unassigned agent',
-      assigneeMention: assignee?.mention || '',
+      assignee: anonymous
+        ? `${assignee?.displayName || assignee?.mention || 'agent'} subagent`
+        : (assignee?.displayName || assignee?.mention || 'Unassigned agent'),
+      assigneeMention: anonymous && baseMention ? `${baseMention}·sub` : baseMention,
       assigneeModel: assignee?.model || '',
       status: task.status,
       summary: task.summary || '',
@@ -257,6 +267,7 @@ function projectMission(db: Db, row: MissionRow, tasks: TaskRow[]): ChatMission 
       waitingFor,
       priority: task.priority || 0,
       reasoningEffort: task.reasoning_effort || '',
+      anonymous,
       queueReason: task.status !== 'pending'
         ? ''
         : waitingFor.length
@@ -398,6 +409,7 @@ export function addChatMissionTask(
     dependsOn?: string[];
     priority?: number;
     reasoningEffort?: string;
+    anonymous?: boolean;
   },
 ): { update: MissionProjectionUpdate; task: ChatMissionTask; assignee: ChatAgentRegistration } {
   const update = getChatMission(db, userId, channelId, missionId, input.coordinatorRegistrationId);
@@ -409,7 +421,10 @@ export function addChatMissionTask(
   if (row.coordinator_registration_id !== coordinator.id) throw new Error('Mission belongs to another coordinator');
   const assignee = findRegistration(db, userId, channelId, input.assignee);
   if (!assignee) throw new Error(`No channel agent matches ${input.assignee}`);
-  if (assignee.id === coordinator.id) throw new Error('Delegate this task to another channel agent');
+  const anonymous = Boolean(input.anonymous);
+  if (assignee.id === coordinator.id && !anonymous) {
+    throw new Error('Delegate this task to another channel agent, or pass anonymous for a self-subagent');
+  }
   const title = cleanText(input.title, 240);
   if (!title) throw new Error('Task title is required');
   const dependencies = Array.from(new Set((input.dependsOn || []).map((id) => cleanText(id, 80)).filter(Boolean)));
@@ -438,11 +453,13 @@ export function addChatMissionTask(
     ORDER BY created_at ASC, rowid ASC LIMIT 1
   `).get(row.id, assignee.id, title) as TaskRow | undefined;
   const normalizedPrompt = cleanText(input.prompt || title, 12_000);
+  const anonymousFlag = anonymous ? 1 : 0;
   if (existing && (
     existing.prompt !== normalizedPrompt
     || existing.depends_on_json !== JSON.stringify(dependencies)
     || existing.priority !== priority
     || existing.reasoning_effort !== reasoningEffort
+    || Boolean(existing.anonymous) !== anonymous
   )) {
     throw new Error('A task with this title already exists with different scheduling options; use a distinct title');
   }
@@ -451,8 +468,8 @@ export function addChatMissionTask(
     db.prepare(`
       INSERT INTO chat_mission_tasks (
         id, mission_id, title, assignee_registration_id, prompt,
-        depends_on_json, priority, reasoning_effort
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        depends_on_json, priority, reasoning_effort, anonymous
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       taskId,
       row.id,
@@ -462,6 +479,7 @@ export function addChatMissionTask(
       JSON.stringify(dependencies),
       priority,
       reasoningEffort,
+      anonymousFlag,
     );
   }
   if (!existing) {
@@ -479,8 +497,10 @@ export function addChatMissionTask(
 
 /**
  * Reconcile dependency failures, then choose ready work without assigning more
- * than one active task to any agent. Dispatch materialization remains in the
- * route layer because it also broadcasts the synthetic worker message.
+ * than one named (non-anonymous) active task to any agent. Anonymous subagents
+ * are parallel clones and skip that occupancy limit. Dispatch materialization
+ * remains in the route layer because it also broadcasts the synthetic worker
+ * message.
  */
 export function listSchedulableMissionTasks(
   db: Db,
@@ -527,6 +547,7 @@ export function listSchedulableMissionTasks(
       FROM chat_mission_tasks t
       JOIN chat_missions m ON m.id = t.mission_id
       WHERE m.channel_id = ? AND m.status IN ('active', 'reviewing', 'blocked')
+        AND COALESCE(t.anonymous, 0) = 0
         AND (t.status = 'running' OR (t.status = 'pending' AND t.dispatch_id IS NOT NULL))
     `).all(mission.channel_id) as Array<{ id: string }>).map((row) => row.id));
     const currentById = new Map(tasks.map((task) => [task.id, task]));
@@ -535,10 +556,13 @@ export function listSchedulableMissionTasks(
       .filter((task) => taskDependencies(task).every((id) => currentById.get(id)?.status === 'completed'))
       .sort((a, b) => b.priority - a.priority || a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
     for (const task of ready) {
-      const reservationKey = `${mission.channel_id}:${task.assignee_registration_id}`;
-      if (occupied.has(task.assignee_registration_id) || reserved.has(reservationKey)) continue;
-      occupied.add(task.assignee_registration_id);
-      reserved.add(reservationKey);
+      const anonymous = Boolean(task.anonymous);
+      if (!anonymous) {
+        const reservationKey = `${mission.channel_id}:${task.assignee_registration_id}`;
+        if (occupied.has(task.assignee_registration_id) || reserved.has(reservationKey)) continue;
+        occupied.add(task.assignee_registration_id);
+        reserved.add(reservationKey);
+      }
       candidates.push({
         taskId: task.id,
         missionId: mission.id,
@@ -550,6 +574,7 @@ export function listSchedulableMissionTasks(
         title: task.title,
         prompt: task.prompt || task.title,
         reasoningEffort: task.reasoning_effort || '',
+        anonymous,
       });
     }
     if (changed) updates.push(refreshMissionProjection(db, mission.id));

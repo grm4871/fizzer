@@ -41,6 +41,15 @@ fs.chmodSync(fakeBin, 0o755);
 fs.writeFileSync(fakeAkronBin, `#!/usr/bin/env node
 const fs = require('fs');
 const { spawn } = require('child_process');
+if (process.env.FAKE_AKRON_EVENTS) {
+  if (process.env.HERMES_CASCADE_EVENTS !== '1') {
+    process.stderr.write('cascade events disabled\\n');
+    process.exit(13);
+  }
+  process.stderr.write(JSON.stringify({ type: 'reasoning.delta', text: 'mapping the harness' }) + '\\n');
+  process.stdout.write('native answer\\n');
+  process.exit(0);
+}
 const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
 fs.writeFileSync(${JSON.stringify(akronChildPid)}, String(child.pid));
 setInterval(() => {}, 1000);
@@ -94,6 +103,31 @@ test('Akron emits silent-work heartbeats and cancellation kills its process tree
       return true;
     }
   });
+});
+
+test('Akron emits launch metadata and native reasoning events through the harness bridge', async () => {
+  process.env.FAKE_AKRON_EVENTS = '1';
+  const events: Array<{ type: string; payload: any }> = [];
+  try {
+    const result = await runCliAgent({
+      agent: 'akron-grok', context: '', userPrompt: 'exercise the bridge', cwd: scratch, runId: 8081,
+      emit: (type, payload) => events.push({ type, payload }),
+    });
+    assert.equal(result.summary, 'native answer');
+  } finally {
+    delete process.env.FAKE_AKRON_EVENTS;
+  }
+
+  const harness = events
+    .filter((event) => event.type === 'harness')
+    .map((event) => String(event.payload?.data || ''))
+    .join('');
+  assert.match(harness, /launching Akron --grok harness/);
+  assert.match(harness, /\$ .*fake-akron --grok/);
+  assert.match(harness, /# cwd /);
+  assert.ok(events.some((event) => event.type === 'text'
+    && event.payload?.message?.content?.[0]?.type === 'thinking'
+    && event.payload.message.content[0].thinking === 'mapping the harness'));
 });
 
 test('resume passes the session id positionally, right before the prompt', async () => {

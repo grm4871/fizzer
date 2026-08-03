@@ -124,6 +124,8 @@ export type ChatMissionTask = {
   waitingFor: string[];
   priority: number;
   reasoningEffort: string;
+  /** Parallel clone of a channel agent; not a second named member. */
+  anonymous: boolean;
   queueReason: 'dependency' | 'agent-busy' | 'queued' | '';
   runId?: number;
   updatedAt: string;

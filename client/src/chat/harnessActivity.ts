@@ -305,6 +305,20 @@ function parseHarnessLog(raw: string, hasStructuredTools: boolean, hasStructured
       meta.command = trimmed.slice(2).trim();
       continue;
     }
+    // A provider can be healthy but quiet while it starts a bridge or waits
+    // for its first inference byte. These are deliberate runner lifecycle
+    // lines, not protocol noise, so retain them as structured activity.
+    const lifecycle = trimmed.match(/^#\s*((?:launching\s+.+?\s+harness)|(?:.+?\s+still working\s*·\s*.+))$/i);
+    if (lifecycle) {
+      meta.fallbackItems.push({
+        id: `system-${seq++}`,
+        kind: 'system',
+        title: 'Harness',
+        text: lifecycle[1],
+        meta: true,
+      });
+      continue;
+    }
     if (trimmed === '# thinking') {
       flushThinking();
       inThinking = true;

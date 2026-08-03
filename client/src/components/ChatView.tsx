@@ -117,6 +117,7 @@ export interface ChatMissionTask {
   waitingFor: string[];
   priority: number;
   reasoningEffort: string;
+  anonymous?: boolean;
   queueReason: 'dependency' | 'agent-busy' | 'queued' | '';
   runId?: number;
   updatedAt: string;
@@ -991,6 +992,7 @@ function ChatMissionCard({ mission }: { mission: ChatMission }) {
                   <strong>{task.title}</strong>
                   <span>
                     @{task.assigneeMention || task.assignee} · {task.status}
+                    {task.anonymous ? ' · subagent' : ''}
                     {task.queueReason === 'dependency' ? ` · waiting for ${task.waitingFor.length}` : ''}
                     {task.queueReason === 'agent-busy' ? ' · agent busy' : ''}
                     {task.queueReason === 'queued' ? ' · queued' : ''}

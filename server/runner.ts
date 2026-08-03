@@ -374,20 +374,26 @@ export function findRunByChatDispatch(db: Db, dispatchId: string): Run | undefin
   return db.prepare('SELECT * FROM runs WHERE chat_dispatch_id = ? LIMIT 1').get(dispatchId) as Run | undefined;
 }
 
-/** Durable per-registration execution lease for chat-agent provider sessions. */
+/** Durable per-registration execution lease for sticky channel provider sessions. */
 export function findOpenRunForChatRegistration(
   db: Db,
   registrationId: string,
   exceptDispatchId = '',
 ): Run | undefined {
   if (!registrationId) return undefined;
+  // Mission tasks use isolated conversation ids (`mission:<taskId>`). They must
+  // neither hold nor contend for the sticky channel lease so anonymous
+  // subagents (and any parallel mission workers) can run beside the named
+  // member's channel session.
   return db.prepare(`
     SELECT r.*
     FROM runs r
     JOIN chat_agent_dispatches d ON d.id = r.chat_dispatch_id
+    LEFT JOIN chat_mission_tasks t ON t.dispatch_id = d.id
     WHERE d.registration_id = ?
       AND r.status IN ('queued', 'running')
       AND (? = '' OR d.id <> ?)
+      AND t.id IS NULL
     ORDER BY r.id ASC
     LIMIT 1
   `).get(registrationId, exceptDispatchId, exceptDispatchId) as Run | undefined;

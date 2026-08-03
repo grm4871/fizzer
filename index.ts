@@ -2540,6 +2540,7 @@ app.post('/api/vaults/:vaultId/channels/:channelId/missions/:missionId/tasks', r
         dependsOn: Array.isArray(req.body?.dependsOn) ? req.body.dependsOn.map(String) : [],
         priority: Number(req.body?.priority) || 0,
         reasoningEffort: String(req.body?.reasoningEffort || ''),
+        anonymous: Boolean(req.body?.anonymous),
       }))();
     const scheduled = scheduleMissionWork(added.update.mission.id);
     const latest = getChatMission(db, req.user!.id, req.params.channelId, added.update.mission.id);

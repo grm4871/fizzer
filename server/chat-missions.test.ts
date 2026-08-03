@@ -80,6 +80,101 @@ test('scheduler respects dependencies, priority, one-active-task-per-agent, and 
   }
 });
 
+test('anonymous subagents can fan out in parallel, including self-clones', () => {
+  const { db, coordinator, worker } = setup();
+  try {
+    const root = createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: 'anon-root', channelId: 'channel-1', author: 'owner',
+      body: 'Fan out sols.', createdAt: '2026-08-03T00:00:00.000Z',
+    });
+    const mission = createChatMission(db, 1, 'vault-1', 'channel-1', {
+      rootMessageId: root.id, coordinatorRegistrationId: coordinator.id, title: 'Parallel sols',
+    });
+
+    assert.throws(
+      () => addChatMissionTask(db, 1, 'channel-1', mission.mission.id, {
+        coordinatorRegistrationId: coordinator.id,
+        title: 'Self without flag', assignee: coordinator.id,
+      }),
+      /anonymous for a self-subagent/,
+    );
+
+    const high = addChatMissionTask(db, 1, 'channel-1', mission.mission.id, {
+      coordinatorRegistrationId: coordinator.id,
+      title: 'High effort probe',
+      assignee: coordinator.id,
+      anonymous: true,
+      reasoningEffort: 'high',
+      prompt: 'Deep analysis path.',
+    });
+    const medium = addChatMissionTask(db, 1, 'channel-1', mission.mission.id, {
+      coordinatorRegistrationId: coordinator.id,
+      title: 'Medium effort probe',
+      assignee: coordinator.id,
+      anonymous: true,
+      reasoningEffort: 'medium',
+      prompt: 'Faster analysis path.',
+    });
+    const named = addChatMissionTask(db, 1, 'channel-1', mission.mission.id, {
+      coordinatorRegistrationId: coordinator.id,
+      title: 'Named worker still serial',
+      assignee: worker.id,
+      prompt: 'Named path.',
+    });
+    const namedSecond = addChatMissionTask(db, 1, 'channel-1', mission.mission.id, {
+      coordinatorRegistrationId: coordinator.id,
+      title: 'Second named waits',
+      assignee: worker.id,
+      prompt: 'Also named.',
+    });
+
+    assert.equal(high.task.anonymous, true);
+    assert.equal(high.task.assigneeMention, 'sol·sub');
+    assert.equal(medium.task.reasoningEffort, 'medium');
+
+    const ready = listSchedulableMissionTasks(db, mission.mission.id);
+    assert.deepEqual(
+      ready.candidates.map((item) => item.taskId).sort(),
+      [high.task.id, medium.task.id, named.task.id].sort(),
+    );
+    assert.ok(!ready.candidates.some((item) => item.taskId === namedSecond.task.id));
+    assert.equal(ready.candidates.filter((item) => item.anonymous).length, 2);
+
+    const highMessage = createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: `mission-task-${high.task.id}`, channelId: 'channel-1', author: '',
+      body: '@sol Deep analysis path.', createdAt: '2026-08-03T00:00:01.000Z',
+      registrationId: coordinator.id, missionTaskId: high.task.id,
+    });
+    const highDispatch = createChatAgentDispatchForRegistration(
+      db, 1, 'channel-1', highMessage, coordinator.id, { reasoningEffort: 'high' },
+    );
+    linkMissionTaskDispatch(db, high.task.id, highDispatch.id);
+    attachRunToMissionTaskByDispatch(db, highDispatch.id, 601);
+    db.prepare(`
+      INSERT INTO runs (vault_id, prompt, agent, conversation_id, status, chat_dispatch_id)
+      VALUES ('vault-1', 'high', 'codex', ?, 'running', ?)
+    `).run(`mission:${high.task.id}`, highDispatch.id);
+
+    const mediumMessage = createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: `mission-task-${medium.task.id}`, channelId: 'channel-1', author: '',
+      body: '@sol Faster analysis path.', createdAt: '2026-08-03T00:00:02.000Z',
+      registrationId: coordinator.id, missionTaskId: medium.task.id,
+    });
+    const mediumDispatch = createChatAgentDispatchForRegistration(
+      db, 1, 'channel-1', mediumMessage, coordinator.id, { reasoningEffort: 'medium' },
+    );
+    // Mission-linked runs do not hold the sticky channel lease.
+    assert.equal(findOpenRunForChatRegistration(db, coordinator.id, mediumDispatch.id), undefined);
+    linkMissionTaskDispatch(db, medium.task.id, mediumDispatch.id);
+    attachRunToMissionTaskByDispatch(db, mediumDispatch.id, 602);
+
+    const afterParallel = listSchedulableMissionTasks(db, mission.mission.id);
+    assert.deepEqual(afterParallel.candidates.map((item) => item.taskId), [named.task.id]);
+  } finally {
+    db.close();
+  }
+});
+
 test('scheduler blocks multi-hop descendants of failed dependencies and wakes review', () => {
   const { db, coordinator, worker } = setup();
   try {

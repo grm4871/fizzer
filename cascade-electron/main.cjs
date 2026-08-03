@@ -150,17 +150,23 @@ async function updateDesktopInPlace() {
   const root = getProjectRoot();
   const gitBin = process.platform === 'win32' ? 'git.exe' : 'git';
 
-  // The desktop shell loads its UI from the remote server (cscd.online), and
-  // client/dist is committed, so an update only needs the latest source.
-  // Stash any local changes first so a dirty working tree can't abort the fast-forward pull,
-  // then restore them afterward.
+  // The desktop shell loads its UI from cscd.online, but its local agent
+  // runner imports the generated dist/cli-agents module. dist is ignored, so a
+  // source pull alone leaves CLI/harness fixes dormant until somebody happens
+  // to build manually. Rebuild in place; it does not terminate main or active
+  // agent processes.
+  // Stash local changes so a dirty tree cannot abort the fast-forward pull,
+  // and always restore them even if the local rebuild fails.
   const stashOut = await runUpdateCommand(gitBin, ['stash', '--include-untracked'], root);
   const didStash = !/No local changes to save/i.test(stashOut);
-
-  await runUpdateCommand(gitBin, ['pull', '--ff-only'], root);
-
-  if (didStash) {
-    await runUpdateCommand(gitBin, ['stash', 'pop'], root);
+  try {
+    await runUpdateCommand(gitBin, ['pull', '--ff-only'], root);
+    const npmBin = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+    await runUpdateCommand(npmBin, ['run', 'build'], root);
+  } finally {
+    if (didStash) {
+      await runUpdateCommand(gitBin, ['stash', 'pop'], root);
+    }
   }
 }
 

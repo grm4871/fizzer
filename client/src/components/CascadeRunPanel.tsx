@@ -360,7 +360,9 @@ function StructuredTranscript({
   isRunning: boolean;
 }) {
   const { stats, items } = activity;
-  const hasStructured = items.length > 0 || stats.hasThinking;
+  // A command/cwd pair is a verified process launch even when the provider
+  // has not emitted a thinking or tool event yet (common for Hermes/Akron).
+  const hasStructured = items.length > 0 || stats.hasThinking || Boolean(stats.command || stats.model || stats.cwd);
   const metaLines = buildMetaLines(stats, isRunning);
   const lastIdx = items.length - 1;
 
@@ -393,7 +395,9 @@ function StructuredTranscript({
 
       {renderItems.length === 0 && (
         <div className="crp-term-line dim">
-          {isRunning ? 'waiting for harness stream…' : 'no structured output'}
+          {isRunning
+            ? (hasStructured ? 'waiting for provider output…' : 'waiting for harness stream…')
+            : 'no structured output'}
         </div>
       )}
 
@@ -510,7 +514,11 @@ export const CascadeRunPanel = memo(function CascadeRunPanel({
     return buildHarnessActivity(message);
   }, [message, isRunning, open]);
   const hasStructuredActivity = Boolean(activity && (
-    activity.items.length > 0 || activity.stats.hasThinking
+    activity.items.length > 0
+    || activity.stats.hasThinking
+    || activity.stats.command
+    || activity.stats.model
+    || activity.stats.cwd
   ));
   const summary = useMemo(
     () => (activity

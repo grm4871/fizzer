@@ -1978,6 +1978,10 @@ function driveHermesProcess(
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     let child;
+    // A launcher can spend time constructing its provider bridge before it
+    // writes its first byte. Give the run panel an unambiguous lifecycle event
+    // first, so a live process is never presented as a blank harness.
+    emitHarness(emit, `\x1b[2m# launching ${label} harness\x1b[0m\r\n`);
     try {
       child = spawn(bin, args, {
         cwd,
