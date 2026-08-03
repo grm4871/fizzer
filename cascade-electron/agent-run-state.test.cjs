@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { AgentRunState } = require('./agent-run-state.cjs');
+const { AgentRunState, settleCancelAcknowledgement } = require('./agent-run-state.cjs');
 
 test('keeps active ownership and replays events after a renderer reload', () => {
   const state = new AgentRunState();
@@ -23,4 +23,16 @@ test('bounds the replay buffer', () => {
   state.record({ runId: 7, type: 'text', payload_json: '{}' });
   state.record({ runId: 7, type: 'text', payload_json: '{}' });
   assert.deepEqual(state.snapshot().events.map((event) => event.bridgeSeq), [2, 3]);
+});
+
+test('cancel acknowledges a child cleanup race after its owned promise settles', async () => {
+  let settle;
+  const running = new Promise((resolve) => { settle = resolve; });
+  setImmediate(settle);
+  assert.equal(await settleCancelAcknowledgement(false, running, 100), true);
+});
+
+test('cancel still refuses a missing or genuinely live untracked child', async () => {
+  assert.equal(await settleCancelAcknowledgement(false, undefined, 10), false);
+  assert.equal(await settleCancelAcknowledgement(false, new Promise(() => {}), 10), false);
 });

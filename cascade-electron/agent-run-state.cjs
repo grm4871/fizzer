@@ -57,4 +57,30 @@ class AgentRunState {
   }
 }
 
-module.exports = { AgentRunState };
+/**
+ * A child may leave the CLI process registry immediately before its owning
+ * promise settles. Treat that narrow cleanup race as an idempotent cancel,
+ * while still refusing a genuinely live, unowned run after a short barrier.
+ */
+async function settleCancelAcknowledgement(cancelled, running, timeoutMs = 1000) {
+  if (cancelled) {
+    if (running) await Promise.resolve(running).catch(() => {});
+    return true;
+  }
+  if (!running) return false;
+
+  let timer;
+  try {
+    return await Promise.race([
+      Promise.resolve(running).then(() => true, () => true),
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve(false), timeoutMs);
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+module.exports = { AgentRunState, settleCancelAcknowledgement };

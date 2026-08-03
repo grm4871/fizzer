@@ -35,7 +35,7 @@ const db = require('./database.cjs');
 const { startLocalAgentRun, cancelLocalAgentRun } = require('./agent-runner.cjs');
 const { connectDesktopRunner, disconnectDesktopRunner, isDesktopRunnerConnected, probeLocalModels } = require('./desktop-runner-host.cjs');
 const { collectPlanUsage } = require('./plan-usage.cjs');
-const { AgentRunState } = require('./agent-run-state.cjs');
+const { AgentRunState, settleCancelAcknowledgement } = require('./agent-run-state.cjs');
 const worktrees = require('./worktrees.cjs');
 
 // Suppress GLib-GObject and GTK warnings on Linux.
@@ -569,16 +569,15 @@ ipcMain.handle('agent:start', async (event, opts) => {
 ipcMain.handle('agent:cancel', async (_event, runId) => {
   try {
     const id = Number(runId);
-    const cancelled = await cancelLocalAgentRun(id);
     const running = localAgentRunPromises.get(id);
-    if (cancelled && running) {
-      // Do not acknowledge steering until close/error cleanup has completed.
-      // The server uses this acknowledgement as the handoff barrier before it
-      // releases the next turn for the same provider session.
-      await running;
-    }
+    const cancelled = await cancelLocalAgentRun(id);
+    // Do not acknowledge steering until close/error cleanup has completed.
+    // The CLI registry is cleared in the child's close handler just before the
+    // owning promise settles; a Stop in that interval used to return false and
+    // leave a terminal Akron run behind a stale "Could not cancel run" notice.
+    const acknowledged = await settleCancelAcknowledgement(cancelled, running);
     agentRunState.cancel(runId);
-    return { success: cancelled };
+    return { success: acknowledged };
   } catch (error) {
     console.error('[IPC] Failed to cancel local agent:', error);
     return { success: false, error: error.message };
