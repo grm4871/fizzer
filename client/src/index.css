@@ -3381,6 +3381,9 @@ a {
 .cascade-run-panel.is-running:not(.open) .crp-header {
   border-color: transparent;
 }
+.cascade-run-panel.is-running:not(.open) {
+  box-shadow: none;
+}
 .cascade-run-panel:not(.open) .crp-stat-chips {
   display: none;
 }
@@ -5732,6 +5735,7 @@ a {
 }
 .chat-work-trace.is-live:not(.is-open) {
   border-color: transparent;
+  box-shadow: none;
 }
 .chat-work-trace:not(.is-open) .chat-work-trace-toggle {
   width: auto;

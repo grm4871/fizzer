@@ -261,6 +261,7 @@ try {
     const label = node.querySelector('.chat-work-decal.is-current .chat-work-decal-label');
     return {
       border: getComputedStyle(node).borderTopWidth,
+      boxShadow: getComputedStyle(node).boxShadow,
       paddingLeft: toggle ? getComputedStyle(toggle).paddingLeft : '',
       dotWidth: dot ? getComputedStyle(dot).width : '',
       dotRadius: dot ? getComputedStyle(dot).borderRadius : '',
@@ -269,6 +270,7 @@ try {
   });
   check('collapsed workflow uses an inline status dot aligned with chat text', (
     inlineActivityStyle.border === '0px'
+      && inlineActivityStyle.boxShadow === 'none'
       && inlineActivityStyle.paddingLeft === '0px'
       && inlineActivityStyle.dotWidth === '8px'
       && inlineActivityStyle.dotRadius === '50%'
