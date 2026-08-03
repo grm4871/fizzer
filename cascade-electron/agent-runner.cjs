@@ -664,7 +664,7 @@ async function runClaudeLocally(opts, emit) {
             }
             if (lastBlockWasText) {
               // Separate this turn's text from the previous one.
-              emit('text', { message: { content: [{ type: 'text', text: '\n\n' }] } });
+              emit('text', { chatVisible: true, message: { content: [{ type: 'text', text: '\n\n' }] } });
               emitHarness(emit, '\r\n\r\n');
               streamedText += '\n\n';
             }
@@ -676,7 +676,9 @@ async function runClaudeLocally(opts, emit) {
             emitHarness(emit, `\x1b[2m${delta.thinking}\x1b[0m`);
             lastBlockWasText = false;
           } else if (delta?.type === 'text_delta' && delta.text) {
-            emit('text', { message: { content: [{ type: 'text', text: delta.text }] } });
+            // Claude SDK thinking deltas use the distinct thinking block above;
+            // text deltas are assistant-visible prose and can stream into chat.
+            emit('text', { chatVisible: true, message: { content: [{ type: 'text', text: delta.text }] } });
             emitHarness(emit, delta.text);
             streamedText += delta.text;
             latestAssistantText += delta.text;

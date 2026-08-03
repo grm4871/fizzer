@@ -656,7 +656,14 @@ async function runCodex(
         if (item.type === 'agent_message') {
           summary = item.text || summary;
           const text = item.text || '';
-          emit('text', { message: { content: [{ type: 'text', text: (emittedText ? '\n\n' : '') + text }] } });
+          // Codex reports reasoning separately as `reasoning` items. An
+          // `agent_message` is therefore safe to render in chat immediately:
+          // it is either an intentional progress update or the final answer,
+          // not hidden chain-of-thought. Other adapters must opt in explicitly.
+          emit('text', {
+            chatVisible: true,
+            message: { content: [{ type: 'text', text: (emittedText ? '\n\n' : '') + text }] },
+          });
           if (text) emittedText = true;
         } else if (item.type === 'reasoning') {
           emit('text', { message: { content: [{ type: 'thinking', text: item.text || '' }] } });

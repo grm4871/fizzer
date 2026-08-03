@@ -32,3 +32,9 @@ test('Claude chat uses adaptive effort with no fixed thinking budget', () => {
   assert.doesNotMatch(source, /CLAUDE_CHAT_THINKING_TOKENS/);
   assert.doesNotMatch(source, /budgetTokens: thinkingTokens/);
 });
+
+test('Claude exposes assistant text for live chat while keeping reasoning separate', () => {
+  const source = fs.readFileSync(path.join(__dirname, 'agent-runner.cjs'), 'utf8');
+  assert.match(source, /thinking_delta[\s\S]*emit\('text', \{ message: \{ content: \[\{ type: 'thinking'/);
+  assert.match(source, /text_delta[\s\S]*emit\('text', \{ chatVisible: true/);
+});

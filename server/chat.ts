@@ -2018,6 +2018,7 @@ export function buildAgentChatContentFromRunEvents(
   let status: ChatMessage['status'] = 'running';
   let terminalSummary = '';
   let suppressChatBody = false;
+  let hasVisibleText = false;
 
   for (const event of events) {
     let payload: any;
@@ -2027,7 +2028,9 @@ export function buildAgentChatContentFromRunEvents(
       continue;
     }
     if (event.type === 'text') {
-      assistantText += textFromRunContent(payload?.message?.content);
+      const text = textFromRunContent(payload?.message?.content);
+      assistantText += text;
+      if (payload?.chatVisible === true && text.trim()) hasVisibleText = true;
       blocks = appendChatRunBlocks(blocks, normalizeChatRunBlocks(payload?.message?.content));
     } else if (event.type === 'user') {
       blocks = appendChatRunBlocks(blocks, normalizeChatRunBlocks(payload?.message?.content));
@@ -2065,7 +2068,10 @@ export function buildAgentChatContentFromRunEvents(
   // leaked "thinking traces" into the transcript. Harness + blocks still update.
   let body: string;
   if (!done) {
-    body = 'Thinking...';
+    // Only adapters that can distinguish user-facing assistant prose from
+    // reasoning/monologue opt into live chat text. Legacy providers retain the
+    // conservative placeholder until their terminal summary is available.
+    body = hasVisibleText && trimmed ? trimmed : 'Thinking...';
   } else if (status === 'failed' || status === 'canceled') {
     const reason = terminalSummary.trim()
       || (status === 'canceled' ? 'Run canceled by user.' : 'Agent failed.');

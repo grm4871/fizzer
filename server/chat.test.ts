@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import Database from 'better-sqlite3';
-import { buildAgentChannelWorkspaceContext, buildAgentChatContext, CASCADE_AGENT_APP_CONTEXT } from './chat.js';
+import {
+  buildAgentChannelWorkspaceContext,
+  buildAgentChatContentFromRunEvents,
+  buildAgentChatContext,
+  CASCADE_AGENT_APP_CONTEXT,
+} from './chat.js';
 
 test('the app contract identifies Cascade and the live note helper unambiguously', () => {
   assert.match(CASCADE_AGENT_APP_CONTEXT, /Obsidian-style workspace for AI-native project management/);
@@ -82,4 +87,39 @@ test('history with no media carries no attachment hint', () => {
     { id: 'm1', channelId: 'c', author: 'a', body: 'hello', createdAt: 'm1' },
   ] as never);
   assert.equal(context, 'a: hello');
+});
+
+test('only explicitly assistant-visible run text streams into a running chat message', () => {
+  const event = (payload: Record<string, unknown>) => ({
+    type: 'text',
+    payload_json: JSON.stringify(payload),
+  });
+  const hidden = buildAgentChatContentFromRunEvents([
+    event({ message: { content: [{ type: 'text', text: 'internal progress' }] } }),
+  ]);
+  assert.equal(hidden.body, 'Thinking...');
+
+  const visible = buildAgentChatContentFromRunEvents([
+    event({ chatVisible: true, message: { content: [{ type: 'text', text: 'I am checking that now.' }] } }),
+  ]);
+  assert.equal(visible.body, 'I am checking that now.');
+  assert.equal(visible.status, 'running');
+});
+
+test('a terminal summary still replaces streamed progress', () => {
+  const content = buildAgentChatContentFromRunEvents([
+    {
+      type: 'text',
+      payload_json: JSON.stringify({
+        chatVisible: true,
+        message: { content: [{ type: 'text', text: 'I am checking that now.' }] },
+      }),
+    },
+    {
+      type: 'status',
+      payload_json: JSON.stringify({ status: 'completed', summary: 'The fix is verified.' }),
+    },
+  ]);
+  assert.equal(content.body, 'The fix is verified.');
+  assert.equal(content.done, true);
 });

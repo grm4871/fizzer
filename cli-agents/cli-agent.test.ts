@@ -111,11 +111,17 @@ test('an unrelated Codex failure still fails, rather than silently rerunning', a
 
 test('a fresh run is never retried and never mentions resume', async () => {
   resetArgs();
-  const result = await runCliAgent({ agent: 'codex', context: '', userPrompt: 'new', cwd: scratch, emit });
+  const events: Array<{ type: string; payload: any }> = [];
+  const result = await runCliAgent({
+    agent: 'codex', context: '', userPrompt: 'new', cwd: scratch,
+    emit: (type, payload) => events.push({ type, payload }),
+  });
   const attempts = readArgs();
   assert.equal(attempts.length, 1);
   assert.ok(!attempts[0].includes('resume'));
   assert.equal(result.sessionId, 'fresh-session-1');
+  const answer = events.find((event) => event.type === 'text' && event.payload?.chatVisible === true);
+  assert.equal(answer?.payload.message.content[0].text, 'answered');
 });
 
 test.after(() => fs.rmSync(scratch, { recursive: true, force: true }));

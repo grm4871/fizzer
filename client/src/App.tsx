@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef, useMemo, lazy, Suspense, type CSSProperties, type ReactNode } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { type Tab } from './components/TabBar';
-import { perfMark, perfSpan, perfSpanAsync } from './perf';
+import { perfMark, perfReport, perfSpan, perfSpanAsync } from './perf';
 
 // CodeMirror (editor core plus every language mode via @codemirror/language-data)
 // is the heaviest dependency in the app and is only needed once a note tab is
@@ -1463,6 +1463,20 @@ export default function App() {
     let pendingHarnessChunks = '';
     let pendingHarnessRunId: number | null = null;
     let harnessFlushTimer: number | null = null;
+    const latencyStartedAt = Number.isFinite(Date.parse(triggeringMessage.createdAt))
+      ? Date.parse(triggeringMessage.createdAt)
+      : Date.now();
+    const reportedLatencyStages = new Set<string>();
+    const reportLatencyStage = (stage: string, detail: Record<string, unknown> = {}) => {
+      if (reportedLatencyStages.has(stage)) return;
+      reportedLatencyStages.add(stage);
+      perfReport(
+        `chat.latency.${stage}`,
+        Math.max(0, Date.now() - latencyStartedAt),
+        { agentId, channelId, dispatchId: dispatchId || undefined, ...detail },
+        0,
+      );
+    };
     // Dual-rate batching: structured content stays snappy; raw harness bytes
     // are much higher volume and don't need 30fps React commits.
     const STREAM_UI_MS = 48;
@@ -1538,6 +1552,7 @@ export default function App() {
       agentId,
       registrationId: registration.id,
     }, { persist: false });
+    reportLatencyStage('placeholder');
 
     try {
       // The prior terminal event is published only after its session id is
@@ -1613,10 +1628,12 @@ export default function App() {
           if (processedSeqs.has(event.seq)) return;
           processedSeqs.add(event.seq);
         }
+        reportLatencyStage('firstRunEvent', { runId, eventType: event.type });
         try {
           if (event.type === 'status') {
             const payload = JSON.parse(event.payload_json);
             if (payload.status === 'completed' || payload.status === 'failed' || payload.status === 'canceled') {
+              reportLatencyStage('terminal', { runId, status: payload.status });
               const terminal = payload.status as 'completed' | 'failed' | 'canceled';
               const suppressChatBody = payload.suppressChatBody === true;
               const finalBody = honestAgentChatBody(
@@ -1666,16 +1683,21 @@ export default function App() {
             const text = textFromRunContent(payload.message?.content);
             const hasToolBlock = hasChatRunToolBlock(payload.message?.content);
             if (!text && blocks.length === 0 && !hasToolBlock) return;
-            // Accumulate final-answer candidates, but do not write intermediate
-            // stream monologue into the chat bubble — that leaked plan/thinking
-            // traces into the transcript. Body stays "Thinking..." until status.
+            // Accumulate final-answer candidates. Only adapters that explicitly
+            // distinguish assistant-visible prose from reasoning may stream the
+            // text into the chat body; everything else stays in the trace.
             if (text) assistantText += text;
             bufferedBlocks = appendChatRunBlocks(bufferedBlocks, blocks);
+            const chatVisible = payload.chatVisible === true && Boolean(text.trim());
+            if (chatVisible) reportLatencyStage('firstVisibleText', { runId });
             queueMessageUpdate((message) => ({
               ...message,
-              body: message.status === 'running' || message.body === 'Thinking...' || !message.body?.trim()
-                ? 'Thinking...'
-                : message.body,
+              // Reasoning remains in the trace. Codex agent_message and Claude
+              // text_delta events opt in to immediate chat rendering so the
+              // user does not wait for the full run to finish before reading.
+              body: chatVisible && assistantText.trim()
+                ? assistantText.trimStart()
+                : message.body || 'Thinking...',
               blocks: appendChatRunBlocks(message.blocks, blocks),
               runId,
             }));
@@ -1700,18 +1722,10 @@ export default function App() {
         }
       };
 
-      runSocket = connectRunsSocket();
-      // Wait for a successful transport only. engine.io may emit connect_error
-      // while falling back (websocket → polling); rejecting on the first one
-      // is what wrote the raw "websocket error" string into chat.
-      await new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error('Runs socket connect timeout')), 15000);
-        runSocket!.once('connect', () => {
-          clearTimeout(timer);
-          resolve();
-        });
-      });
-
+      // Run creation must not wait behind a fresh Socket.IO handshake. The
+      // server persists every event and also broadcasts the chat projection;
+      // after POST succeeds we join the run room and backfill anything emitted
+      // before the transport connected.
       const res = await api<{ run: { id: number; status: string; conversation_id: string }; reused?: boolean }>(`/api/vaults/${vaultId}/runs`, {
         method: 'POST',
         body: JSON.stringify({
@@ -1744,6 +1758,7 @@ export default function App() {
       });
 
       activeRunId = res.run.id;
+      reportLatencyStage('runCreated', { runId: res.run.id, reused: res.reused === true });
       activeAgentSessionRunRef.current.set(watermarkKey, res.run.id);
       // The run is registered server-side; the server now owns persistence of this
       // message's streamed updates. Skip our own debounced PATCH to avoid duplicate
@@ -1760,9 +1775,13 @@ export default function App() {
         runId: res.run.id,
       }));
 
+      runSocket = connectRunsSocket();
       runSocketsRef.current.set(res.run.id, runSocket);
       joinRunRoom = () => runSocket!.emit('joinRun', res.run.id);
-      runSocket.on('connect', joinRunRoom);
+      runSocket.on('connect', () => {
+        reportLatencyStage('runsSocketConnected', { runId: res.run.id });
+        joinRunRoom();
+      });
       runSocket.emit('joinRun', res.run.id);
       const cleanup = () => {};
       runSocket.on('event', (event) => processRunEvent(event, res.run.id, cleanup));

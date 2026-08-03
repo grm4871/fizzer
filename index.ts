@@ -200,9 +200,9 @@ import {
 } from './server/scratchpad.js';
 
 const PORT = Number(process.env.API_PORT || 3000);
-// Budget for the boot-time semantic rerank of agent memory (0 disables it).
+// Budget for explicit semantic scratchpad recall (0 disables it). Chat run
+// startup intentionally stays on the in-process lexical path.
 const SCRATCHPAD_QMD_TIMEOUT_MS = Math.max(0, Number(process.env.SCRATCHPAD_QMD_TIMEOUT_MS ?? 4000));
-const qmdTimeoutWarned = new Set<string>();
 /** Single source of truth with desktop-runner (persisted secret when env unset). */
 const JWT_SECRET = resolveJwtSecret();
 const DB_PATH = process.env.DOCS_DB_PATH || path.join(process.cwd(), 'docs.db');
@@ -2040,36 +2040,15 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
             }
           } catch { /* best-effort folder mint */ }
           const topic = `${channelTitle} ${prompt}`.slice(0, 400);
-          // Hybrid semantic+lexical ranking (QMD, local embeddings) so memory
-          // recall fires on paraphrases, not just literal keyword overlap.
-          // Bounded: a slow or cold index degrades to keyword matching.
-          // QMD re-syncs the corpus per call, so notes written moments ago
-          // are rankable on the next boot (lexically at once; semantically
-          // once the background embed catches up).
-          let rankedNoteIds: string[] | undefined;
-          if (SCRATCHPAD_QMD_TIMEOUT_MS > 0) {
-            try {
-              const started = Date.now();
-              const hits = await Promise.race([
-                searchWithQmd(db, runVault.id, topic, { scope: 'notes', limit: 24 }),
-                new Promise<Awaited<ReturnType<typeof searchWithQmd>>>((resolve) => {
-                  setTimeout(() => resolve([]), SCRATCHPAD_QMD_TIMEOUT_MS);
-                }),
-              ]);
-              const elapsed = Date.now() - started;
-              if (hits.length === 0 && elapsed >= SCRATCHPAD_QMD_TIMEOUT_MS && !qmdTimeoutWarned.has(runVault.id)) {
-                qmdTimeoutWarned.add(runVault.id);
-                console.warn(`[scratchpad] semantic rerank timed out after ${elapsed}ms for vault ${runVault.id}; keyword fallback (warns once per vault)`);
-              }
-              const ids = hits.filter((hit) => hit.type === 'note').map((hit) => hit.id);
-              if (ids.length) rankedNoteIds = ids;
-            } catch { /* keyword fallback inside buildAgentMemoryInjection */ }
-          }
+          // Run startup uses the bounded lexical ranking built into memory
+          // injection. QMD synchronizes the whole vault corpus before search
+          // and could add up to four seconds to a cold conversational turn.
+          // Semantic recall remains available explicitly through `recall`,
+          // where its cost is requested rather than hidden on every cold boot.
           const mem = buildAgentMemoryInjection(db, runVault.id, {
             channelTopic: topic,
             maxChars: 900,
             agentKey: agentMemoryKey || selectedAgent,
-            rankedNoteIds,
             noteStats: getNoteStatsForVault(db, runVault.id),
           });
           if (mem.enabled && mem.text) contextChunks.push(mem.text);
