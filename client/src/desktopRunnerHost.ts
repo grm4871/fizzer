@@ -69,6 +69,26 @@ const BRIDGE_CURSOR_KEY = 'cascade_runner_bridge_cursor';
 let bridgeInstanceId = '';
 let bridgeCursor = 0;
 
+/**
+ * Main may report "not found" in the few milliseconds between child-registry
+ * cleanup and the terminal bridge event. Wait briefly for that authoritative
+ * event before telling the server cancellation failed.
+ */
+export async function reconcileCancelAcknowledgement(
+  success: boolean,
+  runId: number,
+  active = activeRunIds,
+  timeoutMs = 1000,
+): Promise<boolean> {
+  if (success || !active.has(runId)) return true;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    if (!active.has(runId)) return true;
+  }
+  return false;
+}
+
 function loadBridgeCursor(instanceId: string): number {
   try {
     const saved = JSON.parse(localStorage.getItem(BRIDGE_CURSOR_KEY) || '{}') as { instanceId?: string; cursor?: number };
@@ -285,11 +305,12 @@ function wireSocketHandlers(activeSocket: Socket): void {
       return;
     }
     const result = await runnerElectronAPI()?.cancelAgentRun?.(runId).catch(() => ({ success: false }));
-    if (result?.success) {
+    const success = await reconcileCancelAcknowledgement(result?.success === true, runId);
+    if (success) {
       activeRunIds.delete(runId);
       recentTerminalEvents.delete(runId);
     }
-    acknowledge?.({ success: result?.success === true });
+    acknowledge?.({ success });
   });
 
   activeSocket.on('disconnect', (reason) => {
