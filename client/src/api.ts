@@ -18,7 +18,7 @@
    ═══════════════════════════════════════════════════════════ */
 
 /** Authenticated user record. */
-export type User = { id: number; username: string };
+export type User = { id: number; username: string; displayName: string; avatarUrl: string };
 
 /** A vault (workspace) containing folders and notes. */
 export type Vault = {
@@ -86,6 +86,13 @@ export type SearchResult = {
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
+export class ApiError extends Error {
+  constructor(message: string, public readonly status: number) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
 /**
  * Generic typed fetch wrapper for the Cascade API.
  *
@@ -108,7 +115,7 @@ export async function api<T>(path: string, options: RequestInit = {}) {
   const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
   const data = await res.json().catch(() => ({}));
   if (res.status === 401) localStorage.removeItem('docs_token');
-  if (!res.ok) throw new Error(data.error || 'Request failed');
+  if (!res.ok) throw new ApiError(data.error || 'Request failed', res.status);
   return data as T;
 }
 

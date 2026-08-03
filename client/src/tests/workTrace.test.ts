@@ -42,6 +42,17 @@ describe('workTrace', () => {
     expect(partitionWorkRun([reply])).toEqual({ trace: [], full: [reply] });
   });
 
+  it('hides a lone long delegated response behind the work dot', () => {
+    const workerEssay = msg({
+      id: 'worker-essay',
+      author: 'Sonnet',
+      body: '# Audit\n\n' + 'Detailed evidence for the coordinator. '.repeat(80),
+      agentId: 'claude',
+      missionTaskId: 'task-essay',
+    });
+    expect(partitionWorkRun([workerEssay])).toEqual({ trace: [workerEssay], full: [] });
+  });
+
   it('collapses intermediates and keeps the final non-worker answer full', () => {
     const mid = msg({ id: 'a1', author: 'Sol', body: 'Checking…', agentId: 'codex' });
     const final = msg({ id: 'a2', author: 'Sol', body: 'Fixed root cause.', agentId: 'codex' });

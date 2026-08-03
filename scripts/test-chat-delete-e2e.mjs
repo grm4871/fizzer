@@ -13,10 +13,11 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { io } from 'socket.io-client';
+import { pickPort } from './lib/test-ports.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, '..');
-const API_PORT = Number(process.env.TEST_API_PORT || 3097);
+const API_PORT = Number(process.env.TEST_API_PORT) || await pickPort();
 const API_BASE = `http://127.0.0.1:${API_PORT}`;
 const DB_PATH = `/tmp/cascade-chatdelete-e2e-${API_PORT}.db`;
 

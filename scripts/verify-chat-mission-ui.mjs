@@ -82,6 +82,10 @@ try {
     method: 'POST', body: JSON.stringify({ username, password: 'testpass12345' }),
   });
   const auth = { authorization: `Bearer ${token}` };
+  const { token: agentToken } = await must(`${API_BASE}/api/auth/agent-token`, {
+    method: 'POST', headers: auth,
+  });
+  const agentAuth = { authorization: `Bearer ${agentToken}` };
   const { vault } = await must(`${API_BASE}/api/vaults`, {
     method: 'POST', headers: auth, body: JSON.stringify({ name: 'Mission UI' }),
   });
@@ -145,7 +149,7 @@ try {
   const beforeTrace = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/messages`, { headers: auth });
   for (const message of beforeTrace.messages.filter((item) => item.status === 'running' || item.status === 'sending')) {
     await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/messages`, {
-      method: 'POST', headers: auth,
+      method: 'POST', headers: agentAuth,
       body: JSON.stringify({ ...message, body: 'Worker queued for runtime verification.', status: 'completed' }),
     });
   }
@@ -169,7 +173,7 @@ try {
   for (const message of traceMessages) {
     message.createdAt = new Date().toISOString();
     await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/messages`, {
-      method: 'POST', headers: auth, body: JSON.stringify(message),
+      method: 'POST', headers: message.agentId || message.registrationId || message.author === 'Cascade' ? agentAuth : auth, body: JSON.stringify(message),
     });
     await delay(5);
   }
@@ -276,6 +280,11 @@ try {
       && inlineActivityStyle.dotRadius === '50%'
       && inlineActivityStyle.labelWeight >= 500
   ), JSON.stringify(inlineActivityStyle));
+  const activityDotBox = await workTrace.locator('.chat-work-decal.is-current .chat-work-decal-mark').boundingBox();
+  const finalBodyBox = await page.locator(`[data-message-id="${rootMessage.id}"]`).locator('xpath=ancestor::*[contains(@class,"chat-message-body")]').boundingBox();
+  check('workflow dot shares the transcript text axis', (
+    activityDotBox != null && finalBodyBox != null && Math.abs(activityDotBox.x - finalBodyBox.x) <= 1
+  ), `dot=${JSON.stringify(activityDotBox)}, text=${JSON.stringify(finalBodyBox)}`);
   check('coordinator prose flattens when later work is still active', (
     !finalVisible && !traceText.includes('user-facing answer remains')
   ), `finalVisible=${finalVisible}, trace=${JSON.stringify(traceText)}`);
@@ -313,6 +322,23 @@ try {
   await reloadedCard.waitFor({ timeout: 20_000 });
   await reloadedCard.locator('summary').click();
   check('reload retains task status and evidence', (await reloadedCard.innerText()).includes('Reload and multiplayer projection passed.'));
+
+  await page.locator('.sidebar-footer .user-info').click();
+  const accountDialog = page.getByRole('dialog', { name: 'Account' });
+  await accountDialog.waitFor({ timeout: 5_000 });
+  await accountDialog.getByLabel('Display name').fill('Mission Operator');
+  await accountDialog.locator('input[type="file"]').setInputFiles({
+    name: 'avatar.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from('iVBORw0KGgo=', 'base64'),
+  });
+  await accountDialog.getByRole('button', { name: 'Save profile' }).click();
+  await accountDialog.getByText('Profile saved').waitFor({ timeout: 5_000 });
+  check('account modal saves display name and profile picture', await accountDialog.locator('.account-avatar-preview img').isVisible());
+  await accountDialog.getByRole('button', { name: 'Close account settings' }).click();
+  await page.reload({ waitUntil: 'networkidle' });
+  await openChannel();
+  check('profile identity survives reload', (await page.locator('.sidebar-footer .user-info').innerText()).includes('Mission Operator'));
 
   const solRow = page.locator('.chat-agent-edit-btn', { hasText: 'Sol' });
   await solRow.waitFor({ timeout: 10_000 });

@@ -18,7 +18,7 @@
  */
 
 import { useState, useMemo, useEffect, useRef } from 'react';
-import type { Vault, Folder, NoteSummary } from '../api';
+import type { Vault, Folder, NoteSummary, User } from '../api';
 import { NOTE_DND_TYPE, noteEmbedMarkdown } from '../docEmbeds';
 import { CHAT_NOTE_MARKER } from './ChatView';
 import {
@@ -31,7 +31,7 @@ const FOLDER_DND_TYPE = 'application/x-cascade-folder';
 const ROOT_DROP_ID = '__root__';
 
 interface SidebarProps {
-  user: { id: number; username: string };
+  user: User;
   vaults: Vault[];
   activeVaultId: string | null;
   folders: Folder[];
@@ -46,6 +46,7 @@ interface SidebarProps {
   onSearch: () => void;
   onCollapse: () => void;
   onLogout: () => void;
+  onOpenAccount: () => void;
   isOwner?: boolean;
   onOpenAdmin?: () => void;
   onDeleteNote: (id: string) => void;
@@ -115,6 +116,7 @@ export function Sidebar({
   onSearch,
   onCollapse,
   onLogout,
+  onOpenAccount,
   isOwner,
   onOpenAdmin,
   onDeleteNote,
@@ -698,10 +700,12 @@ export function Sidebar({
 
       {/* Footer */}
       <div className="sidebar-footer">
-        <div className="user-info">
-          <div className="user-avatar">{user.username.charAt(0).toUpperCase()}</div>
-          <span className="truncate">{user.username}</span>
-        </div>
+        <button type="button" className="user-info" onClick={onOpenAccount} title="Account settings">
+          <div className="user-avatar">
+            {user.avatarUrl ? <img src={user.avatarUrl} alt="" /> : (user.displayName || user.username).charAt(0).toUpperCase()}
+          </div>
+          <span className="truncate">{user.displayName || user.username}</span>
+        </button>
         <button
           className="btn-icon"
           title="Update desktop app"

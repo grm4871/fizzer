@@ -1037,6 +1037,12 @@ a {
   gap: 8px;
   font-size: 0.8125rem;
   color: var(--text-secondary);
+  min-width: 0;
+  cursor: pointer;
+  text-align: left;
+}
+.sidebar-footer .user-info:hover {
+  color: var(--text-primary);
 }
 .sidebar-footer .user-avatar {
   width: 24px;
@@ -1050,6 +1056,103 @@ a {
   justify-content: center;
   font-size: 0.6875rem;
   font-weight: 600;
+}
+.sidebar-footer .user-avatar img {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
+}
+
+.overlay-backdrop.account-settings-backdrop {
+  z-index: 1200;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+.account-settings {
+  width: min(560px, 100%);
+  max-height: min(780px, 90vh);
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-surface);
+  box-shadow: 0 24px 80px hsla(228, 30%, 2%, 0.55);
+}
+.account-settings > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.account-settings h2,
+.account-settings p { margin: 0; }
+.account-settings h2 { font-size: 1.05rem; }
+.account-settings p { margin-top: 4px; color: var(--text-tertiary); font-size: 0.75rem; }
+.account-settings-section {
+  display: grid;
+  gap: 12px;
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.account-settings-section:last-child { border-bottom: 0; }
+.account-profile-section {
+  grid-template-columns: 72px minmax(0, 1fr);
+}
+.account-profile-section > label,
+.account-profile-section > .account-settings-status,
+.account-profile-section > .account-settings-actions { grid-column: 1 / -1; }
+.account-avatar-preview {
+  width: 64px;
+  height: 64px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--accent-subtle);
+  color: var(--accent);
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+.account-avatar-preview img { width: 100%; height: 100%; object-fit: cover; }
+.account-avatar-actions { display: flex; align-content: center; flex-wrap: wrap; gap: 7px; }
+.account-avatar-actions button,
+.account-settings-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+.account-avatar-actions small { flex-basis: 100%; }
+.account-settings label { display: grid; gap: 5px; color: var(--text-secondary); font-size: 0.75rem; }
+.account-settings input {
+  width: 100%;
+  min-height: 36px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-deep);
+  color: var(--text-primary);
+}
+.account-settings input:disabled { color: var(--text-tertiary); opacity: 0.8; }
+.account-settings small { color: var(--text-tertiary); font-size: 0.6875rem; line-height: 1.4; }
+.account-section-title { display: flex; align-items: center; gap: 7px; color: var(--text-primary); }
+.account-settings-status { color: var(--text-secondary); font-size: 0.75rem; }
+.account-settings-actions { display: flex; justify-content: flex-end; }
+.account-settings-actions button { border-color: hsla(38, 55%, 48%, 0.4); color: var(--accent-hover); }
+@media (max-width: 520px) {
+  .overlay-backdrop.account-settings-backdrop { align-items: end; padding: 0; }
+  .account-settings { max-height: 92vh; border-radius: 14px 14px 0 0; }
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -5713,7 +5816,7 @@ a {
 
 /* ── Agent work trace: TUI-style collapsed multi-agent chatter ── */
 .chat-work-trace {
-  margin: 8px 0 10px;
+  margin: 8px 16px 10px 58px;
   max-width: 720px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -6050,6 +6153,15 @@ a {
   font-size: 0.75rem;
   line-height: 1;
   animation: chat-work-blink 1.05s steps(1) infinite;
+}
+
+/* Keep compact coordinator activity on the same x-axis as message copy. These
+   overrides live after the base trace rule so narrow layouts cannot lose. */
+@media (max-width: 900px) {
+  .chat-work-trace { margin-left: 48px; margin-right: 12px; }
+}
+@media (max-width: 520px) {
+  .chat-work-trace { margin-left: 42px; margin-right: 8px; }
 }
 @keyframes chat-work-blink {
   50% { opacity: 0; }

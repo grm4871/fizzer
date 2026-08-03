@@ -271,6 +271,7 @@ export interface ChatChannelPresence {
   participants: string[];
   online: string[];
   owner?: string;
+  profiles?: Record<string, { id: number; username: string; displayName: string; avatarUrl: string }>;
 }
 
 export type SharedChatNote = {
@@ -1023,6 +1024,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
   selectedMessageId,
   avatarKind,
   avatarUrl,
+  authorLabel,
   ownerLabel,
   planUsage,
   latestRunningMessageId,
@@ -1047,6 +1049,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
   selectedMessageId: string | null;
   avatarKind: 'agent' | 'human';
   avatarUrl?: string;
+  authorLabel?: string;
   ownerLabel?: string;
   planUsage?: PlanUsage | null;
   latestRunningMessageId?: string;
@@ -1123,10 +1126,10 @@ const ChatGroupRow = memo(function ChatGroupRow({
     >
       {showBody ? (
         <>
-          <ChatAvatar name={head.author} kind={avatarKind} avatarUrl={avatarUrl} />
+          <ChatAvatar name={authorLabel || head.author} kind={avatarKind} avatarUrl={avatarUrl} />
           <div className="chat-message-body">
             <div className="chat-message-meta">
-              <strong>{head.author}</strong>
+              <strong>{authorLabel || head.author}</strong>
               {planUsage && <PlanUsageMeters usage={planUsage} />}
               {ownerLabel && <span className="chat-agent-owner">{ownerLabel}'s agent</span>}
               <time dateTime={tail.createdAt}>{formatTime(tail.createdAt)}</time>
@@ -1548,8 +1551,12 @@ export const ChatView = memo(function ChatView({
   const getMessageAvatarKind = (message: ChatMessage): 'agent' | 'human' =>
     message.agentId || agentAuthors.has(message.author) ? 'agent' : 'human';
   const getMessageAvatarUrl = (message: ChatMessage) => {
-    return resolveMessageRegistration(message)?.avatarUrl || '';
+    return resolveMessageRegistration(message)?.avatarUrl || presence.profiles?.[message.author]?.avatarUrl || '';
   };
+  const getMessageAuthorLabel = (message: ChatMessage) =>
+    resolveMessageRegistration(message)?.displayName
+      || presence.profiles?.[message.author]?.displayName
+      || message.author;
   const getMessageOwnerLabel = (message: ChatMessage) => {
     const registration = resolveMessageRegistration(message);
     const identity = registration?.vaultAgentId ? vaultAgentById.get(registration.vaultAgentId) : undefined;
@@ -2361,6 +2368,7 @@ export const ChatView = memo(function ChatView({
                       selectedMessageId={groupSelected ? selectedMessageId : null}
                       avatarKind={getMessageAvatarKind(head)}
                       avatarUrl={getMessageAvatarUrl(head)}
+                      authorLabel={getMessageAuthorLabel(head)}
                       ownerLabel={getMessageOwnerLabel(head)}
                       planUsage={getMessagePlanUsage(head)}
                       latestRunningMessageId={runState?.latestId}
@@ -2398,6 +2406,7 @@ export const ChatView = memo(function ChatView({
                   selectedMessageId={groupSelected ? selectedMessageId : null}
                   avatarKind={getMessageAvatarKind(head)}
                   avatarUrl={getMessageAvatarUrl(head)}
+                  authorLabel={getMessageAuthorLabel(head)}
                   ownerLabel={getMessageOwnerLabel(head)}
                   planUsage={getMessagePlanUsage(head)}
                   latestRunningMessageId={runState?.latestId}
@@ -2676,9 +2685,10 @@ export const ChatView = memo(function ChatView({
           return (
           <div className={`chat-user chat-human${isOnline ? '' : ' is-offline'}`} key={name}>
             <div className="chat-user-row">
-              <ChatAvatar name={name} kind="human" size="sm" />
+              <ChatAvatar name={presence.profiles?.[name]?.displayName || name} kind="human" avatarUrl={presence.profiles?.[name]?.avatarUrl} size="sm" />
               <div className="chat-user-copy">
-                <strong>{name}</strong>
+                <strong>{presence.profiles?.[name]?.displayName || name}</strong>
+                {presence.profiles?.[name]?.displayName && presence.profiles?.[name]?.displayName !== name && <span>@{name}</span>}
                 <span>{isOwner ? 'owner' : isSelf ? 'you' : isOnline ? 'online' : 'offline'}</span>
               </div>
             </div>

@@ -253,7 +253,7 @@ const DESKTOP_BUILDS: Record<string, string> = {
   linux: 'Cascade.AppImage',
 };
 
-type User = { id: number; username: string; password_hash: string; created_at: string };
+type User = { id: number; username: string; display_name: string; avatar_url: string; auth_version: number; password_hash: string; created_at: string };
 type AuthAccess = 'user' | 'agent';
 type AuthedRequest = Request & { user?: { id: number; username: string; access: AuthAccess } };
 type ChatInviteToken = {
@@ -273,6 +273,9 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
+    display_name TEXT NOT NULL DEFAULT '',
+    avatar_url TEXT NOT NULL DEFAULT '',
+    auth_version INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
@@ -340,6 +343,17 @@ db.exec(`
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 `);
+
+const userColumns = db.prepare("PRAGMA table_info(users)").all() as { name: string }[];
+if (!userColumns.some((column) => column.name === 'display_name')) {
+  db.exec("ALTER TABLE users ADD COLUMN display_name TEXT NOT NULL DEFAULT ''");
+}
+if (!userColumns.some((column) => column.name === 'avatar_url')) {
+  db.exec("ALTER TABLE users ADD COLUMN avatar_url TEXT NOT NULL DEFAULT ''");
+}
+if (!userColumns.some((column) => column.name === 'auth_version')) {
+  db.exec("ALTER TABLE users ADD COLUMN auth_version INTEGER NOT NULL DEFAULT 0");
+}
 
 // Existing installations predate unlisted notes. SQLite has no portable
 // ADD COLUMN IF NOT EXISTS, so inspect the schema before applying the migration.
@@ -442,22 +456,40 @@ const io = new Server(httpServer, {
 const runsNamespace = io.of('/runs');
 const vaultNamespace = io.of('/vault');
 
-// ── Auth helpers ───────────────────────────────────────────────────
-
-function signToken(user: { id: number; username: string }) {
-  return jwt.sign({ ...user, access: 'user' satisfies AuthAccess }, JWT_SECRET, { expiresIn: '30d' });
+function disconnectUserSockets(userId: number) {
+  for (const namespace of [runsNamespace, vaultNamespace]) {
+    for (const socket of namespace.sockets.values()) {
+      if ((socket.data.user as { id?: number } | undefined)?.id === userId) socket.disconnect(true);
+    }
+  }
 }
 
-function signAgentToken(user: { id: number; username: string }) {
+// ── Auth helpers ───────────────────────────────────────────────────
+
+function tokenIdentity(user: { id: number; username: string; auth_version?: number }) {
+  const authVersion = user.auth_version ?? (db.prepare('SELECT auth_version FROM users WHERE id = ?').get(user.id) as { auth_version?: number } | undefined)?.auth_version ?? 0;
+  return { id: user.id, username: user.username, authVersion };
+}
+
+function signToken(user: { id: number; username: string; auth_version?: number }) {
+  return jwt.sign({ ...tokenIdentity(user), access: 'user' satisfies AuthAccess }, JWT_SECRET, { expiresIn: '30d' });
+}
+
+function signAgentToken(user: { id: number; username: string; auth_version?: number }) {
   return jwt.sign(
-    { id: user.id, username: user.username, access: 'agent' satisfies AuthAccess },
+    { ...tokenIdentity(user), access: 'agent' satisfies AuthAccess },
     JWT_SECRET,
     { expiresIn: '12h' },
   );
 }
 
-function publicUser(user: { id: number; username: string }) {
-  return { id: user.id, username: user.username };
+function publicUser(user: { id: number; username: string; display_name?: string; avatar_url?: string }) {
+  return {
+    id: user.id,
+    username: user.username,
+    displayName: String(user.display_name || user.username),
+    avatarUrl: String(user.avatar_url || ''),
+  };
 }
 
 /** The server owner is the first-registered account (lowest user id). */
@@ -500,7 +532,11 @@ function requireAuth(req: AuthedRequest, res: Response, next: NextFunction) {
   if (!token) return res.status(401).json({ error: 'Authentication required' });
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as { id: number; username: string; access?: AuthAccess };
+    const decoded = jwt.verify(token, JWT_SECRET) as { id: number; username: string; authVersion?: number; access?: AuthAccess };
+    const current = db.prepare('SELECT username, auth_version FROM users WHERE id = ?').get(decoded.id) as { username: string; auth_version: number } | undefined;
+    if (!current || current.username !== decoded.username || current.auth_version !== (decoded.authVersion ?? 0)) {
+      return res.status(401).json({ error: 'Session expired; please sign in again' });
+    }
     req.user = {
       id: decoded.id,
       username: decoded.username,
@@ -550,8 +586,12 @@ function socketAuth(socket: { handshake: { auth: { token?: unknown } }; data: Re
   const token = typeof socket.handshake.auth.token === 'string' ? socket.handshake.auth.token : null;
   if (!token) return next(new Error('Authentication required'));
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as { id: number; username: string; access?: AuthAccess };
+    const decoded = jwt.verify(token, JWT_SECRET) as { id: number; username: string; authVersion?: number; access?: AuthAccess };
     if (decoded.access === 'agent') return next(new Error('This operation requires user access'));
+    const current = db.prepare('SELECT username, auth_version FROM users WHERE id = ?').get(decoded.id) as { username: string; auth_version: number } | undefined;
+    if (!current || current.username !== decoded.username || current.auth_version !== (decoded.authVersion ?? 0)) {
+      return next(new Error('Session expired; please sign in again'));
+    }
     socket.data.user = { id: decoded.id, username: decoded.username };
     next();
   } catch {
@@ -1097,8 +1137,33 @@ app.post('/api/auth/password', requireAuth, authRateLimit, async (req: AuthedReq
     return res.status(401).json({ error: 'Current password is incorrect' });
   }
   const passwordHash = await bcrypt.hash(newPassword, 12);
-  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(passwordHash, user.id);
-  res.json({ ok: true, token: signToken(user) });
+  const changed = db.prepare('UPDATE users SET password_hash = ?, auth_version = auth_version + 1 WHERE id = ? AND password_hash = ?')
+    .run(passwordHash, user.id, user.password_hash);
+  if (changed.changes !== 1) return res.status(409).json({ error: 'Password changed in another session; please try again' });
+  const updated = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id) as User;
+  const token = signToken(updated);
+  res.json({ ok: true, token });
+  disconnectUserSockets(user.id);
+});
+
+app.put('/api/me/profile', requireAuth, requireUserAccess, (req: AuthedRequest, res) => {
+  const displayName = String(req.body?.displayName || '').trim();
+  const avatarUrl = String(req.body?.avatarUrl || '').trim();
+  if (displayName.length < 1 || displayName.length > 48 || /[\u0000-\u001f\u007f]/.test(displayName)) {
+    return res.status(400).json({ error: 'Display name must be 1-48 characters without control characters' });
+  }
+  if (avatarUrl.length > 2_800_000) {
+    return res.status(400).json({ error: 'Profile picture must be smaller than 2 MB' });
+  }
+  if (avatarUrl && !/^data:image\/(png|jpeg|webp|gif);base64,[a-z0-9+/=]+$/i.test(avatarUrl)) {
+    return res.status(400).json({ error: 'Profile picture must be a PNG, JPEG, WebP, or GIF image' });
+  }
+  db.prepare("UPDATE users SET display_name = ?, avatar_url = ? WHERE id = ?")
+    .run(displayName, avatarUrl, req.user!.id);
+  const updated = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user!.id) as User;
+  const profile = publicUser(updated);
+  vaultNamespace.emit('vault:userProfileUpdated', profile);
+  res.json({ user: profile });
 });
 
 // The server owner (first-registered account) issues a single-use, 1-hour
@@ -1138,13 +1203,18 @@ app.post('/api/auth/reset', authRateLimit, async (req, res) => {
     return res.status(400).json({ error: 'This reset link is invalid or has expired' });
   }
   const passwordHash = await bcrypt.hash(newPassword, 12);
-  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(passwordHash, user.id);
-  const updated = { id: user.id, username: user.username };
-  res.json({ ok: true, user: publicUser(updated), token: signToken(updated), owner: isOwner(updated.id) });
+  const changed = db.prepare('UPDATE users SET password_hash = ?, auth_version = auth_version + 1 WHERE id = ? AND password_hash = ?')
+    .run(passwordHash, user.id, user.password_hash);
+  if (changed.changes !== 1) return res.status(400).json({ error: 'This reset link has already been used' });
+  const updated = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id) as User;
+  const replacementToken = signToken(updated);
+  res.json({ ok: true, user: publicUser(updated), token: replacementToken, owner: isOwner(updated.id) });
+  disconnectUserSockets(user.id);
 });
 
 app.get('/api/me', requireAuth, (req: AuthedRequest, res) => {
-  res.json({ user: req.user, owner: isOwner(req.user!.id) });
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user!.id) as User;
+  res.json({ user: publicUser(user), owner: isOwner(req.user!.id) });
 });
 
 // The desktop runner gives child agents this short-lived, restricted token
@@ -1156,8 +1226,8 @@ app.post('/api/auth/agent-token', requireAuth, requireUserAccess, (req: AuthedRe
 // Owner-only: list accounts for the admin panel (no secrets).
 app.get('/api/admin/users', requireAuth, (req: AuthedRequest, res) => {
   if (!isOwner(req.user!.id)) return res.status(403).json({ error: 'Owner only' });
-  const users = db.prepare('SELECT id, username, created_at FROM users ORDER BY id ASC').all() as Array<{ id: number; username: string; created_at: string }>;
-  res.json({ users });
+  const users = db.prepare('SELECT id, username, display_name, avatar_url, created_at FROM users ORDER BY id ASC').all() as User[];
+  res.json({ users: users.map((user) => ({ ...publicUser(user), created_at: user.created_at })) });
 });
 
 // ── Vault routes ───────────────────────────────────────────────────
@@ -1201,6 +1271,11 @@ app.post('/api/vaults/:id/folders', requireAuth, (req: AuthedRequest, res) => {
 });
 
 app.patch('/api/folders/:id', requireAuth, (req: AuthedRequest, res) => {
+  const owned = db.prepare(`
+    SELECT f.id FROM folders f JOIN vaults v ON v.id = f.vault_id
+    WHERE f.id = ? AND v.created_by = ?
+  `).get(req.params.id, req.user!.id);
+  if (!owned) return res.status(404).json({ error: 'Folder not found' });
   try {
     const folder = updateFolder(db, req.params.id, req.body || {});
     res.json({ folder });
@@ -1212,6 +1287,11 @@ app.patch('/api/folders/:id', requireAuth, (req: AuthedRequest, res) => {
 });
 
 app.delete('/api/folders/:id', requireAuth, (req: AuthedRequest, res) => {
+  const owned = db.prepare(`
+    SELECT f.id FROM folders f JOIN vaults v ON v.id = f.vault_id
+    WHERE f.id = ? AND v.created_by = ?
+  `).get(req.params.id, req.user!.id);
+  if (!owned) return res.status(404).json({ error: 'Folder not found' });
   try {
     deleteFolder(db, req.params.id);
     res.json({ ok: true });
@@ -2380,7 +2460,8 @@ app.get('/api/vaults/:vaultId/channels/:channelId/messages/:messageId/embeds', r
 app.post('/api/vaults/:vaultId/channels/:channelId/messages', requireAuth, (req: AuthedRequest, res) => {
   try {
     const { route } = assertChatChannel(db, req.params.channelId, req.user!.id);
-    const message = createChatMessage(db, req.user!.id, req.params.vaultId, req.params.channelId, req.body);
+    const input = isAgentRequest(req) ? req.body : { ...req.body, author: req.user!.username, agentId: undefined, registrationId: undefined };
+    const message = createChatMessage(db, req.user!.id, req.params.vaultId, req.params.channelId, input);
     const dispatches = createChatAgentDispatches(
       db,
       req.user!.id,
@@ -2516,7 +2597,18 @@ app.post('/api/vaults/:vaultId/channels/:channelId/missions/:missionId/finish', 
 app.patch('/api/vaults/:vaultId/channels/:channelId/messages/:messageId', requireAuth, (req: AuthedRequest, res) => {
   try {
     const { route } = assertChatChannel(db, req.params.channelId, req.user!.id);
-    const message = updateChatMessage(db, req.user!.id, req.params.vaultId, req.params.channelId, req.params.messageId, req.body);
+    const existing = getChatMessage(db, req.params.channelId, req.user!.id, req.params.messageId);
+    if (!existing) return res.status(404).json({ error: 'Message not found' });
+    if (!isAgentRequest(req) && existing.author !== req.user!.username) {
+      return res.status(403).json({ error: 'You can only edit your own messages' });
+    }
+    const patch = isAgentRequest(req) ? req.body : {
+      body: typeof req.body?.body === 'string' ? req.body.body : existing.body,
+      images: req.body?.images,
+      attachments: req.body?.attachments,
+      replyTo: req.body?.replyTo,
+    };
+    const message = updateChatMessage(db, req.user!.id, req.params.vaultId, req.params.channelId, req.params.messageId, patch);
     if (!message) return res.status(404).json({ error: 'Message not found' });
     const dispatches = createChatAgentDispatches(db, req.user!.id, req.params.channelId, message)
       .filter((dispatch) => dispatch.runId == null);
@@ -2633,8 +2725,11 @@ app.get('/api/vaults/:vaultId/channels/:channelId/settings', requireAuth, (req: 
   }
 });
 
-app.put('/api/vaults/:vaultId/channels/:channelId/settings', requireAuth, (req: AuthedRequest, res) => {
+app.put('/api/vaults/:vaultId/channels/:channelId/settings', requireAuth, requireUserAccess, (req: AuthedRequest, res) => {
   try {
+    const { route } = assertChatChannel(db, req.params.channelId, req.user!.id);
+    const source = db.prepare('SELECT created_by FROM vaults WHERE id = ?').get(route.sourceVaultId) as { created_by: number } | undefined;
+    if (source?.created_by !== req.user!.id) return res.status(403).json({ error: 'Only the chat owner can change its working directory' });
     const settings = setChannelCwd(db, req.params.channelId, req.user!.id, String(req.body?.cwd ?? ''));
     // Notify other clients on this vault so open channel views pick up the change.
     emitVaultEvent(req.params.vaultId, 'vault:chatChannelSettings', {
@@ -2656,7 +2751,12 @@ app.get('/api/vaults/:vaultId/channels/:channelId/presence', requireAuth, async 
     const owner = db.prepare(`
       SELECT u.username FROM vaults v JOIN users u ON u.id = v.created_by WHERE v.id = ?
     `).get(route.sourceVaultId) as { username: string } | undefined;
-    res.json({ participants, online, owner: owner?.username || '' });
+    const profileRows = participants.length
+      ? db.prepare(`SELECT id, username, display_name, avatar_url FROM users WHERE username IN (${participants.map(() => '?').join(',')})`)
+        .all(...participants) as User[]
+      : [];
+    const profiles = Object.fromEntries(profileRows.map((user) => [user.username, publicUser(user)]));
+    res.json({ participants, online, owner: owner?.username || '', profiles });
   } catch {
     res.status(404).json({ error: 'Chat channel not found' });
   }
@@ -2725,7 +2825,7 @@ app.put('/api/vaults/:vaultId/channels/:channelId/agents', requireAuth, (req: Au
 
 // Used by the agent helper. The registration id is supplied by its isolated run
 // context, so a running agent can only update the identity it was launched as.
-app.put('/api/vaults/:vaultId/channels/:channelId/agents/:registrationId/avatar', requireAuth, (req: AuthedRequest, res) => {
+app.put('/api/vaults/:vaultId/channels/:channelId/agents/:registrationId/avatar', requireAuth, requireUserAccess, (req: AuthedRequest, res) => {
   try {
     const { route } = assertChatChannel(db, req.params.channelId, req.user!.id);
     const registration = setChatAgentAvatar(

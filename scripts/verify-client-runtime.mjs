@@ -5,8 +5,10 @@
  */
 import { spawn } from 'child_process';
 import { setTimeout as delay } from 'timers/promises';
+import { pickPort } from './lib/test-ports.mjs';
 
-const targetUrl = process.argv.find((arg) => arg.startsWith('http')) || 'http://127.0.0.1:4173/app.html';
+const explicitUrl = process.argv.find((arg) => arg.startsWith('http'));
+const targetUrl = explicitUrl || `http://127.0.0.1:${await pickPort()}/app.html`;
 const previewPort = Number(new URL(targetUrl).port || 4173);
 
 async function waitForUrl(url, timeoutMs = 30000) {

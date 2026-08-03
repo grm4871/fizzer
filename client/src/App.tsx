@@ -33,9 +33,10 @@ import { SessionManager } from './components/SessionManager';
 import { NewsTicker } from './components/NewsTicker';
 import { PaneGrid, type TabDragPayload } from './components/PaneGrid';
 import { SuperkanbanView } from './components/SuperkanbanView';
+import { AccountSettings } from './components/AccountSettings';
 import * as Layout from './layout/tree';
 import type { LayoutNode } from './layout/tree';
-import { api, type User, type Vault, type Folder, type NoteSummary, type Note } from './api';
+import { api, ApiError, type User, type Vault, type Folder, type NoteSummary, type Note } from './api';
 import { connectRunsSocket, connectVaultSocket } from './socket';
 import { isLocalRunId, cancelLocalAgentRun } from './localAgentRunner';
 import { ensureDesktopRunnerHost, startDesktopRunnerHost } from './desktopRunnerHost';
@@ -130,6 +131,8 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [isOwner, setIsOwner] = useState(false);
   const [adminOpen, setAdminOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const [authEpoch, setAuthEpoch] = useState(0);
   const [authMode, setAuthMode] = useState<'login' | 'register' | 'reset'>('login');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -558,16 +561,16 @@ export default function App() {
     const results = await Promise.all(finalIds.map(async (channelId) => {
       try {
         const data = await api<ChatChannelPresence>(`/api/vaults/${vaultId}/channels/${channelId}/presence`);
-        return { channelId, participants: data.participants ?? [], online: data.online ?? [], owner: data.owner ?? '' };
+        return { channelId, participants: data.participants ?? [], online: data.online ?? [], owner: data.owner ?? '', profiles: data.profiles ?? {} };
       } catch {
-        return { channelId, participants: [], online: [], owner: '' };
+        return { channelId, participants: [], online: [], owner: '', profiles: {} };
       }
     }));
 
     setChatPresenceByChannel((prev) => {
       const next = { ...prev };
-      for (const { channelId, participants, online, owner } of results) {
-        next[channelId] = { participants, online, owner };
+      for (const { channelId, participants, online, owner, profiles } of results) {
+        next[channelId] = { participants, online, owner, profiles };
       }
       return next;
     });
@@ -740,6 +743,9 @@ export default function App() {
         body: JSON.stringify(toChatMessagePatch(message)),
       });
     } catch (error) {
+      // Mission completion can durably remove a queued synthetic wake while a
+      // renderer still has one final throttled stream patch. The deletion wins.
+      if (error instanceof ApiError && error.status === 404) return;
       console.error('Failed to update chat message:', error);
     }
   }, []);
@@ -2628,7 +2634,7 @@ export default function App() {
         },
       }));
     };
-    const handleChatPresence = (data: { vaultId: string; channelId: string; participants: string[]; online: string[]; owner?: string }) => {
+    const handleChatPresence = (data: ChatChannelPresence & { vaultId: string; channelId: string }) => {
       if (data.vaultId !== activeVaultId) return;
       setChatPresenceByChannel((prev) => ({
         ...prev,
@@ -2636,8 +2642,19 @@ export default function App() {
           participants: data.participants ?? [],
           online: data.online ?? [],
           owner: data.owner ?? '',
+          profiles: data.profiles ?? {},
         },
       }));
+    };
+    const handleUserProfileUpdated = (profile: User) => {
+      if (profile.id === user?.id) setUser(profile);
+      setChatPresenceByChannel((prev) => Object.fromEntries(Object.entries(prev).map(([channelId, presence]) => [
+        channelId,
+        {
+          ...presence,
+          profiles: { ...(presence.profiles || {}), [profile.username]: profile },
+        },
+      ])));
     };
 
     socket.on('vault:noteChanged', handleNoteChanged);
@@ -2652,6 +2669,7 @@ export default function App() {
     socket.on('vault:vaultAgentUpserted', handleVaultAgentUpserted);
     socket.on('vault:vaultAgentRemoved', handleVaultAgentRemoved);
     socket.on('vault:chatPresence', handleChatPresence);
+    socket.on('vault:userProfileUpdated', handleUserProfileUpdated);
     return () => {
       if (socketVaultReloadTimerRef.current != null) {
         window.clearTimeout(socketVaultReloadTimerRef.current);
@@ -2676,9 +2694,10 @@ export default function App() {
       socket.off('vault:vaultAgentUpserted', handleVaultAgentUpserted);
       socket.off('vault:vaultAgentRemoved', handleVaultAgentRemoved);
       socket.off('vault:chatPresence', handleChatPresence);
+      socket.off('vault:userProfileUpdated', handleUserProfileUpdated);
       socket.disconnect();
     };
-  }, [activeVaultId, loadVaultData, loadNoteContent, loadChatAgentMembers, loadChatMessages, openChatTabIds, openNote, syncChatPresenceRooms, dispatchChatAgentIntents, recoverPendingChatAgentDispatches]);
+  }, [activeVaultId, user?.id, authEpoch, loadVaultData, loadNoteContent, loadChatAgentMembers, loadChatMessages, openChatTabIds, openNote, syncChatPresenceRooms, dispatchChatAgentIntents, recoverPendingChatAgentDispatches]);
 
   useEffect(() => {
     const socket = vaultSocketRef.current;
@@ -3225,6 +3244,7 @@ export default function App() {
           onSearch={() => setSearchOpen(true)}
           onCollapse={() => setSidebarOpen(false)}
           onLogout={handleLogout}
+          onOpenAccount={() => setAccountOpen(true)}
           onDeleteNote={handleDeleteNote}
           onMoveNote={handleMoveNote}
           onUnlistNote={handleUnlistNote}
@@ -3233,6 +3253,15 @@ export default function App() {
           onRenameFolder={handleRenameFolder}
           onRenameNote={renameNoteTab}
           onDeleteFolder={handleDeleteFolder}
+        />
+      )}
+
+      {accountOpen && user && (
+        <AccountSettings
+          user={user}
+          onClose={() => setAccountOpen(false)}
+          onUserChanged={setUser}
+          onSessionChanged={() => setAuthEpoch((value) => value + 1)}
         />
       )}
 

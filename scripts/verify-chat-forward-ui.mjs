@@ -78,6 +78,8 @@ try {
     body: JSON.stringify({ username, password: 'testpass12345' }),
   });
   const auth = { Authorization: `Bearer ${token}` };
+  const { token: agentToken } = await must(`${API_BASE}/api/auth/agent-token`, { method: 'POST', headers: auth });
+  const agentAuth = { Authorization: `Bearer ${agentToken}` };
   const { vault } = await must(`${API_BASE}/api/vaults`, { method: 'POST', headers: auth, body: JSON.stringify({ name: `QA Vault ${stamp}` }) });
   const channels = {};
   for (const title of ['qa-source', 'qa-target']) {
@@ -88,7 +90,7 @@ try {
   }
 
   await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channels['qa-source'].id}/messages`, {
-    method: 'POST', headers: auth,
+    method: 'POST', headers: agentAuth,
     body: JSON.stringify({
       id: `msg-${stamp}-fwd`,
       channelId: channels['qa-source'].id,

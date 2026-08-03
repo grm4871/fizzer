@@ -128,6 +128,8 @@ async function main() {
     const otherName = `other_${stamp}`;
     const A = await register(ownerName);
     const B = await register(otherName);
+    const { token: agentToken } = await must(`${API_BASE}/api/auth/agent-token`, { method: 'POST', headers: A.auth });
+    const agentAuth = { authorization: `Bearer ${agentToken}` };
 
     const { vault } = await must(`${API_BASE}/api/vaults`, { method: 'POST', headers: A.auth, body: JSON.stringify({ name: 'Forward Vault' }) });
     const source = await createChannel(A.auth, vault.id, 'general');
@@ -138,7 +140,7 @@ async function main() {
 
     // ── Test 1: forward a message with an attachment into another channel.
     const attachments = [{ name: 'diagram.png', media_type: 'image/png', url: 'https://example.test/diagram.png' }];
-    const original = await post(A.auth, vault.id, source.id, 'Claude', 'the renderer stalled for ~1s', {
+    const original = await post(agentAuth, vault.id, source.id, 'Claude', 'the renderer stalled for ~1s', {
       agentId: 'claude', attachments,
     });
     const fwd = await fetchJson(`${API_BASE}/api/vaults/${vault.id}/channels/${source.id}/messages/${original}/forward`, {
