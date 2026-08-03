@@ -1578,6 +1578,9 @@ export default function App() {
       status: orchestrationQueue && sessionTurn.preceding ? 'sending' : 'running',
       agentId,
       registrationId: registration.id,
+      ...(triggeringMessage.missionTaskId
+        ? { missionTaskId: triggeringMessage.missionTaskId }
+        : {}),
     }, { persist: false });
     reportLatencyStage('placeholder');
 

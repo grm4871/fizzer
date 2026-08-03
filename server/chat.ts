@@ -2111,6 +2111,7 @@ export function ensureAgentChatMessage(
     author: string;
     agentId?: string;
     registrationId?: string;
+    missionTaskId?: string;
     runId: number;
     body?: string;
     /** Optional; when omitted, stamp strictly after the channel's latest message
@@ -2123,6 +2124,7 @@ export function ensureAgentChatMessage(
     status: 'running',
     agentId: input.agentId,
     registrationId: input.registrationId,
+    missionTaskId: input.missionTaskId,
     author: input.author,
   });
   if (existing) return { message: existing, created: false };
@@ -2149,6 +2151,7 @@ export function ensureAgentChatMessage(
     status: 'running',
     agentId: input.agentId,
     registrationId: input.registrationId,
+    missionTaskId: input.missionTaskId,
     runId: input.runId,
   });
   return { message, created: true };

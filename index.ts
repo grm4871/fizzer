@@ -1996,6 +1996,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
   let registrationId = typeof req.body?.registrationId === 'string' ? req.body.registrationId.trim() : '';
   const chatDispatchId = typeof req.body?.chatDispatchId === 'string' ? req.body.chatDispatchId.trim() : '';
   let chatDispatch: ChatAgentDispatch | null = null;
+  let chatMissionTaskId = '';
   if (chatDispatchId) {
     if (!chatChannelId) return res.status(400).json({ error: 'Chat channel is required for dispatch' });
     chatDispatch = getChatAgentDispatch(db, req.user!.id, chatChannelId, chatDispatchId);
@@ -2014,6 +2015,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     }
     registrationId = chatDispatch.registration.id;
     triggeringMessageId = chatDispatch.messageId;
+    chatMissionTaskId = chatDispatch.message.missionTaskId || '';
     if (chatDispatch.runId != null) {
       const existing = getRun(db, chatDispatch.runId);
       if (existing) return res.json({ run: existing, reused: true });
@@ -2274,6 +2276,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
             author: chatAuthor || selectedAgent,
             agentId: selectedAgent,
             registrationId: chatRegistrationId || undefined,
+            missionTaskId: chatMissionTaskId || undefined,
             runId: run.id,
             body: 'Thinking...',
           },

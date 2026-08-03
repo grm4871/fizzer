@@ -228,6 +228,39 @@ test('one registration cannot lease two open provider runs across dispatches', (
   }
 });
 
+test('schema repair marks historical worker replies as internal mission evidence', () => {
+  const { db, coordinator, worker } = setup();
+  try {
+    const root = createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: 'repair-root', channelId: 'channel-1', author: 'owner', body: 'Run it',
+      createdAt: '2026-08-03T00:00:00.000Z',
+    });
+    const mission = createChatMission(db, 1, 'vault-1', 'channel-1', {
+      rootMessageId: root.id, coordinatorRegistrationId: coordinator.id, title: 'Repair projection',
+    });
+    const task = addChatMissionTask(db, 1, 'channel-1', mission.mission.id, {
+      coordinatorRegistrationId: coordinator.id, title: 'Audit', assignee: worker.id,
+    });
+    const run = db.prepare(`
+      INSERT INTO runs (vault_id, prompt, agent, conversation_id, status)
+      VALUES ('vault-1', 'audit', 'codex', 'mission-task', 'completed')
+    `).run();
+    db.prepare('UPDATE chat_mission_tasks SET run_id = ? WHERE id = ?')
+      .run(Number(run.lastInsertRowid), task.task.id);
+    createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: 'historical-worker-report', channelId: 'channel-1', author: 'Terra',
+      body: 'A long internal audit.', createdAt: '2026-08-03T00:00:01.000Z',
+      agentId: 'codex', registrationId: worker.id, runId: Number(run.lastInsertRowid),
+    });
+
+    assert.equal(getChatMessage(db, 'channel-1', 1, 'historical-worker-report')?.missionTaskId, undefined);
+    ensureChatMissionSchema(db);
+    assert.equal(getChatMessage(db, 'channel-1', 1, 'historical-worker-report')?.missionTaskId, task.task.id);
+  } finally {
+    db.close();
+  }
+});
+
 test('a coordinator mission persists, dispatches a focused task, and settles from the worker run', () => {
   const { db, coordinator, worker } = setup();
   try {

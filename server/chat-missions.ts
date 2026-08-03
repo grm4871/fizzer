@@ -142,6 +142,24 @@ export function ensureChatMissionSchema(db: Db): void {
   if (!taskColumns.some((column) => column.name === 'reasoning_effort')) {
     db.exec("ALTER TABLE chat_mission_tasks ADD COLUMN reasoning_effort TEXT NOT NULL DEFAULT ''");
   }
+  // Early scheduler builds linked the worker run to its task but omitted the
+  // same durable task id from the rendered reply. Repair those existing rows so
+  // internal worker reports collapse after reload as well as on new runs.
+  db.exec(`
+    UPDATE chat_messages
+    SET mission_task_id = (
+      SELECT task.id
+      FROM chat_mission_tasks task
+      WHERE task.run_id = chat_messages.run_id
+      LIMIT 1
+    )
+    WHERE mission_task_id IS NULL
+      AND run_id IS NOT NULL
+      AND EXISTS (
+        SELECT 1 FROM chat_mission_tasks task
+        WHERE task.run_id = chat_messages.run_id
+      )
+  `);
 }
 
 function taskDependencies(row: Pick<TaskRow, 'depends_on_json'>): string[] {
