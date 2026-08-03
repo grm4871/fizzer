@@ -297,7 +297,12 @@ export async function cancelRun(
   const ownerId = getDelegatedRunOwner(runId) ?? getDelegatedRunOwnerFromDb(db, runId);
   if (ownerId != null || isDelegatedRun(runId)) {
     if (ownerId != null) {
-      cancelDelegatedRun(ownerId, runId);
+      // Steering must not publish its terminal event until Electron confirms
+      // the old local process has actually exited. The renderer starts the
+      // continuation when it sees this event; publishing early allowed two
+      // Codex processes to resume the same provider session concurrently.
+      const stopped = await cancelDelegatedRun(ownerId, runId);
+      if (!stopped) return false;
     }
     clearDelegatedRun(runId);
     clearDelegatedRunRecord(db, runId);
@@ -367,6 +372,25 @@ export async function startRun(
 export function findRunByChatDispatch(db: Db, dispatchId: string): Run | undefined {
   if (!dispatchId) return undefined;
   return db.prepare('SELECT * FROM runs WHERE chat_dispatch_id = ? LIMIT 1').get(dispatchId) as Run | undefined;
+}
+
+/** Durable per-registration execution lease for chat-agent provider sessions. */
+export function findOpenRunForChatRegistration(
+  db: Db,
+  registrationId: string,
+  exceptDispatchId = '',
+): Run | undefined {
+  if (!registrationId) return undefined;
+  return db.prepare(`
+    SELECT r.*
+    FROM runs r
+    JOIN chat_agent_dispatches d ON d.id = r.chat_dispatch_id
+    WHERE d.registration_id = ?
+      AND r.status IN ('queued', 'running')
+      AND (? = '' OR d.id <> ?)
+    ORDER BY r.id ASC
+    LIMIT 1
+  `).get(registrationId, exceptDispatchId, exceptDispatchId) as Run | undefined;
 }
 
 export type ConversationSessionQuery = {

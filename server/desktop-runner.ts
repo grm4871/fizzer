@@ -455,11 +455,18 @@ export function reclaimDelegatedRun(runId: number, userId: number): void {
   delegatedRunOwners.set(runId, userId);
 }
 
-export function cancelDelegatedRun(userId: number, runId: number): boolean {
+export async function cancelDelegatedRun(userId: number, runId: number): Promise<boolean> {
   const socket = runnersByUser.get(userId);
   if (!socket?.connected) return false;
-  socket.emit('run:cancel', { runId });
-  return true;
+  return await new Promise<boolean>((resolve) => {
+    socket.timeout(15_000).emit(
+      'run:cancel',
+      { runId },
+      (error: Error | null, response?: { success?: boolean }) => {
+        resolve(!error && response?.success === true);
+      },
+    );
+  });
 }
 
 export function clearDelegatedRun(runId: number): void {

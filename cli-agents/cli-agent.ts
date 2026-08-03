@@ -81,7 +81,16 @@ function terminateCliProcess(child: ChildProcess, processGroup: boolean): void {
 export function cancelCliAgentRun(runId: number): boolean {
   const child = activeCliProcesses.get(runId);
   if (!child) return false;
-  terminateCliProcess(child, groupedCliProcesses.has(runId));
+  const processGroup = groupedCliProcesses.has(runId);
+  terminateCliProcess(child, processGroup);
+  const forceKill = setTimeout(() => {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    if (processGroup && process.platform !== 'win32' && child.pid) {
+      try { process.kill(-child.pid, 'SIGKILL'); return; } catch { /* fall through */ }
+    }
+    try { child.kill('SIGKILL'); } catch { /* already settled */ }
+  }, 5_000);
+  forceKill.unref?.();
   activeCliProcesses.delete(runId);
   groupedCliProcesses.delete(runId);
   return true;

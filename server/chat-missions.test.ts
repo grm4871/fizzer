@@ -29,6 +29,7 @@ import {
   settleMissionTaskForRun,
   updateChatMissionTask,
 } from './chat-missions.js';
+import { ensureRunnerSchema, findOpenRunForChatRegistration } from './runner.js';
 
 test('scheduler respects dependencies, priority, one-active-task-per-agent, and task effort', () => {
   const { db, coordinator, worker } = setup();
@@ -180,6 +181,7 @@ function setup() {
     sourceVaultId: 'vault-1', sourceChannelId: 'channel-1', createdBy: 1,
   });
   ensureChatDispatchSchema(db);
+  ensureRunnerSchema(db);
   ensureChatMissionSchema(db);
   const coordinator = upsertChatAgentMember(db, 1, 'vault-1', 'channel-1', {
     id: 'reg-sol',
@@ -199,6 +201,32 @@ function setup() {
   });
   return { db, coordinator, worker };
 }
+
+test('one registration cannot lease two open provider runs across dispatches', () => {
+  const { db, coordinator } = setup();
+  try {
+    const firstMessage = createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: 'lease-first', channelId: 'channel-1', author: 'owner', body: 'Start',
+      createdAt: '2026-08-03T00:00:00.000Z',
+    });
+    const secondMessage = createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: 'lease-steer', channelId: 'channel-1', author: 'owner', body: 'Steer',
+      createdAt: '2026-08-03T00:00:01.000Z',
+    });
+    const first = createChatAgentDispatchForRegistration(db, 1, 'channel-1', firstMessage, coordinator.id);
+    const second = createChatAgentDispatchForRegistration(db, 1, 'channel-1', secondMessage, coordinator.id);
+    db.prepare(`
+      INSERT INTO runs (vault_id, prompt, agent, conversation_id, status, chat_dispatch_id)
+      VALUES ('vault-1', 'first', 'codex', 'coordinator-session', 'running', ?)
+    `).run(first.id);
+
+    assert.equal(findOpenRunForChatRegistration(db, coordinator.id, second.id)?.chat_dispatch_id, first.id);
+    db.prepare("UPDATE runs SET status = 'canceled' WHERE chat_dispatch_id = ?").run(first.id);
+    assert.equal(findOpenRunForChatRegistration(db, coordinator.id, second.id), undefined);
+  } finally {
+    db.close();
+  }
+});
 
 test('a coordinator mission persists, dispatches a focused task, and settles from the worker run', () => {
   const { db, coordinator, worker } = setup();

@@ -275,12 +275,21 @@ function wireSocketHandlers(activeSocket: Socket): void {
     void handleDelegatedRun(payload);
   });
 
-  activeSocket.on('run:cancel', (data: { runId?: number }) => {
+  activeSocket.on('run:cancel', async (
+    data: { runId?: number },
+    acknowledge?: (result: { success: boolean }) => void,
+  ) => {
     const runId = Number(data?.runId);
-    if (!Number.isFinite(runId)) return;
-    activeRunIds.delete(runId);
-    recentTerminalEvents.delete(runId);
-    void runnerElectronAPI()?.cancelAgentRun?.(runId);
+    if (!Number.isFinite(runId)) {
+      acknowledge?.({ success: false });
+      return;
+    }
+    const result = await runnerElectronAPI()?.cancelAgentRun?.(runId).catch(() => ({ success: false }));
+    if (result?.success) {
+      activeRunIds.delete(runId);
+      recentTerminalEvents.delete(runId);
+    }
+    acknowledge?.({ success: result?.success === true });
   });
 
   activeSocket.on('disconnect', (reason) => {

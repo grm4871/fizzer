@@ -64,6 +64,7 @@ import {
   publishRunEvent,
   finishDelegatedRun,
   findRunByChatDispatch,
+  findOpenRunForChatRegistration,
   listOpenDelegatedRuns,
   type AgentId,
 } from './server/runner.js';
@@ -2144,6 +2145,17 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     effectivePrompt = redactPrivateBlocks(effectivePrompt);
 
     let run;
+    if (chatDispatchId && chatRegistrationId) {
+      const occupied = findOpenRunForChatRegistration(db, chatRegistrationId, chatDispatchId);
+      if (occupied) {
+        // Leave this dispatch unclaimed. Another renderer/reconnect can retry
+        // after the physical-stop acknowledgement settles the active run.
+        return res.status(409).json({
+          error: 'Agent session is still stopping; this turn remains queued.',
+          activeRunId: occupied.id,
+        });
+      }
+    }
     try {
       run = await startRun(db, runVault, note_id || null, effectivePrompt, selectedAgent, {
         conversationId: preliminaryConversationId,

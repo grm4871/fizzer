@@ -104,6 +104,12 @@ async function main() {
       auth: { token },
       transports: ['websocket'],
     });
+    const canceledLocally = [];
+    let cancelAckDelayMs = 0;
+    runnerSocket.on('run:cancel', ({ runId }, acknowledge) => {
+      canceledLocally.push(Number(runId));
+      setTimeout(() => acknowledge?.({ success: true }), cancelAckDelayMs);
+    });
 
     await new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('Runner socket connect timeout')), 10000);
@@ -210,11 +216,20 @@ async function main() {
       }),
     });
     await sleep(250);
+    cancelAckDelayMs = 200;
+    const cancelStartedAt = Date.now();
     await fetchJson(`${API_BASE}/api/runs/${steeringRun.id}/cancel`, {
       method: 'POST',
       headers: auth,
       body: JSON.stringify({ steering: true }),
     });
+    if (!canceledLocally.includes(steeringRun.id)) {
+      throw new Error('Steering continuation was released before desktop cancellation acknowledgement');
+    }
+    if (Date.now() - cancelStartedAt < 150) {
+      throw new Error('Cancel endpoint returned before desktop process-exit acknowledgement');
+    }
+    cancelAckDelayMs = 0;
     const { run: steeredRun } = await fetchJson(`${API_BASE}/api/vaults/${vault.id}/runs`, {
       method: 'POST',
       headers: auth,

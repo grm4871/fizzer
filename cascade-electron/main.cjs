@@ -534,6 +534,7 @@ ipcMain.handle('window:mergeTab', async (event, { tab, screenX, screenY }) => {
 // ═══════════════════════════════════════════════════════════════
 
 /** Run a CLI agent (Grok, Codex, etc.) on this machine instead of the remote server. */
+const localAgentRunPromises = new Map();
 ipcMain.handle('agent:start', async (event, opts) => {
   try {
     const runId = Number(opts?.runId);
@@ -550,10 +551,13 @@ ipcMain.handle('agent:start', async (event, opts) => {
         }
       }
     };
-    void startLocalAgentRun(opts, sendEvent).catch((error) => {
+    const runPromise = startLocalAgentRun(opts, sendEvent).catch((error) => {
       console.error('[IPC] Local agent run failed:', error);
       agentRunState.cancel(runId);
+    }).finally(() => {
+      if (localAgentRunPromises.get(runId) === runPromise) localAgentRunPromises.delete(runId);
     });
+    localAgentRunPromises.set(runId, runPromise);
     return { success: true };
   } catch (error) {
     console.error('[IPC] Failed to start local agent:', error);
@@ -564,7 +568,15 @@ ipcMain.handle('agent:start', async (event, opts) => {
 /** Cancel a locally running CLI agent process. */
 ipcMain.handle('agent:cancel', async (_event, runId) => {
   try {
-    const cancelled = await cancelLocalAgentRun(runId);
+    const id = Number(runId);
+    const cancelled = await cancelLocalAgentRun(id);
+    const running = localAgentRunPromises.get(id);
+    if (cancelled && running) {
+      // Do not acknowledge steering until close/error cleanup has completed.
+      // The server uses this acknowledgement as the handoff barrier before it
+      // releases the next turn for the same provider session.
+      await running;
+    }
     agentRunState.cancel(runId);
     return { success: cancelled };
   } catch (error) {
