@@ -232,6 +232,7 @@ async function listWorkspaces(dir) {
       isPrimary: path.resolve(wtPath) === path.resolve(repo.primaryRoot),
       managed: Boolean(entry),
       channelId: entry?.channelId || null,
+      workItemId: entry?.workItemId || null,
       baseBranch: entry?.baseBranch || null,
       createdAt: entry?.createdAt || null,
       exists: fs.existsSync(wtPath),
@@ -244,7 +245,7 @@ async function listWorkspaces(dir) {
  * Create an isolated workspace: a new branch off the current base, checked out
  * into a Cascade-managed directory outside the repository.
  */
-async function createWorkspace({ dir, slug, baseBranch, channelId } = {}) {
+async function createWorkspace({ dir, slug, baseBranch, channelId, workItemId } = {}) {
   const repo = await resolveRepo(dir);
   if (!repo.isRepo) return { ok: false, error: repo.error || 'Not a git repository' };
 
@@ -274,6 +275,7 @@ async function createWorkspace({ dir, slug, baseBranch, channelId } = {}) {
     baseBranch: base,
     baseCommit: baseSha.stdout,
     channelId: channelId || null,
+    workItemId: workItemId || null,
     createdAt: new Date().toISOString(),
   });
 

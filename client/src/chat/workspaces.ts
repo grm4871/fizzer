@@ -12,6 +12,7 @@ export type Workspace = {
   isPrimary: boolean;
   managed: boolean;
   channelId: string | null;
+  workItemId: string | null;
   baseBranch: string | null;
   createdAt: string | null;
   exists: boolean;
@@ -49,7 +50,12 @@ type Failure = { ok: false; error: string; needsForce?: boolean };
 export type WorkspaceBridge = {
   listWorktrees: (dir: string) => Promise<{ ok: true; repo: string; primaryRoot: string; workspaces: Workspace[] } | Failure>;
   getWorktreeStatus: (dir: string) => Promise<WorkspaceStatus | Failure>;
-  createWorktree: (opts: { dir: string; slug: string; channelId?: string }) => Promise<{ ok: true; path: string; branch: string } | Failure>;
+  createWorktree: (opts: {
+    dir: string;
+    slug: string;
+    channelId?: string;
+    workItemId?: string;
+  }) => Promise<{ ok: true; path: string; branch: string; baseCommit?: string } | Failure>;
   removeWorktree: (opts: { dir: string; force?: boolean }) => Promise<{ ok: true; path: string } | Failure>;
   createWorktreePullRequest: (opts: { dir: string; title?: string; body?: string; draft?: boolean }) => Promise<{ ok: true; url: string; branch: string; base: string; draft: boolean } | Failure>;
   getWorktreePullRequest: (dir: string) => Promise<{ ok: true; pr: PullRequest | null } | Failure>;

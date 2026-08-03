@@ -56,6 +56,22 @@ import {
   type VaultRole,
 } from './server/vaultMembers.js';
 import {
+  acquireWorkItemLease,
+  createWorkItem,
+  createWorkItemHandoff,
+  ensureWorkItemSchema,
+  getWorkItem,
+  linkWorkItemRun,
+  listSiblingWorkItems,
+  listWorkItemReviews,
+  listWorkItems,
+  reapExpiredWorkItemLeases,
+  releaseWorkItemLease,
+  updateWorkItem,
+  type WorkItemStatus,
+  type WorkspaceMode,
+} from './server/workItems.js';
+import {
   createNoteVersion,
   diffNoteVersions,
   diffText,
@@ -433,6 +449,8 @@ ensureChatSchema(db);
 ensureChatDispatchSchema(db);
 ensureChatMissionSchema(db);
 ensureVaultMembersSchema(db);
+ensureWorkItemSchema(db);
+try { reapExpiredWorkItemLeases(db); } catch { /* best-effort on boot */ }
 db.exec(`
   CREATE TABLE IF NOT EXISTS chat_note_grants (
     message_id TEXT NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
@@ -1319,6 +1337,137 @@ app.delete('/api/vaults/:id/members/:userId', requireAuth, (req: AuthedRequest, 
     res.json({ ok: true });
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : 'Could not remove member' });
+  }
+});
+
+// ── Work items (durable task workspaces) ───────────────────────────
+
+app.get('/api/vaults/:id/work-items', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const items = listWorkItems(db, req.user!.id, req.params.id, {
+      channelId: typeof req.query.channelId === 'string' ? req.query.channelId : undefined,
+      status: typeof req.query.status === 'string' ? req.query.status : undefined,
+    });
+    res.json({ items });
+  } catch (error) {
+    res.status(404).json({ error: error instanceof Error ? error.message : 'Vault not found' });
+  }
+});
+
+app.post('/api/vaults/:id/work-items', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const item = createWorkItem(db, req.user!.id, req.params.id, {
+      title: String(req.body?.title || ''),
+      brief: String(req.body?.brief || ''),
+      channelId: req.body?.channelId != null ? String(req.body.channelId) : null,
+      priority: Number(req.body?.priority) || 0,
+      sourceKind: String(req.body?.sourceKind || 'manual'),
+      sourceId: String(req.body?.sourceId || ''),
+      dependsOn: Array.isArray(req.body?.dependsOn) ? req.body.dependsOn.map(String) : [],
+      repository: String(req.body?.repository || ''),
+      baseCommit: String(req.body?.baseCommit || ''),
+      branch: String(req.body?.branch || ''),
+      workspaceMode: String(req.body?.workspaceMode || 'shared'),
+      worktreePath: String(req.body?.worktreePath || ''),
+      assigneeRegistrationId: req.body?.assigneeRegistrationId != null
+        ? String(req.body.assigneeRegistrationId)
+        : null,
+    });
+    res.status(201).json({ item });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not create work item' });
+  }
+});
+
+app.get('/api/work-items/:id', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const item = getWorkItem(db, req.user!.id, req.params.id);
+    const reviews = listWorkItemReviews(db, req.user!.id, item.id);
+    const siblings = listSiblingWorkItems(db, req.user!.id, item.id);
+    res.json({ item, reviews, siblings });
+  } catch (error) {
+    res.status(404).json({ error: error instanceof Error ? error.message : 'Work item not found' });
+  }
+});
+
+app.patch('/api/work-items/:id', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const item = updateWorkItem(db, req.user!.id, req.params.id, {
+      title: req.body?.title != null ? String(req.body.title) : undefined,
+      brief: req.body?.brief != null ? String(req.body.brief) : undefined,
+      status: req.body?.status != null ? String(req.body.status) as WorkItemStatus : undefined,
+      priority: req.body?.priority != null ? Number(req.body.priority) : undefined,
+      assigneeRegistrationId: req.body?.assigneeRegistrationId !== undefined
+        ? (req.body.assigneeRegistrationId == null ? null : String(req.body.assigneeRegistrationId))
+        : undefined,
+      repository: req.body?.repository != null ? String(req.body.repository) : undefined,
+      baseCommit: req.body?.baseCommit != null ? String(req.body.baseCommit) : undefined,
+      branch: req.body?.branch != null ? String(req.body.branch) : undefined,
+      workspaceMode: req.body?.workspaceMode != null ? String(req.body.workspaceMode) as WorkspaceMode : undefined,
+      worktreePath: req.body?.worktreePath != null ? String(req.body.worktreePath) : undefined,
+      prNumber: req.body?.prNumber !== undefined
+        ? (req.body.prNumber == null ? null : Number(req.body.prNumber))
+        : undefined,
+      prUrl: req.body?.prUrl != null ? String(req.body.prUrl) : undefined,
+      prState: req.body?.prState != null ? String(req.body.prState) : undefined,
+      summary: req.body?.summary != null ? String(req.body.summary) : undefined,
+      verification: req.body?.verification != null ? String(req.body.verification) : undefined,
+      dependsOn: Array.isArray(req.body?.dependsOn) ? req.body.dependsOn.map(String) : undefined,
+    });
+    res.json({ item });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not update work item' });
+  }
+});
+
+app.post('/api/work-items/:id/lease', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const item = acquireWorkItemLease(
+      db,
+      req.user!.id,
+      req.params.id,
+      String(req.body?.holder || req.user!.username || req.user!.id),
+      Number(req.body?.ttlMs) || undefined,
+    );
+    res.json({ item });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not acquire lease' });
+  }
+});
+
+app.post('/api/work-items/:id/release', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const item = releaseWorkItemLease(
+      db,
+      req.user!.id,
+      req.params.id,
+      req.body?.holder != null ? String(req.body.holder) : undefined,
+    );
+    res.json({ item });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not release lease' });
+  }
+});
+
+app.post('/api/work-items/:id/runs', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const item = linkWorkItemRun(db, req.user!.id, req.params.id, Number(req.body?.runId));
+    res.json({ item });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not link run' });
+  }
+});
+
+app.post('/api/work-items/:id/handoff', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const result = createWorkItemHandoff(db, req.user!.id, req.params.id, {
+      toRegistrationId: String(req.body?.toRegistrationId || ''),
+      fromRegistrationId: req.body?.fromRegistrationId != null ? String(req.body.fromRegistrationId) : undefined,
+      note: String(req.body?.note || ''),
+    });
+    res.status(201).json(result);
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not hand off work item' });
   }
 });
 

@@ -1,11 +1,12 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { Bot, Copy, Forward, Hash, ImagePlus, Paperclip, Reply, Send, Trash2, X } from 'lucide-react';
+import { Bot, ClipboardList, Copy, Forward, Hash, ImagePlus, Paperclip, Reply, Send, Trash2, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import { api, type NoteSummary } from '../api';
 import { DOC_EMBED_REGEX, findEmbeddedNote, NOTE_DND_TYPE, noteEmbedMarkdown, splitDocEmbeds } from '../docEmbeds';
 import { escapeRegExp, normalizeMention } from '../chat/mentions';
+import { createChannelWorkItem } from '../chat/workItems';
 import { highlightJSON } from './jsonHighlighter';
 import { CascadeRunPanel } from './CascadeRunPanel';
 import { ChatSidebarButtons } from './ChatSidebarButtons';
@@ -2620,6 +2621,29 @@ export const ChatView = memo(function ChatView({
               Forward
             </button>
           )}
+          {vaultId && (
+            <button
+              type="button"
+              onClick={() => {
+                const message = contextMenu.message;
+                setContextMenu(null);
+                void createChannelWorkItem(vaultId, {
+                  title: (message.body || 'Work item').replace(/\s+/g, ' ').trim().slice(0, 120) || 'Work item',
+                  brief: message.body || '',
+                  channelId,
+                  sourceKind: 'message',
+                  sourceId: message.id,
+                  repository: channelCwd || '',
+                  workspaceMode: channelCwd ? 'isolated' : 'shared',
+                }).catch(() => {
+                  /* settings panel shows work items on next open */
+                });
+              }}
+            >
+              <ClipboardList size={14} />
+              Create work item
+            </button>
+          )}
           {onDeleteMessage && (
             <button
               type="button"
@@ -2676,6 +2700,7 @@ export const ChatView = memo(function ChatView({
             <ChatWorkspacePanel
               channelId={channelId}
               channelName={channelName}
+              vaultId={vaultId}
               cwd={channelCwd}
               onUseWorkspace={(path) => { void saveChannelCwd(path); }}
             />

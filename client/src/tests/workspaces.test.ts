@@ -88,6 +88,7 @@ function workspace(overrides: Partial<Workspace> = {}): Workspace {
     isPrimary: false,
     managed: true,
     channelId: null,
+    workItemId: null,
     baseBranch: 'master',
     createdAt: null,
     exists: true,
