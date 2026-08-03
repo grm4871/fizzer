@@ -505,7 +505,17 @@ async function loadCliAgentModule() {
     const href = pathToFileURL(modPath).href + `?t=${mtimeMs || Date.now()}`;
     cliAgentModulePromise = import(href);
   }
-  return cliAgentModulePromise;
+  const mod = await cliAgentModulePromise;
+  // Run before every CLI launch, not just module import. That makes recovery
+  // deterministic in tests and also cleans up a prior runner host that died
+  // without requiring an entire Electron relaunch.
+  if (typeof mod.reapOrphanedCliAgentProcesses === 'function') {
+    const reaped = await mod.reapOrphanedCliAgentProcesses();
+    if (Array.isArray(reaped) && reaped.length > 0) {
+      console.warn(`[agent-runner] reaped orphaned CLI runs after desktop crash: ${reaped.join(', ')}`);
+    }
+  }
+  return mod;
 }
 
 /**
@@ -956,9 +966,15 @@ async function cancelLocalAgentRun(runId) {
   return flagged;
 }
 
+/** Reap detached CLI groups left behind by a prior crashed Electron main. */
+async function reapOrphanedLocalAgentRuns() {
+  await loadCliAgentModule();
+}
+
 module.exports = {
   startLocalAgentRun,
   cancelLocalAgentRun,
+  reapOrphanedLocalAgentRuns,
   chatTriggeringMessageId,
   helperAllowedTools,
   normalizeClaudeEffort,

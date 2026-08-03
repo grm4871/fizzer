@@ -3,6 +3,10 @@ const test = require('node:test');
 const os = require('node:os');
 const path = require('node:path');
 const fs = require('node:fs');
+const { spawn } = require('node:child_process');
+const { pathToFileURL } = require('node:url');
+const runnerLeaseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-runner-leases-'));
+process.env.CASCADE_AGENT_PROCESS_DIR = runnerLeaseDir;
 const { chatTriggeringMessageId, helperAllowedTools, normalizeClaudeEffort, startLocalAgentRun } = require('./agent-runner.cjs');
 
 test('chat triggering message id follows the mission root through runner payload shapes', () => {
@@ -44,6 +48,7 @@ test('Akron reaches the Electron event bridge with launch, reasoning, and termin
   const bin = path.join(dir, 'fake-akron');
   fs.writeFileSync(bin, `#!/usr/bin/env node
 if (process.env.HERMES_CASCADE_EVENTS !== '1') process.exit(13);
+if (process.env.FAKE_AKRON_CRASH_LOOP === '1') setInterval(() => {}, 1000);
 process.stderr.write(JSON.stringify({ type: 'reasoning.delta', text: 'bridged thought' }) + '\\n');
 process.stdout.write('bridged answer\\n');
 `);
@@ -78,4 +83,45 @@ process.stdout.write('bridged answer\\n');
   const terminal = events.at(-1);
   assert.equal(terminal.type, 'status');
   assert.equal(JSON.parse(terminal.payload_json).status, 'completed');
+
+  // Reproduce a hard Electron-main crash: the detached Akron process group is
+  // adopted by PID 1, while its durable lease survives on disk.
+  const crashedRunId = 92002;
+  const crashHost = `
+    import fs from 'node:fs';
+    import { runCliAgent } from ${JSON.stringify(pathToFileURL(path.join(__dirname, '..', 'dist', 'cli-agents', 'cli-agent.js')).href)};
+    void runCliAgent({ agent: 'akron-grok', context: '', userPrompt: 'long orchestrator work', cwd: ${JSON.stringify(dir)}, runId: ${crashedRunId}, emit() {} });
+    const lease = ${JSON.stringify(path.join(runnerLeaseDir, `${crashedRunId}.json`))};
+    const timer = setInterval(() => {
+      if (fs.existsSync(lease)) { clearInterval(timer); process.exit(77); }
+    }, 10);
+  `;
+  const crashedOwner = spawn(process.execPath, ['--input-type=module', '-e', crashHost], {
+    cwd: path.join(__dirname, '..'),
+    env: {
+      ...process.env,
+      AKRON_BIN: bin,
+      FAKE_AKRON_CRASH_LOOP: '1',
+      CASCADE_AGENT_PROCESS_DIR: runnerLeaseDir,
+    },
+    stdio: 'ignore',
+  });
+  const crashCode = await new Promise((resolve) => crashedOwner.once('exit', resolve));
+  assert.equal(crashCode, 77);
+  const orphanLease = JSON.parse(fs.readFileSync(path.join(runnerLeaseDir, `${crashedRunId}.json`), 'utf8'));
+  assert.doesNotThrow(() => process.kill(orphanLease.processGroupId, 0));
+
+  // Starting the next real coordinator turn goes through loadCliAgentModule,
+  // which must reap the orphan before launching the replacement Akron run.
+  const recoveredEvents = [];
+  await startLocalAgentRun({
+    runId: 92003,
+    agent: 'akron-grok',
+    prompt: 'coordinator after crash',
+    cwd: dir,
+    vaultRoot: dir,
+  }, (event) => recoveredEvents.push(event));
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.throws(() => process.kill(orphanLease.processGroupId, 0));
+  assert.equal(JSON.parse(recoveredEvents.at(-1).payload_json).status, 'completed');
 });

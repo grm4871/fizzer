@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { spawn } from 'node:child_process';
 
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-codex-'));
 const fakeBin = path.join(scratch, 'fake-codex');
@@ -19,6 +20,7 @@ const fakeAkronBin = path.join(scratch, 'fake-akron');
 const argLog = path.join(scratch, 'args.jsonl');
 const akronChildPid = path.join(scratch, 'akron-child.pid');
 const akronAttemptLog = path.join(scratch, 'akron-attempts.txt');
+const agentProcessLeaseDir = path.join(scratch, 'agent-processes');
 
 fs.writeFileSync(fakeBin, `#!/usr/bin/env node
 const fs = require('fs');
@@ -70,8 +72,9 @@ process.env.CODEX_BIN = fakeBin;
 process.env.AKRON_BIN = fakeAkronBin;
 process.env.RUNNER_CLI_HEARTBEAT_MS = '25';
 process.env.RUNNER_AKRON_IDLE_TIMEOUT_MS = '1000';
+process.env.CASCADE_AGENT_PROCESS_DIR = agentProcessLeaseDir;
 
-const { cancelCliAgentRun, runCliAgent } = await import('./cli-agent.js');
+const { cancelCliAgentRun, reapOrphanedCliAgentProcesses, runCliAgent } = await import('./cli-agent.js');
 
 function readArgs(): string[][] {
   return fs.readFileSync(argLog, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
@@ -155,6 +158,53 @@ test('Akron retries one byte-silent provider request with a fresh bridge', async
   }
   assert.equal(fs.readFileSync(akronAttemptLog, 'utf8'), '2');
   assert.match(harness.join(''), /retrying Akron once with a fresh bridge/);
+});
+
+test('a crashed desktop owner leaves a real Akron group that the next coordinator reaps', async () => {
+  fs.rmSync(agentProcessLeaseDir, { recursive: true, force: true });
+  fs.rmSync(akronChildPid, { force: true });
+  const hostScript = `
+    import fs from 'node:fs';
+    import { runCliAgent } from ${JSON.stringify(new URL('./cli-agent.ts', import.meta.url).href)};
+    void runCliAgent({ agent: 'akron-grok', context: '', userPrompt: 'orchestrate until crash', cwd: ${JSON.stringify(scratch)}, runId: 9090, emit() {} });
+    const lease = ${JSON.stringify(path.join(agentProcessLeaseDir, '9090.json'))};
+    const timer = setInterval(() => {
+      if (fs.existsSync(lease)) {
+        clearInterval(timer);
+        process.exit(77);
+      }
+    }, 10);
+  `;
+  const crashedHost = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', hostScript], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      AKRON_BIN: fakeAkronBin,
+      CASCADE_AGENT_PROCESS_DIR: agentProcessLeaseDir,
+      RUNNER_AKRON_IDLE_TIMEOUT_MS: '30000',
+    },
+    stdio: 'ignore',
+  });
+  const exitCode = await new Promise<number | null>((resolve) => crashedHost.once('exit', resolve));
+  assert.equal(exitCode, 77, 'simulated Electron owner should crash abruptly');
+
+  const lease = JSON.parse(fs.readFileSync(path.join(agentProcessLeaseDir, '9090.json'), 'utf8'));
+  assert.doesNotThrow(() => process.kill(lease.processGroupId, 0), 'detached Akron should reproduce the orphan');
+
+  assert.deepEqual(await reapOrphanedCliAgentProcesses(), [9090]);
+  await waitFor(() => {
+    try { process.kill(lease.processGroupId, 0); return false; } catch { return true; }
+  });
+
+  process.env.FAKE_AKRON_EVENTS = '1';
+  try {
+    const next = await runCliAgent({
+      agent: 'akron-grok', context: '', userPrompt: 'next coordinator turn', cwd: scratch, runId: 9091, emit,
+    });
+    assert.equal(next.summary, 'native answer');
+  } finally {
+    delete process.env.FAKE_AKRON_EVENTS;
+  }
 });
 
 test('Akron emits launch metadata and native reasoning events through the harness bridge', async () => {

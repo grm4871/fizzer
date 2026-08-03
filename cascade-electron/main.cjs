@@ -32,7 +32,7 @@ if (explicitUserDataDir) {
 }
 
 const db = require('./database.cjs');
-const { startLocalAgentRun, cancelLocalAgentRun } = require('./agent-runner.cjs');
+const { startLocalAgentRun, cancelLocalAgentRun, reapOrphanedLocalAgentRuns } = require('./agent-runner.cjs');
 const { connectDesktopRunner, disconnectDesktopRunner, isDesktopRunnerConnected, probeLocalModels } = require('./desktop-runner-host.cjs');
 const { collectPlanUsage } = require('./plan-usage.cjs');
 const { AgentRunState, settleCancelAcknowledgement } = require('./agent-run-state.cjs');
@@ -874,6 +874,11 @@ ipcMain.handle('app:updateAndRestart', async () => {
 // ═══════════════════════════════════════════════════════════════
 
   app.whenReady().then(async () => {
+  try {
+    await reapOrphanedLocalAgentRuns();
+  } catch (error) {
+    console.error('[Main] Failed to reap orphaned agent processes:', error);
+  }
   // Initialize database
   try {
     db.initDatabase();

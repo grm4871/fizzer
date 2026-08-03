@@ -56,6 +56,7 @@
  */
 
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -66,6 +67,103 @@ type Db = Database.Database;
 export const activeCliProcesses = new Map<number, ChildProcess>();
 const groupedCliProcesses = new Set<number>();
 const runHelperEnvByRunId = new Map<number, NodeJS.ProcessEnv>();
+const agentProcessLeaseDir = process.env.CASCADE_AGENT_PROCESS_DIR
+  || path.join(os.homedir(), '.cascade', 'agent-processes');
+
+type AgentProcessLease = {
+  version: 1;
+  runId: number;
+  ownerPid: number;
+  ownerStartTicks: string;
+  processGroupId: number;
+  token: string;
+  label: string;
+};
+
+function processStartTicks(pid: number): string {
+  if (process.platform !== 'linux' || !Number.isInteger(pid) || pid <= 0) return '';
+  try {
+    // The command name can contain spaces and parentheses. Field 22 starts
+    // twenty fields after the final ')' in /proc/<pid>/stat.
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
+    return stat.slice(stat.lastIndexOf(')') + 2).trim().split(/\s+/)[19] || '';
+  } catch {
+    return '';
+  }
+}
+
+function leasePath(runId: number): string {
+  return path.join(agentProcessLeaseDir, `${runId}.json`);
+}
+
+function writeAgentProcessLease(lease: AgentProcessLease): void {
+  fs.mkdirSync(agentProcessLeaseDir, { recursive: true, mode: 0o700 });
+  const target = leasePath(lease.runId);
+  const temporary = `${target}.${process.pid}.tmp`;
+  fs.writeFileSync(temporary, JSON.stringify(lease), { mode: 0o600 });
+  fs.renameSync(temporary, target);
+}
+
+function clearAgentProcessLease(runId: number): void {
+  try { fs.unlinkSync(leasePath(runId)); } catch { /* already absent */ }
+}
+
+function processHasLeaseToken(pid: number, runId: number, token: string): boolean {
+  if (process.platform !== 'linux') return false;
+  try {
+    const env = fs.readFileSync(`/proc/${pid}/environ`);
+    const entries = env.toString().split('\0');
+    return entries.includes(`CASCADE_RUN_ID=${runId}`)
+      && entries.includes(`CASCADE_AGENT_PROCESS_TOKEN=${token}`);
+  } catch {
+    return false;
+  }
+}
+
+function processIsSameOwner(lease: AgentProcessLease): boolean {
+  const currentStart = processStartTicks(lease.ownerPid);
+  return Boolean(currentStart && currentStart === lease.ownerStartTicks);
+}
+
+/**
+ * Kill detached CLI groups whose owning Electron main process crashed.
+ *
+ * Detached launchers survive a hard Electron exit and are adopted by PID 1.
+ * The token check prevents a stale/forged lease from targeting an unrelated
+ * process group after PID reuse.
+ */
+export async function reapOrphanedCliAgentProcesses(): Promise<number[]> {
+  if (process.platform !== 'linux') return [];
+  let files: string[] = [];
+  try { files = fs.readdirSync(agentProcessLeaseDir).filter((name) => name.endsWith('.json')); } catch { return []; }
+  const reaped: number[] = [];
+  for (const file of files) {
+    const target = path.join(agentProcessLeaseDir, file);
+    let lease: AgentProcessLease | null = null;
+    try { lease = JSON.parse(fs.readFileSync(target, 'utf8')) as AgentProcessLease; } catch { /* invalid lease */ }
+    const valid = lease?.version === 1
+      && Number.isInteger(lease.runId) && lease.runId > 0
+      && Number.isInteger(lease.ownerPid) && lease.ownerPid > 1
+      && Number.isInteger(lease.processGroupId) && lease.processGroupId > 1
+      && typeof lease.ownerStartTicks === 'string' && lease.ownerStartTicks.length > 0
+      && typeof lease.token === 'string' && lease.token.length >= 16;
+    if (!valid || !lease) {
+      try { fs.unlinkSync(target); } catch { /* ignore */ }
+      continue;
+    }
+    if (processIsSameOwner(lease)) continue;
+    if (!processHasLeaseToken(lease.processGroupId, lease.runId, lease.token)) {
+      try { fs.unlinkSync(target); } catch { /* stale */ }
+      continue;
+    }
+    try { process.kill(-lease.processGroupId, 'SIGTERM'); } catch { /* already gone */ }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    try { process.kill(-lease.processGroupId, 0); process.kill(-lease.processGroupId, 'SIGKILL'); } catch { /* settled */ }
+    try { fs.unlinkSync(target); } catch { /* ignore */ }
+    reaped.push(lease.runId);
+  }
+  return reaped;
+}
 
 function terminateCliProcess(child: ChildProcess, processGroup: boolean): void {
   if (processGroup && process.platform !== 'win32' && child.pid) {
@@ -97,6 +195,7 @@ export function cancelCliAgentRun(runId: number): boolean {
   terminateCliProcessWithEscalation(child, processGroup);
   activeCliProcesses.delete(runId);
   groupedCliProcesses.delete(runId);
+  clearAgentProcessLease(runId);
   return true;
 }
 
@@ -2008,6 +2107,7 @@ function driveHermesProcess(
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     let child;
+    const leaseToken = randomBytes(16).toString('hex');
     // A launcher can spend time constructing its provider bridge before it
     // writes its first byte. Give the run panel an unambiguous lifecycle event
     // first, so a live process is never presented as a blank harness.
@@ -2020,13 +2120,37 @@ function driveHermesProcess(
         // Hermes-family runs their own process group so Stop reaches the whole
         // tree instead of only terminating the outer bash wrapper.
         detached: process.platform !== 'win32',
-        env: { ...(env ? { ...spawnEnv(runId), ...env } : spawnEnv(runId)), HERMES_CASCADE_EVENTS: '1' },
+        env: {
+          ...(env ? { ...spawnEnv(runId), ...env } : spawnEnv(runId)),
+          HERMES_CASCADE_EVENTS: '1',
+          CASCADE_AGENT_PROCESS_TOKEN: leaseToken,
+          ...(runId !== undefined ? { CASCADE_RUN_ID: String(runId) } : {}),
+        },
       });
       if (runId !== undefined) {
         activeCliProcesses.set(runId, child);
-        if (process.platform !== 'win32') groupedCliProcesses.add(runId);
+        if (process.platform !== 'win32') {
+          groupedCliProcesses.add(runId);
+          if (child.pid && process.platform === 'linux') {
+            writeAgentProcessLease({
+              version: 1,
+              runId,
+              ownerPid: process.pid,
+              ownerStartTicks: processStartTicks(process.pid),
+              processGroupId: child.pid,
+              token: leaseToken,
+              label,
+            });
+          }
+        }
       }
     } catch (err) {
+      if (child) terminateCliProcessWithEscalation(child, process.platform !== 'win32');
+      if (runId !== undefined) {
+        activeCliProcesses.delete(runId);
+        groupedCliProcesses.delete(runId);
+        clearAgentProcessLease(runId);
+      }
       reject(new Error(`Failed to launch ${label} ('${bin}'): ${err instanceof Error ? err.message : String(err)}`));
       return;
     }
@@ -2035,6 +2159,7 @@ function driveHermesProcess(
       if (runId !== undefined) {
         activeCliProcesses.delete(runId);
         groupedCliProcesses.delete(runId);
+        clearAgentProcessLease(runId);
       }
     };
 
