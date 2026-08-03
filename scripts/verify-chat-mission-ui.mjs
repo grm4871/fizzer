@@ -254,14 +254,18 @@ try {
   const finalVisible = await page.locator(`[data-message-id="${traceMessages[2].id}"]`).isVisible();
   const initiallyExpanded = await workTrace.locator('.chat-work-trace-toggle').getAttribute('aria-expanded');
   check('worker chatter collapses into a work trace', await workTrace.isVisible());
-  check('work trace keeps the final answer outside the compact stream', (
-    finalVisible && !traceText.includes('user-facing answer remains')
+  check('collapsed work trace exposes workflow decals', await workTrace.locator('.chat-work-decal').count() >= 1);
+  check('coordinator prose flattens when later work is still active', (
+    !finalVisible && !traceText.includes('user-facing answer remains')
   ), `finalVisible=${finalVisible}, trace=${JSON.stringify(traceText)}`);
   check('settled trace starts collapsed and is keyboard-expandable', initiallyExpanded === 'false', `aria-expanded=${initiallyExpanded}`);
   await workTrace.locator('.chat-work-trace-toggle').click();
   const traceLines = workTrace.locator('.chat-work-line');
   const traceLineCount = await traceLines.count();
   check('expanded trace exposes its worker steps', traceLineCount >= 1, `count=${traceLineCount}`);
+  check('expanded trace retains flattened coordinator evidence', (
+    await workTrace.locator(`[data-message-id="${traceMessages[2].id}"]`).count()
+  ) === 1);
   const workerLine = workTrace.locator(`[data-message-id="${traceMessages[1].id}"]`);
   await workerLine.locator('.chat-work-line-fold').click();
   check('an individual step restores its full evidence', (

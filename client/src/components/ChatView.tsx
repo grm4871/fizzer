@@ -1520,13 +1520,10 @@ export const ChatView = memo(function ChatView({
   const agentAuthors = useMemo(() => new Set(
     registeredAgentRows.flatMap((agent) => [agent.label, agent.registration.displayName].filter(Boolean)),
   ), [registeredAgentRows]);
-  const coordinatorRegistrationIds = useMemo(() => new Set(
-    registeredAgents.filter((agent) => agent.orchestrator).map((agent) => agent.id),
-  ), [registeredAgents]);
   // Collapse multi-agent chatter into TUI-style work traces between human turns.
   const transcriptSegments = useMemo(
-    () => segmentTranscript(sortedMessages, { agentAuthors, coordinatorRegistrationIds }),
-    [agentAuthors, coordinatorRegistrationIds, sortedMessages],
+    () => segmentTranscript(sortedMessages, { agentAuthors }),
+    [agentAuthors, sortedMessages],
   );
   const registrationById = useMemo(() => {
     const byId = new Map<string, ChatAgentRegistration>();

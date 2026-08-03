@@ -12,6 +12,7 @@ import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import {
   workTraceAuthorKey,
+  workTraceDecals,
   workTracePreview,
   workTraceStatusLabel,
   workTraceSummary,
@@ -182,23 +183,12 @@ export const ChatWorkTrace = memo(function ChatWorkTrace({
   runningMessageState: ReadonlyMap<string, { latestId: string; count: number }>;
 }) {
   const live = trace.some((m) => m.status === 'running' || m.status === 'sending');
-  const [open, setOpen] = useState(live);
+  const [open, setOpen] = useState(false);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const pinBottomRef = useRef(true);
   const summary = useMemo(() => workTraceSummary(trace), [trace]);
-  const tailPreview = useMemo(() => {
-    const last = trace[trace.length - 1];
-    if (!last) return '';
-    return workTracePreview(last.body || workTraceStatusLabel(last), 72);
-  }, [trace]);
-
-  useEffect(() => {
-    if (live) {
-      setOpen(true);
-      pinBottomRef.current = true;
-    }
-  }, [live]);
+  const decals = useMemo(() => workTraceDecals(trace), [trace]);
 
   useEffect(() => {
     if (!selectedMessageId) return;
@@ -240,11 +230,23 @@ export const ChatWorkTrace = memo(function ChatWorkTrace({
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
       >
-        <span className="chat-work-trace-kicker">work</span>
+        <span className="chat-work-trace-kicker">flow</span>
+        <span className="chat-work-decals" aria-label={`Workflow: ${decals.map((decal) => decal.label).join(', ')}`}>
+          {decals.map((decal, index) => {
+            const current = index === decals.length - 1;
+            return (
+              <span
+                key={`${decal.phase}-${index}`}
+                className={`chat-work-decal phase-${decal.phase}${current ? ' is-current' : ''}${current && live ? ' is-live' : ''}`}
+                title={decal.label}
+              >
+                <span className="chat-work-decal-mark" aria-hidden="true">{decal.mark}</span>
+                <span className="chat-work-decal-label">{decal.label}</span>
+              </span>
+            );
+          })}
+        </span>
         <span className="chat-work-trace-summary">{summary}</span>
-        {!open && tailPreview && (
-          <span className="chat-work-trace-tail dim">{tailPreview}</span>
-        )}
         {live && <span className="ai-spinner chat-work-trace-spinner" aria-hidden="true" />}
         <ChevronRight size={13} className={`chat-work-trace-chevron${open ? ' open' : ''}`} />
       </button>

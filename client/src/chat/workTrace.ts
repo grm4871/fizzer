@@ -76,6 +76,65 @@ export function workTraceStatusLabel(message: Pick<ChatMessage, 'status' | 'body
   return preview || '(empty)';
 }
 
+export type WorkTracePhase =
+  | 'routing'
+  | 'working'
+  | 'waiting'
+  | 'steering'
+  | 'reviewing'
+  | 'testing'
+  | 'deploying'
+  | 'blocked'
+  | 'complete';
+
+export interface WorkTraceDecal {
+  phase: WorkTracePhase;
+  label: string;
+  mark: string;
+}
+
+const WORK_TRACE_DECALS: Record<WorkTracePhase, WorkTraceDecal> = {
+  routing: { phase: 'routing', label: 'route', mark: '↗' },
+  working: { phase: 'working', label: 'work', mark: '◌' },
+  waiting: { phase: 'waiting', label: 'wait', mark: '⋯' },
+  steering: { phase: 'steering', label: 'steer', mark: '↪' },
+  reviewing: { phase: 'reviewing', label: 'review', mark: '◇' },
+  testing: { phase: 'testing', label: 'test', mark: '✓' },
+  deploying: { phase: 'deploying', label: 'deploy', mark: '↑' },
+  blocked: { phase: 'blocked', label: 'blocked', mark: '!' },
+  complete: { phase: 'complete', label: 'done', mark: '✓' },
+};
+
+/** Best available workflow phase from durable status plus a conservative live-text overlay. */
+export function workTracePhase(
+  message: Pick<ChatMessage, 'id' | 'author' | 'body' | 'status' | 'missionTaskId' | 'harnessLog'>,
+): WorkTracePhase {
+  const text = `${message.body || ''}\n${message.harnessLog || ''}`.toLowerCase();
+  if (message.status === 'failed') return 'blocked';
+  if (/\b(steer|redirect|change direction|supersed)/.test(text)) return 'steering';
+  if (message.status === 'canceled') return 'blocked';
+  if (isSystemCascadeMessage(message) || /\b(review|reconcil|ready for review)/.test(text)) return 'reviewing';
+  if (message.status === 'running' || message.status === 'sending') {
+    if (/\b(deploy|ship|release|production|prod\b)/.test(text)) return 'deploying';
+    if (/\b(test|verify|verification|lint|runtime|regression|check)/.test(text)) return 'testing';
+    if (/\b(wait|waiting|blocked on|dependency|agent busy)/.test(text)) return 'waiting';
+    if (message.status === 'sending' || message.missionTaskId) return 'routing';
+    return 'working';
+  }
+  if (message.missionTaskId) return 'complete';
+  return 'complete';
+}
+
+/** Ordered, de-duplicated workflow trail for the collapsed header. */
+export function workTraceDecals(trace: ChatMessage[]): WorkTraceDecal[] {
+  const phases: WorkTracePhase[] = [];
+  for (const message of trace) {
+    const phase = workTracePhase(message);
+    if (phases[phases.length - 1] !== phase) phases.push(phase);
+  }
+  return phases.slice(-6).map((phase) => WORK_TRACE_DECALS[phase]);
+}
+
 /**
  * Within a consecutive agent/system run, decide which messages collapse.
  * Mission/media artifacts and the last settled non-worker answer stay full.
@@ -84,7 +143,6 @@ export function workTraceStatusLabel(message: Pick<ChatMessage, 'status' | 'body
  */
 export function partitionWorkRun(
   messages: ChatMessage[],
-  options?: { coordinatorRegistrationIds?: ReadonlySet<string> },
 ): { trace: ChatMessage[]; full: ChatMessage[] } {
   if (messages.length === 0) return { trace: [], full: [] };
 
@@ -99,7 +157,7 @@ export function partitionWorkRun(
   for (let index = 0; index < messages.length; index += 1) {
     const message = messages[index];
     const isLast = index === messages.length - 1;
-    if (shouldRenderFullInWorkRun(message, isLast, options?.coordinatorRegistrationIds)) {
+    if (shouldRenderFullInWorkRun(message, isLast)) {
       full.push(message);
     } else {
       trace.push(message);
@@ -112,17 +170,9 @@ export function partitionWorkRun(
 function shouldRenderFullInWorkRun(
   message: ChatMessage,
   isLast: boolean,
-  coordinatorRegistrationIds?: ReadonlySet<string>,
 ): boolean {
   if (message.mission || message.changeRequest) return true;
   if (message.hasImages || message.images?.length || message.attachments?.length) return true;
-  // Coordinator prose addresses the operator. Keep it conversational even if
-  // a later worker wake or placeholder is appended to the same agent streak.
-  if (
-    message.registrationId
-    && coordinatorRegistrationIds?.has(message.registrationId)
-    && !isForcedWorkTraceLine(message)
-  ) return true;
   // Final user-facing answer of a multi-message run.
   if (
     isLast
@@ -154,7 +204,6 @@ export function segmentTranscript(
   messages: ChatMessage[],
   options?: {
     agentAuthors?: ReadonlySet<string>;
-    coordinatorRegistrationIds?: ReadonlySet<string>;
   },
 ): TranscriptSegment[] {
   const agentAuthors = options?.agentAuthors;
@@ -181,9 +230,7 @@ export function segmentTranscript(
       index += 1;
     }
 
-    const { trace, full } = partitionWorkRun(work, {
-      coordinatorRegistrationIds: options?.coordinatorRegistrationIds,
-    });
+    const { trace, full } = partitionWorkRun(work);
     if (trace.length === 0) {
       for (const group of groupMessages(full.length ? full : work)) {
         segments.push({ kind: 'group', group });

@@ -6,6 +6,8 @@ import {
   partitionWorkRun,
   segmentTranscript,
   workTracePreview,
+  workTraceDecals,
+  workTracePhase,
   workTraceSummary,
 } from '../chat/workTrace';
 
@@ -108,17 +110,28 @@ describe('workTrace', () => {
     ]);
   });
 
-  it('keeps coordinator prose full even when later worker activity follows', () => {
+  it('flattens coordinator progress when later worker activity follows', () => {
     const coordinator = msg({
       id: 'a1', author: 'Sol', body: 'Here is the answer.', agentId: 'codex', registrationId: 'sol-reg',
     });
     const laterWorker = msg({
       id: 'a2', author: 'Terra', body: 'Still checking.', agentId: 'codex', missionTaskId: 'task-1',
     });
-    const segments = segmentTranscript([coordinator, laterWorker], {
-      coordinatorRegistrationIds: new Set(['sol-reg']),
-    });
-    expect(segments.map((segment) => segment.kind)).toEqual(['group', 'work']);
+    const segments = segmentTranscript([coordinator, laterWorker]);
+    expect(segments.map((segment) => segment.kind)).toEqual(['work']);
+    if (segments[0].kind === 'work') expect(segments[0].trace).toEqual([coordinator, laterWorker]);
+  });
+
+  it('derives a compact ordered workflow decal trail', () => {
+    const trace = [
+      msg({ id: '1', author: 'Sol', body: 'Queued for Terra', status: 'sending', missionTaskId: 't1' }),
+      msg({ id: '2', author: 'Terra', body: 'Running regression tests', status: 'running', missionTaskId: 't1' }),
+      msg({ id: '3', author: 'Sol', body: 'Reconciling evidence for review', status: 'running' }),
+      msg({ id: '4', author: 'Sol', body: 'Deploying production', status: 'running' }),
+      msg({ id: '5', author: 'Sol', body: 'Done' }),
+    ];
+    expect(trace.map(workTracePhase)).toEqual(['routing', 'testing', 'reviewing', 'deploying', 'complete']);
+    expect(workTraceDecals(trace).map((decal) => decal.label)).toEqual(['route', 'test', 'review', 'deploy', 'done']);
   });
 
   it('previews and summarizes compactly', () => {

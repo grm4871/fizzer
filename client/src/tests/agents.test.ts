@@ -95,6 +95,8 @@ describe('formatAgentChatPrompt', () => {
     expect(prompt).toContain('--after <task-id,...>');
     expect(prompt).toContain('Stay responsive to the user while workers run');
     expect(prompt).toContain('cascade-chat mission finish');
+    expect(prompt).toContain('treat that as authorization to implement it');
+    expect(prompt).toContain('Do not stop at agreement, praise, or a proposal');
   });
 
   it('continuations keep normal completion guidance', () => {
