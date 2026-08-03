@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   agentsAfterLoadFailure,
   CHAT_AGENT_MODEL_PRESETS,
+  chatAgentConversation,
   formatAgentChatPrompt,
   needsCascadeWorkspaceContext,
   needsRecentChatContext,
@@ -23,6 +24,27 @@ describe('agent member hydration', () => {
   it('falls back to legacy registrations only when no server state was loaded', () => {
     const legacy = [{ id: 'legacy', mention: 'legacy' }];
     expect(agentsAfterLoadFailure(undefined, legacy)).toBe(legacy);
+  });
+});
+
+describe('agent conversation isolation', () => {
+  it('keeps normal channel turns sticky', () => {
+    expect(chatAgentConversation('reg-terra', 'channel-session', undefined)).toEqual({
+      conversationId: 'channel-session',
+      watermarkKey: 'reg-terra:channel-session',
+      adoptConversation: false,
+    });
+  });
+
+  it('gives each mission task a stable isolated conversation', () => {
+    const first = chatAgentConversation('reg-terra', 'multi-day-channel-session', 'task-1');
+    const retry = chatAgentConversation('reg-terra', 'multi-day-channel-session', 'task-1');
+    const next = chatAgentConversation('reg-terra', 'multi-day-channel-session', 'task-2');
+    expect(first).toEqual(retry);
+    expect(first.conversationId).toBe('mission:task-1');
+    expect(next.conversationId).toBe('mission:task-2');
+    expect(next.watermarkKey).not.toBe(first.watermarkKey);
+    expect(first.adoptConversation).toBe(false);
   });
 });
 
@@ -103,6 +125,15 @@ describe('formatAgentChatPrompt', () => {
     const prompt = formatAgentChatPrompt('dev', registration, 'ok cool', 'alice', true);
     expect(prompt).toContain('Finish the request with judgment');
     expect(prompt).not.toContain('cascade-chat send');
+  });
+
+  it('does not repay the full coordinator contract on a resumed session', () => {
+    const coordinator = { ...registration, orchestrator: true };
+    const fresh = formatAgentChatPrompt('dev', coordinator, 'take care of the release', 'alice', false);
+    const continued = formatAgentChatPrompt('dev', coordinator, 'and publish android', 'alice', true);
+    expect(continued).toContain('delegate only when another session adds clear value');
+    expect(continued).not.toContain('cascade-chat mission delegate');
+    expect(fresh.length - continued.length).toBeGreaterThan(900);
   });
 
   it('leaves Akron scratchpad guidance to the native harness tool', () => {

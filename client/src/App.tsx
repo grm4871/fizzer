@@ -44,6 +44,7 @@ import {
   agentsAfterLoadFailure,
   agentLabel,
   CHAT_AGENTS,
+  chatAgentConversation,
   formatAgentChatPrompt,
   mergeAgentModelPresets,
   needsCascadeWorkspaceContext,
@@ -1440,7 +1441,12 @@ export default function App() {
     const agentId = registration.agentId as AgentId;
     if (!CHAT_AGENTS.some((agent) => agent.id === agentId)) return false;
     const channelName = notesRef.current.find((note) => note.id === channelId)?.title || 'chat';
-    const watermarkKey = `${registration.id}:${registration.conversationId || ''}`;
+    const conversation = chatAgentConversation(
+      registration.id,
+      registration.conversationId,
+      triggeringMessage.missionTaskId,
+    );
+    const watermarkKey = conversation.watermarkKey;
     const sessionTurn = enqueueSessionTurn(agentSessionTailRef.current, watermarkKey);
     const orchestrationQueue = queuesBehindActiveSession(triggeringMessage);
     const steeringTurn = Boolean(sessionTurn.preceding) && !orchestrationQueue;
@@ -1621,7 +1627,7 @@ export default function App() {
       const runPrompt = formatAgentChatPrompt(channelName, registration, steeredPrompt, triggeringMessage.author, continuation);
       // Conversation id groups runs for backend session resume (findPriorSession).
       // The actual CLI session_id is resolved server-side — not this value.
-      const conversationId = registration.conversationId || undefined;
+      const conversationId = conversation.conversationId;
       let assistantText = '';
       let bufferedBlocks: ChatBlock[] = [];
       const processedSeqs = new Set<number>();
@@ -1792,7 +1798,7 @@ export default function App() {
       serverOwnedChatMessageIdsRef.current.add(agentMessageId);
       // Legacy members predate per-member sessions: adopt the conversation the
       // server just minted and persist it so later turns resume the same session.
-      if (!registration.conversationId && res.run.conversation_id) {
+      if (conversation.adoptConversation && res.run.conversation_id) {
         handleRegisterChatAgent(channelId, { ...registration, conversationId: res.run.conversation_id });
       }
 

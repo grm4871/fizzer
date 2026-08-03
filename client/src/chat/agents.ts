@@ -203,6 +203,29 @@ export type AgentPromptRegistration = {
   orchestrator?: boolean;
 };
 
+/**
+ * Coordinators keep a sticky channel conversation; delegated mission tasks get
+ * a task-scoped provider session. A retry can resume its own evidence, while a
+ * later task cannot inherit a worker's multi-day channel transcript.
+ */
+export function chatAgentConversation(
+  registrationId: string,
+  savedConversationId: string | undefined,
+  missionTaskId: string | undefined,
+) {
+  const taskId = String(missionTaskId || '').trim();
+  if (taskId) {
+    const conversationId = `mission:${taskId}`;
+    return { conversationId, watermarkKey: `${registrationId}:${conversationId}`, adoptConversation: false };
+  }
+  const conversationId = String(savedConversationId || '').trim() || undefined;
+  return {
+    conversationId,
+    watermarkKey: `${registrationId}:${conversationId || ''}`,
+    adoptConversation: !conversationId,
+  };
+}
+
 /** True only when the request cannot stand on its own after reply/batch folding. */
 export function needsRecentChatContext(request: string): boolean {
   const text = String(request || '').trim();
@@ -236,7 +259,13 @@ export function formatAgentChatPrompt(
   const nativeScratchpad = registration.agentId === 'akron-grok';
   const compactNativeCli = registration.agentId === 'hermes' || registration.agentId === 'omp';
   const coordinatorGuidance = registration.orchestrator
-    ? ' You are this channel’s coordinator. Handle simple requests directly with no delegation hop. When the user proposes an actionable change or says something should work differently, treat that as authorization to implement it within the stated scope unless they clearly ask only to discuss or explain. Do not stop at agreement, praise, or a proposal: make the change, verify it, and report the result. For genuinely parallel or long work, use `cascade-chat members`, then `cascade-chat mission start --title "..." --objective "..."` and one or more `cascade-chat mission delegate --mission <id> --to @agent --task "..." --message "..."`. Add `--after <task-id,...>` for dependencies, `--priority N` for ready-work ordering, and `--effort low|medium|high|xhigh|max|ultra` for supported Codex/Claude workers that need a non-default reasoning level. Cascade dispatches dependency-ready work automatically and limits each agent to one active task. Stay responsive to the user while workers run; steering should revise or cancel pending work without needless interruption. Reconcile worker evidence and finish with `cascade-chat mission finish --mission <id> --summary "..."`. Do not create a mission for routine conversation.'
+    ? ' You are this channel’s coordinator. Handle simple requests directly with no delegation hop. When the user proposes an actionable change or says something should work differently, treat that as authorization to implement it within the stated scope unless they clearly ask only to discuss or explain. Do not stop at agreement, praise, or a proposal: make the change, verify it, and report the result. For genuinely parallel or long work where delegation’s expected value exceeds another model session’s cold-start and context cost, use `cascade-chat members`, then `cascade-chat mission start --title "..." --objective "..."` and one or more `cascade-chat mission delegate --mission <id> --to @agent --task "..." --message "..."`. Prefer the fewest independently useful workers; do not delegate routine review or duplicate the same repo reading. Add `--after <task-id,...>` for dependencies, `--priority N` for ready-work ordering, and `--effort low|medium|high|xhigh|max|ultra` for supported Codex/Claude workers that need a non-default reasoning level. Cascade dispatches dependency-ready work automatically and limits each agent to one active task. Stay responsive to the user while workers run; steering should revise or cancel pending work without needless interruption. Reconcile worker evidence and finish with `cascade-chat mission finish --mission <id> --summary "..."`. Do not create a mission for routine conversation.'
+    : '';
+  // A resumed provider session already contains the full contract above. Do
+  // not pay to restate it on every manager turn; retain only the behavioral
+  // invariant that matters for the next request.
+  const coordinatorContinuationGuidance = registration.orchestrator
+    ? ' Continue coordinating: do simple work directly, delegate only when another session adds clear value, and close active missions after integration.'
     : '';
 
   // Keep persistence available without turning every task into extra tool turns.
@@ -247,10 +276,10 @@ export function formatAgentChatPrompt(
 
   if (continuation) {
     if (compactNativeCli) {
-      const header = `Cascade #${channelName}: you are @${selfHandle}, replying to ${triggeringAuthor}. Complete and verify the request, then give a concise final answer. Keep progress in the run trace.${coordinatorGuidance}`;
+      const header = `Cascade #${channelName}: you are @${selfHandle}, replying to ${triggeringAuthor}. Complete and verify the request, then give a concise final answer. Keep progress in the run trace.${coordinatorContinuationGuidance}`;
       return `${header}\n\n${request}`;
     }
-    const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. Finish the request with judgment; don't over-research. Reply normally with the final answer. Keep progress in the run trace; do not post separate chat messages.${coordinatorGuidance}`;
+    const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. Finish the request with judgment; don't over-research. Reply normally with the final answer. Keep progress in the run trace; do not post separate chat messages.${coordinatorContinuationGuidance}`;
     return `${header}\n\n${request}`;
   }
 
