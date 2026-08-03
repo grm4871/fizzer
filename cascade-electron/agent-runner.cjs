@@ -130,6 +130,10 @@ function ensureWrapperOnPath() {
   process.env.CASCADE_HELPER_CONFIG = HELPER_CONFIG_PATH;
 }
 
+function chatTriggeringMessageId(opts) {
+  return String(opts && opts.chatTriggeringMessageId || opts?.chat?.triggeringMessageId || '').trim();
+}
+
 function buildAgentEnv(opts) {
   ensureWrapperOnPath();
   const env = { ...process.env };
@@ -148,6 +152,8 @@ function buildAgentEnv(opts) {
   if (channelId) env.CASCADE_CHAT_CHANNEL = channelId;
   const messageId = String(opts && opts.chatMessageId || opts?.chat?.messageId || '').trim();
   if (messageId) env.CASCADE_CHAT_MESSAGE = messageId;
+  const triggeringMessageId = chatTriggeringMessageId(opts);
+  if (triggeringMessageId) env.CASCADE_CHAT_TRIGGERING_MESSAGE = triggeringMessageId;
   env.CASCADE_HELPER_DIR = resolveWrapperDir();
   env.CASCADE_HELPER_CONFIG = HELPER_CONFIG_PATH;
   const pathParts = String(env.PATH || '').split(path.delimiter).filter(Boolean);
@@ -183,13 +189,14 @@ function helperConfigPathForRun(runId) {
   return HELPER_CONFIG_PATH;
 }
 
-function writeHelperConfig({ runId, vaultId, channelId, messageId, chatAuthor, agentId, agentMemoryKey, registrationId } = {}) {
+function writeHelperConfig({ runId, vaultId, channelId, messageId, triggeringMessageId, chatAuthor, agentId, agentMemoryKey, registrationId } = {}) {
   const payload = {
     url: noteApi.configured ? noteApi.url : (noteApi.url || process.env.CASCADE_NOTE_URL || 'https://cscd.online'),
     token: noteApi.configured ? noteApi.token : (noteApi.token || process.env.CASCADE_NOTE_TOKEN || ''),
     vaultId: vaultId || process.env.CASCADE_NOTE_VAULT || '',
     chatChannelId: channelId || process.env.CASCADE_CHAT_CHANNEL || '',
     chatMessageId: messageId || process.env.CASCADE_CHAT_MESSAGE || '',
+    chatTriggeringMessageId: triggeringMessageId || process.env.CASCADE_CHAT_TRIGGERING_MESSAGE || '',
     chatAuthor: chatAuthor || process.env.CASCADE_CHAT_AUTHOR || '',
     agentId: agentId || '',
     agentMemoryKey: agentMemoryKey || '',
@@ -216,6 +223,7 @@ function buildRunHelperEnv(opts) {
   const vaultId = String(opts && opts.vaultId || '').trim();
   const channelId = String(opts && opts.chatChannelId || opts?.chat?.channelId || '').trim();
   const messageId = String(opts && opts.chatMessageId || opts?.chat?.messageId || '').trim();
+  const triggeringMessageId = chatTriggeringMessageId(opts);
   const chatAuthor = String(opts && opts.chatAuthor || '').trim();
   const agentId = String(opts && opts.agent || '').trim();
   const agentMemoryKey = String(opts && opts.agentMemoryKey || '').trim();
@@ -225,6 +233,7 @@ function buildRunHelperEnv(opts) {
     vaultId,
     channelId,
     messageId,
+    triggeringMessageId,
     chatAuthor,
     agentId,
     agentMemoryKey,
@@ -249,6 +258,7 @@ function buildRunHelperEnv(opts) {
   if (vaultId) env.CASCADE_NOTE_VAULT = vaultId;
   if (channelId) env.CASCADE_CHAT_CHANNEL = channelId;
   if (messageId) env.CASCADE_CHAT_MESSAGE = messageId;
+  if (triggeringMessageId) env.CASCADE_CHAT_TRIGGERING_MESSAGE = triggeringMessageId;
   if (chatAuthor) env.CASCADE_CHAT_AUTHOR = chatAuthor;
   if (Number.isFinite(runId) && runId > 0) env.CASCADE_RUN_ID = String(runId);
   return env;
@@ -942,6 +952,7 @@ async function cancelLocalAgentRun(runId) {
 module.exports = {
   startLocalAgentRun,
   cancelLocalAgentRun,
+  chatTriggeringMessageId,
   helperAllowedTools,
   normalizeClaudeEffort,
   resolveAgentCwd,

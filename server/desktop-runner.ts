@@ -37,6 +37,7 @@ export type DelegatedRunPayload = {
   resumeSessionId?: string;
   chatChannelId?: string;
   chatMessageId?: string;
+  chatTriggeringMessageId?: string;
   chatAuthor?: string;
   agentMemoryKey?: string;
   chatRegistrationId?: string;

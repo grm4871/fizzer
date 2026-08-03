@@ -57,6 +57,7 @@ export type Run = {
   finished_at: string | null;
   summary: string | null;
   model: string | null;
+  chat_dispatch_id: string | null;
 };
 
 /** Terminal statuses — run will not produce further events. */
@@ -98,7 +99,8 @@ export function ensureRunnerSchema(db: Db) {
       started_at TEXT NOT NULL DEFAULT (datetime('now')),
       finished_at TEXT,
       summary TEXT,
-      model TEXT
+      model TEXT,
+      chat_dispatch_id TEXT
     );
 
     CREATE TABLE IF NOT EXISTS run_events (
@@ -134,6 +136,13 @@ export function ensureRunnerSchema(db: Db) {
   if (!runCols.some(col => col.name === 'model')) {
     db.exec("ALTER TABLE runs ADD COLUMN model TEXT");
   }
+  if (!runCols.some(col => col.name === 'chat_dispatch_id')) {
+    db.exec("ALTER TABLE runs ADD COLUMN chat_dispatch_id TEXT");
+  }
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS runs_chat_dispatch_idx
+      ON runs(chat_dispatch_id) WHERE chat_dispatch_id IS NOT NULL
+  `);
 }
 
 /** Record that a run is actively delegated to a user's desktop runner. */
@@ -325,14 +334,24 @@ export async function startRun(
   noteId: string | null,
   prompt: string,
   agent: AgentId = 'claude-code',
-  opts: { conversationId?: string; model?: string; sessionId?: string } = {},
+  opts: { conversationId?: string; model?: string; sessionId?: string; chatDispatchId?: string } = {},
 ) {
   const conversationId = opts.conversationId || crypto.randomUUID();
   const model = opts.model || null;
   const result = db.prepare(`
-    INSERT INTO runs (vault_id, note_id, prompt, agent, conversation_id, status, model, session_id)
-    VALUES (?, ?, ?, ?, ?, 'queued', ?, ?)
-  `).run(vault.id, noteId, prompt, agent, conversationId, model, opts.sessionId || null);
+    INSERT INTO runs (
+      vault_id, note_id, prompt, agent, conversation_id, status, model, session_id, chat_dispatch_id
+    ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?)
+  `).run(
+    vault.id,
+    noteId,
+    prompt,
+    agent,
+    conversationId,
+    model,
+    opts.sessionId || null,
+    opts.chatDispatchId || null,
+  );
 
   const runId = Number(result.lastInsertRowid);
   const run = getRun(db, runId)!;
@@ -343,6 +362,11 @@ export async function startRun(
   // run to their connected desktop runner (delegateRunToDesktop). The server
   // only records the run here and relays the events streamed back.
   return run;
+}
+
+export function findRunByChatDispatch(db: Db, dispatchId: string): Run | undefined {
+  if (!dispatchId) return undefined;
+  return db.prepare('SELECT * FROM runs WHERE chat_dispatch_id = ? LIMIT 1').get(dispatchId) as Run | undefined;
 }
 
 export type ConversationSessionQuery = {

@@ -63,6 +63,7 @@ import {
   findConversationSession,
   publishRunEvent,
   finishDelegatedRun,
+  findRunByChatDispatch,
   listOpenDelegatedRuns,
   type AgentId,
 } from './server/runner.js';
@@ -120,6 +121,30 @@ import {
   setChannelCwd,
   type ChatMessage,
 } from './server/chat.js';
+import {
+  attachRunToChatAgentDispatch,
+  createChatAgentDispatchForRegistration,
+  createChatAgentDispatches,
+  ensureChatDispatchSchema,
+  getChatAgentDispatch,
+  listPendingChatAgentDispatches,
+  type ChatAgentDispatch,
+} from './server/chat-dispatch.js';
+import {
+  addChatMissionTask,
+  attachRunToMissionTaskByDispatch,
+  createChatMission,
+  ensureChatMissionSchema,
+  finishChatMission,
+  getChatMission,
+  linkMissionTaskDispatch,
+  missionRootMessage,
+  refreshMissionProjection,
+  settleMissionTaskForRun,
+  updateChatMissionTask,
+  type MissionProjectionUpdate,
+  type MissionWake,
+} from './server/chat-missions.js';
 import {
   ensurePublishSchema,
   getPublishInfo,
@@ -376,6 +401,8 @@ ensureRunnerSchema(db);
 // runs (see scheduleOrphanReclaimAfterRestart + activeRunIds on register).
 ensureFeedSchema(db);
 ensureChatSchema(db);
+ensureChatDispatchSchema(db);
+ensureChatMissionSchema(db);
 db.exec(`
   CREATE TABLE IF NOT EXISTS chat_note_grants (
     message_id TEXT NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
@@ -623,13 +650,40 @@ function emitVaultEvent(vaultId: string, event: string, data: unknown) {
 
 setFeedNotifySink(emitVaultEvent);
 
-function emitChatMessageEvent(sourceVaultId: string, sourceChannelId: string, event: 'vault:chatMessageCreated' | 'vault:chatMessageUpdated', message: ChatMessage) {
+function emitChatMessageEvent(
+  sourceVaultId: string,
+  sourceChannelId: string,
+  event: 'vault:chatMessageCreated' | 'vault:chatMessageUpdated',
+  message: ChatMessage,
+  dispatches: ChatAgentDispatch[] = [],
+) {
+  const sourceOwner = db.prepare('SELECT created_by FROM vaults WHERE id = ?')
+    .get(sourceVaultId) as { created_by: number } | undefined;
   for (const route of listChatChannelRoutes(db, sourceVaultId, sourceChannelId)) {
+    const localOwner = db.prepare('SELECT created_by FROM vaults WHERE id = ?')
+      .get(route.localVaultId) as { created_by: number } | undefined;
+    const routeDispatches = localOwner?.created_by === sourceOwner?.created_by
+      ? dispatches
+      : dispatches.filter((dispatch) => dispatch.registration.pingableByOthers);
     emitVaultEvent(route.localVaultId, event, {
       vaultId: route.localVaultId,
       channelId: route.localChannelId,
       message: { ...message, channelId: route.localChannelId },
+      ...(routeDispatches.length > 0 ? {
+        dispatches: routeDispatches.map((dispatch) => ({
+          ...dispatch,
+          channelId: route.localChannelId,
+          message: { ...dispatch.message, channelId: route.localChannelId },
+        })),
+      } : {}),
     });
+  }
+}
+
+function emitMissionProjection(update: MissionProjectionUpdate) {
+  const message = missionRootMessage(db, update);
+  if (message) {
+    emitChatMessageEvent(update.vaultId, update.channelId, 'vault:chatMessageUpdated', message);
   }
 }
 
@@ -695,11 +749,44 @@ const chatRunTargets = new Map<number, ChatRunTarget>();
 const chatRunFlushTimers = new Map<number, NodeJS.Timeout>();
 const CHAT_RUN_THROTTLE_MS = 250;
 
+function enqueueMissionCoordinatorWake(wake: MissionWake) {
+  const taskLines = wake.mission.tasks.map((task) => (
+    `- ${task.title} — @${task.assigneeMention || task.assignee}: ${task.status}`
+      + (task.summary ? ` — ${task.summary.slice(0, 600)}` : '')
+  ));
+  const body = [
+    `@${wake.mission.coordinatorMention} Mission ${wake.mission.id} (“${wake.mission.title}”) is ready for your review (${wake.mission.status}).`,
+    ...taskLines,
+    '',
+    'Review the evidence, resolve or explain failures, perform any integration and verification still needed, then reply to the user with the outcome. Keep the mission state accurate.',
+  ].join('\n');
+  try {
+    const message = createChatMessage(db, wake.createdBy, wake.vaultId, wake.channelId, {
+      id: `sys-mission-${wake.mission.id}-${crypto.randomUUID().slice(0, 8)}`,
+      channelId: wake.channelId,
+      author: 'Cascade',
+      body,
+      createdAt: new Date().toISOString(),
+    });
+    const dispatch = createChatAgentDispatchForRegistration(
+      db,
+      wake.createdBy,
+      wake.channelId,
+      message,
+      wake.coordinatorRegistrationId,
+    );
+    emitChatMessageEvent(wake.vaultId, wake.channelId, 'vault:chatMessageCreated', message, [dispatch]);
+  } catch (error) {
+    // The mission remains durably completed/blocked and visible. A missing
+    // coordinator can be repaired by the user without losing worker evidence.
+    console.warn('mission coordinator wake skipped:', error instanceof Error ? error.message : error);
+  }
+}
+
 function syncRunToChatMessage(runId: number) {
   const target = chatRunTargets.get(runId);
-  if (!target) return;
   const content = buildAgentChatContentFromRunEvents(listRunEvents(db, runId));
-  try {
+  if (target) try {
     // Dual-post suppress: agent already posted via cascade-chat send. Drop the
     // Thinking placeholder instead of leaving an empty "(message)" shell that
     // sticks in the live UI until refresh.
@@ -736,13 +823,27 @@ function syncRunToChatMessage(runId: number) {
       });
       if (updated) {
         const { route } = assertChatChannel(db, target.channelId, target.userId);
-        emitChatMessageEvent(route.sourceVaultId, route.sourceChannelId, 'vault:chatMessageUpdated', updated);
+        const dispatches = content.done
+          ? createChatAgentDispatches(db, target.userId, target.channelId, updated)
+            .filter((dispatch) => dispatch.runId == null)
+          : [];
+        emitChatMessageEvent(route.sourceVaultId, route.sourceChannelId, 'vault:chatMessageUpdated', updated, dispatches);
       }
     }
   } catch {
     // Channel/message vanished (e.g. deleted mid-run) — drop the target below.
   }
   if (content.done) {
+    const settled = settleMissionTaskForRun(
+      db,
+      runId,
+      content.status === 'failed' ? 'failed' : content.status === 'canceled' ? 'canceled' : 'completed',
+      content.body || getRun(db, runId)?.summary || '',
+    );
+    if (settled) {
+      emitMissionProjection(settled.update);
+      if (settled.wake) enqueueMissionCoordinatorWake(settled.wake);
+    }
     chatRunTargets.delete(runId);
     const timer = chatRunFlushTimers.get(runId);
     if (timer) clearTimeout(timer);
@@ -751,7 +852,10 @@ function syncRunToChatMessage(runId: number) {
 }
 
 setChatSyncSink((runId, eventType) => {
-  if (!chatRunTargets.has(runId)) return;
+  // Mission settlement is independent of a renderer/chat placeholder. A run
+  // can fail before its shell is linked or after the shell is deleted, and its
+  // durable task must still reach a terminal state.
+  if (!chatRunTargets.has(runId) && eventType !== 'status') return;
   // Flush final run status immediately; throttle streaming token updates.
   if (eventType === 'status') {
     const timer = chatRunFlushTimers.get(runId);
@@ -1742,7 +1846,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
 
   const chatChannelId = typeof req.body?.chat?.channelId === 'string' ? req.body.chat.channelId.trim() : '';
   const chatMessageId = typeof req.body?.chat?.messageId === 'string' ? req.body.chat.messageId.trim() : '';
-  const triggeringMessageId = typeof req.body?.chat?.triggeringMessageId === 'string'
+  let triggeringMessageId = typeof req.body?.chat?.triggeringMessageId === 'string'
     ? req.body.chat.triggeringMessageId.trim()
     : '';
   const chatContextNeeded = req.body?.chat?.contextNeeded === true
@@ -1753,7 +1857,20 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     || req.body?.chat?.workspaceNeeded === 1
     || req.body?.chat?.workspaceNeeded === '1'
     || req.body?.chat?.workspaceNeeded === 'true';
-  const registrationId = typeof req.body?.registrationId === 'string' ? req.body.registrationId.trim() : '';
+  let registrationId = typeof req.body?.registrationId === 'string' ? req.body.registrationId.trim() : '';
+  const chatDispatchId = typeof req.body?.chatDispatchId === 'string' ? req.body.chatDispatchId.trim() : '';
+  let chatDispatch: ChatAgentDispatch | null = null;
+  if (chatDispatchId) {
+    if (!chatChannelId) return res.status(400).json({ error: 'Chat channel is required for dispatch' });
+    chatDispatch = getChatAgentDispatch(db, req.user!.id, chatChannelId, chatDispatchId);
+    if (!chatDispatch) return res.status(404).json({ error: 'Chat dispatch not found' });
+    registrationId = chatDispatch.registration.id;
+    triggeringMessageId = chatDispatch.messageId;
+    if (chatDispatch.runId != null) {
+      const existing = getRun(db, chatDispatch.runId);
+      if (existing) return res.json({ run: existing, reused: true });
+    }
+  }
 
   // Resolve the run's execution context. A chat-agent ping always executes on the
   // *agent owner's* desktop runner using the owner's stored registration — never
@@ -1980,11 +2097,30 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     // chat context has been assembled, immediately before the model run.
     effectivePrompt = redactPrivateBlocks(effectivePrompt);
 
-    const run = await startRun(db, runVault, note_id || null, effectivePrompt, selectedAgent, {
-      conversationId: preliminaryConversationId,
-      model: selectedModel,
-      sessionId: resumeSessionId,
-    });
+    let run;
+    try {
+      run = await startRun(db, runVault, note_id || null, effectivePrompt, selectedAgent, {
+        conversationId: preliminaryConversationId,
+        model: selectedModel,
+        sessionId: resumeSessionId,
+        chatDispatchId: chatDispatchId || undefined,
+      });
+    } catch (error) {
+      // Two renderers may recover the same durable dispatch concurrently. The
+      // unique run key makes the first writer authoritative; everyone else
+      // joins that run instead of spawning another local model process.
+      const existing = chatDispatchId ? findRunByChatDispatch(db, chatDispatchId) : undefined;
+      if (existing) {
+        attachRunToChatAgentDispatch(db, chatDispatchId, existing.id);
+        return res.json({ run: existing, reused: true });
+      }
+      throw error;
+    }
+    if (chatDispatchId) {
+      attachRunToChatAgentDispatch(db, chatDispatchId, run.id);
+      const missionUpdate = attachRunToMissionTaskByDispatch(db, chatDispatchId, run.id);
+      if (missionUpdate) emitMissionProjection(missionUpdate);
+    }
 
     // Server single-writer: create/link the running agent message before
     // delegation so stream updates never no-op on a missing placeholder.
@@ -2034,6 +2170,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
       resumeSessionId,
       chatChannelId: targetChannelId,
       chatMessageId,
+      chatTriggeringMessageId: triggeringMessageId,
       chatAuthor,
       agentMemoryKey: agentMemoryKey || selectedAgent,
       chatRegistrationId,
@@ -2049,7 +2186,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
       return res.status(503).json({ error });
     }
 
-    res.json({ run });
+    res.json({ run, reused: false });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
@@ -2186,6 +2323,13 @@ app.post('/api/vaults/:vaultId/channels/:channelId/messages', requireAuth, (req:
   try {
     const { route } = assertChatChannel(db, req.params.channelId, req.user!.id);
     const message = createChatMessage(db, req.user!.id, req.params.vaultId, req.params.channelId, req.body);
+    const dispatches = createChatAgentDispatches(
+      db,
+      req.user!.id,
+      req.params.channelId,
+      message,
+    );
+    const agents = listChatAgentMembers(db, req.params.channelId, req.user!.id);
     refreshChatNoteGrants(req.user!.id, req.params.vaultId, route.sourceChannelId, message);
     try {
       indexChatMessageBacklinks(db, route.sourceVaultId, route.sourceChannelId, {
@@ -2197,10 +2341,118 @@ app.post('/api/vaults/:vaultId/channels/:channelId/messages', requireAuth, (req:
     } catch (error) {
       console.warn('chat backlink index skipped:', error instanceof Error ? error.message : error);
     }
-    emitChatMessageEvent(route.sourceVaultId, route.sourceChannelId, 'vault:chatMessageCreated', message);
-    res.status(201).json({ message });
+    emitChatMessageEvent(route.sourceVaultId, route.sourceChannelId, 'vault:chatMessageCreated', message, dispatches);
+    res.status(201).json({ message, agents, dispatches });
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+app.get('/api/vaults/:vaultId/channels/:channelId/agent-dispatches/pending', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const dispatches = listPendingChatAgentDispatches(db, req.user!.id, req.params.channelId);
+    res.json({ dispatches });
+  } catch {
+    res.status(404).json({ error: 'Chat channel not found' });
+  }
+});
+
+app.post('/api/vaults/:vaultId/channels/:channelId/missions', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const update = createChatMission(db, req.user!.id, req.params.vaultId, req.params.channelId, {
+      rootMessageId: String(req.body?.rootMessageId || ''),
+      coordinatorRegistrationId: String(req.body?.coordinatorRegistrationId || ''),
+      title: String(req.body?.title || ''),
+      objective: String(req.body?.objective || ''),
+    });
+    emitMissionProjection(update);
+    res.status(201).json({ mission: update.mission });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not create mission' });
+  }
+});
+
+app.get('/api/vaults/:vaultId/channels/:channelId/missions/:missionId', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const update = getChatMission(
+      db,
+      req.user!.id,
+      req.params.channelId,
+      req.params.missionId,
+      typeof req.query.coordinator === 'string' ? req.query.coordinator : undefined,
+    );
+    res.json({ mission: update.mission });
+  } catch (error) {
+    res.status(404).json({ error: error instanceof Error ? error.message : 'Mission not found' });
+  }
+});
+
+app.post('/api/vaults/:vaultId/channels/:channelId/missions/:missionId/tasks', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const result = db.transaction(() => {
+      const added = addChatMissionTask(db, req.user!.id, req.params.channelId, req.params.missionId, {
+        coordinatorRegistrationId: String(req.body?.coordinatorRegistrationId || ''),
+        title: String(req.body?.title || ''),
+        assignee: String(req.body?.assignee || ''),
+      });
+      const prompt = String(req.body?.prompt || '').trim() || added.task.title;
+      const message = createChatMessage(db, req.user!.id, req.params.vaultId, req.params.channelId, {
+        id: `mission-task-${added.task.id}`,
+        channelId: req.params.channelId,
+        author: '',
+        body: `@${added.assignee.mention} ${prompt}`,
+        createdAt: new Date().toISOString(),
+        registrationId: String(req.body?.coordinatorRegistrationId || ''),
+        missionTaskId: added.task.id,
+      });
+      const dispatch = createChatAgentDispatchForRegistration(
+        db,
+        req.user!.id,
+        req.params.channelId,
+        message,
+        added.assignee.id,
+      );
+      const update = linkMissionTaskDispatch(db, added.task.id, dispatch.id);
+      return { message, dispatch, update, task: update.mission.tasks.find((task) => task.id === added.task.id)! };
+    })();
+    emitChatMessageEvent(result.update.vaultId, result.update.channelId, 'vault:chatMessageCreated', result.message, [result.dispatch]);
+    emitMissionProjection(result.update);
+    res.status(201).json({ mission: result.update.mission, task: result.task, message: result.message });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not delegate mission task' });
+  }
+});
+
+app.patch('/api/vaults/:vaultId/channels/:channelId/missions/tasks/:taskId', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const update = updateChatMissionTask(db, req.user!.id, req.params.channelId, req.params.taskId, {
+      status: String(req.body?.status || '') as never,
+      summary: String(req.body?.summary || ''),
+    });
+    emitMissionProjection(update);
+    res.json({ mission: update.mission });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not update mission task' });
+  }
+});
+
+app.post('/api/vaults/:vaultId/channels/:channelId/missions/:missionId/finish', requireAuth, async (req: AuthedRequest, res) => {
+  try {
+    const status = String(req.body?.status || 'completed') === 'canceled' ? 'canceled' : 'completed';
+    const update = finishChatMission(db, req.user!.id, req.params.channelId, req.params.missionId, {
+      coordinatorRegistrationId: String(req.body?.coordinatorRegistrationId || ''),
+      status,
+      summary: String(req.body?.summary || ''),
+    });
+    if (status === 'canceled') {
+      await Promise.all(update.mission.tasks
+        .filter((task) => task.status === 'canceled' && task.runId != null)
+        .map((task) => cancelRun(db, task.runId!)));
+    }
+    emitMissionProjection(update);
+    res.json({ mission: update.mission });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not finish mission' });
   }
 });
 
@@ -2209,9 +2461,11 @@ app.patch('/api/vaults/:vaultId/channels/:channelId/messages/:messageId', requir
     const { route } = assertChatChannel(db, req.params.channelId, req.user!.id);
     const message = updateChatMessage(db, req.user!.id, req.params.vaultId, req.params.channelId, req.params.messageId, req.body);
     if (!message) return res.status(404).json({ error: 'Message not found' });
+    const dispatches = createChatAgentDispatches(db, req.user!.id, req.params.channelId, message)
+      .filter((dispatch) => dispatch.runId == null);
     refreshChatNoteGrants(req.user!.id, req.params.vaultId, route.sourceChannelId, message);
-    emitChatMessageEvent(route.sourceVaultId, route.sourceChannelId, 'vault:chatMessageUpdated', message);
-    res.json({ message });
+    emitChatMessageEvent(route.sourceVaultId, route.sourceChannelId, 'vault:chatMessageUpdated', message, dispatches);
+    res.json({ message, dispatches });
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
   }

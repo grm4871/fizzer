@@ -22,6 +22,12 @@ Usage:
   cascade-chat attachment              write a message's images/files to disk
                         (--message-id <id>; default: newest message with media)
   cascade-chat send --message <text>    send a standalone message to the channel
+  cascade-chat members                  list people-callable agent teammates
+  cascade-chat mission start --title T [--objective O]
+  cascade-chat mission status [--mission <id|current>]
+  cascade-chat mission delegate --mission <id> --to @agent --task T --message P
+  cascade-chat mission update --task <id> --status <status> [--summary S]
+  cascade-chat mission finish --mission <id> [--summary S]
   cascade-chat avatar --url <https-url> set this agent's profile picture
                         (also --avatar-url; --url here is the image, not API base)
   cascade-chat distill                 condense chat into a vault note
@@ -31,6 +37,13 @@ Options:
   --vault <id>              vault id (default $CASCADE_NOTE_VAULT)
   --channel <id>            channel id (default $CASCADE_CHAT_CHANNEL)
   --message <text>          message body for send (default: stdin)
+  --mission <id|current>    mission id for mission commands
+  --task <id|title>         task id (update) or title (delegate)
+  --to <@handle>            worker agent for mission delegate
+  --status <status>         pending|running|completed|failed|blocked|canceled
+  --summary <text>          concise task/mission outcome
+  --objective <text>        mission objective (defaults to triggering message)
+  --root <message-id>       mission root (defaults to triggering chat message)
   --changes-file <path>     JSON change request metadata for send
   --raw-message             preserve literal backslash-n sequences in --message
   --url <https-url>         profile picture URL for avatar
@@ -56,7 +69,7 @@ Options:
   --json                    machine-readable output
 
 Env: CASCADE_NOTE_URL, CASCADE_NOTE_TOKEN, CASCADE_NOTE_VAULT,
-     CASCADE_CHAT_CHANNEL, CASCADE_CHAT_MESSAGE, CASCADE_CHAT_AUTHOR,
+     CASCADE_CHAT_CHANNEL, CASCADE_CHAT_MESSAGE, CASCADE_CHAT_TRIGGERING_MESSAGE, CASCADE_CHAT_AUTHOR,
      CASCADE_HELPER_CONFIG`;
 
 function parseArgs(argv) {
@@ -392,7 +405,7 @@ async function main() {
     process.exit(raw ? 0 : 1);
   }
   const cmd = raw === 'attachments' ? 'attachment' : raw;
-  if (!['history', 'send', 'avatar', 'distill', 'search', 'attachment'].includes(cmd)) {
+  if (!['history', 'send', 'members', 'mission', 'avatar', 'distill', 'search', 'attachment'].includes(cmd)) {
     fail(`unknown command "${raw}". Run with --help.`);
   }
 
@@ -404,6 +417,138 @@ async function main() {
 
   const url = baseUrl(args, config, { ignoreArgsUrl: cmd === 'avatar' });
   const token = await getToken(url, args, config);
+  if (cmd === 'members') {
+    const { agents = [] } = await api(
+      url,
+      token,
+      'GET',
+      `/api/vaults/${vaultId}/channels/${channelId}/agents`,
+    );
+    const members = agents.map((agent) => ({
+      id: agent.id,
+      displayName: agent.displayName,
+      mention: agent.mention,
+      agentId: agent.agentId,
+      model: agent.model || '',
+      orchestrator: agent.orchestrator === true,
+      taggableByAgents: agent.taggableByAgents === true,
+    }));
+    if (args.json) process.stdout.write(JSON.stringify(members) + '\n');
+    else process.stdout.write((members.map((agent) => (
+      `@${agent.mention}  ${agent.displayName}  ${agent.agentId}${agent.model ? ` · ${agent.model}` : ''}${agent.orchestrator ? ' · coordinator' : ''}`
+    )).join('\n') || '(no agents)') + '\n');
+    return;
+  }
+
+  if (cmd === 'mission') {
+    const sub = String(args._[1] || 'status').toLowerCase();
+    const registrationId = configString(config, 'registrationId');
+    const missionRef = String(args.mission || args._[2] || 'current').trim() || 'current';
+    if (sub === 'start') {
+      if (!registrationId) fail('mission start can only be used from a registered coordinator run.');
+      const title = String(args.title || '').trim();
+      if (!title) fail('mission start needs --title <text>.');
+      const rootMessageId = String(
+        args.root
+        || configString(config, 'chatTriggeringMessageId')
+        || process.env.CASCADE_CHAT_TRIGGERING_MESSAGE
+        || '',
+      ).trim();
+      if (!rootMessageId) fail('mission start needs a triggering message; pass --root <message-id>.');
+      const result = await api(
+        url,
+        token,
+        'POST',
+        `/api/vaults/${vaultId}/channels/${channelId}/missions`,
+        {
+          rootMessageId,
+          coordinatorRegistrationId: registrationId,
+          title,
+          objective: String(args.objective || '').trim(),
+        },
+      );
+      if (args.json) process.stdout.write(JSON.stringify(result.mission) + '\n');
+      else process.stdout.write(`mission ${result.mission.id} started: ${result.mission.title}\n`);
+      return;
+    }
+    if (sub === 'status' || sub === 'show') {
+      const coordinator = registrationId ? `?coordinator=${encodeURIComponent(registrationId)}` : '';
+      const result = await api(
+        url,
+        token,
+        'GET',
+        `/api/vaults/${vaultId}/channels/${channelId}/missions/${encodeURIComponent(missionRef)}${coordinator}`,
+      );
+      if (args.json) process.stdout.write(JSON.stringify(result.mission) + '\n');
+      else {
+        const mission = result.mission;
+        const tasks = (mission.tasks || []).map((task) => (
+          `  ${task.status === 'completed' ? '✓' : task.status === 'failed' || task.status === 'blocked' ? '!' : '·'} ${task.id}  ${task.title} — @${task.assigneeMention || task.assignee} (${task.status})${task.summary ? `\n      ${task.summary}` : ''}`
+        )).join('\n');
+        process.stdout.write(`${mission.status}  ${mission.id}  ${mission.title}\n${tasks || '  (no tasks)'}\n`);
+      }
+      return;
+    }
+    if (sub === 'delegate') {
+      if (!registrationId) fail('mission delegate can only be used from a registered coordinator run.');
+      const assignee = String(args.to || '').trim();
+      const title = String(args.task || args.title || '').trim();
+      if (!assignee) fail('mission delegate needs --to <@agent>.');
+      if (!title) fail('mission delegate needs --task <title>.');
+      const fromStdin = args.message === true || args.message === undefined;
+      const rawPrompt = fromStdin ? await readStdin() : args.message;
+      const prompt = (fromStdin
+        ? String(rawPrompt)
+        : normalizeInlineMessage(rawPrompt, args['raw-message'] === true)).trim() || title;
+      const result = await api(
+        url,
+        token,
+        'POST',
+        `/api/vaults/${vaultId}/channels/${channelId}/missions/${encodeURIComponent(missionRef)}/tasks`,
+        { coordinatorRegistrationId: registrationId, title, assignee, prompt },
+      );
+      if (args.json) process.stdout.write(JSON.stringify({ mission: result.mission, task: result.task }) + '\n');
+      else process.stdout.write(`delegated ${result.task.id} to @${result.task.assigneeMention}: ${result.task.title}\n`);
+      return;
+    }
+    if (sub === 'update') {
+      const taskId = String(args.task || args._[2] || '').trim();
+      const status = String(args.status || '').trim().toLowerCase();
+      if (!taskId) fail('mission update needs --task <id>.');
+      if (!['pending', 'running', 'completed', 'failed', 'blocked', 'canceled'].includes(status)) {
+        fail('mission update needs --status pending|running|completed|failed|blocked|canceled.');
+      }
+      const result = await api(
+        url,
+        token,
+        'PATCH',
+        `/api/vaults/${vaultId}/channels/${channelId}/missions/tasks/${encodeURIComponent(taskId)}`,
+        { status, summary: String(args.summary || '').trim() },
+      );
+      if (args.json) process.stdout.write(JSON.stringify(result.mission) + '\n');
+      else process.stdout.write(`task ${taskId} → ${status}\n`);
+      return;
+    }
+    if (sub === 'finish' || sub === 'cancel') {
+      if (!registrationId) fail(`mission ${sub} can only be used from a registered coordinator run.`);
+      const result = await api(
+        url,
+        token,
+        'POST',
+        `/api/vaults/${vaultId}/channels/${channelId}/missions/${encodeURIComponent(missionRef)}/finish`,
+        {
+          coordinatorRegistrationId: registrationId,
+          status: sub === 'cancel' ? 'canceled' : 'completed',
+          summary: String(args.summary || '').trim(),
+        },
+      );
+      if (args.json) process.stdout.write(JSON.stringify(result.mission) + '\n');
+      else process.stdout.write(`mission ${result.mission.id} → ${result.mission.status}\n`);
+      return;
+    }
+    fail(`unknown mission command "${sub}". Use start|status|delegate|update|finish|cancel.`);
+  }
+
   if (cmd === 'avatar') {
     const registrationId = configString(config, 'registrationId');
     if (!registrationId) fail('avatar can only be used from a registered agent chat run.');

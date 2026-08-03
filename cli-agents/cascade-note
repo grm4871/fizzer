@@ -22,13 +22,16 @@
  *   cascade-note edit <id|title>           # replace content (--content/stdin)
  *   cascade-note append <id|title>         # append content (--content/stdin)
  *   cascade-note rename <id|title> --title T
+ *   cascade-note move <id|title> --folder <id|name>
+ *   cascade-note folder list
+ *   cascade-note folder create <name> [--parent <id|name>]
  *   cascade-note delete <id|title>
  *
  * Options:
  *   --vault <id>     vault id      (default $CASCADE_NOTE_VAULT, else sole vault)
  *   --title <t>      note title    (create / rename)
  *   --content <c>    inline body   (else read stdin)
- *   --folder <id>    folder id     (create)
+ *   --folder <id>    folder id/name (create / move)
  *   --url <base>     API base      (default $CASCADE_NOTE_URL, else cscd.online)
  *   --token <jwt>    bearer token  (default $CASCADE_NOTE_TOKEN)
  *   --json           machine-readable output
@@ -55,6 +58,9 @@ Usage:
   cascade-note edit <id|title>           replace body (stdin / --content-file / --content)
   cascade-note append <id|title>         append body  (stdin / --content-file / --content)
   cascade-note rename <id|title> --title T
+  cascade-note move <id|title> --folder <id|name>  list and move a note into a folder
+  cascade-note folder list                         list vault folders
+  cascade-note folder create <name> [--parent <id|name>]
   cascade-note delete <id|title>         permanently delete a note
   cascade-note backlinks <id|title>      note + chat backlinks for a note
   cascade-note memory show               what agent memory would inject
@@ -74,7 +80,8 @@ Body input (pick one):
 Options:
   --vault <id>     vault id   (default $CASCADE_NOTE_VAULT, else sole vault)
   --title <t>      note title (create / rename / memory)
-  --folder <id>    folder id  (create)
+  --folder <id>    folder id or unique name (create / move)
+  --parent <id>    parent folder id or unique name (folder create)
   --listed         put create in the sidebar tree (default is unlisted / chat-only)
   --unlisted       explicit unlisted (default for create; kept for compatibility)
   --scope notes|chat|all   search scope (default notes)
@@ -222,6 +229,17 @@ async function resolveNote(url, token, vaultId, ref) {
   if (partial.length === 1) return partial[0].id;
   if (partial.length > 1) fail(`"${ref}" matches ${partial.length} notes; pass the note id.`);
   fail(`no note matching "${ref}" in vault ${vaultId}.`);
+}
+
+/** Resolve a folder by exact id, else unique case-insensitive name in the vault. */
+async function resolveFolder(url, token, vaultId, ref) {
+  const { folders = [] } = await api(url, token, 'GET', `/api/vaults/${vaultId}/folders`);
+  const byId = folders.filter((folder) => folder.id === ref);
+  if (byId.length === 1) return byId[0];
+  const matches = folders.filter((folder) => String(folder.name).toLowerCase() === String(ref).toLowerCase());
+  if (matches.length === 1) return matches[0];
+  if (matches.length > 1) fail(`folder "${ref}" is ambiguous (${matches.length} folders); pass the folder id.`);
+  fail(`no folder matching "${ref}" in vault ${vaultId}.`);
 }
 
 function sanitizeAgentFolderName(name) {
@@ -437,15 +455,49 @@ async function main() {
       // Agent default: unlisted (chat/search/embed only). Sidebar listing is
       // human-directed — pass --listed only when the user asks to put it in the tree.
       const listed = args.listed === true;
+      const folder = args.folder ? await resolveFolder(url, token, vaultId, String(args.folder)) : undefined;
       const payload = {
         title,
         content,
         is_listed: listed,
-        ...(args.folder ? { folder_id: String(args.folder) } : {}),
+        ...(folder ? { folder_id: folder.id } : {}),
       };
       const { note } = await api(url, token, 'POST', `/api/vaults/${vaultId}/notes`, payload);
       const where = note.is_listed ? 'listed' : 'unlisted';
       out(args, `created ${note.id}  ${note.title}  (${where})`, note);
+      break;
+    }
+    case 'folder': {
+      const sub = args._[1] || 'list';
+      const vaultId = await resolveVault(url, token, args, config);
+      if (sub === 'list') {
+        const { folders = [] } = await api(url, token, 'GET', `/api/vaults/${vaultId}/folders`);
+        out(args, folders.map((folder) => `${folder.id}  ${folder.name}${folder.parent_id ? `  parent: ${folder.parent_id}` : ''}`).join('\n') || '(no folders)', folders);
+      } else if (sub === 'create') {
+        const name = args._.slice(2).join(' ').trim();
+        if (!name) fail('folder create needs a folder name.');
+        const parent = args.parent ? await resolveFolder(url, token, vaultId, String(args.parent)) : undefined;
+        const { folder } = await api(url, token, 'POST', `/api/vaults/${vaultId}/folders`, {
+          name,
+          ...(parent ? { parent_id: parent.id } : {}),
+        });
+        out(args, `created folder ${folder.id}  ${folder.name}`, folder);
+      } else {
+        fail(`unknown folder subcommand "${sub}". Use list|create.`);
+      }
+      break;
+    }
+    case 'move': {
+      const ref = args._[1];
+      if (!ref) fail('move needs a note id or title.');
+      if (args.folder === undefined || typeof args.folder !== 'string' || !args.folder.trim()) {
+        fail('move needs --folder <folder id or unique name>.');
+      }
+      const vaultId = await resolveVault(url, token, args, config);
+      const id = await resolveNote(url, token, vaultId, ref);
+      const folder = await resolveFolder(url, token, vaultId, args.folder);
+      const { note } = await api(url, token, 'POST', `/api/notes/${id}/move`, { folder_id: folder.id });
+      out(args, `moved ${note.id}  ${note.title}  → ${folder.name}`, note);
       break;
     }
     case 'edit':

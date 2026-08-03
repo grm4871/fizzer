@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildQuotedReplyPrompt, hasRegistrationForMention, precedingMessageBatch, precedingMessageBatchText, resolveAgentMessageRegistration } from '../chat/mentions';
+import { buildQuotedReplyPrompt, hasRegistrationForMention, precedingMessageBatch, precedingMessageBatchText, replyQuoteTargetsAgent, resolveAgentMessageRegistration } from '../chat/mentions';
 import { prepareReplyForSend } from '../components/ChatView';
 
 const registrations = [
@@ -21,6 +21,32 @@ describe('reply agent notification', () => {
   it('detects when an author-derived reply mention needs roster hydration', () => {
     expect(hasRegistrationForMention('ocsol', [])).toBe(false);
     expect(hasRegistrationForMention('@sol', registrations)).toBe(true);
+  });
+});
+
+describe('replyQuoteTargetsAgent', () => {
+  const quotedMessages = [
+    { id: 'msg-human', agentId: undefined, registrationId: undefined },
+    { id: 'msg-agent', agentId: 'codex', registrationId: 'sol-reg' },
+    { id: 'msg-legacy-agent', agentId: 'codex' },
+  ];
+
+  it('does not treat a reply to a person as a failed agent call', () => {
+    expect(replyQuoteTargetsAgent(
+      { messageId: 'msg-human', mention: 'asdfasdf' },
+      quotedMessages,
+    )).toBe(false);
+  });
+
+  it('still reports agent-authored quotes, including legacy helper messages', () => {
+    expect(replyQuoteTargetsAgent({ messageId: 'msg-agent', mention: 'sol' }, quotedMessages)).toBe(true);
+    expect(replyQuoteTargetsAgent({ messageId: 'msg-legacy-agent', mention: 'sol' }, quotedMessages)).toBe(true);
+  });
+
+  it('defers to the server when the quote is outside the loaded page', () => {
+    expect(replyQuoteTargetsAgent({ messageId: 'msg-gone', mention: 'sol' }, quotedMessages)).toBe(false);
+    expect(replyQuoteTargetsAgent({ messageId: 'msg-gone', mention: '' }, quotedMessages)).toBe(false);
+    expect(replyQuoteTargetsAgent(undefined, quotedMessages)).toBe(false);
   });
 });
 

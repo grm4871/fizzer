@@ -122,10 +122,10 @@ try {
   await page.goto(APP_URL, { waitUntil: 'networkidle' });
 
   async function openChannel(title) {
-    const entry = page.getByText(title, { exact: false }).first();
+    const entry = page.locator(`#note-${channels[title].id}`);
     await entry.waitFor({ timeout: 20000 });
     await entry.click();
-    await page.getByText(`#${title}`, { exact: false }).first().waitFor({ timeout: 20000 });
+    await page.locator('.chat-header h2', { hasText: title }).waitFor({ timeout: 20000 });
   }
 
   await openChannel('qa-source');

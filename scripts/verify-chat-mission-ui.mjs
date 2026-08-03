@@ -1,0 +1,255 @@
+#!/usr/bin/env node
+/** Built-client smoke for the inline mission artifact and coordinator setting. */
+import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import { setTimeout as delay } from 'node:timers/promises';
+import { pickPort } from './lib/test-ports.mjs';
+
+const API_PORT = Number(process.env.TEST_API_PORT) || await pickPort();
+const PREVIEW_PORT = Number(process.env.TEST_PREVIEW_PORT) || await pickPort();
+const API_BASE = `http://127.0.0.1:${API_PORT}`;
+const APP_URL = `http://127.0.0.1:${PREVIEW_PORT}/app.html`;
+const DB_PATH = `/tmp/cascade-mission-ui-${API_PORT}.db`;
+const root = new URL('..', import.meta.url).pathname;
+
+async function waitForUrl(url, timeoutMs = 30_000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    try { if ((await fetch(url, { redirect: 'follow' })).ok) return; } catch { /* booting */ }
+    await delay(300);
+  }
+  throw new Error(`Timed out waiting for ${url}`);
+}
+
+async function must(url, options = {}) {
+  const response = await fetch(url, {
+    ...options,
+    headers: { 'content-type': 'application/json', ...(options.headers || {}) },
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(`${response.status} ${url}: ${data.error || 'request failed'}`);
+  return data;
+}
+
+async function waitForCoordinator(vaultId, channelId, auth, registrationId, expected) {
+  const deadline = Date.now() + 10_000;
+  let agents = [];
+  while (Date.now() < deadline) {
+    ({ agents = [] } = await must(`${API_BASE}/api/vaults/${vaultId}/channels/${channelId}/agents`, { headers: auth }));
+    if (agents.find((item) => item.id === registrationId)?.orchestrator === expected) return agents;
+    await delay(100);
+  }
+  return agents;
+}
+
+let failures = 0;
+function check(label, condition, detail = '') {
+  if (condition) console.log(`[mission-ui] OK  ${label}`);
+  else {
+    console.error(`[mission-ui] FAIL ${label}${detail ? ` — ${detail}` : ''}`);
+    failures += 1;
+  }
+}
+
+try { fs.unlinkSync(DB_PATH); } catch { /* clean */ }
+const server = spawn('node', ['dist/index.js'], {
+  cwd: root,
+  env: {
+    ...process.env,
+    API_PORT: String(API_PORT),
+    API_HOST: '127.0.0.1',
+    DOCS_DB_PATH: DB_PATH,
+    JWT_SECRET: 'mission-ui-secret',
+    CASCADE_ALLOW_OPEN_REGISTRATION: '1',
+  },
+  stdio: ['ignore', 'pipe', 'pipe'],
+});
+server.stderr.on('data', (chunk) => process.stderr.write(`[server-err] ${chunk}`));
+const preview = spawn('npm', ['--workspace=client', 'run', 'preview', '--', '--host', '127.0.0.1', '--port', String(PREVIEW_PORT)], {
+  cwd: root,
+  env: { ...process.env, API_PORT: String(API_PORT) },
+  stdio: ['ignore', 'pipe', 'pipe'],
+});
+preview.stderr.on('data', (chunk) => process.stderr.write(`[preview] ${chunk}`));
+
+let browser;
+try {
+  await waitForUrl(`${API_BASE}/api/health`);
+  await waitForUrl(APP_URL);
+  const stamp = Date.now();
+  const username = `mission_ui_${stamp}`;
+  const { token } = await must(`${API_BASE}/api/auth/register`, {
+    method: 'POST', body: JSON.stringify({ username, password: 'testpass12345' }),
+  });
+  const auth = { authorization: `Bearer ${token}` };
+  const { vault } = await must(`${API_BASE}/api/vaults`, {
+    method: 'POST', headers: auth, body: JSON.stringify({ name: 'Mission UI' }),
+  });
+  const { note: channel } = await must(`${API_BASE}/api/vaults/${vault.id}/notes`, {
+    method: 'POST', headers: auth,
+    body: JSON.stringify({ title: 'mission-room', content: 'cascade://chat-channel' }),
+  });
+  const rootMessage = {
+    id: `mission-root-${stamp}`,
+    channelId: channel.id,
+    author: username,
+    body: 'Implement the chat-first orchestration slice.',
+    createdAt: new Date().toISOString(),
+  };
+  // Seed the root before enabling the coordinator so this renderer smoke does
+  // not need a live desktop model runner.
+  await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/messages`, {
+    method: 'POST', headers: auth, body: JSON.stringify(rootMessage),
+  });
+  const { agent: solIdentity } = await must(`${API_BASE}/api/vaults/${vault.id}/vault-agents`, {
+    method: 'PUT', headers: auth,
+    body: JSON.stringify({ agentId: 'codex', displayName: 'Sol', mention: 'sol', model: 'gpt-5.6-sol' }),
+  });
+  // An unknown backend keeps this smoke deterministic: the task stays durable
+  // but no real model process is launched when the renderer recovers it.
+  const { agent: terraIdentity } = await must(`${API_BASE}/api/vaults/${vault.id}/vault-agents`, {
+    method: 'PUT', headers: auth,
+    body: JSON.stringify({ agentId: 'mission-test-worker', displayName: 'Terra', mention: 'terra' }),
+  });
+  const { registration: sol } = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/agents/from-vault`, {
+    method: 'POST', headers: auth,
+    body: JSON.stringify({ vaultAgentId: solIdentity.id, orchestrator: true }),
+  });
+  await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/agents/from-vault`, {
+    method: 'POST', headers: auth, body: JSON.stringify({ vaultAgentId: terraIdentity.id }),
+  });
+  const { mission } = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/missions`, {
+    method: 'POST', headers: auth,
+    body: JSON.stringify({
+      rootMessageId: rootMessage.id,
+      coordinatorRegistrationId: sol.id,
+      title: 'Chat-first orchestration',
+      objective: rootMessage.body,
+    }),
+  });
+  const { task } = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/missions/${mission.id}/tasks`, {
+    method: 'POST', headers: auth,
+    body: JSON.stringify({
+      coordinatorRegistrationId: sol.id,
+      title: 'Verify multiplayer persistence',
+      assignee: '@terra',
+      prompt: 'Verify live updates and reload persistence.',
+    }),
+  });
+  const seeded = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/messages`, { headers: auth });
+  if (!seeded.messages.find((message) => message.id === rootMessage.id)?.mission) {
+    throw new Error('seeded mission projection was missing before the browser loaded');
+  }
+
+  const { chromium } = await import('playwright');
+  browser = await chromium.launch({ headless: true });
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  const errors = [];
+  const channelResponses = [];
+  page.on('pageerror', (error) => errors.push(`pageerror: ${error.message}`));
+  page.on('console', (message) => {
+    if (message.type() === 'error') errors.push(`console.error: ${message.text()}`);
+  });
+  page.on('response', (response) => {
+    if (response.url().includes(`/channels/${channel.id}/`)) {
+      channelResponses.push(`${response.status()} ${response.url()}`);
+    }
+  });
+  await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
+  await page.evaluate((value) => {
+    localStorage.setItem('docs_token', value);
+    localStorage.setItem('cascade_chat_users_collapsed', '0');
+  }, token);
+  await page.goto(APP_URL, { waitUntil: 'networkidle' });
+  const openChannel = async () => {
+    const entry = page.locator(`#note-${channel.id}`);
+    await entry.waitFor({ timeout: 20_000 });
+    await entry.click();
+    try {
+      await page.locator('.chat-header h2', { hasText: 'mission-room' }).waitFor({ timeout: 20_000 });
+    } catch (error) {
+      console.error('[mission-ui] page after channel click:\n' + (await page.locator('body').innerText()).slice(0, 4000));
+      console.error('[mission-ui] browser errors:\n' + errors.join('\n'));
+      await page.screenshot({ path: '/tmp/cascade-mission-ui-fail.png', fullPage: true });
+      throw error;
+    }
+  };
+  await openChannel();
+  const browserSeed = await page.evaluate(async ({ vaultId, channelId }) => {
+    const headers = { authorization: `Bearer ${localStorage.getItem('docs_token') || ''}` };
+    const [messages, agents] = await Promise.all([
+      fetch(`/api/vaults/${vaultId}/channels/${channelId}/messages`, { headers }).then((response) => response.json()),
+      fetch(`/api/vaults/${vaultId}/channels/${channelId}/agents`, { headers }).then((response) => response.json()),
+    ]);
+    return { messages, agents };
+  }, { vaultId: vault.id, channelId: channel.id });
+
+  const card = page.locator('.chat-mission-card', { hasText: 'Chat-first orchestration' });
+  try {
+    await card.waitFor({ timeout: 20_000 });
+  } catch (error) {
+    console.error('[mission-ui] page without mission card:\n' + (await page.locator('body').innerText()).slice(0, 5000));
+    console.error('[mission-ui] browser errors:\n' + errors.join('\n'));
+    console.error('[mission-ui] browser API snapshot:\n' + JSON.stringify(browserSeed, null, 2).slice(0, 8000));
+    console.error('[mission-ui] channel responses:\n' + channelResponses.join('\n'));
+    await page.screenshot({ path: '/tmp/cascade-mission-ui-fail.png', fullPage: true });
+    throw error;
+  }
+  check('mission artifact renders inline', await card.isVisible());
+  check('active mission starts compact', !(await card.evaluate((node) => node.open)));
+  await card.locator('summary').click();
+  check('mission expands to its worker task', (await card.innerText()).includes('Verify multiplayer persistence'));
+
+  await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/missions/tasks/${task.id}`, {
+    method: 'PATCH', headers: auth,
+    body: JSON.stringify({ status: 'running', summary: 'Second client connected.' }),
+  });
+  await page.waitForFunction(() => document.querySelector('.chat-mission-task.is-running') !== null, null, { timeout: 10_000 });
+  check('live task update does not collapse an open artifact', await card.evaluate((node) => node.open));
+
+  await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/missions/tasks/${task.id}`, {
+    method: 'PATCH', headers: auth,
+    body: JSON.stringify({ status: 'completed', summary: 'Reload and multiplayer projection passed.' }),
+  });
+  await page.waitForFunction(() => document.querySelector('.chat-mission-card.is-reviewing') !== null, null, { timeout: 10_000 });
+  check('worker completion waits for coordinator review', (await card.locator('summary').innerText()).includes('reviewing'));
+
+  await page.reload({ waitUntil: 'networkidle' });
+  await openChannel();
+  const reloadedCard = page.locator('.chat-mission-card', { hasText: 'Chat-first orchestration' });
+  await reloadedCard.waitFor({ timeout: 20_000 });
+  await reloadedCard.locator('summary').click();
+  check('reload retains task status and evidence', (await reloadedCard.innerText()).includes('Reload and multiplayer projection passed.'));
+
+  const solRow = page.locator('.chat-agent-edit-btn', { hasText: 'Sol' });
+  await solRow.waitFor({ timeout: 10_000 });
+  await solRow.click();
+  const coordinatorToggle = page.getByLabel('Coordinate this channel');
+  await coordinatorToggle.waitFor({ timeout: 5_000 });
+  check('coordinator toggle reflects persisted membership', await coordinatorToggle.isChecked());
+  check('coordinator implies the default human-message route', await page.getByLabel('Reply to every human message').isDisabled());
+
+  await coordinatorToggle.uncheck();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  let agents = await waitForCoordinator(vault.id, channel.id, auth, sol.id, false);
+  check('disabling coordination persists', agents.find((item) => item.id === sol.id)?.orchestrator === false);
+  await solRow.click();
+  await page.getByLabel('Coordinate this channel').check();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  agents = await waitForCoordinator(vault.id, channel.id, auth, sol.id, true);
+  check('re-enabling coordination persists', agents.find((item) => item.id === sol.id)?.orchestrator === true);
+
+  const fatal = errors.filter((line) => !line.includes('[VersionCheck]'));
+  check('no console errors or uncaught exceptions', fatal.length === 0, fatal.join(' | '));
+} catch (error) {
+  console.error('[mission-ui] FAILED:', error.message || error);
+  failures += 1;
+} finally {
+  await browser?.close();
+  preview.kill('SIGTERM');
+  server.kill('SIGTERM');
+  await delay(300);
+  try { fs.unlinkSync(DB_PATH); } catch { /* clean */ }
+}
+
+process.exit(failures ? 1 : 0);

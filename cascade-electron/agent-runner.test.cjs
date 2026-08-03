@@ -3,7 +3,13 @@ const test = require('node:test');
 const os = require('node:os');
 const path = require('node:path');
 const fs = require('node:fs');
-const { helperAllowedTools, normalizeClaudeEffort } = require('./agent-runner.cjs');
+const { chatTriggeringMessageId, helperAllowedTools, normalizeClaudeEffort } = require('./agent-runner.cjs');
+
+test('chat triggering message id follows the mission root through runner payload shapes', () => {
+  assert.equal(chatTriggeringMessageId({ chatTriggeringMessageId: 'root-top' }), 'root-top');
+  assert.equal(chatTriggeringMessageId({ chat: { triggeringMessageId: 'root-nested' } }), 'root-nested');
+  assert.equal(chatTriggeringMessageId({ chatMessageId: 'worker-placeholder' }), '');
+});
 
 test('Cascade helpers are pre-authorized by command name and discovered paths', () => {
   const rules = helperAllowedTools();

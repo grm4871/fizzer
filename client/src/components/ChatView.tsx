@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { Bot, Copy, Forward, ImagePlus, Paperclip, Plus, Reply, Send, Square, Trash2, X } from 'lucide-react';
+import { Bot, Copy, Forward, Hash, ImagePlus, Paperclip, Reply, Send, Trash2, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
@@ -97,6 +97,34 @@ export interface ChatMessage {
     mergedAt?: string;
     mergedBy?: string;
   };
+  mission?: ChatMission;
+  missionTaskId?: string;
+}
+
+export type ChatMissionTaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'blocked' | 'canceled';
+
+export interface ChatMissionTask {
+  id: string;
+  title: string;
+  assignee: string;
+  assigneeMention: string;
+  status: ChatMissionTaskStatus;
+  summary: string;
+  runId?: number;
+  updatedAt: string;
+}
+
+export interface ChatMission {
+  id: string;
+  title: string;
+  objective: string;
+  status: 'active' | 'reviewing' | 'blocked' | 'completed' | 'canceled';
+  coordinator: string;
+  coordinatorMention: string;
+  tasks: ChatMissionTask[];
+  summary: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 /** Desktop runner health from GET /api/me/desktop-runner */
@@ -159,6 +187,7 @@ export interface ChatAgentRegistration {
   contextPrompt: string;
   taggableByAgents: boolean;
   replyToEveryMessage: boolean;
+  orchestrator: boolean;
   /** Allow users other than the owner to @mention/trigger this agent in a
    * shared channel. The run still executes on the owner's desktop runner. */
   pingableByOthers: boolean;
@@ -914,6 +943,53 @@ function SwipeToReply({
   );
 }
 
+function ChatMissionCard({ mission }: { mission: ChatMission }) {
+  const [open, setOpen] = useState(mission.status === 'blocked');
+  useEffect(() => {
+    if (mission.status === 'blocked') setOpen(true);
+  }, [mission.status]);
+  const done = mission.tasks.filter((task) => task.status === 'completed' || task.status === 'canceled').length;
+  const total = mission.tasks.length;
+  const statusLabel = mission.status === 'active'
+    ? (total ? `${done}/${total} done` : 'planning')
+    : mission.status;
+  return (
+    <details
+      className={`chat-mission-card is-${mission.status}`}
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <summary>
+        <span className="chat-mission-state" aria-hidden="true" />
+        <strong>{mission.title}</strong>
+        <span>{statusLabel}</span>
+      </summary>
+      <div className="chat-mission-content">
+        {mission.objective && <p>{mission.objective}</p>}
+        {mission.tasks.length > 0 ? (
+          <div className="chat-mission-tasks">
+            {mission.tasks.map((task) => (
+              <div className={`chat-mission-task is-${task.status}`} key={task.id}>
+                <span className="chat-mission-task-state" aria-label={task.status}>
+                  {task.status === 'completed' ? '✓' : task.status === 'failed' || task.status === 'blocked' ? '!' : task.status === 'running' ? '●' : '○'}
+                </span>
+                <div>
+                  <strong>{task.title}</strong>
+                  <span>@{task.assigneeMention || task.assignee} · {task.status}</span>
+                  {task.summary && <small>{task.summary}</small>}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <span className="chat-mission-empty">{mission.coordinator} is deciding how to handle this.</span>
+        )}
+        {mission.summary && <div className="chat-mission-summary">{mission.summary}</div>}
+      </div>
+    </details>
+  );
+}
+
 /**
  * One author-run of messages. Memoized so keystrokes in the composer, agent
  * panel state, and stream ticks in *other* groups don't re-render the whole
@@ -1124,6 +1200,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
                   {message.body
                     && !(message.status === 'running' && /^Thinking(?:\.{3}|…)$/.test(message.body.trim()))
                     && <ChatMessageText messageId={message.id} body={message.body} mentionableAliases={mentionableAliases} notes={notes} onOpenNote={onOpenNote} onOpenSharedNote={onOpenSharedNote} />}
+                  {message.mission && <ChatMissionCard mission={message.mission} />}
                   {message.changeRequest && (
                     <div className="chat-change-request">
                       <div className="chat-change-files">
@@ -1311,6 +1388,7 @@ export const ChatView = memo(function ChatView({
       contextPrompt: '',
       taggableByAgents: false,
       replyToEveryMessage: false,
+      orchestrator: false,
       pingableByOthers: false,
       yolo: false,
       conversationId: '',
@@ -1328,6 +1406,7 @@ export const ChatView = memo(function ChatView({
     contextPrompt: '',
     taggableByAgents: false,
     replyToEveryMessage: false,
+    orchestrator: false,
     pingableByOthers: false,
     yolo: false,
     conversationId: '',
@@ -1819,6 +1898,7 @@ export const ChatView = memo(function ChatView({
           contextPrompt: va.contextPrompt,
           taggableByAgents: false,
           replyToEveryMessage: false,
+          orchestrator: false,
           pingableByOthers: false,
           yolo: false,
           conversationId: '',
@@ -1961,6 +2041,18 @@ export const ChatView = memo(function ChatView({
         const vaultAgentId = va?.id || agentForm.vaultAgentId || '';
         if (vaultAgentId && onAddVaultAgentToChannel) {
           await onAddVaultAgentToChannel(channelId, vaultAgentId);
+          // Persist membership-only flags selected in the create form. Adding
+          // the vault identity alone intentionally starts with safe defaults.
+          onRegisterAgent(channelId, {
+            ...agentForm,
+            id: agentForm.id || createChatAgentRegistrationId(),
+            vaultAgentId,
+            displayName: agentForm.displayName.trim(),
+            mention,
+            model,
+            cwd: agentForm.cwd.trim(),
+            contextPrompt: agentForm.contextPrompt.trim(),
+          });
         } else {
           onRegisterAgent(channelId, {
             ...agentForm,
@@ -2798,7 +2890,21 @@ export const ChatView = memo(function ChatView({
             <label className="chat-agent-toggle">
               <input
                 type="checkbox"
+                checked={agentForm.orchestrator}
+                onChange={(event) => setAgentForm((value) => ({
+                  ...value,
+                  orchestrator: event.target.checked,
+                  replyToEveryMessage: event.target.checked,
+                }))}
+              />
+              Coordinate this channel
+            </label>
+            <span className="chat-agent-field-hint">Receives human messages, may create durable missions, and can dispatch other channel agents.</span>
+            <label className="chat-agent-toggle">
+              <input
+                type="checkbox"
                 checked={agentForm.replyToEveryMessage}
+                disabled={agentForm.orchestrator}
                 onChange={(event) => setAgentForm((value) => ({ ...value, replyToEveryMessage: event.target.checked }))}
               />
               Reply to every human message

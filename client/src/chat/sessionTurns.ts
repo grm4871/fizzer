@@ -3,6 +3,11 @@ export type SessionTurn = {
   release: () => void;
 };
 
+/** Mission work is a queued assignment, never a correction to the active turn. */
+export function queuesBehindActiveSession(message: { id?: string; missionTaskId?: string }): boolean {
+  return Boolean(message.missionTaskId || String(message.id || '').startsWith('sys-mission-'));
+}
+
 /**
  * Serialize top-level prompts for one backing CLI session.
  *

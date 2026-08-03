@@ -50,7 +50,7 @@ import {
   normalizeChatCwd,
   type AgentId,
 } from './chat/agents';
-import { buildQuotedReplyPrompt, getMentionedRegistrations, hasRegistrationForMention, normalizeMention, precedingMessageBatch, precedingMessageBatchText, resolveAgentMessageRegistration, stripRegisteredAgentMentions } from './chat/mentions';
+import { buildQuotedReplyPrompt, getMentionedRegistrations, normalizeMention, precedingMessageBatch, precedingMessageBatchText, replyQuoteTargetsAgent, stripRegisteredAgentMentions } from './chat/mentions';
 import {
   appendChatRunBlocks,
   appendHarnessLog,
@@ -73,8 +73,24 @@ import {
   type ChatState,
   type PersistedSession,
 } from './chat/session';
-import { consumePendingSessionSteer, enqueueSessionTurn, requestSessionSteer } from './chat/sessionTurns';
+import { consumePendingSessionSteer, enqueueSessionTurn, queuesBehindActiveSession, requestSessionSteer } from './chat/sessionTurns';
 import { Activity, Gem, PanelLeftOpen, Users } from 'lucide-react';
+
+type ChatAgentDispatch = {
+  id: string;
+  messageId: string;
+  channelId: string;
+  registration: ChatAgentRegistration;
+  message: ChatMessage;
+  runId: number | null;
+  createdAt: string;
+};
+
+type PersistedChatMessage = {
+  message: ChatMessage;
+  agents: ChatAgentRegistration[];
+  dispatches: ChatAgentDispatch[];
+};
 
 /**
  * @file App.tsx — Root component for Cascade
@@ -222,10 +238,10 @@ export default function App() {
   const pendingAgentSteerRef = useRef<Set<string>>(new Set());
   const pendingChatPatchRef = useRef<Map<string, ChatMessage>>(new Map());
   const chatPatchTimerRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
-  const startAgentChatRunRef = useRef<((channelId: string, registration: ChatAgentRegistration, prompt: string, triggeringMessage: ChatMessage) => void) | null>(null);
-  // Direct `cascade-chat send` replies arrive as a new message, rather than as
-  // streamed run text. Keep handoffs idempotent across socket reconnects.
-  const chainedAgentMessageIdsRef = useRef<Set<string>>(new Set());
+  // One renderer can observe its own message POST over Socket.IO before the
+  // response arrives. Keep durable dispatch recovery single-flight locally;
+  // the server's unique dispatch key is the cross-renderer backstop.
+  const startingChatDispatchesRef = useRef<Set<string>>(new Set());
   // Debounce socket-driven soft vault reloads (note create/change/delete bursts).
   const socketVaultReloadTimerRef = useRef<number | null>(null);
   // Repair focus if the focused pane disappears (e.g. after collapsing a split).
@@ -669,9 +685,13 @@ export default function App() {
     vaultId: string,
     channelId: string,
     message: ChatMessage,
-  ): Promise<ChatMessage | null> => {
+  ): Promise<PersistedChatMessage | null> => {
     try {
-      const data = await api<{ message: ChatMessage }>(`/api/vaults/${vaultId}/channels/${channelId}/messages`, {
+      const data = await api<{
+        message: ChatMessage;
+        agents?: ChatAgentRegistration[];
+        dispatches?: ChatAgentDispatch[];
+      }>(`/api/vaults/${vaultId}/channels/${channelId}/messages`, {
         method: 'POST',
         body: JSON.stringify(message),
       });
@@ -691,7 +711,17 @@ export default function App() {
           },
         };
       });
-      return merged;
+      const agents = data.agents ?? chatStateRef.current.registeredAgentsByChannel[channelId] ?? [];
+      if (data.agents) {
+        setChatState((prev) => ({
+          ...prev,
+          registeredAgentsByChannel: {
+            ...prev.registeredAgentsByChannel,
+            [channelId]: data.agents!,
+          },
+        }));
+      }
+      return { message: merged, agents, dispatches: data.dispatches ?? [] };
     } catch (error) {
       console.error('Failed to persist chat message:', error);
       setNotice(error instanceof Error ? error.message : 'Could not save chat message');
@@ -742,13 +772,15 @@ export default function App() {
 
   const persistChatAgentMemberToServer = useCallback(async (vaultId: string, channelId: string, registration: ChatAgentRegistration) => {
     try {
-      await api(`/api/vaults/${vaultId}/channels/${channelId}/agents`, {
+      const data = await api<{ registration: ChatAgentRegistration }>(`/api/vaults/${vaultId}/channels/${channelId}/agents`, {
         method: 'PUT',
         body: JSON.stringify(registration),
       });
+      return data.registration;
     } catch (error) {
       console.error('Failed to persist chat agent member:', error);
       setNotice(error instanceof Error ? error.message : 'Could not save agent member');
+      return null;
     }
   }, []);
 
@@ -1170,13 +1202,19 @@ export default function App() {
     message: ChatMessage,
     options: { persist?: boolean } = {},
   ) => {
-    setChatState((prev) => ({
-      ...prev,
-      messagesByChannel: {
-        ...prev.messagesByChannel,
-        [channelId]: [...(prev.messagesByChannel[channelId] ?? []), message],
-      },
-    }));
+    setChatState((prev) => {
+      const existing = prev.messagesByChannel[channelId] ?? [];
+      const next = existing.some((item) => item.id === message.id)
+        ? existing.map((item) => item.id === message.id ? { ...item, ...message } : item)
+        : [...existing, message];
+      return {
+        ...prev,
+        messagesByChannel: {
+          ...prev.messagesByChannel,
+          [channelId]: next,
+        },
+      };
+    });
     const vaultId = activeVaultIdRef.current;
     if (vaultId && options.persist !== false) void persistChatMessageToServer(vaultId, channelId, message);
   }, [persistChatMessageToServer]);
@@ -1217,7 +1255,8 @@ export default function App() {
       displayName: registration.displayName.trim() || agentLabel(registration.agentId as AgentId),
       mention: normalizeMention(registration.mention || registration.agentId),
       cwd: normalizeChatCwd(registration.cwd),
-      replyToEveryMessage: registration.replyToEveryMessage === true,
+      orchestrator: registration.orchestrator === true,
+      replyToEveryMessage: registration.replyToEveryMessage === true || registration.orchestrator === true,
       conversationId: registration.conversationId || newId('conv'),
     };
     setChatState((prev) => ({
@@ -1232,7 +1271,23 @@ export default function App() {
     }));
     const vaultId = activeVaultIdRef.current;
     if (vaultId) {
-      void persistChatAgentMemberToServer(vaultId, channelId, normalized).then(() => {
+      void persistChatAgentMemberToServer(vaultId, channelId, normalized).then((saved) => {
+        if (saved) {
+          setChatState((prev) => ({
+            ...prev,
+            registeredAgentsByChannel: {
+              ...prev.registeredAgentsByChannel,
+              [channelId]: [
+                ...(prev.registeredAgentsByChannel[channelId] ?? []).filter((item) => (
+                  item.id !== normalized.id
+                  && item.id !== saved.id
+                  && (!saved.vaultAgentId || item.vaultAgentId !== saved.vaultAgentId)
+                )),
+                saved,
+              ],
+            },
+          }));
+        }
         void loadVaultAgents(vaultId);
       });
     }
@@ -1366,17 +1421,21 @@ export default function App() {
     prompt: string,
     triggeringMessage: ChatMessage,
     runImages: Array<{ media_type: string; data: string }> = [],
-  ) => {
+    dispatchId?: string,
+  ): Promise<boolean> => {
     const vaultId = activeVaultIdRef.current;
-    if (!vaultId) return;
+    if (!vaultId) return false;
 
     const agentId = registration.agentId as AgentId;
-    if (!CHAT_AGENTS.some((agent) => agent.id === agentId)) return;
+    if (!CHAT_AGENTS.some((agent) => agent.id === agentId)) return false;
     const channelName = notesRef.current.find((note) => note.id === channelId)?.title || 'chat';
     const watermarkKey = `${registration.id}:${registration.conversationId || ''}`;
     const sessionTurn = enqueueSessionTurn(agentSessionTailRef.current, watermarkKey);
-    const steeringTurn = Boolean(sessionTurn.preceding);
-    const agentMessageId = `agent-${agentId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const orchestrationQueue = queuesBehindActiveSession(triggeringMessage);
+    const steeringTurn = Boolean(sessionTurn.preceding) && !orchestrationQueue;
+    const agentMessageId = dispatchId
+      ? `agent-dispatch-${dispatchId}`
+      : `agent-${agentId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
     if (steeringTurn) {
       const runToInterrupt = requestSessionSteer(
@@ -1473,7 +1532,7 @@ export default function App() {
       id: agentMessageId,
       channelId,
       author: registration.displayName || agentLabel(agentId),
-      body: 'Thinking...',
+      body: orchestrationQueue && sessionTurn.preceding ? 'Queued...' : 'Thinking...',
       createdAt: afterChatTimestamp(triggeringMessage.createdAt),
       status: 'running',
       agentId,
@@ -1487,18 +1546,25 @@ export default function App() {
       // A predecessor that never publishes a terminal event must not leave this
       // optimistic shell saying "Thinking..." forever. The server has not been
       // asked to create a run yet, so it is safe to fail this startup locally.
-      let startupTimeout: number | undefined;
-      await Promise.race([
-        sessionTurn.preceding,
-        new Promise<never>((_resolve, reject) => {
-          startupTimeout = window.setTimeout(
-            () => reject(new Error('Agent run did not start within 60 seconds. Please try again.')),
-            60_000,
-          );
-        }),
-      ]).finally(() => {
-        if (startupTimeout != null) window.clearTimeout(startupTimeout);
-      });
+      if (orchestrationQueue) {
+        // Long worker tasks routinely exceed a minute. Their next assignment is
+        // durable and should wait for the provider session, not time out or
+        // interrupt it as if the user had steered the current answer.
+        await sessionTurn.preceding;
+      } else {
+        let startupTimeout: number | undefined;
+        await Promise.race([
+          sessionTurn.preceding,
+          new Promise<never>((_resolve, reject) => {
+            startupTimeout = window.setTimeout(
+              () => reject(new Error('Agent run did not start within 60 seconds. Please try again.')),
+              60_000,
+            );
+          }),
+        ]).finally(() => {
+          if (startupTimeout != null) window.clearTimeout(startupTimeout);
+        });
+      }
       // One sticky session per agent: the run resumes (and extends) the member's
       // conversation, so its earlier turns are already in context. A `/clear`
       // rotates conversationId, so a fresh key here has no watermark.
@@ -1592,26 +1658,6 @@ export default function App() {
                 // on failure so the next turn re-feeds the context this run missed.
                 agentContextWatermarkRef.current.set(watermarkKey, agentMessageId);
               }
-              // Chain agent→agent mentions from the cleaned final body, not raw stream.
-              // Skip when body was suppressed (real reply already went out via cascade-chat send).
-              if (terminal === 'completed' && finalBody.trim() && !suppressChatBody) {
-                const registrations = (chatStateRef.current.registeredAgentsByChannel[channelId] ?? [])
-                  .filter((item) => item.id !== registration.id);
-                const mentionedAgents = getMentionedRegistrations(finalBody, registrations, true);
-                const chainPrompt = stripRegisteredAgentMentions(finalBody, registrations) || finalBody;
-                const triggeringAgentMessage: ChatMessage = {
-                  id: agentMessageId,
-                  channelId,
-                  author: registration.displayName || agentLabel(agentId),
-                  body: finalBody,
-                  createdAt: new Date().toISOString(),
-                  agentId,
-                  registrationId: registration.id,
-                };
-                for (const mentionedRegistration of mentionedAgents) {
-                  startAgentChatRunRef.current?.(channelId, mentionedRegistration, chainPrompt, triggeringAgentMessage);
-                }
-              }
               finishRun(runId, cleanup);
             }
           } else if (event.type === 'text') {
@@ -1666,7 +1712,7 @@ export default function App() {
         });
       });
 
-      const res = await api<{ run: { id: number; status: string; conversation_id: string } }>(`/api/vaults/${vaultId}/runs`, {
+      const res = await api<{ run: { id: number; status: string; conversation_id: string }; reused?: boolean }>(`/api/vaults/${vaultId}/runs`, {
         method: 'POST',
         body: JSON.stringify({
           prompt: runPrompt,
@@ -1681,6 +1727,7 @@ export default function App() {
           // agent owner's desktop runner (cross-user pings) and enforce its
           // pingable-by-others setting, rather than trusting these client values.
           registrationId: registration.id,
+          ...(dispatchId ? { chatDispatchId: dispatchId } : {}),
           // Link the run to this chat message so the server persists/broadcasts
           // the streamed reply to all clients (see serverOwnedChatMessageIdsRef).
           chat: {
@@ -1737,6 +1784,7 @@ export default function App() {
           body: JSON.stringify({ steering: true }),
         }).catch(() => {});
       }
+      return true;
     } catch (error) {
       // Release server ownership so this client-side failure is persisted by us.
       // If the run was actually created and later succeeds, the server's update
@@ -1758,9 +1806,113 @@ export default function App() {
         status: 'failed',
       }));
       sessionTurn.release();
+      return false;
     }
   }, [appendChatMessage, updateChatMessage, handleRegisterChatAgent]);
-  startAgentChatRunRef.current = startAgentChatRun;
+  const dispatchChatAgentIntents = useCallback(async (
+    channelId: string,
+    triggeringMessage: ChatMessage,
+    registrations: ChatAgentRegistration[],
+    dispatches: ChatAgentDispatch[],
+    history: ChatMessage[],
+    ownMedia: ChatMediaAttachment[] = [],
+  ) => {
+    const pendingDispatches = dispatches.filter((dispatch) => dispatch.runId == null);
+    if (pendingDispatches.length === 0) return;
+    const vaultId = activeVaultIdRef.current;
+    const contextMessages = history.filter((message) => message.id !== triggeringMessage.id);
+    const attachmentNames = (triggeringMessage.attachments ?? []).map((item) => item.name).join(' ');
+    const typedSource = [triggeringMessage.body.trim(), attachmentNames].filter(Boolean).join(' ');
+    const directPrompt = stripRegisteredAgentMentions(typedSource, registrations);
+    const quotedPrompt = triggeringMessage.replyTo
+      ? buildQuotedReplyPrompt(triggeringMessage.replyTo, contextMessages)
+      : '';
+    const batchPrompt = directPrompt || quotedPrompt
+      ? ''
+      : precedingMessageBatchText(contextMessages, triggeringMessage);
+    const taskGuidance = triggeringMessage.missionTaskId
+      ? `Cascade mission task id: ${triggeringMessage.missionTaskId}. The mission card updates automatically when this run ends. If you are blocked rather than finished, run \`cascade-chat mission update --task ${triggeringMessage.missionTaskId} --status blocked --summary "<what is needed>"\` before replying.`
+      : '';
+    const prompt = [quotedPrompt, directPrompt || batchPrompt, taskGuidance].filter(Boolean).join('\n\n')
+      || typedSource
+      || 'Please review the attached media.';
+
+    const ownImages = ownMedia.length > 0
+      ? mediaToRunImages(ownMedia)
+      : dataUrlsToRunImages(triggeringMessage.images);
+    const quotedMessage = triggeringMessage.replyTo
+      ? contextMessages.find((message) => message.id === triggeringMessage.replyTo?.messageId)
+      : undefined;
+    const imageSources = ownImages.length > 0
+      ? []
+      : (quotedMessage ? [quotedMessage] : precedingMessageBatch(contextMessages, triggeringMessage));
+    const carriedImages: Array<{ media_type: string; data: string }> = [];
+    for (const source of imageSources) {
+      let images = dataUrlsToRunImages(source.images);
+      if (images.length === 0 && source.hasImages && vaultId) {
+        try {
+          const full = await api<{ message: ChatMessage }>(
+            `/api/vaults/${vaultId}/channels/${channelId}/messages/${encodeURIComponent(source.id)}`,
+          );
+          images = dataUrlsToRunImages(full.message?.images);
+        } catch { /* Text and attachment names still carry the recoverable ask. */ }
+      }
+      carriedImages.push(...images);
+    }
+    const runImages = [...ownImages, ...carriedImages.slice(-4)];
+    const agentsWithoutImages = new Set<AgentId>(['grok', 'antigravity', 'copilot', 'hermes', 'akron-grok']);
+
+    await Promise.all(pendingDispatches.map(async (dispatch) => {
+      if (startingChatDispatchesRef.current.has(dispatch.id)) return;
+      startingChatDispatchesRef.current.add(dispatch.id);
+      try {
+        const blind = agentsWithoutImages.has(dispatch.registration.agentId as AgentId);
+        const promptForRun = blind && runImages.length > 0
+          ? `${prompt}\n\n(This message carries ${runImages.length} image(s) you cannot receive — say so instead of guessing.)`
+          : prompt;
+        await startAgentChatRun(
+          channelId,
+          dispatch.registration,
+          promptForRun,
+          triggeringMessage,
+          blind ? [] : runImages,
+          dispatch.id,
+        );
+      } finally {
+        startingChatDispatchesRef.current.delete(dispatch.id);
+      }
+    }));
+  }, [startAgentChatRun]);
+
+  const recoverPendingChatAgentDispatches = useCallback(async (channelId: string) => {
+    const vaultId = activeVaultIdRef.current;
+    if (!vaultId) return;
+    try {
+      const data = await api<{ dispatches: ChatAgentDispatch[] }>(
+        `/api/vaults/${vaultId}/channels/${channelId}/agent-dispatches/pending`,
+      );
+      const dispatches = data.dispatches ?? [];
+      if (dispatches.length === 0) return;
+      const registrations = chatStateRef.current.registeredAgentsByChannel[channelId] ?? [];
+      const grouped = new Map<string, ChatAgentDispatch[]>();
+      for (const dispatch of dispatches) {
+        grouped.set(dispatch.messageId, [...(grouped.get(dispatch.messageId) ?? []), dispatch]);
+      }
+      for (const group of grouped.values()) {
+        const trigger = group[0].message;
+        await dispatchChatAgentIntents(
+          channelId,
+          trigger,
+          registrations.length > 0 ? registrations : group.map((item) => item.registration),
+          group,
+          chatStateRef.current.messagesByChannel[channelId] ?? [],
+        );
+      }
+    } catch {
+      // Reconnect will try again. The durable outbox is intentionally left
+      // pending, so a transient API gap cannot turn a visible ping into a loss.
+    }
+  }, [dispatchChatAgentIntents]);
 
   const handleCancelChatRun = useCallback(async (runId: number): Promise<boolean> => {
     try {
@@ -1859,9 +2011,17 @@ export default function App() {
 
     const messages = chatStateRef.current.messagesByChannel[channelId] ?? [];
     const last = messages[messages.length - 1];
+    const typedSource = [trimmed, attachments.map((item) => item.name).join(' ')].filter(Boolean).join(' ');
+    const replyTargetIsAgent = replyQuoteTargetsAgent(replyTo, messages);
+    const hasAgentIntent = Boolean(replyTo)
+      || getMentionedRegistrations(typedSource, channelRegistrations, false).length > 0
+      || channelRegistrations.some((registration) => registration.replyToEveryMessage);
     let outgoingMessage = candidate;
     let mergeTargetId: string | null = null;
-    if (last && canMergeChatMessages(last, candidate)) {
+    // A reply or dispatch intent gets its own durable row. Folding it into an
+    // earlier PATCH can lose thread provenance, and would make orchestration
+    // depend on a renderer staying alive long enough to launch the run.
+    if (!hasAgentIntent && last && canMergeChatMessages(last, candidate)) {
       mergeTargetId = last.id;
       outgoingMessage = {
         ...last,
@@ -1895,111 +2055,27 @@ export default function App() {
     // inserted first it gets a lower rowid/seq and survives reloads as
     // "response then prompt" even when the UI briefly looked correct.
     void (async () => {
-      let trigger = outgoingMessage;
-      if (vaultId) {
-        if (mergeTargetId) {
-          scheduleChatMessagePatch(vaultId, channelId, mergeTargetId, outgoingMessage, true);
-        } else {
-          const saved = await persistChatMessageToServer(vaultId, channelId, candidate);
-          if (saved) trigger = saved;
-        }
-      }
-
-      let registrations = chatStateRef.current.registeredAgentsByChannel[channelId] ?? [];
-      const replyMention = normalizeMention(replyTo?.mention || '');
-      const hasReplyAgent = hasRegistrationForMention(replyMention, registrations);
-      // The reply banner can derive @name from the quoted author even if agent
-      // member hydration failed during a deploy. Resolve that mismatch from the
-      // authoritative channel roster before routing, rather than silently
-      // posting a reply that starts no run.
-      if (vaultId && replyMention && !hasReplyAgent) {
-        try {
-          const data = await api<{ agents: ChatAgentRegistration[] }>(
-            `/api/vaults/${vaultId}/channels/${channelId}/agents`,
-          );
-          registrations = data.agents ?? [];
-          setChatState((prev) => ({
-            ...prev,
-            registeredAgentsByChannel: {
-              ...prev.registeredAgentsByChannel,
-              [channelId]: registrations,
-            },
-          }));
-        } catch {
-          // Persistence still succeeded. A visible notice below explains why
-          // the reply could not route instead of failing silently.
-        }
-      }
-      const implicitMention = replyTo?.mention ? `@${replyTo.mention}` : '';
-      // What the sender actually typed. Kept apart from `implicitMention`, which
-      // exists only to route a reply back to its author: when that author is a
-      // person the "@name" is not part of the ask, and folding it into the prompt
-      // leaves the agent with a bare handle and no question.
-      const typedSource = [trimmed, attachments.map((item) => item.name).join(' ')].filter(Boolean).join(' ');
-      const mentionSource = [implicitMention, typedSource].filter(Boolean).join(' ');
-      const mentionedAgents = getMentionedRegistrations(mentionSource, registrations, false);
-      const targetAgents = [
-        ...mentionedAgents,
-        ...registrations.filter((registration) =>
-          registration.replyToEveryMessage
-          && !mentionedAgents.some((mentioned) => mentioned.id === registration.id)
-        ),
-      ];
-      if (targetAgents.length === 0) {
-        if (replyMention) setNotice(`Could not route reply to @${replyMention}. Reconnect and try again.`);
+      if (!vaultId) return;
+      if (mergeTargetId) {
+        scheduleChatMessagePatch(vaultId, channelId, mergeTargetId, outgoingMessage, true);
         return;
       }
-      const directPrompt = stripRegisteredAgentMentions(typedSource, registrations);
-      // A reply carries its ask in the quote, so hand the quoted message to the
-      // agent. Without it a bare "@agent" reply arrives as an empty prompt and
-      // the agent answers "no new ask" at the thing you were pointing at.
-      const quotedPrompt = replyTo ? buildQuotedReplyPrompt(replyTo, messages) : '';
-      // A bare @agent after a same-author message batch means "handle that batch".
-      // Usually plain text has already merged into outgoingMessage; the explicit
-      // fallback also covers grouped messages that could not be physically merged.
-      // A quote is the more precise pointer, so it wins over the batch guess.
-      const batchPrompt = directPrompt || quotedPrompt ? '' : precedingMessageBatchText(messages, candidate);
-      const prompt = [quotedPrompt, directPrompt || batchPrompt].filter(Boolean).join('\n\n')
-        || typedSource || 'Please review the attached media.';
-      // "@agent diagnose this" carries no media of its own — the screenshot is on
-      // another message: the one being replied to, or the same-author batch just
-      // before it (the same pointer rule the batch prompt already uses). Without
-      // this the agent gets the words, none of the evidence, and guesses at what
-      // it cannot see.
-      const ownImages = mediaToRunImages(media);
-      const quotedMessage = replyTo ? messages.find((message) => message.id === replyTo.messageId) : undefined;
-      const imageSources = ownImages.length > 0
-        ? []
-        : (quotedMessage ? [quotedMessage] : precedingMessageBatch(messages, candidate));
-      const carriedImages: Array<{ media_type: string; data: string }> = [];
-      for (const source of imageSources) {
-        let images = dataUrlsToRunImages(source.images);
-        if (images.length === 0 && source.hasImages && vaultId) {
-          // The list payload strips heavy data URLs; refetch the one message we need.
-          try {
-            const full = await api<{ message: ChatMessage }>(
-              `/api/vaults/${vaultId}/channels/${channelId}/messages/${encodeURIComponent(source.id)}`,
-            );
-            images = dataUrlsToRunImages(full.message?.images);
-          } catch { /* the quoted/batch text still carries the ask */ }
-        }
-        carriedImages.push(...images);
+      const saved = await persistChatMessageToServer(vaultId, channelId, candidate);
+      if (!saved) return;
+      if (replyTargetIsAgent && saved.dispatches.length === 0) {
+        const replyMention = normalizeMention(replyTo?.mention || '');
+        if (replyMention) setNotice(`Could not route reply to @${replyMention}. Reconnect and try again.`);
       }
-      // Keep the most recent few: a long screenshot batch would otherwise blow up
-      // the request without adding much the agent can act on.
-      const runImages = [...ownImages, ...carriedImages.slice(-4)];
-      const agentsWithoutImages = new Set<AgentId>(['grok', 'antigravity', 'copilot', 'hermes', 'akron-grok']);
-      for (const registration of targetAgents) {
-        const blind = agentsWithoutImages.has(registration.agentId as AgentId);
-        // Tell a text-only agent an image exists rather than let it answer as if
-        // the message were complete.
-        const promptForRun = blind && runImages.length > 0
-          ? `${prompt}\n\n(This message carries ${runImages.length} image(s) you cannot receive — say so instead of guessing.)`
-          : prompt;
-        void startAgentChatRun(channelId, registration, promptForRun, trigger, blind ? [] : runImages);
-      }
+      await dispatchChatAgentIntents(
+        channelId,
+        saved.message,
+        saved.agents,
+        saved.dispatches,
+        messages,
+        media,
+      );
     })();
-  }, [scheduleChatMessagePatch, persistChatMessageToServer, startAgentChatRun, user, handleRegisterChatAgent, appendChatMessage]);
+  }, [scheduleChatMessagePatch, persistChatMessageToServer, dispatchChatAgentIntents, user, handleRegisterChatAgent, appendChatMessage]);
 
   /** Close a tab from anywhere: drop it from the registry, content, and tree. */
   const closeTab = useCallback((tabId: string) => {
@@ -2287,12 +2363,13 @@ export default function App() {
             channelIds,
           }),
           loadChatAgentMembers(activeVaultId, notesRef.current, { channelIds }),
-        ]);
+        ]).then(() => Promise.all(
+          channelIds.map((channelId) => recoverPendingChatAgentDispatches(channelId)),
+        ));
       }
     };
-    joinActiveVault();
     socket.on('connect', handleConnect);
-    syncChatPresenceRooms(socket);
+    if (socket.connected) handleConnect();
 
     // Soft + debounced: note events often arrive in bursts (agent saves, multi-
     // user edits). A hard full reload per event re-stacked cold-start work and
@@ -2331,7 +2408,7 @@ export default function App() {
       else if (Notification.permission === 'default') void Notification.requestPermission().then((p) => { if (p === 'granted') show(); });
     };
 
-    const handleChatMessageCreated = (data: { vaultId: string; channelId: string; message: ChatMessage }) => {
+    const handleChatMessageCreated = (data: { vaultId: string; channelId: string; message: ChatMessage; dispatches?: ChatAgentDispatch[] }) => {
       if (data.vaultId !== activeVaultId) return;
       setChatState((prev) => {
         const existing = prev.messagesByChannel[data.channelId] ?? [];
@@ -2345,28 +2422,20 @@ export default function App() {
         };
       });
 
-      // Agents normally post their real reply through `cascade-chat send`.
-      // Those messages bypass the run-completion chain below because the run
-      // bubble is suppressed to avoid a duplicate reply. Chain from this
-      // settled, agent-authored message instead; never from "Thinking...".
-      if (data.message.status) return;
-      const registrations = chatStateRef.current.registeredAgentsByChannel[data.channelId] ?? [];
-      const source = resolveAgentMessageRegistration(data.message, registrations);
-      if (!source) return;
-      const targets = getMentionedRegistrations(
-        data.message.body,
-        registrations.filter((item) => item.id !== source.id),
-        true,
-      );
-      const prompt = stripRegisteredAgentMentions(data.message.body, registrations) || data.message.body;
-      for (const target of targets) {
-        const key = `${data.message.id}:${target.id}`;
-        if (chainedAgentMessageIdsRef.current.has(key)) continue;
-        chainedAgentMessageIdsRef.current.add(key);
-        startAgentChatRunRef.current?.(data.channelId, target, prompt, data.message);
+      const dispatches = data.dispatches ?? [];
+      if (dispatches.length > 0) {
+        const cached = chatStateRef.current.registeredAgentsByChannel[data.channelId] ?? [];
+        const registrations = cached.length > 0 ? cached : dispatches.map((dispatch) => dispatch.registration);
+        void dispatchChatAgentIntents(
+          data.channelId,
+          data.message,
+          registrations,
+          dispatches,
+          chatStateRef.current.messagesByChannel[data.channelId] ?? [],
+        );
       }
     };
-    const handleChatMessageUpdated = (data: { vaultId: string; channelId: string; message: ChatMessage }) => {
+    const handleChatMessageUpdated = (data: { vaultId: string; channelId: string; message: ChatMessage; dispatches?: ChatAgentDispatch[] }) => {
       if (data.vaultId !== activeVaultId) return;
       // Terminal empty agent shells (dual-post suppress after cascade-chat send)
       // must not stick around as blank "(message)" bubbles in the live UI.
@@ -2417,6 +2486,18 @@ export default function App() {
           },
         };
       });
+      const dispatches = data.dispatches ?? [];
+      if (dispatches.length > 0) {
+        const cached = chatStateRef.current.registeredAgentsByChannel[data.channelId] ?? [];
+        const registrations = cached.length > 0 ? cached : dispatches.map((dispatch) => dispatch.registration);
+        void dispatchChatAgentIntents(
+          data.channelId,
+          data.message,
+          registrations,
+          dispatches,
+          chatStateRef.current.messagesByChannel[data.channelId] ?? [],
+        );
+      }
     };
     const handleChatMessageDeleted = (data: { vaultId: string; channelId: string; messageId: string }) => {
       if (data.vaultId !== activeVaultId) return;
@@ -2544,13 +2625,16 @@ export default function App() {
       socket.off('vault:chatPresence', handleChatPresence);
       socket.disconnect();
     };
-  }, [activeVaultId, loadVaultData, loadNoteContent, loadChatAgentMembers, loadChatMessages, openChatTabIds, openNote, syncChatPresenceRooms]);
+  }, [activeVaultId, loadVaultData, loadNoteContent, loadChatAgentMembers, loadChatMessages, openChatTabIds, openNote, syncChatPresenceRooms, dispatchChatAgentIntents, recoverPendingChatAgentDispatches]);
 
   useEffect(() => {
     const socket = vaultSocketRef.current;
     if (!socket?.connected || !activeVaultId) return;
     syncChatPresenceRooms(socket);
-  }, [activeVaultId, syncChatPresenceRooms]);
+    for (const channelId of visibleChatChannelIds) {
+      void recoverPendingChatAgentDispatches(channelId);
+    }
+  }, [activeVaultId, syncChatPresenceRooms, visibleChatChannelIds, recoverPendingChatAgentDispatches]);
 
   // ═══════════════════════════════════════════════════════════════
   // NOTE / FOLDER OPERATIONS

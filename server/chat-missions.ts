@@ -1,0 +1,479 @@
+/**
+ * Durable chat-first orchestration state.
+ *
+ * Tables are authoritative; `chat_messages.mission_json` is a materialized
+ * projection so normal transcript reads and multiplayer socket updates render
+ * a mission without a second request or a client-owned task store.
+ */
+import crypto from 'node:crypto';
+import type Database from 'better-sqlite3';
+import {
+  assertChatChannel,
+  getChatMessage,
+  listChatAgentMembers,
+  type ChatAgentRegistration,
+  type ChatMessage,
+  type ChatMission,
+  type ChatMissionStatus,
+  type ChatMissionTask,
+  type ChatMissionTaskStatus,
+} from './chat.js';
+
+type Db = Database.Database;
+
+type MissionRow = {
+  id: string;
+  vault_id: string;
+  channel_id: string;
+  root_message_id: string;
+  coordinator_registration_id: string;
+  title: string;
+  objective: string;
+  status: ChatMissionStatus;
+  summary: string;
+  wake_sent: number;
+  created_by: number;
+  created_at: string;
+  updated_at: string;
+};
+
+type TaskRow = {
+  id: string;
+  mission_id: string;
+  title: string;
+  assignee_registration_id: string;
+  status: ChatMissionTaskStatus;
+  summary: string;
+  dispatch_id: string | null;
+  run_id: number | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type MissionProjectionUpdate = {
+  mission: ChatMission;
+  vaultId: string;
+  channelId: string;
+  rootMessageId: string;
+  createdBy: number;
+};
+
+export type MissionWake = MissionProjectionUpdate & {
+  coordinatorRegistrationId: string;
+};
+
+export function ensureChatMissionSchema(db: Db): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS chat_missions (
+      id TEXT PRIMARY KEY,
+      vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
+      channel_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+      root_message_id TEXT NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
+      coordinator_registration_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      objective TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'active',
+      summary TEXT NOT NULL DEFAULT '',
+      wake_sent INTEGER NOT NULL DEFAULT 0,
+      created_by INTEGER NOT NULL REFERENCES users(id),
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(channel_id, root_message_id)
+    );
+    CREATE INDEX IF NOT EXISTS chat_missions_channel_idx
+      ON chat_missions(channel_id, status, updated_at);
+
+    CREATE TABLE IF NOT EXISTS chat_mission_tasks (
+      id TEXT PRIMARY KEY,
+      mission_id TEXT NOT NULL REFERENCES chat_missions(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      assignee_registration_id TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      summary TEXT NOT NULL DEFAULT '',
+      dispatch_id TEXT,
+      run_id INTEGER,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS chat_mission_tasks_mission_idx
+      ON chat_mission_tasks(mission_id, created_at);
+    CREATE UNIQUE INDEX IF NOT EXISTS chat_mission_tasks_dispatch_idx
+      ON chat_mission_tasks(dispatch_id) WHERE dispatch_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS chat_mission_tasks_run_idx
+      ON chat_mission_tasks(run_id) WHERE run_id IS NOT NULL;
+  `);
+}
+
+function cleanText(value: unknown, max: number): string {
+  return String(value || '').trim().slice(0, max);
+}
+
+function findRegistration(
+  db: Db,
+  userId: number,
+  channelId: string,
+  ref: string,
+): ChatAgentRegistration | undefined {
+  const normalized = String(ref || '').replace(/^@+/, '').trim().toLowerCase();
+  return listChatAgentMembers(db, channelId, userId).find((member) => (
+    member.id === ref
+    || member.vaultAgentId === ref
+    || member.mention.toLowerCase() === normalized
+    || member.displayName.toLowerCase() === normalized
+  ));
+}
+
+function assertCoordinator(
+  db: Db,
+  userId: number,
+  channelId: string,
+  registrationId: string,
+): ChatAgentRegistration {
+  const registration = findRegistration(db, userId, channelId, registrationId);
+  if (!registration || !registration.orchestrator) {
+    throw new Error('This agent is not the channel coordinator');
+  }
+  const { route } = assertChatChannel(db, channelId, userId);
+  const owner = db.prepare(`
+    SELECT va.owner_user_id AS owner_user_id
+    FROM chat_agent_members m
+    JOIN vault_agents va ON va.id = m.vault_agent_id
+    WHERE m.id = ? AND m.channel_id = ?
+  `).get(registration.id, route.sourceChannelId) as { owner_user_id: number } | undefined;
+  if (!owner || owner.owner_user_id !== userId) {
+    throw new Error('Only the coordinator owner can operate its mission');
+  }
+  return registration;
+}
+
+function missionRow(db: Db, missionId: string): MissionRow | undefined {
+  return db.prepare('SELECT * FROM chat_missions WHERE id = ?').get(missionId) as MissionRow | undefined;
+}
+
+function taskRows(db: Db, missionId: string): TaskRow[] {
+  return db.prepare(`
+    SELECT * FROM chat_mission_tasks
+    WHERE mission_id = ? ORDER BY created_at ASC, rowid ASC
+  `).all(missionId) as TaskRow[];
+}
+
+function deriveMissionStatus(row: MissionRow, tasks: TaskRow[]): ChatMissionStatus {
+  if (row.status === 'canceled') return 'canceled';
+  if (row.status === 'completed') return 'completed';
+  if (tasks.length === 0) return 'active';
+  if (tasks.some((task) => task.status === 'failed' || task.status === 'blocked')) return 'blocked';
+  // Worker completion means the coordinator has evidence to reconcile, not
+  // that the user's whole request is done. Only `finishChatMission` can make
+  // the mission completed after integration and verification.
+  if (tasks.every((task) => task.status === 'completed' || task.status === 'canceled')) return 'reviewing';
+  return 'active';
+}
+
+function projectMission(db: Db, row: MissionRow, tasks: TaskRow[]): ChatMission {
+  const registrations = listChatAgentMembers(db, row.channel_id, row.created_by);
+  const byId = new Map(registrations.map((registration) => [registration.id, registration]));
+  const coordinator = byId.get(row.coordinator_registration_id);
+  const projectedTasks: ChatMissionTask[] = tasks.map((task) => {
+    const assignee = byId.get(task.assignee_registration_id);
+    return {
+      id: task.id,
+      title: task.title,
+      assignee: assignee?.displayName || assignee?.mention || 'Unassigned agent',
+      assigneeMention: assignee?.mention || '',
+      status: task.status,
+      summary: task.summary || '',
+      ...(task.run_id != null ? { runId: task.run_id } : {}),
+      updatedAt: task.updated_at,
+    };
+  });
+  return {
+    id: row.id,
+    title: row.title,
+    objective: row.objective,
+    status: deriveMissionStatus(row, tasks),
+    coordinator: coordinator?.displayName || coordinator?.mention || 'Coordinator',
+    coordinatorMention: coordinator?.mention || '',
+    tasks: projectedTasks,
+    summary: row.summary || '',
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+/** Refresh the transcript projection after every state transition. */
+export function refreshMissionProjection(db: Db, missionId: string): MissionProjectionUpdate {
+  const row = missionRow(db, missionId);
+  if (!row) throw new Error('Mission not found');
+  const tasks = taskRows(db, missionId);
+  const status = deriveMissionStatus(row, tasks);
+  if (status !== row.status) {
+    db.prepare(`
+      UPDATE chat_missions SET status = ?, updated_at = datetime('now') WHERE id = ?
+    `).run(status, missionId);
+  }
+  const updated = missionRow(db, missionId)!;
+  const mission = projectMission(db, updated, tasks);
+  db.prepare(`
+    UPDATE chat_messages SET mission_json = ? WHERE id = ? AND channel_id = ?
+  `).run(JSON.stringify(mission), updated.root_message_id, updated.channel_id);
+  return {
+    mission,
+    vaultId: updated.vault_id,
+    channelId: updated.channel_id,
+    rootMessageId: updated.root_message_id,
+    createdBy: updated.created_by,
+  };
+}
+
+export function missionRootMessage(db: Db, update: MissionProjectionUpdate): ChatMessage | undefined {
+  return getChatMessage(db, update.channelId, update.createdBy, update.rootMessageId);
+}
+
+export function createChatMission(
+  db: Db,
+  userId: number,
+  vaultId: string,
+  channelId: string,
+  input: {
+    rootMessageId: string;
+    coordinatorRegistrationId: string;
+    title: string;
+    objective?: string;
+  },
+): MissionProjectionUpdate {
+  const { route } = assertChatChannel(db, channelId, userId);
+  if (route.localVaultId !== vaultId) throw new Error('Chat channel not found');
+  const coordinator = assertCoordinator(db, userId, channelId, input.coordinatorRegistrationId);
+  const root = getChatMessage(db, channelId, userId, input.rootMessageId);
+  if (!root) throw new Error('Mission root message not found');
+  const title = cleanText(input.title, 180);
+  if (!title) throw new Error('Mission title is required');
+  const objective = cleanText(input.objective || root.body, 4000);
+  const existing = db.prepare(`
+    SELECT id, coordinator_registration_id FROM chat_missions WHERE channel_id = ? AND root_message_id = ?
+  `).get(route.sourceChannelId, root.id) as { id: string; coordinator_registration_id: string } | undefined;
+  if (existing && existing.coordinator_registration_id !== coordinator.id) {
+    throw new Error('Mission belongs to another coordinator');
+  }
+  const id = existing?.id || crypto.randomUUID();
+  if (!existing) {
+    db.prepare(`
+      INSERT INTO chat_missions (
+        id, vault_id, channel_id, root_message_id, coordinator_registration_id,
+        title, objective, created_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      route.sourceVaultId,
+      route.sourceChannelId,
+      root.id,
+      coordinator.id,
+      title,
+      objective,
+      userId,
+    );
+  }
+  return refreshMissionProjection(db, id);
+}
+
+export function getChatMission(
+  db: Db,
+  userId: number,
+  channelId: string,
+  missionRef: string,
+  coordinatorRegistrationId?: string,
+): MissionProjectionUpdate {
+  const { route } = assertChatChannel(db, channelId, userId);
+  let row: MissionRow | undefined;
+  if (!missionRef || missionRef === 'current') {
+    row = db.prepare(`
+      SELECT * FROM chat_missions
+      WHERE channel_id = ?
+        AND (? = '' OR coordinator_registration_id = ?)
+      ORDER BY
+        CASE WHEN status IN ('active', 'reviewing', 'blocked') THEN 0 ELSE 1 END,
+        updated_at DESC, rowid DESC
+      LIMIT 1
+    `).get(route.sourceChannelId, coordinatorRegistrationId || '', coordinatorRegistrationId || '') as MissionRow | undefined;
+  } else {
+    row = missionRow(db, missionRef);
+    if (row?.channel_id !== route.sourceChannelId) row = undefined;
+  }
+  if (!row) throw new Error('Mission not found');
+  return refreshMissionProjection(db, row.id);
+}
+
+export function addChatMissionTask(
+  db: Db,
+  userId: number,
+  channelId: string,
+  missionId: string,
+  input: { coordinatorRegistrationId: string; title: string; assignee: string },
+): { update: MissionProjectionUpdate; task: ChatMissionTask; assignee: ChatAgentRegistration } {
+  const update = getChatMission(db, userId, channelId, missionId, input.coordinatorRegistrationId);
+  const row = missionRow(db, update.mission.id)!;
+  if (row.status === 'completed' || row.status === 'canceled') {
+    throw new Error('Mission is already closed');
+  }
+  const coordinator = assertCoordinator(db, userId, channelId, input.coordinatorRegistrationId);
+  if (row.coordinator_registration_id !== coordinator.id) throw new Error('Mission belongs to another coordinator');
+  const assignee = findRegistration(db, userId, channelId, input.assignee);
+  if (!assignee) throw new Error(`No channel agent matches ${input.assignee}`);
+  if (assignee.id === coordinator.id) throw new Error('Delegate this task to another channel agent');
+  const title = cleanText(input.title, 240);
+  if (!title) throw new Error('Task title is required');
+  // Tool retries after a lost HTTP response must not fan out a second worker.
+  // A coordinator can still rerun work by giving the new task a distinct title.
+  const existing = db.prepare(`
+    SELECT id FROM chat_mission_tasks
+    WHERE mission_id = ? AND assignee_registration_id = ? AND title = ?
+    ORDER BY created_at ASC, rowid ASC LIMIT 1
+  `).get(row.id, assignee.id, title) as { id: string } | undefined;
+  const taskId = existing?.id || crypto.randomUUID();
+  if (!existing) {
+    db.prepare(`
+      INSERT INTO chat_mission_tasks (id, mission_id, title, assignee_registration_id)
+      VALUES (?, ?, ?, ?)
+    `).run(taskId, row.id, title, assignee.id);
+  }
+  if (!existing) {
+    db.prepare(`
+      UPDATE chat_missions SET status = 'active', wake_sent = 0, updated_at = datetime('now') WHERE id = ?
+    `).run(row.id);
+  }
+  const refreshed = refreshMissionProjection(db, row.id);
+  return {
+    update: refreshed,
+    task: refreshed.mission.tasks.find((task) => task.id === taskId)!,
+    assignee,
+  };
+}
+
+export function linkMissionTaskDispatch(db: Db, taskId: string, dispatchId: string): MissionProjectionUpdate {
+  const row = db.prepare('SELECT mission_id FROM chat_mission_tasks WHERE id = ?')
+    .get(taskId) as { mission_id: string } | undefined;
+  if (!row) throw new Error('Mission task not found');
+  db.prepare(`
+    UPDATE chat_mission_tasks SET dispatch_id = COALESCE(dispatch_id, ?), updated_at = datetime('now')
+    WHERE id = ?
+  `).run(dispatchId, taskId);
+  return refreshMissionProjection(db, row.mission_id);
+}
+
+export function attachRunToMissionTaskByDispatch(db: Db, dispatchId: string, runId: number): MissionProjectionUpdate | null {
+  const row = db.prepare(`
+    SELECT id, mission_id, status FROM chat_mission_tasks WHERE dispatch_id = ?
+  `).get(dispatchId) as { id: string; mission_id: string; status: ChatMissionTaskStatus } | undefined;
+  if (!row) return null;
+  if (row.status === 'pending' || row.status === 'running') {
+    db.prepare(`
+      UPDATE chat_mission_tasks SET run_id = ?, status = 'running', updated_at = datetime('now') WHERE id = ?
+    `).run(runId, row.id);
+  }
+  return refreshMissionProjection(db, row.mission_id);
+}
+
+export function updateChatMissionTask(
+  db: Db,
+  userId: number,
+  channelId: string,
+  taskId: string,
+  input: { status: ChatMissionTaskStatus; summary?: string },
+): MissionProjectionUpdate {
+  const { route } = assertChatChannel(db, channelId, userId);
+  const row = db.prepare(`
+    SELECT t.mission_id, m.channel_id, m.created_by, m.status AS mission_status FROM chat_mission_tasks t
+    JOIN chat_missions m ON m.id = t.mission_id WHERE t.id = ?
+  `).get(taskId) as { mission_id: string; channel_id: string; created_by: number; mission_status: ChatMissionStatus } | undefined;
+  if (!row || row.channel_id !== route.sourceChannelId || row.created_by !== userId) {
+    throw new Error('Mission task not found');
+  }
+  if (row.mission_status === 'completed' || row.mission_status === 'canceled') {
+    throw new Error('Mission is already closed');
+  }
+  const allowed: ChatMissionTaskStatus[] = ['pending', 'running', 'completed', 'failed', 'blocked', 'canceled'];
+  if (!allowed.includes(input.status)) throw new Error('Invalid mission task status');
+  db.prepare(`
+    UPDATE chat_mission_tasks SET status = ?, summary = ?, updated_at = datetime('now') WHERE id = ?
+  `).run(input.status, cleanText(input.summary, 4000), taskId);
+  if (['completed', 'failed', 'blocked', 'canceled'].includes(input.status)) {
+    db.prepare(`
+      DELETE FROM chat_agent_dispatches
+      WHERE run_id IS NULL
+        AND id = (SELECT dispatch_id FROM chat_mission_tasks WHERE id = ?)
+    `).run(taskId);
+  }
+  return refreshMissionProjection(db, row.mission_id);
+}
+
+export function finishChatMission(
+  db: Db,
+  userId: number,
+  channelId: string,
+  missionId: string,
+  input: { coordinatorRegistrationId: string; status: 'completed' | 'canceled'; summary?: string },
+): MissionProjectionUpdate {
+  const update = getChatMission(db, userId, channelId, missionId, input.coordinatorRegistrationId);
+  const row = missionRow(db, update.mission.id)!;
+  const coordinator = assertCoordinator(db, userId, channelId, input.coordinatorRegistrationId);
+  if (row.coordinator_registration_id !== coordinator.id) throw new Error('Mission belongs to another coordinator');
+  if (row.status === 'completed' || row.status === 'canceled') {
+    if (row.status !== input.status) throw new Error('Mission is already closed');
+    return refreshMissionProjection(db, row.id);
+  }
+  const tasks = taskRows(db, row.id);
+  if (input.status === 'completed' && tasks.some((task) => task.status === 'pending' || task.status === 'running')) {
+    throw new Error('Mission still has active workers');
+  }
+  db.prepare(`
+    UPDATE chat_missions SET status = ?, summary = ?, wake_sent = 1, updated_at = datetime('now') WHERE id = ?
+  `).run(input.status, cleanText(input.summary, 4000), row.id);
+  if (input.status === 'canceled') {
+    db.prepare(`
+      UPDATE chat_mission_tasks SET status = 'canceled', updated_at = datetime('now')
+      WHERE mission_id = ? AND status IN ('pending', 'running')
+    `).run(row.id);
+    db.prepare(`
+      DELETE FROM chat_agent_dispatches
+      WHERE run_id IS NULL
+        AND id IN (SELECT dispatch_id FROM chat_mission_tasks WHERE mission_id = ?)
+    `).run(row.id);
+  }
+  return refreshMissionProjection(db, row.id);
+}
+
+/** Settle a worker task from its authoritative run terminal status. */
+export function settleMissionTaskForRun(
+  db: Db,
+  runId: number,
+  status: 'completed' | 'failed' | 'canceled',
+  summary: string,
+): { update: MissionProjectionUpdate; wake: MissionWake | null } | null {
+  const task = db.prepare(`
+    SELECT * FROM chat_mission_tasks WHERE run_id = ? LIMIT 1
+  `).get(runId) as TaskRow | undefined;
+  if (!task) return null;
+  // A worker may explicitly report blocked before exiting successfully. Preserve
+  // that higher-information state instead of converting it to completed.
+  if (!['blocked', 'canceled', 'completed', 'failed'].includes(task.status)) {
+    const next: ChatMissionTaskStatus = status === 'completed' ? 'completed' : status;
+    db.prepare(`
+      UPDATE chat_mission_tasks SET status = ?, summary = ?, updated_at = datetime('now') WHERE id = ?
+    `).run(next, cleanText(summary, 4000), task.id);
+  }
+  const update = refreshMissionProjection(db, task.mission_id);
+  let wake: MissionWake | null = null;
+  const allWorkersSettled = update.mission.tasks.length > 0
+    && update.mission.tasks.every((item) => ['completed', 'failed', 'blocked', 'canceled'].includes(item.status));
+  if (allWorkersSettled && (update.mission.status === 'reviewing' || update.mission.status === 'blocked')) {
+    const claimed = db.prepare(`
+      UPDATE chat_missions SET wake_sent = 1, updated_at = datetime('now')
+      WHERE id = ? AND wake_sent = 0
+    `).run(task.mission_id);
+    if (claimed.changes > 0) {
+      const row = missionRow(db, task.mission_id)!;
+      wake = { ...refreshMissionProjection(db, task.mission_id), coordinatorRegistrationId: row.coordinator_registration_id };
+    }
+  }
+  return { update: wake || update, wake };
+}

@@ -64,6 +64,44 @@ restricted token and scoped environment supplied by the desktop runner.
 Use scratchpad storage only for durable causes, decisions, and dead ends.
 Routine progress belongs in the run trace.
 
+## Chat-first orchestration
+
+A channel may designate one registered agent as its coordinator. This is a
+membership setting, not a separate project-management surface:
+
+- ordinary human messages route to the coordinator;
+- an explicit `@specialist` mention takes the direct zero-hop path instead;
+- the coordinator answers small requests itself;
+- for parallel or long work it creates a mission and delegates focused tasks
+  to other registered channel agents.
+
+The provider session remains the reasoning and execution environment. Cascade
+only supplies the durable coordination substrate through `cascade-chat`:
+
+```text
+cascade-chat members
+cascade-chat mission start --title "..." --objective "..."
+cascade-chat mission delegate --mission <id> --to @agent --task "..." --message "..."
+cascade-chat mission status --mission <id>
+cascade-chat mission finish --mission <id> --summary "..."
+```
+
+`chat_missions` and `chat_mission_tasks` are authoritative. A compact mission
+projection is materialized on the root chat message so it arrives in the normal
+transcript, Socket.IO updates, linked multiplayer channels, and reloads without
+a second client-owned task store. Worker terminal events update their task. The
+coordinator wakes once after all workers settle, reviews and integrates their
+evidence, and explicitly finishes the mission; worker completion alone puts a
+mission in `reviewing`, not `completed`.
+
+Chat-to-agent intent is also an outbox (`chat_agent_dispatches`). Message and
+target survive renderer reloads and reconnects, and a unique run key ensures
+multiple clients recovering the same dispatch still launch only one provider
+process. Explicit mission delegation is the permission boundary that lets a
+coordinator call a worker which has disabled ordinary agent-to-agent mentions.
+Shared-channel users can only launch registrations whose owner enabled
+multiplayer pings.
+
 ## Prompt and context layers
 
 A chat run may combine:

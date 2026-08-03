@@ -2,10 +2,17 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   consumePendingSessionSteer,
   enqueueSessionTurn,
+  queuesBehindActiveSession,
   requestSessionSteer,
 } from '../chat/sessionTurns';
 
 describe('chat session turn serialization', () => {
+  it('queues mission workers and coordinator wakeups instead of steering active work', () => {
+    expect(queuesBehindActiveSession({ id: 'mission-task-message', missionTaskId: 'task-1' })).toBe(true);
+    expect(queuesBehindActiveSession({ id: 'sys-mission-mission-1-wake' })).toBe(true);
+    expect(queuesBehindActiveSession({ id: 'human-message' })).toBe(false);
+  });
+
   it('holds a steering prompt until the active turn releases the same session', async () => {
     const tails = new Map<string, Promise<void>>();
     const first = enqueueSessionTurn(tails, 'supagrok:conversation-1');

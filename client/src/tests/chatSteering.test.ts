@@ -27,6 +27,7 @@ const agent: ChatAgentRegistration = {
   contextPrompt: '',
   taggableByAgents: true,
   replyToEveryMessage: false,
+  orchestrator: false,
   pingableByOthers: true,
   yolo: false,
   conversationId: 'conversation-1',

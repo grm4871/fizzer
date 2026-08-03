@@ -56,6 +56,26 @@ export function resolveAgentMessageRegistration<T extends MentionableAgent & { i
   return matches.length === 1 ? matches[0] : undefined;
 }
 
+/**
+ * Does a reply quote point at an agent, i.e. is it supposed to start a run?
+ *
+ * A reply ref falls back to an author-derived @name, so replying to a person
+ * carries a mention too — the mention alone cannot answer this, and treating it
+ * as one made "could not route reply" fire on every human reply.
+ */
+export function replyQuoteTargetsAgent(
+  replyTo: { messageId: string; mention?: string } | undefined,
+  messages: Array<{ id: string; agentId?: string; registrationId?: string }>,
+): boolean {
+  if (!replyTo) return false;
+  const quoted = messages.find((message) => message.id === replyTo.messageId);
+  // A derived reply mention can belong to a person too. If the quoted row is
+  // outside the loaded window, let the server inspect the authoritative parent
+  // rather than showing a false agent-routing failure in the renderer.
+  if (!quoted) return false;
+  return Boolean(quoted.agentId || quoted.registrationId);
+}
+
 export function getMentionedRegistrations<T extends MentionableAgent & { id?: string; vaultAgentId?: string }>(
   text: string,
   registrations: T[],

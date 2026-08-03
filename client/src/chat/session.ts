@@ -125,6 +125,7 @@ export function readLegacyLocalChatAgentMembers(): Record<string, ChatAgentRegis
             contextPrompt: typeof registration.contextPrompt === 'string' ? registration.contextPrompt : '',
             taggableByAgents: typeof registration.taggableByAgents === 'boolean' ? registration.taggableByAgents : true,
             replyToEveryMessage: typeof registration.replyToEveryMessage === 'boolean' ? registration.replyToEveryMessage : false,
+            orchestrator: typeof registration.orchestrator === 'boolean' ? registration.orchestrator : false,
             pingableByOthers: typeof registration.pingableByOthers === 'boolean' ? registration.pingableByOthers : false,
             yolo: typeof registration.yolo === 'boolean' ? registration.yolo : false,
             conversationId: typeof registration.conversationId === 'string' ? registration.conversationId : '',

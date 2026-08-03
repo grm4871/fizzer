@@ -81,6 +81,20 @@ describe('formatAgentChatPrompt', () => {
     expect(prompt).not.toContain('no tools');
   });
 
+  it('gives a coordinator an explicit zero-hop/direct-or-mission contract', () => {
+    const prompt = formatAgentChatPrompt(
+      'dev',
+      { ...registration, orchestrator: true },
+      'take care of the release',
+      'alice',
+      false,
+    );
+    expect(prompt).toContain('Handle simple requests directly with no delegation hop');
+    expect(prompt).toContain('cascade-chat mission start');
+    expect(prompt).toContain('cascade-chat mission delegate');
+    expect(prompt).toContain('cascade-chat mission finish');
+  });
+
   it('continuations keep normal completion guidance', () => {
     const prompt = formatAgentChatPrompt('dev', registration, 'ok cool', 'alice', true);
     expect(prompt).toContain('Finish the request with judgment');

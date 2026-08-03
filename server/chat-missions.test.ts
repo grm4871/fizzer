@@ -1,0 +1,380 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import Database from 'better-sqlite3';
+import {
+  CHAT_NOTE_MARKER,
+  createChatMessage,
+  ensureChatSchema,
+  getChatMessage,
+  linkChatChannel,
+  upsertChatAgentMember,
+} from './chat.js';
+import {
+  createChatAgentDispatchForRegistration,
+  createChatAgentDispatches,
+  ensureChatDispatchSchema,
+  listPendingChatAgentDispatches,
+  resolveChatAgentTargets,
+} from './chat-dispatch.js';
+import {
+  addChatMissionTask,
+  attachRunToMissionTaskByDispatch,
+  createChatMission,
+  ensureChatMissionSchema,
+  finishChatMission,
+  linkMissionTaskDispatch,
+  settleMissionTaskForRun,
+  updateChatMissionTask,
+} from './chat-missions.js';
+
+function setup() {
+  const db = new Database(':memory:');
+  db.exec(`
+    PRAGMA foreign_keys = ON;
+    CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT);
+    CREATE TABLE vaults (id TEXT PRIMARY KEY, name TEXT, root_path TEXT, created_by INTEGER);
+    CREATE TABLE notes (
+      id TEXT PRIMARY KEY,
+      vault_id TEXT NOT NULL,
+      folder_id TEXT,
+      title TEXT NOT NULL,
+      content TEXT NOT NULL DEFAULT '',
+      content_preview TEXT NOT NULL DEFAULT '',
+      is_pinned INTEGER NOT NULL DEFAULT 0,
+      is_archived INTEGER NOT NULL DEFAULT 0,
+      is_listed INTEGER NOT NULL DEFAULT 1,
+      position INTEGER NOT NULL DEFAULT 0,
+      word_count INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE TABLE tags (id TEXT PRIMARY KEY, vault_id TEXT, name TEXT);
+    CREATE TABLE note_tags (note_id TEXT, tag_id TEXT);
+    INSERT INTO users (id, username) VALUES (1, 'owner'), (2, 'guest');
+    INSERT INTO vaults (id, name, root_path, created_by) VALUES ('vault-1', 'Test', '/tmp', 1);
+    INSERT INTO vaults (id, name, root_path, created_by) VALUES ('vault-2', 'Guest', '/tmp', 2);
+    INSERT INTO notes (id, vault_id, title, content, content_preview)
+      VALUES ('channel-1', 'vault-1', 'dev', '${CHAT_NOTE_MARKER}', '${CHAT_NOTE_MARKER}');
+    INSERT INTO notes (id, vault_id, title, content, content_preview)
+      VALUES ('channel-2', 'vault-2', 'dev', '${CHAT_NOTE_MARKER}', '${CHAT_NOTE_MARKER}');
+  `);
+  ensureChatSchema(db);
+  linkChatChannel(db, {
+    localVaultId: 'vault-2', localChannelId: 'channel-2',
+    sourceVaultId: 'vault-1', sourceChannelId: 'channel-1', createdBy: 1,
+  });
+  ensureChatDispatchSchema(db);
+  ensureChatMissionSchema(db);
+  const coordinator = upsertChatAgentMember(db, 1, 'vault-1', 'channel-1', {
+    id: 'reg-sol',
+    agentId: 'codex',
+    displayName: 'Sol',
+    mention: 'sol',
+    model: 'gpt-5.6-sol',
+    orchestrator: true,
+  });
+  const worker = upsertChatAgentMember(db, 1, 'vault-1', 'channel-1', {
+    id: 'reg-terra',
+    agentId: 'codex',
+    displayName: 'Terra',
+    mention: 'terra',
+    model: 'gpt-5.6-terra',
+    taggableByAgents: false,
+  });
+  return { db, coordinator, worker };
+}
+
+test('a coordinator mission persists, dispatches a focused task, and settles from the worker run', () => {
+  const { db, coordinator, worker } = setup();
+  try {
+    const root = createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: 'root-message', channelId: 'channel-1', author: 'owner',
+      body: 'Build and verify the multiplayer flow.', createdAt: '2026-08-03T00:00:00.000Z',
+    });
+    const created = createChatMission(db, 1, 'vault-1', 'channel-1', {
+      rootMessageId: root.id,
+      coordinatorRegistrationId: coordinator.id,
+      title: 'Multiplayer flow',
+      objective: root.body,
+    });
+    assert.equal(created.mission.status, 'active');
+    assert.deepEqual(created.mission.tasks, []);
+
+    const added = addChatMissionTask(db, 1, 'channel-1', created.mission.id, {
+      coordinatorRegistrationId: coordinator.id,
+      title: 'Verify the second client',
+      assignee: '@terra',
+    });
+    assert.equal(added.assignee.id, worker.id);
+    const delegation = createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: `mission-task-${added.task.id}`,
+      channelId: 'channel-1',
+      author: '',
+      body: '@terra Exercise reload and reconnect.',
+      createdAt: '2026-08-03T00:00:01.000Z',
+      registrationId: coordinator.id,
+      missionTaskId: added.task.id,
+    });
+    const dispatch = createChatAgentDispatchForRegistration(
+      db, 1, 'channel-1', delegation, worker.id,
+    );
+    linkMissionTaskDispatch(db, added.task.id, dispatch.id);
+    const running = attachRunToMissionTaskByDispatch(db, dispatch.id, 42);
+    assert.equal(running?.mission.tasks[0]?.status, 'running');
+    assert.equal(running?.mission.tasks[0]?.runId, 42);
+
+    const settled = settleMissionTaskForRun(db, 42, 'completed', 'Reload and reconnect both passed.');
+    assert.equal(settled?.update.mission.status, 'reviewing');
+    assert.equal(settled?.update.mission.tasks[0]?.status, 'completed');
+    assert.equal(settled?.update.mission.tasks[0]?.summary, 'Reload and reconnect both passed.');
+    assert.equal(settled?.wake?.coordinatorRegistrationId, coordinator.id);
+    // Terminal events can be replayed; the coordinator wake is claimed once.
+    assert.equal(settleMissionTaskForRun(db, 42, 'completed', 'same')?.wake, null);
+    assert.equal(
+      getChatMessage(db, 'channel-1', 1, root.id)?.mission?.tasks[0]?.summary,
+      'Reload and reconnect both passed.',
+    );
+
+    const projected = getChatMessage(db, 'channel-1', 1, root.id);
+    assert.equal(projected?.mission?.id, created.mission.id);
+    assert.equal(projected?.mission?.tasks[0]?.status, 'completed');
+  } finally {
+    db.close();
+  }
+});
+
+test('explicit mission dispatch bypasses worker opt-in while agent chatter does not', () => {
+  const { db, coordinator, worker } = setup();
+  try {
+    const coordinatorMessage = createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: 'coord-msg', channelId: 'channel-1', author: '', body: '@terra investigate',
+      createdAt: '2026-08-03T00:00:00.000Z', registrationId: coordinator.id,
+    });
+    assert.deepEqual(resolveChatAgentTargets(db, 1, 'channel-1', coordinatorMessage), []);
+    const explicit = createChatAgentDispatchForRegistration(db, 1, 'channel-1', coordinatorMessage, worker.id);
+    assert.equal(explicit.registration.id, worker.id);
+
+    const ordinary = upsertChatAgentMember(db, 1, 'vault-1', 'channel-1', {
+      id: 'reg-ordinary', agentId: 'codex', displayName: 'Ordinary', mention: 'ordinary',
+    });
+    const ordinaryMessage = createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: 'ordinary-msg', channelId: 'channel-1', author: '', body: '@terra investigate',
+      createdAt: '2026-08-03T00:00:01.000Z', registrationId: ordinary.id,
+    });
+    assert.deepEqual(resolveChatAgentTargets(db, 1, 'channel-1', ordinaryMessage), []);
+  } finally {
+    db.close();
+  }
+});
+
+test('an explicit specialist call takes the zero-hop route instead of also running the coordinator', () => {
+  const { db, coordinator, worker } = setup();
+  try {
+    const plain = createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: 'plain', channelId: 'channel-1', author: 'owner', body: 'Can you handle this?',
+      createdAt: '2026-08-03T00:00:00.000Z',
+    });
+    assert.deepEqual(resolveChatAgentTargets(db, 1, 'channel-1', plain).map((item) => item.id), [coordinator.id]);
+
+    const direct = createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: 'direct', channelId: 'channel-1', author: 'owner', body: '@terra handle this directly',
+      createdAt: '2026-08-03T00:00:01.000Z',
+    });
+    assert.deepEqual(resolveChatAgentTargets(db, 1, 'channel-1', direct).map((item) => item.id), [worker.id]);
+
+    const both = createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: 'both', channelId: 'channel-1', author: 'owner', body: '@sol and @terra compare approaches',
+      createdAt: '2026-08-03T00:00:02.000Z',
+    });
+    assert.deepEqual(resolveChatAgentTargets(db, 1, 'channel-1', both).map((item) => item.id), [coordinator.id, worker.id]);
+  } finally {
+    db.close();
+  }
+});
+
+test('a shared-channel user only dispatches agents that opted into multiplayer pings', () => {
+  const { db, coordinator } = setup();
+  try {
+    const closed = createChatMessage(db, 2, 'vault-2', 'channel-2', {
+      id: 'guest-closed', channelId: 'channel-2', author: 'guest', body: 'Please coordinate this.',
+      createdAt: '2026-08-03T00:00:00.000Z',
+    });
+    assert.deepEqual(resolveChatAgentTargets(db, 2, 'channel-2', closed), []);
+
+    db.prepare('UPDATE chat_agent_members SET pingable_by_others = 1 WHERE id = ?').run(coordinator.id);
+    const open = createChatMessage(db, 2, 'vault-2', 'channel-2', {
+      id: 'guest-open', channelId: 'channel-2', author: 'guest', body: 'Please coordinate this.',
+      createdAt: '2026-08-03T00:00:01.000Z',
+    });
+    assert.deepEqual(resolveChatAgentTargets(db, 2, 'channel-2', open).map((item) => item.id), [coordinator.id]);
+    assert.throws(() => upsertChatAgentMember(db, 2, 'vault-2', 'channel-2', {
+      ...coordinator,
+      orchestrator: false,
+      replyToEveryMessage: false,
+    }), /Only the channel owner/);
+  } finally {
+    db.close();
+  }
+});
+
+test('a reply to a human does not become an accidental agent dispatch', () => {
+  const { db } = setup();
+  try {
+    createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: 'human', channelId: 'channel-1', author: 'terra', body: 'human message',
+      createdAt: '2026-08-03T00:00:00.000Z',
+    });
+    const reply = createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: 'reply', channelId: 'channel-1', author: 'owner', body: 'sounds good',
+      createdAt: '2026-08-03T00:00:01.000Z',
+      replyTo: { messageId: 'human', author: 'terra', mention: 'terra', preview: 'human message' },
+    });
+    // The coordinator still receives every human message; Terra must not be
+    // selected merely because the human happens to share its handle.
+    assert.deepEqual(
+      createChatAgentDispatches(db, 1, 'channel-1', reply).map((dispatch) => dispatch.registration.mention),
+      ['sol'],
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test('an explicit blocked report survives a nominally successful worker exit', () => {
+  const { db, coordinator, worker } = setup();
+  try {
+    createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: 'root', channelId: 'channel-1', author: 'owner', body: 'Ship it', createdAt: '2026-08-03T00:00:00.000Z',
+    });
+    const mission = createChatMission(db, 1, 'vault-1', 'channel-1', {
+      rootMessageId: 'root', coordinatorRegistrationId: coordinator.id, title: 'Ship it',
+    });
+    const added = addChatMissionTask(db, 1, 'channel-1', mission.mission.id, {
+      coordinatorRegistrationId: coordinator.id, title: 'Deploy', assignee: worker.id,
+    });
+    const msg = createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: 'delegate', channelId: 'channel-1', author: '', body: '@terra deploy',
+      createdAt: '2026-08-03T00:00:01.000Z', registrationId: coordinator.id,
+      missionTaskId: added.task.id,
+    });
+    const dispatch = createChatAgentDispatchForRegistration(db, 1, 'channel-1', msg, worker.id);
+    linkMissionTaskDispatch(db, added.task.id, dispatch.id);
+    attachRunToMissionTaskByDispatch(db, dispatch.id, 99);
+    updateChatMissionTask(db, 1, 'channel-1', added.task.id, {
+      status: 'blocked', summary: 'Needs production credentials.',
+    });
+    const settled = settleMissionTaskForRun(db, 99, 'completed', 'Done.');
+    assert.equal(settled?.update.mission.status, 'blocked');
+    assert.equal(settled?.update.mission.tasks[0]?.summary, 'Needs production credentials.');
+  } finally {
+    db.close();
+  }
+});
+
+test('mission and delegation retries are idempotent', () => {
+  const { db, coordinator, worker } = setup();
+  try {
+    createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: 'root-retry', channelId: 'channel-1', author: 'owner', body: 'Do durable work',
+      createdAt: '2026-08-03T00:00:00.000Z',
+    });
+    const firstMission = createChatMission(db, 1, 'vault-1', 'channel-1', {
+      rootMessageId: 'root-retry', coordinatorRegistrationId: coordinator.id, title: 'Durable work',
+    });
+    const firstTask = addChatMissionTask(db, 1, 'channel-1', firstMission.mission.id, {
+      coordinatorRegistrationId: coordinator.id, title: 'One assignment', assignee: worker.id,
+    });
+    const retriedMission = createChatMission(db, 1, 'vault-1', 'channel-1', {
+      rootMessageId: 'root-retry', coordinatorRegistrationId: coordinator.id, title: 'Changed by retry',
+    });
+    const retriedTask = addChatMissionTask(db, 1, 'channel-1', firstMission.mission.id, {
+      coordinatorRegistrationId: coordinator.id, title: 'One assignment', assignee: worker.id,
+    });
+    assert.equal(retriedMission.mission.id, firstMission.mission.id);
+    assert.equal(retriedMission.mission.title, 'Durable work');
+    assert.equal(retriedTask.task.id, firstTask.task.id);
+    assert.equal(retriedTask.update.mission.tasks.length, 1);
+  } finally {
+    db.close();
+  }
+});
+
+test('the coordinator wakes only after every worker has settled', () => {
+  const { db, coordinator, worker } = setup();
+  try {
+    createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: 'root-many', channelId: 'channel-1', author: 'owner', body: 'Compare two checks',
+      createdAt: '2026-08-03T00:00:00.000Z',
+    });
+    const mission = createChatMission(db, 1, 'vault-1', 'channel-1', {
+      rootMessageId: 'root-many', coordinatorRegistrationId: coordinator.id, title: 'Two checks',
+    });
+    const tasks = ['First check', 'Second check'].map((title, index) => {
+      const added = addChatMissionTask(db, 1, 'channel-1', mission.mission.id, {
+        coordinatorRegistrationId: coordinator.id, title, assignee: worker.id,
+      });
+      const message = createChatMessage(db, 1, 'vault-1', 'channel-1', {
+        id: `many-${index}`, channelId: 'channel-1', author: '', body: `@terra ${title}`,
+        createdAt: `2026-08-03T00:00:0${index + 1}.000Z`, registrationId: coordinator.id,
+        missionTaskId: added.task.id,
+      });
+      const dispatch = createChatAgentDispatchForRegistration(db, 1, 'channel-1', message, worker.id);
+      linkMissionTaskDispatch(db, added.task.id, dispatch.id);
+      attachRunToMissionTaskByDispatch(db, dispatch.id, 200 + index);
+      return added.task;
+    });
+    assert.equal(tasks.length, 2);
+    const first = settleMissionTaskForRun(db, 200, 'completed', 'First passed.');
+    assert.equal(first?.update.mission.status, 'active');
+    assert.equal(first?.wake, null);
+    const second = settleMissionTaskForRun(db, 201, 'failed', 'Second failed.');
+    assert.equal(second?.update.mission.status, 'blocked');
+    assert.equal(second?.wake?.coordinatorRegistrationId, coordinator.id);
+  } finally {
+    db.close();
+  }
+});
+
+test('a mission cannot complete over active work and cancel removes pending dispatches', () => {
+  const { db, coordinator, worker } = setup();
+  try {
+    createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: 'root-cancel', channelId: 'channel-1', author: 'owner', body: 'Maybe do this',
+      createdAt: '2026-08-03T00:00:00.000Z',
+    });
+    const mission = createChatMission(db, 1, 'vault-1', 'channel-1', {
+      rootMessageId: 'root-cancel', coordinatorRegistrationId: coordinator.id, title: 'Cancelable',
+    });
+    const added = addChatMissionTask(db, 1, 'channel-1', mission.mission.id, {
+      coordinatorRegistrationId: coordinator.id, title: 'Pending task', assignee: worker.id,
+    });
+    const message = createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: 'pending-delegation', channelId: 'channel-1', author: '', body: '@terra wait',
+      createdAt: '2026-08-03T00:00:01.000Z', registrationId: coordinator.id,
+      missionTaskId: added.task.id,
+    });
+    const dispatch = createChatAgentDispatchForRegistration(db, 1, 'channel-1', message, worker.id);
+    linkMissionTaskDispatch(db, added.task.id, dispatch.id);
+    assert.equal(listPendingChatAgentDispatches(db, 1, 'channel-1').length, 1);
+    assert.throws(() => finishChatMission(db, 1, 'channel-1', mission.mission.id, {
+      coordinatorRegistrationId: coordinator.id, status: 'completed', summary: 'Too soon',
+    }), /active workers/);
+    const canceled = finishChatMission(db, 1, 'channel-1', mission.mission.id, {
+      coordinatorRegistrationId: coordinator.id, status: 'canceled', summary: 'No longer needed',
+    });
+    assert.equal(canceled.mission.status, 'canceled');
+    assert.equal(canceled.mission.tasks[0]?.status, 'canceled');
+    assert.deepEqual(listPendingChatAgentDispatches(db, 1, 'channel-1'), []);
+    assert.throws(() => addChatMissionTask(db, 1, 'channel-1', mission.mission.id, {
+      coordinatorRegistrationId: coordinator.id, title: 'Too late', assignee: worker.id,
+    }), /already closed/);
+    assert.throws(() => updateChatMissionTask(db, 1, 'channel-1', added.task.id, {
+      status: 'completed', summary: 'Too late',
+    }), /already closed/);
+    assert.throws(() => finishChatMission(db, 1, 'channel-1', mission.mission.id, {
+      coordinatorRegistrationId: coordinator.id, status: 'completed', summary: 'Reopen',
+    }), /already closed/);
+  } finally {
+    db.close();
+  }
+});

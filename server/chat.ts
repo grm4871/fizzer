@@ -19,8 +19,8 @@ export const CHAT_NOTE_MARKER = 'cascade://chat-channel';
 export const CASCADE_AGENT_APP_CONTEXT =
   'Cascade is a user-facing, Obsidian-style workspace for AI-native project management. '
   + 'Its vault folders, project docs, notes, and chats are live app data, not a mirror of the agent process cwd. '
-  + 'Use `cascade-note` by command name to list, read, create, or edit live notes; it is on PATH and pre-authorized. '
-  + 'Use `--listed` and `--folder` when placing a new note in the sidebar. '
+  + 'Use `cascade-note` by command name to list, read, create, edit, move live notes, and create/list folders; it is on PATH and pre-authorized. '
+  + 'Use `cascade-note folder create <name>`, then `cascade-note move <note> --folder <folder>` to organize existing notes. Use `--listed` and `--folder` when placing a new note in the sidebar. '
   + 'Do not replace the helper with an absolute path, inspect a local docs.db, or conclude notes are unavailable '
   + 'because they are absent from the local filesystem or named tool list. '
   + 'Use normal filesystem tools only for local repository/workspace work the user actually requested. '
@@ -104,6 +104,38 @@ export type ChatMessage = {
   /** Set when this message was forwarded from another channel. */
   forwardedFrom?: ChatForwardRef;
   changeRequest?: ChatChangeRequest;
+  /** Durable chat-first orchestration state projected onto the root message. */
+  mission?: ChatMission;
+  /** Delegated worker messages point at the task they execute. */
+  missionTaskId?: string;
+};
+
+export type ChatMissionTaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'blocked' | 'canceled';
+
+export type ChatMissionTask = {
+  id: string;
+  title: string;
+  assignee: string;
+  assigneeMention: string;
+  status: ChatMissionTaskStatus;
+  summary: string;
+  runId?: number;
+  updatedAt: string;
+};
+
+export type ChatMissionStatus = 'active' | 'reviewing' | 'blocked' | 'completed' | 'canceled';
+
+export type ChatMission = {
+  id: string;
+  title: string;
+  objective: string;
+  status: ChatMissionStatus;
+  coordinator: string;
+  coordinatorMention: string;
+  tasks: ChatMissionTask[];
+  summary: string;
+  createdAt: string;
+  updatedAt: string;
 };
 
 /** Max messages returned by the default channel list (newest first window). */
@@ -137,6 +169,8 @@ export type ChatAgentRegistration = {
   contextPrompt: string;
   taggableByAgents: boolean;
   replyToEveryMessage: boolean;
+  /** Channel coordinator: receives every human turn and may dispatch members. */
+  orchestrator: boolean;
   /** Allow users other than the agent owner to @mention/trigger it in a shared
    * (linked) channel. Opt-in; the run still executes on the owner's runner. */
   pingableByOthers: boolean;
@@ -199,6 +233,8 @@ type ChatMessageRow = {
   reply_to_json: string | null;
   forwarded_from_json: string | null;
   change_request_json: string | null;
+  mission_json: string | null;
+  mission_task_id: string | null;
 };
 
 type RunStatusRow = {
@@ -233,7 +269,9 @@ export function ensureChatSchema(db: Db): void {
       attachments_json TEXT,
       reply_to_json TEXT,
       forwarded_from_json TEXT,
-      change_request_json TEXT
+      change_request_json TEXT,
+      mission_json TEXT,
+      mission_task_id TEXT
     );
     CREATE INDEX IF NOT EXISTS chat_messages_channel_idx ON chat_messages(channel_id, created_at);
     CREATE VIRTUAL TABLE IF NOT EXISTS chat_messages_fts USING fts5(author, body, content='chat_messages', content_rowid='rowid');
@@ -262,6 +300,7 @@ export function ensureChatSchema(db: Db): void {
       context_prompt TEXT NOT NULL DEFAULT '',
       taggable_by_agents INTEGER NOT NULL DEFAULT 0,
       reply_to_every_message INTEGER NOT NULL DEFAULT 0,
+      orchestrator INTEGER NOT NULL DEFAULT 0,
       pingable_by_others INTEGER NOT NULL DEFAULT 0,
       yolo INTEGER NOT NULL DEFAULT 0,
       conversation_id TEXT NOT NULL DEFAULT '',
@@ -316,6 +355,12 @@ export function ensureChatSchema(db: Db): void {
   if (!messageCols.some((col) => col.name === 'forwarded_from_json')) {
     db.exec('ALTER TABLE chat_messages ADD COLUMN forwarded_from_json TEXT');
   }
+  if (!messageCols.some((col) => col.name === 'mission_json')) {
+    db.exec('ALTER TABLE chat_messages ADD COLUMN mission_json TEXT');
+  }
+  if (!messageCols.some((col) => col.name === 'mission_task_id')) {
+    db.exec('ALTER TABLE chat_messages ADD COLUMN mission_task_id TEXT');
+  }
   const memberCols = db.prepare("PRAGMA table_info(chat_agent_members)").all() as Array<{ name: string }>;
   if (!memberCols.some((col) => col.name === 'yolo')) {
     db.exec('ALTER TABLE chat_agent_members ADD COLUMN yolo INTEGER NOT NULL DEFAULT 0');
@@ -325,6 +370,9 @@ export function ensureChatSchema(db: Db): void {
   }
   if (!memberCols.some((col) => col.name === 'reply_to_every_message')) {
     db.exec('ALTER TABLE chat_agent_members ADD COLUMN reply_to_every_message INTEGER NOT NULL DEFAULT 0');
+  }
+  if (!memberCols.some((col) => col.name === 'orchestrator')) {
+    db.exec('ALTER TABLE chat_agent_members ADD COLUMN orchestrator INTEGER NOT NULL DEFAULT 0');
   }
   if (!memberCols.some((col) => col.name === 'pingable_by_others')) {
     db.exec('ALTER TABLE chat_agent_members ADD COLUMN pingable_by_others INTEGER NOT NULL DEFAULT 0');
@@ -378,6 +426,7 @@ type ChatAgentMemberRow = {
   context_prompt: string;
   taggable_by_agents: number;
   reply_to_every_message: number;
+  orchestrator: number;
   pingable_by_others: number;
   yolo: number;
   conversation_id: string;
@@ -431,6 +480,7 @@ function rowToAgentMember(row: ChatAgentMemberRow): ChatAgentRegistration {
     contextPrompt: row.context_prompt,
     taggableByAgents: row.taggable_by_agents !== 0,
     replyToEveryMessage: row.reply_to_every_message !== 0,
+    orchestrator: row.orchestrator !== 0,
     pingableByOthers: row.pingable_by_others !== 0,
     yolo: row.yolo !== 0,
     conversationId: row.conversation_id,
@@ -660,12 +710,32 @@ function normalizeAgentRegistration(input: Partial<ChatAgentRegistration>, fallb
     cwd: String(input.cwd || ''),
     contextPrompt: String(input.contextPrompt || ''),
     taggableByAgents: input.taggableByAgents === true,
-    replyToEveryMessage: input.replyToEveryMessage === true,
+    replyToEveryMessage: input.replyToEveryMessage === true || input.orchestrator === true,
+    orchestrator: input.orchestrator === true,
     pingableByOthers: input.pingableByOthers === true,
     yolo: input.yolo === true,
     // May be empty here; upsert preserves the existing session or mints a new one.
     conversationId: String(input.conversationId || '').trim(),
   };
+}
+
+function assertCoordinatorSlot(db: Db, channelId: string, memberId: string, requested: boolean): void {
+  if (!requested) return;
+  const existing = db.prepare(`
+    SELECT display_name, mention FROM chat_agent_members
+    WHERE channel_id = ? AND orchestrator != 0 AND id != ? LIMIT 1
+  `).get(channelId, memberId) as { display_name: string; mention: string } | undefined;
+  if (existing) {
+    throw new Error(`${existing.display_name || `@${existing.mention}`} already coordinates this channel`);
+  }
+}
+
+function assertAgentManagementOwner(db: Db, userId: number, sourceVaultId: string): void {
+  const vault = db.prepare('SELECT created_by FROM vaults WHERE id = ?')
+    .get(sourceVaultId) as { created_by: number } | undefined;
+  if (!vault || vault.created_by !== userId) {
+    throw new Error('Only the channel owner can manage its agents');
+  }
 }
 
 /**
@@ -853,10 +923,11 @@ export function addVaultAgentToChannel(
   vaultId: string,
   channelId: string,
   vaultAgentId: string,
-  flags: Partial<Pick<ChatAgentRegistration, 'reasoningEffort' | 'taggableByAgents' | 'replyToEveryMessage' | 'pingableByOthers' | 'yolo' | 'conversationId'>> = {},
+  flags: Partial<Pick<ChatAgentRegistration, 'reasoningEffort' | 'taggableByAgents' | 'replyToEveryMessage' | 'orchestrator' | 'pingableByOthers' | 'yolo' | 'conversationId'>> = {},
 ): ChatAgentRegistration {
   const { route } = assertChatChannel(db, channelId, userId);
   if (route.localVaultId !== vaultId) throw new Error('Chat channel not found');
+  assertAgentManagementOwner(db, userId, route.sourceVaultId);
   const va = db.prepare('SELECT * FROM vault_agents WHERE id = ? AND vault_id = ?')
     .get(vaultAgentId, route.sourceVaultId) as VaultAgentRow | undefined;
   if (!va) throw new Error('Vault agent not found');
@@ -869,7 +940,8 @@ export function addVaultAgentToChannel(
     || existing?.conversation_id
     || crypto.randomUUID();
   const taggable = flags.taggableByAgents !== undefined ? flags.taggableByAgents : (existing ? existing.taggable_by_agents !== 0 : false);
-  const replyEvery = flags.replyToEveryMessage !== undefined ? flags.replyToEveryMessage : (existing ? existing.reply_to_every_message !== 0 : false);
+  const orchestrator = flags.orchestrator !== undefined ? flags.orchestrator : (existing ? existing.orchestrator !== 0 : false);
+  const replyEvery = orchestrator || (flags.replyToEveryMessage !== undefined ? flags.replyToEveryMessage : (existing ? existing.reply_to_every_message !== 0 : false));
   const pingable = flags.pingableByOthers !== undefined ? flags.pingableByOthers : (existing ? existing.pingable_by_others !== 0 : false);
   const yolo = flags.yolo !== undefined ? flags.yolo : (existing ? existing.yolo !== 0 : false);
   const requestedEffort = String(flags.reasoningEffort ?? existing?.reasoning_effort ?? '').trim().toLowerCase();
@@ -882,29 +954,30 @@ export function addVaultAgentToChannel(
     ? requestedEffort
     : '';
   const memberId = existing?.id || crypto.randomUUID();
+  assertCoordinatorSlot(db, route.sourceChannelId, memberId, orchestrator);
 
   if (existing) {
     db.prepare(`
       UPDATE chat_agent_members SET
         agent_id = ?, display_name = ?, avatar_url = ?, mention = ?, model = ?, reasoning_effort = ?, cwd = ?, context_prompt = ?,
-        taggable_by_agents = ?, reply_to_every_message = ?, pingable_by_others = ?, yolo = ?,
+        taggable_by_agents = ?, reply_to_every_message = ?, orchestrator = ?, pingable_by_others = ?, yolo = ?,
         conversation_id = ?, vault_agent_id = ?, updated_at = datetime('now')
       WHERE id = ? AND channel_id = ?
     `).run(
       va.agent_id, va.display_name, va.avatar_url, va.mention, va.model, reasoningEffort, va.cwd, va.context_prompt,
-      taggable ? 1 : 0, replyEvery ? 1 : 0, pingable ? 1 : 0, yolo ? 1 : 0,
+      taggable ? 1 : 0, replyEvery ? 1 : 0, orchestrator ? 1 : 0, pingable ? 1 : 0, yolo ? 1 : 0,
       conversationId, va.id, memberId, route.sourceChannelId,
     );
   } else {
     db.prepare(`
       INSERT INTO chat_agent_members (
         id, channel_id, vault_id, vault_agent_id, agent_id, display_name, avatar_url, mention,
-        model, reasoning_effort, cwd, context_prompt, taggable_by_agents, reply_to_every_message, pingable_by_others, yolo, conversation_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        model, reasoning_effort, cwd, context_prompt, taggable_by_agents, reply_to_every_message, orchestrator, pingable_by_others, yolo, conversation_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       memberId, route.sourceChannelId, route.sourceVaultId, va.id,
       va.agent_id, va.display_name, va.avatar_url, va.mention, va.model, reasoningEffort, va.cwd, va.context_prompt,
-      taggable ? 1 : 0, replyEvery ? 1 : 0, pingable ? 1 : 0, yolo ? 1 : 0, conversationId,
+      taggable ? 1 : 0, replyEvery ? 1 : 0, orchestrator ? 1 : 0, pingable ? 1 : 0, yolo ? 1 : 0, conversationId,
     );
   }
 
@@ -998,6 +1071,11 @@ function rowToMessage(row: ChatMessageRow & { has_harness?: number }, opts?: { d
       const changeRequest = parseJson<ChatChangeRequest>(row.change_request_json);
       return changeRequest ? { changeRequest } : {};
     })(),
+    ...(() => {
+      const mission = parseJson<ChatMission>(row.mission_json);
+      return mission ? { mission } : {};
+    })(),
+    ...(row.mission_task_id ? { missionTaskId: row.mission_task_id } : {}),
   };
 }
 
@@ -1020,6 +1098,8 @@ function messageToRow(vaultId: string, channelId: string, message: ChatMessage):
     reply_to_json: serializeJson(message.replyTo),
     forwarded_from_json: serializeJson(message.forwardedFrom),
     change_request_json: serializeJson(message.changeRequest),
+    mission_json: serializeJson(message.mission),
+    mission_task_id: message.missionTaskId ?? null,
   };
 }
 
@@ -1155,7 +1235,7 @@ export function listChatMessages(
         SELECT id, channel_id, vault_id, author, body, created_at,
           status, agent_id, registration_id, run_id,
           blocks_json, images_json, attachments_json, reply_to_json,
-          forwarded_from_json, change_request_json,
+          forwarded_from_json, change_request_json, mission_json, mission_task_id,
           rowid,
           CASE WHEN harness_log IS NOT NULL AND length(harness_log) > 0 THEN 1 ELSE 0 END AS has_harness
         FROM chat_messages
@@ -1456,7 +1536,9 @@ function persistChatMessageRow(db: Db, vaultId: string, channelId: string, messa
       attachments_json = ?,
       reply_to_json = ?,
       forwarded_from_json = ?,
-      change_request_json = ?
+      change_request_json = ?,
+      mission_json = ?,
+      mission_task_id = ?
     WHERE id = ? AND channel_id = ?
   `).run(
     row.author,
@@ -1473,6 +1555,8 @@ function persistChatMessageRow(db: Db, vaultId: string, channelId: string, messa
     row.reply_to_json,
     row.forwarded_from_json,
     row.change_request_json,
+    row.mission_json,
+    row.mission_task_id,
     message.id,
     channelId,
   );
@@ -1621,6 +1705,8 @@ export function createChatMessage(
       harnessLog: (message.harnessLog?.length ?? 0) > (current.harnessLog?.length ?? 0)
         ? message.harnessLog
         : current.harnessLog,
+      mission: message.mission || current.mission,
+      missionTaskId: message.missionTaskId || current.missionTaskId,
     };
     return {
       ...persistChatMessageRow(db, route.sourceVaultId, route.sourceChannelId, merged),
@@ -1633,8 +1719,8 @@ export function createChatMessage(
       id, channel_id, vault_id, author, body, created_at,
       status, agent_id, registration_id, run_id,
       blocks_json, harness_log, images_json, attachments_json, reply_to_json,
-      forwarded_from_json, change_request_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      forwarded_from_json, change_request_json, mission_json, mission_task_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     row.id,
     row.channel_id,
@@ -1653,6 +1739,8 @@ export function createChatMessage(
     row.reply_to_json,
     row.forwarded_from_json,
     row.change_request_json,
+    row.mission_json,
+    row.mission_task_id,
   );
 
   // Carry the persistence order so the create broadcast orders identically to a
@@ -2174,12 +2262,14 @@ export function upsertChatAgentMember(
 ): ChatAgentRegistration {
   const { route } = assertChatChannel(db, channelId, userId);
   if (route.localVaultId !== vaultId) throw new Error('Chat channel not found');
+  assertAgentManagementOwner(db, userId, route.sourceVaultId);
 
   // Prefer linking an existing vault agent when vaultAgentId is provided.
   if (input.vaultAgentId && String(input.vaultAgentId).trim()) {
     return addVaultAgentToChannel(db, userId, vaultId, channelId, String(input.vaultAgentId).trim(), {
       taggableByAgents: input.taggableByAgents,
       replyToEveryMessage: input.replyToEveryMessage,
+      orchestrator: input.orchestrator,
       pingableByOthers: input.pingableByOthers,
       yolo: input.yolo,
       reasoningEffort: input.reasoningEffort,
@@ -2196,6 +2286,12 @@ export function upsertChatAgentMember(
   if (existing?.vault_agent_id) member.vaultAgentId = existing.vault_agent_id;
 
   const vaultAgent = ensureVaultAgentForMember(db, route.sourceVaultId, member);
+  db.prepare(`
+    UPDATE vault_agents SET owner_user_id = COALESCE(
+      owner_user_id,
+      (SELECT created_by FROM vaults WHERE id = ?)
+    ) WHERE id = ?
+  `).run(route.sourceVaultId, vaultAgent.id);
   member.vaultAgentId = vaultAgent.id;
   // Identity is canonical on vault_agents
   member.agentId = vaultAgent.agentId;
@@ -2205,6 +2301,7 @@ export function upsertChatAgentMember(
   member.model = vaultAgent.model;
   member.cwd = vaultAgent.cwd;
   member.contextPrompt = vaultAgent.contextPrompt;
+  assertCoordinatorSlot(db, route.sourceChannelId, member.id, member.orchestrator);
 
   if (existing) {
     db.prepare(`
@@ -2220,6 +2317,7 @@ export function upsertChatAgentMember(
         context_prompt = ?,
         taggable_by_agents = ?,
         reply_to_every_message = ?,
+        orchestrator = ?,
         pingable_by_others = ?,
         yolo = ?,
         conversation_id = ?,
@@ -2237,6 +2335,7 @@ export function upsertChatAgentMember(
       member.contextPrompt,
       member.taggableByAgents ? 1 : 0,
       member.replyToEveryMessage ? 1 : 0,
+      member.orchestrator ? 1 : 0,
       member.pingableByOthers ? 1 : 0,
       member.yolo ? 1 : 0,
       member.conversationId,
@@ -2247,8 +2346,8 @@ export function upsertChatAgentMember(
     db.prepare(`
       INSERT INTO chat_agent_members (
         id, channel_id, vault_id, vault_agent_id, agent_id, display_name, avatar_url, mention,
-        model, reasoning_effort, cwd, context_prompt, taggable_by_agents, reply_to_every_message, pingable_by_others, yolo, conversation_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        model, reasoning_effort, cwd, context_prompt, taggable_by_agents, reply_to_every_message, orchestrator, pingable_by_others, yolo, conversation_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       member.id,
       route.sourceChannelId,
@@ -2264,6 +2363,7 @@ export function upsertChatAgentMember(
       member.contextPrompt,
       member.taggableByAgents ? 1 : 0,
       member.replyToEveryMessage ? 1 : 0,
+      member.orchestrator ? 1 : 0,
       member.pingableByOthers ? 1 : 0,
       member.yolo ? 1 : 0,
       member.conversationId,
@@ -2282,6 +2382,7 @@ export function removeChatAgentMember(
 ): boolean {
   const { route } = assertChatChannel(db, channelId, userId);
   if (route.localVaultId !== vaultId) throw new Error('Chat channel not found');
+  assertAgentManagementOwner(db, userId, route.sourceVaultId);
 
   const result = db.prepare('DELETE FROM chat_agent_members WHERE id = ? AND channel_id = ?').run(registrationId, route.sourceChannelId);
   return result.changes > 0;

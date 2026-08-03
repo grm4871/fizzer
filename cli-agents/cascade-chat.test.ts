@@ -1,0 +1,122 @@
+import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
+import http from 'node:http';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { promisify } from 'node:util';
+import test from 'node:test';
+import { fileURLToPath } from 'node:url';
+
+const execFileAsync = promisify(execFile);
+const here = path.dirname(fileURLToPath(import.meta.url));
+const cli = path.join(here, 'cascade-chat');
+
+test('coordinator helper starts and delegates a mission with structured API calls', async (t) => {
+  const requests: Array<{ method: string; path: string; body: Record<string, unknown> | null }> = [];
+  const server = http.createServer(async (req, res) => {
+    let raw = '';
+    for await (const chunk of req) raw += chunk;
+    requests.push({
+      method: req.method || '',
+      path: req.url || '',
+      body: raw ? JSON.parse(raw) : null,
+    });
+    res.setHeader('content-type', 'application/json');
+    if (req.url === '/api/vaults/vault-1/channels/channel-1/missions') {
+      res.statusCode = 201;
+      res.end(JSON.stringify({ mission: { id: 'mission-1', title: 'Release', status: 'active', tasks: [] } }));
+      return;
+    }
+    if (req.url === '/api/vaults/vault-1/channels/channel-1/missions/mission-1/tasks') {
+      res.statusCode = 201;
+      res.end(JSON.stringify({
+        mission: { id: 'mission-1', title: 'Release', status: 'active' },
+        task: { id: 'task-1', title: 'Verify browser', assigneeMention: 'terra' },
+      }));
+      return;
+    }
+    if (req.url === '/api/vaults/vault-1/channels/channel-1/missions/mission-1?coordinator=reg-sol') {
+      res.end(JSON.stringify({
+        mission: { id: 'mission-1', title: 'Release', status: 'reviewing', tasks: [] },
+      }));
+      return;
+    }
+    if (req.url === '/api/vaults/vault-1/channels/channel-1/missions/tasks/task-1') {
+      res.end(JSON.stringify({ mission: { id: 'mission-1', title: 'Release', status: 'blocked', tasks: [] } }));
+      return;
+    }
+    if (req.url === '/api/vaults/vault-1/channels/channel-1/missions/mission-1/finish') {
+      res.end(JSON.stringify({ mission: { id: 'mission-1', title: 'Release', status: 'completed', tasks: [] } }));
+      return;
+    }
+    res.statusCode = 404;
+    res.end(JSON.stringify({ error: 'not found' }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const address = server.address();
+  assert(address && typeof address === 'object');
+  const common = [
+    '--url', `http://127.0.0.1:${address.port}`,
+    '--token', 'token',
+    '--vault', 'vault-1',
+    '--channel', 'channel-1',
+  ];
+  const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-chat-test-'));
+  const config = path.join(fixtureDir, 'helper.json');
+  fs.writeFileSync(config, JSON.stringify({
+    registrationId: 'reg-sol',
+    chatTriggeringMessageId: 'root-message',
+  }));
+  t.after(() => fs.rmSync(fixtureDir, { recursive: true, force: true }));
+  const withCoordinator = { ...process.env, CASCADE_HELPER_CONFIG: config };
+
+  const started = await execFileAsync(process.execPath, [
+    cli, 'mission', 'start', '--title', 'Release', '--objective', 'Ship safely',
+    ...common,
+  ], { env: withCoordinator });
+  assert.match(started.stdout, /mission mission-1 started/);
+  const delegated = await execFileAsync(process.execPath, [
+    cli, 'mission', 'delegate', '--mission', 'mission-1', '--to', '@terra',
+    '--task', 'Verify browser', '--message', 'Exercise reload and reconnect.', ...common,
+  ], { env: withCoordinator });
+  assert.match(delegated.stdout, /delegated task-1 to @terra/);
+  const status = await execFileAsync(process.execPath, [
+    cli, 'mission', 'status', '--mission', 'mission-1', ...common,
+  ], { env: withCoordinator });
+  assert.match(status.stdout, /reviewing\s+mission-1/);
+  await execFileAsync(process.execPath, [
+    cli, 'mission', 'update', '--task', 'task-1', '--status', 'blocked',
+    '--summary', 'Needs a credential', ...common,
+  ], { env: withCoordinator });
+  await execFileAsync(process.execPath, [
+    cli, 'mission', 'finish', '--mission', 'mission-1', '--summary', 'Integrated', ...common,
+  ], { env: withCoordinator });
+  assert.deepEqual(requests.map((request) => `${request.method} ${request.path}`), [
+    'POST /api/vaults/vault-1/channels/channel-1/missions',
+    'POST /api/vaults/vault-1/channels/channel-1/missions/mission-1/tasks',
+    'GET /api/vaults/vault-1/channels/channel-1/missions/mission-1?coordinator=reg-sol',
+    'PATCH /api/vaults/vault-1/channels/channel-1/missions/tasks/task-1',
+    'POST /api/vaults/vault-1/channels/channel-1/missions/mission-1/finish',
+  ]);
+  assert.deepEqual(requests[0]?.body, {
+    rootMessageId: 'root-message',
+    coordinatorRegistrationId: 'reg-sol',
+    title: 'Release',
+    objective: 'Ship safely',
+  });
+  assert.deepEqual(requests[1]?.body, {
+    coordinatorRegistrationId: 'reg-sol',
+    title: 'Verify browser',
+    assignee: '@terra',
+    prompt: 'Exercise reload and reconnect.',
+  });
+  assert.deepEqual(requests[3]?.body, { status: 'blocked', summary: 'Needs a credential' });
+  assert.deepEqual(requests[4]?.body, {
+    coordinatorRegistrationId: 'reg-sol',
+    status: 'completed',
+    summary: 'Integrated',
+  });
+  assert.equal(JSON.parse(fs.readFileSync(config, 'utf8')).usedChatSend, undefined);
+});

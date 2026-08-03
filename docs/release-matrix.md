@@ -38,7 +38,7 @@ Where a row above has a command, run the command instead of reasoning about the 
 
 | Row | Command | What it actually asserts |
 | --- | --- | --- |
-| Chat rendering, composer, replies | `npm test` | Grouping/merge rules, reply refs, mention parsing, run blocks, steering (client unit) |
+| Chat rendering, composer, replies | `npm test`, `npm run test:chat-mission`, `npm run verify:chat-mission-ui` | Grouping/merge rules, reply refs, mention parsing, run blocks, steering; durable mission state across linked clients/reload; inline artifact and coordinator setting in the built client |
 | Search, links, forwarding | `npm run test:chat-forward`, `npm run verify:chat-forward-ui` | Copy fidelity + provenance across channels, socket broadcast, survives reload, refusals; then the same via real right-click → picker → banner |
 | Tabs, panes, menus, Superkanban | `npm run verify:tab-menus` | Every `+`/tab menu item present (catches a prop that never reached the component), menu survives the opening right-click, menu unclipped, Superkanban routes to a populated board, Close tab works |
 | Agent start and run lifecycle | `npm run test:desktop-runner` | Run reclaim, replay, duplicate-process avoidance |
@@ -69,4 +69,3 @@ A release claim should say what was verified, not merely “tests passed.” Inc
 - Production health plus the served asset or API behavior checked.
 - Device and viewport for mobile UI changes.
 - Whether an active agent run survived reload/reconnect when lifecycle code changed.
-

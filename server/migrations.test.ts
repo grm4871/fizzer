@@ -12,6 +12,9 @@ import {
   upsertChatAgentMember,
   CHAT_NOTE_MARKER,
 } from './chat.js';
+import { ensureChatDispatchSchema } from './chat-dispatch.js';
+import { ensureChatMissionSchema } from './chat-missions.js';
+import { ensureRunnerSchema } from './runner.js';
 
 /**
  * Release matrix — "API, persistence, migrations": a feature that works on a
@@ -95,10 +98,11 @@ test('a fresh database gets every chat_messages column the writers use', () => {
   withDb((db) => {
     ensureChatSchema(db);
     const cols = columns(db, 'chat_messages');
-    for (const required of ['harness_log', 'change_request_json', 'forwarded_from_json']) {
+    for (const required of ['harness_log', 'change_request_json', 'forwarded_from_json', 'mission_json', 'mission_task_id']) {
       assert.ok(cols.includes(required), `fresh schema is missing ${required}`);
     }
     assert.ok(columns(db, 'chat_agent_members').includes('reasoning_effort'));
+    assert.ok(columns(db, 'chat_agent_members').includes('orchestrator'));
   });
 });
 
@@ -114,7 +118,7 @@ test('an existing database is migrated to the current chat_messages shape', () =
     ensureChatSchema(db);
 
     const cols = columns(db, 'chat_messages');
-    for (const required of ['harness_log', 'change_request_json', 'forwarded_from_json']) {
+    for (const required of ['harness_log', 'change_request_json', 'forwarded_from_json', 'mission_json', 'mission_task_id']) {
       assert.ok(cols.includes(required), `migration did not add ${required}`);
     }
     // The upgrade must not drop or rewrite what was already there.
@@ -150,6 +154,55 @@ test('an existing agent-members table gains the reasoning effort override', () =
     `);
     ensureChatSchema(db);
     assert.ok(columns(db, 'chat_agent_members').includes('reasoning_effort'));
+    assert.ok(columns(db, 'chat_agent_members').includes('orchestrator'));
+  });
+});
+
+test('mission and durable dispatch tables initialize idempotently on an upgraded database', () => {
+  withDb((db) => {
+    addChannel(db, 'chan-1', 'general');
+    ensureChatSchema(db);
+    ensureChatDispatchSchema(db);
+    ensureChatMissionSchema(db);
+    assert.deepEqual(
+      columns(db, 'chat_missions').filter((name) => ['root_message_id', 'coordinator_registration_id', 'wake_sent'].includes(name)),
+      ['root_message_id', 'coordinator_registration_id', 'wake_sent'],
+    );
+    assert.ok(columns(db, 'chat_mission_tasks').includes('dispatch_id'));
+    assert.ok(columns(db, 'chat_agent_dispatches').includes('run_id'));
+    assert.doesNotThrow(() => {
+      ensureChatDispatchSchema(db);
+      ensureChatMissionSchema(db);
+    });
+  });
+});
+
+test('an existing runs table gains the unique chat dispatch key', () => {
+  withDb((db) => {
+    db.exec(`
+      CREATE TABLE runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        vault_id TEXT NOT NULL,
+        note_id TEXT,
+        prompt TEXT NOT NULL,
+        agent TEXT NOT NULL DEFAULT 'claude-code',
+        session_id TEXT,
+        conversation_id TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'queued',
+        started_at TEXT NOT NULL DEFAULT (datetime('now')),
+        finished_at TEXT,
+        summary TEXT,
+        model TEXT
+      );
+    `);
+    ensureRunnerSchema(db);
+    assert.ok(columns(db, 'runs').includes('chat_dispatch_id'));
+    const insert = db.prepare(`
+      INSERT INTO runs (vault_id, prompt, chat_dispatch_id) VALUES ('vault-1', ?, 'dispatch-1')
+    `);
+    insert.run('first');
+    assert.throws(() => insert.run('duplicate'));
+    assert.doesNotThrow(() => ensureRunnerSchema(db));
   });
 });
 
