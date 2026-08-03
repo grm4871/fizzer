@@ -24,7 +24,7 @@ export ANDROID_SDK_ROOT="$SDK_ROOT"
 export PATH="$CMD_TOOLS/bin:$SDK_ROOT/platform-tools:$PATH"
 
 yes | sdkmanager --licenses >/dev/null
-sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+sdkmanager "platform-tools" "platforms;android-36" "build-tools;35.0.0"
 
 cat > "$SDK_ROOT/../android-sdk.env" <<EOF
 export ANDROID_HOME="$SDK_ROOT"

@@ -55,8 +55,8 @@
     "build:client:android": "CAPACITOR=true dotenv -e client/android.env -- npm --workspace=client run build",
     "cap:sync": "npx cap sync android",
     "cap:open": "npx cap open android",
-    "android:build": "npm run build:client:android && npm run cap:sync",
-    "android:apk": "npm run android:build && cd android && JAVA_HOME=\"${JAVA_HOME:-$HOME/.local/jdks/jdk-21.0.11+10}\" ./gradlew assembleDebug && cp -f app/build/outputs/apk/debug/app-debug.apk ../client/public/cascade-android.apk && cp -f app/build/outputs/apk/debug/app-debug.apk ../client/dist/cascade-android.apk"
+    "android:build": "npm run build:client:android && node scripts/prepare-capacitor-assets.mjs && npm run cap:sync",
+    "android:apk": "npm run android:build && cd android && JAVA_HOME=\"${JAVA_HOME:-$HOME/.local/jdks/jdk-21.0.11+10}\" ./gradlew clean assembleDebug && cp -f app/build/outputs/apk/debug/app-debug.apk ../client/public/cascade-android.apk && cp -f app/build/outputs/apk/debug/app-debug.apk ../client/dist/cascade-android.apk"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.175",
