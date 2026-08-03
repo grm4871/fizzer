@@ -463,7 +463,9 @@ export const CascadeRunPanel = memo(function CascadeRunPanel({
 }) {
   const isRunning = message.status === 'running';
   const canExpand = hasRunActivity(message);
-  const [open, setOpen] = useState(isRunning || forceOpen);
+  // Live work appears as a lightweight activity bubble until the operator
+  // asks for the complete thinking/tool trace. Selection still force-opens it.
+  const [open, setOpen] = useState(forceOpen);
   const [showRaw, setShowRaw] = useState(false);
   const [hydrating, setHydrating] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -507,9 +509,14 @@ export const CascadeRunPanel = memo(function CascadeRunPanel({
     if (!isRunning && !open) return null;
     return buildHarnessActivity(message);
   }, [message, isRunning, open]);
+  const hasStructuredActivity = Boolean(activity && (
+    activity.items.length > 0 || activity.stats.hasThinking
+  ));
   const summary = useMemo(
-    () => (activity ? summarizeActivity(activity, isRunning) : (isRunning ? 'running…' : 'trace')),
-    [activity, isRunning],
+    () => (activity
+      ? (isRunning && !hasStructuredActivity ? 'waiting for harness stream…' : summarizeActivity(activity, isRunning))
+      : (isRunning ? 'waiting for harness stream…' : 'trace')),
+    [activity, hasStructuredActivity, isRunning],
   );
   const statChips = useMemo(
     () => (activity ? buildHeaderStatChips(activity.stats) : []),
@@ -533,13 +540,6 @@ export const CascadeRunPanel = memo(function CascadeRunPanel({
     return n;
   }, [activity]);
 
-  useEffect(() => {
-    if (isRunning) {
-      setOpen(true);
-      pinBottomRef.current = true;
-    }
-  }, [isRunning]);
-
   // Selecting a message opens its harness, but must not pin it open: gating the
   // render on `open || forceOpen` made the toggle silently do nothing for as
   // long as the message stayed selected, so a finished panel could not be closed.
@@ -561,7 +561,7 @@ export const CascadeRunPanel = memo(function CascadeRunPanel({
 
   if (!isRunning && !canExpand) return null;
 
-  const hasStructured = Boolean(activity && (activity.items.length > 0 || activity.stats.hasThinking));
+  const hasStructured = hasStructuredActivity;
   // Raw CLI/JSONL is a diagnostic fallback, not a live transcript. Showing it
   // before structured events arrive flashes prompts and protocol frames.
   const useRaw = Boolean(activity && (showRaw || (!isRunning && !hasStructured && activity.stats.hasRaw)));

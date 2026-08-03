@@ -3346,6 +3346,14 @@ a {
 }
 /* Collapsed header-only state can still skip offscreen work. */
 .cascade-run-panel:not(.open) {
+  width: fit-content;
+  max-width: min(100%, 34rem);
+  margin-top: 6px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
   content-visibility: auto;
   contain-intrinsic-size: auto 36px;
 }
@@ -3362,7 +3370,22 @@ a {
   background: color-mix(in srgb, var(--surface-raised) 48%, transparent);
 }
 .cascade-run-panel:not(.open) .crp-header {
-  border-bottom: none;
+  width: fit-content;
+  max-width: 100%;
+  border: 1px solid color-mix(in srgb, var(--border) 64%, white 12%);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-raised) 78%, white 5%);
+  box-shadow: 0 4px 18px hsla(228, 28%, 4%, 0.12);
+  overflow: hidden;
+}
+.cascade-run-panel.is-running:not(.open) .crp-header {
+  border-color: color-mix(in srgb, var(--border) 64%, hsl(38, 42%, 58%));
+}
+.cascade-run-panel:not(.open) .crp-stat-chips {
+  display: none;
+}
+.cascade-run-panel:not(.open) .crp-toggle {
+  padding-inline: 10px;
 }
 .crp-toggle {
   min-width: 0;
@@ -5661,6 +5684,29 @@ a {
 .chat-work-trace.is-live {
   border-color: color-mix(in srgb, var(--border) 72%, hsl(38, 52%, 48%));
   box-shadow: inset 2px 0 0 hsla(38, 58%, 52%, 0.5);
+}
+.chat-work-trace:not(.is-open) {
+  width: fit-content;
+  max-width: min(100%, 34rem);
+  margin-top: 6px;
+  border: 1px solid color-mix(in srgb, var(--border) 64%, white 12%);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-raised) 78%, white 5%);
+  box-shadow: 0 4px 18px hsla(228, 28%, 4%, 0.12);
+}
+.chat-work-trace.is-live:not(.is-open) {
+  border-color: color-mix(in srgb, var(--border) 64%, hsl(38, 42%, 58%));
+}
+.chat-work-trace:not(.is-open) .chat-work-trace-toggle {
+  width: auto;
+  padding-inline: 10px;
+  border-radius: inherit;
+  background: transparent;
+}
+.chat-work-trace:not(.is-open) .chat-work-trace-kicker,
+.chat-work-trace:not(.is-open) .chat-work-trace-summary,
+.chat-work-trace:not(.is-open) .chat-work-decal:not(.is-current) {
+  display: none;
 }
 .chat-work-trace-toggle {
   width: 100%;
