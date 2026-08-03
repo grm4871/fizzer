@@ -1341,10 +1341,19 @@ const ChatGroupRow = memo(function ChatGroupRow({
       )}
     </article>
   );
-}, (prev, next) =>
-  prev.group === next.group
-  && prev.selectedMessageId === next.selectedMessageId
+}, (prev, next) => {
+  // segmentTranscript rebuilds group wrappers every stream tick — compare the
+  // underlying message refs so settled groups skip re-render.
+  const prevMsgs = prev.group.messages;
+  const nextMsgs = next.group.messages;
+  if (prevMsgs.length !== nextMsgs.length) return false;
+  for (let i = 0; i < prevMsgs.length; i += 1) {
+    if (prevMsgs[i] !== nextMsgs[i]) return false;
+  }
+  return prev.selectedMessageId === next.selectedMessageId
   && prev.avatarKind === next.avatarKind
+  && prev.avatarUrl === next.avatarUrl
+  && prev.authorLabel === next.authorLabel
   && prev.ownerLabel === next.ownerLabel
   && prev.planUsage === next.planUsage
   && prev.latestRunningMessageId === next.latestRunningMessageId
@@ -1364,8 +1373,8 @@ const ChatGroupRow = memo(function ChatGroupRow({
   && prev.onImageLoad === next.onImageLoad
   && prev.scrollRootRef === next.scrollRootRef
   && prev.vaultId === next.vaultId
-  && prev.onHydrateMessage === next.onHydrateMessage
-);
+  && prev.onHydrateMessage === next.onHydrateMessage;
+});
 
 export const ChatView = memo(function ChatView({
   channelId,

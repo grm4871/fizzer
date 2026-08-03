@@ -122,6 +122,11 @@ function isMobileViewport(): boolean {
 const loadVaultDataInflight = new Map<string, Promise<void>>();
 const loadChatMessagesInflight = new Map<string, Promise<{ channelId: string; messages: ChatMessage[] }>>();
 
+/** Stable empties so ChatView memo doesn't bust when a channel has no data yet. */
+const EMPTY_CHAT_MESSAGES: ChatMessage[] = [];
+const EMPTY_CHAT_AGENTS: ChatAgentRegistration[] = [];
+const EMPTY_CHAT_PRESENCE: ChatChannelPresence = { participants: [], online: [], owner: '', profiles: {} };
+
 export default function App() {
   // ═══════════════════════════════════════════════════════════════
   // STATE
@@ -444,7 +449,9 @@ export default function App() {
       if (a.activeRuns !== b.activeRuns) return false;
       if (a.lastError !== b.lastError) return false;
       if (a.lastErrorAt !== b.lastErrorAt) return false;
-      if (a.lastSeenAt !== b.lastSeenAt) return false;
+      // lastSeenAt ticks on every runner socket event — ignore for UI identity
+      // or the 12s health poll re-renders the whole chat tree while streaming.
+      if (a.models === b.models && a.planUsage === b.planUsage) return true;
       try {
         return JSON.stringify(a.models) === JSON.stringify(b.models)
           && JSON.stringify(a.planUsage) === JSON.stringify(b.planUsage);
@@ -836,21 +843,23 @@ export default function App() {
         await perfSpanAsync(
           'vault.loadVaultData',
           async () => {
-            // Open chat tabs are already typed in the restored session — kick
-            // their message/agent/presence fetches in parallel with folders+notes
-            // so cold start is one RTT, not folders/notes THEN messages.
+            // Prefer the focused chat tab first so cold start paints useful
+            // transcript ASAP; other open tabs hydrate after the shell settles.
             const openChats = openChatTabIds();
+            const focusedChatId = openTabsRef.current.find((t) => t.type === 'chat' && t.id === focusedPaneRef.current.activeTabId)?.id
+              ?? openChats[0];
+            const primaryChats = focusedChatId ? [focusedChatId] : [];
+            const secondaryChats = openChats.filter((id) => id !== focusedChatId);
             const silent = soft;
 
             const foldersP = api<{ folders: Folder[] }>(`/api/vaults/${vaultId}/folders`);
             const notesP = api<{ notes: NoteSummary[] }>(`/api/vaults/${vaultId}/notes`);
-            // Chat + vault agents must not gate the notes tree paint. Kick them
-            // immediately; only await folders/notes for the sidebar shell.
-            const chatP = openChats.length > 0
+            // Primary chat + vault agents must not gate notes-tree paint.
+            const primaryChatP = primaryChats.length > 0
               ? Promise.all([
-                  loadChatMessages(vaultId, [], { silent, channelIds: openChats }),
-                  loadChatAgentMembers(vaultId, [], { channelIds: openChats }),
-                  loadChatPresence(vaultId, [], { channelIds: openChats }),
+                  loadChatMessages(vaultId, [], { silent, channelIds: primaryChats }),
+                  loadChatAgentMembers(vaultId, [], { channelIds: primaryChats }),
+                  loadChatPresence(vaultId, [], { channelIds: primaryChats }),
                 ])
               : Promise.resolve();
             const vaultAgentsP = loadVaultAgents(vaultId);
@@ -859,10 +868,16 @@ export default function App() {
             const nextNotes = noteData.notes || [];
             setFolders(folderData.folders || []);
             setNotes(nextNotes);
-            // Chat + vault-agent lists already in flight; do not block shell paint.
-            // Each loader owns its own error handling / inflight keys.
-            void chatP.catch(() => undefined);
+            void primaryChatP.catch(() => undefined);
             void vaultAgentsP.catch(() => undefined);
+            if (secondaryChats.length > 0) {
+              // Defer background tabs one frame so the active channel can paint.
+              window.setTimeout(() => {
+                void loadChatMessages(vaultId, nextNotes, { silent: true, channelIds: secondaryChats }).catch(() => undefined);
+                void loadChatAgentMembers(vaultId, nextNotes, { channelIds: secondaryChats }).catch(() => undefined);
+                void loadChatPresence(vaultId, nextNotes, { channelIds: secondaryChats }).catch(() => undefined);
+              }, 0);
+            }
           },
           {
             vaultId,
@@ -3196,12 +3211,12 @@ export default function App() {
         <ChatView
           channelId={channel.id}
           channelName={channel.title}
-          messages={chatState.messagesByChannel[channel.id] ?? []}
+          messages={chatState.messagesByChannel[channel.id] ?? EMPTY_CHAT_MESSAGES}
           isLoadingMessages={loadingChatChannels[channel.id] === true}
           currentUser={currentUsername}
-          presence={chatPresenceByChannel[channel.id] ?? { participants: [], online: [] }}
+          presence={chatPresenceByChannel[channel.id] ?? EMPTY_CHAT_PRESENCE}
           availableAgents={availableChatAgents}
-          registeredAgents={chatState.registeredAgentsByChannel[channel.id] ?? []}
+          registeredAgents={chatState.registeredAgentsByChannel[channel.id] ?? EMPTY_CHAT_AGENTS}
           vaultAgents={vaultAgents}
           runnerHealth={runnerHealth}
           onRegisterAgent={handleRegisterChatAgent}
