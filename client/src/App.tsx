@@ -2564,6 +2564,14 @@ export default function App() {
     };
     const handleChatMessageDeleted = (data: { vaultId: string; channelId: string; messageId: string }) => {
       if (data.vaultId !== activeVaultId) return;
+      // A mission can remove a queued synthetic wake while its last streamed
+      // renderer patch is still throttled. Cancel that local write so deletion
+      // remains authoritative and the client never emits a predictable 404.
+      pendingChatPatchRef.current.delete(data.messageId);
+      const pendingTimer = chatPatchTimerRef.current.get(data.messageId);
+      if (pendingTimer) window.clearTimeout(pendingTimer);
+      chatPatchTimerRef.current.delete(data.messageId);
+      streamingChatMessageIdsRef.current.delete(data.messageId);
       setChatState((prev) => {
         const existing = prev.messagesByChannel[data.channelId];
         if (!existing) return prev;
