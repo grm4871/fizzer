@@ -13,13 +13,14 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const cli = path.join(here, 'cascade-chat');
 
 test('coordinator helper starts and delegates a mission with structured API calls', async (t) => {
-  const requests: Array<{ method: string; path: string; body: Record<string, unknown> | null }> = [];
+  const requests: Array<{ method: string; path: string; runId: string; body: Record<string, unknown> | null }> = [];
   const server = http.createServer(async (req, res) => {
     let raw = '';
     for await (const chunk of req) raw += chunk;
     requests.push({
       method: req.method || '',
       path: req.url || '',
+      runId: String(req.headers['x-cascade-run-id'] || ''),
       body: raw ? JSON.parse(raw) : null,
     });
     res.setHeader('content-type', 'application/json');
@@ -70,7 +71,7 @@ test('coordinator helper starts and delegates a mission with structured API call
     chatTriggeringMessageId: 'root-message',
   }));
   t.after(() => fs.rmSync(fixtureDir, { recursive: true, force: true }));
-  const withCoordinator = { ...process.env, CASCADE_HELPER_CONFIG: config };
+  const withCoordinator = { ...process.env, CASCADE_HELPER_CONFIG: config, CASCADE_RUN_ID: '777' };
 
   const started = await execFileAsync(process.execPath, [
     cli, 'mission', 'start', '--title', 'Release', '--objective', 'Ship safely',
@@ -100,6 +101,7 @@ test('coordinator helper starts and delegates a mission with structured API call
     'PATCH /api/vaults/vault-1/channels/channel-1/missions/tasks/task-1',
     'POST /api/vaults/vault-1/channels/channel-1/missions/mission-1/finish',
   ]);
+  assert.ok(requests.every((request) => request.runId === '777'));
   assert.deepEqual(requests[0]?.body, {
     rootMessageId: 'root-message',
     coordinatorRegistrationId: 'reg-sol',

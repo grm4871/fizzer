@@ -65,6 +65,21 @@ describe('agent steering presentation', () => {
     ];
     expect(getSteeringPromptLabels(messages, [agent]).size).toBe(0);
   });
+
+  it('keeps the steering decal after the interrupted response settles', () => {
+    const messages = [
+      message('1', {
+        author: 'Sol', agentId: 'codex', registrationId: agent.id,
+        status: 'canceled', body: 'Steered into the continuation below.',
+      }),
+      message('2', { body: 'also answer the subscription question' }),
+      message('3', {
+        author: 'Sol', agentId: 'codex', registrationId: agent.id,
+        body: 'It is low risk for personal CLI use.',
+      }),
+    ];
+    expect(getSteeringPromptLabels(messages, [agent]).get('2')).toBe('sol');
+  });
 });
 
 describe('reasoning effort settings', () => {
@@ -119,6 +134,7 @@ describe('chat run panel lifecycle', () => {
     expect(shouldRenderRunPanel(message('2', { status: 'running' }), false, false)).toBe(false);
     expect(shouldRenderRunPanel(message('3', { status: 'failed' }), false, true)).toBe(true);
     expect(shouldRenderRunPanel(message('4', { status: 'canceled' }), false, true)).toBe(true);
+    expect(shouldRenderRunPanel(message('5', { status: 'sending', body: 'Queued...' }), false, true)).toBe(false);
   });
 
   it('renders a successful final reply without an automatic Harness view', () => {

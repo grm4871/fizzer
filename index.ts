@@ -1864,6 +1864,18 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     if (!chatChannelId) return res.status(400).json({ error: 'Chat channel is required for dispatch' });
     chatDispatch = getChatAgentDispatch(db, req.user!.id, chatChannelId, chatDispatchId);
     if (!chatDispatch) return res.status(404).json({ error: 'Chat dispatch not found' });
+    const wakeMissionId = /^sys-mission-([0-9a-f-]{36})-/i.exec(chatDispatch.messageId)?.[1];
+    if (wakeMissionId) {
+      const missionState = db.prepare('SELECT status FROM chat_missions WHERE id = ?')
+        .get(wakeMissionId) as { status: string } | undefined;
+      if (missionState?.status === 'completed' || missionState?.status === 'canceled') {
+        const { route } = assertChatChannel(db, chatChannelId, req.user!.id);
+        db.prepare('DELETE FROM chat_messages WHERE id = ? AND channel_id = ?')
+          .run(chatDispatch.messageId, route.sourceChannelId);
+        emitChatMessageDeleted(route.sourceVaultId, route.sourceChannelId, chatDispatch.messageId);
+        return res.status(404).json({ error: 'Chat dispatch not found' });
+      }
+    }
     registrationId = chatDispatch.registration.id;
     triggeringMessageId = chatDispatch.messageId;
     if (chatDispatch.runId != null) {
@@ -2418,10 +2430,12 @@ app.patch('/api/vaults/:vaultId/channels/:channelId/missions/tasks/:taskId', req
 app.post('/api/vaults/:vaultId/channels/:channelId/missions/:missionId/finish', requireAuth, async (req: AuthedRequest, res) => {
   try {
     const status = String(req.body?.status || 'completed') === 'canceled' ? 'canceled' : 'completed';
+    const helperRunId = Number(req.header('x-cascade-run-id'));
     const update = finishChatMission(db, req.user!.id, req.params.channelId, req.params.missionId, {
       coordinatorRegistrationId: String(req.body?.coordinatorRegistrationId || ''),
       status,
       summary: String(req.body?.summary || ''),
+      ...(Number.isFinite(helperRunId) ? { currentRunId: helperRunId } : {}),
     });
     if (status === 'canceled') {
       await Promise.all(update.mission.tasks
@@ -2429,6 +2443,10 @@ app.post('/api/vaults/:vaultId/channels/:channelId/missions/:missionId/finish', 
         .map((task) => cancelRun(db, task.runId!)));
     }
     emitMissionProjection(update);
+    for (const messageId of update.removedWakeMessageIds || []) {
+      emitChatMessageDeleted(update.vaultId, update.channelId, messageId);
+    }
+    await Promise.all((update.canceledWakeRunIds || []).map((runId) => cancelRun(db, runId)));
     res.json({ mission: update.mission });
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : 'Could not finish mission' });

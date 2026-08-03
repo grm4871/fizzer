@@ -183,6 +183,8 @@ async function getToken(url, args, config) {
 
 async function api(url, token, method, path, body) {
   const headers = { authorization: `Bearer ${token}` };
+  const runId = String(process.env.CASCADE_RUN_ID || '').trim();
+  if (runId) headers['x-cascade-run-id'] = runId;
   if (body !== undefined) headers['content-type'] = 'application/json';
   const res = await fetch(`${url}${path}`, {
     method,

@@ -56,6 +56,10 @@ export type MissionProjectionUpdate = {
   channelId: string;
   rootMessageId: string;
   createdBy: number;
+  /** Obsolete synthetic coordinator prompts removed when review finishes first. */
+  removedWakeMessageIds?: string[];
+  /** Already-launched stale review runs that should be canceled by the route. */
+  canceledWakeRunIds?: number[];
 };
 
 export type MissionWake = MissionProjectionUpdate & {
@@ -411,7 +415,13 @@ export function finishChatMission(
   userId: number,
   channelId: string,
   missionId: string,
-  input: { coordinatorRegistrationId: string; status: 'completed' | 'canceled'; summary?: string },
+  input: {
+    coordinatorRegistrationId: string;
+    status: 'completed' | 'canceled';
+    summary?: string;
+    /** Preserve the legitimate wake run that is closing its own mission. */
+    currentRunId?: number;
+  },
 ): MissionProjectionUpdate {
   const update = getChatMission(db, userId, channelId, missionId, input.coordinatorRegistrationId);
   const row = missionRow(db, update.mission.id)!;
@@ -439,7 +449,31 @@ export function finishChatMission(
         AND id IN (SELECT dispatch_id FROM chat_mission_tasks WHERE mission_id = ?)
     `).run(row.id);
   }
-  return refreshMissionProjection(db, row.id);
+  // Worker settlement can enqueue the synthetic review prompt while the
+  // coordinator is still finishing the mission in its current run. That
+  // dispatch is intentionally queued behind the same provider session. If the
+  // coordinator closes the mission before the queue advances, remove the stale
+  // prompt and its pending outbox row so it cannot launch a second, inert run.
+  const staleWakeRows = db.prepare(`
+    SELECT m.id, d.run_id FROM chat_messages m
+    JOIN chat_agent_dispatches d ON d.message_id = m.id
+    WHERE m.channel_id = ?
+      AND m.id LIKE ?
+      AND d.registration_id = ?
+  `).all(row.channel_id, `sys-mission-${row.id}-%`, row.coordinator_registration_id) as Array<{ id: string; run_id: number | null }>;
+  const obsoleteWakeRows = staleWakeRows.filter((item) => (
+    item.run_id == null || item.run_id !== input.currentRunId
+  ));
+  for (const wakeMessage of obsoleteWakeRows) {
+    db.prepare('DELETE FROM chat_messages WHERE id = ? AND channel_id = ?')
+      .run(wakeMessage.id, row.channel_id);
+  }
+  const canceledWakeRunIds = obsoleteWakeRows.flatMap((item) => item.run_id == null ? [] : [item.run_id]);
+  return {
+    ...refreshMissionProjection(db, row.id),
+    ...(obsoleteWakeRows.length ? { removedWakeMessageIds: obsoleteWakeRows.map((item) => item.id) } : {}),
+    ...(canceledWakeRunIds.length ? { canceledWakeRunIds } : {}),
+  };
 }
 
 /** Settle a worker task from its authoritative run terminal status. */

@@ -1548,7 +1548,7 @@ export default function App() {
       author: registration.displayName || agentLabel(agentId),
       body: orchestrationQueue && sessionTurn.preceding ? 'Queued...' : 'Thinking...',
       createdAt: afterChatTimestamp(triggeringMessage.createdAt),
-      status: 'running',
+      status: orchestrationQueue && sessionTurn.preceding ? 'sending' : 'running',
       agentId,
       registrationId: registration.id,
     }, { persist: false });
@@ -1566,6 +1566,11 @@ export default function App() {
         // durable and should wait for the provider session, not time out or
         // interrupt it as if the user had steered the current answer.
         await sessionTurn.preceding;
+        applyMessageUpdateNow((message) => ({
+          ...message,
+          body: 'Thinking...',
+          status: 'running',
+        }));
       } else {
         let startupTimeout: number | undefined;
         await Promise.race([
@@ -1805,6 +1810,24 @@ export default function App() {
       }
       return true;
     } catch (error) {
+      // A coordinator can finish a mission before its queued synthetic review
+      // prompt reaches the provider session. The server removes that obsolete
+      // dispatch; quietly prune the optimistic shell instead of showing an
+      // empty failed Harness panel for work that is already complete.
+      if (dispatchId && error instanceof Error && error.message === 'Chat dispatch not found') {
+        setChatState((prev) => ({
+          ...prev,
+          messagesByChannel: {
+            ...prev.messagesByChannel,
+            [channelId]: (prev.messagesByChannel[channelId] ?? [])
+              .filter((message) => message.id !== agentMessageId),
+          },
+        }));
+        runSocket?.disconnect();
+        streamingChatMessageIdsRef.current.delete(agentMessageId);
+        sessionTurn.release();
+        return false;
+      }
       // Release server ownership so this client-side failure is persisted by us.
       // If the run was actually created and later succeeds, the server's update
       // (higher stream score) still wins over this 'failed' state.

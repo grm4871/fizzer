@@ -707,6 +707,23 @@ export function getSteeringPromptLabels(
       break;
     }
   }
+  // Once the interrupted response settles as canceled, there is no longer a
+  // pair of simultaneously running bubbles and the live-only decal above used
+  // to disappear. Preserve it from the durable transcript shape: canceled
+  // agent response, human correction, then the same agent's continuation.
+  for (let index = 1; index < messages.length - 1; index += 1) {
+    const prompt = messages[index];
+    if (prompt.agentId || labels.has(prompt.id)) continue;
+    const before = messages[index - 1];
+    const after = messages[index + 1];
+    const beforeKey = before.registrationId || before.agentId;
+    const afterKey = after.registrationId || after.agentId;
+    if (!beforeKey || beforeKey !== afterKey || before.status !== 'canceled') continue;
+    if (!/Steered into the continuation below\./i.test(before.body)) continue;
+    const registration = registeredAgents.find((item) => item.id === afterKey || item.agentId === afterKey);
+    if (!registration) continue;
+    labels.set(prompt.id, normalizeMention(registration.mention || registration.agentId));
+  }
   return labels;
 }
 
@@ -1115,6 +1132,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
               )}
               {tail.status === 'running' && latestRunningMessageId === tail.id && runningSiblingCount <= 1 && <span className="chat-message-status">working</span>}
               {tail.status === 'running' && latestRunningMessageId !== tail.id && <span className="chat-message-status is-steered">continued below</span>}
+              {tail.status === 'sending' && <span className="chat-message-status">queued</span>}
               {tail.status === 'failed' && <span className="chat-message-status is-error">failed</span>}
               {tail.status === 'canceled' && <span className="chat-message-status is-error">canceled</span>}
             </div>
