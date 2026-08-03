@@ -112,6 +112,11 @@ A chat run may combine:
 4. recent channel messages on a cold start;
 5. bounded memory and scratchpad recall for cold starts.
 
+Every agent path also receives a shared chat-brevity rule from
+`formatAgentChatPrompt` / `CHAT_REPLY_BREVITY`: the final bubble stays short
+(outcome first; no process essay). Verification and intermediate detail belong
+in the run trace. Coordinators keep mission finish summaries short as well.
+
 Stable application capability context is not re-sent to a resumed session.
 Private note blocks are redacted after all context assembly and immediately
 before delegation.

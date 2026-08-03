@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   agentsAfterLoadFailure,
   CHAT_AGENT_MODEL_PRESETS,
+  CHAT_REPLY_BREVITY,
   chatAgentConversation,
   formatAgentChatPrompt,
   needsCascadeWorkspaceContext,
@@ -90,7 +91,7 @@ describe('formatAgentChatPrompt', () => {
     expect(prompt).toContain('verification before replying');
     expect(prompt).toContain('Keep progress in the run trace');
     expect(prompt).not.toContain('cascade-chat send');
-    expect(prompt).toContain('Reply normally with the final answer');
+    expect(prompt).toContain(CHAT_REPLY_BREVITY);
     expect(prompt).toContain('cascade-scratchpad');
     expect(prompt).toMatch(/only for a durable root cause/i);
     expect(prompt).not.toMatch(/final answer (is|there)/i);
@@ -99,6 +100,7 @@ describe('formatAgentChatPrompt', () => {
   it('short pings use the same full path', () => {
     const prompt = formatAgentChatPrompt('dev', registration, 'hey is deploy green?', 'alice');
     expect(prompt).toContain('verification before replying');
+    expect(prompt).toContain(CHAT_REPLY_BREVITY);
     expect(prompt).toContain('cascade-scratchpad');
     expect(prompt).not.toContain('no tools');
   });
@@ -117,6 +119,7 @@ describe('formatAgentChatPrompt', () => {
     expect(prompt).toContain('--after <task-id,...>');
     expect(prompt).toContain('Stay responsive to the user while workers run');
     expect(prompt).toContain('cascade-chat mission finish');
+    expect(prompt).toContain('Keep mission summaries short');
     expect(prompt).toContain('treat that as authorization to implement it');
     expect(prompt).toContain('Do not stop at agreement, praise, or a proposal');
   });
@@ -124,6 +127,7 @@ describe('formatAgentChatPrompt', () => {
   it('continuations keep normal completion guidance', () => {
     const prompt = formatAgentChatPrompt('dev', registration, 'ok cool', 'alice', true);
     expect(prompt).toContain('Finish the request with judgment');
+    expect(prompt).toContain(CHAT_REPLY_BREVITY);
     expect(prompt).not.toContain('cascade-chat send');
   });
 
@@ -132,6 +136,7 @@ describe('formatAgentChatPrompt', () => {
     const fresh = formatAgentChatPrompt('dev', coordinator, 'take care of the release', 'alice', false);
     const continued = formatAgentChatPrompt('dev', coordinator, 'and publish android', 'alice', true);
     expect(continued).toContain('delegate only when another session adds clear value');
+    expect(continued).toContain('keep replies short');
     expect(continued).not.toContain('cascade-chat mission delegate');
     expect(fresh.length - continued.length).toBeGreaterThan(900);
   });
@@ -143,6 +148,7 @@ describe('formatAgentChatPrompt', () => {
 
     expect(fresh).toContain('harness `scratchpad`');
     for (const prompt of [fresh, continued]) {
+      expect(prompt).toContain(CHAT_REPLY_BREVITY);
       expect(prompt).not.toContain('cascade-scratchpad');
       expect(prompt).not.toContain('cascade-note memory');
     }
@@ -157,8 +163,10 @@ describe('formatAgentChatPrompt', () => {
     const prompt = formatAgentChatPrompt('dev', nativeCli, request, 'alice', false);
 
     expect(prompt).toContain(request);
+    expect(prompt).toContain(CHAT_REPLY_BREVITY);
     expect(prompt).toContain('Keep progress in the run trace');
     expect(prompt).not.toContain('cascade-scratchpad');
-    expect(prompt.length - request.length).toBeLessThan(180);
+    // Compact path: short channel header + shared brevity rule only.
+    expect(prompt.length - request.length).toBeLessThan(260);
   });
 });
