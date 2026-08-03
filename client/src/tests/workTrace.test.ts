@@ -151,7 +151,7 @@ describe('workTrace', () => {
       msg({ id: '5', author: 'Sol', body: 'Done' }),
     ];
     expect(trace.map(workTracePhase)).toEqual(['routing', 'testing', 'reviewing', 'deploying', 'complete']);
-    expect(workTraceDecals(trace).map((decal) => decal.label)).toEqual(['route', 'test', 'review', 'deploy', 'done']);
+    expect(workTraceDecals(trace).map((decal) => decal.label)).toEqual(['route', 'test', 'review', 'deploy', 'complete']);
   });
 
   it('previews and summarizes compactly', () => {

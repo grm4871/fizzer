@@ -844,6 +844,8 @@ export default function App() {
 
             const foldersP = api<{ folders: Folder[] }>(`/api/vaults/${vaultId}/folders`);
             const notesP = api<{ notes: NoteSummary[] }>(`/api/vaults/${vaultId}/notes`);
+            // Chat + vault agents must not gate the notes tree paint. Kick them
+            // immediately; only await folders/notes for the sidebar shell.
             const chatP = openChats.length > 0
               ? Promise.all([
                   loadChatMessages(vaultId, [], { silent, channelIds: openChats }),
@@ -857,7 +859,10 @@ export default function App() {
             const nextNotes = noteData.notes || [];
             setFolders(folderData.folders || []);
             setNotes(nextNotes);
-            await Promise.all([chatP, vaultAgentsP]);
+            // Chat + vault-agent lists already in flight; do not block shell paint.
+            // Each loader owns its own error handling / inflight keys.
+            void chatP.catch(() => undefined);
+            void vaultAgentsP.catch(() => undefined);
           },
           {
             vaultId,

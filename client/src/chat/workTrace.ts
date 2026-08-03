@@ -110,7 +110,7 @@ const WORK_TRACE_DECALS: Record<WorkTracePhase, WorkTraceDecal> = {
   testing: { phase: 'testing', label: 'test', mark: '✓' },
   deploying: { phase: 'deploying', label: 'deploy', mark: '↑' },
   blocked: { phase: 'blocked', label: 'blocked', mark: '!' },
-  complete: { phase: 'complete', label: 'done', mark: '✓' },
+  complete: { phase: 'complete', label: 'complete', mark: '✓' },
 };
 
 /** Best available workflow phase from durable status plus a conservative live-text overlay. */

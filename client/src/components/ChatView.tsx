@@ -999,8 +999,9 @@ function ChatMissionCard({ mission }: { mission: ChatMission }) {
   const done = mission.tasks.filter((task) => task.status === 'completed' || task.status === 'canceled').length;
   const total = mission.tasks.length;
   const statusLabel = mission.status === 'active'
-    ? (total ? `${done}/${total} done` : 'planning')
+    ? (total ? `${done}/${total} tasks` : 'planning')
     : mission.status;
+  const lead = mission.coordinatorMention || mission.coordinator;
   return (
     <details
       className={`chat-mission-card is-${mission.status}`}
@@ -1009,10 +1010,17 @@ function ChatMissionCard({ mission }: { mission: ChatMission }) {
     >
       <summary>
         <span className="chat-mission-state" aria-hidden="true" />
+        <span className="chat-mission-kicker">Mission</span>
         <strong>{mission.title}</strong>
-        <span>{statusLabel}</span>
+        <span className="chat-mission-status">{statusLabel}</span>
       </summary>
       <div className="chat-mission-content">
+        {lead && (
+          <p className="chat-mission-lead">
+            Led by <strong>@{lead}</strong>
+            {total > 0 ? ` · ${done}/${total} agent tasks` : ''}
+          </p>
+        )}
         {mission.objective && <p>{mission.objective}</p>}
         {mission.tasks.length > 0 ? (
           <div className="chat-mission-tasks">
@@ -1038,7 +1046,7 @@ function ChatMissionCard({ mission }: { mission: ChatMission }) {
             ))}
           </div>
         ) : (
-          <span className="chat-mission-empty">{mission.coordinator} is deciding how to handle this.</span>
+          <span className="chat-mission-empty">@{lead || mission.coordinator} is deciding how to handle this.</span>
         )}
         {mission.summary && <div className="chat-mission-summary">{mission.summary}</div>}
       </div>
@@ -1165,17 +1173,17 @@ const ChatGroupRow = memo(function ChatGroupRow({
           <div className="chat-message-body">
             <div className="chat-message-meta">
               <strong>{authorLabel || head.author}</strong>
-              {planUsage && <PlanUsageMeters usage={planUsage} />}
-              {ownerLabel && <span className="chat-agent-owner">{ownerLabel}'s agent</span>}
+              {avatarKind === 'agent' && planUsage && <PlanUsageMeters usage={planUsage} />}
+              {avatarKind === 'agent' && ownerLabel && <span className="chat-agent-owner">{ownerLabel}'s agent</span>}
               <time dateTime={tail.createdAt}>{formatTime(tail.createdAt)}</time>
-              {tail.status === 'running' && latestRunningMessageId === tail.id && runningSiblingCount > 1 && (
+              {avatarKind === 'agent' && tail.status === 'running' && latestRunningMessageId === tail.id && runningSiblingCount > 1 && (
                 <span className="chat-message-status is-steering">steering · latest</span>
               )}
-              {tail.status === 'running' && latestRunningMessageId === tail.id && runningSiblingCount <= 1 && <span className="chat-message-status">working</span>}
-              {tail.status === 'running' && latestRunningMessageId !== tail.id && <span className="chat-message-status is-steered">continued below</span>}
-              {tail.status === 'sending' && <span className="chat-message-status">queued</span>}
-              {tail.status === 'failed' && <span className="chat-message-status is-error">failed</span>}
-              {tail.status === 'canceled' && <span className="chat-message-status is-error">canceled</span>}
+              {avatarKind === 'agent' && tail.status === 'running' && latestRunningMessageId === tail.id && runningSiblingCount <= 1 && <span className="chat-message-status">working</span>}
+              {avatarKind === 'agent' && tail.status === 'running' && latestRunningMessageId !== tail.id && <span className="chat-message-status is-steered">continued below</span>}
+              {avatarKind === 'agent' && tail.status === 'sending' && <span className="chat-message-status">queued</span>}
+              {avatarKind === 'agent' && tail.status === 'failed' && <span className="chat-message-status is-error">failed</span>}
+              {avatarKind === 'agent' && tail.status === 'canceled' && <span className="chat-message-status is-error">canceled</span>}
             </div>
             {group.messages.map((message) => {
               const hasRunWidget = message.status === 'running';
@@ -2769,14 +2777,15 @@ export const ChatView = memo(function ChatView({
           const isSelf = name === currentUser;
           const isOnline = isSelf || onlineUsers.has(name);
           const isOwner = name === presence.owner;
+          const roleLabel = isOwner ? 'owner' : isSelf ? 'you' : isOnline ? 'online' : 'offline';
           return (
-          <div className={`chat-user chat-human${isOnline ? '' : ' is-offline'}`} key={name}>
+          <div className={`chat-user chat-human${isOnline ? '' : ' is-offline'}${isSelf ? ' is-self' : ''}`} key={name}>
             <div className="chat-user-row">
               <ChatAvatar name={presence.profiles?.[name]?.displayName || name} kind="human" avatarUrl={presence.profiles?.[name]?.avatarUrl} size="sm" />
               <div className="chat-user-copy">
                 <strong>{presence.profiles?.[name]?.displayName || name}</strong>
-                {presence.profiles?.[name]?.displayName && presence.profiles?.[name]?.displayName !== name && <span>@{name}</span>}
-                <span>{isOwner ? 'owner' : isSelf ? 'you' : isOnline ? 'online' : 'offline'}</span>
+                {presence.profiles?.[name]?.displayName && presence.profiles?.[name]?.displayName !== name && <span className="chat-user-handle">@{name}</span>}
+                <span className="chat-user-role">{roleLabel}</span>
               </div>
             </div>
             {presence.owner === currentUser && !isSelf && onRemoveParticipant && (
@@ -2816,7 +2825,8 @@ export const ChatView = memo(function ChatView({
                 <ChatAvatar name={agent.registration.displayName || agent.label} kind="agent" avatarUrl={agent.registration.avatarUrl} size="sm" />
                 <div className="chat-user-copy">
                   <strong>{agent.registration.displayName || agent.label}</strong>
-                  <span>@{agent.registration.mention || agent.id} · {selectedModel || 'no model'}</span>
+                  <span className="chat-user-handle">@{agent.registration.mention || agent.id}</span>
+                  <span className="chat-user-role">{selectedModel || 'no model'}</span>
                   {planUsage && <PlanUsageMeters usage={planUsage} stacked />}
                 </div>
               </button>
