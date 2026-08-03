@@ -657,12 +657,14 @@ vaultNamespace.on('connection', (socket) => {
       const owner = db.prepare(`
         SELECT u.username FROM vaults v JOIN users u ON u.id = v.created_by WHERE v.id = ?
       `).get(route.sourceVaultId) as { username: string } | undefined;
+      const profiles = buildChatPresenceProfiles(participants);
       socket.emit('vault:chatPresence', {
         vaultId: route.localVaultId,
         channelId: localChannelId,
         online,
         participants,
         owner: owner?.username || '',
+        profiles,
       });
       await emitChatPresence(route.sourceVaultId, route.sourceChannelId);
     } catch {
@@ -847,12 +849,21 @@ async function getOnlineUsernamesForChannel(sourceChannelId: string): Promise<st
   return Array.from(names).sort((a, b) => a.localeCompare(b));
 }
 
+function buildChatPresenceProfiles(participantUsernames: string[]) {
+  if (!participantUsernames.length) return {} as Record<string, ReturnType<typeof publicUser>>;
+  const profileRows = db.prepare(
+    `SELECT id, username, display_name, avatar_url FROM users WHERE username IN (${participantUsernames.map(() => '?').join(',')})`,
+  ).all(...participantUsernames) as User[];
+  return Object.fromEntries(profileRows.map((user) => [user.username, publicUser(user)]));
+}
+
 async function emitChatPresence(sourceVaultId: string, sourceChannelId: string) {
   const online = await getOnlineUsernamesForChannel(sourceChannelId);
   const participants = listChatChannelParticipantUsernames(db, sourceVaultId, sourceChannelId);
   const owner = db.prepare(`
     SELECT u.username FROM vaults v JOIN users u ON u.id = v.created_by WHERE v.id = ?
   `).get(sourceVaultId) as { username: string } | undefined;
+  const profiles = buildChatPresenceProfiles(participants);
   for (const route of listChatChannelRoutes(db, sourceVaultId, sourceChannelId)) {
     emitVaultEvent(route.localVaultId, 'vault:chatPresence', {
       vaultId: route.localVaultId,
@@ -860,6 +871,7 @@ async function emitChatPresence(sourceVaultId: string, sourceChannelId: string) 
       online,
       participants,
       owner: owner?.username || '',
+      profiles,
     });
   }
 }
@@ -3028,11 +3040,7 @@ app.get('/api/vaults/:vaultId/channels/:channelId/presence', requireAuth, async 
     const owner = db.prepare(`
       SELECT u.username FROM vaults v JOIN users u ON u.id = v.created_by WHERE v.id = ?
     `).get(route.sourceVaultId) as { username: string } | undefined;
-    const profileRows = participants.length
-      ? db.prepare(`SELECT id, username, display_name, avatar_url FROM users WHERE username IN (${participants.map(() => '?').join(',')})`)
-        .all(...participants) as User[]
-      : [];
-    const profiles = Object.fromEntries(profileRows.map((user) => [user.username, publicUser(user)]));
+    const profiles = buildChatPresenceProfiles(participants);
     res.json({ participants, online, owner: owner?.username || '', profiles });
   } catch {
     res.status(404).json({ error: 'Chat channel not found' });

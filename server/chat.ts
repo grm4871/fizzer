@@ -1210,6 +1210,26 @@ export function listChatChannelParticipantUsernames(db: Db, sourceVaultId: strin
   for (const row of linkedOwners) {
     if (row.username) usernames.add(row.username);
   }
+
+  // Also include human authors who posted in this channel so profiles populate
+  // even when membership is only partially linked (or a guest spoke once).
+  try {
+    const authors = db.prepare(`
+      SELECT DISTINCT author AS username
+      FROM chat_messages
+      WHERE channel_id = ?
+        AND (agent_id IS NULL OR agent_id = '')
+        AND author IS NOT NULL
+        AND author != ''
+        AND author != 'Cascade'
+      LIMIT 200
+    `).all(sourceChannelId) as Array<{ username: string }>;
+    for (const row of authors) {
+      if (row.username) usernames.add(row.username);
+    }
+  } catch {
+    // Best-effort; core owner/link participants still return.
+  }
   return Array.from(usernames).sort((a, b) => a.localeCompare(b));
 }
 

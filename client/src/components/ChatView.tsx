@@ -1583,12 +1583,20 @@ export const ChatView = memo(function ChatView({
       : registrationById.byAgentOrName.get(message.agentId ?? '') ?? registrationById.byAgentOrName.get(message.author);
   const getMessageAvatarKind = (message: ChatMessage): 'agent' | 'human' =>
     message.agentId || agentAuthors.has(message.author) ? 'agent' : 'human';
+  const resolveHumanProfile = (author: string) => {
+    const profiles = presence.profiles || {};
+    if (profiles[author]) return profiles[author];
+    // Profiles are keyed by username; some older rows used display names as author.
+    return Object.values(profiles).find((profile) => profile.displayName === author);
+  };
   const getMessageAvatarUrl = (message: ChatMessage) => {
-    return resolveMessageRegistration(message)?.avatarUrl || presence.profiles?.[message.author]?.avatarUrl || '';
+    return resolveMessageRegistration(message)?.avatarUrl
+      || resolveHumanProfile(message.author)?.avatarUrl
+      || '';
   };
   const getMessageAuthorLabel = (message: ChatMessage) =>
     resolveMessageRegistration(message)?.displayName
-      || presence.profiles?.[message.author]?.displayName
+      || resolveHumanProfile(message.author)?.displayName
       || message.author;
   const getMessageOwnerLabel = (message: ChatMessage) => {
     const registration = resolveMessageRegistration(message);
