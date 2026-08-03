@@ -24,6 +24,7 @@ type DispatchRow = {
   channel_id: string;
   registration_id: string;
   run_id: number | null;
+  reasoning_effort: string;
   created_at: string;
 };
 
@@ -34,6 +35,7 @@ export type ChatAgentDispatch = {
   registration: ChatAgentRegistration;
   message: ChatMessage;
   runId: number | null;
+  reasoningEffort: string;
   createdAt: string;
 };
 
@@ -45,12 +47,17 @@ export function ensureChatDispatchSchema(db: Db): void {
       channel_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
       registration_id TEXT NOT NULL,
       run_id INTEGER,
+      reasoning_effort TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       UNIQUE(message_id, registration_id)
     );
     CREATE INDEX IF NOT EXISTS chat_agent_dispatches_pending_idx
       ON chat_agent_dispatches(channel_id, run_id, created_at);
   `);
+  const columns = db.prepare('PRAGMA table_info(chat_agent_dispatches)').all() as Array<{ name: string }>;
+  if (!columns.some((column) => column.name === 'reasoning_effort')) {
+    db.exec("ALTER TABLE chat_agent_dispatches ADD COLUMN reasoning_effort TEXT NOT NULL DEFAULT ''");
+  }
 }
 
 function normalizeMention(value: string): string {
@@ -137,6 +144,7 @@ export function createChatAgentDispatchForRegistration(
   channelId: string,
   message: ChatMessage,
   registrationId: string,
+  options: { reasoningEffort?: string } = {},
 ): ChatAgentDispatch {
   const { route } = assertChatChannel(db, channelId, userId);
   const registration = listChatAgentMembers(db, channelId, userId)
@@ -144,9 +152,15 @@ export function createChatAgentDispatchForRegistration(
   if (!registration) throw new Error('Agent not found');
   db.prepare(`
     INSERT OR IGNORE INTO chat_agent_dispatches
-      (id, message_id, channel_id, registration_id)
-    VALUES (?, ?, ?, ?)
-  `).run(crypto.randomUUID(), message.id, route.sourceChannelId, registration.id);
+      (id, message_id, channel_id, registration_id, reasoning_effort)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(
+    crypto.randomUUID(),
+    message.id,
+    route.sourceChannelId,
+    registration.id,
+    String(options.reasoningEffort || '').trim().toLowerCase(),
+  );
   const row = db.prepare(`
     SELECT * FROM chat_agent_dispatches
     WHERE message_id = ? AND registration_id = ?
@@ -173,6 +187,7 @@ function hydrateDispatch(
     registration,
     message,
     runId: row.run_id,
+    reasoningEffort: row.reasoning_effort || '',
     createdAt: row.created_at,
   };
 }

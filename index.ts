@@ -133,11 +133,13 @@ import {
 import {
   addChatMissionTask,
   attachRunToMissionTaskByDispatch,
+  claimMissionCoordinatorWake,
   createChatMission,
   ensureChatMissionSchema,
   finishChatMission,
   getChatMission,
   linkMissionTaskDispatch,
+  listSchedulableMissionTasks,
   missionRootMessage,
   refreshMissionProjection,
   settleMissionTaskForRun,
@@ -687,6 +689,58 @@ function emitMissionProjection(update: MissionProjectionUpdate) {
   }
 }
 
+/** Materialize every dependency-ready task into the durable chat dispatch outbox. */
+function scheduleMissionWork(missionId?: string) {
+  const result = db.transaction(() => {
+    const scheduled = listSchedulableMissionTasks(db, missionId);
+    const dispatches: Array<{
+      message: ChatMessage;
+      dispatch: ChatAgentDispatch;
+      update: MissionProjectionUpdate;
+    }> = [];
+    for (const candidate of scheduled.candidates) {
+      const message = createChatMessage(db, candidate.createdBy, candidate.vaultId, candidate.channelId, {
+        id: `mission-task-${candidate.taskId}`,
+        channelId: candidate.channelId,
+        author: '',
+        body: `@${listChatAgentMembers(db, candidate.channelId, candidate.createdBy)
+          .find((member) => member.id === candidate.assigneeRegistrationId)?.mention || 'agent'} ${candidate.prompt}`,
+        createdAt: new Date().toISOString(),
+        registrationId: candidate.coordinatorRegistrationId,
+        missionTaskId: candidate.taskId,
+      });
+      const dispatch = createChatAgentDispatchForRegistration(
+        db,
+        candidate.createdBy,
+        candidate.channelId,
+        message,
+        candidate.assigneeRegistrationId,
+        { reasoningEffort: candidate.reasoningEffort },
+      );
+      const update = linkMissionTaskDispatch(db, candidate.taskId, dispatch.id);
+      dispatches.push({ message, dispatch, update });
+    }
+    const affectedMissionIds = new Set([
+      ...scheduled.updates.map((update) => update.mission.id),
+      ...scheduled.candidates.map((candidate) => candidate.missionId),
+      ...(missionId ? [missionId] : []),
+    ]);
+    const wakes = Array.from(affectedMissionIds)
+      .map((id) => claimMissionCoordinatorWake(db, id))
+      .filter((wake): wake is MissionWake => Boolean(wake));
+    const finalUpdate = missionId ? refreshMissionProjection(db, missionId) : undefined;
+    return { ...scheduled, dispatches, wakes, finalUpdate };
+  })();
+  for (const update of result.updates) emitMissionProjection(update);
+  for (const item of result.dispatches) {
+    emitChatMessageEvent(item.update.vaultId, item.update.channelId, 'vault:chatMessageCreated', item.message, [item.dispatch]);
+    emitMissionProjection(item.update);
+  }
+  for (const wake of result.wakes) enqueueMissionCoordinatorWake(wake);
+  if (result.finalUpdate) emitMissionProjection(result.finalUpdate);
+  return result;
+}
+
 function emitChatMessageDeleted(sourceVaultId: string, sourceChannelId: string, messageId: string) {
   for (const route of listChatChannelRoutes(db, sourceVaultId, sourceChannelId)) {
     emitVaultEvent(route.localVaultId, 'vault:chatMessageDeleted', {
@@ -842,7 +896,8 @@ function syncRunToChatMessage(runId: number) {
     );
     if (settled) {
       emitMissionProjection(settled.update);
-      if (settled.wake) enqueueMissionCoordinatorWake(settled.wake);
+      const scheduled = scheduleMissionWork(settled.update.mission.id);
+      if (settled.wake && scheduled.dispatches.length === 0) enqueueMissionCoordinatorWake(settled.wake);
     }
     chatRunTargets.delete(runId);
     const timer = chatRunFlushTimers.get(runId);
@@ -1924,7 +1979,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     // Empty means inherit the user's local Codex CLI config; an explicit value
     // is a per-channel override chosen in this agent's Cascade settings.
     selectedReasoningEffort = selectedAgent === 'codex' || selectedAgent === 'claude-code'
-      ? registration.reasoningEffort || undefined
+      ? chatDispatch?.reasoningEffort || registration.reasoningEffort || undefined
       : undefined;
     selectedCwd = normalizeRunCwd(registration.cwd);
     // A channel-wide cwd (if set) overrides the agent's own cwd, so every agent
@@ -2380,35 +2435,25 @@ app.get('/api/vaults/:vaultId/channels/:channelId/missions/:missionId', requireA
 
 app.post('/api/vaults/:vaultId/channels/:channelId/missions/:missionId/tasks', requireAuth, (req: AuthedRequest, res) => {
   try {
-    const result = db.transaction(() => {
-      const added = addChatMissionTask(db, req.user!.id, req.params.channelId, req.params.missionId, {
+    const prompt = String(req.body?.prompt || '').trim();
+    const added = db.transaction(() => addChatMissionTask(db, req.user!.id, req.params.channelId, req.params.missionId, {
         coordinatorRegistrationId: String(req.body?.coordinatorRegistrationId || ''),
         title: String(req.body?.title || ''),
         assignee: String(req.body?.assignee || ''),
-      });
-      const prompt = String(req.body?.prompt || '').trim() || added.task.title;
-      const message = createChatMessage(db, req.user!.id, req.params.vaultId, req.params.channelId, {
-        id: `mission-task-${added.task.id}`,
-        channelId: req.params.channelId,
-        author: '',
-        body: `@${added.assignee.mention} ${prompt}`,
-        createdAt: new Date().toISOString(),
-        registrationId: String(req.body?.coordinatorRegistrationId || ''),
-        missionTaskId: added.task.id,
-      });
-      const dispatch = createChatAgentDispatchForRegistration(
-        db,
-        req.user!.id,
-        req.params.channelId,
-        message,
-        added.assignee.id,
-      );
-      const update = linkMissionTaskDispatch(db, added.task.id, dispatch.id);
-      return { message, dispatch, update, task: update.mission.tasks.find((task) => task.id === added.task.id)! };
-    })();
-    emitChatMessageEvent(result.update.vaultId, result.update.channelId, 'vault:chatMessageCreated', result.message, [result.dispatch]);
-    emitMissionProjection(result.update);
-    res.status(201).json({ mission: result.update.mission, task: result.task, message: result.message });
+        prompt,
+        dependsOn: Array.isArray(req.body?.dependsOn) ? req.body.dependsOn.map(String) : [],
+        priority: Number(req.body?.priority) || 0,
+        reasoningEffort: String(req.body?.reasoningEffort || ''),
+      }))();
+    const scheduled = scheduleMissionWork(added.update.mission.id);
+    const latest = getChatMission(db, req.user!.id, req.params.channelId, added.update.mission.id);
+    const dispatched = scheduled.dispatches.find((item) => item.message.missionTaskId === added.task.id);
+    res.status(201).json({
+      mission: latest.mission,
+      task: latest.mission.tasks.find((task) => task.id === added.task.id),
+      ...(dispatched ? { message: dispatched.message } : {}),
+      scheduled: Boolean(dispatched),
+    });
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : 'Could not delegate mission task' });
   }
@@ -2420,8 +2465,9 @@ app.patch('/api/vaults/:vaultId/channels/:channelId/missions/tasks/:taskId', req
       status: String(req.body?.status || '') as never,
       summary: String(req.body?.summary || ''),
     });
-    emitMissionProjection(update);
-    res.json({ mission: update.mission });
+    scheduleMissionWork(update.mission.id);
+    const latest = getChatMission(db, req.user!.id, req.params.channelId, update.mission.id);
+    res.json({ mission: latest.mission });
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : 'Could not update mission task' });
   }
@@ -3000,4 +3046,7 @@ httpServer.listen(PORT, () => {
   console.log(`Cascade Notes API running on http://localhost:${PORT}`);
   console.log(`SQLite database: ${DB_PATH}`);
   startFeedPoller(db);
+  // Tasks may have become ready immediately before a server restart. Rebuild
+  // their deterministic dispatch messages from durable dependency state.
+  scheduleMissionWork();
 });

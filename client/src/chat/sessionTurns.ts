@@ -3,6 +3,20 @@ export type SessionTurn = {
   release: () => void;
 };
 
+/** Recover the active run identity from durable chat projection after reload. */
+export function findProjectedActiveSessionRun(
+  messages: Array<{ registrationId?: string; runId?: number; status?: string }>,
+  registrationId: string,
+): number | undefined {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.registrationId === registrationId && message.status === 'running' && message.runId != null) {
+      return message.runId;
+    }
+  }
+  return undefined;
+}
+
 /** Mission work is a queued assignment, never a correction to the active turn. */
 export function queuesBehindActiveSession(message: { id?: string; missionTaskId?: string }): boolean {
   return Boolean(message.missionTaskId || String(message.id || '').startsWith('sys-mission-'));

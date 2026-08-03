@@ -73,7 +73,7 @@ import {
   type ChatState,
   type PersistedSession,
 } from './chat/session';
-import { consumePendingSessionSteer, enqueueSessionTurn, queuesBehindActiveSession, requestSessionSteer } from './chat/sessionTurns';
+import { consumePendingSessionSteer, enqueueSessionTurn, findProjectedActiveSessionRun, queuesBehindActiveSession, requestSessionSteer } from './chat/sessionTurns';
 import { Activity, Gem, PanelLeftOpen, Users } from 'lucide-react';
 
 type ChatAgentDispatch = {
@@ -83,6 +83,7 @@ type ChatAgentDispatch = {
   registration: ChatAgentRegistration;
   message: ChatMessage;
   runId: number | null;
+  reasoningEffort?: string;
   createdAt: string;
 };
 
@@ -1438,6 +1439,16 @@ export default function App() {
       : `agent-${agentId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
     if (steeringTurn) {
+      // A reload preserves the durable running message but clears this
+      // renderer-local map. Recover its run id so a follow-up can still steer
+      // the coordinator instead of waiting 60 seconds behind an un-canceled run.
+      if (!activeAgentSessionRunRef.current.has(watermarkKey)) {
+        const projectedRunId = findProjectedActiveSessionRun(
+          chatStateRef.current.messagesByChannel[channelId] ?? [],
+          registration.id,
+        );
+        if (projectedRunId != null) activeAgentSessionRunRef.current.set(watermarkKey, projectedRunId);
+      }
       const runToInterrupt = requestSessionSteer(
         activeAgentSessionRunRef.current,
         interruptedAgentSessionRunRef.current,

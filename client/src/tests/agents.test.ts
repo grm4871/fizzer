@@ -92,6 +92,8 @@ describe('formatAgentChatPrompt', () => {
     expect(prompt).toContain('Handle simple requests directly with no delegation hop');
     expect(prompt).toContain('cascade-chat mission start');
     expect(prompt).toContain('cascade-chat mission delegate');
+    expect(prompt).toContain('--after <task-id,...>');
+    expect(prompt).toContain('Stay responsive to the user while workers run');
     expect(prompt).toContain('cascade-chat mission finish');
   });
 

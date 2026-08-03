@@ -108,8 +108,14 @@ export interface ChatMissionTask {
   title: string;
   assignee: string;
   assigneeMention: string;
+  assigneeModel: string;
   status: ChatMissionTaskStatus;
   summary: string;
+  dependsOn: string[];
+  waitingFor: string[];
+  priority: number;
+  reasoningEffort: string;
+  queueReason: 'dependency' | 'agent-busy' | 'queued' | '';
   runId?: number;
   updatedAt: string;
 }
@@ -992,7 +998,14 @@ function ChatMissionCard({ mission }: { mission: ChatMission }) {
                 </span>
                 <div>
                   <strong>{task.title}</strong>
-                  <span>@{task.assigneeMention || task.assignee} · {task.status}</span>
+                  <span>
+                    @{task.assigneeMention || task.assignee} · {task.status}
+                    {task.queueReason === 'dependency' ? ` · waiting for ${task.waitingFor.length}` : ''}
+                    {task.queueReason === 'agent-busy' ? ' · agent busy' : ''}
+                    {task.queueReason === 'queued' ? ' · queued' : ''}
+                    {task.assigneeModel ? ` · ${task.assigneeModel}` : ''}
+                    {task.reasoningEffort ? ` · ${task.reasoningEffort} effort` : ''}
+                  </span>
                   {task.summary && <small>{task.summary}</small>}
                 </div>
               </div>

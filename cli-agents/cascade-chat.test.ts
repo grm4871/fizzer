@@ -34,6 +34,7 @@ test('coordinator helper starts and delegates a mission with structured API call
       res.end(JSON.stringify({
         mission: { id: 'mission-1', title: 'Release', status: 'active' },
         task: { id: 'task-1', title: 'Verify browser', assigneeMention: 'terra' },
+        scheduled: true,
       }));
       return;
     }
@@ -80,9 +81,10 @@ test('coordinator helper starts and delegates a mission with structured API call
   assert.match(started.stdout, /mission mission-1 started/);
   const delegated = await execFileAsync(process.execPath, [
     cli, 'mission', 'delegate', '--mission', 'mission-1', '--to', '@terra',
-    '--task', 'Verify browser', '--message', 'Exercise reload and reconnect.', ...common,
+    '--task', 'Verify browser', '--message', 'Exercise reload and reconnect.',
+    '--after', 'task-a,task-b', '--priority', '7', '--effort', 'high', ...common,
   ], { env: withCoordinator });
-  assert.match(delegated.stdout, /delegated task-1 to @terra/);
+  assert.match(delegated.stdout, /dispatched task-1 to @terra/);
   const status = await execFileAsync(process.execPath, [
     cli, 'mission', 'status', '--mission', 'mission-1', ...common,
   ], { env: withCoordinator });
@@ -113,6 +115,9 @@ test('coordinator helper starts and delegates a mission with structured API call
     title: 'Verify browser',
     assignee: '@terra',
     prompt: 'Exercise reload and reconnect.',
+    dependsOn: ['task-a', 'task-b'],
+    priority: 7,
+    reasoningEffort: 'high',
   });
   assert.deepEqual(requests[3]?.body, { status: 'blocked', summary: 'Needs a credential' });
   assert.deepEqual(requests[4]?.body, {

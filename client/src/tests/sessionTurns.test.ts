@@ -4,7 +4,21 @@ import {
   enqueueSessionTurn,
   queuesBehindActiveSession,
   requestSessionSteer,
+  findProjectedActiveSessionRun,
 } from '../chat/sessionTurns';
+
+describe('findProjectedActiveSessionRun', () => {
+  it('recovers the newest running run for a registration after renderer reload', () => {
+    expect(findProjectedActiveSessionRun([
+      { registrationId: 'sol', runId: 40, status: 'running' },
+      { registrationId: 'terra', runId: 41, status: 'running' },
+      { registrationId: 'sol', runId: 42, status: 'running' },
+    ], 'sol')).toBe(42);
+    expect(findProjectedActiveSessionRun([
+      { registrationId: 'sol', runId: 42, status: 'failed' },
+    ], 'sol')).toBeUndefined();
+  });
+});
 
 describe('chat session turn serialization', () => {
   it('queues mission workers and coordinator wakeups instead of steering active work', () => {

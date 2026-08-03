@@ -169,7 +169,12 @@ test('mission and durable dispatch tables initialize idempotently on an upgraded
       ['root_message_id', 'coordinator_registration_id', 'wake_sent'],
     );
     assert.ok(columns(db, 'chat_mission_tasks').includes('dispatch_id'));
+    assert.ok(columns(db, 'chat_mission_tasks').includes('prompt'));
+    assert.ok(columns(db, 'chat_mission_tasks').includes('depends_on_json'));
+    assert.ok(columns(db, 'chat_mission_tasks').includes('priority'));
+    assert.ok(columns(db, 'chat_mission_tasks').includes('reasoning_effort'));
     assert.ok(columns(db, 'chat_agent_dispatches').includes('run_id'));
+    assert.ok(columns(db, 'chat_agent_dispatches').includes('reasoning_effort'));
     assert.doesNotThrow(() => {
       ensureChatDispatchSchema(db);
       ensureChatMissionSchema(db);

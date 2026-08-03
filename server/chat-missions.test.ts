@@ -23,10 +23,88 @@ import {
   createChatMission,
   ensureChatMissionSchema,
   finishChatMission,
+  listSchedulableMissionTasks,
   linkMissionTaskDispatch,
   settleMissionTaskForRun,
   updateChatMissionTask,
 } from './chat-missions.js';
+
+test('scheduler respects dependencies, priority, one-active-task-per-agent, and task effort', () => {
+  const { db, coordinator, worker } = setup();
+  try {
+    const root = createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: 'scheduler-root', channelId: 'channel-1', author: 'owner',
+      body: 'Run a dependent plan.', createdAt: '2026-08-03T00:00:00.000Z',
+    });
+    const mission = createChatMission(db, 1, 'vault-1', 'channel-1', {
+      rootMessageId: root.id, coordinatorRegistrationId: coordinator.id, title: 'Scheduled plan',
+    });
+    const first = addChatMissionTask(db, 1, 'channel-1', mission.mission.id, {
+      coordinatorRegistrationId: coordinator.id,
+      title: 'Prepare implementation', assignee: worker.id,
+      prompt: 'Inspect and prepare.', priority: 10, reasoningEffort: 'high',
+    });
+    const second = addChatMissionTask(db, 1, 'channel-1', mission.mission.id, {
+      coordinatorRegistrationId: coordinator.id,
+      title: 'Verify implementation', assignee: worker.id,
+      prompt: 'Verify the result.', dependsOn: [first.task.id], reasoningEffort: 'low',
+    });
+
+    const initial = listSchedulableMissionTasks(db, mission.mission.id);
+    assert.deepEqual(initial.candidates.map((item) => item.taskId), [first.task.id]);
+    assert.equal(initial.candidates[0]?.reasoningEffort, 'high');
+    const dispatchMessage = createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: `mission-task-${first.task.id}`, channelId: 'channel-1', author: '',
+      body: '@terra Inspect and prepare.', createdAt: '2026-08-03T00:00:01.000Z',
+      registrationId: coordinator.id, missionTaskId: first.task.id,
+    });
+    const dispatch = createChatAgentDispatchForRegistration(
+      db, 1, 'channel-1', dispatchMessage, worker.id, { reasoningEffort: 'high' },
+    );
+    assert.equal(dispatch.reasoningEffort, 'high');
+    linkMissionTaskDispatch(db, first.task.id, dispatch.id);
+    assert.deepEqual(listSchedulableMissionTasks(db, mission.mission.id).candidates, []);
+
+    attachRunToMissionTaskByDispatch(db, dispatch.id, 501);
+    settleMissionTaskForRun(db, 501, 'completed', 'Prepared.');
+    const unlocked = listSchedulableMissionTasks(db, mission.mission.id);
+    assert.deepEqual(unlocked.candidates.map((item) => item.taskId), [second.task.id]);
+    assert.deepEqual(
+      unlocked.candidates.length ? getChatMessage(db, 'channel-1', 1, root.id)?.mission?.tasks[1]?.waitingFor : [],
+      [],
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test('scheduler blocks descendants of failed dependencies instead of hanging', () => {
+  const { db, coordinator, worker } = setup();
+  try {
+    const root = createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: 'failed-root', channelId: 'channel-1', author: 'owner', body: 'Run work.',
+      createdAt: '2026-08-03T00:00:00.000Z',
+    });
+    const mission = createChatMission(db, 1, 'vault-1', 'channel-1', {
+      rootMessageId: root.id, coordinatorRegistrationId: coordinator.id, title: 'Failure propagation',
+    });
+    const parent = addChatMissionTask(db, 1, 'channel-1', mission.mission.id, {
+      coordinatorRegistrationId: coordinator.id, title: 'Parent', assignee: worker.id,
+    });
+    const child = addChatMissionTask(db, 1, 'channel-1', mission.mission.id, {
+      coordinatorRegistrationId: coordinator.id, title: 'Child', assignee: worker.id,
+      dependsOn: [parent.task.id],
+    });
+    updateChatMissionTask(db, 1, 'channel-1', parent.task.id, { status: 'failed', summary: 'Nope.' });
+    const result = listSchedulableMissionTasks(db, mission.mission.id);
+    assert.deepEqual(result.candidates, []);
+    const blocked = result.updates[0]?.mission.tasks.find((task) => task.id === child.task.id);
+    assert.equal(blocked?.status, 'blocked');
+    assert.match(blocked?.summary || '', /Dependency/);
+  } finally {
+    db.close();
+  }
+});
 
 function setup() {
   const db = new Database(':memory:');

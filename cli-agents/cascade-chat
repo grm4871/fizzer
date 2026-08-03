@@ -25,7 +25,7 @@ Usage:
   cascade-chat members                  list people-callable agent teammates
   cascade-chat mission start --title T [--objective O]
   cascade-chat mission status [--mission <id|current>]
-  cascade-chat mission delegate --mission <id> --to @agent --task T --message P
+  cascade-chat mission delegate --mission <id> --to @agent --task T --message P [--after <task-id,...>] [--priority N] [--effort E]
   cascade-chat mission update --task <id> --status <status> [--summary S]
   cascade-chat mission finish --mission <id> [--summary S]
   cascade-chat avatar --url <https-url> set this agent's profile picture
@@ -43,6 +43,9 @@ Options:
   --status <status>         pending|running|completed|failed|blocked|canceled
   --summary <text>          concise task/mission outcome
   --objective <text>        mission objective (defaults to triggering message)
+  --after <task-id,...>     wait for these mission tasks to complete
+  --priority <-100..100>    schedule higher-priority ready work first
+  --effort <level>          per-task reasoning effort override
   --root <message-id>       mission root (defaults to triggering chat message)
   --changes-file <path>     JSON change request metadata for send
   --raw-message             preserve literal backslash-n sequences in --message
@@ -507,10 +510,18 @@ async function main() {
         token,
         'POST',
         `/api/vaults/${vaultId}/channels/${channelId}/missions/${encodeURIComponent(missionRef)}/tasks`,
-        { coordinatorRegistrationId: registrationId, title, assignee, prompt },
+        {
+          coordinatorRegistrationId: registrationId,
+          title,
+          assignee,
+          prompt,
+          dependsOn: String(args.after || '').split(',').map((item) => item.trim()).filter(Boolean),
+          priority: Number(args.priority) || 0,
+          reasoningEffort: String(args.effort || '').trim().toLowerCase(),
+        },
       );
       if (args.json) process.stdout.write(JSON.stringify({ mission: result.mission, task: result.task }) + '\n');
-      else process.stdout.write(`delegated ${result.task.id} to @${result.task.assigneeMention}: ${result.task.title}\n`);
+      else process.stdout.write(`${result.scheduled ? 'dispatched' : 'scheduled'} ${result.task.id} to @${result.task.assigneeMention}: ${result.task.title}\n`);
       return;
     }
     if (sub === 'update') {

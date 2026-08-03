@@ -179,6 +179,20 @@ async function main() {
     });
     check('coordinator can dispatch an opt-out worker explicitly', delegated.task?.assigneeMention === 'terra');
     check('delegation message is linked to its durable task', delegated.message?.missionTaskId === delegated.task?.id);
+    const dependent = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/missions/${mission.id}/tasks`, {
+      method: 'POST', headers: agentAuth,
+      body: JSON.stringify({
+        coordinatorRegistrationId: sol.id,
+        title: 'Recheck after guest verification',
+        assignee: '@terra',
+        prompt: 'Recheck only after the guest reload evidence is ready.',
+        dependsOn: [delegated.task.id],
+        priority: 5,
+        reasoningEffort: 'high',
+      }),
+    });
+    check('dependent work stays undispatched while prerequisites run', dependent.scheduled === false && !dependent.message);
+    check('mission projection exposes dependency waiting state', dependent.task?.waitingFor?.[0] === delegated.task.id);
     const helperStatus = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/missions/${mission.id}`, {
       headers: agentAuth,
     });
@@ -188,6 +202,13 @@ async function main() {
       body: JSON.stringify({ status: 'running', summary: 'Accepted by the worker queue.' }),
     });
     check('restricted helper token can update a mission task', helperUpdate.mission?.tasks?.[0]?.status === 'running');
+    const completedFirst = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/missions/tasks/${delegated.task.id}`, {
+      method: 'PATCH', headers: agentAuth,
+      body: JSON.stringify({ status: 'completed', summary: 'Guest reload verified.' }),
+    });
+    check('completing a prerequisite automatically dispatches its dependent', (
+      completedFirst.mission?.tasks?.find((task) => task.id === dependent.task.id)?.queueReason === 'queued'
+    ));
 
     await sleep(300);
     check('owner received the inline mission update', ownerSocket.updated.some((event) => event.message?.mission?.id === mission.id));
@@ -198,18 +219,22 @@ async function main() {
       event.message?.missionTaskId === delegated.task.id
       && event.dispatches?.[0]?.registration?.id === terra.id
     )));
+    check('automatic dependent dispatch reached owner clients', ownerSocket.created.some((event) => (
+      event.message?.missionTaskId === dependent.task.id
+      && event.dispatches?.[0]?.reasoningEffort === 'high'
+    )));
     check('private worker dispatch is not offered to guest renderers', !guestSocket.created.some((event) => (
       event.message?.missionTaskId === delegated.task.id && (event.dispatches?.length || 0) > 0
     )));
 
     const ownerReload = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/messages?detail=list`, { headers: owner.auth });
     const guestReload = await must(`${API_BASE}/api/vaults/${guestLink.vaultId}/channels/${guestLink.channelId}/messages?detail=list`, { headers: guest.auth });
-    check('owner reload retains mission and task', ownerReload.messages.find((message) => message.id === rootMessage.id)?.mission?.tasks?.[0]?.id === delegated.task.id);
-    check('guest reload retains mission and task through linked ids', guestReload.messages.find((message) => message.id === rootMessage.id)?.mission?.tasks?.[0]?.id === delegated.task.id);
+    check('owner reload retains the scheduled task graph', ownerReload.messages.find((message) => message.id === rootMessage.id)?.mission?.tasks?.length === 2);
+    check('guest reload retains the scheduled task graph through linked ids', guestReload.messages.find((message) => message.id === rootMessage.id)?.mission?.tasks?.length === 2);
 
     const pending = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/agent-dispatches/pending`, { headers: owner.auth });
     check('pending outbox survives without a renderer', pending.dispatches.some((dispatch) => (
-      dispatch.message?.missionTaskId === delegated.task.id && dispatch.registration?.id === terra.id
+      dispatch.message?.missionTaskId === dependent.task.id && dispatch.registration?.id === terra.id
     )));
 
     ownerSocket.socket.disconnect();

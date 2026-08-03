@@ -105,11 +105,12 @@ try {
     method: 'PUT', headers: auth,
     body: JSON.stringify({ agentId: 'codex', displayName: 'Sol', mention: 'sol', model: 'gpt-5.6-sol' }),
   });
-  // An unknown backend keeps this smoke deterministic: the task stays durable
-  // but no real model process is launched when the renderer recovers it.
+  // This fixture has no connected desktop runner, so using a real Codex
+  // registration still cannot launch a provider process. It lets the card
+  // verify the per-task model and reasoning-effort projection.
   const { agent: terraIdentity } = await must(`${API_BASE}/api/vaults/${vault.id}/vault-agents`, {
     method: 'PUT', headers: auth,
-    body: JSON.stringify({ agentId: 'mission-test-worker', displayName: 'Terra', mention: 'terra' }),
+    body: JSON.stringify({ agentId: 'codex', displayName: 'Terra', mention: 'terra', model: 'gpt-5.6-terra' }),
   });
   const { registration: sol } = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/agents/from-vault`, {
     method: 'POST', headers: auth,
@@ -134,6 +135,7 @@ try {
       title: 'Verify multiplayer persistence',
       assignee: '@terra',
       prompt: 'Verify live updates and reload persistence.',
+      reasoningEffort: 'high',
     }),
   });
   const seeded = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/messages`, { headers: auth });
@@ -199,6 +201,9 @@ try {
   check('active mission starts compact', !(await card.evaluate((node) => node.open)));
   await card.locator('summary').click();
   check('mission expands to its worker task', (await card.innerText()).includes('Verify multiplayer persistence'));
+  check('mission exposes worker model and adaptive effort', (
+    (await card.innerText()).includes('gpt-5.6-terra') && (await card.innerText()).includes('high effort')
+  ));
 
   await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/missions/tasks/${task.id}`, {
     method: 'PATCH', headers: auth,

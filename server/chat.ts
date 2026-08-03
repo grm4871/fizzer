@@ -117,8 +117,14 @@ export type ChatMissionTask = {
   title: string;
   assignee: string;
   assigneeMention: string;
+  assigneeModel: string;
   status: ChatMissionTaskStatus;
   summary: string;
+  dependsOn: string[];
+  waitingFor: string[];
+  priority: number;
+  reasoningEffort: string;
+  queueReason: 'dependency' | 'agent-busy' | 'queued' | '';
   runId?: number;
   updatedAt: string;
 };

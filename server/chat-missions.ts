@@ -44,6 +44,10 @@ type TaskRow = {
   assignee_registration_id: string;
   status: ChatMissionTaskStatus;
   summary: string;
+  prompt: string;
+  depends_on_json: string;
+  priority: number;
+  reasoning_effort: string;
   dispatch_id: string | null;
   run_id: number | null;
   created_at: string;
@@ -64,6 +68,19 @@ export type MissionProjectionUpdate = {
 
 export type MissionWake = MissionProjectionUpdate & {
   coordinatorRegistrationId: string;
+};
+
+export type MissionTaskScheduleCandidate = {
+  taskId: string;
+  missionId: string;
+  vaultId: string;
+  channelId: string;
+  createdBy: number;
+  coordinatorRegistrationId: string;
+  assigneeRegistrationId: string;
+  title: string;
+  prompt: string;
+  reasoningEffort: string;
 };
 
 export function ensureChatMissionSchema(db: Db): void {
@@ -94,6 +111,10 @@ export function ensureChatMissionSchema(db: Db): void {
       assignee_registration_id TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'pending',
       summary TEXT NOT NULL DEFAULT '',
+      prompt TEXT NOT NULL DEFAULT '',
+      depends_on_json TEXT NOT NULL DEFAULT '[]',
+      priority INTEGER NOT NULL DEFAULT 0,
+      reasoning_effort TEXT NOT NULL DEFAULT '',
       dispatch_id TEXT,
       run_id INTEGER,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -106,6 +127,28 @@ export function ensureChatMissionSchema(db: Db): void {
     CREATE INDEX IF NOT EXISTS chat_mission_tasks_run_idx
       ON chat_mission_tasks(run_id) WHERE run_id IS NOT NULL;
   `);
+  const taskColumns = db.prepare('PRAGMA table_info(chat_mission_tasks)').all() as Array<{ name: string }>;
+  if (!taskColumns.some((column) => column.name === 'prompt')) {
+    db.exec("ALTER TABLE chat_mission_tasks ADD COLUMN prompt TEXT NOT NULL DEFAULT ''");
+  }
+  if (!taskColumns.some((column) => column.name === 'depends_on_json')) {
+    db.exec("ALTER TABLE chat_mission_tasks ADD COLUMN depends_on_json TEXT NOT NULL DEFAULT '[]'");
+  }
+  if (!taskColumns.some((column) => column.name === 'priority')) {
+    db.exec('ALTER TABLE chat_mission_tasks ADD COLUMN priority INTEGER NOT NULL DEFAULT 0');
+  }
+  if (!taskColumns.some((column) => column.name === 'reasoning_effort')) {
+    db.exec("ALTER TABLE chat_mission_tasks ADD COLUMN reasoning_effort TEXT NOT NULL DEFAULT ''");
+  }
+}
+
+function taskDependencies(row: Pick<TaskRow, 'depends_on_json'>): string[] {
+  try {
+    const parsed = JSON.parse(row.depends_on_json || '[]');
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : [];
+  } catch {
+    return [];
+  }
 }
 
 function cleanText(value: unknown, max: number): string {
@@ -177,15 +220,30 @@ function projectMission(db: Db, row: MissionRow, tasks: TaskRow[]): ChatMission 
   const registrations = listChatAgentMembers(db, row.channel_id, row.created_by);
   const byId = new Map(registrations.map((registration) => [registration.id, registration]));
   const coordinator = byId.get(row.coordinator_registration_id);
+  const byTaskId = new Map(tasks.map((item) => [item.id, item]));
   const projectedTasks: ChatMissionTask[] = tasks.map((task) => {
     const assignee = byId.get(task.assignee_registration_id);
+    const dependsOn = taskDependencies(task);
+    const waitingFor = dependsOn.filter((id) => byTaskId.get(id)?.status !== 'completed');
     return {
       id: task.id,
       title: task.title,
       assignee: assignee?.displayName || assignee?.mention || 'Unassigned agent',
       assigneeMention: assignee?.mention || '',
+      assigneeModel: assignee?.model || '',
       status: task.status,
       summary: task.summary || '',
+      dependsOn,
+      waitingFor,
+      priority: task.priority || 0,
+      reasoningEffort: task.reasoning_effort || '',
+      queueReason: task.status !== 'pending'
+        ? ''
+        : waitingFor.length
+          ? 'dependency'
+          : task.dispatch_id
+            ? 'queued'
+            : 'agent-busy',
       ...(task.run_id != null ? { runId: task.run_id } : {}),
       updatedAt: task.updated_at,
     };
@@ -312,7 +370,15 @@ export function addChatMissionTask(
   userId: number,
   channelId: string,
   missionId: string,
-  input: { coordinatorRegistrationId: string; title: string; assignee: string },
+  input: {
+    coordinatorRegistrationId: string;
+    title: string;
+    assignee: string;
+    prompt?: string;
+    dependsOn?: string[];
+    priority?: number;
+    reasoningEffort?: string;
+  },
 ): { update: MissionProjectionUpdate; task: ChatMissionTask; assignee: ChatAgentRegistration } {
   const update = getChatMission(db, userId, channelId, missionId, input.coordinatorRegistrationId);
   const row = missionRow(db, update.mission.id)!;
@@ -326,6 +392,24 @@ export function addChatMissionTask(
   if (assignee.id === coordinator.id) throw new Error('Delegate this task to another channel agent');
   const title = cleanText(input.title, 240);
   if (!title) throw new Error('Task title is required');
+  const dependencies = Array.from(new Set((input.dependsOn || []).map((id) => cleanText(id, 80)).filter(Boolean)));
+  if (dependencies.length) {
+    const found = db.prepare(`
+      SELECT id FROM chat_mission_tasks WHERE mission_id = ? AND id IN (${dependencies.map(() => '?').join(',')})
+    `).all(row.id, ...dependencies) as Array<{ id: string }>;
+    if (found.length !== dependencies.length) throw new Error('Every dependency must be an existing task in this mission');
+  }
+  const priority = Math.max(-100, Math.min(100, Math.floor(Number(input.priority) || 0)));
+  const requestedEffort = cleanText(input.reasoningEffort, 20).toLowerCase();
+  const supportedEfforts = assignee.agentId === 'codex'
+    ? ['', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']
+    : assignee.agentId === 'claude-code'
+      ? ['', 'low', 'medium', 'high', 'xhigh', 'max']
+      : [''];
+  if (!supportedEfforts.includes(requestedEffort)) {
+    throw new Error(`${requestedEffort || 'Reasoning effort'} is not supported by @${assignee.mention}`);
+  }
+  const reasoningEffort = requestedEffort;
   // Tool retries after a lost HTTP response must not fan out a second worker.
   // A coordinator can still rerun work by giving the new task a distinct title.
   const existing = db.prepare(`
@@ -336,9 +420,20 @@ export function addChatMissionTask(
   const taskId = existing?.id || crypto.randomUUID();
   if (!existing) {
     db.prepare(`
-      INSERT INTO chat_mission_tasks (id, mission_id, title, assignee_registration_id)
-      VALUES (?, ?, ?, ?)
-    `).run(taskId, row.id, title, assignee.id);
+      INSERT INTO chat_mission_tasks (
+        id, mission_id, title, assignee_registration_id, prompt,
+        depends_on_json, priority, reasoning_effort
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      taskId,
+      row.id,
+      title,
+      assignee.id,
+      cleanText(input.prompt || title, 12_000),
+      JSON.stringify(dependencies),
+      priority,
+      reasoningEffort,
+    );
   }
   if (!existing) {
     db.prepare(`
@@ -351,6 +446,80 @@ export function addChatMissionTask(
     task: refreshed.mission.tasks.find((task) => task.id === taskId)!,
     assignee,
   };
+}
+
+/**
+ * Reconcile dependency failures, then choose ready work without assigning more
+ * than one active task to any agent. Dispatch materialization remains in the
+ * route layer because it also broadcasts the synthetic worker message.
+ */
+export function listSchedulableMissionTasks(
+  db: Db,
+  missionId?: string,
+): { candidates: MissionTaskScheduleCandidate[]; updates: MissionProjectionUpdate[] } {
+  const missionFilter = missionId ? 'AND m.id = ?' : '';
+  const args = missionId ? [missionId] : [];
+  const missions = db.prepare(`
+    SELECT m.* FROM chat_missions m
+    WHERE m.status IN ('active', 'blocked') ${missionFilter}
+    ORDER BY m.created_at ASC, m.rowid ASC
+  `).all(...args) as MissionRow[];
+  const updates: MissionProjectionUpdate[] = [];
+  const candidates: MissionTaskScheduleCandidate[] = [];
+  const reserved = new Set<string>();
+
+  for (const mission of missions) {
+    let tasks = taskRows(db, mission.id);
+    const byId = new Map(tasks.map((task) => [task.id, task]));
+    let changed = false;
+    for (const task of tasks) {
+      if (task.status !== 'pending' || task.dispatch_id) continue;
+      const failedDependency = taskDependencies(task)
+        .map((id) => byId.get(id))
+        .find((dependency) => dependency && ['failed', 'blocked', 'canceled'].includes(dependency.status));
+      if (!failedDependency) continue;
+      db.prepare(`
+        UPDATE chat_mission_tasks
+        SET status = 'blocked', summary = ?, updated_at = datetime('now')
+        WHERE id = ? AND status = 'pending' AND dispatch_id IS NULL
+      `).run(`Dependency “${failedDependency.title}” ended ${failedDependency.status}.`, task.id);
+      changed = true;
+    }
+    if (changed) tasks = taskRows(db, mission.id);
+
+    const occupied = new Set((db.prepare(`
+      SELECT DISTINCT t.assignee_registration_id AS id
+      FROM chat_mission_tasks t
+      JOIN chat_missions m ON m.id = t.mission_id
+      WHERE m.channel_id = ? AND m.status IN ('active', 'reviewing', 'blocked')
+        AND (t.status = 'running' OR (t.status = 'pending' AND t.dispatch_id IS NOT NULL))
+    `).all(mission.channel_id) as Array<{ id: string }>).map((row) => row.id));
+    const currentById = new Map(tasks.map((task) => [task.id, task]));
+    const ready = tasks
+      .filter((task) => task.status === 'pending' && !task.dispatch_id)
+      .filter((task) => taskDependencies(task).every((id) => currentById.get(id)?.status === 'completed'))
+      .sort((a, b) => b.priority - a.priority || a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
+    for (const task of ready) {
+      const reservationKey = `${mission.channel_id}:${task.assignee_registration_id}`;
+      if (occupied.has(task.assignee_registration_id) || reserved.has(reservationKey)) continue;
+      occupied.add(task.assignee_registration_id);
+      reserved.add(reservationKey);
+      candidates.push({
+        taskId: task.id,
+        missionId: mission.id,
+        vaultId: mission.vault_id,
+        channelId: mission.channel_id,
+        createdBy: mission.created_by,
+        coordinatorRegistrationId: mission.coordinator_registration_id,
+        assigneeRegistrationId: task.assignee_registration_id,
+        title: task.title,
+        prompt: task.prompt || task.title,
+        reasoningEffort: task.reasoning_effort || '',
+      });
+    }
+    if (changed) updates.push(refreshMissionProjection(db, mission.id));
+  }
+  return { candidates, updates };
 }
 
 export function linkMissionTaskDispatch(db: Db, taskId: string, dispatchId: string): MissionProjectionUpdate {
@@ -476,6 +645,23 @@ export function finishChatMission(
   };
 }
 
+/** Claim the coordinator review wake exactly once after every task is terminal. */
+export function claimMissionCoordinatorWake(db: Db, missionId: string): MissionWake | null {
+  const update = refreshMissionProjection(db, missionId);
+  const allWorkersSettled = update.mission.tasks.length > 0
+    && update.mission.tasks.every((item) => ['completed', 'failed', 'blocked', 'canceled'].includes(item.status));
+  if (!allWorkersSettled || (update.mission.status !== 'reviewing' && update.mission.status !== 'blocked')) {
+    return null;
+  }
+  const claimed = db.prepare(`
+    UPDATE chat_missions SET wake_sent = 1, updated_at = datetime('now')
+    WHERE id = ? AND wake_sent = 0
+  `).run(missionId);
+  if (claimed.changes === 0) return null;
+  const row = missionRow(db, missionId)!;
+  return { ...refreshMissionProjection(db, missionId), coordinatorRegistrationId: row.coordinator_registration_id };
+}
+
 /** Settle a worker task from its authoritative run terminal status. */
 export function settleMissionTaskForRun(
   db: Db,
@@ -496,18 +682,6 @@ export function settleMissionTaskForRun(
     `).run(next, cleanText(summary, 4000), task.id);
   }
   const update = refreshMissionProjection(db, task.mission_id);
-  let wake: MissionWake | null = null;
-  const allWorkersSettled = update.mission.tasks.length > 0
-    && update.mission.tasks.every((item) => ['completed', 'failed', 'blocked', 'canceled'].includes(item.status));
-  if (allWorkersSettled && (update.mission.status === 'reviewing' || update.mission.status === 'blocked')) {
-    const claimed = db.prepare(`
-      UPDATE chat_missions SET wake_sent = 1, updated_at = datetime('now')
-      WHERE id = ? AND wake_sent = 0
-    `).run(task.mission_id);
-    if (claimed.changes > 0) {
-      const row = missionRow(db, task.mission_id)!;
-      wake = { ...refreshMissionProjection(db, task.mission_id), coordinatorRegistrationId: row.coordinator_registration_id };
-    }
-  }
+  const wake = claimMissionCoordinatorWake(db, task.mission_id);
   return { update: wake || update, wake };
 }
