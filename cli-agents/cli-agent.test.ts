@@ -18,6 +18,7 @@ const fakeBin = path.join(scratch, 'fake-codex');
 const fakeAkronBin = path.join(scratch, 'fake-akron');
 const argLog = path.join(scratch, 'args.jsonl');
 const akronChildPid = path.join(scratch, 'akron-child.pid');
+const akronAttemptLog = path.join(scratch, 'akron-attempts.txt');
 
 fs.writeFileSync(fakeBin, `#!/usr/bin/env node
 const fs = require('fs');
@@ -41,6 +42,16 @@ fs.chmodSync(fakeBin, 0o755);
 fs.writeFileSync(fakeAkronBin, `#!/usr/bin/env node
 const fs = require('fs');
 const { spawn } = require('child_process');
+if (process.env.FAKE_AKRON_RETRY) {
+  let attempts = 0;
+  try { attempts = Number(fs.readFileSync(${JSON.stringify(akronAttemptLog)}, 'utf8')) || 0; } catch {}
+  attempts += 1;
+  fs.writeFileSync(${JSON.stringify(akronAttemptLog)}, String(attempts));
+  if (attempts > 1) {
+    process.stdout.write('recovered answer\\n');
+    process.exit(0);
+  }
+}
 if (process.env.FAKE_AKRON_EVENTS) {
   if (process.env.HERMES_CASCADE_EVENTS !== '1') {
     process.stderr.write('cascade events disabled\\n');
@@ -116,7 +127,7 @@ test('Akron provider silence times out and releases its process tree', async () 
   await waitFor(() => fs.existsSync(akronChildPid));
   const descendantPid = Number(fs.readFileSync(akronChildPid, 'utf8'));
   await assert.rejects(run, /produced no output for 1000ms and was stopped/);
-  assert.ok(Date.now() - started < 2_000);
+  assert.ok(Date.now() - started < 3_000);
   await waitFor(() => {
     try {
       process.kill(descendantPid, 0);
@@ -125,6 +136,25 @@ test('Akron provider silence times out and releases its process tree', async () 
       return true;
     }
   });
+});
+
+test('Akron retries one byte-silent provider request with a fresh bridge', async () => {
+  fs.rmSync(akronAttemptLog, { force: true });
+  process.env.FAKE_AKRON_RETRY = '1';
+  const harness: string[] = [];
+  try {
+    const result = await runCliAgent({
+      agent: 'akron-grok', context: '', userPrompt: 'recover once', cwd: scratch, runId: 8082,
+      emit: (type, payload: any) => {
+        if (type === 'harness') harness.push(String(payload?.data || ''));
+      },
+    });
+    assert.equal(result.summary, 'recovered answer');
+  } finally {
+    delete process.env.FAKE_AKRON_RETRY;
+  }
+  assert.equal(fs.readFileSync(akronAttemptLog, 'utf8'), '2');
+  assert.match(harness.join(''), /retrying Akron once with a fresh bridge/);
 });
 
 test('Akron emits launch metadata and native reasoning events through the harness bridge', async () => {

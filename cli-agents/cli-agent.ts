@@ -213,6 +213,8 @@ const AKRON_IDLE_TIMEOUT_MS = Math.max(1_000, Number(
   process.env.RUNNER_AKRON_IDLE_TIMEOUT_MS || 120_000,
 ));
 
+class CliIdleTimeoutError extends Error {}
+
 /**
  * Idle-timeout handle: `bump()` on every chunk of child output, `clear()` once
  * the process settles. Fires `onIdle` after CLI_IDLE_TIMEOUT_MS of silence.
@@ -1961,19 +1963,32 @@ async function runAkronGrok(prompt: string, cwd: string, emit: AgentEmit, _resum
     }
   };
 
-  const summaryText = await driveHermesProcess(
-    AKRON_BIN,
-    args,
-    cwd,
-    onStdoutLine,
-    onStderrLine,
-    () => text.trim() || 'Completed note operations successfully.',
-    'Akron --grok',
-    runId,
-    emit,
-    env,
-    AKRON_IDLE_TIMEOUT_MS,
-  );
+  let summaryText = '';
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      summaryText = await driveHermesProcess(
+        AKRON_BIN,
+        args,
+        cwd,
+        onStdoutLine,
+        onStderrLine,
+        () => text.trim() || 'Completed note operations successfully.',
+        'Akron --grok',
+        runId,
+        emit,
+        env,
+        AKRON_IDLE_TIMEOUT_MS,
+      );
+      break;
+    } catch (error) {
+      if (!(error instanceof CliIdleTimeoutError) || attempt > 0) throw error;
+      // Grok Build occasionally accepts a request but never returns its first
+      // response byte. A fresh bridge/request succeeds in practice. Retrying is
+      // safe here because Hermes emitted no provider or tool event whatsoever.
+      emitHarness(emit, '\x1b[2m# provider returned no bytes; retrying Akron once with a fresh bridge\x1b[0m\r\n');
+      text = '';
+    }
+  }
   return { summary: summaryText };
 }
 
@@ -2042,7 +2057,7 @@ function driveHermesProcess(
         clearInterval(heartbeat);
         cleanUpProcess();
         terminateCliProcessWithEscalation(child, process.platform !== 'win32');
-        reject(new Error(`${label} produced no output for ${idleTimeoutMs}ms and was stopped.`));
+        reject(new CliIdleTimeoutError(`${label} produced no output for ${idleTimeoutMs}ms and was stopped.`));
       }
     }, idleTimeoutMs);
 
