@@ -120,9 +120,91 @@ function processHasLeaseToken(pid: number, runId: number, token: string): boolea
   }
 }
 
+function processGroupIdOf(pid: number): number {
+  if (process.platform !== 'linux' || !Number.isInteger(pid) || pid <= 0) return 0;
+  try {
+    // Field 5 (pgrp) is the fourth whitespace-separated field after the
+    // final ')' of /proc/<pid>/stat (comm may contain spaces/parens).
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
+    const fields = stat.slice(stat.lastIndexOf(')') + 2).trim().split(/\s+/);
+    const pgid = Number(fields[3]);
+    return Number.isInteger(pgid) && pgid > 1 ? pgid : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Find a live process that still carries this run's ownership token.
+ *
+ * Prefer members of the recorded process group. The group leader can die while
+ * hermes/bridge descendants remain (still token-bearing), so a leader-only
+ * environ check would drop the lease and leave orphans.
+ */
+function findLeaseTokenProcess(runId: number, token: string, preferredPgid?: number): number {
+  if (process.platform !== 'linux') return 0;
+  if (preferredPgid && preferredPgid > 1 && processHasLeaseToken(preferredPgid, runId, token)) {
+    return preferredPgid;
+  }
+  let names: string[] = [];
+  try { names = fs.readdirSync('/proc'); } catch { return 0; }
+  for (const name of names) {
+    if (!/^\d+$/.test(name)) continue;
+    const pid = Number(name);
+    if (!Number.isInteger(pid) || pid <= 1) continue;
+    if (preferredPgid && preferredPgid > 1) {
+      const pgid = processGroupIdOf(pid);
+      if (pgid !== preferredPgid) continue;
+    }
+    if (processHasLeaseToken(pid, runId, token)) return pid;
+  }
+  // Preferred group emptied or leader-only PID reused: any token holder still
+  // proves this run is live (and supplies a group to kill).
+  if (preferredPgid && preferredPgid > 1) {
+    for (const name of names) {
+      if (!/^\d+$/.test(name)) continue;
+      const pid = Number(name);
+      if (!Number.isInteger(pid) || pid <= 1) continue;
+      if (processHasLeaseToken(pid, runId, token)) return pid;
+    }
+  }
+  return 0;
+}
+
+function readAgentProcessLease(runId: number): AgentProcessLease | null {
+  try {
+    const lease = JSON.parse(fs.readFileSync(leasePath(runId), 'utf8')) as AgentProcessLease;
+    const valid = lease?.version === 1
+      && Number.isInteger(lease.runId) && lease.runId === runId
+      && Number.isInteger(lease.ownerPid) && lease.ownerPid > 1
+      && Number.isInteger(lease.processGroupId) && lease.processGroupId > 1
+      && typeof lease.ownerStartTicks === 'string' && lease.ownerStartTicks.length > 0
+      && typeof lease.token === 'string' && lease.token.length >= 16;
+    return valid ? lease : null;
+  } catch {
+    return null;
+  }
+}
+
 function processIsSameOwner(lease: AgentProcessLease): boolean {
   const currentStart = processStartTicks(lease.ownerPid);
   return Boolean(currentStart && currentStart === lease.ownerStartTicks);
+}
+
+function terminateProcessGroup(pgid: number): void {
+  if (!Number.isInteger(pgid) || pgid <= 1 || process.platform === 'win32') return;
+  try { process.kill(-pgid, 'SIGTERM'); } catch { /* already gone */ }
+  const forceKill = setTimeout(() => {
+    try { process.kill(-pgid, 0); process.kill(-pgid, 'SIGKILL'); } catch { /* settled */ }
+  }, 5_000);
+  forceKill.unref?.();
+}
+
+async function terminateProcessGroupHard(pgid: number): Promise<void> {
+  if (!Number.isInteger(pgid) || pgid <= 1 || process.platform === 'win32') return;
+  try { process.kill(-pgid, 'SIGTERM'); } catch { /* already gone */ }
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  try { process.kill(-pgid, 0); process.kill(-pgid, 'SIGKILL'); } catch { /* settled */ }
 }
 
 /**
@@ -152,13 +234,13 @@ export async function reapOrphanedCliAgentProcesses(): Promise<number[]> {
       continue;
     }
     if (processIsSameOwner(lease)) continue;
-    if (!processHasLeaseToken(lease.processGroupId, lease.runId, lease.token)) {
+    const tokenPid = findLeaseTokenProcess(lease.runId, lease.token, lease.processGroupId);
+    if (!tokenPid) {
       try { fs.unlinkSync(target); } catch { /* stale */ }
       continue;
     }
-    try { process.kill(-lease.processGroupId, 'SIGTERM'); } catch { /* already gone */ }
-    await new Promise((resolve) => setTimeout(resolve, 250));
-    try { process.kill(-lease.processGroupId, 0); process.kill(-lease.processGroupId, 'SIGKILL'); } catch { /* settled */ }
+    const pgid = processGroupIdOf(tokenPid) || lease.processGroupId;
+    await terminateProcessGroupHard(pgid);
     try { fs.unlinkSync(target); } catch { /* ignore */ }
     reaped.push(lease.runId);
   }
@@ -187,10 +269,31 @@ function terminateCliProcessWithEscalation(child: ChildProcess, processGroup: bo
   forceKill.unref?.();
 }
 
+/**
+ * Stop a run using only its durable lease — used when module reload lost the
+ * in-memory ChildProcess map, or when cancel races a reaped map entry.
+ */
+function cancelCliAgentRunFromLease(runId: number): boolean {
+  if (process.platform !== 'linux') return false;
+  const lease = readAgentProcessLease(runId);
+  if (!lease) return false;
+  const tokenPid = findLeaseTokenProcess(lease.runId, lease.token, lease.processGroupId);
+  if (!tokenPid) {
+    clearAgentProcessLease(runId);
+    return false;
+  }
+  const pgid = processGroupIdOf(tokenPid) || lease.processGroupId;
+  terminateProcessGroup(pgid);
+  activeCliProcesses.delete(runId);
+  groupedCliProcesses.delete(runId);
+  clearAgentProcessLease(runId);
+  return true;
+}
+
 /** Cancel one CLI run, including descendants of launchers such as Akron. */
 export function cancelCliAgentRun(runId: number): boolean {
   const child = activeCliProcesses.get(runId);
-  if (!child) return false;
+  if (!child) return cancelCliAgentRunFromLease(runId);
   const processGroup = groupedCliProcesses.has(runId);
   terminateCliProcessWithEscalation(child, processGroup);
   activeCliProcesses.delete(runId);

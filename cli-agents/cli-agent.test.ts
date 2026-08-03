@@ -74,7 +74,12 @@ process.env.RUNNER_CLI_HEARTBEAT_MS = '25';
 process.env.RUNNER_AKRON_IDLE_TIMEOUT_MS = '1000';
 process.env.CASCADE_AGENT_PROCESS_DIR = agentProcessLeaseDir;
 
-const { cancelCliAgentRun, reapOrphanedCliAgentProcesses, runCliAgent } = await import('./cli-agent.js');
+const {
+  activeCliProcesses,
+  cancelCliAgentRun,
+  reapOrphanedCliAgentProcesses,
+  runCliAgent,
+} = await import('./cli-agent.js');
 
 function readArgs(): string[][] {
   return fs.readFileSync(argLog, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
@@ -160,14 +165,13 @@ test('Akron retries one byte-silent provider request with a fresh bridge', async
   assert.match(harness.join(''), /retrying Akron once with a fresh bridge/);
 });
 
-test('a crashed desktop owner leaves a real Akron group that the next coordinator reaps', async () => {
-  fs.rmSync(agentProcessLeaseDir, { recursive: true, force: true });
+async function crashHostLeavingAkronOrphan(runId: number): Promise<{ lease: any; descendantPid: number }> {
   fs.rmSync(akronChildPid, { force: true });
   const hostScript = `
     import fs from 'node:fs';
     import { runCliAgent } from ${JSON.stringify(new URL('./cli-agent.ts', import.meta.url).href)};
-    void runCliAgent({ agent: 'akron-grok', context: '', userPrompt: 'orchestrate until crash', cwd: ${JSON.stringify(scratch)}, runId: 9090, emit() {} });
-    const lease = ${JSON.stringify(path.join(agentProcessLeaseDir, '9090.json'))};
+    void runCliAgent({ agent: 'akron-grok', context: '', userPrompt: 'orchestrate until crash', cwd: ${JSON.stringify(scratch)}, runId: ${runId}, emit() {} });
+    const lease = ${JSON.stringify(path.join(agentProcessLeaseDir, `${runId}.json`))};
     const timer = setInterval(() => {
       if (fs.existsSync(lease)) {
         clearInterval(timer);
@@ -187,9 +191,16 @@ test('a crashed desktop owner leaves a real Akron group that the next coordinato
   });
   const exitCode = await new Promise<number | null>((resolve) => crashedHost.once('exit', resolve));
   assert.equal(exitCode, 77, 'simulated Electron owner should crash abruptly');
-
-  const lease = JSON.parse(fs.readFileSync(path.join(agentProcessLeaseDir, '9090.json'), 'utf8'));
+  await waitFor(() => fs.existsSync(akronChildPid));
+  const lease = JSON.parse(fs.readFileSync(path.join(agentProcessLeaseDir, `${runId}.json`), 'utf8'));
+  const descendantPid = Number(fs.readFileSync(akronChildPid, 'utf8'));
   assert.doesNotThrow(() => process.kill(lease.processGroupId, 0), 'detached Akron should reproduce the orphan');
+  return { lease, descendantPid };
+}
+
+test('a crashed desktop owner leaves a real Akron group that the next coordinator reaps', async () => {
+  fs.rmSync(agentProcessLeaseDir, { recursive: true, force: true });
+  const { lease } = await crashHostLeavingAkronOrphan(9090);
 
   assert.deepEqual(await reapOrphanedCliAgentProcesses(), [9090]);
   await waitFor(() => {
@@ -205,6 +216,43 @@ test('a crashed desktop owner leaves a real Akron group that the next coordinato
   } finally {
     delete process.env.FAKE_AKRON_EVENTS;
   }
+});
+
+test('cancel after losing the in-memory process map still kills via durable lease', async () => {
+  fs.rmSync(agentProcessLeaseDir, { recursive: true, force: true });
+  fs.rmSync(akronChildPid, { force: true });
+  const run = runCliAgent({
+    agent: 'akron-grok', context: '', userPrompt: 'survive module reload', cwd: scratch, runId: 9100, emit,
+  });
+  await waitFor(() => fs.existsSync(path.join(agentProcessLeaseDir, '9100.json')));
+  await waitFor(() => fs.existsSync(akronChildPid));
+  const descendantPid = Number(fs.readFileSync(akronChildPid, 'utf8'));
+
+  // Simulate hot-reload / map loss while the detached group keeps running.
+  assert.equal(activeCliProcesses.delete(9100), true);
+  assert.equal(cancelCliAgentRun(9100), true, 'lease-backed cancel must succeed without the ChildProcess handle');
+  await assert.rejects(run, /exited with code|stopped|SIG/);
+  await waitFor(() => {
+    try { process.kill(descendantPid, 0); return false; } catch { return true; }
+  });
+  assert.equal(fs.existsSync(path.join(agentProcessLeaseDir, '9100.json')), false);
+});
+
+test('reaper still kills token-bearing descendants after the group leader dies', async () => {
+  fs.rmSync(agentProcessLeaseDir, { recursive: true, force: true });
+  const { lease, descendantPid } = await crashHostLeavingAkronOrphan(9101);
+
+  try { process.kill(lease.processGroupId, 'SIGKILL'); } catch { /* already gone */ }
+  await waitFor(() => {
+    try { process.kill(lease.processGroupId, 0); return false; } catch { return true; }
+  });
+  assert.doesNotThrow(() => process.kill(descendantPid, 0), 'bridge/Hermes descendant should still be orphaned');
+
+  assert.deepEqual(await reapOrphanedCliAgentProcesses(), [9101]);
+  await waitFor(() => {
+    try { process.kill(descendantPid, 0); return false; } catch { return true; }
+  });
+  assert.equal(fs.existsSync(path.join(agentProcessLeaseDir, '9101.json')), false);
 });
 
 test('Akron emits launch metadata and native reasoning events through the harness bridge', async () => {
