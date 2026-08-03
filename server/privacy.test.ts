@@ -86,10 +86,18 @@ test('agent API capabilities allow helpers but deny user and publishing routes',
   assert.equal(isAgentApiRequestAllowed('POST', '/api/vaults/v1/channels/c1/messages'), true);
   assert.equal(isAgentApiRequestAllowed('POST', '/api/vaults/v1/scratchpad/journal'), true);
   assert.equal(isAgentApiRequestAllowed('PATCH', '/api/vaults/v1/channels/c1/messages/m1'), true);
+  assert.equal(isAgentApiRequestAllowed('POST', '/api/vaults/v1/folders'), true);
+  assert.equal(isAgentApiRequestAllowed('GET', '/api/vaults/v1/channels/c1/agents'), true);
+  assert.equal(isAgentApiRequestAllowed('POST', '/api/vaults/v1/channels/c1/missions'), true);
+  assert.equal(isAgentApiRequestAllowed('GET', '/api/vaults/v1/channels/c1/missions/m1'), true);
+  assert.equal(isAgentApiRequestAllowed('POST', '/api/vaults/v1/channels/c1/missions/m1/tasks'), true);
+  assert.equal(isAgentApiRequestAllowed('PATCH', '/api/vaults/v1/channels/c1/missions/tasks/t1'), true);
+  assert.equal(isAgentApiRequestAllowed('POST', '/api/vaults/v1/channels/c1/missions/m1/finish'), true);
 
   assert.equal(isAgentApiRequestAllowed('POST', '/api/auth/password'), false);
   assert.equal(isAgentApiRequestAllowed('GET', '/api/admin/users'), false);
   assert.equal(isAgentApiRequestAllowed('GET', '/api/notes/n1/diff'), false);
   assert.equal(isAgentApiRequestAllowed('POST', '/api/notes/n1/publish'), false);
   assert.equal(isAgentApiRequestAllowed('POST', '/api/vaults/v1/runs'), false);
+  assert.equal(isAgentApiRequestAllowed('PUT', '/api/vaults/v1/channels/c1/agents'), false);
 });

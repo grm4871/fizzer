@@ -118,6 +118,18 @@ async function main() {
     });
     check('coordinator implies reply-to-every-human-message', sol.orchestrator && sol.replyToEveryMessage);
     check('worker remains closed to ordinary agent chaining', !terra.taggableByAgents);
+    const { token: agentToken } = await must(`${API_BASE}/api/auth/agent-token`, {
+      method: 'POST', headers: owner.auth,
+    });
+    const agentAuth = { authorization: `Bearer ${agentToken}` };
+    const helperMembers = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/agents`, {
+      headers: agentAuth,
+    });
+    check('restricted helper token can list mission teammates', helperMembers.agents?.length === 2);
+    const helperFolder = await must(`${API_BASE}/api/vaults/${vault.id}/folders`, {
+      method: 'POST', headers: agentAuth, body: JSON.stringify({ name: 'agent-created' }),
+    });
+    check('restricted helper token can create a live-note folder', helperFolder.folder?.name === 'agent-created');
 
     const { token: invite } = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/invite-link`, {
       method: 'POST', headers: owner.auth,
@@ -148,7 +160,7 @@ async function main() {
     check('human message creates a durable coordinator dispatch', posted.dispatches?.[0]?.registration?.id === sol.id);
 
     const { mission } = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/missions`, {
-      method: 'POST', headers: owner.auth,
+      method: 'POST', headers: agentAuth,
       body: JSON.stringify({
         rootMessageId: rootMessage.id,
         coordinatorRegistrationId: sol.id,
@@ -157,7 +169,7 @@ async function main() {
       }),
     });
     const delegated = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/missions/${mission.id}/tasks`, {
-      method: 'POST', headers: owner.auth,
+      method: 'POST', headers: agentAuth,
       body: JSON.stringify({
         coordinatorRegistrationId: sol.id,
         title: 'Verify guest reload',
@@ -167,6 +179,15 @@ async function main() {
     });
     check('coordinator can dispatch an opt-out worker explicitly', delegated.task?.assigneeMention === 'terra');
     check('delegation message is linked to its durable task', delegated.message?.missionTaskId === delegated.task?.id);
+    const helperStatus = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/missions/${mission.id}`, {
+      headers: agentAuth,
+    });
+    check('restricted helper token can read mission state', helperStatus.mission?.id === mission.id);
+    const helperUpdate = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/missions/tasks/${delegated.task.id}`, {
+      method: 'PATCH', headers: agentAuth,
+      body: JSON.stringify({ status: 'running', summary: 'Accepted by the worker queue.' }),
+    });
+    check('restricted helper token can update a mission task', helperUpdate.mission?.tasks?.[0]?.status === 'running');
 
     await sleep(300);
     check('owner received the inline mission update', ownerSocket.updated.some((event) => event.message?.mission?.id === mission.id));
