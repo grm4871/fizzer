@@ -259,11 +259,20 @@ function configureWindow(win) {
   };
   win.on('unresponsive', () => logDesktopLifecycle('window.unresponsive'));
   win.on('responsive', () => logDesktopLifecycle('window.responsive'));
+  // Renderer OOM/crashes leave a dead shell unless we reload. Keep agents alive
+  // in main; only bounce the webContents (same path as Ctrl/Cmd+R).
   win.webContents.on('render-process-gone', (_event, details) => {
-    logDesktopLifecycle('renderer.gone', {
-      reason: details?.reason,
-      exitCode: details?.exitCode,
-    });
+    const reason = details?.reason || 'unknown';
+    const exitCode = details?.exitCode;
+    logDesktopLifecycle('renderer.gone', { reason, exitCode });
+    console.error('[Main] render-process-gone', { windowId: win.id, reason, exitCode });
+    // clean-exit is a normal teardown (window close / app quit) — do not reload.
+    if (reason === 'clean-exit' || win.isDestroyed() || win.webContents.isDestroyed()) return;
+    setTimeout(() => {
+      if (win.isDestroyed() || win.webContents.isDestroyed()) return;
+      logDesktopLifecycle('renderer.recover-reload', { reason, exitCode });
+      win.webContents.reloadIgnoringCache();
+    }, 250);
   });
 
   // Block navigation to sites outside cscd.online / local dev.

@@ -136,4 +136,40 @@ describe('Markdown-backed Kanban helpers', () => {
     expect(columns[0].cards.map((card) => card.sourceTitle))
       .toEqual(['First board', 'First board', 'Second board', 'Second board']);
   });
+
+  it('parses the live Cascade kanban board and tolerates non-string content', () => {
+    const live = [
+      '---',
+      'kanban-plugin: board',
+      '---',
+      '',
+      '# Cascade',
+      '',
+      '## Backlog',
+      '',
+      '- [ ] Add MP4 embeds — accept already allows `video/*`; no real `<video>` render yet',
+      '- [ ] Cap anonymous mission fanout concurrency',
+      '- [ ] Deeper task-workspace roadmap — [[Cascade-native parallel workspaces and pull requests]]',
+      '  - durable work-item schema',
+      '',
+      '## In progress',
+      '',
+      '## Done',
+      '',
+      '- [x] Multiplayer account management',
+      '',
+      '%% kanban:settings',
+      '```',
+      '{"kanban-plugin":"board"}',
+      '```',
+      '%%',
+      '',
+    ].join('\n');
+    const board = parseKanbanMarkdown(live);
+    expect(board.columns.map((c) => c.title)).toEqual(['Backlog', 'In progress', 'Done']);
+    expect(board.columns[0].cards.length).toBeGreaterThanOrEqual(3);
+    expect(hasObsidianKanbanMarker(live)).toBe(true);
+    expect(() => parseKanbanMarkdown(undefined as unknown as string)).not.toThrow();
+    expect(parseKanbanMarkdown(undefined as unknown as string).columns).toEqual([]);
+  });
 });

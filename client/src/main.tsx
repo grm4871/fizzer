@@ -5,6 +5,7 @@ import App from './App';
 import { PopoutApp } from './PopoutApp';
 import { getPopoutDescriptor } from './popout';
 import { installPerfObservers } from './perf';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 // Long-task + hot-path profiler (always logs freezes ≥80ms; verbose via
 // localStorage.cascade_perf=1 or ?perf=1). See client/src/perf.ts.
@@ -16,6 +17,8 @@ const popout = getPopoutDescriptor();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    {popout ? <PopoutApp descriptor={popout} /> : <App />}
+    <ErrorBoundary label="Cascade">
+      {popout ? <PopoutApp descriptor={popout} /> : <App />}
+    </ErrorBoundary>
   </StrictMode>,
 );

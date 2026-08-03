@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { LayoutDashboard, Search } from 'lucide-react';
 import { hasObsidianKanbanMarker, parseKanbanMarkdown, type KanbanCard } from './KanbanView';
+import { ErrorBoundary } from './ErrorBoundary';
 import type { Note } from '../api';
 
 export interface SuperkanbanSource {
@@ -64,8 +65,23 @@ interface SuperkanbanViewProps {
 }
 
 export function SuperkanbanView({ notes, loading, error, onOpenNote }: SuperkanbanViewProps) {
+  return (
+    <ErrorBoundary label="Superkanban">
+      <SuperkanbanViewInner notes={notes} loading={loading} error={error} onOpenNote={onOpenNote} />
+    </ErrorBoundary>
+  );
+}
+
+function SuperkanbanViewInner({ notes, loading, error, onOpenNote }: SuperkanbanViewProps) {
   const [query, setQuery] = useState('');
-  const columns = useMemo(() => mergeKanbanSources(notes), [notes]);
+  const columns = useMemo(
+    () => mergeKanbanSources((notes || []).map((note) => ({
+      id: note.id,
+      title: note.title,
+      content: typeof note.content === 'string' ? note.content : '',
+    }))),
+    [notes],
+  );
   const normalizedQuery = query.trim().toLocaleLowerCase();
 
   if (loading) return <div className="superkanban-empty">Loading your Kanban boards…</div>;
@@ -100,7 +116,7 @@ export function SuperkanbanView({ notes, loading, error, onOpenNote }: Superkanb
               <div className="kanban-cards">
                 {cards.map((card) => (
                   <article className={`kanban-card${card.checked ? ' is-complete' : ''}`} key={card.id}>
-                    <div className="kanban-card-title"><ReactMarkdown remarkPlugins={[remarkGfm]}>{card.text}</ReactMarkdown></div>
+                    <div className="kanban-card-title"><ReactMarkdown remarkPlugins={[remarkGfm]}>{card.text || ''}</ReactMarkdown></div>
                     <button type="button" className="superkanban-source" onClick={() => onOpenNote(card.sourceId)} title={`Open ${card.sourceTitle}`}>
                       {card.sourceTitle}
                     </button>

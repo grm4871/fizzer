@@ -18,6 +18,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
+import { ErrorBoundary } from './ErrorBoundary';
 
 export interface KanbanCard {
   id: string;
@@ -73,12 +74,15 @@ function parseCard(line: string, lineIndex: number): KanbanCard | null {
 }
 
 export function hasObsidianKanbanMarker(content: string) {
+  if (typeof content !== 'string' || !content) return false;
   const frontmatter = content.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
   return Boolean(frontmatter && FRONTMATTER_KEY.test(frontmatter[1]));
 }
 
 export function parseKanbanMarkdown(content: string): KanbanBoard {
-  const lines = content.split('\n');
+  // Never throw on open — bad/partial note bodies used to white-screen the pane.
+  const safe = typeof content === 'string' ? content : '';
+  const lines = safe.split('\n');
   const columns: KanbanColumn[] = [];
   const archive: KanbanCard[] = [];
   let activeColumn: KanbanColumn | null = null;
@@ -138,7 +142,7 @@ export function parseKanbanMarkdown(content: string): KanbanBoard {
     archive,
     archiveHeadingLineIndex,
     archiveMarkerLineIndex,
-    hasObsidianMarker: hasObsidianKanbanMarker(content),
+    hasObsidianMarker: hasObsidianKanbanMarker(safe),
   };
 }
 
@@ -375,6 +379,14 @@ function CardMarkdown({ text }: { text: string }) {
 }
 
 export function KanbanView({ content, onContentChange }: KanbanViewProps) {
+  return (
+    <ErrorBoundary label="Kanban">
+      <KanbanViewInner content={content} onContentChange={onContentChange} />
+    </ErrorBoundary>
+  );
+}
+
+function KanbanViewInner({ content, onContentChange }: KanbanViewProps) {
   const board = useMemo(() => parseKanbanMarkdown(content), [content]);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [draggedCardId, setDraggedCardId] = useState<string | null>(null);
