@@ -387,6 +387,9 @@ function driveProcess(
   runId?: number,
   emit?: AgentEmit,
   env?: NodeJS.ProcessEnv,
+  /** Tee of stderr, for callers that must inspect a CLI's diagnostics after a
+   *  zero-exit failure (e.g. Codex reporting a dead session). */
+  onStderr?: (chunk: string) => void,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     let child;
@@ -448,6 +451,7 @@ function driveProcess(
       const chunk = d.toString();
       idle.bump();
       stderr += chunk;
+      onStderr?.(chunk);
       // Dim red for stderr so it is distinguishable in the terminal pane.
       emitHarness(emit, `\x1b[31m${chunk}\x1b[0m`);
     });
@@ -577,9 +581,9 @@ async function runCodex(
   const sandboxConfigArgs = yolo
     ? []
     : ['-c', 'sandbox_workspace_write.network_access=true'];
-  const args = resumeId
-    ? ['exec', 'resume', '--json', '--skip-git-repo-check', '-c', `sandbox_mode=${sandbox}`, ...sandboxConfigArgs, ...reasoningEffortArgs, ...modelArgs, resumeId, prompt, ...imageArgs]
-    : ['exec', '--json', '--skip-git-repo-check', '--sandbox', sandbox, ...sandboxConfigArgs, ...reasoningEffortArgs, ...modelArgs, prompt, ...imageArgs];
+  const buildArgs = (resume?: string) => (resume
+    ? ['exec', 'resume', '--json', '--skip-git-repo-check', '-c', `sandbox_mode=${sandbox}`, ...sandboxConfigArgs, ...reasoningEffortArgs, ...modelArgs, resume, prompt, ...imageArgs]
+    : ['exec', '--json', '--skip-git-repo-check', '--sandbox', sandbox, ...sandboxConfigArgs, ...reasoningEffortArgs, ...modelArgs, prompt, ...imageArgs]);
 
   let summary = '';
   let sessionId: string | undefined;
@@ -667,12 +671,48 @@ async function runCodex(
     }
   };
 
+  // A resumable session lives in Codex's local rollout store, which Cascade
+  // does not control: entries are pruned, absent on another machine, and gone
+  // once `codex` state is cleared. Asking to resume one that is gone fails the
+  // whole turn with "no rollout found for thread id …" — the agent answers
+  // nothing at all, for a reason that has nothing to do with the request. The
+  // session is an optimization, so lose it and start a new one instead.
+  let stderrText = '';
+  const collectStderr = (chunk: string) => { stderrText += chunk; };
+  const drive = (attemptArgs: string[]) => driveProcess(
+    CODEX_BIN, attemptArgs, cwd, onLine,
+    () => summary || 'Completed note operations successfully.',
+    'Codex', runId, emit, env, collectStderr,
+  );
+  const retryFresh = async () => {
+    emitHarness(emit, '\x1b[33m# that session is gone from Codex\'s store — starting a fresh one\x1b[0m\r\n');
+    stderrText = '';
+    return { summary: await drive(buildArgs(undefined)), sessionId };
+  };
+
   try {
-    const summaryText = await driveProcess(CODEX_BIN, args, cwd, onLine, () => summary || 'Completed note operations successfully.', 'Codex', runId, emit, env);
+    let summaryText: string;
+    try {
+      summaryText = await drive(buildArgs(resumeId));
+    } catch (error) {
+      // The usual shape: codex exits non-zero and driveProcess rejects.
+      if (resumeId && isDeadCodexSession(`${stderrText}\n${error instanceof Error ? error.message : String(error)}`)) {
+        return await retryFresh();
+      }
+      throw error;
+    }
+    // The quieter shape: a zero exit with the complaint only on stderr, which
+    // would otherwise complete the turn "successfully" with nothing said.
+    if (resumeId && !sessionId && isDeadCodexSession(stderrText)) return await retryFresh();
     return { summary: summaryText, sessionId };
   } finally {
     cleanup();
   }
+}
+
+/** Codex's way of saying the session id we asked to resume no longer exists. */
+function isDeadCodexSession(stderr: string): boolean {
+  return /no rollout found|thread\/resume failed|session not found/i.test(stderr);
 }
 
 // ═══════════════════════════════════════════════════════════════
