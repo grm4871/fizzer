@@ -555,10 +555,108 @@ function aliasesEqual(a: string[], b: string[]) {
   return a.length === b.length && a.every((value, index) => value === b[index]);
 }
 
+// While an agent message streams, its body grows by a token at a time and
+// react-markdown re-parses the *entire* body on every keystroke-sized update —
+// the dominant main-thread cost during a live run. Paint a throttled snapshot
+// (matching ThinkingBlock's 90ms) so the full markdown parse runs a few times a
+// second instead of per token; the final settle always flushes the exact body.
+const STREAM_BODY_PAINT_MS = 120;
+
+function useThrottledStreamBody(body: string, streaming: boolean): string {
+  const [paintBody, setPaintBody] = useState(body);
+  const lastPaintRef = useRef(0);
+  useEffect(() => {
+    if (!streaming) {
+      // Settled (or never streaming): show the exact body immediately.
+      setPaintBody(body);
+      return;
+    }
+    const now = Date.now();
+    const since = now - lastPaintRef.current;
+    if (since >= STREAM_BODY_PAINT_MS) {
+      lastPaintRef.current = now;
+      setPaintBody(body);
+      return;
+    }
+    // Trailing edge — guarantees the latest chunk lands even if tokens keep
+    // arriving faster than the interval (a debounce would starve steady streams).
+    const timer = window.setTimeout(() => {
+      lastPaintRef.current = Date.now();
+      setPaintBody(body);
+    }, STREAM_BODY_PAINT_MS - since);
+    return () => window.clearTimeout(timer);
+  }, [body, streaming]);
+  return paintBody;
+}
+
+// The actual markdown parse lives in its own memoized child so a throttled-away
+// body update (parent re-render with an unchanged `formattedBody`) bails out
+// here instead of re-parsing the whole message.
+const ChatMarkdownBody = memo(function ChatMarkdownBody({
+  messageId,
+  formattedBody,
+  components,
+  notes,
+  onOpenNote,
+  onOpenSharedNote,
+}: {
+  messageId: string;
+  formattedBody: string;
+  components: Record<string, unknown>;
+  notes: NoteSummary[];
+  onOpenNote?: (id: string) => void;
+  onOpenSharedNote?: (messageId: string, title: string) => void;
+}) {
+  return (
+    <>
+      {splitDocEmbeds(formattedBody).map((part, index) => {
+        if (part.type === 'text') {
+          if (!part.value) return null;
+          return (
+            <ReactMarkdown key={index} remarkPlugins={CHAT_MARKDOWN_PLUGINS} components={components as any}>
+              {part.value}
+            </ReactMarkdown>
+          );
+        }
+        const embedded = findEmbeddedNote(notes, part.value);
+        return (
+          <button
+            key={index}
+            type="button"
+            className={`chat-doc-embed${embedded || onOpenSharedNote ? '' : ' is-missing'}`}
+            onClick={() => embedded ? onOpenNote?.(embedded.id) : onOpenSharedNote?.(messageId, part.value)}
+            disabled={!embedded && !onOpenSharedNote}
+            title={embedded ? `Open ${embedded.title}` : 'Open shared note'}
+            draggable={!!embedded}
+            onDragStart={(event) => {
+              if (!embedded) return;
+              event.dataTransfer.setData(NOTE_DND_TYPE, embedded.id);
+              event.dataTransfer.setData('text/plain', noteEmbedMarkdown(embedded));
+              event.dataTransfer.effectAllowed = 'copyMove';
+            }}
+          >
+            <span className="chat-doc-embed-title">
+              {embedded?.title ?? (onOpenSharedNote ? part.value : `Missing note: ${part.value}`)}
+            </span>
+            {embedded?.content_preview?.trim() && (
+              <span className="chat-doc-embed-preview">
+                {embedded.content_preview.trim().length > 180
+                  ? `${embedded.content_preview.trim().slice(0, 179)}…`
+                  : embedded.content_preview.trim()}
+              </span>
+            )}
+          </button>
+        );
+      })}
+    </>
+  );
+});
+
 // ChatMessageText stays module-local; work-trace uses its own lightweight markdown.
 const ChatMessageText = memo(function ChatMessageText({
   messageId,
   body,
+  streaming = false,
   mentionableAliases,
   notes = [],
   onOpenNote,
@@ -566,11 +664,14 @@ const ChatMessageText = memo(function ChatMessageText({
 }: {
   messageId: string;
   body: string;
+  streaming?: boolean;
   mentionableAliases: string[];
   notes?: NoteSummary[];
   onOpenNote?: (id: string) => void;
   onOpenSharedNote?: (messageId: string, title: string) => void;
 }) {
+  const paintBody = useThrottledStreamBody(body, streaming);
+
   const withMentions = useCallback((children: ReactNode): ReactNode => {
     if (Array.isArray(children)) {
       return children.flatMap((child) =>
@@ -582,7 +683,7 @@ const ChatMessageText = memo(function ChatMessageText({
   }, [mentionableAliases]);
 
   const formattedBody = useMemo(() => {
-    const processed = body.replace(/\\+`/g, '`');
+    const processed = paintBody.replace(/\\+`/g, '`');
     const trimmed = processed.trim();
     if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
       try {
@@ -595,7 +696,7 @@ const ChatMessageText = memo(function ChatMessageText({
       }
     }
     return processed;
-  }, [body]);
+  }, [paintBody]);
 
   const components = useMemo(() => ({
     p: ({ children }: { children?: ReactNode }) => <p>{withMentions(children)}</p>,
@@ -633,50 +734,18 @@ const ChatMessageText = memo(function ChatMessageText({
   }), [withMentions]);
 
   return (
-    <>
-      {splitDocEmbeds(formattedBody).map((part, index) => {
-        if (part.type === 'text') {
-          if (!part.value) return null;
-          return (
-            <ReactMarkdown key={index} remarkPlugins={CHAT_MARKDOWN_PLUGINS} components={components}>
-              {part.value}
-            </ReactMarkdown>
-          );
-        }
-        const embedded = findEmbeddedNote(notes, part.value);
-        return (
-          <button
-            key={index}
-            type="button"
-            className={`chat-doc-embed${embedded || onOpenSharedNote ? '' : ' is-missing'}`}
-            onClick={() => embedded ? onOpenNote?.(embedded.id) : onOpenSharedNote?.(messageId, part.value)}
-            disabled={!embedded && !onOpenSharedNote}
-            title={embedded ? `Open ${embedded.title}` : 'Open shared note'}
-            draggable={!!embedded}
-            onDragStart={(event) => {
-              if (!embedded) return;
-              event.dataTransfer.setData(NOTE_DND_TYPE, embedded.id);
-              event.dataTransfer.setData('text/plain', noteEmbedMarkdown(embedded));
-              event.dataTransfer.effectAllowed = 'copyMove';
-            }}
-          >
-            <span className="chat-doc-embed-title">
-              {embedded?.title ?? (onOpenSharedNote ? part.value : `Missing note: ${part.value}`)}
-            </span>
-            {embedded?.content_preview?.trim() && (
-              <span className="chat-doc-embed-preview">
-                {embedded.content_preview.trim().length > 180
-                  ? `${embedded.content_preview.trim().slice(0, 179)}…`
-                  : embedded.content_preview.trim()}
-              </span>
-            )}
-          </button>
-        );
-      })}
-    </>
+    <ChatMarkdownBody
+      messageId={messageId}
+      formattedBody={formattedBody}
+      components={components}
+      notes={notes}
+      onOpenNote={onOpenNote}
+      onOpenSharedNote={onOpenSharedNote}
+    />
   );
 }, (prev, next) =>
   prev.messageId === next.messageId
+  && prev.streaming === next.streaming
   && prev.onOpenSharedNote === next.onOpenSharedNote
   &&
   prev.body === next.body
@@ -1285,7 +1354,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
                   {message.body
                     && !isSteeringContinuationMessage(message)
                     && !(message.status === 'running' && /^Thinking(?:\.{3}|…)$/.test(message.body.trim()))
-                    && <ChatMessageText messageId={message.id} body={message.body} mentionableAliases={mentionableAliases} notes={notes} onOpenNote={onOpenNote} onOpenSharedNote={onOpenSharedNote} />}
+                    && <ChatMessageText messageId={message.id} body={message.body} streaming={message.status === 'running'} mentionableAliases={mentionableAliases} notes={notes} onOpenNote={onOpenNote} onOpenSharedNote={onOpenSharedNote} />}
                   {message.mission && <ChatMissionCard mission={message.mission} />}
                   {message.changeRequest && (
                     <div className="chat-change-request">
