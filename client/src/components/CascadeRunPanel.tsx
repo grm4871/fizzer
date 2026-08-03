@@ -568,7 +568,7 @@ export const CascadeRunPanel = memo(function CascadeRunPanel({
 
   return (
     <div
-      className={`cascade-run-panel ${open ? 'open' : ''} ${isRunning ? 'is-running' : ''}`}
+      className={`cascade-run-panel ${open ? 'open' : ''} ${isRunning ? 'is-running' : 'is-settled'}${message.status === 'failed' ? ' is-failed' : ''}${message.status === 'canceled' ? ' is-canceled' : ''}`}
       onClick={(event) => event.stopPropagation()}
       onPointerDown={(event) => event.stopPropagation()}
     >

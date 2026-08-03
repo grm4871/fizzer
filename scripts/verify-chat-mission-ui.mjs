@@ -255,6 +255,25 @@ try {
   const initiallyExpanded = await workTrace.locator('.chat-work-trace-toggle').getAttribute('aria-expanded');
   check('worker chatter collapses into a work trace', await workTrace.isVisible());
   check('collapsed work trace exposes workflow decals', await workTrace.locator('.chat-work-decal').count() >= 1);
+  const inlineActivityStyle = await workTrace.evaluate((node) => {
+    const toggle = node.querySelector('.chat-work-trace-toggle');
+    const dot = node.querySelector('.chat-work-decal.is-current .chat-work-decal-mark');
+    const label = node.querySelector('.chat-work-decal.is-current .chat-work-decal-label');
+    return {
+      border: getComputedStyle(node).borderTopWidth,
+      paddingLeft: toggle ? getComputedStyle(toggle).paddingLeft : '',
+      dotWidth: dot ? getComputedStyle(dot).width : '',
+      dotRadius: dot ? getComputedStyle(dot).borderRadius : '',
+      labelWeight: label ? Number(getComputedStyle(label).fontWeight) : 0,
+    };
+  });
+  check('collapsed workflow uses an inline status dot aligned with chat text', (
+    inlineActivityStyle.border === '0px'
+      && inlineActivityStyle.paddingLeft === '0px'
+      && inlineActivityStyle.dotWidth === '8px'
+      && inlineActivityStyle.dotRadius === '50%'
+      && inlineActivityStyle.labelWeight >= 500
+  ), JSON.stringify(inlineActivityStyle));
   check('coordinator prose flattens when later work is still active', (
     !finalVisible && !traceText.includes('user-facing answer remains')
   ), `finalVisible=${finalVisible}, trace=${JSON.stringify(traceText)}`);

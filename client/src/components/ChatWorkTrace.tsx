@@ -189,6 +189,7 @@ export const ChatWorkTrace = memo(function ChatWorkTrace({
   const pinBottomRef = useRef(true);
   const summary = useMemo(() => workTraceSummary(trace), [trace]);
   const decals = useMemo(() => workTraceDecals(trace), [trace]);
+  const currentPhase = decals[decals.length - 1]?.phase || 'working';
 
   useEffect(() => {
     if (!selectedMessageId) return;
@@ -223,7 +224,7 @@ export const ChatWorkTrace = memo(function ChatWorkTrace({
   if (trace.length === 0) return null;
 
   return (
-    <div className={`chat-work-trace ${open ? 'is-open' : ''} ${live ? 'is-live' : ''}`}>
+    <div className={`chat-work-trace phase-${currentPhase} ${open ? 'is-open' : ''} ${live ? 'is-live' : ''}`}>
       <button
         type="button"
         className="chat-work-trace-toggle"
