@@ -3,6 +3,12 @@ export type SessionTurn = {
   release: () => void;
 };
 
+type SessionTurnHandle = { release: () => void; generation: number };
+
+/** Active turns per session key, oldest first — used to unstick steers. */
+const sessionTurnHandles = new Map<string, SessionTurnHandle[]>();
+let sessionTurnGeneration = 0;
+
 /** Recover the active run identity from durable chat projection after reload. */
 export function findProjectedActiveSessionRun(
   messages: Array<{ registrationId?: string; runId?: number; status?: string }>,
@@ -39,16 +45,44 @@ export function enqueueSessionTurn(
   });
   tails.set(key, turn);
 
+  const generation = ++sessionTurnGeneration;
   let released = false;
-  return {
-    preceding,
-    release: () => {
-      if (released) return;
-      released = true;
-      resolveTurn();
-      if (tails.get(key) === turn) tails.delete(key);
-    },
+  const release = () => {
+    if (released) return;
+    released = true;
+    resolveTurn();
+    if (tails.get(key) === turn) tails.delete(key);
+    const list = sessionTurnHandles.get(key);
+    if (!list) return;
+    const next = list.filter((handle) => handle.generation !== generation);
+    if (next.length) sessionTurnHandles.set(key, next);
+    else sessionTurnHandles.delete(key);
   };
+  const list = sessionTurnHandles.get(key) ?? [];
+  list.push({ release, generation });
+  sessionTurnHandles.set(key, list);
+
+  return { preceding, release };
+}
+
+/**
+ * Unstick a human/orchestrator steer when the predecessor never released after
+ * cancel (dead socket, hung provider, app restart mid-turn). Releases every
+ * turn for the session except the newest waiter so the steer can proceed.
+ * Returns how many prior turns were force-released.
+ */
+export function forceReleasePriorSessionTurns(key: string): number {
+  const list = sessionTurnHandles.get(key);
+  if (!list || list.length <= 1) return 0;
+  const prior = list.slice(0, -1);
+  for (const handle of prior) handle.release();
+  return prior.length;
+}
+
+/** Test helper: drop module-level handle state between cases. */
+export function resetSessionTurnHandlesForTests(): void {
+  sessionTurnHandles.clear();
+  sessionTurnGeneration = 0;
 }
 
 /**

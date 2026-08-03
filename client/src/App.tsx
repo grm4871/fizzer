@@ -75,7 +75,7 @@ import {
   type ChatState,
   type PersistedSession,
 } from './chat/session';
-import { consumePendingSessionSteer, enqueueSessionTurn, findProjectedActiveSessionRun, queuesBehindActiveSession, requestSessionSteer } from './chat/sessionTurns';
+import { consumePendingSessionSteer, enqueueSessionTurn, findProjectedActiveSessionRun, forceReleasePriorSessionTurns, queuesBehindActiveSession, requestSessionSteer } from './chat/sessionTurns';
 import { Activity, Gem, PanelLeftOpen, Users } from 'lucide-react';
 
 type ChatAgentDispatch = {
@@ -1454,6 +1454,17 @@ export default function App() {
       ? `agent-dispatch-${dispatchId}`
       : `agent-${agentId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
+    const cancelSteeringRun = async (runId: number) => {
+      try {
+        await api<{ success: boolean }>(`/api/runs/${runId}/cancel`, {
+          method: 'POST',
+          body: JSON.stringify({ steering: true }),
+        });
+      } catch {
+        // Terminal event / 409 retry still frees the lease when possible.
+      }
+    };
+
     if (steeringTurn) {
       // A reload preserves the durable running message but clears this
       // renderer-local map. Recover its run id so a follow-up can still steer
@@ -1472,13 +1483,12 @@ export default function App() {
         watermarkKey,
       );
       if (runToInterrupt != null) {
-        void api<{ success: boolean }>(`/api/runs/${runToInterrupt}/cancel`, {
-          method: 'POST',
-          body: JSON.stringify({ steering: true }),
-        }).catch(() => {
-          // The terminal event or the normal serialized fallback still releases
-          // the queued turn; a failed interrupt must not create parallel runs.
-        });
+        // Await cancel so the provider lease is released before we wait on the
+        // local turn chain. Fire-and-forget left steers stuck for 60s then fail.
+        await cancelSteeringRun(runToInterrupt);
+        // If the predecessor never saw a terminal event (dead socket / hung
+        // CLI), force-release it so this steer is not stranded.
+        forceReleasePriorSessionTurns(watermarkKey);
       }
     } else if (!orchestrationQueue) {
       // App restart clears local session tails, so the next human ping is not
@@ -1492,10 +1502,8 @@ export default function App() {
       if (projectedRunId != null) {
         activeAgentSessionRunRef.current.set(watermarkKey, projectedRunId);
         interruptedAgentSessionRunRef.current.set(watermarkKey, projectedRunId);
-        void api<{ success: boolean }>(`/api/runs/${projectedRunId}/cancel`, {
-          method: 'POST',
-          body: JSON.stringify({ steering: true }),
-        }).catch(() => {});
+        await cancelSteeringRun(projectedRunId);
+        forceReleasePriorSessionTurns(watermarkKey);
       }
     }
 
@@ -1619,18 +1627,44 @@ export default function App() {
           status: 'running',
         }));
       } else {
-        let startupTimeout: number | undefined;
-        await Promise.race([
-          sessionTurn.preceding,
-          new Promise<never>((_resolve, reject) => {
-            startupTimeout = window.setTimeout(
-              () => reject(new Error('Agent run did not start within 60 seconds. Please try again.')),
-              60_000,
-            );
-          }),
-        ]).finally(() => {
-          if (startupTimeout != null) window.clearTimeout(startupTimeout);
-        });
+        // Human / orchestrator steers: never fail the turn solely because the
+        // predecessor hung after cancel. Interrupt again, force-release priors,
+        // then proceed — createRun's 409 path still serializes the provider lease.
+        const waitForPreceding = async (ms: number) => {
+          if (!sessionTurn.preceding) return;
+          let startupTimeout: number | undefined;
+          try {
+            await Promise.race([
+              sessionTurn.preceding,
+              new Promise<never>((_resolve, reject) => {
+                startupTimeout = window.setTimeout(
+                  () => reject(new Error('preceding-timeout')),
+                  ms,
+                );
+              }),
+            ]);
+          } finally {
+            if (startupTimeout != null) window.clearTimeout(startupTimeout);
+          }
+        };
+        try {
+          await waitForPreceding(steeringTurn ? 45_000 : 60_000);
+        } catch {
+          const projectedRunId = findProjectedActiveSessionRun(
+            chatStateRef.current.messagesByChannel[channelId] ?? [],
+            registration.id,
+          );
+          if (projectedRunId != null) {
+            activeAgentSessionRunRef.current.set(watermarkKey, projectedRunId);
+            await cancelSteeringRun(projectedRunId);
+          }
+          forceReleasePriorSessionTurns(watermarkKey);
+          try {
+            await waitForPreceding(5_000);
+          } catch {
+            // Last resort: proceed. Server 409 + cancel retries handle a still-open lease.
+          }
+        }
       }
       // One sticky session per agent: the run resumes (and extends) the member's
       // conversation, so its earlier turns are already in context. A `/clear`

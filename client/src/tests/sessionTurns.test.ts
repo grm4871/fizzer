@@ -1,11 +1,17 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi, beforeEach } from 'vitest';
 import {
   consumePendingSessionSteer,
   enqueueSessionTurn,
+  forceReleasePriorSessionTurns,
   queuesBehindActiveSession,
   requestSessionSteer,
   findProjectedActiveSessionRun,
+  resetSessionTurnHandlesForTests,
 } from '../chat/sessionTurns';
+
+beforeEach(() => {
+  resetSessionTurnHandlesForTests();
+});
 
 describe('findProjectedActiveSessionRun', () => {
   it('recovers the newest running run for a registration after renderer reload', () => {
@@ -67,5 +73,22 @@ describe('chat session turn serialization', () => {
     expect(consumePendingSessionSteer(interrupted, pending, 'sol:conversation-1', 42)).toBe(true);
     expect(interrupted.get('sol:conversation-1')).toBe(42);
     expect(pending.size).toBe(0);
+  });
+
+  it('force-releases prior turns so a steer is not stuck behind a hung predecessor', async () => {
+    const tails = new Map<string, Promise<void>>();
+    const first = enqueueSessionTurn(tails, 'supagrok:conversation-1');
+    const second = enqueueSessionTurn(tails, 'supagrok:conversation-1');
+    const dispatched = vi.fn();
+    void second.preceding?.then(dispatched);
+    await Promise.resolve();
+    expect(dispatched).not.toHaveBeenCalled();
+
+    expect(forceReleasePriorSessionTurns('supagrok:conversation-1')).toBe(1);
+    await second.preceding;
+    expect(dispatched).toHaveBeenCalledOnce();
+    // First release is idempotent after force-release.
+    first.release();
+    second.release();
   });
 });
