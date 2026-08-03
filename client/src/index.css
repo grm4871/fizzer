@@ -3411,7 +3411,8 @@ a {
 }
 .cascade-run-panel:not(.open) .crp-toggle-label,
 .cascade-run-panel:not(.open) .crp-spinner,
-.cascade-run-panel:not(.open) .crp-chevron {
+.cascade-run-panel:not(.open) .crp-chevron,
+.cascade-run-panel:not(.open) .crp-stop {
   display: none;
 }
 .cascade-run-panel:not(.open) .crp-toggle-summary {

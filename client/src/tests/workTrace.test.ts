@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ChatMessage } from '../components/ChatView';
 import {
   isForcedWorkTraceLine,
+  isSteeringContinuationMessage,
   isWorkTraceMessage,
   partitionWorkRun,
   segmentTranscript,
@@ -20,6 +21,14 @@ function msg(partial: Partial<ChatMessage> & Pick<ChatMessage, 'id' | 'author' |
 }
 
 describe('workTrace', () => {
+  it('recognizes the durable steering sentinel without exposing it as prose', () => {
+    expect(isSteeringContinuationMessage(msg({
+      id: 'steered', author: 'Sol', body: 'Steered into the continuation below.', status: 'canceled',
+    }))).toBe(true);
+    expect(isSteeringContinuationMessage(msg({
+      id: 'cancel', author: 'Sol', body: 'Run canceled by user.', status: 'canceled',
+    }))).toBe(false);
+  });
   it('classifies agents, mission wakes, and humans', () => {
     expect(isWorkTraceMessage(msg({ id: '1', author: 'jt', body: 'hi' }))).toBe(false);
     expect(isWorkTraceMessage(msg({ id: '2', author: 'Sol', body: 'ok', agentId: 'codex' }))).toBe(true);

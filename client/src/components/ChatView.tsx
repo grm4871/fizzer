@@ -12,7 +12,7 @@ import { ChatSidebarButtons } from './ChatSidebarButtons';
 import { ChatWorkspacePanel } from './ChatWorkspacePanel';
 import { ChatWorkTrace } from './ChatWorkTrace';
 import { hasRunActivity } from '../chat/harnessActivity';
-import { segmentTranscript } from '../chat/workTrace';
+import { isSteeringContinuationMessage, segmentTranscript } from '../chat/workTrace';
 
 export const CHAT_NOTE_MARKER = 'cascade://chat-channel';
 export const CHAT_MEDIA_LIMIT = 8;
@@ -728,7 +728,7 @@ export function getSteeringPromptLabels(
     const beforeKey = before.registrationId || before.agentId;
     const afterKey = after.registrationId || after.agentId;
     if (!beforeKey || beforeKey !== afterKey || before.status !== 'canceled') continue;
-    if (!/Steered into the continuation below\./i.test(before.body)) continue;
+    if (!isSteeringContinuationMessage(before)) continue;
     const registration = registeredAgents.find((item) => item.id === afterKey || item.agentId === afterKey);
     if (!registration) continue;
     labels.set(prompt.id, normalizeMention(registration.mention || registration.agentId));
@@ -1219,6 +1219,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
                     </div>
                   )}
                   {message.body
+                    && !isSteeringContinuationMessage(message)
                     && !(message.status === 'running' && /^Thinking(?:\.{3}|…)$/.test(message.body.trim()))
                     && <ChatMessageText messageId={message.id} body={message.body} mentionableAliases={mentionableAliases} notes={notes} onOpenNote={onOpenNote} onOpenSharedNote={onOpenSharedNote} />}
                   {message.mission && <ChatMissionCard mission={message.mission} />}

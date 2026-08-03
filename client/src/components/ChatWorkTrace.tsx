@@ -13,6 +13,7 @@ import remarkBreaks from 'remark-breaks';
 import {
   workTraceAuthorKey,
   workTraceDecals,
+  isSteeringContinuationMessage,
   workTracePreview,
   workTraceStatusLabel,
   workTraceSummary,
@@ -134,6 +135,7 @@ const WorkTraceLine = memo(function WorkTraceLine({
             </div>
           )}
           {message.body
+            && !isSteeringContinuationMessage(message)
             && !(message.status === 'running' && /^Thinking(?:\.{3}|…)$/.test(message.body.trim()))
             && <WorkTraceBody body={message.body} />}
           {showHarness && (

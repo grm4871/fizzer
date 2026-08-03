@@ -76,6 +76,14 @@ export function workTraceStatusLabel(message: Pick<ChatMessage, 'status' | 'body
   return preview || '(empty)';
 }
 
+/** Durable steering sentinel: useful for presentation state, never user-facing prose. */
+export function isSteeringContinuationMessage(
+  message: Pick<ChatMessage, 'status' | 'body'>,
+): boolean {
+  return message.status === 'canceled'
+    && /Steered into the continuation below\./i.test(message.body || '');
+}
+
 export type WorkTracePhase =
   | 'routing'
   | 'working'
