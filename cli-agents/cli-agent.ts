@@ -77,11 +77,7 @@ function terminateCliProcess(child: ChildProcess, processGroup: boolean): void {
   try { child.kill('SIGTERM'); } catch { /* already settled */ }
 }
 
-/** Cancel one CLI run, including descendants of launchers such as Akron. */
-export function cancelCliAgentRun(runId: number): boolean {
-  const child = activeCliProcesses.get(runId);
-  if (!child) return false;
-  const processGroup = groupedCliProcesses.has(runId);
+function terminateCliProcessWithEscalation(child: ChildProcess, processGroup: boolean): void {
   terminateCliProcess(child, processGroup);
   const forceKill = setTimeout(() => {
     if (child.exitCode !== null || child.signalCode !== null) return;
@@ -91,6 +87,14 @@ export function cancelCliAgentRun(runId: number): boolean {
     try { child.kill('SIGKILL'); } catch { /* already settled */ }
   }, 5_000);
   forceKill.unref?.();
+}
+
+/** Cancel one CLI run, including descendants of launchers such as Akron. */
+export function cancelCliAgentRun(runId: number): boolean {
+  const child = activeCliProcesses.get(runId);
+  if (!child) return false;
+  const processGroup = groupedCliProcesses.has(runId);
+  terminateCliProcessWithEscalation(child, processGroup);
   activeCliProcesses.delete(runId);
   groupedCliProcesses.delete(runId);
   return true;
@@ -202,12 +206,21 @@ const CLI_IDLE_TIMEOUT_MS = Number(
 const CLI_PROGRESS_HEARTBEAT_MS = Math.max(10, Number(
   process.env.RUNNER_CLI_HEARTBEAT_MS || 15_000,
 ));
+// Akron's local Grok bridge can hold an upstream stream open forever without a
+// response byte. A short provider-silence bound prevents one wedged request
+// from monopolizing the coordinator's sticky slot for the generic 30 minutes.
+const AKRON_IDLE_TIMEOUT_MS = Math.max(1_000, Number(
+  process.env.RUNNER_AKRON_IDLE_TIMEOUT_MS || 120_000,
+));
 
 /**
  * Idle-timeout handle: `bump()` on every chunk of child output, `clear()` once
  * the process settles. Fires `onIdle` after CLI_IDLE_TIMEOUT_MS of silence.
  */
-function createIdleTimer(onIdle: () => void): { bump: () => void; clear: () => void } {
+function createIdleTimer(
+  onIdle: () => void,
+  timeoutMs = CLI_IDLE_TIMEOUT_MS,
+): { bump: () => void; clear: () => void } {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const clear = () => {
     if (timer) clearTimeout(timer);
@@ -215,7 +228,7 @@ function createIdleTimer(onIdle: () => void): { bump: () => void; clear: () => v
   };
   const bump = () => {
     clear();
-    timer = setTimeout(onIdle, CLI_IDLE_TIMEOUT_MS);
+    timer = setTimeout(onIdle, timeoutMs);
   };
   bump();
   return { bump, clear };
@@ -1959,6 +1972,7 @@ async function runAkronGrok(prompt: string, cwd: string, emit: AgentEmit, _resum
     runId,
     emit,
     env,
+    AKRON_IDLE_TIMEOUT_MS,
   );
   return { summary: summaryText };
 }
@@ -1975,6 +1989,7 @@ function driveHermesProcess(
   runId?: number,
   emit?: AgentEmit,
   env?: NodeJS.ProcessEnv,
+  idleTimeoutMs = CLI_IDLE_TIMEOUT_MS,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     let child;
@@ -2026,10 +2041,10 @@ function driveHermesProcess(
         settled = true;
         clearInterval(heartbeat);
         cleanUpProcess();
-        terminateCliProcess(child, process.platform !== 'win32');
-        reject(new Error(`${label} produced no output for ${CLI_IDLE_TIMEOUT_MS}ms and was stopped.`));
+        terminateCliProcessWithEscalation(child, process.platform !== 'win32');
+        reject(new Error(`${label} produced no output for ${idleTimeoutMs}ms and was stopped.`));
       }
-    });
+    }, idleTimeoutMs);
 
     child.stdout.on('data', (d: Buffer | string) => {
       const chunk = d.toString();

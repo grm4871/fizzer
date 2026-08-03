@@ -1480,6 +1480,23 @@ export default function App() {
           // the queued turn; a failed interrupt must not create parallel runs.
         });
       }
+    } else if (!orchestrationQueue) {
+      // App restart clears local session tails, so the next human ping is not
+      // classified as a steer even though a durable open run may still hold the
+      // sticky registration lease. Interrupt that ghost so POST /runs does not
+      // fail forever with "still stopping".
+      const projectedRunId = findProjectedActiveSessionRun(
+        chatStateRef.current.messagesByChannel[channelId] ?? [],
+        registration.id,
+      );
+      if (projectedRunId != null) {
+        activeAgentSessionRunRef.current.set(watermarkKey, projectedRunId);
+        interruptedAgentSessionRunRef.current.set(watermarkKey, projectedRunId);
+        void api<{ success: boolean }>(`/api/runs/${projectedRunId}/cancel`, {
+          method: 'POST',
+          body: JSON.stringify({ steering: true }),
+        }).catch(() => {});
+      }
     }
 
     let runSocket: ReturnType<typeof connectRunsSocket> | null = null;
@@ -1761,36 +1778,73 @@ export default function App() {
       // server persists every event and also broadcasts the chat projection;
       // after POST succeeds we join the run room and backfill anything emitted
       // before the transport connected.
-      const res = await api<{ run: { id: number; status: string; conversation_id: string }; reused?: boolean }>(`/api/vaults/${vaultId}/runs`, {
-        method: 'POST',
-        body: JSON.stringify({
-          prompt: runPrompt,
-          note_id: null,
-          agent: agentId,
-          conversation_id: conversationId,
-          model: registration.model || undefined,
-          cwd: normalizeChatCwd(registration.cwd) || undefined,
-          yolo: registration.yolo,
-          images: runImages,
-          // Identifies the registered agent so the server can route the run to the
-          // agent owner's desktop runner (cross-user pings) and enforce its
-          // pingable-by-others setting, rather than trusting these client values.
-          registrationId: registration.id,
-          ...(dispatchId ? { chatDispatchId: dispatchId } : {}),
-          // Link the run to this chat message so the server persists/broadcasts
-          // the streamed reply to all clients (see serverOwnedChatMessageIdsRef).
-          chat: {
-            channelId,
-            messageId: agentMessageId,
-            triggeringMessageId: triggeringMessage.id,
-            author: registration.displayName || agentLabel(agentId),
-            // Hermes already has a large native agent prompt. Only pay for
-            // Cascade-specific context when the request genuinely depends on it.
-            contextNeeded: needsRecentChatContext(prompt),
-            workspaceNeeded: needsCascadeWorkspaceContext(prompt),
-          },
-        }),
+      const runBody = JSON.stringify({
+        prompt: runPrompt,
+        note_id: null,
+        agent: agentId,
+        conversation_id: conversationId,
+        model: registration.model || undefined,
+        cwd: normalizeChatCwd(registration.cwd) || undefined,
+        yolo: registration.yolo,
+        images: runImages,
+        // Identifies the registered agent so the server can route the run to the
+        // agent owner's desktop runner (cross-user pings) and enforce its
+        // pingable-by-others setting, rather than trusting these client values.
+        registrationId: registration.id,
+        ...(dispatchId ? { chatDispatchId: dispatchId } : {}),
+        // Link the run to this chat message so the server persists/broadcasts
+        // the streamed reply to all clients (see serverOwnedChatMessageIdsRef).
+        chat: {
+          channelId,
+          messageId: agentMessageId,
+          triggeringMessageId: triggeringMessage.id,
+          author: registration.displayName || agentLabel(agentId),
+          // Hermes already has a large native agent prompt. Only pay for
+          // Cascade-specific context when the request genuinely depends on it.
+          contextNeeded: needsRecentChatContext(prompt),
+          workspaceNeeded: needsCascadeWorkspaceContext(prompt),
+        },
       });
+      const createRun = () => api<{ run: { id: number; status: string; conversation_id: string }; reused?: boolean }>(
+        `/api/vaults/${vaultId}/runs`,
+        { method: 'POST', body: runBody },
+      );
+      // 409 "still stopping" means the sticky session lease is held by another
+      // open run (often a ghost after app restart). Cancel + retry instead of
+      // treating the turn as permanently failed.
+      let res: { run: { id: number; status: string; conversation_id: string }; reused?: boolean };
+      try {
+        res = await createRun();
+      } catch (error) {
+        if (!(error instanceof ApiError) || error.status !== 409) throw error;
+        const activeId = Number(error.data?.activeRunId);
+        if (Number.isFinite(activeId)) {
+          await api<{ success: boolean }>(`/api/runs/${activeId}/cancel`, {
+            method: 'POST',
+            body: JSON.stringify({ steering: true }),
+          }).catch(() => {});
+        }
+        let lastError: unknown = error;
+        res = await (async () => {
+          for (let attempt = 0; attempt < 6; attempt += 1) {
+            await new Promise((resolve) => window.setTimeout(resolve, 150 + attempt * 150));
+            try {
+              return await createRun();
+            } catch (retryError) {
+              lastError = retryError;
+              if (!(retryError instanceof ApiError) || retryError.status !== 409) throw retryError;
+              const retryActiveId = Number(retryError.data?.activeRunId);
+              if (Number.isFinite(retryActiveId)) {
+                await api<{ success: boolean }>(`/api/runs/${retryActiveId}/cancel`, {
+                  method: 'POST',
+                  body: JSON.stringify({ steering: true }),
+                }).catch(() => {});
+              }
+            }
+          }
+          throw lastError;
+        })();
+      }
 
       activeRunId = res.run.id;
       reportLatencyStage('runCreated', { runId: res.run.id, reused: res.reused === true });

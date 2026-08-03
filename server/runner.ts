@@ -18,6 +18,7 @@ import {
   clearDelegatedRun,
   getDelegatedRunOwner,
   isDelegatedRun,
+  isDesktopRunnerOnline,
 } from './desktop-runner.js';
 
 export type AgentId = 'claude-code' | 'codex' | 'grok' | 'antigravity' | 'copilot' | 'hermes' | 'akron-grok' | 'omp';
@@ -302,7 +303,11 @@ export async function cancelRun(
       // continuation when it sees this event; publishing early allowed two
       // Codex processes to resume the same provider session concurrently.
       const stopped = await cancelDelegatedRun(ownerId, runId);
-      if (!stopped) return false;
+      if (!stopped) {
+        // App restart / offline desktop can never ack. Force-settle so sticky
+        // channel leases do not strand later turns behind "still stopping".
+        if (isDesktopRunnerOnline(ownerId)) return false;
+      }
     }
     clearDelegatedRun(runId);
     clearDelegatedRunRecord(db, runId);
@@ -331,6 +336,39 @@ export async function cancelRun(
   }
 
   return false;
+}
+
+/**
+ * True when an open sticky-session lease cannot still be running on a desktop:
+ * no owner, or the recorded owner is offline. Used to release ghost leases after
+ * app restart so the next chat turn is not permanently 409'd.
+ */
+export function isUnreclaimableOpenRun(db: Db, runId: number): boolean {
+  const run = getRun(db, runId);
+  if (!run || isTerminalRunStatus(run.status)) return false;
+  const ownerId = getDelegatedRunOwner(runId) ?? getDelegatedRunOwnerFromDb(db, runId);
+  if (ownerId == null) return true;
+  return !isDesktopRunnerOnline(ownerId);
+}
+
+/** Force a terminal cancel for a ghost open run that can never ack stop. */
+export function forceCancelUnreclaimableRun(
+  db: Db,
+  runId: number,
+  summary = 'Run abandoned after desktop disconnect or restart.',
+): boolean {
+  const run = getRun(db, runId);
+  if (!run || isTerminalRunStatus(run.status)) return false;
+  if (!isUnreclaimableOpenRun(db, runId)) return false;
+  clearDelegatedRun(runId);
+  clearDelegatedRunRecord(db, runId);
+  db.prepare(`
+    UPDATE runs
+    SET status = 'canceled', finished_at = datetime('now'), summary = ?
+    WHERE id = ? AND status IN ('queued', 'running')
+  `).run(summary, runId);
+  publishRunEvent(db, runId, 'status', { status: 'canceled', summary });
+  return true;
 }
 
 export async function startRun(

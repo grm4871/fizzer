@@ -87,7 +87,11 @@ export type SearchResult = {
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
 export class ApiError extends Error {
-  constructor(message: string, public readonly status: number) {
+  constructor(
+    message: string,
+    public readonly status: number,
+    public readonly data: Record<string, unknown> = {},
+  ) {
     super(message);
     this.name = 'ApiError';
   }
@@ -115,7 +119,14 @@ export async function api<T>(path: string, options: RequestInit = {}) {
   const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
   const data = await res.json().catch(() => ({}));
   if (res.status === 401) localStorage.removeItem('docs_token');
-  if (!res.ok) throw new ApiError(data.error || 'Request failed', res.status);
+  if (!res.ok) {
+    const body = data && typeof data === 'object' ? data as Record<string, unknown> : {};
+    throw new ApiError(
+      typeof body.error === 'string' ? body.error : 'Request failed',
+      res.status,
+      body,
+    );
+  }
   return data as T;
 }
 

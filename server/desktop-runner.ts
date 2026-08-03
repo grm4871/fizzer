@@ -255,11 +255,14 @@ export function initDesktopRunners(io: Server, db: Db, hooks: RunnerHooks): void
       const previousInstanceId = runnerInstanceIds.get(user.id);
       if (nextInstanceId) runnerInstanceIds.set(user.id, nextInstanceId);
 
-      // A renderer reload preserves the main-owned children and reports them
-      // above. A changed main-process id means those omitted runs cannot still
-      // be attached to this Electron process, so settle them immediately and
-      // visibly instead of leaving permanent "running" ghosts.
-      if (previousInstanceId && nextInstanceId && previousInstanceId !== nextInstanceId) {
+      const instanceChanged = Boolean(
+        previousInstanceId && nextInstanceId && previousInstanceId !== nextInstanceId,
+      );
+      // Only a changed Electron-main instance proves omitted children are dead.
+      // A renderer/socket reconnect can transiently register before its main
+      // snapshot arrives; treating that omission as authoritative kills healthy
+      // long-running agents.
+      if (instanceChanged) {
         const active = new Set(reclaimed);
         const interrupted = listOpenDelegatedRuns(db)
           .filter((row) => row.owner_user_id === user.id && !active.has(row.run_id))

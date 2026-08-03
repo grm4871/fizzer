@@ -115,7 +115,7 @@ async function main() {
       const timer = setTimeout(() => reject(new Error('Runner socket connect timeout')), 10000);
       runnerSocket.on('connect', () => {
         clearTimeout(timer);
-        runnerSocket.emit('runner:register');
+        runnerSocket.emit('runner:register', { runnerInstanceId: 'desktop-main-a' });
         resolve();
       });
       runnerSocket.on('connect_error', (err) => {
@@ -284,7 +284,10 @@ async function main() {
       const timer = setTimeout(() => reject(new Error('Reconnect timeout')), 10000);
       reconnected.on('connect', () => {
         clearTimeout(timer);
-        reconnected.emit('runner:register');
+        reconnected.emit('runner:register', {
+          runnerInstanceId: 'desktop-main-a',
+          activeRunIds: [openRun.id],
+        });
         resolve();
       });
       reconnected.on('connect_error', (err) => {
@@ -314,6 +317,35 @@ async function main() {
       throw new Error(`Expected recovered run completed, got ${recovered.run.status}`);
     }
     console.log('[e2e] OK run completed after reconnect');
+
+    // ── Full app restart: omitted old children must release sticky leases ──
+    let restartPayload = null;
+    reconnected.on('run:delegate', (payload) => {
+      restartPayload = payload;
+      reconnected.emit('runner:runEvent', {
+        runId: payload.runId,
+        type: 'status',
+        payload: { status: 'running' },
+      });
+    });
+    const { run: restartRun } = await fetchJson(`${API_BASE}/api/vaults/${vault.id}/runs`, {
+      method: 'POST', headers: auth,
+      body: JSON.stringify({ prompt: 'Interrupted by full app restart', agent: 'grok', note_id: null }),
+    });
+    await sleep(300);
+    if (!restartPayload || restartPayload.runId !== restartRun.id) {
+      throw new Error('Expected restart fixture run to be delegated');
+    }
+    reconnected.emit('runner:register', {
+      runnerInstanceId: 'desktop-main-b',
+      activeRunIds: [],
+    });
+    await sleep(300);
+    const interrupted = await fetchJson(`${API_BASE}/api/runs/${restartRun.id}`, { headers: auth });
+    if (interrupted.run.status !== 'failed' || !String(interrupted.run.summary).includes('restarted')) {
+      throw new Error(`Expected app-restart run to fail visibly, got ${interrupted.run.status}: ${interrupted.run.summary}`);
+    }
+    console.log('[e2e] OK full app restart released omitted run ownership');
 
     reconnected.disconnect();
     runnerSocket.disconnect();

@@ -58,6 +58,7 @@ fs.chmodSync(fakeAkronBin, 0o755);
 process.env.CODEX_BIN = fakeBin;
 process.env.AKRON_BIN = fakeAkronBin;
 process.env.RUNNER_CLI_HEARTBEAT_MS = '25';
+process.env.RUNNER_AKRON_IDLE_TIMEOUT_MS = '1000';
 
 const { cancelCliAgentRun, runCliAgent } = await import('./cli-agent.js');
 
@@ -95,6 +96,27 @@ test('Akron emits silent-work heartbeats and cancellation kills its process tree
 
   assert.equal(cancelCliAgentRun(8080), true);
   await assert.rejects(run, /exited with code/);
+  await waitFor(() => {
+    try {
+      process.kill(descendantPid, 0);
+      return false;
+    } catch {
+      return true;
+    }
+  });
+});
+
+test('Akron provider silence times out and releases its process tree', async () => {
+  fs.rmSync(akronChildPid, { force: true });
+  const started = Date.now();
+  const run = runCliAgent({
+    agent: 'akron-grok', context: '', userPrompt: 'provider never answers', cwd: scratch, runId: 8081,
+    emit,
+  });
+  await waitFor(() => fs.existsSync(akronChildPid));
+  const descendantPid = Number(fs.readFileSync(akronChildPid, 'utf8'));
+  await assert.rejects(run, /produced no output for 1000ms and was stopped/);
+  assert.ok(Date.now() - started < 2_000);
   await waitFor(() => {
     try {
       process.kill(descendantPid, 0);

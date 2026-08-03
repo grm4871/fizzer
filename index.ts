@@ -65,6 +65,7 @@ import {
   finishDelegatedRun,
   findRunByChatDispatch,
   findOpenRunForChatRegistration,
+  forceCancelUnreclaimableRun,
   listOpenDelegatedRuns,
   type AgentId,
 } from './server/runner.js';
@@ -2230,12 +2231,20 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     if (chatDispatchId && chatRegistrationId) {
       const occupied = findOpenRunForChatRegistration(db, chatRegistrationId, chatDispatchId);
       if (occupied) {
-        // Leave this dispatch unclaimed. Another renderer/reconnect can retry
-        // after the physical-stop acknowledgement settles the active run.
-        return res.status(409).json({
-          error: 'Agent session is still stopping; this turn remains queued.',
-          activeRunId: occupied.id,
-        });
+        // Ghost lease after app restart / offline desktop: free it so this turn
+        // can claim the sticky session instead of failing as a permanent 409.
+        if (forceCancelUnreclaimableRun(db, occupied.id)) {
+          for (const update of settleChatMessagesForRun(db, occupied.id)) {
+            emitChatMessageEvent(update.vaultId, update.channelId, 'vault:chatMessageUpdated', update.message);
+          }
+        } else {
+          // Leave this dispatch unclaimed. Another renderer/reconnect can retry
+          // after the physical-stop acknowledgement settles the active run.
+          return res.status(409).json({
+            error: 'Agent session is still stopping; this turn remains queued.',
+            activeRunId: occupied.id,
+          });
+        }
       }
     }
     try {
