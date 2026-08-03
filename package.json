@@ -10,7 +10,7 @@
     "client"
   ],
   "scripts": {
-    "postinstall": "node scripts/rebuild-natives.cjs --postinstall",
+    "postinstall": "node -e \"try{require('fs').accessSync('scripts/rebuild-natives.cjs')}catch{process.exit(0)};require('child_process').spawnSync(process.execPath,['scripts/rebuild-natives.cjs','--postinstall'],{stdio:'inherit',env:process.env}).status&&process.exit(1)\"",
     "rebuild:native": "node scripts/rebuild-natives.cjs",
     "dev-backend": "tsx watch index.ts",
     "dev-backend-debug": "tsx watch index.ts --debug",
