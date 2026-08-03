@@ -59,7 +59,9 @@ export function ensureVaultMembersSchema(db: Db): void {
     db.exec('ALTER TABLE vault_members ADD COLUMN invited_by INTEGER REFERENCES users(id)');
   }
   if (columns.length && !columns.includes('created_at')) {
-    db.exec(`ALTER TABLE vault_members ADD COLUMN created_at TEXT NOT NULL DEFAULT (datetime('now'))`);
+    // SQLite rejects non-constant defaults on ALTER ADD COLUMN.
+    db.exec(`ALTER TABLE vault_members ADD COLUMN created_at TEXT NOT NULL DEFAULT ''`);
+    db.exec(`UPDATE vault_members SET created_at = datetime('now') WHERE created_at = ''`);
   }
 
   // Backfill: every vault owner is a member. Safe on every boot.
