@@ -17,7 +17,7 @@
  * @component
  */
 
-import { useState, useMemo, useEffect, useRef } from 'react';
+import { memo, useState, useMemo, useEffect, useRef } from 'react';
 import type { Vault, Folder, NoteSummary, User } from '../api';
 import { NOTE_DND_TYPE, noteEmbedMarkdown } from '../docEmbeds';
 import { CHAT_NOTE_MARKER } from './ChatView';
@@ -100,7 +100,7 @@ export function isMp3Link(label: string, href: string) {
     || normalizedHref.split(/[?#]/)[0].endsWith('.mp3');
 }
 
-export function Sidebar({
+export const Sidebar = memo(function Sidebar({
   user,
   vaults,
   activeVaultId,
@@ -831,4 +831,4 @@ export function Sidebar({
       )}
     </aside>
   );
-}
+});
