@@ -17,9 +17,34 @@ From the repository root:
 
 ```bash
 npm install
+npm install --prefix cascade-electron
 ```
 
-The root package is an npm workspace that includes `client/`.
+The root package is an npm workspace that includes `client/`. `cascade-electron/`
+is a separate package (desktop shell) and needs its own install.
+
+### Native modules (`better-sqlite3`, `bcrypt`)
+
+These compile against the current Node (and Electron) ABI. After a Node upgrade,
+or when Vite shows `ECONNREFUSED` to `localhost:3000` while the backend fails
+with `NODE_MODULE_VERSION`, rebuild:
+
+```bash
+npm run rebuild:native
+```
+
+Root `postinstall` only rebuilds the API natives when a load-time ABI mismatch
+is detected (safe for Linux/server). Electron natives rebuild during
+`cascade-electron` install, or via `npm run rebuild:native`.
+
+On macOS, if node-gyp fails because Homebrew Python is broken (e.g. `pyexpat`),
+the rebuild script prefers `/usr/bin/python3`. You can also force it:
+
+```bash
+npm_config_python=/usr/bin/python3 npm run rebuild:native
+```
+
+Skip automatic native work with `CASCADE_SKIP_NATIVE_REBUILD=1`.
 
 ## Run the full stack
 

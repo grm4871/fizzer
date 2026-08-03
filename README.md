@@ -11,7 +11,19 @@ Electron + React desktop app for browsing, notes, and agent-assisted editing.
 
 ```bash
 npm install
+npm install --prefix cascade-electron
 ```
+
+If the API fails to start after a Node upgrade (`NODE_MODULE_VERSION` /
+`better-sqlite3` ABI mismatch, often looking like Vite `ECONNREFUSED` on
+`/api/*`), rebuild natives:
+
+```bash
+npm run rebuild:native
+```
+
+macOS tip if node-gyp fails on a broken Homebrew Python:
+`npm_config_python=/usr/bin/python3 npm run rebuild:native`.
 
 ## Run In Development
 

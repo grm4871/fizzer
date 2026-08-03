@@ -91,3 +91,41 @@ export function describeStatus(status: WorkspaceStatus): string {
 export function isSafeToRemove(status: WorkspaceStatus): boolean {
   return !status.isPrimary && !status.dirty && status.unpushed === 0;
 }
+
+/**
+ * When the channel is on the primary checkout (or a dirty shared tree),
+ * recommend isolating work so parallel agents do not trample each other.
+ */
+export function recommendIsolation(
+  status: WorkspaceStatus | null,
+  workspaces: Workspace[] | null,
+): string | null {
+  if (!status) return null;
+  const managedPeers = (workspaces || []).filter((ws) => !ws.isPrimary && ws.managed && ws.exists);
+  if (status.isPrimary && status.dirty) {
+    return managedPeers.length
+      ? 'Primary checkout is dirty — switch to an isolated workspace before parallel agent work.'
+      : 'Primary checkout is dirty — create an isolated workspace so agents do not fight over the main tree.';
+  }
+  if (status.isPrimary && managedPeers.length >= 1) {
+    return 'You are on the primary checkout while isolated workspaces exist — use one for task work.';
+  }
+  if (!status.isPrimary && status.behindBase > 0) {
+    return `This workspace is ${status.behindBase} commit${status.behindBase === 1 ? '' : 's'} behind ${status.baseBranch} — rebase or merge before opening a PR.`;
+  }
+  return null;
+}
+
+/** Warn when multiple managed workspaces in the same repo look active at once. */
+export function overlapWarnings(workspaces: Workspace[] | null, status: WorkspaceStatus | null): string[] {
+  if (!workspaces?.length || !status) return [];
+  const managed = workspaces.filter((ws) => ws.managed && !ws.isPrimary && ws.exists);
+  if (managed.length < 2) return [];
+  const warnings: string[] = [];
+  if (!status.isPrimary && (status.dirty || status.commits.length || status.unpushed)) {
+    warnings.push(
+      `${managed.length} isolated workspaces share this repo — other channels may be writing nearby.`,
+    );
+  }
+  return warnings;
+}

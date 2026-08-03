@@ -30,6 +30,7 @@ import {
   getGraph,
   getNote,
   getVault,
+  getWritableVault,
   listFolders,
   listNotes,
   listTags,
@@ -44,6 +45,16 @@ import {
   updateNote,
   type Vault,
 } from './server/vault.js';
+import {
+  addVaultMember,
+  ensureVaultMembersSchema,
+  getVaultRole,
+  isVaultRole,
+  listVaultMembers,
+  removeVaultMember,
+  setVaultMemberRole,
+  type VaultRole,
+} from './server/vaultMembers.js';
 import {
   createNoteVersion,
   diffNoteVersions,
@@ -421,6 +432,7 @@ ensureFeedSchema(db);
 ensureChatSchema(db);
 ensureChatDispatchSchema(db);
 ensureChatMissionSchema(db);
+ensureVaultMembersSchema(db);
 db.exec(`
   CREATE TABLE IF NOT EXISTS chat_note_grants (
     message_id TEXT NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
@@ -1249,7 +1261,65 @@ app.post('/api/vaults', requireAuth, (req: AuthedRequest, res) => {
 app.get('/api/vaults/:id', requireAuth, (req: AuthedRequest, res) => {
   const vault = getVault(db, req.params.id, req.user!.id);
   if (!vault) return res.status(404).json({ error: 'Vault not found' });
-  res.json({ vault });
+  res.json({ vault, role: getVaultRole(db, vault.id, req.user!.id) });
+});
+
+app.get('/api/vaults/:id/members', requireAuth, (req: AuthedRequest, res) => {
+  const vault = getVault(db, req.params.id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Vault not found' });
+  res.json({
+    members: listVaultMembers(db, vault.id),
+    role: getVaultRole(db, vault.id, req.user!.id),
+  });
+});
+
+app.post('/api/vaults/:id/members', requireAuth, (req: AuthedRequest, res) => {
+  const vault = getVault(db, req.params.id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Vault not found' });
+  try {
+    const username = String(req.body?.username || '').trim().replace(/^@+/, '').toLowerCase();
+    if (!username) return res.status(400).json({ error: 'Username is required' });
+    const roleRaw = String(req.body?.role || 'editor').trim().toLowerCase();
+    if (!isVaultRole(roleRaw) || roleRaw === 'owner') {
+      return res.status(400).json({ error: 'Role must be admin, editor, or viewer' });
+    }
+    const user = db.prepare('SELECT id FROM users WHERE username = ?').get(username) as { id: number } | undefined;
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    const member = addVaultMember(db, vault.id, req.user!.id, user.id, roleRaw as VaultRole);
+    res.status(201).json({ member });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not add member' });
+  }
+});
+
+app.patch('/api/vaults/:id/members/:userId', requireAuth, (req: AuthedRequest, res) => {
+  const vault = getVault(db, req.params.id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Vault not found' });
+  try {
+    const targetUserId = Number(req.params.userId);
+    if (!Number.isInteger(targetUserId)) return res.status(400).json({ error: 'Invalid user id' });
+    const roleRaw = String(req.body?.role || '').trim().toLowerCase();
+    if (!isVaultRole(roleRaw) || roleRaw === 'owner') {
+      return res.status(400).json({ error: 'Role must be admin, editor, or viewer' });
+    }
+    const member = setVaultMemberRole(db, vault.id, req.user!.id, targetUserId, roleRaw as VaultRole);
+    res.json({ member });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not update member' });
+  }
+});
+
+app.delete('/api/vaults/:id/members/:userId', requireAuth, (req: AuthedRequest, res) => {
+  const vault = getVault(db, req.params.id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Vault not found' });
+  try {
+    const targetUserId = Number(req.params.userId);
+    if (!Number.isInteger(targetUserId)) return res.status(400).json({ error: 'Invalid user id' });
+    removeVaultMember(db, vault.id, req.user!.id, targetUserId);
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not remove member' });
+  }
 });
 
 // ── Folder routes ──────────────────────────────────────────────────
@@ -1261,8 +1331,11 @@ app.get('/api/vaults/:id/folders', requireAuth, (req: AuthedRequest, res) => {
 });
 
 app.post('/api/vaults/:id/folders', requireAuth, (req: AuthedRequest, res) => {
-  const vault = getVault(db, req.params.id, req.user!.id);
-  if (!vault) return res.status(404).json({ error: 'Vault not found' });
+  const vault = getWritableVault(db, req.params.id, req.user!.id);
+  if (!vault) {
+    if (getVault(db, req.params.id, req.user!.id)) return res.status(403).json({ error: 'Viewer role cannot edit this vault' });
+    return res.status(404).json({ error: 'Vault not found' });
+  }
   try {
     const folder = createFolder(db, vault.id, req.body || {});
     res.status(201).json({ folder });
@@ -1273,10 +1346,19 @@ app.post('/api/vaults/:id/folders', requireAuth, (req: AuthedRequest, res) => {
 
 app.patch('/api/folders/:id', requireAuth, (req: AuthedRequest, res) => {
   const owned = db.prepare(`
-    SELECT f.id FROM folders f JOIN vaults v ON v.id = f.vault_id
-    WHERE f.id = ? AND v.created_by = ?
+    SELECT f.id FROM folders f
+    JOIN vault_members m ON m.vault_id = f.vault_id
+    WHERE f.id = ? AND m.user_id = ? AND m.role IN ('owner','admin','editor')
   `).get(req.params.id, req.user!.id);
-  if (!owned) return res.status(404).json({ error: 'Folder not found' });
+  if (!owned) {
+    const readable = db.prepare(`
+      SELECT f.id FROM folders f
+      JOIN vault_members m ON m.vault_id = f.vault_id
+      WHERE f.id = ? AND m.user_id = ?
+    `).get(req.params.id, req.user!.id);
+    if (readable) return res.status(403).json({ error: 'Viewer role cannot edit this vault' });
+    return res.status(404).json({ error: 'Folder not found' });
+  }
   try {
     const folder = updateFolder(db, req.params.id, req.body || {});
     res.json({ folder });
@@ -1289,10 +1371,19 @@ app.patch('/api/folders/:id', requireAuth, (req: AuthedRequest, res) => {
 
 app.delete('/api/folders/:id', requireAuth, (req: AuthedRequest, res) => {
   const owned = db.prepare(`
-    SELECT f.id FROM folders f JOIN vaults v ON v.id = f.vault_id
-    WHERE f.id = ? AND v.created_by = ?
+    SELECT f.id FROM folders f
+    JOIN vault_members m ON m.vault_id = f.vault_id
+    WHERE f.id = ? AND m.user_id = ? AND m.role IN ('owner','admin','editor')
   `).get(req.params.id, req.user!.id);
-  if (!owned) return res.status(404).json({ error: 'Folder not found' });
+  if (!owned) {
+    const readable = db.prepare(`
+      SELECT f.id FROM folders f
+      JOIN vault_members m ON m.vault_id = f.vault_id
+      WHERE f.id = ? AND m.user_id = ?
+    `).get(req.params.id, req.user!.id);
+    if (readable) return res.status(403).json({ error: 'Viewer role cannot edit this vault' });
+    return res.status(404).json({ error: 'Folder not found' });
+  }
   try {
     deleteFolder(db, req.params.id);
     res.json({ ok: true });
@@ -1322,8 +1413,11 @@ app.get('/api/vaults/:id/notes', requireAuth, (req: AuthedRequest, res) => {
 });
 
 app.post('/api/vaults/:id/notes', requireAuth, (req: AuthedRequest, res) => {
-  const vault = getVault(db, req.params.id, req.user!.id);
-  if (!vault) return res.status(404).json({ error: 'Vault not found' });
+  const vault = getWritableVault(db, req.params.id, req.user!.id);
+  if (!vault) {
+    if (getVault(db, req.params.id, req.user!.id)) return res.status(403).json({ error: 'Viewer role cannot edit this vault' });
+    return res.status(404).json({ error: 'Vault not found' });
+  }
   try {
     const note = createNote(db, vault.id, req.user!.id, req.body || {});
     createNoteVersion(db, note.id, note.content, 'created');
@@ -1347,8 +1441,11 @@ app.get('/api/notes/:id', requireAuth, (req: AuthedRequest, res) => {
 app.put('/api/notes/:id', requireAuth, (req: AuthedRequest, res) => {
   const existing = getNote(db, req.params.id);
   if (!existing) return res.status(404).json({ error: 'Note not found' });
-  const vault = getVault(db, existing.vault_id, req.user!.id);
-  if (!vault) return res.status(404).json({ error: 'Note not found' });
+  const vault = getWritableVault(db, existing.vault_id, req.user!.id);
+  if (!vault) {
+    if (getVault(db, existing.vault_id, req.user!.id)) return res.status(403).json({ error: 'Viewer role cannot edit this vault' });
+    return res.status(404).json({ error: 'Note not found' });
+  }
 
   try {
     const proposed = String(req.body.content ?? existing.content);
@@ -1367,8 +1464,11 @@ app.put('/api/notes/:id', requireAuth, (req: AuthedRequest, res) => {
 app.post('/api/notes/:id/rename', requireAuth, (req: AuthedRequest, res) => {
   const existing = getNote(db, req.params.id);
   if (!existing) return res.status(404).json({ error: 'Note not found' });
-  const vault = getVault(db, existing.vault_id, req.user!.id);
-  if (!vault) return res.status(404).json({ error: 'Note not found' });
+  const vault = getWritableVault(db, existing.vault_id, req.user!.id);
+  if (!vault) {
+    if (getVault(db, existing.vault_id, req.user!.id)) return res.status(403).json({ error: 'Viewer role cannot edit this vault' });
+    return res.status(404).json({ error: 'Note not found' });
+  }
 
   try {
     const note = renameNote(db, req.params.id, String(req.body.title ?? ''));
@@ -1383,8 +1483,11 @@ app.post('/api/notes/:id/rename', requireAuth, (req: AuthedRequest, res) => {
 app.delete('/api/notes/:id', requireAuth, (req: AuthedRequest, res) => {
   const existing = getNote(db, req.params.id);
   if (!existing) return res.status(404).json({ error: 'Note not found' });
-  const vault = getVault(db, existing.vault_id, req.user!.id);
-  if (!vault) return res.status(404).json({ error: 'Note not found' });
+  const vault = getWritableVault(db, existing.vault_id, req.user!.id);
+  if (!vault) {
+    if (getVault(db, existing.vault_id, req.user!.id)) return res.status(403).json({ error: 'Viewer role cannot edit this vault' });
+    return res.status(404).json({ error: 'Note not found' });
+  }
 
   try {
     deleteNoteAssets(db, req.params.id);
@@ -1400,8 +1503,11 @@ app.delete('/api/notes/:id', requireAuth, (req: AuthedRequest, res) => {
 app.post('/api/notes/:id/move', requireAuth, (req: AuthedRequest, res) => {
   const existing = getNote(db, req.params.id);
   if (!existing) return res.status(404).json({ error: 'Note not found' });
-  const vault = getVault(db, existing.vault_id, req.user!.id);
-  if (!vault) return res.status(404).json({ error: 'Note not found' });
+  const vault = getWritableVault(db, existing.vault_id, req.user!.id);
+  if (!vault) {
+    if (getVault(db, existing.vault_id, req.user!.id)) return res.status(403).json({ error: 'Viewer role cannot edit this vault' });
+    return res.status(404).json({ error: 'Note not found' });
+  }
 
   try {
     const folderId = req.body.folder_id !== undefined ? (req.body.folder_id || null) : null;
@@ -1418,8 +1524,11 @@ app.post('/api/notes/:id/move', requireAuth, (req: AuthedRequest, res) => {
 app.post('/api/notes/:id/unlist', requireAuth, (req: AuthedRequest, res) => {
   const existing = getNote(db, req.params.id);
   if (!existing) return res.status(404).json({ error: 'Note not found' });
-  const vault = getVault(db, existing.vault_id, req.user!.id);
-  if (!vault) return res.status(404).json({ error: 'Note not found' });
+  const vault = getWritableVault(db, existing.vault_id, req.user!.id);
+  if (!vault) {
+    if (getVault(db, existing.vault_id, req.user!.id)) return res.status(403).json({ error: 'Viewer role cannot edit this vault' });
+    return res.status(404).json({ error: 'Note not found' });
+  }
 
   try {
     unlistNote(db, req.params.id);
@@ -1434,8 +1543,11 @@ app.post('/api/notes/:id/unlist', requireAuth, (req: AuthedRequest, res) => {
 app.post('/api/notes/:id/pin', requireAuth, (req: AuthedRequest, res) => {
   const existing = getNote(db, req.params.id);
   if (!existing) return res.status(404).json({ error: 'Note not found' });
-  const vault = getVault(db, existing.vault_id, req.user!.id);
-  if (!vault) return res.status(404).json({ error: 'Note not found' });
+  const vault = getWritableVault(db, existing.vault_id, req.user!.id);
+  if (!vault) {
+    if (getVault(db, existing.vault_id, req.user!.id)) return res.status(403).json({ error: 'Viewer role cannot edit this vault' });
+    return res.status(404).json({ error: 'Note not found' });
+  }
 
   togglePin(db, req.params.id);
   const note = getNote(db, req.params.id);
@@ -1458,8 +1570,11 @@ app.get('/api/notes/:id/assets/:assetId', requireAuth, serveNoteAsset(db));
 app.post('/api/notes/:id/archive', requireAuth, (req: AuthedRequest, res) => {
   const existing = getNote(db, req.params.id);
   if (!existing) return res.status(404).json({ error: 'Note not found' });
-  const vault = getVault(db, existing.vault_id, req.user!.id);
-  if (!vault) return res.status(404).json({ error: 'Note not found' });
+  const vault = getWritableVault(db, existing.vault_id, req.user!.id);
+  if (!vault) {
+    if (getVault(db, existing.vault_id, req.user!.id)) return res.status(403).json({ error: 'Viewer role cannot edit this vault' });
+    return res.status(404).json({ error: 'Note not found' });
+  }
 
   toggleArchive(db, req.params.id);
   const note = getNote(db, req.params.id);

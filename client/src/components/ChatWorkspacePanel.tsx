@@ -3,6 +3,8 @@ import { GitBranch, GitPullRequest, Plus, RefreshCw, Trash2 } from 'lucide-react
 import {
   describeStatus,
   isSafeToRemove,
+  overlapWarnings,
+  recommendIsolation,
   suggestWorkspaceSlug,
   workspaceBridge,
   type PullRequest,
@@ -125,6 +127,8 @@ export function ChatWorkspacePanel({ channelId, channelName, cwd, onUseWorkspace
 
   const activePath = status?.path;
   const canOpenPr = Boolean(status && !status.isPrimary && status.commits.length && !status.dirty);
+  const isolationHint = recommendIsolation(status, workspaces);
+  const overlaps = overlapWarnings(workspaces, status);
 
   return (
     <div className="chat-workspaces">
@@ -138,6 +142,10 @@ export function ChatWorkspacePanel({ channelId, channelName, cwd, onUseWorkspace
 
       {!cwd.trim() && <p className="chat-workspaces-hint">Set a working directory above to use isolated workspaces.</p>}
       {repoError && <p className="chat-workspaces-hint">{repoError}</p>}
+      {isolationHint && <p className="chat-workspaces-notice is-warn">{isolationHint}</p>}
+      {overlaps.map((warning) => (
+        <p key={warning} className="chat-workspaces-notice is-warn">{warning}</p>
+      ))}
 
       {workspaces && (
         <>
@@ -200,6 +208,38 @@ export function ChatWorkspacePanel({ channelId, channelName, cwd, onUseWorkspace
 
       {status && !status.isPrimary && (
         <div className="chat-workspace-review">
+          <div className="chat-workspace-detail">
+            <div className="chat-workspace-detail-heading">Workspace detail</div>
+            <p className="chat-workspaces-hint">
+              {status.branch} · {status.head.slice(0, 7)} · base {status.baseBranch}
+              {status.behindBase ? ` · ${status.behindBase} behind` : ''}
+              {status.unpushed ? ` · ${status.unpushed} unpushed` : ''}
+            </p>
+            {status.commits.length > 0 && (
+              <ul className="chat-workspace-detail-list">
+                {status.commits.slice(-8).map((commit) => (
+                  <li key={commit.sha} title={commit.sha}>
+                    <code>{commit.sha.slice(0, 7)}</code> {commit.subject}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {status.changedFiles.length > 0 && (
+              <ul className="chat-workspace-detail-list">
+                {status.changedFiles.slice(0, 12).map((file) => (
+                  <li key={`${file.status}:${file.path}`}>
+                    <span className="chat-workspace-file-status">{file.status}</span> {file.path}
+                  </li>
+                ))}
+                {status.changedFiles.length > 12 && (
+                  <li className="chat-workspaces-hint">+{status.changedFiles.length - 12} more files</li>
+                )}
+              </ul>
+            )}
+            {!status.commits.length && !status.changedFiles.length && (
+              <p className="chat-workspaces-hint">No local commits or file changes yet.</p>
+            )}
+          </div>
           {pr ? (
             <a className="chat-workspace-pr" href={pr.url} target="_blank" rel="noreferrer">
               <GitPullRequest size={11} />
@@ -209,6 +249,10 @@ export function ChatWorkspacePanel({ channelId, channelName, cwd, onUseWorkspace
                   {pr.checks.failing ? `${pr.checks.failing} failing` : pr.checks.pending ? `${pr.checks.pending} pending` : 'checks green'}
                 </span>
               )}
+              {pr.mergeable && pr.mergeable !== 'MERGEABLE' && (
+                <span className="is-failing">{pr.mergeable.toLowerCase()}</span>
+              )}
+              {pr.reviewDecision && <span>{pr.reviewDecision.toLowerCase()}</span>}
             </a>
           ) : prOpen ? (
             <div className="chat-workspace-create">

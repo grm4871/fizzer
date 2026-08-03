@@ -3334,6 +3334,8 @@ export default function App() {
       {accountOpen && user && (
         <AccountSettings
           user={user}
+          vaultId={activeVaultId}
+          vaultName={vaults.find((vault) => vault.id === activeVaultId)?.name}
           onClose={() => setAccountOpen(false)}
           onUserChanged={setUser}
           onSessionChanged={() => setAuthEpoch((value) => value + 1)}

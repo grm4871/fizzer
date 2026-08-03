@@ -11,7 +11,8 @@
     "start:watch": "nodemon --watch main.cjs --watch preload.cjs --watch agent-runner.cjs --watch desktop-runner-host.cjs --exec \"electron .\"",
     "package": "electron-forge package",
     "make": "electron-forge make",
-    "postinstall": "electron-rebuild -f -w better-sqlite3"
+    "postinstall": "node ../scripts/rebuild-natives.cjs --electron-only",
+    "rebuild:native": "node ../scripts/rebuild-natives.cjs --electron-only"
   },
   "dependencies": {
     "better-sqlite3": "^12.5.0",

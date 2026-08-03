@@ -331,6 +331,18 @@ function isImageMediaType(mediaType: string) {
   return mediaType.startsWith('image/');
 }
 
+export function isVideoMediaType(mediaType: string) {
+  return mediaType.startsWith('video/');
+}
+
+export function isMp4Attachment(attachment: { name?: string; media_type?: string; url?: string }) {
+  const type = String(attachment.media_type || '').toLowerCase();
+  if (isVideoMediaType(type) || type === 'video/mp4') return true;
+  const name = String(attachment.name || '').toLowerCase();
+  const url = String(attachment.url || '').toLowerCase();
+  return name.endsWith('.mp4') || url.includes('video/mp4') || /\.mp4(\?|$)/.test(url);
+}
+
 function readMediaFile(file: File): Promise<ChatMediaAttachment | null> {
   return new Promise((resolve) => {
     if (file.size > CHAT_MEDIA_MAX_BYTES) {
@@ -1209,17 +1221,35 @@ const ChatGroupRow = memo(function ChatGroupRow({
                   {message.attachments && message.attachments.length > 0 && (
                     <div className="chat-msg-attachments">
                       {message.attachments.map((attachment, attachmentIndex) => (
-                        <a
-                          key={attachmentIndex}
-                          className="chat-msg-attachment"
-                          href={attachment.url}
-                          download={attachment.name}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          <Paperclip size={13} />
-                          <span>{attachment.name}</span>
-                        </a>
+                        isMp4Attachment(attachment) ? (
+                          <div key={attachmentIndex} className="chat-msg-video">
+                            <video
+                              className="chat-msg-video-el"
+                              controls
+                              playsInline
+                              preload="metadata"
+                              src={attachment.url}
+                              onLoadedData={onImageLoad}
+                            >
+                              <a href={attachment.url} download={attachment.name} target="_blank" rel="noreferrer">
+                                {attachment.name || 'video.mp4'}
+                              </a>
+                            </video>
+                            {attachment.name && <span className="chat-msg-video-label">{attachment.name}</span>}
+                          </div>
+                        ) : (
+                          <a
+                            key={attachmentIndex}
+                            className="chat-msg-attachment"
+                            href={attachment.url}
+                            download={attachment.name}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            <Paperclip size={13} />
+                            <span>{attachment.name}</span>
+                          </a>
+                        )
                       ))}
                     </div>
                   )}
@@ -2505,6 +2535,8 @@ export const ChatView = memo(function ChatView({
                   <div key={`${item.name || 'media'}-${index}`} className="chat-paste-thumb">
                     {isImageMediaType(item.media_type) ? (
                       <img src={item.url} alt="" />
+                    ) : isVideoMediaType(item.media_type) || isMp4Attachment(item) ? (
+                      <video className="chat-paste-video" src={item.url} muted playsInline preload="metadata" />
                     ) : (
                       <div className="chat-paste-file">
                         <Paperclip size={14} />

@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { describeStatus, isSafeToRemove, suggestWorkspaceSlug, workspaceBridge, type WorkspaceStatus } from '../chat/workspaces';
+import {
+  describeStatus,
+  isSafeToRemove,
+  overlapWarnings,
+  recommendIsolation,
+  suggestWorkspaceSlug,
+  workspaceBridge,
+  type Workspace,
+  type WorkspaceStatus,
+} from '../chat/workspaces';
 
 function status(overrides: Partial<WorkspaceStatus> = {}): WorkspaceStatus {
   return {
@@ -69,5 +78,37 @@ describe('bridge detection', () => {
     expect(workspaceBridge()).toBeUndefined();
 
     delete scope.window;
+  });
+});
+
+function workspace(overrides: Partial<Workspace> = {}): Workspace {
+  return {
+    path: '/tmp/cascade-wt/a',
+    branch: 'cascade/a',
+    isPrimary: false,
+    managed: true,
+    channelId: null,
+    baseBranch: 'master',
+    createdAt: null,
+    exists: true,
+    ...overrides,
+  };
+}
+
+describe('isolation recommender', () => {
+  it('warns when primary is dirty or peers exist', () => {
+    expect(recommendIsolation(status({ isPrimary: true, dirty: true, path: '/repo' }), [])).toMatch(/isolated workspace/);
+    expect(recommendIsolation(
+      status({ isPrimary: true, path: '/repo' }),
+      [workspace()],
+    )).toMatch(/primary checkout while isolated/);
+    expect(recommendIsolation(status({ behindBase: 2 }), [workspace()])).toMatch(/behind/);
+    expect(recommendIsolation(status(), [workspace()])).toBeNull();
+  });
+
+  it('flags concurrent managed workspaces with local activity', () => {
+    const peers = [workspace(), workspace({ path: '/tmp/cascade-wt/b', branch: 'cascade/b' })];
+    expect(overlapWarnings(peers, status({ dirty: true, changedFiles: [{ status: 'M', path: 'a' }] }))).toHaveLength(1);
+    expect(overlapWarnings([workspace()], status({ dirty: true }))).toHaveLength(0);
   });
 });

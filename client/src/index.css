@@ -1150,6 +1150,78 @@ a {
 .account-settings-status { color: var(--text-secondary); font-size: 0.75rem; }
 .account-settings-actions { display: flex; justify-content: flex-end; }
 .account-settings-actions button { border-color: hsla(38, 55%, 48%, 0.4); color: var(--accent-hover); }
+.account-settings-lede { margin: 0 0 8px; color: var(--text-tertiary); font-size: 0.75rem; }
+.account-vault-members {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.account-vault-members li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-base);
+}
+.account-vault-members li > div {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+.account-vault-members strong {
+  font-size: 0.8125rem;
+  color: var(--text-primary);
+}
+.account-vault-members span {
+  font-size: 0.7rem;
+  color: var(--text-tertiary);
+}
+.account-vault-role {
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+}
+.account-vault-member-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.account-vault-member-actions select,
+.account-vault-invite select,
+.account-vault-invite input {
+  font-size: 0.75rem;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+.account-vault-invite {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.account-vault-invite input { flex: 1 1 8rem; min-width: 0; }
+.account-vault-invite button {
+  font-size: 0.75rem;
+  padding: 5px 10px;
+  border: 1px solid hsla(38, 55%, 48%, 0.4);
+  border-radius: var(--radius-sm);
+  color: var(--accent-hover);
+  cursor: pointer;
+}
+.account-vault-invite button:disabled { opacity: 0.5; cursor: default; }
 @media (max-width: 520px) {
   .overlay-backdrop.account-settings-backdrop { align-items: end; padding: 0; }
   .account-settings { max-height: 92vh; border-radius: 14px 14px 0 0; }
@@ -4075,6 +4147,31 @@ a {
   border-color: var(--border-active);
   color: var(--text-primary);
 }
+.chat-msg-video {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: min(420px, 100%);
+  margin-bottom: 2px;
+}
+.chat-msg-video-el {
+  width: 100%;
+  max-height: 320px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: #000;
+}
+.chat-msg-video-label {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+}
+.chat-paste-video {
+  width: 72px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: 6px;
+  background: #000;
+}
 .chat-users {
   width: 244px;
   flex: 0 0 244px;
@@ -4186,6 +4283,48 @@ a {
 .chat-workspaces-notice {
   color: var(--accent);
   word-break: break-word;
+}
+.chat-workspaces-notice.is-warn {
+  color: var(--warning, #d4a017);
+}
+.chat-workspace-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-base);
+}
+.chat-workspace-detail-heading {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+.chat-workspace-detail-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 140px;
+  overflow: auto;
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+}
+.chat-workspace-detail-list code {
+  font-size: 0.66rem;
+  color: var(--text-primary);
+}
+.chat-workspace-file-status {
+  display: inline-block;
+  min-width: 1.4em;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  color: var(--text-primary);
 }
 .chat-workspaces-list {
   display: flex;

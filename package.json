@@ -10,6 +10,8 @@
     "client"
   ],
   "scripts": {
+    "postinstall": "node scripts/rebuild-natives.cjs --postinstall",
+    "rebuild:native": "node scripts/rebuild-natives.cjs",
     "dev-backend": "tsx watch index.ts",
     "dev-backend-debug": "tsx watch index.ts --debug",
     "dev-client": "dotenv -- npm --workspace=client run dev",
@@ -31,6 +33,7 @@
     "start:vps": "node dist/index.js",
     "test": "npm --workspace=client run test",
     "test:server": "tsx --test server/*.test.ts",
+    "test:native": "node --test scripts/rebuild-natives.test.cjs",
     "test:desktop-runner": "node scripts/test-desktop-runner-e2e.mjs",
     "test:electron": "node --test cascade-electron/*.test.cjs",
     "test:cli-agents": "tsx --test cli-agents/*.test.ts",

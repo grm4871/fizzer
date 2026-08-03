@@ -542,6 +542,77 @@ function rewriteImageLineWidth(view: EditorView, wrap: HTMLElement, width: numbe
 }
 
 /* ─── Image Widget ───────────────────────────────────────── */
+function isVideoMarkdownTarget(alt: string, url: string): boolean {
+  const lowerAlt = alt.toLowerCase();
+  const lowerUrl = url.toLowerCase();
+  return lowerAlt.endsWith('.mp4')
+    || lowerUrl.includes('video/mp4')
+    || /\.mp4(\?|$)/.test(lowerUrl)
+    || lowerUrl.endsWith('.mp4');
+}
+
+class VideoWidget extends WidgetType {
+  constructor(
+    private alt: string,
+    private url: string,
+  ) {
+    super();
+  }
+
+  toDOM() {
+    const wrap = document.createElement('div');
+    wrap.className = 'cm-md-video-wrap';
+    const video = document.createElement('video');
+    video.className = 'cm-md-video is-loading';
+    video.controls = true;
+    video.playsInline = true;
+    video.preload = 'metadata';
+    const label = document.createElement('div');
+    label.className = 'cm-md-video-label';
+    label.textContent = this.alt || 'video.mp4';
+
+    const resolved = resolveAssetUrl(this.url);
+    const finish = (src: string) => {
+      video.src = src;
+      video.onloadeddata = () => video.classList.remove('is-loading');
+      video.onerror = () => {
+        video.classList.remove('is-loading');
+        video.classList.add('is-error');
+      };
+    };
+
+    if (/^https?:\/\//i.test(resolved) && !resolved.includes('/api/notes/')) {
+      finish(resolved);
+    } else {
+      const token = localStorage.getItem('docs_token');
+      fetch(resolved, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+        .then((res) => {
+          if (!res.ok) throw new Error('load failed');
+          return res.blob();
+        })
+        .then((blob) => finish(URL.createObjectURL(blob)))
+        .catch(() => {
+          video.classList.remove('is-loading');
+          video.classList.add('is-error');
+        });
+    }
+
+    wrap.appendChild(video);
+    wrap.appendChild(label);
+    return wrap;
+  }
+
+  eq(other: VideoWidget) {
+    return this.alt === other.alt && this.url === other.url;
+  }
+
+  ignoreEvent() {
+    return true;
+  }
+}
+
 class ImageWidget extends WidgetType {
   constructor(
     private alt: string,
@@ -1316,14 +1387,26 @@ function buildDecorationsInner(
     const imageMatch = text.match(IMAGE_LINE_RE);
     if (imageMatch) {
       const { alt, width } = parseImageAlt(imageMatch[2]);
-      decos.push({
-        from: line.from,
-        to: line.to,
-        deco: Decoration.replace({
-          block: true,
-          widget: new ImageWidget(alt, imageMatch[3], width),
-        }),
-      });
+      const url = imageMatch[3];
+      if (isVideoMarkdownTarget(alt, url)) {
+        decos.push({
+          from: line.from,
+          to: line.to,
+          deco: Decoration.replace({
+            block: true,
+            widget: new VideoWidget(alt, url),
+          }),
+        });
+      } else {
+        decos.push({
+          from: line.from,
+          to: line.to,
+          deco: Decoration.replace({
+            block: true,
+            widget: new ImageWidget(alt, url, width),
+          }),
+        });
+      }
       continue;
     }
 
@@ -1764,6 +1847,42 @@ export const NoteEditor = memo(function NoteEditor({ note, content, onContentCha
     }
   }, [note, flashPublishNotice]);
 
+  const insertVideoFromFile = useCallback(async (file: File) => {
+    const editorView = viewRef.current;
+    if (!note?.id || !editorView) return false;
+    const isMp4 = file.type === 'video/mp4' || file.name.toLowerCase().endsWith('.mp4');
+    if (!isMp4) return false;
+    if (file.size > NOTE_AUDIO_MAX_BYTES) {
+      flashPublishNotice(`MP4 is too large (max ${NOTE_AUDIO_MAX_BYTES / (1024 * 1024)}MB)`);
+      return false;
+    }
+    flashPublishNotice('Uploading MP4...');
+    try {
+      const data = await readFileAsBase64(file);
+      const result = await api<{ url: string }>(`/api/notes/${note.id}/assets`, {
+        method: 'POST',
+        body: JSON.stringify({ media_type: 'video/mp4', data, filename: file.name }),
+      });
+      const label = file.name || 'video.mp4';
+      const from = editorView.state.selection.main.from;
+      const to = editorView.state.selection.main.to;
+      const line = editorView.state.doc.lineAt(from);
+      const prefix = line.text.trim() ? '\n\n' : '';
+      const insert = `${prefix}![${label}](${result.url})\n`;
+      editorView.dispatch({
+        changes: { from, to, insert },
+        selection: { anchor: from + insert.length },
+        scrollIntoView: true,
+      });
+      editorView.focus();
+      flashPublishNotice('MP4 embedded');
+      return true;
+    } catch (err) {
+      flashPublishNotice(err instanceof Error ? err.message : 'MP4 upload failed');
+      return false;
+    }
+  }, [note, flashPublishNotice]);
+
   insertImageFromFileRef.current = insertImageFromFile;
 
   const insertNoteEmbed = useCallback((noteId: string, coords?: { x: number; y: number }) => {
@@ -2095,16 +2214,17 @@ export const NoteEditor = memo(function NoteEditor({ note, content, onContentCha
         <button id="toolbar-strike" className="toolbar-btn" onClick={() => toolbarAction('strikethrough')} title="Strikethrough"><s>S</s></button>
         <button id="toolbar-code" className="toolbar-btn mono" onClick={() => toolbarAction('code')} title="Inline Code">&lt;/&gt;</button>
         <button id="toolbar-link" className="toolbar-btn" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => toolbarAction('link')} title="Insert Link (Ctrl+K)"><Link2 size={16} /></button>
-        <button id="toolbar-image" className="toolbar-btn" onClick={() => toolbarAction('image')} title="Upload image or MP3 (images also support paste/drop)">📎</button>
+        <button id="toolbar-image" className="toolbar-btn" onClick={() => toolbarAction('image')} title="Upload image, MP3, or MP4 (images also support paste/drop)">📎</button>
         <input
           ref={imageInputRef}
           type="file"
-          accept="image/*,audio/mpeg,.mp3"
+          accept="image/*,audio/mpeg,.mp3,video/mp4,.mp4"
           hidden
           onChange={(e) => {
             const file = e.target.files?.[0];
             e.target.value = '';
             if (file?.type.startsWith('image/')) void insertImageFromFile(file);
+            else if (file?.type === 'video/mp4' || file?.name.toLowerCase().endsWith('.mp4')) void insertVideoFromFile(file);
             else if (file) void insertAudioFromFile(file);
           }}
         />

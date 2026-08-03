@@ -220,11 +220,47 @@ function reIndexLinks(db: Db, noteId: string, vaultId: string, content: string):
 // ── Vaults ─────────────────────────────────────────────────────────
 
 export function listVaults(db: Db, userId: number): Vault[] {
-  return db.prepare('SELECT * FROM vaults WHERE created_by = ? ORDER BY created_at DESC').all(userId) as Vault[];
+  // Membership-aware: owners (created_by) and invited members both see the vault.
+  // Falls back to created_by-only when vault_members has not been migrated yet.
+  try {
+    return db.prepare(`
+      SELECT v.*
+      FROM vaults v
+      JOIN vault_members m ON m.vault_id = v.id
+      WHERE m.user_id = ?
+      ORDER BY v.created_at DESC
+    `).all(userId) as Vault[];
+  } catch {
+    return db.prepare('SELECT * FROM vaults WHERE created_by = ? ORDER BY created_at DESC').all(userId) as Vault[];
+  }
 }
 
 export function getVault(db: Db, vaultId: string, userId: number): Vault | undefined {
-  return db.prepare('SELECT * FROM vaults WHERE id = ? AND created_by = ?').get(vaultId, userId) as Vault | undefined;
+  try {
+    return db.prepare(`
+      SELECT v.*
+      FROM vaults v
+      JOIN vault_members m ON m.vault_id = v.id
+      WHERE v.id = ? AND m.user_id = ?
+    `).get(vaultId, userId) as Vault | undefined;
+  } catch {
+    return db.prepare('SELECT * FROM vaults WHERE id = ? AND created_by = ?').get(vaultId, userId) as Vault | undefined;
+  }
+}
+
+/** Any member may read; only editor+ may mutate notes/folders/settings. */
+export function getWritableVault(db: Db, vaultId: string, userId: number): Vault | undefined {
+  try {
+    return db.prepare(`
+      SELECT v.*
+      FROM vaults v
+      JOIN vault_members m ON m.vault_id = v.id
+      WHERE v.id = ? AND m.user_id = ?
+        AND m.role IN ('owner', 'admin', 'editor')
+    `).get(vaultId, userId) as Vault | undefined;
+  } catch {
+    return getVault(db, vaultId, userId);
+  }
 }
 
 function prepopulateWalkthrough(vault: Vault): void {
@@ -246,6 +282,16 @@ export function createVault(db: Db, userId: number, opts: { name: string; root_p
   db.prepare(
     'INSERT INTO vaults (id, name, root_path, created_by) VALUES (?, ?, ?, ?)'
   ).run(id, name, rootPath, userId);
+
+  try {
+    db.prepare(`
+      INSERT INTO vault_members (vault_id, user_id, role, invited_by)
+      VALUES (?, ?, 'owner', ?)
+      ON CONFLICT(vault_id, user_id) DO UPDATE SET role = 'owner'
+    `).run(id, userId, userId);
+  } catch {
+    // Schema may not exist yet during early migrations; ensureVaultMembersSchema backfills.
+  }
 
   const vault = db.prepare('SELECT * FROM vaults WHERE id = ?').get(id) as Vault;
 

@@ -7,7 +7,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import type { Request, Response } from 'express';
 import type Database from 'better-sqlite3';
-import { getNote, getVault } from './vault.js';
+import { getNote, getVault, getWritableVault } from './vault.js';
 
 type Db = Database.Database;
 
@@ -26,6 +26,7 @@ const ASSET_EXT: Record<string, string> = {
   ...IMG_EXT,
   'audio/mpeg': 'mp3',
   'audio/mp3': 'mp3',
+  'video/mp4': 'mp4',
 };
 
 export function noteAssetsDir(db: Db, noteId: string): string | null {
@@ -54,12 +55,17 @@ export function uploadNoteAsset(
 ): { asset_id: string; url: string; filename: string } {
   const note = getNote(db, noteId);
   if (!note) throw new Error('Note not found');
-  const vault = getVault(db, note.vault_id, userId);
+  const vault = getWritableVault(db, note.vault_id, userId);
   if (!vault) throw new Error('Note not found');
 
   const mediaType = String(input.media_type || '').trim().toLowerCase();
-  if (!mediaType.startsWith('image/') && mediaType !== 'audio/mpeg' && mediaType !== 'audio/mp3') {
-    throw new Error('Only image and MP3 uploads are supported');
+  if (
+    !mediaType.startsWith('image/')
+    && mediaType !== 'audio/mpeg'
+    && mediaType !== 'audio/mp3'
+    && mediaType !== 'video/mp4'
+  ) {
+    throw new Error('Only image, MP3, and MP4 uploads are supported');
   }
 
   const data = String(input.data || '').trim();
@@ -106,6 +112,7 @@ const MIME_BY_EXT: Record<string, string> = {
   webp: 'image/webp',
   svg: 'image/svg+xml',
   mp3: 'audio/mpeg',
+  mp4: 'video/mp4',
 };
 
 export function serveNoteAsset(db: Db) {
