@@ -7,6 +7,7 @@ import {
   dataUrlsToRunImages,
   getRunningMessageState,
   getSteeringPromptLabels,
+  mergeChatPresence,
   shouldRenderRunPanel,
   shouldDetachStickyForTouch,
   shouldDetachStickyForWheel,
@@ -178,5 +179,33 @@ describe('dataUrlsToRunImages', () => {
   it('skips non-image and non-data sources', () => {
     expect(dataUrlsToRunImages(['https://example.com/a.png', 'data:text/plain;base64,AAAA'])).toEqual([]);
     expect(dataUrlsToRunImages(undefined)).toEqual([]);
+  });
+});
+
+describe('mergeChatPresence', () => {
+  const alice = { id: 1, username: 'alice', displayName: 'Alice', avatarUrl: 'https://a/alice.png' };
+
+  it('keeps cached profiles when an emit omits them', () => {
+    const prior = { participants: ['alice'], online: ['alice'], owner: 'alice', profiles: { alice } };
+    const merged = mergeChatPresence(prior, { participants: ['alice'], online: [] });
+    expect(merged.profiles).toEqual({ alice });
+  });
+
+  it('does not wipe cached profiles with an explicit empty object', () => {
+    const prior = { participants: ['alice'], online: ['alice'], owner: 'alice', profiles: { alice } };
+    const merged = mergeChatPresence(prior, { participants: ['alice'], online: [], profiles: {} });
+    expect(merged.profiles).toEqual({ alice });
+  });
+
+  it('merges in newly reported profiles alongside cached ones', () => {
+    const bob = { id: 2, username: 'bob', displayName: 'Bob', avatarUrl: '' };
+    const prior = { participants: ['alice'], online: ['alice'], owner: 'alice', profiles: { alice } };
+    const merged = mergeChatPresence(prior, { participants: ['alice', 'bob'], online: ['bob'], profiles: { bob } });
+    expect(merged.profiles).toEqual({ alice, bob });
+  });
+
+  it('starts from the incoming payload when there is no cache yet', () => {
+    const merged = mergeChatPresence(undefined, { participants: ['alice'], online: ['alice'], owner: 'alice', profiles: { alice } });
+    expect(merged).toEqual({ participants: ['alice'], online: ['alice'], owner: 'alice', profiles: { alice } });
   });
 });

@@ -276,6 +276,26 @@ export interface ChatChannelPresence {
   profiles?: Record<string, { id: number; username: string; displayName: string; avatarUrl: string }>;
 }
 
+/**
+ * Folds an incoming `vault:chatPresence` payload onto the cached presence for a channel.
+ * Some presence emits carry no `profiles` (or an empty one); this must never wipe a
+ * previously-known profile, only add to or refresh it.
+ */
+export function mergeChatPresence(
+  prior: ChatChannelPresence | undefined,
+  incoming: Partial<ChatChannelPresence>,
+): ChatChannelPresence {
+  const nextProfiles = incoming.profiles && Object.keys(incoming.profiles).length > 0
+    ? { ...(prior?.profiles || {}), ...incoming.profiles }
+    : (prior?.profiles || incoming.profiles || {});
+  return {
+    participants: incoming.participants ?? prior?.participants ?? [],
+    online: incoming.online ?? prior?.online ?? [],
+    owner: incoming.owner || prior?.owner || '',
+    profiles: nextProfiles,
+  };
+}
+
 export type SharedChatNote = {
   id: string;
   title: string;

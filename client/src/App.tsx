@@ -16,6 +16,7 @@ import {
   createChatAgentRegistrationId,
   dataUrlsToRunImages,
   mediaToRunImages,
+  mergeChatPresence,
   type ChatAgentRegistration,
   type ChatBlock,
   type ChatChannelPresence,
@@ -2745,22 +2746,10 @@ export default function App() {
     };
     const handleChatPresence = (data: ChatChannelPresence & { vaultId: string; channelId: string }) => {
       if (data.vaultId !== activeVaultId) return;
-      setChatPresenceByChannel((prev) => {
-        const prior = prev[data.channelId];
-        // Socket events used to omit profiles; never wipe a good cache with {}.
-        const nextProfiles = data.profiles && Object.keys(data.profiles).length > 0
-          ? { ...(prior?.profiles || {}), ...data.profiles }
-          : (prior?.profiles || data.profiles || {});
-        return {
-          ...prev,
-          [data.channelId]: {
-            participants: data.participants ?? prior?.participants ?? [],
-            online: data.online ?? prior?.online ?? [],
-            owner: data.owner || prior?.owner || '',
-            profiles: nextProfiles,
-          },
-        };
-      });
+      setChatPresenceByChannel((prev) => ({
+        ...prev,
+        [data.channelId]: mergeChatPresence(prev[data.channelId], data),
+      }));
     };
     const handleUserProfileUpdated = (profile: User) => {
       if (profile.id === user?.id) setUser(profile);
