@@ -10,7 +10,9 @@ import { highlightJSON } from './jsonHighlighter';
 import { CascadeRunPanel } from './CascadeRunPanel';
 import { ChatSidebarButtons } from './ChatSidebarButtons';
 import { ChatWorkspacePanel } from './ChatWorkspacePanel';
+import { ChatWorkTrace } from './ChatWorkTrace';
 import { hasRunActivity } from '../chat/harnessActivity';
+import { segmentTranscript } from '../chat/workTrace';
 
 export const CHAT_NOTE_MARKER = 'cascade://chat-channel';
 export const CHAT_MEDIA_LIMIT = 8;
@@ -518,6 +520,7 @@ function aliasesEqual(a: string[], b: string[]) {
   return a.length === b.length && a.every((value, index) => value === b[index]);
 }
 
+// ChatMessageText stays module-local; work-trace uses its own lightweight markdown.
 const ChatMessageText = memo(function ChatMessageText({
   messageId,
   body,
@@ -753,19 +756,6 @@ export function dataUrlsToRunImages(sources: string[] | undefined) {
 
 interface ChatMessageGroup {
   messages: ChatMessage[];
-}
-
-function groupChatMessages(messages: ChatMessage[]): ChatMessageGroup[] {
-  const groups: ChatMessageGroup[] = [];
-  for (const message of messages) {
-    const last = groups[groups.length - 1];
-    if (last && canGroupChatMessages(last.messages[last.messages.length - 1], message)) {
-      last.messages.push(message);
-    } else {
-      groups.push({ messages: [message] });
-    }
-  }
-  return groups;
 }
 
 function ChatAvatar({
@@ -1497,10 +1487,8 @@ export const ChatView = memo(function ChatView({
       })
       .map(({ message }) => message);
   }, [messages]);
-  // Grouping recomputes on every message change, but unchanged groups must
-  // keep their object identity or ChatGroupRow's memo never hits: reuse the
-  // previous group object when the exact same message refs compose it.
-  const groupIdentityCacheRef = useRef<Map<string, ChatMessageGroup>>(new Map());
+  // Grouping identity cache removed: transcript segments are recomputed with
+  // message-ref equality via sortedMessages + segmentTranscript.
   // Lazily hydrate messages whose data-URL images the list payload stripped.
   // Track only in-flight work, not "ever hydrated": a reconnect can replace a
   // full message with another slim copy and must be allowed to hydrate it again.
@@ -1519,23 +1507,6 @@ export const ChatView = memo(function ChatView({
     }
   }, [sortedMessages, vaultId, onHydrateMessage]);
 
-  const messageGroups = useMemo(() => {
-    const fresh = groupChatMessages(sortedMessages);
-    const cache = groupIdentityCacheRef.current;
-    const nextCache = new Map<string, ChatMessageGroup>();
-    const stable = fresh.map((group) => {
-      const key = group.messages[0].id;
-      const prev = cache.get(key);
-      const reusable = prev
-        && prev.messages.length === group.messages.length
-        && prev.messages.every((message, index) => message === group.messages[index]);
-      const chosen = reusable ? prev : group;
-      nextCache.set(key, chosen);
-      return chosen;
-    });
-    groupIdentityCacheRef.current = nextCache;
-    return stable;
-  }, [sortedMessages]);
   const runningMessageState = useMemo(() => {
     return getRunningMessageState(sortedMessages);
   }, [sortedMessages]);
@@ -1549,6 +1520,14 @@ export const ChatView = memo(function ChatView({
   const agentAuthors = useMemo(() => new Set(
     registeredAgentRows.flatMap((agent) => [agent.label, agent.registration.displayName].filter(Boolean)),
   ), [registeredAgentRows]);
+  const coordinatorRegistrationIds = useMemo(() => new Set(
+    registeredAgents.filter((agent) => agent.orchestrator).map((agent) => agent.id),
+  ), [registeredAgents]);
+  // Collapse multi-agent chatter into TUI-style work traces between human turns.
+  const transcriptSegments = useMemo(
+    () => segmentTranscript(sortedMessages, { agentAuthors, coordinatorRegistrationIds }),
+    [agentAuthors, coordinatorRegistrationIds, sortedMessages],
+  );
   const registrationById = useMemo(() => {
     const byId = new Map<string, ChatAgentRegistration>();
     const byAgentOrName = new Map<string, ChatAgentRegistration>();
@@ -2351,7 +2330,64 @@ export const ChatView = memo(function ChatView({
               <strong>#{channelName}</strong>
             </div>
           ) : (
-            messageGroups.map((group) => {
+            transcriptSegments.flatMap((segment) => {
+              if (segment.kind === 'work') {
+                const nodes: ReactNode[] = [
+                  <ChatWorkTrace
+                    key={`work-${segment.id}`}
+                    trace={segment.trace}
+                    selectedMessageId={
+                      selectedMessageId
+                      && segment.trace.some((message) => message.id === selectedMessageId)
+                        ? selectedMessageId
+                        : null
+                    }
+                    onCancelRun={onCancelRun}
+                    onContextMenu={openMessageContextMenu}
+                    onReply={startReply}
+                    vaultId={vaultId}
+                    onHydrateMessage={onHydrateMessage}
+                    runningMessageState={runningMessageState}
+                  />,
+                ];
+                for (const group of segment.fullGroups) {
+                  const head = group.messages[0];
+                  const groupSelected = selectedMessageId != null
+                    && group.messages.some((message) => message.id === selectedMessageId);
+                  const runKey = head.registrationId || head.agentId || '';
+                  const runState = runKey ? runningMessageState.get(runKey) : undefined;
+                  nodes.push(
+                    <ChatGroupRow
+                      key={head.id}
+                      group={group}
+                      selectedMessageId={groupSelected ? selectedMessageId : null}
+                      avatarKind={getMessageAvatarKind(head)}
+                      avatarUrl={getMessageAvatarUrl(head)}
+                      ownerLabel={getMessageOwnerLabel(head)}
+                      planUsage={getMessagePlanUsage(head)}
+                      latestRunningMessageId={runState?.latestId}
+                      runningSiblingCount={runState?.count || 0}
+                      steeringPromptLabels={steeringPromptLabels}
+                      mentionableAliases={mentionableAliases}
+                      notes={notes}
+                      onOpenNote={onOpenNote}
+                      onOpenSharedNote={openSharedNote}
+                      onCancelRun={onCancelRun}
+                      onToggleSelect={toggleMessageSelection}
+                      onContextMenu={openMessageContextMenu}
+                      onReply={startReply}
+                      onLightbox={openLightbox}
+                      onImageLoad={scrollToBottomIfSticky}
+                      scrollRootRef={messagesRef}
+                      vaultId={vaultId}
+                      onHydrateMessage={onHydrateMessage}
+                    />,
+                  );
+                }
+                return nodes;
+              }
+
+              const group = segment.group;
               const head = group.messages[0];
               const groupSelected = selectedMessageId != null
                 && group.messages.some((message) => message.id === selectedMessageId);

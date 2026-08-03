@@ -64,7 +64,28 @@ import type Database from 'better-sqlite3';
 type Db = Database.Database;
 
 export const activeCliProcesses = new Map<number, ChildProcess>();
+const groupedCliProcesses = new Set<number>();
 const runHelperEnvByRunId = new Map<number, NodeJS.ProcessEnv>();
+
+function terminateCliProcess(child: ChildProcess, processGroup: boolean): void {
+  if (processGroup && process.platform !== 'win32' && child.pid) {
+    try {
+      process.kill(-child.pid, 'SIGTERM');
+      return;
+    } catch { /* Fall through if the group already disappeared. */ }
+  }
+  try { child.kill('SIGTERM'); } catch { /* already settled */ }
+}
+
+/** Cancel one CLI run, including descendants of launchers such as Akron. */
+export function cancelCliAgentRun(runId: number): boolean {
+  const child = activeCliProcesses.get(runId);
+  if (!child) return false;
+  terminateCliProcess(child, groupedCliProcesses.has(runId));
+  activeCliProcesses.delete(runId);
+  groupedCliProcesses.delete(runId);
+  return true;
+}
 
 export function setRunHelperEnv(runId: number, env: NodeJS.ProcessEnv): void {
   runHelperEnvByRunId.set(runId, env);
@@ -169,6 +190,9 @@ function statsFromUsageBlob(
 const CLI_IDLE_TIMEOUT_MS = Number(
   process.env.RUNNER_CLI_IDLE_TIMEOUT || process.env.RUNNER_CLI_TIMEOUT || 1_800_000,
 );
+const CLI_PROGRESS_HEARTBEAT_MS = Math.max(10, Number(
+  process.env.RUNNER_CLI_HEARTBEAT_MS || 15_000,
+));
 
 /**
  * Idle-timeout handle: `bump()` on every chunk of child output, `clear()` once
@@ -1949,10 +1973,15 @@ function driveHermesProcess(
       child = spawn(bin, args, {
         cwd,
         stdio: ['ignore', 'pipe', 'pipe'],
+        // Akron's launcher owns a bridge plus Hermes/tool descendants. Give
+        // Hermes-family runs their own process group so Stop reaches the whole
+        // tree instead of only terminating the outer bash wrapper.
+        detached: process.platform !== 'win32',
         env: { ...(env ? { ...spawnEnv(runId), ...env } : spawnEnv(runId)), HERMES_CASCADE_EVENTS: '1' },
       });
       if (runId !== undefined) {
         activeCliProcesses.set(runId, child);
+        if (process.platform !== 'win32') groupedCliProcesses.add(runId);
       }
     } catch (err) {
       reject(new Error(`Failed to launch ${label} ('${bin}'): ${err instanceof Error ? err.message : String(err)}`));
@@ -1962,6 +1991,7 @@ function driveHermesProcess(
     const cleanUpProcess = () => {
       if (runId !== undefined) {
         activeCliProcesses.delete(runId);
+        groupedCliProcesses.delete(runId);
       }
     };
 
@@ -1972,17 +2002,25 @@ function driveHermesProcess(
     let stdoutBuf = '';
     let stderrBuf = '';
     let settled = false;
+    let quietSince = Date.now();
+    const heartbeat = setInterval(() => {
+      if (settled || Date.now() - quietSince < CLI_PROGRESS_HEARTBEAT_MS) return;
+      const quietSeconds = Math.max(1, Math.round((Date.now() - quietSince) / 1_000));
+      emitHarness(emit, `\x1b[2m# ${label} still working · ${quietSeconds}s without provider output\x1b[0m\r\n`);
+    }, CLI_PROGRESS_HEARTBEAT_MS);
     const idle = createIdleTimer(() => {
       if (!settled) {
         settled = true;
+        clearInterval(heartbeat);
         cleanUpProcess();
-        child.kill('SIGTERM');
+        terminateCliProcess(child, process.platform !== 'win32');
         reject(new Error(`${label} produced no output for ${CLI_IDLE_TIMEOUT_MS}ms and was stopped.`));
       }
     });
 
     child.stdout.on('data', (d: Buffer | string) => {
       const chunk = d.toString();
+      quietSince = Date.now();
       idle.bump();
       emitHarness(emit, chunk);
       stdoutBuf += chunk;
@@ -2000,6 +2038,7 @@ function driveHermesProcess(
 
     child.stderr.on('data', (d: Buffer | string) => {
       const chunk = d.toString();
+      quietSince = Date.now();
       idle.bump();
       emitHarness(emit, `\x1b[31m${chunk}\x1b[0m`);
       stderrBuf += chunk;
@@ -2025,6 +2064,7 @@ function driveHermesProcess(
       if (settled) return;
       settled = true;
       idle.clear();
+      clearInterval(heartbeat);
       cleanUpProcess();
       reject(new Error(`${label} ('${bin}') could not be started: ${err.message}. Is it installed and on PATH?`));
     });
@@ -2033,6 +2073,7 @@ function driveHermesProcess(
       if (settled) return;
       settled = true;
       idle.clear();
+      clearInterval(heartbeat);
       cleanUpProcess();
       const trailingOut = stdoutBuf.trim();
       if (trailingOut) {

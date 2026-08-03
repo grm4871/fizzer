@@ -942,6 +942,11 @@ async function cancelLocalAgentRun(runId) {
   if (typeof mod.cancelAntigravityRun === 'function') {
     try { mod.cancelAntigravityRun(id); flagged = true; } catch { /* ignore */ }
   }
+  if (typeof mod.cancelCliAgentRun === 'function') {
+    try {
+      if (mod.cancelCliAgentRun(id)) return true;
+    } catch { /* fall through to legacy direct-child cancellation */ }
+  }
   const child = mod.activeCliProcesses?.get(id);
   if (child) {
     try { child.kill('SIGTERM'); } catch { /* ignore */ }

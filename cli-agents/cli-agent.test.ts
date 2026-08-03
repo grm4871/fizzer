@@ -15,7 +15,9 @@ import path from 'path';
 
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-codex-'));
 const fakeBin = path.join(scratch, 'fake-codex');
+const fakeAkronBin = path.join(scratch, 'fake-akron');
 const argLog = path.join(scratch, 'args.jsonl');
+const akronChildPid = path.join(scratch, 'akron-child.pid');
 
 fs.writeFileSync(fakeBin, `#!/usr/bin/env node
 const fs = require('fs');
@@ -36,9 +38,19 @@ process.stdout.write(JSON.stringify({ type: 'item.completed', item: { type: 'age
 process.exit(0);
 `);
 fs.chmodSync(fakeBin, 0o755);
+fs.writeFileSync(fakeAkronBin, `#!/usr/bin/env node
+const fs = require('fs');
+const { spawn } = require('child_process');
+const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+fs.writeFileSync(${JSON.stringify(akronChildPid)}, String(child.pid));
+setInterval(() => {}, 1000);
+`);
+fs.chmodSync(fakeAkronBin, 0o755);
 process.env.CODEX_BIN = fakeBin;
+process.env.AKRON_BIN = fakeAkronBin;
+process.env.RUNNER_CLI_HEARTBEAT_MS = '25';
 
-const { runCliAgent } = await import('./cli-agent.js');
+const { cancelCliAgentRun, runCliAgent } = await import('./cli-agent.js');
 
 function readArgs(): string[][] {
   return fs.readFileSync(argLog, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
@@ -49,6 +61,40 @@ function resetArgs() {
 }
 
 const emit = () => {};
+
+async function waitFor(predicate: () => boolean, timeoutMs = 2_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.fail('condition did not become true');
+}
+
+test('Akron emits silent-work heartbeats and cancellation kills its process tree', async () => {
+  fs.rmSync(akronChildPid, { force: true });
+  const harness: string[] = [];
+  const run = runCliAgent({
+    agent: 'akron-grok', context: '', userPrompt: 'work silently', cwd: scratch, runId: 8080,
+    emit: (type, payload: any) => {
+      if (type === 'harness') harness.push(String(payload?.data || ''));
+    },
+  });
+  await waitFor(() => fs.existsSync(akronChildPid));
+  const descendantPid = Number(fs.readFileSync(akronChildPid, 'utf8'));
+  await waitFor(() => harness.some((line) => line.includes('still working')));
+
+  assert.equal(cancelCliAgentRun(8080), true);
+  await assert.rejects(run, /exited with code/);
+  await waitFor(() => {
+    try {
+      process.kill(descendantPid, 0);
+      return false;
+    } catch {
+      return true;
+    }
+  });
+});
 
 test('resume passes the session id positionally, right before the prompt', async () => {
   resetArgs();

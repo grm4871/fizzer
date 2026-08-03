@@ -94,7 +94,7 @@ try {
     channelId: channel.id,
     author: username,
     body: 'Implement the chat-first orchestration slice.',
-    createdAt: new Date().toISOString(),
+    createdAt: new Date(Date.now() - 10_000).toISOString(),
   };
   // Seed the root before enabling the coordinator so this renderer smoke does
   // not need a live desktop model runner.
@@ -116,7 +116,7 @@ try {
     method: 'POST', headers: auth,
     body: JSON.stringify({ vaultAgentId: solIdentity.id, orchestrator: true }),
   });
-  await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/agents/from-vault`, {
+  const { registration: terra } = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/agents/from-vault`, {
     method: 'POST', headers: auth, body: JSON.stringify({ vaultAgentId: terraIdentity.id }),
   });
   const { mission } = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/missions`, {
@@ -138,9 +138,49 @@ try {
       reasoningEffort: 'high',
     }),
   });
+  // Task creation intentionally produces a queued worker shell. Settle that
+  // provider-free fixture before testing the completed trace state; otherwise
+  // the scheduler may append a live placeholder after the synthetic final.
+  await delay(100);
+  const beforeTrace = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/messages`, { headers: auth });
+  for (const message of beforeTrace.messages.filter((item) => item.status === 'running' || item.status === 'sending')) {
+    await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/messages`, {
+      method: 'POST', headers: auth,
+      body: JSON.stringify({ ...message, body: 'Worker queued for runtime verification.', status: 'completed' }),
+    });
+  }
+  const traceMessages = [
+    {
+      id: `sys-mission-${mission.id}-trace`, channelId: channel.id, author: 'Cascade',
+      // Keep the runtime fixture provider-free: an @mention would create a
+      // fresh dispatch/placeholder and alter the transcript being asserted.
+      body: 'Sol: worker evidence is ready for review.',
+    },
+    {
+      id: `trace-worker-${stamp}`, channelId: channel.id, author: 'Terra', agentId: 'codex',
+      body: 'Inspected multiplayer persistence and collected the runtime evidence.',
+      missionTaskId: task.id,
+    },
+    {
+      id: `trace-final-${stamp}`, channelId: channel.id, author: 'Sol', registrationId: sol.id,
+      body: 'Integrated the evidence; the user-facing answer remains a normal message.',
+    },
+  ];
+  for (const message of traceMessages) {
+    message.createdAt = new Date().toISOString();
+    await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/messages`, {
+      method: 'POST', headers: auth, body: JSON.stringify(message),
+    });
+    await delay(5);
+  }
   const seeded = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/messages`, { headers: auth });
   if (!seeded.messages.find((message) => message.id === rootMessage.id)?.mission) {
     throw new Error('seeded mission projection was missing before the browser loaded');
+  }
+  for (const message of traceMessages) {
+    if (!seeded.messages.some((item) => item.id === message.id)) {
+      throw new Error(`seeded work-trace message ${message.id} was missing before the browser loaded`);
+    }
   }
 
   const { chromium } = await import('playwright');
@@ -153,6 +193,7 @@ try {
     if (message.type() === 'error') errors.push(`console.error: ${message.text()}`);
   });
   page.on('response', (response) => {
+    if (response.status() >= 400) errors.push(`http.${response.status()}: ${response.url()}`);
     if (response.url().includes(`/channels/${channel.id}/`)) {
       channelResponses.push(`${response.status()} ${response.url()}`);
     }
@@ -205,6 +246,28 @@ try {
     (await card.innerText()).includes('gpt-5.6-terra') && (await card.innerText()).includes('high effort')
   ));
 
+  // Compact lines are intentionally not mounted until the trace opens, so
+  // select this fixture by its visible system author rather than :has().
+  const workTrace = page.locator('.chat-work-trace').filter({ hasText: 'Cascade' }).first();
+  await workTrace.waitFor({ timeout: 10_000 });
+  const traceText = await workTrace.innerText();
+  const finalVisible = await page.locator(`[data-message-id="${traceMessages[2].id}"]`).isVisible();
+  const initiallyExpanded = await workTrace.locator('.chat-work-trace-toggle').getAttribute('aria-expanded');
+  check('worker chatter collapses into a work trace', await workTrace.isVisible());
+  check('work trace keeps the final answer outside the compact stream', (
+    finalVisible && !traceText.includes('user-facing answer remains')
+  ), `finalVisible=${finalVisible}, trace=${JSON.stringify(traceText)}`);
+  check('settled trace starts collapsed and is keyboard-expandable', initiallyExpanded === 'false', `aria-expanded=${initiallyExpanded}`);
+  await workTrace.locator('.chat-work-trace-toggle').click();
+  const traceLines = workTrace.locator('.chat-work-line');
+  const traceLineCount = await traceLines.count();
+  check('expanded trace exposes its worker steps', traceLineCount >= 1, `count=${traceLineCount}`);
+  const workerLine = workTrace.locator(`[data-message-id="${traceMessages[1].id}"]`);
+  await workerLine.locator('.chat-work-line-fold').click();
+  check('an individual step restores its full evidence', (
+    await workerLine.innerText()
+  ).includes('Inspected multiplayer persistence'));
+
   await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/missions/tasks/${task.id}`, {
     method: 'PATCH', headers: auth,
     body: JSON.stringify({ status: 'running', summary: 'Second client connected.' }),
@@ -244,7 +307,15 @@ try {
   agents = await waitForCoordinator(vault.id, channel.id, auth, sol.id, true);
   check('re-enabling coordination persists', agents.find((item) => item.id === sol.id)?.orchestrator === true);
 
-  const fatal = errors.filter((line) => !line.includes('[VersionCheck]'));
+  const expectedOfflineRun = errors.some((line) => line.startsWith('http.503:') && line.endsWith('/runs'));
+  const fatal = errors.filter((line) => {
+    if (line.includes('[VersionCheck]')) return false;
+    // This smoke intentionally has no desktop runner; automatic mission
+    // dispatch therefore probes /runs and gets the expected 503.
+    if (expectedOfflineRun && line.startsWith('http.503:') && line.endsWith('/runs')) return false;
+    if (expectedOfflineRun && line.includes('Failed to load resource: the server responded with a status of 503')) return false;
+    return true;
+  });
   check('no console errors or uncaught exceptions', fatal.length === 0, fatal.join(' | '));
 } catch (error) {
   console.error('[mission-ui] FAILED:', error.message || error);
