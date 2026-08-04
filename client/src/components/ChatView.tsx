@@ -445,34 +445,45 @@ function formatPlanUsageTitle(usage?: PlanUsage | null) {
 function PlanUsageMeters({
   usage,
   stacked = false,
+  decal = false,
 }: {
   usage: PlanUsage;
   stacked?: boolean;
+  /** Compact right-rail chips — no row growth. */
+  decal?: boolean;
 }) {
   const title = formatPlanUsageTitle(usage);
   if (usage.status !== 'ok') {
+    if (decal) return null;
     return <span className="chat-plan-meters is-unavailable" title={title}>usage unavailable</span>;
   }
   const windows = planUsageWindows(usage).slice(0, 3);
+  if (windows.length === 0) return null;
   return (
-    <span className={`chat-plan-meters${stacked ? ' is-stacked' : ''}`} title={title}>
+    <span
+      className={`chat-plan-meters${stacked ? ' is-stacked' : ''}${decal ? ' is-decal' : ''}`}
+      title={title}
+    >
       {windows.map((window, index) => {
         const percent = Math.round(window.usedPercent);
+        const shortLabel = window.label.length > 5
+          ? window.label.replace(/session/i, 'sess').replace(/week/i, 'wk').slice(0, 4)
+          : window.label;
         return (
           <span
             className="chat-plan-meter"
             key={`${window.label}:${index}`}
             role="progressbar"
-            aria-label={`${window.label} plan usage`}
+            aria-label={`${window.label} plan usage ${percent}%`}
             aria-valuemin={0}
             aria-valuemax={100}
             aria-valuenow={percent}
           >
-            <span className="chat-plan-meter-label">{window.label}</span>
+            <span className="chat-plan-meter-label">{decal ? shortLabel : window.label}</span>
             <span className="chat-plan-meter-track" aria-hidden="true">
               <span className="chat-plan-meter-fill" style={{ width: `${percent}%` }} />
             </span>
-            <span className="chat-plan-meter-value">{percent}%</span>
+            {!decal && <span className="chat-plan-meter-value">{percent}%</span>}
           </span>
         );
       })}
@@ -2904,10 +2915,12 @@ export const ChatView = memo(function ChatView({
               >
                 <ChatAvatar name={agent.registration.displayName || agent.label} kind="agent" avatarUrl={agent.registration.avatarUrl} size="sm" />
                 <div className="chat-user-copy">
-                  <strong>{agent.registration.displayName || agent.label}</strong>
+                  <div className="chat-user-copy-head">
+                    <strong>{agent.registration.displayName || agent.label}</strong>
+                    {planUsage && <PlanUsageMeters usage={planUsage} decal />}
+                  </div>
                   <span className="chat-user-handle">@{agent.registration.mention || agent.id}</span>
                   <span className="chat-user-role">{selectedModel || 'no model'}</span>
-                  {planUsage && <PlanUsageMeters usage={planUsage} stacked />}
                 </div>
               </button>
               <button

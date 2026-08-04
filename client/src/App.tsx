@@ -459,8 +459,27 @@ export default function App() {
         return false;
       }
     };
+    const mergePlanUsage = (
+      prev: DesktopRunnerHealth['planUsage'],
+      next: DesktopRunnerHealth['planUsage'],
+    ): DesktopRunnerHealth['planUsage'] => {
+      // Keep last good per-provider snapshot so meters don't vanish on a miss.
+      const merged: NonNullable<DesktopRunnerHealth['planUsage']> = { ...(prev || {}) };
+      if (!next) return Object.keys(merged).length ? merged : null;
+      for (const [key, value] of Object.entries(next)) {
+        if (value?.status === 'ok') merged[key] = value;
+        else if (!merged[key]) merged[key] = value;
+      }
+      return merged;
+    };
     const apply = (data: DesktopRunnerHealth) => {
-      setRunnerHealth((prev) => (sameHealth(prev, data) ? prev : data));
+      setRunnerHealth((prev) => {
+        const withUsage: DesktopRunnerHealth = {
+          ...data,
+          planUsage: mergePlanUsage(prev?.planUsage ?? null, data.planUsage),
+        };
+        return sameHealth(prev, withUsage) ? prev : withUsage;
+      });
     };
     const tick = async () => {
       // Skip network work while the tab is hidden; resume on visibilitychange.
@@ -469,7 +488,17 @@ export default function App() {
         const data = await api<DesktopRunnerHealth>('/api/me/desktop-runner');
         if (!cancelled) apply(data);
       } catch {
-        if (!cancelled) apply(OFFLINE);
+        // Offline ticks must not wipe cached plan usage.
+        if (!cancelled) {
+          setRunnerHealth((prev) => {
+            const offline: DesktopRunnerHealth = {
+              ...OFFLINE,
+              planUsage: prev?.planUsage ?? null,
+              models: prev?.models ?? null,
+            };
+            return sameHealth(prev, offline) ? prev : offline;
+          });
+        }
       }
     };
     void tick();

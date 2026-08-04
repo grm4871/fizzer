@@ -4987,6 +4987,16 @@ button:focus-visible,
   gap: 1px;
   line-height: 1.25;
 }
+.chat-user-copy-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.chat-user-copy-head strong {
+  min-width: 0;
+  flex: 1;
+}
 .chat-user-copy strong {
   color: inherit;
   font-size: 0.8125rem;
@@ -5010,27 +5020,41 @@ button:focus-visible,
   font-family: var(--font-mono);
   font-size: 0.625rem;
 }
-.chat-user-copy .chat-plan-meters.is-stacked {
+/* Right-rail plan usage: tiny right-aligned decals, no row growth. */
+.chat-user-copy .chat-plan-meters.is-decal {
   display: flex;
-  width: 100%;
-  margin-top: 5px;
-  gap: 4px;
-  align-items: stretch;
   flex-direction: column;
-  overflow: visible;
-  opacity: 0.88;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 2px;
+  flex: 0 0 auto;
+  margin: 0;
+  margin-left: auto;
+  opacity: 0.9;
 }
-.chat-user-copy .chat-plan-meters.is-stacked .chat-plan-meter {
-  grid-template-columns: 42px minmax(28px, 1fr) 30px;
-  width: 100%;
+.chat-user-copy .chat-plan-meters.is-decal .chat-plan-meter {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  grid-template-columns: none;
+  width: auto;
 }
-.chat-user-copy .chat-plan-meters.is-stacked .chat-plan-meter-track {
-  width: 100%;
-  height: 3px;
-  background: color-mix(in srgb, var(--text-tertiary) 22%, transparent);
+.chat-user-copy .chat-plan-meters.is-decal .chat-plan-meter-label {
+  font-size: 0.5rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--text-tertiary) 85%, var(--accent-hover));
+  line-height: 1;
 }
-.chat-user-copy .chat-plan-meters.is-stacked .chat-plan-meter-fill {
-  background: color-mix(in srgb, var(--text-secondary) 55%, var(--accent) 20%);
+.chat-user-copy .chat-plan-meters.is-decal .chat-plan-meter-track {
+  width: 26px;
+  height: 2px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-tertiary) 28%, transparent);
+}
+.chat-user-copy .chat-plan-meters.is-decal .chat-plan-meter-fill {
+  background: color-mix(in srgb, var(--accent) 55%, var(--text-secondary));
 }
 .chat-agent-user {
   display: flex;
