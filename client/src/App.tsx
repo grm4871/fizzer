@@ -168,7 +168,7 @@ export default function App() {
 
   // UI panels state
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [sidebarWidth, setSidebarWidth] = useState(() => Number(localStorage.getItem('cascade_sidebar_w')) || 280);
+  const [sidebarWidth, setSidebarWidth] = useState(() => Number(localStorage.getItem('cascade_sidebar_w')) || 268);
   const [isResizing, setIsResizing] = useState(false);
   // Members panel open. Mobile starts closed (toolbar opens it like the folder
   // sidebar); desktop restores the previous expanded/collapsed rail preference.
