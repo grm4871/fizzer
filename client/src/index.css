@@ -6603,8 +6603,10 @@ button.chat-avatar-agent {
 }
 
 /* ── Agent work trace: TUI-style collapsed multi-agent chatter ── */
+/* Left indent = message padding-x (18) + avatar (34) + group gap (12) so the
+   activity row sits under the message body column, not offset from it. */
 .chat-work-trace {
-  margin: 8px 16px 10px 58px;
+  margin: 8px 16px 10px 64px;
   max-width: 720px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -6642,19 +6644,26 @@ button.chat-avatar-agent {
   display: none;
 }
 .chat-work-trace:not(.is-open) .chat-work-decal.is-current {
+  display: inline-flex;
+  align-items: center;
   gap: 8px;
   padding: 0;
   border: 0;
   border-radius: 0;
   background: transparent;
+  line-height: 1;
 }
 .chat-work-trace:not(.is-open) .chat-work-decal-mark {
+  display: block;
+  flex: 0 0 8px;
   width: 8px;
   min-width: 8px;
   height: 8px;
   overflow: hidden;
   border-radius: 50%;
   color: transparent;
+  font-size: 0;
+  line-height: 0;
   background: hsl(220, 12%, 86%);
   box-shadow: 0 0 0 1px hsla(220, 12%, 100%, 0.12);
 }
@@ -7047,12 +7056,17 @@ button.chat-avatar-agent {
   color: var(--success);
 }
 .chat-mission-state {
+  display: block;
   width: 8px;
   height: 8px;
   flex: 0 0 8px;
+  margin: 0;
+  padding: 0;
   border-radius: 50%;
   background: var(--accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
+  /* Keep glow from shifting the flex box; center sits on the 8px disk. */
+  box-sizing: border-box;
 }
 .chat-mission-card.is-blocked .chat-mission-state { background: var(--danger); }
 .chat-mission-card.is-reviewing .chat-mission-state { background: var(--warning); }
@@ -7083,10 +7097,15 @@ button.chat-avatar-agent {
   min-width: 0;
 }
 .chat-mission-task-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 15px;
   flex: 0 0 15px;
   color: var(--text-muted);
   text-align: center;
+  line-height: 1;
+  font-size: 0.75rem;
 }
 .chat-mission-task.is-running .chat-mission-task-state { color: var(--accent); }
 .chat-mission-task.is-completed .chat-mission-task-state { color: var(--success); }
