@@ -1705,13 +1705,18 @@ export const ChatView = memo(function ChatView({
   // from here (overrides each agent's own cwd, enforced server-side).
   const [channelCwd, setChannelCwd] = useState('');
   const [channelCwdSaved, setChannelCwdSaved] = useState(false);
+  const [channelKanbanNoteId, setChannelKanbanNoteId] = useState('');
   const [channelSettingsOpen, setChannelSettingsOpen] = useState(false);
 
   useEffect(() => {
     if (!vaultId || !channelId) return;
     let alive = true;
-    api<{ settings: { cwd: string } }>(`/api/vaults/${vaultId}/channels/${channelId}/settings`)
-      .then((d) => { if (alive) setChannelCwd(d.settings?.cwd ?? ''); })
+    api<{ settings: { cwd: string; kanbanNoteId?: string } }>(`/api/vaults/${vaultId}/channels/${channelId}/settings`)
+      .then((d) => {
+        if (!alive) return;
+        setChannelCwd(d.settings?.cwd ?? '');
+        setChannelKanbanNoteId(d.settings?.kanbanNoteId ?? '');
+      })
       .catch(() => { /* keep current value */ });
     return () => { alive = false; };
   }, [vaultId, channelId]);
@@ -1723,11 +1728,12 @@ export const ChatView = memo(function ChatView({
     const next = (override ?? channelCwd).trim();
     if (override !== undefined) setChannelCwd(next);
     try {
-      const d = await api<{ settings: { cwd: string } }>(
+      const d = await api<{ settings: { cwd: string; kanbanNoteId?: string } }>(
         `/api/vaults/${vaultId}/channels/${channelId}/settings`,
         { method: 'PUT', body: JSON.stringify({ cwd: next }) },
       );
       setChannelCwd(d.settings?.cwd ?? '');
+      setChannelKanbanNoteId(d.settings?.kanbanNoteId ?? '');
       setChannelCwdSaved(true);
       window.setTimeout(() => setChannelCwdSaved(false), 1500);
     } catch { /* ignore — transient save failure */ }
@@ -3039,6 +3045,18 @@ export const ChatView = memo(function ChatView({
               {channelCwdSaved && <span className="chat-channel-cwd-saved">saved</span>}
             </div>
             <p>Overrides each agent's own working directory in this channel.</p>
+            {channelKanbanNoteId && onOpenNote && (
+              <button
+                type="button"
+                className="chat-channel-board-link"
+                onClick={() => onOpenNote(channelKanbanNoteId)}
+              >
+                Open channel board
+              </button>
+            )}
+            <p className="chat-channel-board-hint">
+              Orchestrated channels get a local Kanban. Superkanban collates every board in the vault.
+            </p>
             <ChatWorkspacePanel
               channelId={channelId}
               channelName={channelName}

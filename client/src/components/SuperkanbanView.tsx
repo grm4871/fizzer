@@ -212,7 +212,10 @@ function SuperkanbanViewInner({
       <div className="superkanban-empty">
         <LayoutDashboard size={32} aria-hidden="true" />
         <strong>No Kanban boards yet</strong>
-        <p>Create a note with the Kanban board format — or run a mission and live work appears here.</p>
+        <p>
+          Superkanban collates every board in the vault. Give a channel an orchestrator
+          (it gets a local board automatically), or create any note with the Kanban format.
+        </p>
       </div>
     );
   }
@@ -225,9 +228,8 @@ function SuperkanbanViewInner({
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter all boards" aria-label="Filter Superkanban cards" />
         </div>
         <span className="kanban-portability">
-          {notes.length} boards
+          {notes.length} boards · vault-wide collation
           {liveCount > 0 ? ` · ${liveCount} live contracts/tasks` : ''}
-          {' · read-only aggregate'}
         </span>
       </div>
       <div className="kanban-board">

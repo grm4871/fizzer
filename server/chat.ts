@@ -10,7 +10,7 @@
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import type Database from 'better-sqlite3';
-import { getNote, getVault, type Vault } from './vault.js';
+import { createNote, getNote, getVault, type Vault } from './vault.js';
 import { redactPrivateBlocks } from './privacy.js';
 import { createWorkItem } from './workItems.js';
 
@@ -381,6 +381,7 @@ export function ensureChatSchema(db: Db): void {
     CREATE TABLE IF NOT EXISTS chat_channel_settings (
       channel_id TEXT PRIMARY KEY REFERENCES notes(id) ON DELETE CASCADE,
       cwd TEXT NOT NULL DEFAULT '',
+      kanban_note_id TEXT REFERENCES notes(id) ON DELETE SET NULL,
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
@@ -420,6 +421,10 @@ export function ensureChatSchema(db: Db): void {
   }
   if (!memberCols.some((col) => col.name === 'pingable_by_others')) {
     db.exec('ALTER TABLE chat_agent_members ADD COLUMN pingable_by_others INTEGER NOT NULL DEFAULT 0');
+  }
+  const channelSettingsCols = db.prepare('PRAGMA table_info(chat_channel_settings)').all() as Array<{ name: string }>;
+  if (!channelSettingsCols.some((col) => col.name === 'kanban_note_id')) {
+    db.exec('ALTER TABLE chat_channel_settings ADD COLUMN kanban_note_id TEXT REFERENCES notes(id) ON DELETE SET NULL');
   }
   if (!memberCols.some((col) => col.name === 'vault_agent_id')) {
     db.exec("ALTER TABLE chat_agent_members ADD COLUMN vault_agent_id TEXT NOT NULL DEFAULT ''");
@@ -1025,8 +1030,16 @@ export function addVaultAgentToChannel(
     );
   }
 
-  return rowToAgentMember(db.prepare('SELECT * FROM chat_agent_members WHERE id = ? AND channel_id = ?')
+  const member = rowToAgentMember(db.prepare('SELECT * FROM chat_agent_members WHERE id = ? AND channel_id = ?')
     .get(memberId, route.sourceChannelId) as ChatAgentMemberRow);
+  if (orchestrator) {
+    try {
+      ensureChannelOrchestrationKanban(db, userId, channelId);
+    } catch {
+      /* local board is best-effort */
+    }
+  }
+  return member;
 }
 
 function parseJson<T>(value: string | null): T | undefined {
@@ -2412,14 +2425,134 @@ export function getChannelCwd(db: Db, sourceChannelId: string): string {
   return (row?.cwd ?? '').trim();
 }
 
-/** Read a channel's settings (resolves links to the source channel). */
-export function getChannelSettings(db: Db, channelId: string, userId: number): { cwd: string } {
+function getChannelKanbanNoteId(db: Db, sourceChannelId: string): string {
+  const row = db.prepare('SELECT kanban_note_id FROM chat_channel_settings WHERE channel_id = ?')
+    .get(sourceChannelId) as { kanban_note_id: string | null } | undefined;
+  return String(row?.kanban_note_id || '').trim();
+}
+
+function channelHasOrchestrator(db: Db, sourceChannelId: string): boolean {
+  const row = db.prepare(`
+    SELECT 1 AS ok FROM chat_agent_members
+    WHERE channel_id = ? AND orchestrator != 0 LIMIT 1
+  `).get(sourceChannelId) as { ok: number } | undefined;
+  return Boolean(row);
+}
+
+function channelKanbanMarkdown(channelId: string, channelTitle: string): string {
+  const title = channelTitle.trim() || 'channel';
+  return [
+    '---',
+    'kanban-plugin: board',
+    `cascade-channel: ${channelId}`,
+    '---',
+    '',
+    `# ${title} board`,
+    '',
+    'Local orchestration board for this channel. Superkanban collates every board in the vault, including this one.',
+    '',
+    '## Backlog',
+    '',
+    '## In progress',
+    '',
+    '## Blocked',
+    '',
+    '## Done',
+    '',
+    '%% kanban:settings',
+    '```',
+    '{"kanban-plugin":"board"}',
+    '```',
+    '%%',
+    '',
+  ].join('\n');
+}
+
+/**
+ * Ensure a channel with an orchestrator has an attached local Kanban note.
+ * Superkanban remains the vault-wide collation of all such boards.
+ */
+export function ensureChannelOrchestrationKanban(
+  db: Db,
+  userId: number,
+  channelId: string,
+): { kanbanNoteId: string } | null {
   const { route } = assertChatChannel(db, channelId, userId);
-  return { cwd: getChannelCwd(db, route.sourceChannelId) };
+  if (!channelHasOrchestrator(db, route.sourceChannelId)) return null;
+
+  const existingId = getChannelKanbanNoteId(db, route.sourceChannelId);
+  if (existingId) {
+    const existing = getNote(db, existingId);
+    if (existing && !existing.is_archived) return { kanbanNoteId: existingId };
+  }
+
+  // Recover a board that already points at this channel (e.g. settings row lost).
+  const recovered = db.prepare(`
+    SELECT id FROM notes
+    WHERE vault_id = ?
+      AND is_archived = 0
+      AND (
+        content LIKE ?
+        OR content_preview LIKE ?
+      )
+    ORDER BY updated_at DESC
+    LIMIT 1
+  `).get(
+    route.sourceVaultId,
+    `%cascade-channel: ${route.sourceChannelId}%`,
+    `%cascade-channel: ${route.sourceChannelId}%`,
+  ) as { id: string } | undefined;
+  if (recovered?.id) {
+    db.prepare(`
+      INSERT INTO chat_channel_settings (channel_id, cwd, kanban_note_id, updated_at)
+      VALUES (?, '', ?, datetime('now'))
+      ON CONFLICT(channel_id) DO UPDATE SET
+        kanban_note_id = excluded.kanban_note_id,
+        updated_at = excluded.updated_at
+    `).run(route.sourceChannelId, recovered.id);
+    return { kanbanNoteId: recovered.id };
+  }
+
+  const channelNote = getNote(db, route.sourceChannelId);
+  const channelTitle = channelNote?.title || 'channel';
+  const board = createNote(db, route.sourceVaultId, userId, {
+    title: `${channelTitle} board`,
+    content: channelKanbanMarkdown(route.sourceChannelId, channelTitle),
+    is_listed: true,
+  });
+  db.prepare(`
+    INSERT INTO chat_channel_settings (channel_id, cwd, kanban_note_id, updated_at)
+    VALUES (?, '', ?, datetime('now'))
+    ON CONFLICT(channel_id) DO UPDATE SET
+      kanban_note_id = excluded.kanban_note_id,
+      updated_at = excluded.updated_at
+  `).run(route.sourceChannelId, board.id);
+  return { kanbanNoteId: board.id };
+}
+
+/** Read a channel's settings (resolves links to the source channel). */
+export function getChannelSettings(db: Db, channelId: string, userId: number): {
+  cwd: string;
+  kanbanNoteId: string;
+} {
+  const { route } = assertChatChannel(db, channelId, userId);
+  let kanbanNoteId = getChannelKanbanNoteId(db, route.sourceChannelId);
+  if (channelHasOrchestrator(db, route.sourceChannelId)) {
+    try {
+      const ensured = ensureChannelOrchestrationKanban(db, userId, channelId);
+      if (ensured?.kanbanNoteId) kanbanNoteId = ensured.kanbanNoteId;
+    } catch {
+      /* board creation is best-effort; cwd still returns */
+    }
+  }
+  return { cwd: getChannelCwd(db, route.sourceChannelId), kanbanNoteId };
 }
 
 /** Set the channel-wide cwd. Applies to the source channel; returns the value. */
-export function setChannelCwd(db: Db, channelId: string, userId: number, cwd: string): { cwd: string } {
+export function setChannelCwd(db: Db, channelId: string, userId: number, cwd: string): {
+  cwd: string;
+  kanbanNoteId: string;
+} {
   const { route } = assertChatChannel(db, channelId, userId);
   const value = String(cwd ?? '').trim();
   db.prepare(`
@@ -2427,7 +2560,7 @@ export function setChannelCwd(db: Db, channelId: string, userId: number, cwd: st
     VALUES (?, ?, datetime('now'))
     ON CONFLICT(channel_id) DO UPDATE SET cwd = excluded.cwd, updated_at = excluded.updated_at
   `).run(route.sourceChannelId, value);
-  return { cwd: value };
+  return getChannelSettings(db, channelId, userId);
 }
 
 /** Set one persistent agent identity's picture. Only its vault owner can do so. */
@@ -2577,6 +2710,13 @@ export function upsertChatAgentMember(
     );
   }
 
+  if (member.orchestrator) {
+    try {
+      ensureChannelOrchestrationKanban(db, userId, channelId);
+    } catch {
+      /* local board is best-effort */
+    }
+  }
   return member;
 }
 
