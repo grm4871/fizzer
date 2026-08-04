@@ -3252,6 +3252,16 @@ export default function App() {
         <div className="resize-handle" style={{ left: sidebarWidth - 3 }} onMouseDown={startResize} role="separator" aria-orientation="vertical" aria-label="Resize sidebar" title="Drag to resize" />
       )}
 
+      {/* Mobile only: dimmed stage dismisses the drawer on outside tap. */}
+      {sidebarOpen && (
+        <button
+          type="button"
+          className="sidebar-backdrop"
+          aria-label="Close sidebar"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
       {sidebarOpen && (
         <Sidebar
           user={user}

@@ -615,6 +615,10 @@ button:focus-visible,
    SIDEBAR — left rail (archive / notes tree)
    Paired with .chat-users (right rail). Same surface, pad, row geometry.
    ═══════════════════════════════════════════════════════════ */
+/* Mobile drawer only; hidden on desktop so it never intercepts clicks. */
+.sidebar-backdrop {
+  display: none;
+}
 .sidebar {
   background: var(--rail-surface);
   border-right: 1px solid var(--rail-edge);
@@ -5841,6 +5845,38 @@ button:focus-visible,
     display: none;
   }
 
+  .sidebar-backdrop {
+    display: block;
+    position: absolute;
+    inset: 0;
+    z-index: 70;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: hsla(226, 16%, 3%, 0.55);
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .sidebar-backdrop {
+    position: absolute;
+    inset: 0;
+    z-index: 70;
+    display: block;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: hsla(226, 16%, 3%, 0.52);
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+
   .sidebar {
     position: absolute;
     inset: 0 auto 0 0;
@@ -5851,6 +5887,10 @@ button:focus-visible,
   }
 
   .app-shell.sidebar-closed .sidebar {
+    display: none;
+  }
+
+  .app-shell.sidebar-closed .sidebar-backdrop {
     display: none;
   }
 
