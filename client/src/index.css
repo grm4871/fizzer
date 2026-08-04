@@ -671,8 +671,38 @@ button:focus-visible,
   height: 15px;
 }
 
-/* One control for both rails — left .sidebar-actions and right .csb must be identical. */
-.sidebar-actions,
+/* Left rail: bare icon row (no chip shell — pattern lives once on the right). */
+.sidebar-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.sidebar-actions .btn-icon {
+  width: 30px;
+  min-width: 30px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  border-radius: 7px;
+  color: var(--text-secondary);
+}
+.sidebar-actions .btn-icon svg {
+  width: 15px;
+  height: 15px;
+}
+.sidebar-actions .btn-icon:hover {
+  background: color-mix(in srgb, var(--bg-overlay) 70%, transparent);
+  color: var(--text-primary);
+}
+
+/* Right rail: the one chip toolbar. */
 .csb {
   display: inline-flex;
   align-items: center;
@@ -680,14 +710,12 @@ button:focus-visible,
   flex: 0 0 auto;
   width: max-content;
   max-width: 100%;
-  margin-left: auto;
   padding: 3px;
   border: 1px solid var(--rail-edge);
   border-radius: 10px;
   background: var(--rail-toolbar-bg);
   box-shadow: var(--bevel);
 }
-.sidebar-actions .btn-icon,
 .csb button {
   position: relative;
   box-sizing: border-box;
@@ -707,13 +735,11 @@ button:focus-visible,
   cursor: pointer;
   transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
 }
-.sidebar-actions .btn-icon svg,
 .csb button svg {
   width: 15px;
   height: 15px;
   flex-shrink: 0;
 }
-.sidebar-actions .btn-icon:hover,
 .csb button:hover {
   background: color-mix(in srgb, var(--bg-overlay) 70%, transparent);
   color: var(--text-primary);
