@@ -702,15 +702,15 @@ button:focus-visible,
   color: var(--text-primary);
 }
 
-/* Right rail: the one chip toolbar. */
+/* Right rail: full-width action panel (left header stays bare icons). */
 .csb {
-  display: inline-flex;
-  align-items: center;
-  gap: 1px;
-  flex: 0 0 auto;
-  width: max-content;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 2px;
+  width: 100%;
   max-width: 100%;
-  padding: 3px;
+  box-sizing: border-box;
+  padding: 4px;
   border: 1px solid var(--rail-edge);
   border-radius: 10px;
   background: var(--rail-toolbar-bg);
@@ -719,10 +719,10 @@ button:focus-visible,
 .csb button {
   position: relative;
   box-sizing: border-box;
-  width: 30px;
-  min-width: 30px;
-  height: 28px;
-  min-height: 28px;
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  min-height: 30px;
   padding: 0;
   display: inline-flex;
   align-items: center;
@@ -4512,20 +4512,20 @@ button:focus-visible,
   padding: var(--rail-pad-y) 6px;
 }
 
-/* .csb shell/buttons unified with .sidebar-actions above. */
 .csb {
-  margin: 0 0 4px;
-  /* full-width rails still left-align the chip so both look like the same control */
-  margin-right: auto;
-  margin-left: 0;
+  margin: 0 0 6px;
 }
 .csb.is-collapsed {
-  display: inline-flex;
+  display: flex;
   flex-direction: column;
   align-items: center;
-  width: max-content;
-  margin-left: auto;
-  margin-right: auto;
+  width: 100%;
+  grid-template-columns: none;
+  gap: 4px;
+}
+.csb.is-collapsed button {
+  width: 30px;
+  min-width: 30px;
 }
 .csb-plus {
   width: 11px !important;
@@ -4942,17 +4942,18 @@ button:focus-visible,
   background: color-mix(in srgb, var(--bg-raised) 40%, transparent);
 }
 .chat-user.chat-agent-user {
-  border-color: color-mix(in srgb, var(--border) 55%, transparent);
-  background: color-mix(in srgb, hsl(38, 47%, 14%) 40%, transparent);
+  border-color: color-mix(in srgb, hsl(38, 40%, 32%) 45%, var(--border));
+  background: color-mix(in srgb, hsl(38, 42%, 16%) 72%, var(--bg-raised));
+  box-shadow: var(--bevel);
 }
 .chat-user.chat-agent-user:hover,
 .chat-user.chat-agent-user.is-editing {
-  border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
-  background: color-mix(in srgb, hsl(38, 47%, 16%) 58%, var(--bg-raised));
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--border));
+  background: color-mix(in srgb, hsl(38, 48%, 18%) 80%, var(--bg-raised));
   color: var(--text-primary);
 }
 .chat-user.chat-agent-user.is-editing {
-  box-shadow: inset 2px 0 0 var(--accent);
+  box-shadow: inset 2px 0 0 var(--accent), var(--bevel);
 }
 .chat-user-row {
   display: flex;
