@@ -7265,10 +7265,26 @@ button.chat-avatar-agent {
   font-size: 0.6875rem;
   cursor: default;
 }
+.chat-channel-board-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-top: 4px;
+}
+.chat-channel-board-row select {
+  flex: 1 1 10rem;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-size: 0.75rem;
+}
 .chat-channel-board-link {
   display: inline-flex;
   align-items: center;
-  margin-top: 10px;
   padding: 6px 10px;
   border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
   border-radius: 6px;
@@ -7277,6 +7293,7 @@ button.chat-avatar-agent {
   font-size: 0.75rem;
   font-weight: 600;
   cursor: pointer;
+  white-space: nowrap;
 }
 .chat-channel-board-link:hover {
   border-color: var(--accent);

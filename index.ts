@@ -152,6 +152,8 @@ import {
   resolveChatAgentRun,
   getChannelCwd,
   getChannelSettings,
+  setChannelKanbanNoteId,
+  ensureChannelOrchestrationKanban,
   setChannelCwd,
   type ChatMessage,
 } from './server/chat.js';
@@ -3106,8 +3108,32 @@ app.put('/api/vaults/:vaultId/channels/:channelId/settings', requireAuth, requir
   try {
     const { route } = assertChatChannel(db, req.params.channelId, req.user!.id);
     const source = db.prepare('SELECT created_by FROM vaults WHERE id = ?').get(route.sourceVaultId) as { created_by: number } | undefined;
-    if (source?.created_by !== req.user!.id) return res.status(403).json({ error: 'Only the chat owner can change its working directory' });
-    const settings = setChannelCwd(db, req.params.channelId, req.user!.id, String(req.body?.cwd ?? ''));
+    if (source?.created_by !== req.user!.id) {
+      return res.status(403).json({ error: 'Only the chat owner can change channel settings' });
+    }
+    let settings = getChannelSettings(db, req.params.channelId, req.user!.id);
+    if (req.body?.cwd !== undefined) {
+      settings = setChannelCwd(db, req.params.channelId, req.user!.id, String(req.body.cwd ?? ''));
+    }
+    if (req.body?.kanbanNoteId !== undefined) {
+      settings = setChannelKanbanNoteId(
+        db,
+        req.user!.id,
+        req.params.channelId,
+        req.body.kanbanNoteId == null || req.body.kanbanNoteId === ''
+          ? null
+          : String(req.body.kanbanNoteId),
+      );
+    }
+    if (req.body?.createInternalKanban === true) {
+      const created = ensureChannelOrchestrationKanban(db, req.user!.id, req.params.channelId, {
+        createInternal: true,
+      });
+      settings = getChannelSettings(db, req.params.channelId, req.user!.id);
+      if (!created && !settings.kanbanNoteId) {
+        return res.status(400).json({ error: 'Could not create internal board' });
+      }
+    }
     // Notify other clients on this vault so open channel views pick up the change.
     emitVaultEvent(req.params.vaultId, 'vault:chatChannelSettings', {
       vaultId: req.params.vaultId,
@@ -3115,8 +3141,8 @@ app.put('/api/vaults/:vaultId/channels/:channelId/settings', requireAuth, requir
       settings,
     });
     res.json({ settings });
-  } catch {
-    res.status(404).json({ error: 'Chat channel not found' });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Chat channel not found' });
   }
 });
 

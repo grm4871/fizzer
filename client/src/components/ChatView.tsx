@@ -3045,17 +3045,57 @@ export const ChatView = memo(function ChatView({
               {channelCwdSaved && <span className="chat-channel-cwd-saved">saved</span>}
             </div>
             <p>Overrides each agent's own working directory in this channel.</p>
-            {channelKanbanNoteId && onOpenNote && (
+            <label htmlFor={`chat-board-${channelId}`}>Project board</label>
+            <div className="chat-channel-board-row">
+              <select
+                id={`chat-board-${channelId}`}
+                value={channelKanbanNoteId}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  setChannelKanbanNoteId(next);
+                  if (!vaultId) return;
+                  void api(`/api/vaults/${vaultId}/channels/${channelId}/settings`, {
+                    method: 'PUT',
+                    body: JSON.stringify({ kanbanNoteId: next || null }),
+                  }).then((d: { settings?: { kanbanNoteId?: string } }) => {
+                    setChannelKanbanNoteId(d.settings?.kanbanNoteId ?? '');
+                  }).catch(() => { /* keep local */ });
+                }}
+              >
+                <option value="">None — pointer only when set</option>
+                {notes
+                  .filter((note) => /kanban-plugin\s*:/.test(note.content_preview || ''))
+                  .map((note) => (
+                    <option key={note.id} value={note.id}>{note.title}</option>
+                  ))}
+              </select>
+              {channelKanbanNoteId && onOpenNote && (
+                <button
+                  type="button"
+                  className="chat-channel-board-link"
+                  onClick={() => onOpenNote(channelKanbanNoteId)}
+                >
+                  Open
+                </button>
+              )}
               <button
                 type="button"
                 className="chat-channel-board-link"
-                onClick={() => onOpenNote(channelKanbanNoteId)}
+                onClick={() => {
+                  if (!vaultId) return;
+                  void api(`/api/vaults/${vaultId}/channels/${channelId}/settings`, {
+                    method: 'PUT',
+                    body: JSON.stringify({ createInternalKanban: true }),
+                  }).then((d: { settings?: { kanbanNoteId?: string } }) => {
+                    setChannelKanbanNoteId(d.settings?.kanbanNoteId ?? '');
+                  }).catch(() => { /* keep local */ });
+                }}
               >
-                Open channel board
+                Internal board
               </button>
-            )}
+            </div>
             <p className="chat-channel-board-hint">
-              Orchestrated channels get a local Kanban. Superkanban collates every board in the vault.
+              Pointer to a vault board (e.g. project board in the sidebar). Superkanban collates every board.
             </p>
             <ChatWorkspacePanel
               channelId={channelId}

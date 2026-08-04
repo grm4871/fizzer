@@ -1030,16 +1030,8 @@ export function addVaultAgentToChannel(
     );
   }
 
-  const member = rowToAgentMember(db.prepare('SELECT * FROM chat_agent_members WHERE id = ? AND channel_id = ?')
+  return rowToAgentMember(db.prepare('SELECT * FROM chat_agent_members WHERE id = ? AND channel_id = ?')
     .get(memberId, route.sourceChannelId) as ChatAgentMemberRow);
-  if (orchestrator) {
-    try {
-      ensureChannelOrchestrationKanban(db, userId, channelId);
-    } catch {
-      /* local board is best-effort */
-    }
-  }
-  return member;
 }
 
 function parseJson<T>(value: string | null): T | undefined {
@@ -2468,25 +2460,61 @@ function channelKanbanMarkdown(channelId: string, channelTitle: string): string 
   ].join('\n');
 }
 
+function writeChannelKanbanPointer(db: Db, sourceChannelId: string, kanbanNoteId: string | null): void {
+  db.prepare(`
+    INSERT INTO chat_channel_settings (channel_id, cwd, kanban_note_id, updated_at)
+    VALUES (?, '', ?, datetime('now'))
+    ON CONFLICT(channel_id) DO UPDATE SET
+      kanban_note_id = excluded.kanban_note_id,
+      updated_at = excluded.updated_at
+  `).run(sourceChannelId, kanbanNoteId);
+}
+
 /**
- * Ensure a channel with an orchestrator has an attached local Kanban note.
- * Superkanban remains the vault-wide collation of all such boards.
+ * Point this channel at an existing vault Kanban note (LHS board), or clear.
+ * Superkanban collates every board; the channel only stores a pointer.
+ */
+export function setChannelKanbanNoteId(
+  db: Db,
+  userId: number,
+  channelId: string,
+  kanbanNoteId: string | null,
+): { cwd: string; kanbanNoteId: string } {
+  const { route } = assertChatChannel(db, channelId, userId);
+  const next = String(kanbanNoteId || '').trim();
+  if (next) {
+    const note = getNote(db, next);
+    if (!note || note.vault_id !== route.sourceVaultId || note.is_archived) {
+      throw new Error('Kanban board note not found in this vault');
+    }
+    if (!/kanban-plugin\s*:/i.test(note.content || note.content_preview || '')) {
+      throw new Error('That note is not a Kanban board');
+    }
+    writeChannelKanbanPointer(db, route.sourceChannelId, next);
+  } else {
+    writeChannelKanbanPointer(db, route.sourceChannelId, null);
+  }
+  return getChannelSettings(db, channelId, userId);
+}
+
+/**
+ * Optional: mint an unlisted internal board for this channel and point at it.
+ * Prefer pointing at an existing LHS project board when one already exists.
  */
 export function ensureChannelOrchestrationKanban(
   db: Db,
   userId: number,
   channelId: string,
+  opts?: { createInternal?: boolean },
 ): { kanbanNoteId: string } | null {
   const { route } = assertChatChannel(db, channelId, userId);
-  if (!channelHasOrchestrator(db, route.sourceChannelId)) return null;
-
   const existingId = getChannelKanbanNoteId(db, route.sourceChannelId);
   if (existingId) {
     const existing = getNote(db, existingId);
     if (existing && !existing.is_archived) return { kanbanNoteId: existingId };
   }
 
-  // Recover a board that already points at this channel (e.g. settings row lost).
+  // Recover a prior internal board tagged for this channel.
   const recovered = db.prepare(`
     SELECT id FROM notes
     WHERE vault_id = ?
@@ -2503,30 +2531,21 @@ export function ensureChannelOrchestrationKanban(
     `%cascade-channel: ${route.sourceChannelId}%`,
   ) as { id: string } | undefined;
   if (recovered?.id) {
-    db.prepare(`
-      INSERT INTO chat_channel_settings (channel_id, cwd, kanban_note_id, updated_at)
-      VALUES (?, '', ?, datetime('now'))
-      ON CONFLICT(channel_id) DO UPDATE SET
-        kanban_note_id = excluded.kanban_note_id,
-        updated_at = excluded.updated_at
-    `).run(route.sourceChannelId, recovered.id);
+    writeChannelKanbanPointer(db, route.sourceChannelId, recovered.id);
     return { kanbanNoteId: recovered.id };
   }
+
+  if (!opts?.createInternal) return null;
 
   const channelNote = getNote(db, route.sourceChannelId);
   const channelTitle = channelNote?.title || 'channel';
   const board = createNote(db, route.sourceVaultId, userId, {
     title: `${channelTitle} board`,
     content: channelKanbanMarkdown(route.sourceChannelId, channelTitle),
-    is_listed: true,
+    // Unlisted: LHS project boards stay the primary; this is an optional internal pad.
+    is_listed: false,
   });
-  db.prepare(`
-    INSERT INTO chat_channel_settings (channel_id, cwd, kanban_note_id, updated_at)
-    VALUES (?, '', ?, datetime('now'))
-    ON CONFLICT(channel_id) DO UPDATE SET
-      kanban_note_id = excluded.kanban_note_id,
-      updated_at = excluded.updated_at
-  `).run(route.sourceChannelId, board.id);
+  writeChannelKanbanPointer(db, route.sourceChannelId, board.id);
   return { kanbanNoteId: board.id };
 }
 
@@ -2536,13 +2555,13 @@ export function getChannelSettings(db: Db, channelId: string, userId: number): {
   kanbanNoteId: string;
 } {
   const { route } = assertChatChannel(db, channelId, userId);
-  let kanbanNoteId = getChannelKanbanNoteId(db, route.sourceChannelId);
-  if (channelHasOrchestrator(db, route.sourceChannelId)) {
-    try {
-      const ensured = ensureChannelOrchestrationKanban(db, userId, channelId);
-      if (ensured?.kanbanNoteId) kanbanNoteId = ensured.kanbanNoteId;
-    } catch {
-      /* board creation is best-effort; cwd still returns */
+  const kanbanNoteId = getChannelKanbanNoteId(db, route.sourceChannelId);
+  // Drop stale pointers if the note vanished.
+  if (kanbanNoteId) {
+    const note = getNote(db, kanbanNoteId);
+    if (!note || note.is_archived) {
+      writeChannelKanbanPointer(db, route.sourceChannelId, null);
+      return { cwd: getChannelCwd(db, route.sourceChannelId), kanbanNoteId: '' };
     }
   }
   return { cwd: getChannelCwd(db, route.sourceChannelId), kanbanNoteId };
@@ -2710,13 +2729,6 @@ export function upsertChatAgentMember(
     );
   }
 
-  if (member.orchestrator) {
-    try {
-      ensureChannelOrchestrationKanban(db, userId, channelId);
-    } catch {
-      /* local board is best-effort */
-    }
-  }
   return member;
 }
 

@@ -9,6 +9,7 @@ import {
   ensureChannelOrchestrationKanban,
   ensureChatSchema,
   getChannelSettings,
+  setChannelKanbanNoteId,
   upsertChatAgentMember,
 } from './chat.js';
 
@@ -37,7 +38,12 @@ function setup() {
     CREATE TABLE folders (id TEXT PRIMARY KEY, vault_id TEXT, parent_id TEXT, name TEXT, position INTEGER DEFAULT 0);
     CREATE TABLE tags (id TEXT PRIMARY KEY, vault_id TEXT, name TEXT);
     CREATE TABLE note_tags (note_id TEXT, tag_id TEXT);
-    CREATE TABLE note_links (source_note_id TEXT, target_note_id TEXT, target_title TEXT);
+    CREATE TABLE note_links (
+      source_id TEXT NOT NULL,
+      target_title TEXT NOT NULL,
+      target_id TEXT,
+      link_type TEXT NOT NULL DEFAULT 'wikilink'
+    );
     INSERT INTO users (id, username) VALUES (1, 'owner');
   `);
   db.prepare('INSERT INTO vaults (id, name, root_path, created_by) VALUES (?, ?, ?, ?)')
@@ -50,10 +56,26 @@ function setup() {
   return { db, root };
 }
 
-test('orchestrator channels get an attached local kanban board', () => {
+const BOARD = `---
+kanban-plugin: board
+---
+
+# Project board
+
+## Backlog
+
+## Done
+
+%% kanban:settings
+\`\`\`
+{"kanban-plugin":"board"}
+\`\`\`
+%%
+`;
+
+test('channel board is a pointer to an existing LHS kanban note', () => {
   const { db, root } = setup();
   try {
-    assert.equal(getChannelSettings(db, 'channel-1', 1).kanbanNoteId, '');
     upsertChatAgentMember(db, 1, 'vault-1', 'channel-1', {
       id: 'reg-sol',
       agentId: 'codex',
@@ -62,17 +84,41 @@ test('orchestrator channels get an attached local kanban board', () => {
       model: 'gpt',
       orchestrator: true,
     });
-    const settings = getChannelSettings(db, 'channel-1', 1);
-    assert.ok(settings.kanbanNoteId);
-    const note = db.prepare('SELECT title, content FROM notes WHERE id = ?').get(settings.kanbanNoteId) as {
-      title: string;
-      content: string;
-    };
-    assert.match(note.title, /cascade-dev board/i);
-    assert.match(note.content, /kanban-plugin:\s*board/);
+    // Enabling orchestrator does not auto-create a board.
+    assert.equal(getChannelSettings(db, 'channel-1', 1).kanbanNoteId, '');
+
+    db.prepare(`
+      INSERT INTO notes (id, vault_id, title, content, content_preview, is_listed, created_by)
+      VALUES (?, ?, ?, ?, ?, 1, 1)
+    `).run('board-1', 'vault-1', 'Cascade board', BOARD, 'kanban-plugin: board');
+
+    const pointed = setChannelKanbanNoteId(db, 1, 'channel-1', 'board-1');
+    assert.equal(pointed.kanbanNoteId, 'board-1');
+    assert.equal(getChannelSettings(db, 'channel-1', 1).kanbanNoteId, 'board-1');
+
+    const cleared = setChannelKanbanNoteId(db, 1, 'channel-1', null);
+    assert.equal(cleared.kanbanNoteId, '');
+  } finally {
+    db.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('optional internal board is unlisted and becomes the pointer', () => {
+  const { db, root } = setup();
+  try {
+    const created = ensureChannelOrchestrationKanban(db, 1, 'channel-1', { createInternal: true });
+    assert.ok(created?.kanbanNoteId);
+    const note = db.prepare('SELECT title, content, is_listed FROM notes WHERE id = ?')
+      .get(created!.kanbanNoteId) as { title: string; content: string; is_listed: number };
+    assert.equal(note.is_listed, 0);
     assert.match(note.content, /cascade-channel:\s*channel-1/);
-    const again = ensureChannelOrchestrationKanban(db, 1, 'channel-1');
-    assert.equal(again?.kanbanNoteId, settings.kanbanNoteId);
+    assert.equal(getChannelSettings(db, 'channel-1', 1).kanbanNoteId, created!.kanbanNoteId);
+    // Idempotent.
+    assert.equal(
+      ensureChannelOrchestrationKanban(db, 1, 'channel-1', { createInternal: true })?.kanbanNoteId,
+      created!.kanbanNoteId,
+    );
   } finally {
     db.close();
     fs.rmSync(root, { recursive: true, force: true });
