@@ -22,7 +22,7 @@ export type WorkItem = {
   brief: string;
   status: WorkItemStatus;
   priority: number;
-  sourceKind: string;
+  sourceKind: 'message' | 'note' | 'kanban' | 'manual' | 'mission' | string;
   sourceId: string;
   assigneeRegistrationId: string | null;
   leaseHolder: string | null;

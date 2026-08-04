@@ -23,8 +23,15 @@ export type WorkItemStatus = (typeof WORK_ITEM_STATUSES)[number];
 export const WORKSPACE_MODES = ['shared', 'isolated', 'existing'] as const;
 export type WorkspaceMode = (typeof WORKSPACE_MODES)[number];
 
-export const SOURCE_KINDS = ['message', 'note', 'kanban', 'manual'] as const;
+/**
+ * Source of the durable contract:
+ * - mission — compiled from a chat mission task
+ * - contract — accepted clarification Q&A (the work item *is* the contract)
+ */
+export const SOURCE_KINDS = ['message', 'note', 'kanban', 'manual', 'mission', 'contract'] as const;
 export type SourceKind = (typeof SOURCE_KINDS)[number];
+
+export type WorkItemStopReason = '' | 'completed' | 'token_budget' | 'manual' | 'failed';
 
 export type WorkItem = {
   id: string;
@@ -32,6 +39,8 @@ export type WorkItem = {
   channelId: string | null;
   title: string;
   brief: string;
+  /** Accepted clarification / acceptance criteria. The work item *is* the contract. */
+  contract: string;
   status: WorkItemStatus;
   priority: number;
   sourceKind: SourceKind | '';
@@ -49,6 +58,10 @@ export type WorkItem = {
   prState: string;
   summary: string;
   verification: string;
+  /** Soft token ceiling for agent drive; 0 = unlimited. */
+  tokenBudget: number;
+  tokensUsed: number;
+  stopReason: WorkItemStopReason;
   dependsOn: string[];
   runIds: number[];
   createdBy: number;
@@ -109,6 +122,10 @@ export function ensureWorkItemSchema(db: Db): void {
       pr_state TEXT NOT NULL DEFAULT '',
       summary TEXT NOT NULL DEFAULT '',
       verification TEXT NOT NULL DEFAULT '',
+      contract TEXT NOT NULL DEFAULT '',
+      token_budget INTEGER NOT NULL DEFAULT 0,
+      tokens_used INTEGER NOT NULL DEFAULT 0,
+      stop_reason TEXT NOT NULL DEFAULT '',
       created_by INTEGER NOT NULL REFERENCES users(id),
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -143,6 +160,12 @@ export function ensureWorkItemSchema(db: Db): void {
     );
     CREATE INDEX IF NOT EXISTS work_item_reviews_item_idx ON work_item_reviews(work_item_id, created_at);
   `);
+  // Idempotent column upgrades for existing DBs.
+  const cols = (db.prepare('PRAGMA table_info(work_items)').all() as Array<{ name: string }>).map((c) => c.name);
+  if (!cols.includes('contract')) db.exec("ALTER TABLE work_items ADD COLUMN contract TEXT NOT NULL DEFAULT ''");
+  if (!cols.includes('token_budget')) db.exec('ALTER TABLE work_items ADD COLUMN token_budget INTEGER NOT NULL DEFAULT 0');
+  if (!cols.includes('tokens_used')) db.exec('ALTER TABLE work_items ADD COLUMN tokens_used INTEGER NOT NULL DEFAULT 0');
+  if (!cols.includes('stop_reason')) db.exec("ALTER TABLE work_items ADD COLUMN stop_reason TEXT NOT NULL DEFAULT ''");
 }
 
 type WorkItemRow = {
@@ -168,6 +191,10 @@ type WorkItemRow = {
   pr_state: string;
   summary: string;
   verification: string;
+  contract?: string;
+  token_budget?: number;
+  tokens_used?: number;
+  stop_reason?: string;
   created_by: number;
   created_at: string;
   updated_at: string;
@@ -180,12 +207,14 @@ function hydrate(db: Db, row: WorkItemRow): WorkItem {
   const runIds = (db.prepare(`
     SELECT run_id AS id FROM work_item_runs WHERE work_item_id = ? ORDER BY linked_at ASC
   `).all(row.id) as Array<{ id: number }>).map((item) => item.id);
+  const stop = String(row.stop_reason || '') as WorkItemStopReason;
   return {
     id: row.id,
     vaultId: row.vault_id,
     channelId: row.channel_id,
     title: row.title,
     brief: row.brief || '',
+    contract: row.contract || '',
     status: isStatus(row.status) ? row.status : 'open',
     priority: row.priority || 0,
     sourceKind: isSourceKind(row.source_kind) ? row.source_kind : '',
@@ -203,6 +232,9 @@ function hydrate(db: Db, row: WorkItemRow): WorkItem {
     prState: row.pr_state || '',
     summary: row.summary || '',
     verification: row.verification || '',
+    tokenBudget: Math.max(0, Number(row.token_budget) || 0),
+    tokensUsed: Math.max(0, Number(row.tokens_used) || 0),
+    stopReason: (['completed', 'token_budget', 'manual', 'failed'].includes(stop) ? stop : '') as WorkItemStopReason,
     dependsOn,
     runIds,
     createdBy: row.created_by,
@@ -257,6 +289,7 @@ export function createWorkItem(
   input: {
     title: string;
     brief?: string;
+    contract?: string;
     channelId?: string | null;
     priority?: number;
     sourceKind?: string;
@@ -268,6 +301,8 @@ export function createWorkItem(
     workspaceMode?: string;
     worktreePath?: string;
     assigneeRegistrationId?: string | null;
+    tokenBudget?: number;
+    verification?: string;
   },
 ): WorkItem {
   assertVaultAccess(db, vaultId, userId, true);
@@ -277,6 +312,7 @@ export function createWorkItem(
   const priority = Math.max(-100, Math.min(100, Math.floor(Number(input.priority) || 0)));
   const sourceKind = isSourceKind(input.sourceKind) ? input.sourceKind : 'manual';
   const workspaceMode = isMode(input.workspaceMode) ? input.workspaceMode : 'shared';
+  const tokenBudget = Math.max(0, Math.floor(Number(input.tokenBudget) || 0));
   const dependencies = Array.from(new Set((input.dependsOn || []).map((item) => cleanText(item, 80)).filter(Boolean)));
   if (dependencies.length) {
     const found = db.prepare(`
@@ -287,16 +323,17 @@ export function createWorkItem(
 
   db.prepare(`
     INSERT INTO work_items (
-      id, vault_id, channel_id, title, brief, priority, source_kind, source_id,
+      id, vault_id, channel_id, title, brief, contract, priority, source_kind, source_id,
       assignee_registration_id, repository, base_commit, branch, workspace_mode,
-      worktree_path, created_by
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      worktree_path, verification, token_budget, created_by
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     vaultId,
     input.channelId || null,
     title,
     cleanText(input.brief, 8000),
+    cleanText(input.contract, 16_000),
     priority,
     sourceKind,
     cleanText(input.sourceId, 120),
@@ -306,6 +343,8 @@ export function createWorkItem(
     cleanText(input.branch, 200),
     workspaceMode,
     cleanText(input.worktreePath, 1000),
+    cleanText(input.verification, 8000),
+    tokenBudget,
     userId,
   );
 
@@ -324,6 +363,7 @@ export function updateWorkItem(
   patch: Partial<{
     title: string;
     brief: string;
+    contract: string;
     status: WorkItemStatus;
     priority: number;
     assigneeRegistrationId: string | null;
@@ -337,6 +377,9 @@ export function updateWorkItem(
     prState: string;
     summary: string;
     verification: string;
+    tokenBudget: number;
+    tokensUsed: number;
+    stopReason: WorkItemStopReason;
     dependsOn: string[];
   }>,
 ): WorkItem {
@@ -355,17 +398,28 @@ export function updateWorkItem(
   const priority = patch.priority !== undefined
     ? Math.max(-100, Math.min(100, Math.floor(Number(patch.priority) || 0)))
     : row.priority;
+  const tokenBudget = patch.tokenBudget !== undefined
+    ? Math.max(0, Math.floor(Number(patch.tokenBudget) || 0))
+    : (row.token_budget || 0);
+  const tokensUsed = patch.tokensUsed !== undefined
+    ? Math.max(0, Math.floor(Number(patch.tokensUsed) || 0))
+    : (row.tokens_used || 0);
+  const stopReason = patch.stopReason !== undefined
+    ? cleanText(patch.stopReason, 40)
+    : (row.stop_reason || '');
 
   db.prepare(`
     UPDATE work_items SET
-      title = ?, brief = ?, status = ?, priority = ?,
+      title = ?, brief = ?, contract = ?, status = ?, priority = ?,
       assignee_registration_id = ?, repository = ?, base_commit = ?, branch = ?,
       workspace_mode = ?, worktree_path = ?, pr_number = ?, pr_url = ?, pr_state = ?,
-      summary = ?, verification = ?, updated_at = datetime('now')
+      summary = ?, verification = ?, token_budget = ?, tokens_used = ?, stop_reason = ?,
+      updated_at = datetime('now')
     WHERE id = ?
   `).run(
     title,
     patch.brief !== undefined ? cleanText(patch.brief, 8000) : row.brief,
+    patch.contract !== undefined ? cleanText(patch.contract, 16_000) : (row.contract || ''),
     status,
     priority,
     patch.assigneeRegistrationId !== undefined ? patch.assigneeRegistrationId : row.assignee_registration_id,
@@ -379,6 +433,9 @@ export function updateWorkItem(
     patch.prState !== undefined ? cleanText(patch.prState, 80) : row.pr_state,
     patch.summary !== undefined ? cleanText(patch.summary, 4000) : row.summary,
     patch.verification !== undefined ? cleanText(patch.verification, 8000) : row.verification,
+    tokenBudget,
+    tokensUsed,
+    stopReason,
     id,
   );
 

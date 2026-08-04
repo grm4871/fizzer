@@ -122,6 +122,13 @@ export interface ChatMissionTask {
   anonymous?: boolean;
   queueReason: 'dependency' | 'agent-busy' | 'queued' | '';
   runId?: number;
+  /** Durable work-item twin (workspace / lease / PR). */
+  workItemId?: string;
+  workItemStatus?: string;
+  workspaceMode?: string;
+  branch?: string;
+  worktreePath?: string;
+  prUrl?: string;
   updatedAt: string;
 }
 
@@ -1144,6 +1151,14 @@ function ChatMissionCard({ mission }: { mission: ChatMission }) {
                     {task.assigneeModel ? ` · ${task.assigneeModel}` : ''}
                     {task.reasoningEffort ? ` · ${task.reasoningEffort} effort` : ''}
                   </span>
+                  {task.workItemId && (
+                    <span className="chat-mission-workspace" title={task.worktreePath || task.branch || task.workItemId}>
+                      {task.workspaceMode === 'isolated' ? 'isolated' : task.workspaceMode || 'workspace'}
+                      {task.branch ? ` · ${task.branch}` : ''}
+                      {task.workItemStatus ? ` · ${task.workItemStatus.replace(/_/g, ' ')}` : ''}
+                      {task.prUrl ? ' · PR' : ''}
+                    </span>
+                  )}
                   {task.summary && <small>{task.summary}</small>}
                 </div>
               </div>

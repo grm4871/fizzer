@@ -2016,6 +2016,23 @@ button:focus-visible,
   text-decoration: line-through;
 }
 .superkanban-column .kanban-card { cursor: default; grid-template-columns: minmax(0, 1fr); }
+.superkanban-column .kanban-card.is-live-work {
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--border));
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, hsl(38, 47%, 18%) 42%, transparent),
+    transparent 52%
+  ),
+  color-mix(in srgb, var(--surface-subtle) 94%, transparent);
+  box-shadow: var(--bevel);
+}
+.superkanban-source.is-live {
+  color: var(--accent-hover);
+  font-weight: 600;
+  cursor: default;
+  text-decoration: none;
+}
+.superkanban-source.is-live:hover { text-decoration: none; }
 .superkanban-source {
   justify-self: start;
   max-width: 100%;
@@ -7084,6 +7101,25 @@ button.chat-avatar-agent {
   margin-top: 2px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+.chat-mission-workspace {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 3px;
+  max-width: 100%;
+  padding: 1px 7px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-subtle) 70%, transparent);
+  color: color-mix(in srgb, var(--accent-hover) 82%, var(--text-secondary));
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .chat-mission-summary {
   margin-top: 8px;

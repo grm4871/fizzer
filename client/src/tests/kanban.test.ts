@@ -14,7 +14,13 @@ import {
   renameKanbanColumn,
   toggleKanbanCard,
 } from '../components/KanbanView';
-import { mergeKanbanSources } from '../components/SuperkanbanView';
+import {
+  mergeKanbanSources,
+  mergeLiveWorkIntoKanban,
+  workItemStatusToKanbanColumn,
+  workItemsToLiveColumns,
+} from '../components/SuperkanbanView';
+import type { WorkItem } from '../chat/workItems';
 
 const SAMPLE = [
   '---',
@@ -135,6 +141,39 @@ describe('Markdown-backed Kanban helpers', () => {
       .toEqual(['Draft brief', 'Plain bullet', 'Second board first', 'Second board second']);
     expect(columns[0].cards.map((card) => card.sourceTitle))
       .toEqual(['First board', 'First board', 'Second board', 'Second board']);
+  });
+
+  it('projects mission work items into Superkanban live columns', () => {
+    const items: WorkItem[] = [
+      {
+        id: 'wi-1', vaultId: 'v', channelId: 'ch', title: 'Ship isolation', brief: '',
+        status: 'in_progress', priority: 0, sourceKind: 'mission', sourceId: 'task-1',
+        assigneeRegistrationId: 'reg-1', leaseHolder: null, leaseExpiresAt: null,
+        repository: '', baseCommit: '', branch: 'cascade/abc/ship-isolation',
+        workspaceMode: 'isolated', worktreePath: '', prNumber: null, prUrl: '', prState: '',
+        summary: '', verification: '', dependsOn: [], runIds: [], createdBy: 1,
+        createdAt: '', updatedAt: '',
+      },
+      {
+        id: 'wi-2', vaultId: 'v', channelId: 'ch', title: 'Queued follow-up', brief: '',
+        status: 'open', priority: 0, sourceKind: 'mission', sourceId: 'task-2',
+        assigneeRegistrationId: null, leaseHolder: null, leaseExpiresAt: null,
+        repository: '', baseCommit: '', branch: 'cascade/abc/queued',
+        workspaceMode: 'isolated', worktreePath: '', prNumber: null, prUrl: '', prState: '',
+        summary: '', verification: '', dependsOn: [], runIds: [], createdBy: 1,
+        createdAt: '', updatedAt: '',
+      },
+    ];
+    expect(workItemStatusToKanbanColumn('in_progress')).toBe('In progress');
+    const live = workItemsToLiveColumns(items);
+    expect(live.map((c) => c.title)).toEqual(['Backlog', 'In progress']);
+    expect(live[1].cards[0].text).toContain('Ship isolation');
+    expect(live[1].cards[0].live).toBe(true);
+    const boards = mergeKanbanSources([{ id: 'b1', title: 'Board', content: SAMPLE }]);
+    const merged = mergeLiveWorkIntoKanban(boards, live);
+    const backlog = merged.find((c) => c.title === 'Backlog')!;
+    expect(backlog.cards[0].sourceTitle).toBe('Live mission work');
+    expect(backlog.cards.some((c) => c.text === 'Draft brief')).toBe(true);
   });
 
   it('parses the live Cascade kanban board and tolerates non-string content', () => {

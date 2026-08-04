@@ -128,6 +128,13 @@ export type ChatMissionTask = {
   anonymous: boolean;
   queueReason: 'dependency' | 'agent-busy' | 'queued' | '';
   runId?: number;
+  /** Durable work-item twin (workspace / lease / PR). */
+  workItemId?: string;
+  workItemStatus?: string;
+  workspaceMode?: string;
+  branch?: string;
+  worktreePath?: string;
+  prUrl?: string;
   updatedAt: string;
 };
 

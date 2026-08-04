@@ -52,6 +52,13 @@ test('scheduler respects dependencies, priority, one-active-task-per-agent, and 
       prompt: 'Verify the result.', dependsOn: [first.task.id], reasoningEffort: 'low',
     });
 
+    // Mission tasks compile into durable isolated work-item twins.
+    assert.ok(first.task.workItemId);
+    assert.equal(first.task.workspaceMode, 'isolated');
+    assert.match(first.task.branch || '', /^cascade\//);
+    assert.ok(second.task.workItemId);
+    assert.notEqual(first.task.workItemId, second.task.workItemId);
+
     const initial = listSchedulableMissionTasks(db, mission.mission.id);
     assert.deepEqual(initial.candidates.map((item) => item.taskId), [first.task.id]);
     assert.equal(initial.candidates[0]?.reasoningEffort, 'high');
@@ -75,6 +82,8 @@ test('scheduler respects dependencies, priority, one-active-task-per-agent, and 
       unlocked.candidates.length ? getChatMessage(db, 'channel-1', 1, root.id)?.mission?.tasks[1]?.waitingFor : [],
       [],
     );
+    const settledFirst = getChatMessage(db, 'channel-1', 1, root.id)?.mission?.tasks.find((t) => t.id === first.task.id);
+    assert.equal(settledFirst?.workItemStatus, 'done');
   } finally {
     db.close();
   }

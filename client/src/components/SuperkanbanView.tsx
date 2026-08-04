@@ -5,6 +5,7 @@ import { LayoutDashboard, Search } from 'lucide-react';
 import { hasObsidianKanbanMarker, parseKanbanMarkdown, type KanbanCard } from './KanbanView';
 import { ErrorBoundary } from './ErrorBoundary';
 import type { Note } from '../api';
+import type { WorkItem, WorkItemStatus } from '../chat/workItems';
 
 export interface SuperkanbanSource {
   id: string;
@@ -15,6 +16,11 @@ export interface SuperkanbanSource {
 export interface SuperkanbanCard extends KanbanCard {
   sourceId: string;
   sourceTitle: string;
+  /** Live work-item twin (mission-compiled or manual). */
+  live?: boolean;
+  workItemId?: string;
+  branch?: string;
+  workspaceMode?: string;
 }
 
 export interface SuperkanbanColumn {
@@ -25,6 +31,72 @@ export interface SuperkanbanColumn {
 
 function columnKey(title: string) {
   return title.trim().replace(/\s+/g, ' ').toLocaleLowerCase();
+}
+
+/** Map durable work-item status onto familiar Kanban lanes. */
+export function workItemStatusToKanbanColumn(status: WorkItemStatus | string): string {
+  switch (status) {
+    case 'in_progress':
+    case 'leased':
+      return 'In progress';
+    case 'review':
+      return 'Review';
+    case 'blocked':
+      return 'Blocked';
+    case 'done':
+      return 'Done';
+    case 'canceled':
+      return 'Archive';
+    case 'open':
+    default:
+      return 'Backlog';
+  }
+}
+
+/**
+ * Project live work items (including mission-compiled twins) into Superkanban
+ * columns so chat orchestration and the board share one surface.
+ */
+export function workItemsToLiveColumns(items: WorkItem[]): SuperkanbanColumn[] {
+  const order = ['Backlog', 'In progress', 'Blocked', 'Review', 'Done', 'Archive'];
+  const byKey = new Map<string, SuperkanbanColumn>();
+  for (const title of order) {
+    const col: SuperkanbanColumn = { id: `live-${columnKey(title)}`, title, cards: [] };
+    byKey.set(columnKey(title), col);
+  }
+  for (const item of items) {
+    // Mission twins always surface; other work needs a channel home.
+    if (item.sourceKind !== 'mission' && !item.channelId) continue;
+    const title = workItemStatusToKanbanColumn(item.status);
+    const key = columnKey(title);
+    let column = byKey.get(key);
+    if (!column) {
+      column = { id: `live-${key}`, title, cards: [] };
+      byKey.set(key, column);
+    }
+    const bits = [
+      item.title,
+      item.assigneeRegistrationId ? `_assignee ${item.assigneeRegistrationId.slice(0, 10)}_` : '',
+      item.branch ? `\`${item.branch}\`` : '',
+      item.workspaceMode === 'isolated' ? 'isolated workspace' : '',
+      item.prUrl ? `[PR](${item.prUrl})` : '',
+      item.summary ? `\n\n${item.summary}` : '',
+    ].filter(Boolean);
+    column.cards.push({
+      id: `work:${item.id}`,
+      text: bits.join(' · ').replace(' · \n\n', '\n\n'),
+      checked: item.status === 'done',
+      sourceId: item.id,
+      sourceTitle: item.sourceKind === 'mission' ? 'Live mission work' : 'Live work item',
+      live: true,
+      workItemId: item.id,
+      branch: item.branch,
+      workspaceMode: item.workspaceMode,
+    });
+  }
+  return order
+    .map((title) => byKey.get(columnKey(title))!)
+    .filter((column) => column.cards.length > 0);
 }
 
 /**
@@ -57,31 +129,68 @@ export function mergeKanbanSources(sources: SuperkanbanSource[]): SuperkanbanCol
   return columns;
 }
 
+/** Fold live work-item columns into note-backed Superkanban columns. */
+export function mergeLiveWorkIntoKanban(
+  boardColumns: SuperkanbanColumn[],
+  liveColumns: SuperkanbanColumn[],
+): SuperkanbanColumn[] {
+  if (liveColumns.length === 0) return boardColumns;
+  const columns = boardColumns.map((column) => ({ ...column, cards: [...column.cards] }));
+  const byKey = new Map(columns.map((column) => [columnKey(column.title), column]));
+  for (const live of liveColumns) {
+    const key = columnKey(live.title);
+    let target = byKey.get(key);
+    if (!target) {
+      target = { id: live.id, title: live.title, cards: [] };
+      byKey.set(key, target);
+      columns.push(target);
+    }
+    // Live cards lead the lane so mission work is visible first.
+    target.cards = [...live.cards, ...target.cards];
+  }
+  return columns;
+}
+
 interface SuperkanbanViewProps {
   notes: Note[];
   loading: boolean;
   error: string | null;
   onOpenNote: (id: string) => void;
+  /** Durable work items for this vault (mission twins + channel work). */
+  liveWorkItems?: WorkItem[];
 }
 
-export function SuperkanbanView({ notes, loading, error, onOpenNote }: SuperkanbanViewProps) {
+export function SuperkanbanView({ notes, loading, error, onOpenNote, liveWorkItems }: SuperkanbanViewProps) {
   return (
     <ErrorBoundary label="Superkanban">
-      <SuperkanbanViewInner notes={notes} loading={loading} error={error} onOpenNote={onOpenNote} />
+      <SuperkanbanViewInner
+        notes={notes}
+        loading={loading}
+        error={error}
+        onOpenNote={onOpenNote}
+        liveWorkItems={liveWorkItems}
+      />
     </ErrorBoundary>
   );
 }
 
-function SuperkanbanViewInner({ notes, loading, error, onOpenNote }: SuperkanbanViewProps) {
+function SuperkanbanViewInner({
+  notes,
+  loading,
+  error,
+  onOpenNote,
+  liveWorkItems = [],
+}: SuperkanbanViewProps) {
   const [query, setQuery] = useState('');
-  const columns = useMemo(
-    () => mergeKanbanSources((notes || []).map((note) => ({
+  const columns = useMemo(() => {
+    const boards = mergeKanbanSources((notes || []).map((note) => ({
       id: note.id,
       title: note.title,
       content: typeof note.content === 'string' ? note.content : '',
-    }))),
-    [notes],
-  );
+    })));
+    return mergeLiveWorkIntoKanban(boards, workItemsToLiveColumns(liveWorkItems || []));
+  }, [notes, liveWorkItems]);
+  const liveCount = (liveWorkItems || []).filter((item) => item.sourceKind === 'mission').length;
   const normalizedQuery = query.trim().toLocaleLowerCase();
 
   if (loading) return <div className="superkanban-empty">Loading your Kanban boards…</div>;
@@ -91,7 +200,7 @@ function SuperkanbanViewInner({ notes, loading, error, onOpenNote }: Superkanban
       <div className="superkanban-empty">
         <LayoutDashboard size={32} aria-hidden="true" />
         <strong>No Kanban boards yet</strong>
-        <p>Create a note with the Kanban board format and it will appear here.</p>
+        <p>Create a note with the Kanban board format — or run a mission and live work appears here.</p>
       </div>
     );
   }
@@ -103,7 +212,11 @@ function SuperkanbanViewInner({ notes, loading, error, onOpenNote }: Superkanban
           <Search size={14} aria-hidden="true" />
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter all boards" aria-label="Filter Superkanban cards" />
         </div>
-        <span className="kanban-portability">{notes.length} boards · read-only aggregate</span>
+        <span className="kanban-portability">
+          {notes.length} boards
+          {liveCount > 0 ? ` · ${liveCount} live mission tasks` : ''}
+          {' · read-only aggregate'}
+        </span>
       </div>
       <div className="kanban-board">
         {columns.map((column) => {
@@ -115,11 +228,21 @@ function SuperkanbanViewInner({ notes, loading, error, onOpenNote }: Superkanban
               <header><strong>{column.title}</strong><span>{cards.length}</span></header>
               <div className="kanban-cards">
                 {cards.map((card) => (
-                  <article className={`kanban-card${card.checked ? ' is-complete' : ''}`} key={card.id}>
+                  <article
+                    className={`kanban-card${card.checked ? ' is-complete' : ''}${card.live ? ' is-live-work' : ''}`}
+                    key={card.id}
+                  >
                     <div className="kanban-card-title"><ReactMarkdown remarkPlugins={[remarkGfm]}>{card.text || ''}</ReactMarkdown></div>
-                    <button type="button" className="superkanban-source" onClick={() => onOpenNote(card.sourceId)} title={`Open ${card.sourceTitle}`}>
-                      {card.sourceTitle}
-                    </button>
+                    {card.live ? (
+                      <span className="superkanban-source is-live" title={card.branch || card.workItemId || 'Live work'}>
+                        {card.sourceTitle}
+                        {card.workspaceMode === 'isolated' ? ' · isolated' : ''}
+                      </span>
+                    ) : (
+                      <button type="button" className="superkanban-source" onClick={() => onOpenNote(card.sourceId)} title={`Open ${card.sourceTitle}`}>
+                        {card.sourceTitle}
+                      </button>
+                    )}
                   </article>
                 ))}
                 {cards.length === 0 && <div className="kanban-no-matches">No matching cards</div>}

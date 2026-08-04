@@ -18,6 +18,17 @@ import {
   type ChatMissionTask,
   type ChatMissionTaskStatus,
 } from './chat.js';
+import {
+  acquireWorkItemLease,
+  createWorkItem,
+  ensureWorkItemSchema,
+  getWorkItem,
+  linkWorkItemRun,
+  releaseWorkItemLease,
+  updateWorkItem,
+  type WorkItem,
+  type WorkItemStatus,
+} from './workItems.js';
 
 type Db = Database.Database;
 
@@ -51,6 +62,8 @@ type TaskRow = {
   anonymous: number;
   dispatch_id: string | null;
   run_id: number | null;
+  /** Durable work-item twin — workspace/PR/lease live here. */
+  work_item_id: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -148,6 +161,12 @@ export function ensureChatMissionSchema(db: Db): void {
   if (!taskColumns.some((column) => column.name === 'anonymous')) {
     db.exec('ALTER TABLE chat_mission_tasks ADD COLUMN anonymous INTEGER NOT NULL DEFAULT 0');
   }
+  if (!taskColumns.some((column) => column.name === 'work_item_id')) {
+    db.exec('ALTER TABLE chat_mission_tasks ADD COLUMN work_item_id TEXT');
+  }
+  // Missions compile into work items; ensure the twin table exists on the same
+  // upgrade path so projection can join without a separate migrate step.
+  ensureWorkItemSchema(db);
   // Early scheduler builds linked the worker run to its task but omitted the
   // same durable task id from the rendered reply. Repair those existing rows so
   // internal worker reports collapse after reload as well as on new runs.
@@ -166,6 +185,131 @@ export function ensureChatMissionSchema(db: Db): void {
         WHERE task.run_id = chat_messages.run_id
       )
   `);
+}
+
+/** Map chat-mission task lifecycle onto the durable work-item status model. */
+export function missionTaskStatusToWorkItemStatus(status: ChatMissionTaskStatus): WorkItemStatus {
+  switch (status) {
+    case 'running':
+      return 'in_progress';
+    case 'blocked':
+    case 'failed':
+      return 'blocked';
+    case 'completed':
+      return 'done';
+    case 'canceled':
+      return 'canceled';
+    case 'pending':
+    default:
+      return 'open';
+  }
+}
+
+function slugifyBranchPart(value: string): string {
+  return cleanText(value, 40)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 32) || 'task';
+}
+
+function workItemBranchForTask(missionId: string, taskId: string, title: string): string {
+  return `cascade/${missionId.slice(0, 8)}/${slugifyBranchPart(title)}-${taskId.slice(0, 6)}`;
+}
+
+/**
+ * Compile a mission task into a durable work item (or return the existing twin).
+ * Workspaces/PRs hang off the work item; the mission task remains the chat
+ * scheduling authority.
+ */
+export function ensureWorkItemForMissionTask(
+  db: Db,
+  userId: number,
+  mission: MissionRow,
+  task: TaskRow,
+): WorkItem {
+  if (task.work_item_id) {
+    try {
+      return getWorkItem(db, userId, task.work_item_id);
+    } catch {
+      /* re-create if the twin was deleted */
+    }
+  }
+  const existing = db.prepare(`
+    SELECT id FROM work_items
+    WHERE vault_id = ? AND source_kind = 'mission' AND source_id = ?
+    LIMIT 1
+  `).get(mission.vault_id, task.id) as { id: string } | undefined;
+  if (existing) {
+    db.prepare('UPDATE chat_mission_tasks SET work_item_id = ? WHERE id = ?').run(existing.id, task.id);
+    return getWorkItem(db, userId, existing.id);
+  }
+
+  const deps = taskDependencies(task);
+  const depWorkItemIds = deps.length === 0
+    ? []
+    : (db.prepare(`
+        SELECT work_item_id AS id FROM chat_mission_tasks
+        WHERE mission_id = ? AND id IN (${deps.map(() => '?').join(',')})
+          AND work_item_id IS NOT NULL
+      `).all(mission.id, ...deps) as Array<{ id: string }>)
+      .map((row) => row.id)
+      .filter(Boolean);
+
+  const item = createWorkItem(db, userId, mission.vault_id, {
+    title: task.title,
+    brief: task.prompt || task.title,
+    channelId: mission.channel_id,
+    priority: task.priority || 0,
+    sourceKind: 'mission',
+    sourceId: task.id,
+    dependsOn: depWorkItemIds,
+    assigneeRegistrationId: task.assignee_registration_id,
+    workspaceMode: 'isolated',
+    branch: workItemBranchForTask(mission.id, task.id, task.title),
+  });
+  db.prepare('UPDATE chat_mission_tasks SET work_item_id = ? WHERE id = ?').run(item.id, task.id);
+  return item;
+}
+
+function syncWorkItemForMissionTask(
+  db: Db,
+  userId: number,
+  mission: MissionRow,
+  task: TaskRow,
+  opts?: { runId?: number; lease?: boolean; release?: boolean },
+): void {
+  let item: WorkItem;
+  try {
+    item = ensureWorkItemForMissionTask(db, userId, mission, task);
+  } catch {
+    return;
+  }
+  const nextStatus = missionTaskStatusToWorkItemStatus(task.status);
+  try {
+    if (opts?.runId) linkWorkItemRun(db, userId, item.id, opts.runId);
+    if (opts?.lease) {
+      try {
+        acquireWorkItemLease(db, userId, item.id, task.assignee_registration_id);
+      } catch {
+        /* lease contention is non-fatal for chat scheduling */
+      }
+    }
+    updateWorkItem(db, userId, item.id, {
+      status: nextStatus,
+      summary: task.summary || item.summary,
+      assigneeRegistrationId: task.assignee_registration_id,
+    });
+    if (opts?.release || ['done', 'canceled', 'blocked'].includes(nextStatus)) {
+      try {
+        releaseWorkItemLease(db, userId, item.id);
+      } catch {
+        /* ignore */
+      }
+    }
+  } catch {
+    /* work-item dual-write must not fail mission scheduling */
+  }
 }
 
 function taskDependencies(row: Pick<TaskRow, 'depends_on_json'>): string[] {
@@ -247,12 +391,24 @@ function projectMission(db: Db, row: MissionRow, tasks: TaskRow[]): ChatMission 
   const byId = new Map(registrations.map((registration) => [registration.id, registration]));
   const coordinator = byId.get(row.coordinator_registration_id);
   const byTaskId = new Map(tasks.map((item) => [item.id, item]));
+  const workItemIds = tasks.map((task) => task.work_item_id).filter((id): id is string => Boolean(id));
+  const workItemsById = new Map<string, WorkItem>();
+  if (workItemIds.length) {
+    for (const id of workItemIds) {
+      try {
+        workItemsById.set(id, getWorkItem(db, row.created_by, id));
+      } catch {
+        /* twin missing — omit workspace projection */
+      }
+    }
+  }
   const projectedTasks: ChatMissionTask[] = tasks.map((task) => {
     const assignee = byId.get(task.assignee_registration_id);
     const dependsOn = taskDependencies(task);
     const waitingFor = dependsOn.filter((id) => byTaskId.get(id)?.status !== 'completed');
     const anonymous = Boolean(task.anonymous);
     const baseMention = assignee?.mention || '';
+    const workItem = task.work_item_id ? workItemsById.get(task.work_item_id) : undefined;
     return {
       id: task.id,
       title: task.title,
@@ -276,6 +432,14 @@ function projectMission(db: Db, row: MissionRow, tasks: TaskRow[]): ChatMission 
             ? 'queued'
             : 'agent-busy',
       ...(task.run_id != null ? { runId: task.run_id } : {}),
+      ...(workItem ? {
+        workItemId: workItem.id,
+        workItemStatus: workItem.status,
+        workspaceMode: workItem.workspaceMode,
+        branch: workItem.branch,
+        worktreePath: workItem.worktreePath,
+        prUrl: workItem.prUrl || undefined,
+      } : {}),
       updatedAt: task.updated_at,
     };
   });
@@ -481,11 +645,14 @@ export function addChatMissionTask(
       reasoningEffort,
       anonymousFlag,
     );
-  }
-  if (!existing) {
     db.prepare(`
       UPDATE chat_missions SET status = 'active', wake_sent = 0, updated_at = datetime('now') WHERE id = ?
     `).run(row.id);
+    // Compile into a durable work-item twin (isolated workspace identity).
+    const taskRow = db.prepare('SELECT * FROM chat_mission_tasks WHERE id = ?').get(taskId) as TaskRow;
+    ensureWorkItemForMissionTask(db, userId, row, taskRow);
+  } else if (!existing.work_item_id) {
+    ensureWorkItemForMissionTask(db, userId, row, existing);
   }
   const refreshed = refreshMissionProjection(db, row.id);
   return {
@@ -595,13 +762,18 @@ export function linkMissionTaskDispatch(db: Db, taskId: string, dispatchId: stri
 
 export function attachRunToMissionTaskByDispatch(db: Db, dispatchId: string, runId: number): MissionProjectionUpdate | null {
   const row = db.prepare(`
-    SELECT id, mission_id, status FROM chat_mission_tasks WHERE dispatch_id = ?
-  `).get(dispatchId) as { id: string; mission_id: string; status: ChatMissionTaskStatus } | undefined;
+    SELECT * FROM chat_mission_tasks WHERE dispatch_id = ?
+  `).get(dispatchId) as TaskRow | undefined;
   if (!row) return null;
   if (row.status === 'pending' || row.status === 'running') {
     db.prepare(`
       UPDATE chat_mission_tasks SET run_id = ?, status = 'running', updated_at = datetime('now') WHERE id = ?
     `).run(runId, row.id);
+  }
+  const mission = missionRow(db, row.mission_id);
+  const updated = db.prepare('SELECT * FROM chat_mission_tasks WHERE id = ?').get(row.id) as TaskRow;
+  if (mission) {
+    syncWorkItemForMissionTask(db, mission.created_by, mission, updated, { runId, lease: true });
   }
   return refreshMissionProjection(db, row.mission_id);
 }
@@ -635,6 +807,13 @@ export function updateChatMissionTask(
       WHERE run_id IS NULL
         AND id = (SELECT dispatch_id FROM chat_mission_tasks WHERE id = ?)
     `).run(taskId);
+  }
+  const mission = missionRow(db, row.mission_id);
+  const task = db.prepare('SELECT * FROM chat_mission_tasks WHERE id = ?').get(taskId) as TaskRow;
+  if (mission && task) {
+    syncWorkItemForMissionTask(db, mission.created_by, mission, task, {
+      release: ['completed', 'failed', 'blocked', 'canceled'].includes(input.status),
+    });
   }
   return {
     ...refreshMissionProjection(db, row.mission_id),
@@ -701,6 +880,9 @@ export function finishChatMission(
       .run(wakeMessage.id, row.channel_id);
   }
   const canceledWakeRunIds = obsoleteWakeRows.flatMap((item) => item.run_id == null ? [] : [item.run_id]);
+  for (const task of taskRows(db, row.id)) {
+    syncWorkItemForMissionTask(db, userId, row, task, { release: true });
+  }
   return {
     ...refreshMissionProjection(db, row.id),
     ...(obsoleteWakeRows.length ? { removedWakeMessageIds: obsoleteWakeRows.map((item) => item.id) } : {}),
@@ -743,6 +925,14 @@ export function settleMissionTaskForRun(
     db.prepare(`
       UPDATE chat_mission_tasks SET status = ?, summary = ?, updated_at = datetime('now') WHERE id = ?
     `).run(next, cleanText(summary, 4000), task.id);
+  }
+  const mission = missionRow(db, task.mission_id);
+  const settled = db.prepare('SELECT * FROM chat_mission_tasks WHERE id = ?').get(task.id) as TaskRow;
+  if (mission && settled) {
+    syncWorkItemForMissionTask(db, mission.created_by, mission, settled, {
+      runId: runId,
+      release: true,
+    });
   }
   const update = refreshMissionProjection(db, task.mission_id);
   const wake = claimMissionCoordinatorWake(db, task.mission_id);

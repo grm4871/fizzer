@@ -34,6 +34,7 @@ import { SessionManager } from './components/SessionManager';
 import { NewsTicker } from './components/NewsTicker';
 import { PaneGrid, type TabDragPayload } from './components/PaneGrid';
 import { SuperkanbanView } from './components/SuperkanbanView';
+import type { WorkItem } from './chat/workItems';
 import { AccountSettings } from './components/AccountSettings';
 import * as Layout from './layout/tree';
 import type { LayoutNode } from './layout/tree';
@@ -163,6 +164,7 @@ export default function App() {
   // Note bodies, keyed by tab id, so each note pane edits independently.
   const [noteContents, setNoteContents] = useState<Record<string, NoteEntry>>({});
   const [superkanbanNotes, setSuperkanbanNotes] = useState<Note[]>([]);
+  const [superkanbanLiveWork, setSuperkanbanLiveWork] = useState<WorkItem[]>([]);
   const [superkanbanLoading, setSuperkanbanLoading] = useState(false);
   const [superkanbanError, setSuperkanbanError] = useState<string | null>(null);
 
@@ -2266,19 +2268,28 @@ export default function App() {
     }
   }, [loadVaultData, closeTab, openChatChannel]);
 
-  /** Fetch every board body in sidebar order for the read-only aggregate tab. */
+  /** Fetch every board body + live mission/work items for the aggregate tab. */
   const loadSuperkanban = useCallback(async () => {
     // Previews are whitespace-collapsed by the API, so detect the marker here
     // and validate the complete note body again inside mergeKanbanSources.
     const boardSummaries = notesRef.current.filter((note) => /kanban-plugin\s*:/.test(note.content_preview));
+    const vaultId = activeVaultIdRef.current;
     setSuperkanbanLoading(true);
     setSuperkanbanError(null);
     try {
-      const fetched = await Promise.all(boardSummaries.map(async (summary) => {
-        const data = await api<{ note: Note }>(`/api/notes/${summary.id}`);
-        return data.note;
-      }));
+      const [fetched, live] = await Promise.all([
+        Promise.all(boardSummaries.map(async (summary) => {
+          const data = await api<{ note: Note }>(`/api/notes/${summary.id}`);
+          return data.note;
+        })),
+        vaultId
+          ? api<{ items: WorkItem[] }>(
+            `/api/vaults/${vaultId}/work-items`,
+          ).then((data) => data.items || []).catch(() => [] as WorkItem[])
+          : Promise.resolve([] as WorkItem[]),
+      ]);
       setSuperkanbanNotes(fetched);
+      setSuperkanbanLiveWork(live);
     } catch (error) {
       console.error('Error loading Superkanban:', error);
       setSuperkanbanError('Could not load all Kanban boards. Try reopening this tab.');
@@ -3112,6 +3123,7 @@ export default function App() {
         loading={superkanbanLoading}
         error={superkanbanError}
         onOpenNote={openNote}
+        liveWorkItems={superkanbanLiveWork}
       />;
     }
     if (tab.type === 'chat') {
@@ -3182,7 +3194,7 @@ export default function App() {
         />
       </Suspense>
     );
-  }, [availableChatAgents, chatState.registeredAgentsByChannel, chatPresenceByChannel, currentUsername, loadingChatChannels, runnerHealth, vaultAgents, handleCancelChatRun, handleCreateChatInviteLink, handleInviteChatUser, handleRemoveChatParticipant, handleLeaveChatChannel, handleRegisterChatAgent, handleRemoveChatAgent, handleUpsertVaultAgent, handleDeleteVaultAgent, handleAddVaultAgentToChannel, handleSendChatMessage, handleForwardChatMessage, noteContents, notes, getNoteChangeHandler, getNoteSaveHandler, getNoteRenameHandler, handleExecuteDirective, handleOpenWikilink, openNote, chatMembersOpen, activeVaultId, handleHydrateChatMessage, handleOpenSharedChatNote, superkanbanNotes, superkanbanLoading, superkanbanError, chatJumpTarget, handleChatJumpHandled]);
+  }, [availableChatAgents, chatState.registeredAgentsByChannel, chatPresenceByChannel, currentUsername, loadingChatChannels, runnerHealth, vaultAgents, handleCancelChatRun, handleCreateChatInviteLink, handleInviteChatUser, handleRemoveChatParticipant, handleLeaveChatChannel, handleRegisterChatAgent, handleRemoveChatAgent, handleUpsertVaultAgent, handleDeleteVaultAgent, handleAddVaultAgentToChannel, handleSendChatMessage, handleForwardChatMessage, noteContents, notes, getNoteChangeHandler, getNoteSaveHandler, getNoteRenameHandler, handleExecuteDirective, handleOpenWikilink, openNote, chatMembersOpen, activeVaultId, handleHydrateChatMessage, handleOpenSharedChatNote, superkanbanNotes, superkanbanLiveWork, superkanbanLoading, superkanbanError, chatJumpTarget, handleChatJumpHandled]);
 
   if (!user) {
     const hasInvite = /^\/invite\/[^/]+$/.test(window.location.pathname);
