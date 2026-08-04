@@ -24,8 +24,10 @@ test('coordinator helper starts and delegates a mission with structured API call
       body: raw ? JSON.parse(raw) : null,
     });
     res.setHeader('content-type', 'application/json');
-    if (req.url === '/api/vaults/vault-1/channels/channel-1/messages/root-message') {
-      res.end(JSON.stringify({ message: { id: 'root-message', body: 'Ship' } }));
+    if (req.method === 'POST' && req.url === '/api/vaults/vault-1/channels/channel-1/messages') {
+      const body = raw ? JSON.parse(raw) : {};
+      res.statusCode = 201;
+      res.end(JSON.stringify({ message: { id: body.id || 'sys-mission-root', body: body.body || '' } }));
       return;
     }
     if (req.url === '/api/vaults/vault-1/channels/channel-1/missions') {
@@ -101,7 +103,7 @@ test('coordinator helper starts and delegates a mission with structured API call
     cli, 'mission', 'finish', '--mission', 'mission-1', '--summary', 'Integrated', ...common,
   ], { env: withCoordinator });
   assert.deepEqual(requests.map((request) => `${request.method} ${request.path}`), [
-    'GET /api/vaults/vault-1/channels/channel-1/messages/root-message',
+    'POST /api/vaults/vault-1/channels/channel-1/messages',
     'POST /api/vaults/vault-1/channels/channel-1/missions',
     'POST /api/vaults/vault-1/channels/channel-1/missions/mission-1/tasks',
     'GET /api/vaults/vault-1/channels/channel-1/missions/mission-1?coordinator=reg-sol',
@@ -109,8 +111,10 @@ test('coordinator helper starts and delegates a mission with structured API call
     'POST /api/vaults/vault-1/channels/channel-1/missions/mission-1/finish',
   ]);
   assert.ok(requests.every((request) => request.runId === '777'));
+  assert.equal(requests[0]?.body?.registrationId, 'reg-sol');
+  assert.equal(requests[1]?.body?.rootMessageId, requests[0]?.body?.id);
   assert.deepEqual(requests[1]?.body, {
-    rootMessageId: 'root-message',
+    rootMessageId: requests[0]?.body?.id,
     coordinatorRegistrationId: 'reg-sol',
     title: 'Release',
     objective: 'Ship safely',
@@ -134,14 +138,13 @@ test('coordinator helper starts and delegates a mission with structured API call
   assert.equal(JSON.parse(fs.readFileSync(config, 'utf8')).usedChatSend, undefined);
 });
 
-test('starting another mission from the same turn creates a separate inline root', async (t) => {
+test('mission start always posts a coordinator shell as the mission root', async (t) => {
   const requests: Array<{ method: string; path: string; body: Record<string, unknown> | null }> = [];
   const server = http.createServer(async (req, res) => {
     let raw = '';
     for await (const chunk of req) raw += chunk;
     requests.push({ method: req.method || '', path: req.url || '', body: raw ? JSON.parse(raw) : null });
     res.setHeader('content-type', 'application/json');
-    if (req.url?.endsWith('/messages/root-message')) return res.end(JSON.stringify({ message: { id: 'root-message', mission: { id: 'first' } } }));
     if (req.url?.endsWith('/messages')) return res.end(JSON.stringify({ message: { id: 'sys-mission-root-new' } }));
     if (req.url?.endsWith('/missions')) return res.end(JSON.stringify({ mission: { id: 'second', title: 'Second task' } }));
     res.statusCode = 404; res.end(JSON.stringify({ error: 'not found' }));
@@ -155,10 +158,10 @@ test('starting another mission from the same turn creates a separate inline root
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   await execFileAsync(process.execPath, [cli, 'mission', 'start', '--title', 'Second task', '--objective', 'Do it too', '--url', `http://127.0.0.1:${address.port}`, '--token', 'token', '--vault', 'vault-1', '--channel', 'channel-1'], { env: { ...process.env, CASCADE_HELPER_CONFIG: config } });
   assert.deepEqual(requests.map((request) => `${request.method} ${request.path}`), [
-    'GET /api/vaults/vault-1/channels/channel-1/messages/root-message',
     'POST /api/vaults/vault-1/channels/channel-1/messages',
     'POST /api/vaults/vault-1/channels/channel-1/missions',
   ]);
-  assert.equal(requests[1].body?.registrationId, 'reg-sol');
-  assert.equal(requests[2].body?.rootMessageId, 'sys-mission-root-new');
+  assert.equal(requests[0].body?.registrationId, 'reg-sol');
+  assert.equal(requests[0].body?.author, 'Sol');
+  assert.equal(requests[1].body?.rootMessageId, 'sys-mission-root-new');
 });

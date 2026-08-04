@@ -454,40 +454,34 @@ async function main() {
       if (!registrationId) fail('mission start can only be used from a registered coordinator run.');
       const title = String(args.title || '').trim();
       if (!title) fail('mission start needs --title <text>.');
-      let rootMessageId = String(
+      const triggerMessageId = String(
         args.root
         || configString(config, 'chatTriggeringMessageId')
         || process.env.CASCADE_CHAT_TRIGGERING_MESSAGE
         || '',
       ).trim();
-      if (!rootMessageId) fail('mission start needs a triggering message; pass --root <message-id>.');
-      // A transcript message can project one mission card. When the user queues
-      // several substantial jobs in one turn, give each new mission its own
-      // durable inline root instead of silently returning the first mission.
-      const rootResult = await api(
+      // Mission cards project onto root_message_id. Always attach under a
+      // coordinator shell (Supagrok header), not the human triggering message.
+      const syntheticId = `sys-mission-root-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+      const synthetic = await api(
         url,
         token,
-        'GET',
-        `/api/vaults/${vaultId}/channels/${channelId}/messages/${encodeURIComponent(rootMessageId)}`,
+        'POST',
+        `/api/vaults/${vaultId}/channels/${channelId}/messages`,
+        {
+          id: syntheticId,
+          channelId,
+          author: configString(config, 'displayName') || configString(config, 'mention') || 'Coordinator',
+          registrationId,
+          body: String(args.objective || '').trim() || title,
+          createdAt: new Date().toISOString(),
+          ...(triggerMessageId
+            ? { replyTo: { messageId: triggerMessageId, author: '', preview: title } }
+            : {}),
+        },
       );
-      if (rootResult.message?.mission) {
-        const syntheticId = `sys-mission-root-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-        const synthetic = await api(
-          url,
-          token,
-          'POST',
-          `/api/vaults/${vaultId}/channels/${channelId}/messages`,
-          {
-            id: syntheticId,
-            channelId,
-            author: configString(config, 'displayName') || configString(config, 'mention') || 'Coordinator',
-            registrationId,
-            body: String(args.objective || '').trim() || title,
-            createdAt: new Date().toISOString(),
-          },
-        );
-        rootMessageId = synthetic.message.id;
-      }
+      const rootMessageId = String(synthetic.message?.id || syntheticId).trim();
+      if (!rootMessageId) fail('mission start could not create a coordinator root message.');
       const result = await api(
         url,
         token,
