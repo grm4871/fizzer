@@ -7,6 +7,7 @@ import {
   requestSessionSteer,
   findProjectedActiveSessionRun,
   resetSessionTurnHandlesForTests,
+  shouldSteerActiveSession,
 } from '../chat/sessionTurns';
 
 beforeEach(() => {
@@ -23,6 +24,34 @@ describe('findProjectedActiveSessionRun', () => {
     expect(findProjectedActiveSessionRun([
       { registrationId: 'sol', runId: 42, status: 'failed' },
     ], 'sol')).toBeUndefined();
+  });
+
+  it('falls back to agentId when registrationId is missing on the shell', () => {
+    expect(findProjectedActiveSessionRun([
+      { agentId: 'grok', runId: 55, status: 'running' },
+    ], 'reg-supagrok', 'grok')).toBe(55);
+  });
+});
+
+describe('shouldSteerActiveSession', () => {
+  it('steers human follow-ups when a durable run is still open without a local tail', () => {
+    expect(shouldSteerActiveSession({
+      orchestrationQueue: false,
+      hasPrecedingTurn: false,
+      hasLocalActiveRun: false,
+      projectedRunId: 99,
+    })).toBe(true);
+    expect(shouldSteerActiveSession({
+      orchestrationQueue: true,
+      hasPrecedingTurn: true,
+      hasLocalActiveRun: true,
+      projectedRunId: 99,
+    })).toBe(false);
+    expect(shouldSteerActiveSession({
+      orchestrationQueue: false,
+      hasPrecedingTurn: false,
+      hasLocalActiveRun: false,
+    })).toBe(false);
   });
 });
 

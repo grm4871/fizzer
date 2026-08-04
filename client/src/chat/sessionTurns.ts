@@ -11,16 +11,32 @@ let sessionTurnGeneration = 0;
 
 /** Recover the active run identity from durable chat projection after reload. */
 export function findProjectedActiveSessionRun(
-  messages: Array<{ registrationId?: string; runId?: number; status?: string }>,
+  messages: Array<{ registrationId?: string; agentId?: string; runId?: number; status?: string }>,
   registrationId: string,
+  agentId?: string,
 ): number | undefined {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
-    if (message.registrationId === registrationId && message.status === 'running' && message.runId != null) {
-      return message.runId;
-    }
+    if (message.status !== 'running' || message.runId == null) continue;
+    if (message.registrationId === registrationId) return message.runId;
+    // Optimistic shells sometimes only carry agentId before registration is linked.
+    if (agentId && message.agentId === agentId && !message.registrationId) return message.runId;
   }
   return undefined;
+}
+
+/**
+ * Human / orchestrator follow-ups should steer when the session is busy locally
+ * or still has a durable running shell — not only when a prior Promise tail exists.
+ */
+export function shouldSteerActiveSession(opts: {
+  orchestrationQueue: boolean;
+  hasPrecedingTurn: boolean;
+  hasLocalActiveRun: boolean;
+  projectedRunId?: number;
+}): boolean {
+  if (opts.orchestrationQueue) return false;
+  return opts.hasPrecedingTurn || opts.hasLocalActiveRun || opts.projectedRunId != null;
 }
 
 /** Mission work is a queued assignment, never a correction to the active turn. */

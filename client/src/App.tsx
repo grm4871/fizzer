@@ -77,7 +77,7 @@ import {
   type PersistedSession,
 } from './chat/session';
 import { chatMessageStore } from './chat/messageStore';
-import { consumePendingSessionSteer, enqueueSessionTurn, findProjectedActiveSessionRun, forceReleasePriorSessionTurns, queuesBehindActiveSession, requestSessionSteer } from './chat/sessionTurns';
+import { consumePendingSessionSteer, enqueueSessionTurn, findProjectedActiveSessionRun, forceReleasePriorSessionTurns, queuesBehindActiveSession, requestSessionSteer, shouldSteerActiveSession } from './chat/sessionTurns';
 import { Activity, Gem, PanelLeftOpen, Users } from 'lucide-react';
 
 type ChatAgentDispatch = {
@@ -1450,7 +1450,22 @@ export default function App() {
     const watermarkKey = conversation.watermarkKey;
     const sessionTurn = enqueueSessionTurn(agentSessionTailRef.current, watermarkKey);
     const orchestrationQueue = queuesBehindActiveSession(triggeringMessage);
-    const steeringTurn = Boolean(sessionTurn.preceding) && !orchestrationQueue;
+    const projectedRunId = findProjectedActiveSessionRun(
+      chatMessageStore.getChannel(channelId),
+      registration.id,
+      registration.agentId,
+    );
+    if (projectedRunId != null && !activeAgentSessionRunRef.current.has(watermarkKey)) {
+      activeAgentSessionRunRef.current.set(watermarkKey, projectedRunId);
+    }
+    // Supervisor/human steers must fire when a durable run is still open even if
+    // the local Promise tail was already released (reload, missed terminal).
+    const steeringTurn = shouldSteerActiveSession({
+      orchestrationQueue,
+      hasPrecedingTurn: Boolean(sessionTurn.preceding),
+      hasLocalActiveRun: activeAgentSessionRunRef.current.has(watermarkKey),
+      projectedRunId,
+    });
     const agentMessageId = dispatchId
       ? `agent-dispatch-${dispatchId}`
       : `agent-${agentId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -1467,45 +1482,32 @@ export default function App() {
     };
 
     if (steeringTurn) {
-      // A reload preserves the durable running message but clears this
-      // renderer-local map. Recover its run id so a follow-up can still steer
-      // the coordinator instead of waiting 60 seconds behind an un-canceled run.
-      if (!activeAgentSessionRunRef.current.has(watermarkKey)) {
-        const projectedRunId = findProjectedActiveSessionRun(
-          chatMessageStore.getChannel(channelId),
-          registration.id,
-        );
-        if (projectedRunId != null) activeAgentSessionRunRef.current.set(watermarkKey, projectedRunId);
-      }
       const runToInterrupt = requestSessionSteer(
         activeAgentSessionRunRef.current,
         interruptedAgentSessionRunRef.current,
         pendingAgentSteerRef.current,
         watermarkKey,
       );
-      if (runToInterrupt != null) {
+      const interruptId = runToInterrupt
+        ?? projectedRunId
+        ?? activeAgentSessionRunRef.current.get(watermarkKey);
+      if (interruptId != null) {
         // Await cancel so the provider lease is released before we wait on the
         // local turn chain. Fire-and-forget left steers stuck for 60s then fail.
-        await cancelSteeringRun(runToInterrupt);
-        // If the predecessor never saw a terminal event (dead socket / hung
-        // CLI), force-release it so this steer is not stranded.
-        forceReleasePriorSessionTurns(watermarkKey);
+        await cancelSteeringRun(interruptId);
       }
-    } else if (!orchestrationQueue) {
+      // Always unstick the local queue for human/supervisor steers — cancel
+      // alone does not release a hung predecessor that never saw a terminal event.
+      forceReleasePriorSessionTurns(watermarkKey);
+    } else if (!orchestrationQueue && projectedRunId != null) {
       // App restart clears local session tails, so the next human ping is not
       // classified as a steer even though a durable open run may still hold the
       // sticky registration lease. Interrupt that ghost so POST /runs does not
       // fail forever with "still stopping".
-      const projectedRunId = findProjectedActiveSessionRun(
-        chatMessageStore.getChannel(channelId),
-        registration.id,
-      );
-      if (projectedRunId != null) {
-        activeAgentSessionRunRef.current.set(watermarkKey, projectedRunId);
-        interruptedAgentSessionRunRef.current.set(watermarkKey, projectedRunId);
-        await cancelSteeringRun(projectedRunId);
-        forceReleasePriorSessionTurns(watermarkKey);
-      }
+      activeAgentSessionRunRef.current.set(watermarkKey, projectedRunId);
+      interruptedAgentSessionRunRef.current.set(watermarkKey, projectedRunId);
+      await cancelSteeringRun(projectedRunId);
+      forceReleasePriorSessionTurns(watermarkKey);
     }
 
     let runSocket: ReturnType<typeof connectRunsSocket> | null = null;
@@ -1649,19 +1651,21 @@ export default function App() {
           }
         };
         try {
-          await waitForPreceding(steeringTurn ? 45_000 : 60_000);
+          // After force-release, steers should not sit for nearly a minute.
+          await waitForPreceding(steeringTurn ? 8_000 : 60_000);
         } catch {
-          const projectedRunId = findProjectedActiveSessionRun(
+          const stuckRunId = findProjectedActiveSessionRun(
             chatMessageStore.getChannel(channelId),
             registration.id,
+            registration.agentId,
           );
-          if (projectedRunId != null) {
-            activeAgentSessionRunRef.current.set(watermarkKey, projectedRunId);
-            await cancelSteeringRun(projectedRunId);
+          if (stuckRunId != null) {
+            activeAgentSessionRunRef.current.set(watermarkKey, stuckRunId);
+            await cancelSteeringRun(stuckRunId);
           }
           forceReleasePriorSessionTurns(watermarkKey);
           try {
-            await waitForPreceding(5_000);
+            await waitForPreceding(2_000);
           } catch {
             // Last resort: proceed. Server 409 + cancel retries handle a still-open lease.
           }
