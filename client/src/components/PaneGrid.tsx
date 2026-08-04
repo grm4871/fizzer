@@ -16,6 +16,11 @@ import { FileText, ExternalLink, X, Hash, LayoutDashboard, PanelLeftClose, Panel
 import type { Tab } from './TabBar';
 import { NOTE_DND_TYPE } from '../docEmbeds';
 import { isPane, type DropSide, type LayoutNode, type PaneNode, type SplitNode } from '../layout/tree';
+import {
+  acquireInteractionLock,
+  bindDragGesture,
+  releaseInteractionLock,
+} from '../ui/interactionLocks';
 
 /** Tab-strip context menu. Portaled to body so `.tab-bar` overflow cannot clip it. */
 type TabStripMenu =
@@ -541,29 +546,25 @@ function Split({ split, ...rest }: { split: SplitNode } & Omit<PaneGridProps, 'n
     const start = isRow ? event.clientX : event.clientY;
     const startSizes = [...split.sizes];
 
-    document.body.style.cursor = isRow ? 'col-resize' : 'row-resize';
-    document.body.style.userSelect = 'none';
+    acquireInteractionLock({ cursor: isRow ? 'col-resize' : 'row-resize' });
 
-    const onMove = (e: MouseEvent) => {
-      const current = isRow ? e.clientX : e.clientY;
-      let deltaFraction = (current - start) / total;
-      const a = startSizes[dividerIndex];
-      const b = startSizes[dividerIndex + 1];
-      // Clamp so neither adjacent child shrinks below the minimum.
-      deltaFraction = Math.max(-(a - MIN_FRACTION), Math.min(b - MIN_FRACTION, deltaFraction));
-      const next = [...startSizes];
-      next[dividerIndex] = a + deltaFraction;
-      next[dividerIndex + 1] = b - deltaFraction;
-      rest.onResize(split.id, next);
-    };
-    const onUp = () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-    };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
+    bindDragGesture({
+      onMove: (e) => {
+        const current = isRow ? e.clientX : e.clientY;
+        let deltaFraction = (current - start) / total;
+        const a = startSizes[dividerIndex];
+        const b = startSizes[dividerIndex + 1];
+        // Clamp so neither adjacent child shrinks below the minimum.
+        deltaFraction = Math.max(-(a - MIN_FRACTION), Math.min(b - MIN_FRACTION, deltaFraction));
+        const next = [...startSizes];
+        next[dividerIndex] = a + deltaFraction;
+        next[dividerIndex + 1] = b - deltaFraction;
+        rest.onResize(split.id, next);
+      },
+      onEnd: () => {
+        releaseInteractionLock();
+      },
+    });
   };
 
   return (

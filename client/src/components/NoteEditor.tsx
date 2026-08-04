@@ -14,6 +14,11 @@ import { tags } from '@lezer/highlight';
 import { FileText, Link2, Box, Columns3, Globe, ExternalLink, LockKeyhole } from 'lucide-react';
 import { hasObsidianKanbanMarker, KanbanView } from './KanbanView';
 import { perfSpan } from '../perf';
+import {
+  acquireInteractionLock,
+  bindDragGesture,
+  releaseInteractionLock,
+} from '../ui/interactionLocks';
 
 /* ═══════════════════════════════════════════════════════════
    NoteEditor — CodeMirror 6 Live Preview Markdown Editor
@@ -661,27 +666,25 @@ class ImageWidget extends WidgetType {
       const startW = img.getBoundingClientRect().width || this.width || IMAGE_MIN_WIDTH_PX;
       const maxW = maxWidthFor();
       wrap.classList.add('is-resizing');
-      document.body.style.cursor = 'nwse-resize';
+      acquireInteractionLock({ cursor: 'nwse-resize' });
+      let lastX = startX;
 
-      const onMove = (ev: MouseEvent) => {
-        const next = clampImageWidth(startW + (ev.clientX - startX), maxW);
-        applyImageWidth(img, next);
-        sizeLabel.textContent = `${next}px`;
-      };
-
-      const onUp = (ev: MouseEvent) => {
-        window.removeEventListener('mousemove', onMove);
-        window.removeEventListener('mouseup', onUp);
-        wrap.classList.remove('is-resizing');
-        document.body.style.cursor = '';
-        const next = clampImageWidth(startW + (ev.clientX - startX), maxW);
-        applyImageWidth(img, next);
-        sizeLabel.textContent = `${next}px`;
-        rewriteImageLineWidth(view, wrap, next);
-      };
-
-      window.addEventListener('mousemove', onMove);
-      window.addEventListener('mouseup', onUp);
+      bindDragGesture({
+        onMove: (ev) => {
+          lastX = ev.clientX;
+          const next = clampImageWidth(startW + (ev.clientX - startX), maxW);
+          applyImageWidth(img, next);
+          sizeLabel.textContent = `${next}px`;
+        },
+        onEnd: () => {
+          wrap.classList.remove('is-resizing');
+          releaseInteractionLock();
+          const next = clampImageWidth(startW + (lastX - startX), maxW);
+          applyImageWidth(img, next);
+          sizeLabel.textContent = `${next}px`;
+          rewriteImageLineWidth(view, wrap, next);
+        },
+      });
     });
 
     // Double-click handle resets to natural size.

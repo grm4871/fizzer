@@ -2,6 +2,12 @@ import { useEffect, useState, useCallback, useRef, useMemo, lazy, Suspense, type
 import { Sidebar } from './components/Sidebar';
 import { type Tab } from './components/TabBar';
 import { perfMark, perfReport, perfSpan, perfSpanAsync } from './perf';
+import {
+  acquireInteractionLock,
+  bindDragGesture,
+  installInteractionLockRecovery,
+  releaseInteractionLock,
+} from './ui/interactionLocks';
 
 // CodeMirror (editor core plus every language mode via @codemirror/language-data)
 // is the heaviest dependency in the app and is only needed once a note tab is
@@ -323,6 +329,10 @@ export default function App() {
     }));
   }, [notes]);
 
+  // Stuck body cursor/user-select (lost mouseup mid-resize) used to freeze
+  // selection/clicks until a full app restart — recover on blur/Escape.
+  useEffect(() => installInteractionLockRecovery(), []);
+
   /** Drag the sidebar divider. */
   const startResize = useCallback((event: React.MouseEvent) => {
     event.preventDefault();
@@ -330,21 +340,17 @@ export default function App() {
     const startSidebar = sidebarWidth;
     const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
     setIsResizing(true);
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
-    const onMove = (e: MouseEvent) => {
-      const delta = e.clientX - startX;
-      setSidebarWidth(clamp(startSidebar + delta, 180, 480));
-    };
-    const onUp = () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-      setIsResizing(false);
-    };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
+    acquireInteractionLock({ cursor: 'col-resize' });
+    bindDragGesture({
+      onMove: (e) => {
+        const delta = e.clientX - startX;
+        setSidebarWidth(clamp(startSidebar + delta, 180, 480));
+      },
+      onEnd: () => {
+        releaseInteractionLock();
+        setIsResizing(false);
+      },
+    });
   }, [sidebarWidth]);
 
   // ═══════════════════════════════════════════════════════════════

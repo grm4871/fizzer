@@ -962,10 +962,25 @@ const SWIPE_REPLY_MAX = 72;
 const SWIPE_REPLY_THRESHOLD = 52;
 const SWIPE_AXIS_SLOP = 12;
 
+/** Active horizontal swipe count — virtualization must not unmount mid-capture. */
+let activeSwipeGestures = 0;
+function beginSwipeGesture(): void {
+  activeSwipeGestures += 1;
+}
+function endSwipeGesture(): void {
+  activeSwipeGestures = Math.max(0, activeSwipeGestures - 1);
+}
+function swipeGestureActive(): boolean {
+  return activeSwipeGestures > 0;
+}
+
 /**
  * DOM-driven swipe: no React setState during vertical pan or per-frame drag.
  * Previous version set dragging=true on every pointerdown and setOffset on every
  * move — that re-rendered the whole message row and stuttered list scroll.
+ *
+ * Horizontal capture must always release: unmount mid-swipe (list virtualization)
+ * or a lost pointerup left the app unclickable until restart.
  */
 function SwipeToReply({
   onReply,
@@ -989,6 +1004,9 @@ function SwipeToReply({
   const axisRef = useRef<'h' | 'v' | null>(null);
   const offsetRef = useRef(0);
   const armedRef = useRef(false);
+  const capturingRef = useRef(false);
+  const finishedRef = useRef(false);
+  const windowEndRef = useRef<(() => void) | null>(null);
 
   const paint = useCallback((offset: number, dragging: boolean) => {
     const content = contentRef.current;
@@ -1013,23 +1031,63 @@ function SwipeToReply({
     }
   }, []);
 
-  const reset = useCallback((animate: boolean) => {
+  const releaseCapture = useCallback((pointerId?: number) => {
+    const root = rootRef.current;
+    if (!root || pointerId == null) return;
+    try {
+      if (root.hasPointerCapture?.(pointerId)) {
+        root.releasePointerCapture(pointerId);
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  const detachWindowEnd = useCallback(() => {
+    windowEndRef.current?.();
+    windowEndRef.current = null;
+  }, []);
+
+  const completeGesture = useCallback((committed: boolean, animate: boolean) => {
+    if (finishedRef.current) return;
+    finishedRef.current = true;
+    const pointerId = startRef.current?.pointerId;
+    releaseCapture(pointerId);
+    if (capturingRef.current) {
+      capturingRef.current = false;
+      endSwipeGesture();
+    }
+    detachWindowEnd();
     startRef.current = null;
     axisRef.current = null;
     offsetRef.current = 0;
     if (!animate) {
       paint(0, false);
-      return;
+    } else {
+      paint(0, true);
+      requestAnimationFrame(() => paint(0, false));
     }
-    paint(0, true);
-    requestAnimationFrame(() => paint(0, false));
-  }, [paint]);
+    if (committed) {
+      try { navigator.vibrate?.(12); } catch { /* ignore */ }
+      onReply();
+    }
+  }, [detachWindowEnd, onReply, paint, releaseCapture]);
+
+  // If virtualization unmounts this row mid-swipe, release capture + gesture flag.
+  useEffect(() => () => {
+    const start = startRef.current;
+    releaseCapture(start?.pointerId);
+    if (capturingRef.current) {
+      capturingRef.current = false;
+      endSwipeGesture();
+    }
+    detachWindowEnd();
+  }, [detachWindowEnd, releaseCapture]);
 
   const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     if (event.pointerType === 'mouse' || event.button !== 0) return;
     const target = event.target as HTMLElement | null;
     if (target?.closest('a, button, input, textarea, select, .cascade-run-panel, pre, code')) return;
     // Track only — no setState (vertical list scroll must stay free).
+    finishedRef.current = false;
     startRef.current = { x: event.clientX, y: event.clientY, pointerId: event.pointerId };
     axisRef.current = null;
     offsetRef.current = 0;
@@ -1037,7 +1095,7 @@ function SwipeToReply({
 
   const onPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
     const start = startRef.current;
-    if (!start || event.pointerId !== start.pointerId) return;
+    if (!start || event.pointerId !== start.pointerId || finishedRef.current) return;
     const dx = event.clientX - start.x;
     const dy = event.clientY - start.y;
     if (!axisRef.current) {
@@ -1048,11 +1106,32 @@ function SwipeToReply({
         return;
       }
       axisRef.current = 'h';
+      if (!capturingRef.current) {
+        capturingRef.current = true;
+        beginSwipeGesture();
+      }
       try {
         event.currentTarget.setPointerCapture(event.pointerId);
       } catch {
         // ignore
       }
+      // Window-level end: survives if the row unmounts under the finger.
+      detachWindowEnd();
+      const pointerId = event.pointerId;
+      const onWinEnd = (ev: Event) => {
+        const pe = ev as PointerEvent;
+        if ('pointerId' in pe && pe.pointerId !== pointerId) return;
+        const committed = axisRef.current === 'h' && offsetRef.current >= SWIPE_REPLY_THRESHOLD;
+        completeGesture(committed, true);
+      };
+      window.addEventListener('pointerup', onWinEnd, true);
+      window.addEventListener('pointercancel', onWinEnd, true);
+      window.addEventListener('blur', onWinEnd);
+      windowEndRef.current = () => {
+        window.removeEventListener('pointerup', onWinEnd, true);
+        window.removeEventListener('pointercancel', onWinEnd, true);
+        window.removeEventListener('blur', onWinEnd);
+      };
     }
     if (axisRef.current !== 'h') return;
     const next = Math.max(0, Math.min(SWIPE_REPLY_MAX, -dx));
@@ -1065,30 +1144,11 @@ function SwipeToReply({
     const start = startRef.current;
     if (!start || event.pointerId !== start.pointerId) {
       // Vertical pan may have cleared start — still release capture if any.
-      try {
-        if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
-          event.currentTarget.releasePointerCapture(event.pointerId);
-        }
-      } catch { /* ignore */ }
+      releaseCapture(event.pointerId);
       return;
     }
     const committed = axisRef.current === 'h' && offsetRef.current >= SWIPE_REPLY_THRESHOLD;
-    try {
-      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-        event.currentTarget.releasePointerCapture(event.pointerId);
-      }
-    } catch {
-      // ignore
-    }
-    reset(true);
-    if (committed) {
-      try {
-        navigator.vibrate?.(12);
-      } catch {
-        // ignore
-      }
-      onReply();
-    }
+    completeGesture(committed, true);
   };
 
   return (
@@ -1100,6 +1160,10 @@ function SwipeToReply({
       onPointerMove={onPointerMove}
       onPointerUp={finish}
       onPointerCancel={finish}
+      onLostPointerCapture={() => {
+        // Capture lost without up/cancel — still clear gesture so IO can unmount.
+        if (capturingRef.current || startRef.current) completeGesture(false, false);
+      }}
       onClick={onClick}
       onContextMenu={onContextMenu}
     >
@@ -1366,7 +1430,9 @@ const ChatGroupRow = memo(function ChatGroupRow({
   // Start mounted so first paint / stick-to-bottom has real content; IO then unmounts offscreen.
   const [inView, setInView] = useState(true);
   const forceMounted = groupSelected
-    || group.messages.some((message) => message.status === 'running');
+    || group.messages.some((message) => message.status === 'running')
+    // Never unmount mid-swipe: orphan pointer capture freezes clicks until restart.
+    || swipeGestureActive();
 
   useEffect(() => {
     const el = articleRef.current;
@@ -1378,7 +1444,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
         if (!entry) return;
         if (entry.isIntersecting) {
           setInView(true);
-        } else if (!forceMounted) {
+        } else if (!forceMounted && !swipeGestureActive()) {
           // Preserve height so scroll position doesn't jump when unmounting markdown.
           heightRef.current = el.offsetHeight || heightRef.current;
           setInView(false);
