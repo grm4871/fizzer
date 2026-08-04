@@ -703,13 +703,17 @@ button:focus-visible,
 }
 
 /* Right rail: full-width action panel (left header stays bare icons). */
+.chat-users > .csb,
 .csb {
-  display: grid;
+  display: grid !important;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 2px;
-  width: 100%;
-  max-width: 100%;
+  flex: 0 0 auto;
+  align-self: stretch;
+  width: 100% !important;
+  max-width: none;
   box-sizing: border-box;
+  margin: 0 0 6px;
   padding: 4px;
   border: 1px solid var(--rail-edge);
   border-radius: 10px;
@@ -4512,14 +4516,11 @@ button:focus-visible,
   padding: var(--rail-pad-y) 6px;
 }
 
-.csb {
-  margin: 0 0 6px;
-}
 .csb.is-collapsed {
-  display: flex;
+  display: flex !important;
   flex-direction: column;
   align-items: center;
-  width: 100%;
+  width: 100% !important;
   grid-template-columns: none;
   gap: 4px;
 }
