@@ -4942,18 +4942,16 @@ button:focus-visible,
   background: color-mix(in srgb, var(--bg-raised) 40%, transparent);
 }
 .chat-user.chat-agent-user {
-  /* Quiet membership row — agent identity via avatar/icon, not filled amber plate. */
-  border-color: transparent;
-  background: transparent;
+  border-color: color-mix(in srgb, var(--border) 55%, transparent);
+  background: color-mix(in srgb, hsl(38, 47%, 14%) 40%, transparent);
 }
 .chat-user.chat-agent-user:hover,
 .chat-user.chat-agent-user.is-editing {
-  border-color: color-mix(in srgb, var(--border) 50%, transparent);
-  background: color-mix(in srgb, var(--bg-raised) 72%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
+  background: color-mix(in srgb, hsl(38, 47%, 16%) 58%, var(--bg-raised));
   color: var(--text-primary);
 }
 .chat-user.chat-agent-user.is-editing {
-  border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
   box-shadow: inset 2px 0 0 var(--accent);
 }
 .chat-user-row {
@@ -5006,7 +5004,7 @@ button:focus-visible,
   white-space: nowrap;
 }
 .chat-user.chat-agent-user .chat-user-role {
-  color: color-mix(in srgb, var(--text-secondary) 70%, var(--text-tertiary));
+  color: color-mix(in srgb, var(--accent-hover) 55%, var(--text-tertiary));
   font-family: var(--font-mono);
   font-size: 0.625rem;
 }
