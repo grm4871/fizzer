@@ -607,10 +607,10 @@ export const Sidebar = memo(function Sidebar({
   }
 
   const quickActions = [
-    { id: 'new-note', title: 'New note', icon: <Edit2 size={16} />, onClick: onNewNote },
-    { id: 'new-folder', title: 'New folder', icon: <FolderPlus size={16} />, onClick: () => { void createFolder(null); } },
-    { id: 'new-channel', title: 'New channel', icon: <Hash size={16} />, onClick: () => { void createChannel(null); } },
-    { id: 'search', title: 'Search', icon: <Search size={16} />, onClick: onSearch },
+    { id: 'new-note', title: 'New note', icon: <Edit2 size={15} />, onClick: onNewNote },
+    { id: 'new-folder', title: 'New folder', icon: <FolderPlus size={15} />, onClick: () => { void createFolder(null); } },
+    { id: 'new-channel', title: 'New channel', icon: <Hash size={15} />, onClick: () => { void createChannel(null); } },
+    { id: 'search', title: 'Search', icon: <Search size={15} />, onClick: onSearch },
   ];
   const actionButtons = (location: string) => quickActions.map((action) => (
     <button key={action.id} id={`${action.id}-btn-${location}`} className="btn-icon" onClick={action.onClick} title={action.title}>{action.icon}</button>

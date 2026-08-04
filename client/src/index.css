@@ -671,27 +671,57 @@ button:focus-visible,
   height: 15px;
 }
 
-.sidebar-actions {
-  display: flex;
+/* One control for both rails — left .sidebar-actions and right .csb must be identical. */
+.sidebar-actions,
+.csb {
+  display: inline-flex;
   align-items: center;
-  gap: var(--rail-gap);
-  min-width: 0;
+  gap: 1px;
+  flex: 0 0 auto;
+  width: max-content;
+  max-width: 100%;
   margin-left: auto;
   padding: 3px;
   border: 1px solid var(--rail-edge);
-  border-radius: var(--rail-toolbar-radius);
+  border-radius: 10px;
   background: var(--rail-toolbar-bg);
   box-shadow: var(--bevel);
 }
-.sidebar-actions .btn-icon {
+.sidebar-actions .btn-icon,
+.csb button {
+  position: relative;
+  box-sizing: border-box;
   width: 30px;
+  min-width: 30px;
   height: 28px;
-  border-radius: 6px;
+  min-height: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
   color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
 }
-.sidebar-actions .btn-icon:hover {
+.sidebar-actions .btn-icon svg,
+.csb button svg {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+}
+.sidebar-actions .btn-icon:hover,
+.csb button:hover {
   background: color-mix(in srgb, var(--bg-overlay) 70%, transparent);
   color: var(--text-primary);
+}
+.csb button.is-selected {
+  border-color: color-mix(in srgb, var(--accent) 36%, var(--border));
+  background: var(--accent-subtle);
+  color: var(--accent-hover);
 }
 .sidebar-actions-mobile,
 .sidebar-mobile-collapse {
@@ -4456,59 +4486,26 @@ button:focus-visible,
   padding: var(--rail-pad-y) 6px;
 }
 
-/* Right-rail toolbar — same shell as .sidebar-actions. */
+/* .csb shell/buttons unified with .sidebar-actions above. */
 .csb {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: var(--rail-gap);
-  margin: 0 0 2px;
-  padding: 3px;
-  border: 1px solid var(--rail-edge);
-  border-radius: var(--rail-toolbar-radius);
-  background: var(--rail-toolbar-bg);
-  box-shadow: var(--bevel);
+  margin: 0 0 4px;
+  /* full-width rails still left-align the chip so both look like the same control */
+  margin-right: auto;
+  margin-left: 0;
 }
 .csb.is-collapsed {
-  display: flex;
+  display: inline-flex;
   flex-direction: column;
   align-items: center;
-  gap: var(--rail-gap);
-  padding: 3px;
-}
-.csb button {
-  position: relative;
-  width: 100%;
-  min-height: 28px;
-  height: 28px;
-  padding: 0 4px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 1px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
-}
-.csb.is-collapsed button {
-  width: 30px;
-  height: 28px;
-  padding: 0;
-}
-.csb button:hover {
-  background: color-mix(in srgb, var(--bg-overlay) 70%, transparent);
-  color: var(--text-primary);
-}
-.csb button.is-selected {
-  border-color: color-mix(in srgb, var(--accent) 36%, var(--border));
-  background: var(--accent-subtle);
-  color: var(--accent-hover);
+  width: max-content;
+  margin-left: auto;
+  margin-right: auto;
 }
 .csb-plus {
+  width: 11px !important;
+  height: 11px !important;
   color: var(--text-tertiary);
-  margin-left: -2px;
+  margin-left: -3px;
 }
 .csb button.is-selected .csb-plus {
   color: var(--accent-hover);
