@@ -25,9 +25,11 @@ export const CASCADE_AGENT_APP_CONTEXT =
   + 'Do not replace the helper with an absolute path, inspect a local docs.db, or conclude notes are unavailable '
   + 'because they are absent from the local filesystem or named tool list. '
   + 'Use normal filesystem tools only for local repository/workspace work the user actually requested. '
-  + 'Chat messages can carry images and files; the transcript marks them but cannot inline them. '
-  + 'Open one with `cascade-chat attachment --message-id <id>`, which writes the file locally and prints its path — '
-  + 'never answer as if an attachment you were told about does not exist.';
+  + 'Chat messages can carry images and files; the text transcript only marks them. '
+  + 'When a message has media, open it with `cascade-chat attachment --message-id <id>` (writes the file and prints its path) '
+  + 'before answering about the image. Never claim you cannot see/receive an attachment, and never invent its contents. '
+  + 'Shipping to this repo: run `npm run build` before push to master; after push watch Deploy Production with `gh run watch` until green. '
+  + 'Push is not ship. Do not ignore a red deploy.';
 
 export type ChatReplyRef = {
   messageId: string;
@@ -1373,8 +1375,9 @@ export function buildAgentChatContext(
   const anyMedia = rows.some((message) => mediaCount(message) > 0);
   // The transcript is text-only, so name the way to actually open the file.
   const hint = anyMedia
-    ? '\n(Attachments above are not inlined here. Open one with '
-      + '`cascade-chat attachment --message-id <id>`, which writes the file locally and prints its path.)'
+    ? '\n(Attachments above are not inlined in this text window. Open one with '
+      + '`cascade-chat attachment --message-id <id>` before answering about the image — '
+      + 'it writes the file locally and prints its path. Do not claim you cannot see the attachment.)'
     : '';
   return `${lines.join('\n')}${hint}`;
 }

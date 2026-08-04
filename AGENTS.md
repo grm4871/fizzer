@@ -1,5 +1,22 @@
 # Agent Instructions
 
+## Ship hard gate (never skip)
+
+Pushing to `master` is **not** shipping. Production only updates after **Deploy Production** is green.
+
+**Before every `git push` to master:**
+
+1. Run **`npm run build`** (root `tsc` + CLI wrappers). This is the same compile Docker runs first — a missing `.d.ts` for a new `.mjs` import fails here and will fail deploy.
+2. If you changed client UI: also `npm run build:client` and the frontend runtime check below.
+
+**After every push that should go live:**
+
+3. `gh run list --limit 3` then **`gh run watch <deploy-id>`** until success (or fix and re-push).
+4. Do **not** claim ship, close the mission, or start unrelated work while Deploy is red or still running.
+5. If red: `gh run view <id> --log-failed` — fix that log, re-run `npm run build` (and client if needed), push again. Do not guess.
+
+Ignoring a red Deploy Production (or skipping local `tsc` and pushing “anyway”) is how multi-commit inbox spam happens. Treat a red deploy as a stop-the-line bug.
+
 ## Release matrix
 
 Use [docs/release-matrix.md](docs/release-matrix.md) for changes being shipped. Run its baseline for every production release, then the rows matching the affected client, agent, desktop, mobile, persistence, or deployment boundaries. Report any applicable row that could not be exercised.
@@ -43,8 +60,13 @@ Production deploys use the same GitHub Actions → SSH pattern as Simcluster.
 
 ### When a deployment fails
 
-- First verify the client bundle from the exact commit: run `npm run build:client`. A GitHub Actions failure during the host's `docker compose build` can be a client syntax/build error, not an SSH or secret problem. Fix and validate that build before retrying the workflow.
-- Use the Actions log to classify failures: before SSH means repository secrets/connectivity; after SSH means the remote update/build output is the source of truth.
+- Read the failing step with `gh run view <id> --log-failed` **before** changing anything.
+- Classify from that log:
+  - **`tsc` / `npm run build` in the server image** → fix types/imports locally with `npm run build` (not client-only).
+  - **client `vite build`** → `npm run build:client` on the exact commit.
+  - **before SSH** → repository secrets/connectivity.
+  - **after SSH / remote-update** → host build, compose, or health check output is truth.
+- Fix, validate the same command that failed, push, and **watch Deploy to green** before claiming ship.
 
 ### After deploy lands — refresh in place (never kill the app)
 

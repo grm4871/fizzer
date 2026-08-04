@@ -145,6 +145,10 @@ describe('formatAgentChatPrompt', () => {
     expect(continued).toContain('Delegate only when another session adds clear value');
     expect(continued).toContain('Keep replies short');
     expect(continued).not.toContain('cascade-chat mission delegate');
+    // Compact ship/attachment reminders stay on continuation; the long mission contract does not.
+    expect(continued).toMatch(/green Deploy|Ship only after/i);
+    expect(fresh).toMatch(/never ignore a red deploy/i);
+    expect(fresh).toMatch(/cascade-chat attachment/i);
     expect(fresh.length - continued.length).toBeGreaterThan(900);
   });
 

@@ -16,6 +16,9 @@ test('the app contract identifies Cascade and the live note helper unambiguously
   assert.match(CASCADE_AGENT_APP_CONTEXT, /`--listed` and `--folder`/);
   assert.match(CASCADE_AGENT_APP_CONTEXT, /Do not replace the helper with an absolute path/);
   assert.match(CASCADE_AGENT_APP_CONTEXT, /absent from the local filesystem or named tool list/);
+  assert.match(CASCADE_AGENT_APP_CONTEXT, /Never claim you cannot see\/receive an attachment/);
+  assert.match(CASCADE_AGENT_APP_CONTEXT, /Push is not ship/);
+  assert.match(CASCADE_AGENT_APP_CONTEXT, /Do not ignore a red deploy/);
 });
 
 test('chat agents inherit folder ancestry and the nearest project doc', () => {
@@ -79,6 +82,7 @@ test('injected chat history names attachments and how to open them', () => {
   assert.match(context, /m1/);
   assert.match(context, /\[attached: 1 image — message m2\]/);
   assert.match(context, /cascade-chat attachment --message-id <id>/);
+  assert.match(context, /Do not claim you cannot see the attachment/);
   assert.doesNotMatch(context, /plain text \[attached/);
 });
 
