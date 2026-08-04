@@ -2326,7 +2326,8 @@ button:focus-visible,
   display: flex;
   min-height: 34px;
 }
-/* Toolbar news ticker — static between swaps so Electron can remain idle. */
+/* Toolbar news ticker. The moving text is an isolated compositor layer; avoid
+   masks and filters here because Chromium repaints those during animation. */
 .news-ticker {
   position: relative;
   flex: 1;
@@ -2343,6 +2344,8 @@ button:focus-visible,
   min-width: 0;
   align-self: stretch;
   overflow: hidden;
+  contain: layout paint;
+  isolation: isolate;
 }
 .news-ticker-label {
   flex: none;
@@ -2356,15 +2359,32 @@ button:focus-visible,
   color: var(--text-tertiary);
 }
 .news-ticker-track {
-  display: block;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  position: absolute;
+  inset: 0 auto 0 0;
+  display: flex;
+  align-items: center;
   white-space: nowrap;
   font-size: 0.6875rem;
   letter-spacing: 0.02em;
   color: var(--accent);
   opacity: 0.78;
+  visibility: hidden;
+}
+.news-ticker-track.is-running {
+  visibility: visible;
+  will-change: transform;
+  animation: news-ticker-scroll linear both;
+}
+.news-ticker-track.is-static {
+  position: static;
+  display: block;
+  visibility: visible;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@keyframes news-ticker-scroll {
+  from { transform: translate3d(var(--news-start, 100%), 0, 0); }
+  to { transform: translate3d(var(--news-end, -100%), 0, 0); }
 }
 
 .workspace-session-btn {

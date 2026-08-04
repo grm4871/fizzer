@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 /**
  * Cookie-Clicker-style news briefings for the workspace toolbar. One headline
- * is shown at a time, then the next is drawn — from a shuffled bag so
+ * scrolls across the bar, then the next is drawn — from a shuffled bag so
  * you never see the same line twice in a row.
  */
 const HEADLINES = [
@@ -145,6 +145,8 @@ const HEADLINES = [
   'local news: everything is fine. the robots told us to say that.',
 ];
 
+const SPEED_PX_PER_SEC = 55;
+const GAP_MS = 900;
 const STATIC_HOLD_MS = 7000;
 
 function shuffled<T>(items: readonly T[]): T[] {
@@ -164,19 +166,44 @@ export function NewsTicker() {
   }, []);
 
   const [headline, setHeadline] = useState(drawNext);
+  const [duration, setDuration] = useState(0);
+  const trackRef = useRef<HTMLSpanElement>(null);
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const reduced = useMemo(() => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false, []);
 
-  // Static swaps avoid keeping Chromium's compositor active every frame. The
-  // previous masked animation was perceptible as pointer lag in Electron/Linux.
+  useLayoutEffect(() => {
+    if (reduced) return;
+    const track = trackRef.current;
+    const viewport = viewportRef.current;
+    if (!track || !viewport) return;
+    const viewportWidth = viewport.offsetWidth;
+    const trackWidth = track.offsetWidth;
+    track.style.setProperty('--news-start', `${viewportWidth}px`);
+    track.style.setProperty('--news-end', `${-trackWidth}px`);
+    setDuration((viewportWidth + trackWidth) / SPEED_PX_PER_SEC);
+  }, [headline, reduced]);
+
   useEffect(() => {
+    if (!reduced) return;
     const timer = window.setTimeout(() => setHeadline(drawNext()), STATIC_HOLD_MS);
     return () => window.clearTimeout(timer);
-  }, [headline, drawNext]);
+  }, [headline, reduced, drawNext]);
+
+  const handleEnd = () => {
+    window.setTimeout(() => setHeadline(drawNext()), GAP_MS);
+  };
 
   return (
     <div className="news-ticker" aria-live="off" title={`News: ${headline}`}>
       <span className="news-ticker-label">News</span>
-      <div className="news-ticker-viewport">
-        <span key={headline} className="news-ticker-track">
+      <div className="news-ticker-viewport" ref={viewportRef}>
+        <span
+          key={headline}
+          ref={trackRef}
+          className={`news-ticker-track${reduced ? ' is-static' : duration ? ' is-running' : ''}`}
+          style={duration && !reduced ? { animationDuration: `${duration}s` } : undefined}
+          onAnimationEnd={reduced ? undefined : handleEnd}
+        >
           {headline}
         </span>
       </div>
