@@ -57,6 +57,7 @@ import {
 } from './server/vaultMembers.js';
 import {
   acquireWorkItemLease,
+  addWorkItemTokenUsage,
   createWorkItem,
   createWorkItemHandoff,
   ensureWorkItemSchema,
@@ -65,8 +66,10 @@ import {
   listSiblingWorkItems,
   listWorkItemReviews,
   listWorkItems,
+  listWorkItemsForRun,
   reapExpiredWorkItemLeases,
   releaseWorkItemLease,
+  stopWorkItem,
   updateWorkItem,
   type WorkItemStatus,
   type WorkspaceMode,
@@ -132,6 +135,8 @@ import {
   forwardChatMessage,
   approveChatChangeRequest,
   mergeChatChangeRequest,
+  answerChatClarification,
+  acceptChatClarification,
   settleChatMessagesForRun,
   listChatAgentMembers,
   listChatChannelParticipants,
@@ -983,6 +988,27 @@ function syncRunToChatMessage(runId: number) {
       const scheduled = scheduleMissionWork(settled.update.mission.id);
       if (settled.wake && scheduled.dispatches.length === 0) enqueueMissionCoordinatorWake(settled.wake);
     }
+    // Contract drive: accumulate rough token use and auto-stop at budget.
+    const bodyLen = (content.body || '').length;
+    const tokenEstimate = Math.max(800, Math.ceil(bodyLen / 4) + 400);
+    for (const workItemId of listWorkItemsForRun(db, runId)) {
+      try {
+        const row = db.prepare('SELECT created_by FROM work_items WHERE id = ?').get(workItemId) as { created_by: number } | undefined;
+        if (!row) continue;
+        const { item, budgetExceeded } = addWorkItemTokenUsage(db, row.created_by, workItemId, tokenEstimate);
+        if (budgetExceeded || item.stopReason === 'token_budget') {
+          for (const linkedRun of item.runIds) {
+            if (linkedRun === runId) continue;
+            const open = getRun(db, linkedRun);
+            if (open && (open.status === 'running' || open.status === 'queued')) {
+              void cancelRun(db, linkedRun).catch(() => {});
+            }
+          }
+        }
+      } catch {
+        /* non-fatal dual-write */
+      }
+    }
     chatRunTargets.delete(runId);
     const timer = chatRunFlushTimers.get(runId);
     if (timer) clearTimeout(timer);
@@ -1371,6 +1397,7 @@ app.post('/api/vaults/:id/work-items', requireAuth, (req: AuthedRequest, res) =>
     const item = createWorkItem(db, req.user!.id, req.params.id, {
       title: String(req.body?.title || ''),
       brief: String(req.body?.brief || ''),
+      contract: String(req.body?.contract || ''),
       channelId: req.body?.channelId != null ? String(req.body.channelId) : null,
       priority: Number(req.body?.priority) || 0,
       sourceKind: String(req.body?.sourceKind || 'manual'),
@@ -1384,6 +1411,8 @@ app.post('/api/vaults/:id/work-items', requireAuth, (req: AuthedRequest, res) =>
       assigneeRegistrationId: req.body?.assigneeRegistrationId != null
         ? String(req.body.assigneeRegistrationId)
         : null,
+      tokenBudget: req.body?.tokenBudget != null ? Number(req.body.tokenBudget) : 0,
+      verification: String(req.body?.verification || ''),
     });
     res.status(201).json({ item });
   } catch (error) {
@@ -1480,6 +1509,27 @@ app.post('/api/work-items/:id/handoff', requireAuth, (req: AuthedRequest, res) =
     res.status(201).json(result);
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : 'Could not hand off work item' });
+  }
+});
+
+/** Manually stop agent drive on a contract/work-item (or mark completed). */
+app.post('/api/work-items/:id/stop', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const reasonRaw = String(req.body?.reason || 'manual');
+    const reason = reasonRaw === 'completed' || reasonRaw === 'token_budget' || reasonRaw === 'failed'
+      ? reasonRaw
+      : 'manual';
+    const item = stopWorkItem(db, req.user!.id, req.params.id, reason, String(req.body?.summary || ''));
+    // Best-effort cancel of open linked runs.
+    for (const runId of item.runIds) {
+      const run = getRun(db, runId);
+      if (run && (run.status === 'running' || run.status === 'queued')) {
+        void cancelRun(db, runId).catch(() => {});
+      }
+    }
+    res.json({ item });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not stop work item' });
   }
 });
 
@@ -3002,6 +3052,34 @@ app.post('/api/vaults/:vaultId/channels/:channelId/messages/:messageId/merge', r
     const message = mergeChatChangeRequest(db, req.user!.id, req.params.vaultId, req.params.channelId, req.params.messageId);
     emitChatMessageEvent(route.sourceVaultId, route.sourceChannelId, 'vault:chatMessageUpdated', message);
     res.json({ message });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+/** Save answers on a pending clarification card. */
+app.post('/api/vaults/:vaultId/channels/:channelId/messages/:messageId/clarification/answer', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const { route } = assertChatChannel(db, req.params.channelId, req.user!.id);
+    const answers = Array.isArray(req.body?.answers) ? req.body.answers : [];
+    const message = answerChatClarification(db, req.user!.id, req.params.channelId, req.params.messageId, answers);
+    emitChatMessageEvent(route.sourceVaultId, route.sourceChannelId, 'vault:chatMessageUpdated', message);
+    res.json({ message });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+/** Accept clarification → durable work-item contract on the kanban. */
+app.post('/api/vaults/:vaultId/channels/:channelId/messages/:messageId/clarification/accept', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const { route } = assertChatChannel(db, req.params.channelId, req.user!.id);
+    const result = acceptChatClarification(db, req.user!.id, req.params.channelId, req.params.messageId, {
+      tokenBudget: req.body?.tokenBudget != null ? Number(req.body.tokenBudget) : undefined,
+      title: req.body?.title != null ? String(req.body.title) : undefined,
+    });
+    emitChatMessageEvent(route.sourceVaultId, route.sourceChannelId, 'vault:chatMessageUpdated', result.message);
+    res.status(201).json({ message: result.message, workItemId: result.workItemId });
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
   }

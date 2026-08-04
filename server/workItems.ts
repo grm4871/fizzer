@@ -537,6 +537,9 @@ export function linkWorkItemRun(db: Db, userId: number, id: string, runId: numbe
   if (!row) throw new Error('Work item not found');
   assertVaultAccess(db, row.vault_id, userId, true);
   if (!Number.isInteger(runId) || runId <= 0) throw new Error('Invalid run id');
+  if (['done', 'canceled'].includes(row.status) || row.stop_reason) {
+    throw new Error('Work item is stopped');
+  }
   db.prepare(`
     INSERT OR IGNORE INTO work_item_runs (work_item_id, run_id) VALUES (?, ?)
   `).run(id, runId);
@@ -548,6 +551,87 @@ export function linkWorkItemRun(db: Db, userId: number, id: string, runId: numbe
     db.prepare(`UPDATE work_items SET updated_at = datetime('now') WHERE id = ?`).run(id);
   }
   return getWorkItem(db, userId, id);
+}
+
+/**
+ * Stop agent drive on this contract: completed, token budget hit, or manual.
+ * Releases the lease and marks the item terminal (done or canceled).
+ */
+export function stopWorkItem(
+  db: Db,
+  userId: number,
+  id: string,
+  reason: WorkItemStopReason,
+  summary?: string,
+): WorkItem {
+  const row = getRow(db, id);
+  if (!row) throw new Error('Work item not found');
+  assertVaultAccess(db, row.vault_id, userId, true);
+  if (!reason) throw new Error('Stop reason is required');
+  if (['done', 'canceled'].includes(row.status) && row.stop_reason) {
+    return getWorkItem(db, userId, id);
+  }
+  const status: WorkItemStatus = reason === 'completed' ? 'done' : 'canceled';
+  db.prepare(`
+    UPDATE work_items
+    SET status = ?,
+        stop_reason = ?,
+        summary = CASE WHEN ? != '' THEN ? ELSE summary END,
+        lease_holder = NULL,
+        lease_expires_at = NULL,
+        updated_at = datetime('now')
+    WHERE id = ?
+  `).run(
+    status,
+    reason,
+    cleanText(summary, 4000),
+    cleanText(summary, 4000),
+    id,
+  );
+  return getWorkItem(db, userId, id);
+}
+
+/**
+ * Accumulate run token usage. When a budget is set and exceeded, auto-stops
+ * with reason `token_budget` so agents no longer drive the contract.
+ */
+export function addWorkItemTokenUsage(
+  db: Db,
+  userId: number,
+  id: string,
+  tokens: number,
+): { item: WorkItem; budgetExceeded: boolean } {
+  const row = getRow(db, id);
+  if (!row) throw new Error('Work item not found');
+  assertVaultAccess(db, row.vault_id, userId, true);
+  const delta = Math.max(0, Math.floor(Number(tokens) || 0));
+  if (delta > 0 && !['done', 'canceled'].includes(row.status)) {
+    db.prepare(`
+      UPDATE work_items
+      SET tokens_used = COALESCE(tokens_used, 0) + ?,
+          updated_at = datetime('now')
+      WHERE id = ?
+    `).run(delta, id);
+  }
+  let item = getWorkItem(db, userId, id);
+  let budgetExceeded = false;
+  if (
+    item.tokenBudget > 0
+    && item.tokensUsed >= item.tokenBudget
+    && !['done', 'canceled'].includes(item.status)
+  ) {
+    item = stopWorkItem(db, userId, id, 'token_budget', `Token budget ${item.tokenBudget} reached (${item.tokensUsed} used).`);
+    budgetExceeded = true;
+  }
+  return { item, budgetExceeded };
+}
+
+/** Find work items linked to a run (for settle / budget checks). */
+export function listWorkItemsForRun(db: Db, runId: number): string[] {
+  if (!Number.isInteger(runId) || runId <= 0) return [];
+  return (db.prepare(`
+    SELECT work_item_id AS id FROM work_item_runs WHERE run_id = ?
+  `).all(runId) as Array<{ id: string }>).map((row) => row.id);
 }
 
 export function createWorkItemHandoff(

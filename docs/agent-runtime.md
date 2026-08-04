@@ -71,10 +71,13 @@ membership setting, not a separate project-management surface:
 
 - ordinary human messages route to the coordinator;
 - an explicit `@specialist` mention takes the direct zero-hop path instead;
-- the coordinator answers small requests itself;
-- for parallel or long work it creates a mission and delegates focused tasks
-  to other registered channel agents, or to anonymous subagents of a named
-  agent (including itself) via `mission delegate --anonymous`.
+- the coordinator answers tiny Q&A and one-liner fixes itself;
+- for almost any non-trivial request it creates a **mission** — durable,
+  searchable task data projected on the chat transcript (subagents optional;
+  a solo mission the coordinator executes alone is normal);
+- for parallel or long work it may also delegate focused tasks to other
+  registered channel agents, or to anonymous subagents of a named agent
+  (including itself) via `mission delegate --anonymous`.
 
 The provider session remains the reasoning and execution environment. Cascade
 only supplies the durable coordination substrate through `cascade-chat`:

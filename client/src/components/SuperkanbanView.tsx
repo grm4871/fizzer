@@ -65,8 +65,8 @@ export function workItemsToLiveColumns(items: WorkItem[]): SuperkanbanColumn[] {
     byKey.set(columnKey(title), col);
   }
   for (const item of items) {
-    // Mission twins always surface; other work needs a channel home.
-    if (item.sourceKind !== 'mission' && !item.channelId) continue;
+    // Mission twins + accepted contracts always surface; other work needs a channel.
+    if (item.sourceKind !== 'mission' && item.sourceKind !== 'contract' && !item.channelId) continue;
     const title = workItemStatusToKanbanColumn(item.status);
     const key = columnKey(title);
     let column = byKey.get(key);
@@ -74,20 +74,30 @@ export function workItemsToLiveColumns(items: WorkItem[]): SuperkanbanColumn[] {
       column = { id: `live-${key}`, title, cards: [] };
       byKey.set(key, column);
     }
+    const budget = item.tokenBudget && item.tokenBudget > 0
+      ? `${item.tokensUsed || 0}/${item.tokenBudget} tok`
+      : '';
     const bits = [
       item.title,
-      item.assigneeRegistrationId ? `_assignee ${item.assigneeRegistrationId.slice(0, 10)}_` : '',
+      item.sourceKind === 'contract' ? '**contract**' : '',
       item.branch ? `\`${item.branch}\`` : '',
-      item.workspaceMode === 'isolated' ? 'isolated workspace' : '',
+      item.workspaceMode === 'isolated' ? 'isolated' : '',
+      budget,
+      item.stopReason ? `stopped: ${item.stopReason}` : '',
       item.prUrl ? `[PR](${item.prUrl})` : '',
+      item.contract ? `\n\n${item.contract.slice(0, 280)}${item.contract.length > 280 ? '…' : ''}` : '',
       item.summary ? `\n\n${item.summary}` : '',
     ].filter(Boolean);
     column.cards.push({
       id: `work:${item.id}`,
-      text: bits.join(' · ').replace(' · \n\n', '\n\n'),
+      text: bits.join(' · ').replace(/ · \n\n/g, '\n\n'),
       checked: item.status === 'done',
       sourceId: item.id,
-      sourceTitle: item.sourceKind === 'mission' ? 'Live mission work' : 'Live work item',
+      sourceTitle: item.sourceKind === 'mission'
+        ? 'Live mission work'
+        : item.sourceKind === 'contract'
+          ? 'Live contract'
+          : 'Live work item',
       live: true,
       workItemId: item.id,
       branch: item.branch,
@@ -190,7 +200,9 @@ function SuperkanbanViewInner({
     })));
     return mergeLiveWorkIntoKanban(boards, workItemsToLiveColumns(liveWorkItems || []));
   }, [notes, liveWorkItems]);
-  const liveCount = (liveWorkItems || []).filter((item) => item.sourceKind === 'mission').length;
+  const liveCount = (liveWorkItems || []).filter((item) => (
+    item.sourceKind === 'mission' || item.sourceKind === 'contract'
+  )).length;
   const normalizedQuery = query.trim().toLocaleLowerCase();
 
   if (loading) return <div className="superkanban-empty">Loading your Kanban boards…</div>;
@@ -214,7 +226,7 @@ function SuperkanbanViewInner({
         </div>
         <span className="kanban-portability">
           {notes.length} boards
-          {liveCount > 0 ? ` · ${liveCount} live mission tasks` : ''}
+          {liveCount > 0 ? ` · ${liveCount} live contracts/tasks` : ''}
           {' · read-only aggregate'}
         </span>
       </div>

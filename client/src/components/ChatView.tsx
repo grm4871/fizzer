@@ -101,6 +101,17 @@ export interface ChatMessage {
     mergedAt?: string;
     mergedBy?: string;
   };
+  /** Pre-work Q&A; accept compiles into a kanban work-item contract. */
+  clarification?: {
+    title: string;
+    questions: Array<{ id: string; prompt: string; answer?: string }>;
+    status: 'pending' | 'accepted' | 'canceled';
+    tokenBudget?: number;
+    assigneeRegistrationId?: string;
+    workItemId?: string;
+    acceptedAt?: string;
+    acceptedBy?: string;
+  };
   mission?: ChatMission;
   missionTaskId?: string;
 }
@@ -1102,6 +1113,117 @@ function SwipeToReply({
   );
 }
 
+function ChatClarificationCard({
+  message,
+  vaultId,
+}: {
+  message: ChatMessage;
+  vaultId?: string;
+}) {
+  const clarification = message.clarification!;
+  const [answers, setAnswers] = useState<Record<string, string>>(() => {
+    const init: Record<string, string> = {};
+    for (const q of clarification.questions) init[q.id] = q.answer || '';
+    return init;
+  });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const pending = clarification.status === 'pending';
+
+  async function saveAnswers() {
+    if (!vaultId || !pending) return;
+    setBusy(true);
+    setError('');
+    try {
+      await api(`/api/vaults/${vaultId}/channels/${message.channelId}/messages/${message.id}/clarification/answer`, {
+        method: 'POST',
+        body: JSON.stringify({
+          answers: clarification.questions.map((q) => ({ id: q.id, answer: answers[q.id] || '' })),
+        }),
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not save answers');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function acceptContract() {
+    if (!vaultId || !pending) return;
+    setBusy(true);
+    setError('');
+    try {
+      await api(`/api/vaults/${vaultId}/channels/${message.channelId}/messages/${message.id}/clarification/answer`, {
+        method: 'POST',
+        body: JSON.stringify({
+          answers: clarification.questions.map((q) => ({ id: q.id, answer: answers[q.id] || '' })),
+        }),
+      });
+      await api(`/api/vaults/${vaultId}/channels/${message.channelId}/messages/${message.id}/clarification/accept`, {
+        method: 'POST',
+        body: JSON.stringify({
+          tokenBudget: clarification.tokenBudget || 0,
+        }),
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not accept contract');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className={`chat-clarification is-${clarification.status}`}>
+      <div className="chat-clarification-head">
+        <span className="chat-clarification-kicker">Clarification</span>
+        <strong>{clarification.title}</strong>
+        <span className="chat-clarification-status">
+          {clarification.status === 'accepted' ? 'contract live' : clarification.status}
+        </span>
+      </div>
+      <p className="chat-clarification-lead">
+        Answers become the durable work-item contract on the kanban. Agents drive until done, budget, or stop.
+      </p>
+      <div className="chat-clarification-questions">
+        {clarification.questions.map((q) => (
+          <label key={q.id} className="chat-clarification-q">
+            <span>{q.prompt}</span>
+            {pending ? (
+              <textarea
+                value={answers[q.id] || ''}
+                onChange={(event) => setAnswers((prev) => ({ ...prev, [q.id]: event.target.value }))}
+                rows={2}
+                placeholder="Your answer…"
+                disabled={busy}
+              />
+            ) : (
+              <small>{q.answer || '—'}</small>
+            )}
+          </label>
+        ))}
+      </div>
+      {clarification.tokenBudget ? (
+        <div className="chat-clarification-budget">Token budget: {clarification.tokenBudget}</div>
+      ) : null}
+      {clarification.workItemId && (
+        <div className="chat-clarification-contract">
+          Contract work item <code>{clarification.workItemId.slice(0, 8)}</code>
+          {clarification.acceptedBy ? ` · accepted by ${clarification.acceptedBy}` : ''}
+        </div>
+      )}
+      {error && <div className="chat-clarification-error">{error}</div>}
+      {pending && vaultId && (
+        <div className="chat-clarification-actions">
+          <button type="button" disabled={busy} onClick={() => void saveAnswers()}>Save answers</button>
+          <button type="button" className="is-primary" disabled={busy} onClick={() => void acceptContract()}>
+            Accept → contract
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ChatMissionCard({ mission }: { mission: ChatMission }) {
   const [open, setOpen] = useState(mission.status === 'blocked');
   useEffect(() => {
@@ -1422,6 +1544,9 @@ const ChatGroupRow = memo(function ChatGroupRow({
                     && !(message.status === 'running' && /^Thinking(?:\.{3}|…)$/.test(message.body.trim()))
                     && <ChatMessageText messageId={message.id} body={message.body} streaming={message.status === 'running'} mentionableAliases={mentionableAliases} notes={notes} onOpenNote={onOpenNote} onOpenSharedNote={onOpenSharedNote} />}
                   {message.mission && <ChatMissionCard mission={message.mission} />}
+                  {message.clarification && (
+                    <ChatClarificationCard message={message} vaultId={vaultId} />
+                  )}
                   {message.changeRequest && (
                     <div className="chat-change-request">
                       <div className="chat-change-files">

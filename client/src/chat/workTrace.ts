@@ -182,7 +182,7 @@ function shouldRenderFullInWorkRun(
   message: ChatMessage,
   isLast: boolean,
 ): boolean {
-  if (message.mission || message.changeRequest) return true;
+  if (message.mission || message.changeRequest || message.clarification) return true;
   if (message.hasImages || message.images?.length || message.attachments?.length) return true;
   // Final user-facing answer of a multi-message run.
   if (

@@ -113,7 +113,10 @@ describe('formatAgentChatPrompt', () => {
       'alice',
       false,
     );
-    expect(prompt).toContain('Handle simple requests directly with no delegation hop');
+    expect(prompt).toContain('Handle tiny Q&A and one-liner fixes directly');
+    expect(prompt).toContain('Prefer creating missions');
+    expect(prompt).toContain('durable searchable task data');
+    expect(prompt).toContain('do not require subagents');
     expect(prompt).toContain('cascade-chat mission start');
     expect(prompt).toContain('cascade-chat mission delegate');
     expect(prompt).toContain('--after <task-id,...>');
@@ -124,6 +127,7 @@ describe('formatAgentChatPrompt', () => {
     expect(prompt).toContain('Keep mission summaries short');
     expect(prompt).toContain('treat that as authorization to implement it');
     expect(prompt).toContain('Do not stop at agreement, praise, or a proposal');
+    expect(prompt).toContain('clarification');
   });
 
   it('continuations keep normal completion guidance', () => {
@@ -137,8 +141,9 @@ describe('formatAgentChatPrompt', () => {
     const coordinator = { ...registration, orchestrator: true };
     const fresh = formatAgentChatPrompt('dev', coordinator, 'take care of the release', 'alice', false);
     const continued = formatAgentChatPrompt('dev', coordinator, 'and publish android', 'alice', true);
-    expect(continued).toContain('delegate only when another session adds clear value');
-    expect(continued).toContain('keep replies short');
+    expect(continued).toContain('bias to `mission start`');
+    expect(continued).toContain('Delegate only when another session adds clear value');
+    expect(continued).toContain('Keep replies short');
     expect(continued).not.toContain('cascade-chat mission delegate');
     expect(fresh.length - continued.length).toBeGreaterThan(900);
   });

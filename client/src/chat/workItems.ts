@@ -20,9 +20,11 @@ export type WorkItem = {
   channelId: string | null;
   title: string;
   brief: string;
+  /** Accepted clarification / acceptance criteria (the item is the contract). */
+  contract?: string;
   status: WorkItemStatus;
   priority: number;
-  sourceKind: 'message' | 'note' | 'kanban' | 'manual' | 'mission' | string;
+  sourceKind: 'message' | 'note' | 'kanban' | 'manual' | 'mission' | 'contract' | string;
   sourceId: string;
   assigneeRegistrationId: string | null;
   leaseHolder: string | null;
@@ -37,6 +39,9 @@ export type WorkItem = {
   prState: string;
   summary: string;
   verification: string;
+  tokenBudget?: number;
+  tokensUsed?: number;
+  stopReason?: string;
   dependsOn: string[];
   runIds: number[];
   createdBy: number;
@@ -66,6 +71,7 @@ export async function createChannelWorkItem(
   input: {
     title: string;
     brief?: string;
+    contract?: string;
     channelId: string;
     sourceKind?: string;
     sourceId?: string;
@@ -74,6 +80,7 @@ export async function createChannelWorkItem(
     worktreePath?: string;
     branch?: string;
     baseCommit?: string;
+    tokenBudget?: number;
   },
 ) {
   const data = await api<{ item: WorkItem }>(`/api/vaults/${vaultId}/work-items`, {
@@ -109,6 +116,18 @@ export async function releaseWorkItem(id: string, holder?: string) {
   const data = await api<{ item: WorkItem }>(`/api/work-items/${encodeURIComponent(id)}/release`, {
     method: 'POST',
     body: JSON.stringify({ holder }),
+  });
+  return data.item;
+}
+
+export async function stopChannelWorkItem(
+  id: string,
+  reason: 'manual' | 'completed' | 'token_budget' | 'failed' = 'manual',
+  summary?: string,
+) {
+  const data = await api<{ item: WorkItem }>(`/api/work-items/${encodeURIComponent(id)}/stop`, {
+    method: 'POST',
+    body: JSON.stringify({ reason, summary: summary || '' }),
   });
   return data.item;
 }

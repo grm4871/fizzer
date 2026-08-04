@@ -12,6 +12,7 @@ import { execFileSync } from 'node:child_process';
 import type Database from 'better-sqlite3';
 import { getNote, getVault, type Vault } from './vault.js';
 import { redactPrivateBlocks } from './privacy.js';
+import { createWorkItem } from './workItems.js';
 
 type Db = Database.Database;
 
@@ -54,6 +55,28 @@ export type ChatChangeRequest = {
   approvals: Array<{ userId: number; username: string }>;
   mergedAt?: string;
   mergedBy?: string;
+};
+
+/**
+ * Pre-contract clarification: agent asks; human answers; accept compiles into
+ * a durable work-item contract that lives on the kanban and drives agents.
+ */
+export type ChatClarificationQuestion = {
+  id: string;
+  prompt: string;
+  answer?: string;
+};
+
+export type ChatClarification = {
+  title: string;
+  questions: ChatClarificationQuestion[];
+  status: 'pending' | 'accepted' | 'canceled';
+  /** Soft token ceiling for the resulting contract (0 = unlimited). */
+  tokenBudget?: number;
+  assigneeRegistrationId?: string;
+  workItemId?: string;
+  acceptedAt?: string;
+  acceptedBy?: string;
 };
 
 export type ChatBlock = {
@@ -104,6 +127,8 @@ export type ChatMessage = {
   /** Set when this message was forwarded from another channel. */
   forwardedFrom?: ChatForwardRef;
   changeRequest?: ChatChangeRequest;
+  /** Pre-work Q&A that becomes a work-item contract when accepted. */
+  clarification?: ChatClarification;
   /** Durable chat-first orchestration state projected onto the root message. */
   mission?: ChatMission;
   /** Delegated worker messages point at the task they execute. */
@@ -248,6 +273,7 @@ type ChatMessageRow = {
   reply_to_json: string | null;
   forwarded_from_json: string | null;
   change_request_json: string | null;
+  clarification_json: string | null;
   mission_json: string | null;
   mission_task_id: string | null;
 };
@@ -366,6 +392,9 @@ export function ensureChatSchema(db: Db): void {
   }
   if (!messageCols.some((col) => col.name === 'change_request_json')) {
     db.exec('ALTER TABLE chat_messages ADD COLUMN change_request_json TEXT');
+  }
+  if (!messageCols.some((col) => col.name === 'clarification_json')) {
+    db.exec('ALTER TABLE chat_messages ADD COLUMN clarification_json TEXT');
   }
   if (!messageCols.some((col) => col.name === 'forwarded_from_json')) {
     db.exec('ALTER TABLE chat_messages ADD COLUMN forwarded_from_json TEXT');
@@ -1087,6 +1116,10 @@ function rowToMessage(row: ChatMessageRow & { has_harness?: number }, opts?: { d
       return changeRequest ? { changeRequest } : {};
     })(),
     ...(() => {
+      const clarification = parseJson<ChatClarification>(row.clarification_json);
+      return clarification ? { clarification } : {};
+    })(),
+    ...(() => {
       const mission = parseJson<ChatMission>(row.mission_json);
       return mission ? { mission } : {};
     })(),
@@ -1113,6 +1146,7 @@ function messageToRow(vaultId: string, channelId: string, message: ChatMessage):
     reply_to_json: serializeJson(message.replyTo),
     forwarded_from_json: serializeJson(message.forwardedFrom),
     change_request_json: serializeJson(message.changeRequest),
+    clarification_json: serializeJson(message.clarification),
     mission_json: serializeJson(message.mission),
     mission_task_id: message.missionTaskId ?? null,
   };
@@ -1270,7 +1304,7 @@ export function listChatMessages(
         SELECT id, channel_id, vault_id, author, body, created_at,
           status, agent_id, registration_id, run_id,
           blocks_json, images_json, attachments_json, reply_to_json,
-          forwarded_from_json, change_request_json, mission_json, mission_task_id,
+          forwarded_from_json, change_request_json, clarification_json, mission_json, mission_task_id,
           rowid,
           CASE WHEN harness_log IS NOT NULL AND length(harness_log) > 0 THEN 1 ELSE 0 END AS has_harness
         FROM chat_messages
@@ -1572,6 +1606,7 @@ function persistChatMessageRow(db: Db, vaultId: string, channelId: string, messa
       reply_to_json = ?,
       forwarded_from_json = ?,
       change_request_json = ?,
+      clarification_json = ?,
       mission_json = ?,
       mission_task_id = ?
     WHERE id = ? AND channel_id = ?
@@ -1590,6 +1625,7 @@ function persistChatMessageRow(db: Db, vaultId: string, channelId: string, messa
     row.reply_to_json,
     row.forwarded_from_json,
     row.change_request_json,
+    row.clarification_json,
     row.mission_json,
     row.mission_task_id,
     message.id,
@@ -1716,6 +1752,34 @@ export function createChatMessage(
       approvals: [],
     };
   }
+  if (input.clarification) {
+    const questions = (Array.isArray(input.clarification.questions) ? input.clarification.questions : [])
+      .slice(0, 20)
+      .map((q, index) => ({
+        id: String(q?.id || `q${index + 1}`).slice(0, 40),
+        prompt: String(q?.prompt || '').trim().slice(0, 2000),
+        ...(q?.answer != null ? { answer: String(q.answer).trim().slice(0, 4000) } : {}),
+      }))
+      .filter((q) => q.prompt.length > 0);
+    if (questions.length) {
+      message.clarification = {
+        title: String(input.clarification.title || 'Clarification').trim().slice(0, 240) || 'Clarification',
+        questions,
+        status: input.clarification.status === 'accepted' || input.clarification.status === 'canceled'
+          ? input.clarification.status
+          : 'pending',
+        ...(input.clarification.tokenBudget != null
+          ? { tokenBudget: Math.max(0, Math.floor(Number(input.clarification.tokenBudget) || 0)) }
+          : {}),
+        ...(input.clarification.assigneeRegistrationId
+          ? { assigneeRegistrationId: String(input.clarification.assigneeRegistrationId).slice(0, 120) }
+          : {}),
+        ...(input.clarification.workItemId
+          ? { workItemId: String(input.clarification.workItemId).slice(0, 80) }
+          : {}),
+      };
+    }
+  }
 
   const row = messageToRow(route.sourceVaultId, route.sourceChannelId, message);
 
@@ -1742,6 +1806,7 @@ export function createChatMessage(
         : current.harnessLog,
       mission: message.mission || current.mission,
       missionTaskId: message.missionTaskId || current.missionTaskId,
+      clarification: message.clarification || current.clarification,
     };
     return {
       ...persistChatMessageRow(db, route.sourceVaultId, route.sourceChannelId, merged),
@@ -1754,8 +1819,8 @@ export function createChatMessage(
       id, channel_id, vault_id, author, body, created_at,
       status, agent_id, registration_id, run_id,
       blocks_json, harness_log, images_json, attachments_json, reply_to_json,
-      forwarded_from_json, change_request_json, mission_json, mission_task_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      forwarded_from_json, change_request_json, clarification_json, mission_json, mission_task_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     row.id,
     row.channel_id,
@@ -1774,6 +1839,7 @@ export function createChatMessage(
     row.reply_to_json,
     row.forwarded_from_json,
     row.change_request_json,
+    row.clarification_json,
     row.mission_json,
     row.mission_task_id,
   );
@@ -1921,6 +1987,103 @@ export function mergeChatChangeRequest(
       },
     }),
     channelId: route.localChannelId,
+  };
+}
+
+export function answerChatClarification(
+  db: Db,
+  userId: number,
+  channelId: string,
+  messageId: string,
+  answers: Array<{ id: string; answer: string }>,
+): ChatMessage {
+  const { route } = assertChatChannel(db, channelId, userId);
+  const row = db.prepare('SELECT *, rowid FROM chat_messages WHERE id = ? AND channel_id = ?')
+    .get(messageId, route.sourceChannelId) as ChatMessageRow | undefined;
+  if (!row) throw new Error('Message not found');
+  const message = rowToMessage(row);
+  if (!message.clarification) throw new Error('Message is not a clarification');
+  if (message.clarification.status !== 'pending') throw new Error('Clarification is already closed');
+  const byId = new Map((answers || []).map((item) => [String(item.id), String(item.answer || '').trim().slice(0, 4000)]));
+  const questions = message.clarification.questions.map((q) => ({
+    ...q,
+    ...(byId.has(q.id) ? { answer: byId.get(q.id) || '' } : {}),
+  }));
+  return {
+    ...persistChatMessageRow(db, route.sourceVaultId, route.sourceChannelId, {
+      ...message,
+      clarification: { ...message.clarification, questions },
+    }),
+    channelId: route.localChannelId,
+  };
+}
+
+/**
+ * Accept a filled clarification → durable work-item contract (kanban + agent drive).
+ * Returns the updated message (with workItemId) and the created work item id.
+ */
+export function acceptChatClarification(
+  db: Db,
+  userId: number,
+  channelId: string,
+  messageId: string,
+  opts?: { tokenBudget?: number; title?: string },
+): { message: ChatMessage; workItemId: string } {
+  const { route } = assertChatChannel(db, channelId, userId);
+  const row = db.prepare('SELECT *, rowid FROM chat_messages WHERE id = ? AND channel_id = ?')
+    .get(messageId, route.sourceChannelId) as ChatMessageRow | undefined;
+  if (!row) throw new Error('Message not found');
+  const message = rowToMessage(row);
+  const clarification = message.clarification;
+  if (!clarification) throw new Error('Message is not a clarification');
+  if (clarification.status === 'accepted' && clarification.workItemId) {
+    return { message: { ...message, channelId: route.localChannelId }, workItemId: clarification.workItemId };
+  }
+  if (clarification.status === 'canceled') throw new Error('Clarification was canceled');
+  const unanswered = clarification.questions.filter((q) => !String(q.answer || '').trim());
+  if (unanswered.length) {
+    throw new Error(`Answer all questions first (${unanswered.length} remaining)`);
+  }
+  const user = db.prepare('SELECT username FROM users WHERE id = ?').get(userId) as { username: string };
+  const contractLines = clarification.questions.map((q, i) => (
+    `Q${i + 1}: ${q.prompt}\nA${i + 1}: ${String(q.answer || '').trim()}`
+  ));
+  const contract = contractLines.join('\n\n');
+  const tokenBudget = Math.max(
+    0,
+    Math.floor(Number(opts?.tokenBudget ?? clarification.tokenBudget) || 0),
+  );
+  const title = String(opts?.title || clarification.title || 'Contract').trim().slice(0, 240) || 'Contract';
+  const item = createWorkItem(db, userId, route.sourceVaultId, {
+    title,
+    brief: message.body || clarification.title,
+    contract,
+    channelId: route.sourceChannelId,
+    sourceKind: 'contract',
+    sourceId: messageId,
+    workspaceMode: 'isolated',
+    branch: `cascade/contract/${messageId.slice(0, 8)}`,
+    assigneeRegistrationId: clarification.assigneeRegistrationId || null,
+    tokenBudget,
+    verification: 'Drive until completed, token budget hit, or manually stopped.',
+  });
+  const updated: ChatMessage = {
+    ...message,
+    clarification: {
+      ...clarification,
+      status: 'accepted',
+      workItemId: item.id,
+      tokenBudget,
+      acceptedAt: new Date().toISOString(),
+      acceptedBy: user.username,
+    },
+  };
+  return {
+    message: {
+      ...persistChatMessageRow(db, route.sourceVaultId, route.sourceChannelId, updated),
+      channelId: route.localChannelId,
+    },
+    workItemId: item.id,
   };
 }
 

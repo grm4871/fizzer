@@ -3,6 +3,7 @@ import test from 'node:test';
 import Database from 'better-sqlite3';
 import {
   acquireWorkItemLease,
+  addWorkItemTokenUsage,
   createWorkItem,
   createWorkItemHandoff,
   ensureWorkItemSchema,
@@ -12,6 +13,7 @@ import {
   listWorkItems,
   reapExpiredWorkItemLeases,
   releaseWorkItemLease,
+  stopWorkItem,
   updateWorkItem,
 } from './workItems.js';
 
@@ -123,6 +125,42 @@ test('link runs handoff and sibling repository query', () => {
     const siblings = listSiblingWorkItems(db, 1, a.id);
     assert.equal(siblings.length, 1);
     assert.equal(siblings[0]?.id, b.id);
+  } finally {
+    db.close();
+  }
+});
+
+test('contract work item stops on token budget or manual stop', () => {
+  const db = setup();
+  try {
+    const item = createWorkItem(db, 1, 'v1', {
+      title: 'Ship clarifications',
+      contract: 'Q1: scope?\nA1: MVP only',
+      sourceKind: 'contract',
+      sourceId: 'msg-clarify-1',
+      channelId: 'ch1',
+      tokenBudget: 1000,
+      workspaceMode: 'isolated',
+    });
+    assert.equal(item.contract.includes('MVP only'), true);
+    assert.equal(item.tokenBudget, 1000);
+    const mid = addWorkItemTokenUsage(db, 1, item.id, 400);
+    assert.equal(mid.budgetExceeded, false);
+    assert.equal(mid.item.tokensUsed, 400);
+    const hit = addWorkItemTokenUsage(db, 1, item.id, 700);
+    assert.equal(hit.budgetExceeded, true);
+    assert.equal(hit.item.stopReason, 'token_budget');
+    assert.equal(hit.item.status, 'canceled');
+
+    const manual = createWorkItem(db, 1, 'v1', {
+      title: 'Manual stop',
+      sourceKind: 'contract',
+      channelId: 'ch1',
+    });
+    const stopped = stopWorkItem(db, 1, manual.id, 'manual', 'User hit stop');
+    assert.equal(stopped.stopReason, 'manual');
+    assert.equal(stopped.status, 'canceled');
+    assert.throws(() => linkWorkItemRun(db, 1, manual.id, 99), /stopped/);
   } finally {
     db.close();
   }
