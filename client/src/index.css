@@ -6801,6 +6801,7 @@ button:focus-visible,
 .chat-work-mark.ok { color: hsl(224, 8%, 46%); }
 .chat-work-mark.run { color: hsl(38, 62%, 56%); }
 .chat-work-mark.err { color: hsl(357, 55%, 62%); }
+.chat-work-mark.steer { color: hsl(38, 88%, 58%); }
 .chat-work-mark.task { color: hsl(198, 48%, 58%); }
 .chat-work-mark.sys { color: hsl(270, 28%, 62%); }
 .chat-work-author {

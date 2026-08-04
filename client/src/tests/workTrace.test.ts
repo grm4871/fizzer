@@ -29,6 +29,17 @@ describe('workTrace', () => {
       id: 'cancel', author: 'Sol', body: 'Run canceled by user.', status: 'canceled',
     }))).toBe(false);
   });
+
+  it('labels steering cancels as steer, not blocked', () => {
+    const steered = msg({
+      id: 'steered', author: 'Sol', body: 'Steered into the continuation below.', status: 'canceled', agentId: 'codex',
+    });
+    expect(workTracePhase(steered)).toBe('steering');
+    expect(workTraceStatusLabel(steered)).toBe('steered');
+    expect(workTracePhase(msg({
+      id: 'hard-cancel', author: 'Sol', body: 'Run canceled by user.', status: 'canceled', agentId: 'codex',
+    }))).toBe('blocked');
+  });
   it('classifies agents, mission wakes, and humans', () => {
     expect(isWorkTraceMessage(msg({ id: '1', author: 'jt', body: 'hi' }))).toBe(false);
     expect(isWorkTraceMessage(msg({ id: '2', author: 'Sol', body: 'ok', agentId: 'codex' }))).toBe(true);

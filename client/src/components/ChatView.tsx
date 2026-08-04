@@ -1263,7 +1263,12 @@ const ChatGroupRow = memo(function ChatGroupRow({
               {avatarKind === 'agent' && tail.status === 'running' && latestRunningMessageId !== tail.id && <span className="chat-message-status is-steered">continued below</span>}
               {avatarKind === 'agent' && tail.status === 'sending' && <span className="chat-message-status">queued</span>}
               {avatarKind === 'agent' && tail.status === 'failed' && <span className="chat-message-status is-error">failed</span>}
-              {avatarKind === 'agent' && tail.status === 'canceled' && <span className="chat-message-status is-error">canceled</span>}
+              {avatarKind === 'agent' && tail.status === 'canceled' && isSteeringContinuationMessage(tail) && (
+                <span className="chat-message-status is-steered">steered</span>
+              )}
+              {avatarKind === 'agent' && tail.status === 'canceled' && !isSteeringContinuationMessage(tail) && (
+                <span className="chat-message-status is-error">canceled</span>
+              )}
             </div>
             {group.messages.map((message) => {
               const hasRunWidget = message.status === 'running';

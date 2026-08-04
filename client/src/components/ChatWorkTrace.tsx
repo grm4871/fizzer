@@ -34,6 +34,7 @@ function formatTime(value: string) {
 
 function statusMark(message: ChatMessage): { mark: string; className: string } {
   if (message.status === 'failed') return { mark: '✗', className: 'err' };
+  if (isSteeringContinuationMessage(message)) return { mark: '↪', className: 'steer' };
   if (message.status === 'canceled') return { mark: '✗', className: 'err' };
   if (message.status === 'running' || message.status === 'sending') return { mark: '…', className: 'run' };
   if (message.missionTaskId) return { mark: '›', className: 'task' };

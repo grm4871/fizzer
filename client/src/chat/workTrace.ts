@@ -71,6 +71,7 @@ export function workTraceStatusLabel(message: Pick<ChatMessage, 'status' | 'body
   if (message.status === 'running') return 'working…';
   if (message.status === 'sending') return 'queued…';
   if (message.status === 'failed') return 'failed';
+  if (isSteeringContinuationMessage(message)) return 'steered';
   if (message.status === 'canceled') return 'canceled';
   const preview = workTracePreview(message.body || '');
   return preview || '(empty)';
@@ -81,7 +82,7 @@ export function isSteeringContinuationMessage(
   message: Pick<ChatMessage, 'status' | 'body'>,
 ): boolean {
   return message.status === 'canceled'
-    && /Steered into the continuation below\./i.test(message.body || '');
+    && /steered into the continuation below/i.test(message.body || '');
 }
 
 export type WorkTracePhase =
@@ -118,6 +119,8 @@ export function workTracePhase(
   message: Pick<ChatMessage, 'id' | 'author' | 'body' | 'status' | 'missionTaskId' | 'harnessLog'>,
 ): WorkTracePhase {
   const text = `${message.body || ''}\n${message.harnessLog || ''}`.toLowerCase();
+  // Steering cancel is intentional flow, not a hard block.
+  if (isSteeringContinuationMessage(message)) return 'steering';
   if (message.status === 'failed') return 'blocked';
   if (/\b(steer|redirect|change direction|supersed)/.test(text)) return 'steering';
   if (message.status === 'canceled') return 'blocked';
