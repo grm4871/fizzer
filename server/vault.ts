@@ -283,17 +283,111 @@ function uniqueVaultRootPath(userId: number, vaultId: string, name: string): str
   return path.resolve(path.join(VAULTS_BASE_DIR, String(userId), vaultId, safeName));
 }
 
+function vaultRootTaken(db: Db, rootPath: string, exceptVaultId?: string): boolean {
+  const resolved = path.resolve(rootPath);
+  const rows = db.prepare('SELECT id, root_path FROM vaults').all() as Array<{ id: string; root_path: string }>;
+  return rows.some((row) => (
+    row.id !== exceptVaultId
+    && path.resolve(row.root_path || '') === resolved
+  ));
+}
+
+function purgeVaultIndex(db: Db, vaultId: string): void {
+  // Drop DB index for a vault that was pointing at a foreign tree. Disk files
+  // belonging to the canonical owner of that path are left untouched.
+  try {
+    db.prepare(`
+      DELETE FROM note_links WHERE source_id IN (SELECT id FROM notes WHERE vault_id = ?)
+        OR target_id IN (SELECT id FROM notes WHERE vault_id = ?)
+    `).run(vaultId, vaultId);
+  } catch { /* schema variants */ }
+  try {
+    db.prepare(`
+      DELETE FROM note_tags WHERE note_id IN (SELECT id FROM notes WHERE vault_id = ?)
+    `).run(vaultId);
+  } catch { /* schema variants */ }
+  db.prepare('DELETE FROM notes WHERE vault_id = ?').run(vaultId);
+  db.prepare('DELETE FROM folders WHERE vault_id = ?').run(vaultId);
+}
+
+/**
+ * Boot-time repair: one vault per on-disk root. Secondary vaults that shared a
+ * path (legacy createVault) are rehomed to empty isolated directories and their
+ * leaked note index is purged so accounts never see each other's trees.
+ */
+export function enforceVaultStorageIsolation(db: Db): { rehomed: number } {
+  const vaults = db.prepare(`
+    SELECT id, name, root_path, created_by, created_at FROM vaults
+    ORDER BY created_at ASC, rowid ASC
+  `).all() as Array<{
+    id: string;
+    name: string;
+    root_path: string;
+    created_by: number;
+    created_at: string;
+  }>;
+
+  const byRoot = new Map<string, typeof vaults>();
+  for (const vault of vaults) {
+    const key = path.resolve(vault.root_path || '');
+    if (!key || key === path.resolve('/')) continue;
+    const group = byRoot.get(key) || [];
+    group.push(vault);
+    byRoot.set(key, group);
+  }
+
+  let rehomed = 0;
+  const updateRoot = db.prepare('UPDATE vaults SET root_path = ? WHERE id = ?');
+
+  for (const [, group] of byRoot) {
+    if (group.length < 2) continue;
+    // Keep the oldest vault on the shared path (canonical owner of that tree).
+    const [, ...intruders] = group;
+    for (const vault of intruders) {
+      const nextRoot = uniqueVaultRootPath(vault.created_by, vault.id, vault.name || 'My Vault');
+      fs.mkdirSync(nextRoot, { recursive: true });
+      purgeVaultIndex(db, vault.id);
+      updateRoot.run(nextRoot, vault.id);
+      const refreshed = db.prepare('SELECT * FROM vaults WHERE id = ?').get(vault.id) as Vault;
+      try {
+        prepopulateWalkthrough(refreshed);
+        rescanVault(db, refreshed.id, refreshed.created_by);
+      } catch (err) {
+        console.error('Failed to reseed rehomed vault', vault.id, err);
+      }
+      rehomed += 1;
+      console.warn(
+        `[vault-isolation] rehomed vault ${vault.id} (user ${vault.created_by}) off shared root ${group[0].root_path} → ${nextRoot}`,
+      );
+    }
+  }
+
+  // Normalize stored paths to absolute resolved form and enforce uniqueness.
+  for (const vault of db.prepare('SELECT id, root_path FROM vaults').all() as Array<{ id: string; root_path: string }>) {
+    const resolved = path.resolve(vault.root_path || '');
+    if (resolved && resolved !== vault.root_path) {
+      if (!vaultRootTaken(db, resolved, vault.id)) {
+        updateRoot.run(resolved, vault.id);
+      }
+    }
+  }
+
+  try {
+    db.exec('CREATE UNIQUE INDEX IF NOT EXISTS vaults_root_path_uidx ON vaults(root_path)');
+  } catch (err) {
+    console.error('[vault-isolation] unique root_path index failed (collisions remain):', err);
+  }
+
+  return { rehomed };
+}
+
 export function createVault(db: Db, userId: number, opts: { name: string; root_path?: string }): Vault {
   const id = crypto.randomUUID();
   const name = String(opts.name || 'My Vault').trim() || 'My Vault';
   // Intentionally ignore opts.root_path from untrusted clients.
   const rootPath = uniqueVaultRootPath(userId, id, name);
 
-  // Refuse to mount a directory already owned by another vault row.
-  const clash = db.prepare('SELECT id, created_by FROM vaults WHERE root_path = ?').get(rootPath) as
-    | { id: string; created_by: number }
-    | undefined;
-  if (clash) {
+  if (vaultRootTaken(db, rootPath)) {
     throw new Error('Vault storage path is already in use');
   }
 
@@ -913,6 +1007,14 @@ function scanDirRecursive(dirPath: string): string[] {
 export function rescanVault(db: Db, vaultId: string, userId: number): void {
   const vault = db.prepare('SELECT * FROM vaults WHERE id = ?').get(vaultId) as Vault | undefined;
   if (!vault) return;
+
+  // Hard boundary: never index a directory claimed by another vault row.
+  if (vaultRootTaken(db, vault.root_path, vault.id)) {
+    console.error(
+      `[vault-isolation] refusing rescan for vault ${vaultId}: root_path shared with another vault (${vault.root_path})`,
+    );
+    return;
+  }
 
   const filesOnDisk = scanDirRecursive(vault.root_path);
 

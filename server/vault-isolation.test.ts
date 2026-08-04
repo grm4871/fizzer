@@ -4,7 +4,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
-import { createVault, listNotes, VAULTS_BASE_DIR } from './vault.js';
+import {
+  createVault,
+  enforceVaultStorageIsolation,
+  listNotes,
+  rescanVault,
+  VAULTS_BASE_DIR,
+} from './vault.js';
 import { ensureVaultMembersSchema } from './vaultMembers.js';
 
 function setup() {
@@ -40,7 +46,11 @@ function setup() {
     CREATE TABLE tags (id TEXT PRIMARY KEY, vault_id TEXT, name TEXT);
     CREATE TABLE note_tags (note_id TEXT, tag_id TEXT);
     CREATE TABLE note_links (
-      source_id TEXT NOT NULL, target_title TEXT NOT NULL, target_id TEXT, link_type TEXT NOT NULL DEFAULT 'wikilink'
+      source_id TEXT NOT NULL,
+      target_title TEXT NOT NULL,
+      target_id TEXT,
+      context TEXT,
+      link_type TEXT NOT NULL DEFAULT 'wikilink'
     );
     INSERT INTO users (id, username) VALUES (1, 'alice'), (2, 'bob');
   `);
@@ -96,5 +106,73 @@ test('createVault ignores client-supplied root_path', () => {
     try {
       fs.rmSync(path.join(VAULTS_BASE_DIR, '2'), { recursive: true, force: true });
     } catch { /* ignore */ }
+  }
+});
+
+test('enforceVaultStorageIsolation rehomes secondary shared-root vaults and purges leaked notes', () => {
+  const db = setup();
+  const shared = path.join(os.tmpdir(), `cascade-shared-root-${Date.now()}`);
+  try {
+    fs.mkdirSync(shared, { recursive: true });
+    fs.writeFileSync(path.join(shared, 'ALICE SECRET.md'), '# alice only\n', 'utf8');
+
+    // Simulate legacy createVault: two vault rows, one disk tree.
+    db.prepare(
+      'INSERT INTO vaults (id, name, root_path, created_by, created_at) VALUES (?, ?, ?, ?, ?)',
+    ).run('v-alice', 'My Vault', shared, 1, '2020-01-01T00:00:00');
+    db.prepare(
+      'INSERT INTO vaults (id, name, root_path, created_by, created_at) VALUES (?, ?, ?, ?, ?)',
+    ).run('v-bob', 'My Vault', shared, 2, '2024-01-01T00:00:00');
+    db.prepare(`
+      INSERT INTO notes (id, vault_id, title, content, content_preview, created_by)
+      VALUES ('n-leaked', 'v-bob', 'ALICE SECRET', '# alice only', 'alice', 2)
+    `).run();
+
+    const result = enforceVaultStorageIsolation(db);
+    assert.equal(result.rehomed, 1);
+
+    const alice = db.prepare('SELECT * FROM vaults WHERE id = ?').get('v-alice') as { root_path: string };
+    const bob = db.prepare('SELECT * FROM vaults WHERE id = ?').get('v-bob') as { root_path: string };
+    assert.equal(path.resolve(alice.root_path), path.resolve(shared));
+    assert.notEqual(path.resolve(bob.root_path), path.resolve(shared));
+    assert.ok(bob.root_path.includes(`${path.sep}2${path.sep}`));
+
+    const bobNotes = listNotes(db, 'v-bob');
+    assert.ok(bobNotes.every((n) => n.title !== 'ALICE SECRET'));
+
+    // Unique index blocks re-inserting a collision.
+    assert.throws(() => {
+      db.prepare(
+        'INSERT INTO vaults (id, name, root_path, created_by) VALUES (?, ?, ?, ?)',
+      ).run('v-collide', 'X', alice.root_path, 2);
+    });
+  } finally {
+    db.close();
+    try { fs.rmSync(shared, { recursive: true, force: true }); } catch { /* ignore */ }
+    try { fs.rmSync(path.join(VAULTS_BASE_DIR, '2'), { recursive: true, force: true }); } catch { /* ignore */ }
+  }
+});
+
+test('rescanVault refuses when root_path is shared with another vault', () => {
+  const db = setup();
+  const shared = path.join(os.tmpdir(), `cascade-rescan-shared-${Date.now()}`);
+  try {
+    fs.mkdirSync(shared, { recursive: true });
+    fs.writeFileSync(path.join(shared, 'LEAK.md'), '# secret\n', 'utf8');
+
+    db.prepare(
+      'INSERT INTO vaults (id, name, root_path, created_by) VALUES (?, ?, ?, ?)',
+    ).run('v1', 'A', shared, 1);
+    db.prepare(
+      'INSERT INTO vaults (id, name, root_path, created_by) VALUES (?, ?, ?, ?)',
+    ).run('v2', 'B', shared, 2);
+
+    rescanVault(db, 'v2', 2);
+    const notes = listNotes(db, 'v2');
+    assert.equal(notes.length, 0);
+    assert.ok(notes.every((n) => n.title !== 'LEAK'));
+  } finally {
+    db.close();
+    try { fs.rmSync(shared, { recursive: true, force: true }); } catch { /* ignore */ }
   }
 });

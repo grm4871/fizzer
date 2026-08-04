@@ -24,6 +24,7 @@ import {
   createFolder,
   createNote,
   createVault,
+  enforceVaultStorageIsolation,
   deleteFolder,
   deleteNote,
   getBacklinks,
@@ -456,6 +457,15 @@ ensureChatSchema(db);
 ensureChatDispatchSchema(db);
 ensureChatMissionSchema(db);
 ensureVaultMembersSchema(db);
+// Hard boundary: rehome any vaults still sharing an on-disk root (legacy leak path).
+try {
+  const isolation = enforceVaultStorageIsolation(db);
+  if (isolation.rehomed > 0) {
+    console.warn(`[vault-isolation] rehomed ${isolation.rehomed} vault(s) off shared roots at boot`);
+  }
+} catch (err) {
+  console.error('[vault-isolation] boot enforce failed:', err);
+}
 ensureWorkItemSchema(db);
 try { reapExpiredWorkItemLeases(db); } catch { /* best-effort on boot */ }
 db.exec(`
