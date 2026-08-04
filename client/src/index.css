@@ -2326,8 +2326,7 @@ button:focus-visible,
   display: flex;
   min-height: 34px;
 }
-/* Toolbar news ticker — instrument-cluster message strip. One headline scrolls
-   across, then the next is drawn (see NewsTicker.tsx). */
+/* Toolbar news ticker — static between swaps so Electron can remain idle. */
 .news-ticker {
   position: relative;
   flex: 1;
@@ -2338,16 +2337,12 @@ button:focus-visible,
   overflow: hidden;
   padding-left: 6px;
 }
-/* Only the scrolling text is masked — headlines fade out on the left as they
-   pass the label and fade in on the right, instead of being cut off. */
 .news-ticker-viewport {
   position: relative;
   flex: 1;
   min-width: 0;
   align-self: stretch;
   overflow: hidden;
-  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 26px, #000 calc(100% - 30px), transparent 100%);
-  mask-image: linear-gradient(90deg, transparent 0, #000 26px, #000 calc(100% - 30px), transparent 100%);
 }
 .news-ticker-label {
   flex: none;
@@ -2361,36 +2356,15 @@ button:focus-visible,
   color: var(--text-tertiary);
 }
 .news-ticker-track {
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  display: flex;
-  align-items: center;
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 0.6875rem;
   letter-spacing: 0.02em;
   color: var(--accent);
   opacity: 0.78;
-  visibility: hidden;
-  will-change: transform;
-}
-.news-ticker-track.is-running {
-  visibility: visible;
-  animation-name: news-ticker-scroll;
-  animation-timing-function: linear;
-  animation-fill-mode: both;
-}
-.news-ticker-track.is-static {
-  position: static;
-  display: block;
-  visibility: visible;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-@keyframes news-ticker-scroll {
-  from { transform: translateX(var(--news-start, 100%)); }
-  to { transform: translateX(var(--news-end, -100%)); }
 }
 
 .workspace-session-btn {

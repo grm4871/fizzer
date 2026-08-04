@@ -1,8 +1,8 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 /**
  * Cookie-Clicker-style news briefings for the workspace toolbar. One headline
- * scrolls the width of the bar, then the next is drawn — from a shuffled bag so
+ * is shown at a time, then the next is drawn — from a shuffled bag so
  * you never see the same line twice in a row.
  */
 const HEADLINES = [
@@ -145,8 +145,6 @@ const HEADLINES = [
   'local news: everything is fine. the robots told us to say that.',
 ];
 
-const SPEED_PX_PER_SEC = 55;
-const GAP_MS = 900;
 const STATIC_HOLD_MS = 7000;
 
 function shuffled<T>(items: readonly T[]): T[] {
@@ -158,12 +156,6 @@ function shuffled<T>(items: readonly T[]): T[] {
   return out;
 }
 
-function prefersReducedMotion(): boolean {
-  return typeof window !== 'undefined'
-    && typeof window.matchMedia === 'function'
-    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-}
-
 export function NewsTicker() {
   const bagRef = useRef<string[]>([]);
   const drawNext = useMemo(() => () => {
@@ -172,48 +164,19 @@ export function NewsTicker() {
   }, []);
 
   const [headline, setHeadline] = useState(drawNext);
-  const [duration, setDuration] = useState(0);
-  const trackRef = useRef<HTMLSpanElement>(null);
-  const viewportRef = useRef<HTMLDivElement>(null);
-  const reduced = useMemo(prefersReducedMotion, []);
 
-  // Measure after the headline paints so scroll speed is constant regardless of
-  // headline length or how wide the toolbar happens to be.
-  useLayoutEffect(() => {
-    if (reduced) return;
-    const track = trackRef.current;
-    const viewport = viewportRef.current;
-    if (!track || !viewport) return;
-    const travel = viewport.offsetWidth + track.offsetWidth;
-    track.style.setProperty('--news-start', `${viewport.offsetWidth}px`);
-    track.style.setProperty('--news-end', `${-track.offsetWidth}px`);
-    setDuration(travel / SPEED_PX_PER_SEC);
-  }, [headline, reduced]);
-
-  // Reduced motion: no scroll, just swap the headline on a timer.
+  // Static swaps avoid keeping Chromium's compositor active every frame. The
+  // previous masked animation was perceptible as pointer lag in Electron/Linux.
   useEffect(() => {
-    if (!reduced) return;
     const timer = window.setTimeout(() => setHeadline(drawNext()), STATIC_HOLD_MS);
     return () => window.clearTimeout(timer);
-  }, [headline, reduced, drawNext]);
-
-  const handleEnd = () => {
-    window.setTimeout(() => setHeadline(drawNext()), GAP_MS);
-  };
+  }, [headline, drawNext]);
 
   return (
     <div className="news-ticker" aria-live="off" title={`News: ${headline}`}>
       <span className="news-ticker-label">News</span>
-      {/* The label sits outside the masked viewport so only the scrolling text
-          fades at the edges — masking the label too would dim it. */}
-      <div className="news-ticker-viewport" ref={viewportRef}>
-        <span
-          key={headline}
-          ref={trackRef}
-          className={`news-ticker-track${reduced ? ' is-static' : duration ? ' is-running' : ''}`}
-          style={duration && !reduced ? { animationDuration: `${duration}s` } : undefined}
-          onAnimationEnd={reduced ? undefined : handleEnd}
-        >
+      <div className="news-ticker-viewport">
+        <span key={headline} className="news-ticker-track">
           {headline}
         </span>
       </div>
