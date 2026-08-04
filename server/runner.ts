@@ -298,15 +298,15 @@ export async function cancelRun(
   const ownerId = getDelegatedRunOwner(runId) ?? getDelegatedRunOwnerFromDb(db, runId);
   if (ownerId != null || isDelegatedRun(runId)) {
     if (ownerId != null) {
-      // Steering must not publish its terminal event until Electron confirms
-      // the old local process has actually exited. The renderer starts the
-      // continuation when it sees this event; publishing early allowed two
-      // Codex processes to resume the same provider session concurrently.
+      // Prefer waiting for Electron to confirm the local process exited so a
+      // continuation does not resume the same provider session concurrently.
       const stopped = await cancelDelegatedRun(ownerId, runId);
       if (!stopped) {
-        // App restart / offline desktop can never ack. Force-settle so sticky
-        // channel leases do not strand later turns behind "still stopping".
-        if (isDesktopRunnerOnline(ownerId)) return false;
+        // Offline / missing desktop can never ack — force-settle below.
+        // Steering is a product requirement: never leave the next turn stuck on
+        // "still stopping" because a hung CLI never acked cancel while online.
+        // Non-steering cancels still wait for a clean stop when the runner is up.
+        if (isDesktopRunnerOnline(ownerId) && !opts.steering) return false;
       }
     }
     clearDelegatedRun(runId);

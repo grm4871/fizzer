@@ -1808,8 +1808,9 @@ export default function App() {
         { method: 'POST', body: runBody },
       );
       // 409 "still stopping" means the sticky session lease is held by another
-      // open run (often a ghost after app restart). Cancel + retry instead of
-      // treating the turn as permanently failed.
+      // open run (often mid-cancel after a steer). Cancel with steering + retry
+      // with longer backoff so desktop stop can finish; never treat the first
+      // 409 as a permanent failed "queued" turn.
       let res: { run: { id: number; status: string; conversation_id: string }; reused?: boolean };
       try {
         res = await createRun();
@@ -1821,11 +1822,14 @@ export default function App() {
             method: 'POST',
             body: JSON.stringify({ steering: true }),
           }).catch(() => {});
+          forceReleasePriorSessionTurns(watermarkKey);
         }
         let lastError: unknown = error;
         res = await (async () => {
-          for (let attempt = 0; attempt < 6; attempt += 1) {
-            await new Promise((resolve) => window.setTimeout(resolve, 150 + attempt * 150));
+          for (let attempt = 0; attempt < 8; attempt += 1) {
+            // Desktop cancel ack can take several seconds; short retries left
+            // steers permanently "queued" while the lease was still draining.
+            await new Promise((resolve) => window.setTimeout(resolve, 400 + attempt * 350));
             try {
               return await createRun();
             } catch (retryError) {
@@ -1837,6 +1841,7 @@ export default function App() {
                   method: 'POST',
                   body: JSON.stringify({ steering: true }),
                 }).catch(() => {});
+                forceReleasePriorSessionTurns(watermarkKey);
               }
             }
           }

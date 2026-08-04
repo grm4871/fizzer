@@ -2514,12 +2514,22 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
             emitChatMessageEvent(update.vaultId, update.channelId, 'vault:chatMessageUpdated', update.message);
           }
         } else {
-          // Leave this dispatch unclaimed. Another renderer/reconnect can retry
-          // after the physical-stop acknowledgement settles the active run.
-          return res.status(409).json({
-            error: 'Agent session is still stopping; this turn remains queued.',
-            activeRunId: occupied.id,
-          });
+          // Steering / follow-up turns: try one server-side steering cancel so a
+          // hung predecessor cannot permanently 409 the continuation. The cancel
+          // path awaits desktop stop then force-settles when steering.
+          const steeredAway = await cancelRun(db, occupied.id, { steering: true });
+          if (steeredAway) {
+            for (const update of settleChatMessagesForRun(db, occupied.id)) {
+              emitChatMessageEvent(update.vaultId, update.channelId, 'vault:chatMessageUpdated', update.message);
+            }
+          } else {
+            // Leave this dispatch unclaimed. Another renderer/reconnect can retry
+            // after the physical-stop acknowledgement settles the active run.
+            return res.status(409).json({
+              error: 'Agent session is still stopping; this turn remains queued.',
+              activeRunId: occupied.id,
+            });
+          }
         }
       }
     }

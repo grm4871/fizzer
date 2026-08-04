@@ -1,0 +1,91 @@
+name: Android Beta APK
+
+# Rebuild + publish Cascade Dev sideload APK on every master push so
+# https://cscd.online/download/android always tracks the latest web shell.
+# Deploy Production then places the android-dev release asset on the host.
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: android-beta
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build debug APK
+        env:
+          ANDROID_HOME: ${{ env.ANDROID_HOME }}
+          ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
+          JAVA_HOME: ${{ env.JAVA_HOME }}
+        run: npm run android:apk
+
+      - name: Publish to android-dev release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -f client/public/cascade-android.apk
+          ls -la client/public/cascade-android.apk
+          if ! gh release view android-dev >/dev/null 2>&1; then
+            gh release create android-dev \
+              --title "Cascade Dev (sideload)" \
+              --notes "Auto-built Cascade Dev shell. WebView loads live https://cscd.online/app.html."
+          fi
+          gh release upload android-dev client/public/cascade-android.apk --clobber
+          echo "Published cascade-android.apk to release android-dev"
+
+      - name: Place APK on production host
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${DEPLOY_HOST:-}" || -z "${DEPLOY_USER:-}" || -z "${DEPLOY_SSH_KEY:-}" ]]; then
+            echo "Deploy SSH secrets missing — release asset published; host place skipped."
+            exit 0
+          fi
+          PORT="${DEPLOY_PORT:-22}"
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -T 10 -H -p "$PORT" "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+          ssh -i ~/.ssh/deploy_key -p "$PORT" -o StrictHostKeyChecking=accept-new \
+            "${DEPLOY_USER}@${DEPLOY_HOST}" 'mkdir -p /var/lib/cascade'
+          scp -i ~/.ssh/deploy_key -P "$PORT" \
+            client/public/cascade-android.apk \
+            "${DEPLOY_USER}@${DEPLOY_HOST}:/var/lib/cascade/cascade-android.apk"
+          ssh -i ~/.ssh/deploy_key -p "$PORT" "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            'ls -la /var/lib/cascade/cascade-android.apk'
