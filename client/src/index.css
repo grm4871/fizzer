@@ -5028,16 +5028,6 @@ button:focus-visible,
   text-align: left;
   cursor: pointer;
 }
-.chat-remove-agent {
-  opacity: 0;
-  transition: opacity var(--transition-fast), background var(--transition-fast), color var(--transition-fast);
-}
-.chat-user:hover .chat-remove-agent,
-.chat-user.is-editing .chat-remove-agent,
-.chat-remove-agent:focus-visible {
-  opacity: 1;
-}
-
 .chat-runs-empty {
   margin: 2px 0 6px;
   padding: 12px 10px;
@@ -5234,10 +5224,17 @@ button:focus-visible,
   flex: 0 0 22px;
   display: grid;
   place-items: center;
-  border-radius: var(--radius-sm);
+  border-radius: 6px;
   background: transparent;
   color: var(--text-tertiary);
   cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--transition-fast), background var(--transition-fast), color var(--transition-fast);
+}
+.chat-user:hover .chat-remove-agent,
+.chat-user.is-editing .chat-remove-agent,
+.chat-remove-agent:focus-visible {
+  opacity: 1;
 }
 .chat-remove-agent:hover {
   background: var(--danger-subtle);
