@@ -14,6 +14,7 @@ import { ChatWorkspacePanel } from './ChatWorkspacePanel';
 import { ChatWorkTrace } from './ChatWorkTrace';
 import { hasRunActivity } from '../chat/harnessActivity';
 import { isSteeringContinuationMessage, segmentTranscript } from '../chat/workTrace';
+import { useChannelMessages } from '../chat/messageStore';
 
 export const CHAT_NOTE_MARKER = 'cascade://chat-channel';
 export const CHAT_MEDIA_LIMIT = 8;
@@ -306,7 +307,6 @@ export type SharedChatNote = {
 interface ChatViewProps {
   channelId: string;
   channelName: string;
-  messages: ChatMessage[];
   isLoadingMessages?: boolean;
   currentUser: string;
   presence: ChatChannelPresence;
@@ -1448,7 +1448,6 @@ const ChatGroupRow = memo(function ChatGroupRow({
 export const ChatView = memo(function ChatView({
   channelId,
   channelName,
-  messages,
   isLoadingMessages = false,
   currentUser,
   presence,
@@ -1479,6 +1478,9 @@ export const ChatView = memo(function ChatView({
   jumpToMessageId,
   onJumpHandled,
 }: ChatViewProps) {
+  // Messages come from an external per-channel store, not props: streaming tokens
+  // then re-render only this ChatView, never the App shell. See messageStore.ts.
+  const messages = useChannelMessages(channelId);
   const [draft, setDraft] = useState('');
   const [usersCollapsedLocal, setUsersCollapsedLocal] = useState(() =>
     typeof localStorage !== 'undefined' && localStorage.getItem('cascade_chat_users_collapsed') === '1'

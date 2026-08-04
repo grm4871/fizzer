@@ -14,6 +14,7 @@ import {
   type ChatAgentRegistration,
   type ChatMessage,
 } from '../components/ChatView';
+import { chatMessageStore } from '../chat/messageStore';
 
 const agent: ChatAgentRegistration = {
   id: 'reg-sol',
@@ -139,17 +140,18 @@ describe('chat run panel lifecycle', () => {
   });
 
   it('renders a successful final reply without an automatic Harness view', () => {
+    // Messages now live in the external store; seed the channel ChatView reads.
+    chatMessageStore.set('channel', [message('1', {
+      author: 'Sol',
+      agentId: 'codex',
+      runId: 42,
+      body: 'A complete final answer with nuance.',
+      harnessLog: '# complete run trace\n',
+      hasHarness: true,
+    })]);
     const markup = renderToStaticMarkup(createElement(ChatView, {
       channelId: 'channel',
       channelName: 'cascade-dev',
-      messages: [message('1', {
-        author: 'Sol',
-        agentId: 'codex',
-        runId: 42,
-        body: 'A complete final answer with nuance.',
-        harnessLog: '# complete run trace\n',
-        hasHarness: true,
-      })],
       currentUser: 'asdfasdf',
       presence: { participants: [], online: [] },
       availableAgents: [],

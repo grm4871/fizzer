@@ -76,6 +76,7 @@ import {
   type ChatState,
   type PersistedSession,
 } from './chat/session';
+import { chatMessageStore } from './chat/messageStore';
 import { consumePendingSessionSteer, enqueueSessionTurn, findProjectedActiveSessionRun, forceReleasePriorSessionTurns, queuesBehindActiveSession, requestSessionSteer } from './chat/sessionTurns';
 import { Activity, Gem, PanelLeftOpen, Users } from 'lucide-react';
 
@@ -122,8 +123,7 @@ function isMobileViewport(): boolean {
 const loadVaultDataInflight = new Map<string, Promise<void>>();
 const loadChatMessagesInflight = new Map<string, Promise<{ channelId: string; messages: ChatMessage[] }>>();
 
-/** Stable empties so ChatView memo doesn't bust when a channel has no data yet. */
-const EMPTY_CHAT_MESSAGES: ChatMessage[] = [];
+/** Stable empty so ChatView memo doesn't bust when a channel has no agents yet. */
 const EMPTY_CHAT_AGENTS: ChatAgentRegistration[] = [];
 const EMPTY_CHAT_PRESENCE: ChatChannelPresence = { participants: [], online: [], owner: '', profiles: {} };
 
@@ -300,7 +300,7 @@ export default function App() {
 
   useEffect(() => {
     const id = window.setTimeout(() => {
-    const { messagesByChannel: _messages, registeredAgentsByChannel: _agents, ...persistedChat } = chatState;
+    const { registeredAgentsByChannel: _agents, ...persistedChat } = chatState;
     localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(persistedChat));
     }, 250);
     return () => clearTimeout(id);
@@ -610,8 +610,8 @@ export default function App() {
       setLoadingChatChannels((prev) => {
         const next = { ...prev };
         for (const id of channelIds) {
-          const cached = chatStateRef.current.messagesByChannel[id];
-          if (!cached || cached.length === 0) next[id] = true;
+          const cached = chatMessageStore.getChannel(id);
+          if (cached.length === 0) next[id] = true;
         }
         return next;
       });
@@ -647,7 +647,9 @@ export default function App() {
               return { channelId, messages };
             } catch {
               // Keep whatever we already have on soft failure (resume offline).
-              const cached = chatStateRef.current.messagesByChannel[channelId];
+              const cached = chatMessageStore.hasChannel(channelId)
+                ? chatMessageStore.getChannel(channelId)
+                : undefined;
               return { channelId, messages: cached ?? legacyMessages[channelId] ?? [] };
             } finally {
               loadChatMessagesInflight.delete(inflightKey);
@@ -657,25 +659,16 @@ export default function App() {
         }
 
         const { messages } = await fetchOne;
-        setChatState((prev) => {
-          if (prev.messagesByChannel[channelId] === messages) return prev;
-          const cachedById = new Map(
-            (prev.messagesByChannel[channelId] ?? []).map((message) => [message.id, message]),
-          );
+        chatMessageStore.update(channelId, (existing) => {
+          if (existing === messages) return existing;
+          const cachedById = new Map(existing.map((message) => [message.id, message]));
           // Reconnect reconciliation intentionally fetches the slim transcript,
           // where data-URL images are represented only by `hasImages`. Merge it
           // over the live cache so a refresh cannot erase already hydrated media.
-          const reconciled = messages.map((message) => {
+          return messages.map((message) => {
             const cached = cachedById.get(message.id);
             return cached ? mergeRemoteChatMessage(cached, message) : message;
           });
-          return {
-            ...prev,
-            messagesByChannel: {
-              ...prev.messagesByChannel,
-              [channelId]: reconciled,
-            },
-          };
         });
         setLoadingChatChannels((prev) => {
           if (!prev[channelId]) return prev;
@@ -710,19 +703,12 @@ export default function App() {
       });
       if (!data.message) return null;
       const merged = mergeRemoteChatMessage(message, data.message);
-      setChatState((prev) => {
-        const existing = prev.messagesByChannel[channelId] ?? [];
+      chatMessageStore.update(channelId, (existing) => {
         const index = existing.findIndex((item) => item.id === data.message.id);
-        if (index === -1) return prev;
+        if (index === -1) return existing;
         const next = [...existing];
         next[index] = mergeRemoteChatMessage(existing[index], data.message);
-        return {
-          ...prev,
-          messagesByChannel: {
-            ...prev.messagesByChannel,
-            [channelId]: next,
-          },
-        };
+        return next;
       });
       const agents = data.agents ?? chatStateRef.current.registeredAgentsByChannel[channelId] ?? [];
       if (data.agents) {
@@ -922,10 +908,7 @@ export default function App() {
 
     // Key presence (not length): empty channels are a valid cached result.
     // length===0 used to re-fetch on every notes/focus tick.
-    const messagesCached = Object.prototype.hasOwnProperty.call(
-      chatStateRef.current.messagesByChannel,
-      channelId,
-    );
+    const messagesCached = chatMessageStore.hasChannel(channelId);
     const agentsCached = Object.prototype.hasOwnProperty.call(
       chatStateRef.current.registeredAgentsByChannel,
       channelId,
@@ -964,18 +947,9 @@ export default function App() {
   const handleHydrateChatMessage = useCallback((message: ChatMessage) => {
     const channelId = message.channelId;
     if (!channelId) return;
-    setChatState((prev) => {
-      const existing = prev.messagesByChannel[channelId] ?? [];
+    chatMessageStore.update(channelId, (existing) => {
       const index = existing.findIndex((item) => item.id === message.id);
-      if (index === -1) {
-        return {
-          ...prev,
-          messagesByChannel: {
-            ...prev.messagesByChannel,
-            [channelId]: [...existing, message],
-          },
-        };
-      }
+      if (index === -1) return [...existing, message];
       const next = [...existing];
       next[index] = mergeRemoteChatMessage(existing[index], {
         ...message,
@@ -985,13 +959,7 @@ export default function App() {
         hasHarness: message.hasHarness ?? existing[index].hasHarness,
         images: message.images?.length ? message.images : existing[index].images,
       });
-      return {
-        ...prev,
-        messagesByChannel: {
-          ...prev.messagesByChannel,
-          [channelId]: next,
-        },
-      };
+      return next;
     });
   }, []);
 
@@ -1008,12 +976,10 @@ export default function App() {
     }
     // Drop it locally too: the socket broadcast also removes it, but this keeps
     // the click responsive (and correct if the socket is currently down).
-    setChatState((prev) => {
-      const existing = prev.messagesByChannel[channelId];
-      if (!existing) return prev;
+    if (!chatMessageStore.hasChannel(channelId)) return;
+    chatMessageStore.update(channelId, (existing) => {
       const next = existing.filter((message) => message.id !== messageId);
-      if (next.length === existing.length) return prev;
-      return { ...prev, messagesByChannel: { ...prev.messagesByChannel, [channelId]: next } };
+      return next.length === existing.length ? existing : next;
     });
   }, []);
 
@@ -1031,14 +997,13 @@ export default function App() {
     );
     // Show it immediately in a cached target transcript; the socket broadcast
     // dedupes on id, so this is safe when the channel is also open elsewhere.
-    setChatState((prev) => {
-      const existing = prev.messagesByChannel[targetChannelId];
-      if (!existing || existing.some((message) => message.id === data.message.id)) return prev;
-      return {
-        ...prev,
-        messagesByChannel: { ...prev.messagesByChannel, [targetChannelId]: [...existing, data.message] },
-      };
-    });
+    if (chatMessageStore.hasChannel(targetChannelId)) {
+      chatMessageStore.update(targetChannelId, (existing) => (
+        existing.some((message) => message.id === data.message.id)
+          ? existing
+          : [...existing, data.message]
+      ));
+    }
     const target = notesRef.current.find((note) => note.id === targetChannelId);
     setNotice(`Forwarded to #${target?.title ?? 'channel'}`);
   }, []);
@@ -1235,19 +1200,11 @@ export default function App() {
     message: ChatMessage,
     options: { persist?: boolean } = {},
   ) => {
-    setChatState((prev) => {
-      const existing = prev.messagesByChannel[channelId] ?? [];
-      const next = existing.some((item) => item.id === message.id)
+    chatMessageStore.update(channelId, (existing) => (
+      existing.some((item) => item.id === message.id)
         ? existing.map((item) => item.id === message.id ? { ...item, ...message } : item)
-        : [...existing, message];
-      return {
-        ...prev,
-        messagesByChannel: {
-          ...prev.messagesByChannel,
-          [channelId]: next,
-        },
-      };
-    });
+        : [...existing, message]
+    ));
     const vaultId = activeVaultIdRef.current;
     if (vaultId && options.persist !== false) void persistChatMessageToServer(vaultId, channelId, message);
   }, [persistChatMessageToServer]);
@@ -1261,18 +1218,12 @@ export default function App() {
     // other clients. The base prefers a pending (not-yet-flushed) patch so a burst
     // of synchronous stream events (e.g. the history backfill loop) accumulates.
     const base = pendingChatPatchRef.current.get(messageId)
-      ?? (chatStateRef.current.messagesByChannel[channelId] ?? []).find((message) => message.id === messageId);
+      ?? chatMessageStore.getChannel(channelId).find((message) => message.id === messageId);
     if (!base) return;
     const patched = updater(base);
-    setChatState((prev) => ({
-      ...prev,
-      messagesByChannel: {
-        ...prev.messagesByChannel,
-        [channelId]: (prev.messagesByChannel[channelId] ?? []).map((message) => (
-          message.id === messageId ? patched : message
-        )),
-      },
-    }));
+    chatMessageStore.update(channelId, (existing) => existing.map((message) => (
+      message.id === messageId ? patched : message
+    )));
     const vaultId = activeVaultIdRef.current;
     if (vaultId && !serverOwnedChatMessageIdsRef.current.has(messageId)) {
       const immediate = !patched.status || patched.status === 'failed' || patched.status === 'canceled';
@@ -1492,7 +1443,7 @@ export default function App() {
       // the coordinator instead of waiting 60 seconds behind an un-canceled run.
       if (!activeAgentSessionRunRef.current.has(watermarkKey)) {
         const projectedRunId = findProjectedActiveSessionRun(
-          chatStateRef.current.messagesByChannel[channelId] ?? [],
+          chatMessageStore.getChannel(channelId),
           registration.id,
         );
         if (projectedRunId != null) activeAgentSessionRunRef.current.set(watermarkKey, projectedRunId);
@@ -1517,7 +1468,7 @@ export default function App() {
       // sticky registration lease. Interrupt that ghost so POST /runs does not
       // fail forever with "still stopping".
       const projectedRunId = findProjectedActiveSessionRun(
-        chatStateRef.current.messagesByChannel[channelId] ?? [],
+        chatMessageStore.getChannel(channelId),
         registration.id,
       );
       if (projectedRunId != null) {
@@ -1672,7 +1623,7 @@ export default function App() {
           await waitForPreceding(steeringTurn ? 45_000 : 60_000);
         } catch {
           const projectedRunId = findProjectedActiveSessionRun(
-            chatStateRef.current.messagesByChannel[channelId] ?? [],
+            chatMessageStore.getChannel(channelId),
             registration.id,
           );
           if (projectedRunId != null) {
@@ -1754,17 +1705,9 @@ export default function App() {
               // live UI never leaves an empty "(message)" shell after cascade-chat
               // send. (Server list already filters empty terminal agent rows.)
               if (terminal === 'completed' && suppressChatBody) {
-                setChatState((prev) => {
-                  const existing = prev.messagesByChannel[channelId] ?? [];
+                chatMessageStore.update(channelId, (existing) => {
                   const next = existing.filter((message) => message.id !== agentMessageId);
-                  if (next.length === existing.length) return prev;
-                  return {
-                    ...prev,
-                    messagesByChannel: {
-                      ...prev.messagesByChannel,
-                      [channelId]: next,
-                    },
-                  };
+                  return next.length === existing.length ? existing : next;
                 });
                 agentContextWatermarkRef.current.set(watermarkKey, agentMessageId);
                 finishRun(runId, cleanup);
@@ -1954,14 +1897,9 @@ export default function App() {
       // dispatch; quietly prune the optimistic shell instead of showing an
       // empty failed Harness panel for work that is already complete.
       if (dispatchId && error instanceof Error && error.message === 'Chat dispatch not found') {
-        setChatState((prev) => ({
-          ...prev,
-          messagesByChannel: {
-            ...prev.messagesByChannel,
-            [channelId]: (prev.messagesByChannel[channelId] ?? [])
-              .filter((message) => message.id !== agentMessageId),
-          },
-        }));
+        chatMessageStore.update(channelId, (existing) => (
+          existing.filter((message) => message.id !== agentMessageId)
+        ));
         runSocket?.disconnect();
         streamingChatMessageIdsRef.current.delete(agentMessageId);
         sessionTurn.release();
@@ -2086,7 +2024,7 @@ export default function App() {
           trigger,
           registrations.length > 0 ? registrations : group.map((item) => item.registration),
           group,
-          chatStateRef.current.messagesByChannel[channelId] ?? [],
+          chatMessageStore.getChannel(channelId),
         );
       }
     } catch {
@@ -2116,23 +2054,21 @@ export default function App() {
           return false;
         }
       }
-      setChatState((prev) => ({
-        ...prev,
-        messagesByChannel: Object.fromEntries(
-          Object.entries(prev.messagesByChannel).map(([channelId, messages]) => [
-            channelId,
-            messages.map((message) => (
-              message.runId === runId && message.status === 'running'
-                ? {
-                    ...message,
-                    body: message.body === 'Thinking...' ? 'Run canceled by user.' : message.body,
-                    status: 'canceled',
-                  }
-                : message
-            )),
-          ]),
-        ),
-      }));
+      chatMessageStore.updateAll((messages) => {
+        let changed = false;
+        const next = messages.map((message) => {
+          if (message.runId === runId && message.status === 'running') {
+            changed = true;
+            return {
+              ...message,
+              body: message.body === 'Thinking...' ? 'Run canceled by user.' : message.body,
+              status: 'canceled' as const,
+            };
+          }
+          return message;
+        });
+        return changed ? next : messages;
+      });
       return true;
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Could not cancel run');
@@ -2190,7 +2126,7 @@ export default function App() {
       ...(replyTo ? { replyTo } : {}),
     };
 
-    const messages = chatStateRef.current.messagesByChannel[channelId] ?? [];
+    const messages = chatMessageStore.getChannel(channelId);
     const last = messages[messages.length - 1];
     const typedSource = [trimmed, attachments.map((item) => item.name).join(' ')].filter(Boolean).join(' ');
     const replyTargetIsAgent = replyQuoteTargetsAgent(replyTo, messages);
@@ -2211,25 +2147,11 @@ export default function App() {
       };
     }
 
-    setChatState((prev) => {
-      const channelMessages = prev.messagesByChannel[channelId] ?? [];
-      if (mergeTargetId) {
-        return {
-          ...prev,
-          messagesByChannel: {
-            ...prev.messagesByChannel,
-            [channelId]: [...channelMessages.slice(0, -1), outgoingMessage],
-          },
-        };
-      }
-      return {
-        ...prev,
-        messagesByChannel: {
-          ...prev.messagesByChannel,
-          [channelId]: [...channelMessages, candidate],
-        },
-      };
-    });
+    chatMessageStore.update(channelId, (channelMessages) => (
+      mergeTargetId
+        ? [...channelMessages.slice(0, -1), outgoingMessage]
+        : [...channelMessages, candidate]
+    ));
 
     const vaultId = activeVaultIdRef.current;
     // Persist the user prompt *before* starting agents. If the agent shell is
@@ -2591,17 +2513,11 @@ export default function App() {
 
     const handleChatMessageCreated = (data: { vaultId: string; channelId: string; message: ChatMessage; dispatches?: ChatAgentDispatch[] }) => {
       if (data.vaultId !== activeVaultId) return;
-      setChatState((prev) => {
-        const existing = prev.messagesByChannel[data.channelId] ?? [];
-        if (existing.some((message) => message.id === data.message.id)) return prev;
-        return {
-          ...prev,
-          messagesByChannel: {
-            ...prev.messagesByChannel,
-            [data.channelId]: [...existing, data.message],
-          },
-        };
-      });
+      chatMessageStore.update(data.channelId, (existing) => (
+        existing.some((message) => message.id === data.message.id)
+          ? existing
+          : [...existing, data.message]
+      ));
 
       const dispatches = data.dispatches ?? [];
       if (dispatches.length > 0) {
@@ -2612,7 +2528,7 @@ export default function App() {
           data.message,
           registrations,
           dispatches,
-          chatStateRef.current.messagesByChannel[data.channelId] ?? [],
+          chatMessageStore.getChannel(data.channelId),
         );
       }
     };
@@ -2626,46 +2542,23 @@ export default function App() {
         && data.message.status !== 'running'
         && (!remoteBody || remoteBody === 'Thinking...'),
       );
-      setChatState((prev) => {
-        const existing = prev.messagesByChannel[data.channelId] ?? [];
+      chatMessageStore.update(data.channelId, (existing) => {
         if (isEmptyAgentShell) {
           const next = existing.filter((message) => message.id !== data.message.id);
           if (next.length === existing.length && !existing.some((m) => m.id === data.message.id)) {
-            return prev; // never insert an empty shell
+            return existing; // never insert an empty shell
           }
-          return {
-            ...prev,
-            messagesByChannel: {
-              ...prev.messagesByChannel,
-              [data.channelId]: next,
-            },
-          };
+          return next;
         }
         const index = existing.findIndex((message) => message.id === data.message.id);
-        if (index === -1) {
-          return {
-            ...prev,
-            messagesByChannel: {
-              ...prev.messagesByChannel,
-              [data.channelId]: [...existing, data.message],
-            },
-          };
+        if (index === -1) return [...existing, data.message];
+        const local = existing[index];
+        if (streamingChatMessageIdsRef.current.has(data.message.id) && data.message.status === 'running') {
+          return existing;
         }
         const next = [...existing];
-        const local = existing[index];
-        if (streamingChatMessageIdsRef.current.has(data.message.id)) {
-          if (data.message.status === 'running') return prev;
-          next[index] = mergeRemoteChatMessage(local, data.message);
-        } else {
-          next[index] = mergeRemoteChatMessage(local, data.message);
-        }
-        return {
-          ...prev,
-          messagesByChannel: {
-            ...prev.messagesByChannel,
-            [data.channelId]: next,
-          },
-        };
+        next[index] = mergeRemoteChatMessage(local, data.message);
+        return next;
       });
       const dispatches = data.dispatches ?? [];
       if (dispatches.length > 0) {
@@ -2676,7 +2569,7 @@ export default function App() {
           data.message,
           registrations,
           dispatches,
-          chatStateRef.current.messagesByChannel[data.channelId] ?? [],
+          chatMessageStore.getChannel(data.channelId),
         );
       }
     };
@@ -2690,15 +2583,10 @@ export default function App() {
       if (pendingTimer) window.clearTimeout(pendingTimer);
       chatPatchTimerRef.current.delete(data.messageId);
       streamingChatMessageIdsRef.current.delete(data.messageId);
-      setChatState((prev) => {
-        const existing = prev.messagesByChannel[data.channelId];
-        if (!existing) return prev;
+      if (!chatMessageStore.hasChannel(data.channelId)) return;
+      chatMessageStore.update(data.channelId, (existing) => {
         const next = existing.filter((message) => message.id !== data.messageId);
-        if (next.length === existing.length) return prev;
-        return {
-          ...prev,
-          messagesByChannel: { ...prev.messagesByChannel, [data.channelId]: next },
-        };
+        return next.length === existing.length ? existing : next;
       });
     };
     const handleChatAgentMemberUpserted = (data: { vaultId: string; channelId: string; registration: ChatAgentRegistration }) => {
@@ -2893,13 +2781,7 @@ export default function App() {
       const wasChatChannel = notesRef.current.find((note) => note.id === noteId)?.content_preview.trim().startsWith(CHAT_NOTE_MARKER);
       await api(`/api/notes/${noteId}`, { method: 'DELETE' });
       closeTabRef.current(noteId);
-      if (wasChatChannel) {
-        setChatState((prev) => {
-          const messagesByChannel = { ...prev.messagesByChannel };
-          delete messagesByChannel[noteId];
-          return { ...prev, messagesByChannel };
-        });
-      }
+      if (wasChatChannel) chatMessageStore.remove(noteId);
       if (activeVaultIdRef.current) await loadVaultData(activeVaultIdRef.current);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Could not delete note');
@@ -3181,6 +3063,9 @@ export default function App() {
   // RENDER
   // ═══════════════════════════════════════════════════════════════
 
+  // Stable identity so ChatView's memo is not defeated every render by an inline arrow.
+  const handleChatJumpHandled = useCallback(() => setChatJumpTarget(null), []);
+
   /** Render the content of a tab inside its pane. */
   const renderTabContent = useCallback((tab: Tab): ReactNode => {
     if (tab.type === 'superkanban') {
@@ -3211,7 +3096,6 @@ export default function App() {
         <ChatView
           channelId={channel.id}
           channelName={channel.title}
-          messages={chatState.messagesByChannel[channel.id] ?? EMPTY_CHAT_MESSAGES}
           isLoadingMessages={loadingChatChannels[channel.id] === true}
           currentUser={currentUsername}
           presence={chatPresenceByChannel[channel.id] ?? EMPTY_CHAT_PRESENCE}
@@ -3240,7 +3124,7 @@ export default function App() {
           vaultId={activeVaultId || undefined}
           onHydrateMessage={handleHydrateChatMessage}
           jumpToMessageId={chatJumpTarget?.channelId === channel.id ? chatJumpTarget.messageId : undefined}
-          onJumpHandled={() => setChatJumpTarget(null)}
+          onJumpHandled={handleChatJumpHandled}
         />
       );
     }
@@ -3260,7 +3144,7 @@ export default function App() {
         />
       </Suspense>
     );
-  }, [availableChatAgents, chatState.messagesByChannel, chatState.registeredAgentsByChannel, chatPresenceByChannel, currentUsername, loadingChatChannels, runnerHealth, vaultAgents, handleCancelChatRun, handleCreateChatInviteLink, handleInviteChatUser, handleRemoveChatParticipant, handleLeaveChatChannel, handleRegisterChatAgent, handleRemoveChatAgent, handleUpsertVaultAgent, handleDeleteVaultAgent, handleAddVaultAgentToChannel, handleSendChatMessage, handleForwardChatMessage, noteContents, notes, getNoteChangeHandler, getNoteSaveHandler, getNoteRenameHandler, handleExecuteDirective, handleOpenWikilink, openNote, chatMembersOpen, activeVaultId, handleHydrateChatMessage, handleOpenSharedChatNote, superkanbanNotes, superkanbanLoading, superkanbanError, chatJumpTarget]);
+  }, [availableChatAgents, chatState.registeredAgentsByChannel, chatPresenceByChannel, currentUsername, loadingChatChannels, runnerHealth, vaultAgents, handleCancelChatRun, handleCreateChatInviteLink, handleInviteChatUser, handleRemoveChatParticipant, handleLeaveChatChannel, handleRegisterChatAgent, handleRemoveChatAgent, handleUpsertVaultAgent, handleDeleteVaultAgent, handleAddVaultAgentToChannel, handleSendChatMessage, handleForwardChatMessage, noteContents, notes, getNoteChangeHandler, getNoteSaveHandler, getNoteRenameHandler, handleExecuteDirective, handleOpenWikilink, openNote, chatMembersOpen, activeVaultId, handleHydrateChatMessage, handleOpenSharedChatNote, superkanbanNotes, superkanbanLoading, superkanbanError, chatJumpTarget, handleChatJumpHandled]);
 
   if (!user) {
     const hasInvite = /^\/invite\/[^/]+$/.test(window.location.pathname);

@@ -24,13 +24,11 @@ export interface PersistedSession {
 }
 
 export interface ChatState {
-  messagesByChannel: Record<string, ChatMessage[]>;
   agentModelsByAgent: Record<string, string>;
   registeredAgentsByChannel: Record<string, ChatAgentRegistration[]>;
 }
 
 export const emptyChatState = (): ChatState => ({
-  messagesByChannel: {},
   agentModelsByAgent: {},
   registeredAgentsByChannel: {},
 });
@@ -142,7 +140,9 @@ export function readLegacyLocalChatMessages(): Record<string, ChatMessage[]> {
   try {
     const raw = localStorage.getItem(CHAT_STORAGE_KEY);
     if (!raw) return {};
-    const parsed = JSON.parse(raw) as Partial<ChatState>;
+    // Legacy shape: messages used to be persisted in this key before they moved
+    // to the in-memory message store, so parse the raw record directly.
+    const parsed = JSON.parse(raw) as { messagesByChannel?: Record<string, unknown> };
     if (!parsed.messagesByChannel || typeof parsed.messagesByChannel !== 'object') return {};
     const messagesByChannel: Record<string, ChatMessage[]> = {};
     for (const [channelId, messages] of Object.entries(parsed.messagesByChannel)) {
@@ -206,7 +206,7 @@ export function loadChatState(): ChatState {
       }
     }
 
-    return { messagesByChannel: {}, agentModelsByAgent, registeredAgentsByChannel: {} };
+    return { agentModelsByAgent, registeredAgentsByChannel: {} };
   } catch {
     return emptyChatState();
   }
