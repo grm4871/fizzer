@@ -272,10 +272,30 @@ function prepopulateWalkthrough(vault: Vault): void {
   fs.writeFileSync(path.join(vault.root_path, 'Navigation & Search.md'), navContent, 'utf8');
 }
 
+/**
+ * Resolve an isolated on-disk root for a new vault.
+ * Never honor a client-supplied path — shared roots cause note leakage across
+ * accounts when rescanVault indexes whoever's markdown is already there.
+ */
+function uniqueVaultRootPath(userId: number, vaultId: string, name: string): string {
+  const safeName = sanitizeFilename(name) || 'vault';
+  // userId + vaultId guarantees isolation even when two users pick "My Vault".
+  return path.resolve(path.join(VAULTS_BASE_DIR, String(userId), vaultId, safeName));
+}
+
 export function createVault(db: Db, userId: number, opts: { name: string; root_path?: string }): Vault {
   const id = crypto.randomUUID();
   const name = String(opts.name || 'My Vault').trim() || 'My Vault';
-  const rootPath = path.resolve(String(opts.root_path || path.join(VAULTS_BASE_DIR, String(userId), sanitizeFilename(name))));
+  // Intentionally ignore opts.root_path from untrusted clients.
+  const rootPath = uniqueVaultRootPath(userId, id, name);
+
+  // Refuse to mount a directory already owned by another vault row.
+  const clash = db.prepare('SELECT id, created_by FROM vaults WHERE root_path = ?').get(rootPath) as
+    | { id: string; created_by: number }
+    | undefined;
+  if (clash) {
+    throw new Error('Vault storage path is already in use');
+  }
 
   fs.mkdirSync(rootPath, { recursive: true });
 
@@ -296,7 +316,11 @@ export function createVault(db: Db, userId: number, opts: { name: string; root_p
   const vault = db.prepare('SELECT * FROM vaults WHERE id = ?').get(id) as Vault;
 
   try {
-    prepopulateWalkthrough(vault);
+    // Only seed walkthrough into an empty directory — never rescrape a foreign tree.
+    const existing = fs.readdirSync(rootPath).filter((entry) => entry !== '.DS_Store');
+    if (existing.length === 0) {
+      prepopulateWalkthrough(vault);
+    }
     rescanVault(db, vault.id, userId);
   } catch (err) {
     console.error('Failed to prepopulate vault walkthrough:', err);

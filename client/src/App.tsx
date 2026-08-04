@@ -3033,6 +3033,12 @@ export default function App() {
           method: 'POST',
           body: JSON.stringify({ token: resetToken.trim(), newPassword: password }),
         });
+        // Drop any prior user's workspace pointer so we never open their vault id.
+        localStorage.removeItem(SESSION_STORAGE_KEY);
+        setActiveVaultId(null);
+        setOpenTabs([]);
+        setNotes([]);
+        setFolders([]);
         localStorage.setItem('docs_token', data.token);
         setUser(data.user);
         setIsOwner(Boolean(data.owner));
@@ -3047,6 +3053,13 @@ export default function App() {
         method: 'POST',
         body: JSON.stringify({ username, password, ...(authMode === 'register' && inviteToken ? { inviteToken } : {}) }),
       });
+      // Account switch: never restore another user's activeVaultId / open tabs.
+      localStorage.removeItem(SESSION_STORAGE_KEY);
+      setActiveVaultId(null);
+      setOpenTabs([]);
+      setNotes([]);
+      setFolders([]);
+      setNoteContents({});
       localStorage.setItem('docs_token', data.token);
       setUser(data.user);
       setIsOwner(Boolean(data.owner));
@@ -3062,6 +3075,7 @@ export default function App() {
     runSocketsRef.current.forEach((socket) => socket.disconnect());
     runSocketsRef.current.clear();
     localStorage.removeItem('docs_token');
+    localStorage.removeItem(SESSION_STORAGE_KEY);
     setUser(null);
     setIsOwner(false);
     setAdminOpen(false);
