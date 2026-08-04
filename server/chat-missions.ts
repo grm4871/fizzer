@@ -368,6 +368,8 @@ function missionRow(db: Db, missionId: string): MissionRow | undefined {
 }
 
 function taskRows(db: Db, missionId: string): TaskRow[] {
+  // rowid preserves insert order when many tasks share second-precision created_at
+  // (common when dual-writing work items in the same wall-clock second).
   return db.prepare(`
     SELECT * FROM chat_mission_tasks
     WHERE mission_id = ? ORDER BY created_at ASC, rowid ASC
@@ -718,10 +720,14 @@ export function listSchedulableMissionTasks(
         AND (t.status = 'running' OR (t.status = 'pending' AND t.dispatch_id IS NOT NULL))
     `).all(mission.channel_id) as Array<{ id: string }>).map((row) => row.id));
     const currentById = new Map(tasks.map((task) => [task.id, task]));
+    // Keep ready order as taskRows already sorted by created_at/rowid; only
+    // re-sort by priority so same-second inserts stay in insert order.
     const ready = tasks
       .filter((task) => task.status === 'pending' && !task.dispatch_id)
       .filter((task) => taskDependencies(task).every((id) => currentById.get(id)?.status === 'completed'))
-      .sort((a, b) => b.priority - a.priority || a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
+      .map((task, index) => ({ task, index }))
+      .sort((a, b) => b.task.priority - a.task.priority || a.index - b.index)
+      .map((entry) => entry.task);
     for (const task of ready) {
       const anonymous = Boolean(task.anonymous);
       if (!anonymous) {
