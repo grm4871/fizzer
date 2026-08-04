@@ -922,6 +922,11 @@ async function runCodex(
           const out = item.aggregated_output ?? item.output ?? '';
           const isError = typeof item.exit_code === 'number' && item.exit_code !== 0;
           emit('user', { message: { content: [{ type: 'tool_result', tool_use_id: item.id, content: truncate(String(out), 8000), is_error: isError }] } });
+          if (isError) {
+            void import('./auto-papercut.mjs')
+              .then((mod) => mod.autoPapercut(String(out), { tool: String(item.type || item.name || 'tool') }))
+              .catch(() => {});
+          }
         }
         break;
       // turn.started handled above via usage path; no content blocks.
@@ -1856,6 +1861,11 @@ async function runAntigravity(
               }],
             },
           });
+          if (isError) {
+            void import('./auto-papercut.mjs')
+              .then((mod) => mod.autoPapercut(outText, { tool: String(type || 'tool') }))
+              .catch(() => {});
+          }
           const preview = outText.replace(/\s+/g, ' ').trim().slice(0, 160);
           emitHarness(emit, `${isError ? '\x1b[31m' : '\x1b[2m'}◀ ${type}${preview ? `: ${preview}` : ''}\x1b[0m\r\n`);
           sawFinalPlanner = false;
@@ -2045,6 +2055,11 @@ async function runCopilot(prompt: string, cwd: string, emit: AgentEmit, resumeId
                   }]
                 }
               });
+              if (isError) {
+                void import('./auto-papercut.mjs')
+                  .then((mod) => mod.autoPapercut(String(out), { tool: String(ev.data.toolName || 'tool') }))
+                  .catch(() => {});
+              }
               lastWasText = false;
             }
             break;

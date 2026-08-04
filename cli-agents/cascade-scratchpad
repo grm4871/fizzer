@@ -15,12 +15,13 @@ import os from 'node:os';
 import path from 'node:path';
 
 const DEFAULT_URL = 'https://cscd.online';
-const KINDS = ['observation', 'outcome', 'dead-end', 'decision', 'todo'];
+const KINDS = ['observation', 'outcome', 'dead-end', 'decision', 'todo', 'papercut'];
 
 const USAGE = `cascade-scratchpad - agent work journal, skills, open threads, and outcomes
 
 Usage:
   cascade-scratchpad jot [text...]             append a journal entry (stdin / --text / --content ok)
+  cascade-scratchpad papercut [text...]        log tool friction / bullshit (dead-end shaped; auto-used by runners)
   cascade-scratchpad journal                   list journal entries
   cascade-scratchpad done --through <id>       mark entries consolidated
   cascade-scratchpad status                    unconsolidated count + open threads + last consolidation
@@ -209,7 +210,7 @@ async function main() {
     process.stdout.write(USAGE + '\n');
     process.exit(cmd ? 0 : 1);
   }
-  if (!['jot', 'journal', 'done', 'status', 'skill', 'outcome', 'promote', 'recall', 'open', 'close'].includes(cmd)) {
+  if (!['jot', 'papercut', 'journal', 'done', 'status', 'skill', 'outcome', 'promote', 'recall', 'open', 'close'].includes(cmd)) {
     fail(`unknown command "${cmd}". Run with --help.`);
   }
 
@@ -219,7 +220,7 @@ async function main() {
   const vaultId = await resolveVault(url, token, args, config);
   const agentKey = resolveAgentKey(args, config);
 
-  if (cmd === 'jot') {
+  if (cmd === 'jot' || cmd === 'papercut') {
     // Accept positional, --text, --content, or stdin. Agents often guess --text
     // (same shape as cascade-note --content); reject bare flags so they don't
     // silently become the body string "true".
@@ -233,12 +234,12 @@ async function main() {
       return '';
     })();
     const body = (positional || flagBody || String(await readStdin())).trim();
-    if (!body) fail('jot needs text (positional args, --text/--content, or stdin).');
-    const kind = String(args.kind || 'observation');
+    if (!body) fail(`${cmd} needs text (positional args, --text/--content, or stdin).`);
+    const kind = cmd === 'papercut' ? 'papercut' : String(args.kind || 'observation');
     if (!KINDS.includes(kind)) fail(`--kind must be one of: ${KINDS.join(', ')}`);
     const runIdRaw = Number(configString(config, 'runId') || process.env.CASCADE_RUN_ID);
     const payload = {
-      body,
+      body: cmd === 'papercut' && !/^papercut:/i.test(body) ? `papercut: ${body}` : body,
       kind,
       agentKey,
       ...(Number.isFinite(runIdRaw) && runIdRaw > 0 ? { runId: runIdRaw } : {}),

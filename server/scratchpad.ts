@@ -41,7 +41,8 @@ import { ensureAgentMemoryFolders, ensureAgentNamedMemoryFolders } from './evolu
 
 type Db = Database.Database;
 
-export const JOURNAL_KINDS = ['observation', 'outcome', 'dead-end', 'decision', 'todo'] as const;
+/** papercut = auto/manual gripe about tool friction (stored like a dead-end). */
+export const JOURNAL_KINDS = ['observation', 'outcome', 'dead-end', 'decision', 'todo', 'papercut'] as const;
 export type JournalKind = typeof JOURNAL_KINDS[number];
 
 const POLICIES_TITLE = 'POLICIES';

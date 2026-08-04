@@ -741,6 +741,12 @@ async function runClaudeLocally(opts, emit) {
             const flag = block.is_error ? '\x1b[31m✗' : '\x1b[32m✓';
             const preview = String(body || '').slice(0, 4000);
             emitHarness(emit, `${flag} tool_result\x1b[0m\r\n${preview}\r\n`);
+            if (block.is_error) {
+              // Auto-capture tool friction into the scratchpad journal (papercut).
+              void import(pathToFileURL(path.join(__dirname, '..', 'cli-agents', 'auto-papercut.mjs')).href)
+                .then((mod) => mod.autoPapercut(preview, { tool: 'tool_result' }))
+                .catch(() => {});
+            }
           }
         }
       } else if (message.type === 'result') {
