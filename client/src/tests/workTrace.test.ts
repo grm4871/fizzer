@@ -9,6 +9,7 @@ import {
   workTracePreview,
   workTraceDecals,
   workTracePhase,
+  workTraceStatusLabel,
   workTraceSummary,
 } from '../chat/workTrace';
 
