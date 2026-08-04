@@ -4,7 +4,14 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import { api, type NoteSummary } from '../api';
-import { DOC_EMBED_REGEX, findEmbeddedNote, NOTE_DND_TYPE, noteEmbedMarkdown, splitDocEmbeds } from '../docEmbeds';
+import {
+  bodyHasNoteRefs,
+  findEmbeddedNote,
+  NOTE_DND_TYPE,
+  noteEmbedMarkdown,
+  splitDocEmbeds,
+  splitWikilinks,
+} from '../docEmbeds';
 import { escapeRegExp, normalizeMention } from '../chat/mentions';
 import { createChannelWorkItem } from '../chat/workItems';
 import { highlightJSON } from './jsonHighlighter';
@@ -580,6 +587,46 @@ function formatChatMentions(text: string, aliases: string[]): ReactNode[] {
   return nodes.length > 0 ? nodes : [text];
 }
 
+/** Inline `[[Title]]` cites → clickable note chips (embeds `![[…]]` stay cards). */
+function formatChatWikilinks(
+  text: string,
+  notes: NoteSummary[],
+  messageId: string,
+  onOpenNote?: (id: string) => void,
+  onOpenSharedNote?: (messageId: string, title: string) => void,
+): ReactNode[] {
+  const parts = splitWikilinks(text);
+  if (parts.length === 1 && parts[0].type === 'text') return [text];
+  let key = 0;
+  const nodes: ReactNode[] = [];
+  for (const part of parts) {
+    if (part.type === 'text') {
+      if (part.value) nodes.push(part.value);
+      continue;
+    }
+    const target = part.value;
+    if (!target) continue;
+    const embedded = findEmbeddedNote(notes, target);
+    const canOpen = Boolean(embedded ? onOpenNote : onOpenSharedNote);
+    nodes.push(
+      <button
+        key={`wiki-${key++}`}
+        type="button"
+        className={`chat-wikilink${embedded ? '' : ' is-missing'}`}
+        onClick={() => {
+          if (embedded) onOpenNote?.(embedded.id);
+          else onOpenSharedNote?.(messageId, target);
+        }}
+        disabled={!canOpen}
+        title={embedded ? `Open ${embedded.title}` : `Note: ${target}`}
+      >
+        {embedded?.title ?? target}
+      </button>,
+    );
+  }
+  return nodes.length > 0 ? nodes : [text];
+}
+
 function aliasesEqual(a: string[], b: string[]) {
   return a.length === b.length && a.every((value, index) => value === b[index]);
 }
@@ -701,15 +748,30 @@ const ChatMessageText = memo(function ChatMessageText({
 }) {
   const paintBody = useThrottledStreamBody(body, streaming);
 
-  const withMentions = useCallback((children: ReactNode): ReactNode => {
+  const withInlineMarkup = useCallback((children: ReactNode): ReactNode => {
+    const decorate = (value: string): ReactNode[] => {
+      // Wikilinks first so mention highlighting runs on surrounding prose only.
+      const wikiNodes = formatChatWikilinks(
+        value,
+        notes,
+        messageId,
+        onOpenNote,
+        onOpenSharedNote,
+      );
+      return wikiNodes.flatMap((node) => (
+        typeof node === 'string'
+          ? formatChatMentions(node, mentionableAliases)
+          : [node]
+      ));
+    };
     if (Array.isArray(children)) {
       return children.flatMap((child) =>
-        typeof child === 'string' ? formatChatMentions(child, mentionableAliases) : [child]
+        typeof child === 'string' ? decorate(child) : [child]
       );
     }
-    if (typeof children === 'string') return formatChatMentions(children, mentionableAliases);
+    if (typeof children === 'string') return decorate(children);
     return children;
-  }, [mentionableAliases]);
+  }, [mentionableAliases, messageId, notes, onOpenNote, onOpenSharedNote]);
 
   const formattedBody = useMemo(() => {
     const processed = paintBody.replace(/\\+`/g, '`');
@@ -728,8 +790,10 @@ const ChatMessageText = memo(function ChatMessageText({
   }, [paintBody]);
 
   const components = useMemo(() => ({
-    p: ({ children }: { children?: ReactNode }) => <p>{withMentions(children)}</p>,
-    li: ({ children }: { children?: ReactNode }) => <li>{withMentions(children)}</li>,
+    p: ({ children }: { children?: ReactNode }) => <p>{withInlineMarkup(children)}</p>,
+    li: ({ children }: { children?: ReactNode }) => <li>{withInlineMarkup(children)}</li>,
+    td: ({ children }: { children?: ReactNode }) => <td>{withInlineMarkup(children)}</td>,
+    th: ({ children }: { children?: ReactNode }) => <th>{withInlineMarkup(children)}</th>,
     code({ node, className, children, ...props }: any) {
       const match = /language-(\w+)/.exec(className || '');
       const isInline = !className;
@@ -760,7 +824,7 @@ const ChatMessageText = memo(function ChatMessageText({
       }
       return <code className={className} {...props}>{children}</code>;
     }
-  }), [withMentions]);
+  }), [withInlineMarkup]);
 
   return (
     <ChatMarkdownBody
@@ -779,15 +843,10 @@ const ChatMessageText = memo(function ChatMessageText({
   &&
   prev.body === next.body
   && aliasesEqual(prev.mentionableAliases, next.mentionableAliases)
-  // The notes list only affects bodies that render `![[...]]` embeds; plain
-  // messages must not re-parse their markdown every time any note changes.
-  && (prev.notes === next.notes || !bodyHasDocEmbed(next.body))
+  // Notes list only matters for bodies with `![[…]]` embeds or `[[…]]` cites.
+  && (prev.notes === next.notes || !bodyHasNoteRefs(next.body))
+  && prev.onOpenNote === next.onOpenNote
 );
-
-function bodyHasDocEmbed(body: string): boolean {
-  DOC_EMBED_REGEX.lastIndex = 0;
-  return DOC_EMBED_REGEX.test(body);
-}
 
 export function canGroupChatMessages(a: ChatMessage, b: ChatMessage) {
   if (a.author.trim() !== b.author.trim()) return false;
@@ -954,7 +1013,7 @@ export function shouldRenderRunPanel(
 }
 
 function groupHasDocEmbed(group: ChatMessageGroup): boolean {
-  return group.messages.some((message) => message.body && bodyHasDocEmbed(message.body));
+  return group.messages.some((message) => message.body && bodyHasNoteRefs(message.body));
 }
 
 /** Swipe-left → reply (mobile/touch). Touch/pen only so desktop drag-select stays clean. */

@@ -3603,6 +3603,33 @@ button.chat-avatar-agent {
   font-weight: 600;
   letter-spacing: 0.01em;
 }
+/* Inline note citations: [[Title]] → clickable chip (not the ![[…]] card embed). */
+.chat-wikilink {
+  display: inline;
+  margin: 0 1px;
+  padding: 0 5px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent-subtle) 70%, transparent);
+  color: var(--accent);
+  font: inherit;
+  font-weight: 600;
+  line-height: inherit;
+  cursor: pointer;
+  vertical-align: baseline;
+}
+.chat-wikilink:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  color: var(--accent-hover, var(--accent));
+  background: color-mix(in srgb, var(--accent-subtle) 100%, transparent);
+}
+.chat-wikilink.is-missing,
+.chat-wikilink:disabled {
+  border-style: dashed;
+  color: var(--text-tertiary);
+  cursor: default;
+  opacity: 0.85;
+}
 .chat-reply-quote {
   display: flex;
   align-items: baseline;
