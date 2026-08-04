@@ -3276,12 +3276,36 @@ button:focus-visible,
   box-shadow: inset 0 0 0 1px hsla(220, 30%, 82%, 0.08);
   /* Do not overflow:hidden here — online status dot sits outside the circle. */
 }
+button.chat-avatar {
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  background: inherit;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+}
+button.chat-avatar.is-clickable:hover {
+  box-shadow:
+    inset 0 0 0 1px hsla(220, 30%, 82%, 0.14),
+    0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+button.chat-avatar.is-clickable:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 .chat-avatar-sm {
   width: 30px;
   height: 30px;
   flex-basis: 30px;
 }
 .chat-avatar-agent {
+  background: hsl(38, 47%, 22%);
+  color: var(--accent-hover);
+}
+button.chat-avatar-agent {
   background: hsl(38, 47%, 22%);
   color: var(--accent-hover);
 }
@@ -3294,6 +3318,7 @@ button:focus-visible,
   height: 100%;
   border-radius: 50%;
   object-fit: cover;
+  pointer-events: none;
 }
 .chat-message-body {
   min-width: 0;

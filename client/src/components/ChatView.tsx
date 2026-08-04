@@ -878,15 +878,39 @@ function ChatAvatar({
   kind,
   avatarUrl = '',
   size = 'md',
+  onClick,
+  title,
 }: {
   name: string;
   kind: 'agent' | 'human';
   avatarUrl?: string;
   size?: 'sm' | 'md';
+  /** When set, the avatar is a button (e.g. open agent settings from a message). */
+  onClick?: (event: React.MouseEvent) => void;
+  title?: string;
 }) {
+  const className = `chat-avatar chat-avatar-${size} chat-avatar-${kind}${onClick ? ' is-clickable' : ''}`;
+  const content = avatarUrl
+    ? <img src={avatarUrl} alt="" />
+    : kind === 'agent'
+      ? <Bot size={size === 'sm' ? 14 : 15} />
+      : initialFor(name);
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        className={className}
+        onClick={onClick}
+        title={title}
+        aria-label={title || `Open settings for ${name}`}
+      >
+        {content}
+      </button>
+    );
+  }
   return (
-    <div className={`chat-avatar chat-avatar-${size} chat-avatar-${kind}`} aria-hidden="true">
-      {avatarUrl ? <img src={avatarUrl} alt="" /> : kind === 'agent' ? <Bot size={size === 'sm' ? 14 : 15} /> : initialFor(name)}
+    <div className={className} aria-hidden="true">
+      {content}
     </div>
   );
 }
@@ -1163,6 +1187,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
   onReply,
   onLightbox,
   onImageLoad,
+  onAgentAvatarClick,
   scrollRootRef,
   vaultId,
   onHydrateMessage,
@@ -1188,6 +1213,8 @@ const ChatGroupRow = memo(function ChatGroupRow({
   onReply: (message: ChatMessage) => void;
   onLightbox: (src: string) => void;
   onImageLoad: () => void;
+  /** Open channel membership settings for this agent (message avatar click). */
+  onAgentAvatarClick?: (event: React.MouseEvent) => void;
   /** Chat scroller element — used as IntersectionObserver root. */
   scrollRootRef: RefObject<HTMLDivElement | null>;
   vaultId?: string;
@@ -1249,7 +1276,15 @@ const ChatGroupRow = memo(function ChatGroupRow({
     >
       {showBody ? (
         <>
-          <ChatAvatar name={authorLabel || head.author} kind={avatarKind} avatarUrl={avatarUrl} />
+          <ChatAvatar
+            name={authorLabel || head.author}
+            kind={avatarKind}
+            avatarUrl={avatarUrl}
+            onClick={avatarKind === 'agent' ? onAgentAvatarClick : undefined}
+            title={avatarKind === 'agent' && onAgentAvatarClick
+              ? `Open settings for ${authorLabel || head.author}`
+              : undefined}
+          />
           <div className="chat-message-body">
             <div className="chat-message-meta">
               <strong>{authorLabel || head.author}</strong>
@@ -1456,6 +1491,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
   && prev.onReply === next.onReply
   && prev.onLightbox === next.onLightbox
   && prev.onImageLoad === next.onImageLoad
+  && prev.onAgentAvatarClick === next.onAgentAvatarClick
   && prev.scrollRootRef === next.scrollRootRef
   && prev.vaultId === next.vaultId
   && prev.onHydrateMessage === next.onHydrateMessage;
@@ -2042,9 +2078,32 @@ export const ChatView = memo(function ChatView({
   function editRegisteredAgent(event: React.MouseEvent, registration: ChatAgentRegistration) {
     event.stopPropagation();
     // Channel membership edit: flags + session. Identity via edit-identity.
+    setUsersCollapsed(false);
+    setChannelSettingsOpen(false);
     setAgentPanelMode('edit-member');
     openAgentEditor(registration);
   }
+
+  /** Message-row avatar → same settings surface as the members rail. */
+  const openAgentSettingsFromMessage = useCallback((message: ChatMessage, event: React.MouseEvent) => {
+    event.stopPropagation();
+    const registration = message.registrationId
+      ? registrationById.byId.get(message.registrationId)
+      : registrationById.byAgentOrName.get(message.agentId ?? '')
+        ?? registrationById.byAgentOrName.get(message.author);
+    if (!registration) return;
+    setUsersCollapsed(false);
+    setChannelSettingsOpen(false);
+    setAgentFormError('');
+    const agent = availableAgents.find((option) => option.id === registration.agentId);
+    const { choice, custom } = resolveModelPicker(agent, registration.model);
+    setModelChoice(choice);
+    setCustomModel(custom);
+    setAgentForm({ ...registration, model: modelFromPicker(choice, custom) });
+    setEditingRegistrationId(registration.id);
+    setAgentPanelMode('edit-member');
+    setAgentMenuOpen(true);
+  }, [availableAgents, registrationById, setUsersCollapsed]);
 
   function editVaultIdentity(event: React.MouseEvent, registration: ChatAgentRegistration) {
     event.stopPropagation();
@@ -2550,6 +2609,11 @@ export const ChatView = memo(function ChatView({
                       onReply={startReply}
                       onLightbox={openLightbox}
                       onImageLoad={scrollToBottomIfSticky}
+                      onAgentAvatarClick={
+                        resolveMessageRegistration(head)
+                          ? (event) => openAgentSettingsFromMessage(head, event)
+                          : undefined
+                      }
                       scrollRootRef={messagesRef}
                       vaultId={vaultId}
                       onHydrateMessage={onHydrateMessage}
@@ -2588,6 +2652,11 @@ export const ChatView = memo(function ChatView({
                   onReply={startReply}
                   onLightbox={openLightbox}
                   onImageLoad={scrollToBottomIfSticky}
+                  onAgentAvatarClick={
+                    resolveMessageRegistration(head)
+                      ? (event) => openAgentSettingsFromMessage(head, event)
+                      : undefined
+                  }
                   scrollRootRef={messagesRef}
                   vaultId={vaultId}
                   onHydrateMessage={onHydrateMessage}
