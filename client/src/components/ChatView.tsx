@@ -2496,8 +2496,9 @@ export const ChatView = memo(function ChatView({
             </div>
           ) : sortedMessages.length === 0 ? (
             <div className="chat-empty">
-              <Hash size={24} />
+              <Hash size={28} className="chat-empty-icon" />
               <strong>#{channelName}</strong>
+              <span className="chat-empty-hint">No messages yet — say hello or @mention an agent to start.</span>
             </div>
           ) : (
             transcriptSegments.flatMap((segment) => {
@@ -2730,7 +2731,7 @@ export const ChatView = memo(function ChatView({
               }}
             />
           </div>
-          <button className="btn-icon" onClick={submit} title="Send message" disabled={!canSend}>
+          <button className="btn-icon chat-send-btn" onClick={submit} title="Send message" disabled={!canSend}>
             <Send size={17} />
           </button>
           {mediaError && <span className="chat-media-error">{mediaError}</span>}
