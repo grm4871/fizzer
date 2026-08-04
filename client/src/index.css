@@ -5850,27 +5850,12 @@ button:focus-visible,
     position: absolute;
     inset: 0;
     z-index: 70;
-    margin: 0;
-    padding: 0;
-    border: 0;
-    background: hsla(226, 16%, 3%, 0.55);
-    backdrop-filter: blur(2px);
-    -webkit-backdrop-filter: blur(2px);
-    cursor: pointer;
-    -webkit-tap-highlight-color: transparent;
-  }
-
-  .sidebar-backdrop {
-    position: absolute;
-    inset: 0;
-    z-index: 70;
-    display: block;
     width: 100%;
     height: 100%;
     margin: 0;
     padding: 0;
     border: 0;
-    background: hsla(226, 16%, 3%, 0.52);
+    background: hsla(226, 16%, 3%, 0.55);
     backdrop-filter: blur(2px);
     -webkit-backdrop-filter: blur(2px);
     cursor: pointer;
