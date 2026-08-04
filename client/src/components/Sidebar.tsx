@@ -535,7 +535,7 @@ export const Sidebar = memo(function Sidebar({
         ) : (
           <button
             id={`folder-${folder.id}`}
-            className={`tree-item${dragOverId === folder.id ? ' drag-over' : ''}${dropClass(folder.id)}`}
+            className={`tree-item is-folder${dragOverId === folder.id ? ' drag-over' : ''}${dropClass(folder.id)}`}
             style={{ paddingLeft }}
             onClick={() => toggleFolder(folder.id)}
             onContextMenu={(e) => openMenu(e, { x: 0, y: 0, kind: 'folder', id: folder.id })}
@@ -545,7 +545,7 @@ export const Sidebar = memo(function Sidebar({
             <span className={`tree-chevron ${isExpanded ? 'expanded' : ''}`}><ChevronRight size={14} /></span>
             <span className="tree-icon">{isExpanded ? <FolderOpen size={16} /> : <FolderIcon size={16} />}</span>
             <span className="tree-label">{folder.name}</span>
-            <span className="tree-count">{childCount || ''}</span>
+            {childCount > 0 && <span className="tree-count">{childCount}</span>}
           </button>
         )}
         {isExpanded && (
@@ -585,16 +585,16 @@ export const Sidebar = memo(function Sidebar({
       <button
         key={note.id}
         id={`note-${note.id}`}
-        className={`tree-item${note.id === activeNoteId ? ' active' : ''}${dropClass(note.id)}`}
+        className={`tree-item${isChatChannel ? ' is-channel' : ' is-note'}${note.id === activeNoteId ? ' active' : ''}${dropClass(note.id)}`}
         style={{ paddingLeft }}
         onClick={() => onSelectNote(note.id)}
         onContextMenu={(e) => openMenu(e, { x: 0, y: 0, kind: 'note', id: note.id })}
         {...noteDragProps(note.id)}
         {...noteDropProps(note, notesByFolder.get(note.folder_id) ?? [])}
       >
-        <span className="tree-icon">{isChatChannel ? <Hash size={16} /> : <FileText size={16} />}</span>
+        <span className="tree-icon">{isChatChannel ? <Hash size={15} /> : <FileText size={15} />}</span>
         <span className="tree-label">{note.title || 'Untitled'}</span>
-        {note.is_pinned ? <span className="pin-icon"><Pin size={12} fill="currentColor" /></span> : null}
+        {note.is_pinned ? <span className="pin-icon"><Pin size={11} fill="currentColor" /></span> : null}
         {note.tags.length > 0 && (
           <span className="tree-tags">
             {note.tags.slice(0, 3).map((tag) => (
@@ -621,9 +621,12 @@ export const Sidebar = memo(function Sidebar({
       {/* Header */}
       <div className="sidebar-header">
         <div className="vault-name">
-          <span className="vault-icon"><Gem size={20} /></span>
+          <span className="vault-icon" aria-hidden="true"><Gem size={15} /></span>
+          <span className="vault-name-text">
+            {vaults.find((v) => v.id === activeVaultId)?.name || 'Cascade'}
+          </span>
         </div>
-        <div className="sidebar-actions sidebar-actions-desktop">{actionButtons('desktop')}</div>
+        <div className="sidebar-actions sidebar-actions-desktop" role="toolbar" aria-label="Sidebar actions">{actionButtons('desktop')}</div>
         <button className="btn-icon sidebar-mobile-collapse" onClick={onCollapse} title="Collapse sidebar"><PanelLeftClose size={16} /></button>
       </div>
 
