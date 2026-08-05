@@ -202,6 +202,7 @@ import {
   servePublicNotePage,
 } from './server/publish.js';
 import { deleteNoteAssets, serveNoteAsset, uploadNoteAsset } from './server/noteAssets.js';
+import { ensureManagedAgentSchema, getManagedEntitlement, setManagedEntitlement } from './server/managedAgents.js';
 import {
   backfillChatNoteBacklinks,
   buildAgentMemoryInjection,
@@ -464,6 +465,7 @@ ensureChatSchema(db);
 ensureChatDispatchSchema(db);
 ensureChatMissionSchema(db);
 ensureVaultMembersSchema(db);
+ensureManagedAgentSchema(db);
 // Hard boundary: rehome any vaults still sharing an on-disk root (legacy leak path).
 try {
   const isolation = enforceVaultStorageIsolation(db);
@@ -1460,6 +1462,25 @@ app.delete('/api/vaults/:id/members/:userId', requireAuth, (req: AuthedRequest, 
     res.json({ ok: true });
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : 'Could not remove member' });
+  }
+});
+
+// ── Managed-agent entitlement (control-plane only; no provider secrets) ───
+app.get('/api/vaults/:id/managed-agent/entitlement', requireAuth, (req: AuthedRequest, res) => {
+  const vault = getVault(db, req.params.id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Vault not found' });
+  res.json({ entitlement: getManagedEntitlement(db, vault.id), admin: getVaultRole(db, vault.id, req.user!.id) === 'owner' });
+});
+
+app.put('/api/vaults/:id/managed-agent/entitlement', requireAuth, (req: AuthedRequest, res) => {
+  const vault = getVault(db, req.params.id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Vault not found' });
+  if (getVaultRole(db, vault.id, req.user!.id) !== 'owner') return res.status(403).json({ error: 'Only the vault owner can manage managed-agent budgets' });
+  try {
+    const entitlement = setManagedEntitlement(db, vault.id, req.body || {});
+    res.json({ entitlement });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not update managed entitlement' });
   }
 });
 
