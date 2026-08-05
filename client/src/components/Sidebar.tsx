@@ -20,6 +20,7 @@
 import { memo, useState, useMemo, useEffect, useRef } from 'react';
 import type { Vault, Folder, NoteSummary, User } from '../api';
 import { NOTE_DND_TYPE, noteEmbedMarkdown } from '../docEmbeds';
+import { usePopupMenu } from '../ui/popupMenu';
 import { CHAT_NOTE_MARKER } from './ChatView';
 import {
   Folder as FolderIcon, FolderOpen, FileText, Pin, Gem, Edit2, FolderPlus,
@@ -132,6 +133,7 @@ export const Sidebar = memo(function Sidebar({
   const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null);
   // When the context menu shows the "Move to…" folder picker for a note.
   const [moveMenu, setMoveMenu] = useState(false);
+  const contextMenuRef = usePopupMenu<HTMLDivElement>(contextMenu, moveMenu);
   // Folder currently being renamed inline (also used right after creation).
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
@@ -278,10 +280,8 @@ export const Sidebar = memo(function Sidebar({
     e.preventDefault();
     e.stopPropagation();
     setMoveMenu(false);
-    // Clamp so the menu stays on-screen.
-    const x = Math.min(e.clientX, window.innerWidth - 200);
-    const y = Math.min(e.clientY, window.innerHeight - 220);
-    setContextMenu({ ...menu, x, y });
+    // Opens at the pointer; usePopupMenu clamps it back on-screen once measured.
+    setContextMenu({ ...menu, x: e.clientX, y: e.clientY });
   }
 
   function startRename(folder: Folder) {
@@ -741,7 +741,18 @@ export const Sidebar = memo(function Sidebar({
       {/* Context menu */}
       {contextMenu && (
         <div
+          ref={contextMenuRef}
           className="tree-context-menu"
+          role="menu"
+          aria-label={
+            contextMenu.kind === 'folder'
+              ? 'Folder options'
+              : contextMenu.kind === 'root'
+                ? 'Sidebar options'
+                : moveMenu
+                  ? 'Move note to folder'
+                  : 'Note options'
+          }
           style={{ top: contextMenu.y, left: contextMenu.x }}
           onClick={(e) => e.stopPropagation()}
         >
@@ -752,28 +763,28 @@ export const Sidebar = memo(function Sidebar({
                 const isChatChannel = note?.content_preview.trim().startsWith(CHAT_NOTE_MARKER);
                 return (
                   <>
-                    <button onClick={() => { setContextMenu(null); onSelectNote(contextMenu.id); }}>
-                      {isChatChannel ? <Hash size={14} /> : <FileText size={14} />} {isChatChannel ? 'Open channel' : 'Open'}
+                    <button type="button" role="menuitem" onClick={() => { setContextMenu(null); onSelectNote(contextMenu.id); }}>
+                      {isChatChannel ? <Hash size={14} /> : <FileText size={14} />} Open
                     </button>
-                    <button onClick={() => { setContextMenu(null); onOpenNoteInNewTab(contextMenu.id); }}>
+                    <button type="button" role="menuitem" onClick={() => { setContextMenu(null); onOpenNoteInNewTab(contextMenu.id); }}>
                       <FilePlus size={14} /> Open in new tab
                     </button>
                   </>
                 );
               })()}
-              <button onClick={() => { const n = notes.find((x) => x.id === contextMenu.id); if (n) startRenameNote(n); }}>
+              <button type="button" role="menuitem" onClick={() => { const n = notes.find((x) => x.id === contextMenu.id); if (n) startRenameNote(n); }}>
                 <Pencil size={14} /> Rename
               </button>
-              <button onClick={() => setMoveMenu(true)}>
+              <button type="button" role="menuitem" onClick={() => setMoveMenu(true)}>
                 <FolderInput size={14} /> Move to…
               </button>
               {!notes.find((x) => x.id === contextMenu.id)?.content_preview.trim().startsWith(CHAT_NOTE_MARKER) && (
-                <button onClick={() => { setContextMenu(null); onUnlistNote(contextMenu.id); }}>
-                  <Unlink size={14} /> Unlink from sidebar
+                <button type="button" role="menuitem" onClick={() => { setContextMenu(null); onUnlistNote(contextMenu.id); }}>
+                  <Unlink size={14} /> Remove from sidebar
                 </button>
               )}
-              <div className="menu-divider" />
-              <button className="menu-danger" onClick={() => { setContextMenu(null); onDeleteNote(contextMenu.id); }}>
+              <div className="menu-divider" role="separator" />
+              <button type="button" role="menuitem" className="menu-danger" onClick={() => { setContextMenu(null); onDeleteNote(contextMenu.id); }}>
                 <Trash2 size={14} /> Delete
               </button>
             </>
@@ -781,12 +792,14 @@ export const Sidebar = memo(function Sidebar({
 
           {contextMenu.kind === 'note' && moveMenu && (
             <div className="menu-scroll">
-              <button onClick={() => { setContextMenu(null); onMoveNote(contextMenu.id, null); }}>
+              <button type="button" role="menuitem" onClick={() => { setContextMenu(null); onMoveNote(contextMenu.id, null); }}>
                 <FolderIcon size={14} /> Root
               </button>
               {flatFolders.map(({ folder, depth }) => (
                 <button
                   key={folder.id}
+                  type="button"
+                  role="menuitem"
                   style={{ paddingLeft: 12 + depth * 12 }}
                   onClick={() => { setContextMenu(null); onMoveNote(contextMenu.id, folder.id); expandFolder(folder.id); }}
                 >
@@ -798,34 +811,34 @@ export const Sidebar = memo(function Sidebar({
 
           {contextMenu.kind === 'folder' && (
             <>
-              <button onClick={() => { setContextMenu(null); expandFolder(contextMenu.id); onNewNoteInFolder(contextMenu.id); }}>
+              <button type="button" role="menuitem" onClick={() => { setContextMenu(null); expandFolder(contextMenu.id); onNewNoteInFolder(contextMenu.id); }}>
                 <FilePlus size={14} /> New note
               </button>
-              <button onClick={() => void createChannel(contextMenu.id)}>
+              <button type="button" role="menuitem" onClick={() => void createChannel(contextMenu.id)}>
                 <Hash size={14} /> New channel
               </button>
-              <button onClick={() => createFolder(contextMenu.id)}>
+              <button type="button" role="menuitem" onClick={() => createFolder(contextMenu.id)}>
                 <FolderPlus size={14} /> New subfolder
               </button>
-              <button onClick={() => { const f = folders.find((x) => x.id === contextMenu.id); if (f) startRename(f); }}>
+              <button type="button" role="menuitem" onClick={() => { const f = folders.find((x) => x.id === contextMenu.id); if (f) startRename(f); }}>
                 <Pencil size={14} /> Rename
               </button>
-              <div className="menu-divider" />
-              <button className="menu-danger" onClick={() => { setContextMenu(null); onDeleteFolder(contextMenu.id); }}>
-                <Trash2 size={14} /> Delete folder
+              <div className="menu-divider" role="separator" />
+              <button type="button" role="menuitem" className="menu-danger" onClick={() => { setContextMenu(null); onDeleteFolder(contextMenu.id); }}>
+                <Trash2 size={14} /> Delete
               </button>
             </>
           )}
 
           {contextMenu.kind === 'root' && (
             <>
-              <button onClick={() => { setContextMenu(null); onNewNote(); }}>
+              <button type="button" role="menuitem" onClick={() => { setContextMenu(null); onNewNote(); }}>
                 <FilePlus size={14} /> New note
               </button>
-              <button onClick={() => void createChannel(null)}>
+              <button type="button" role="menuitem" onClick={() => void createChannel(null)}>
                 <Hash size={14} /> New channel
               </button>
-              <button onClick={() => createFolder(null)}>
+              <button type="button" role="menuitem" onClick={() => createFolder(null)}>
                 <FolderPlus size={14} /> New folder
               </button>
             </>

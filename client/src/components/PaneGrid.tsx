@@ -15,6 +15,7 @@ import { createPortal } from 'react-dom';
 import { FileText, ExternalLink, X, Hash, LayoutDashboard, PanelLeftClose, PanelLeftOpen, Plus } from 'lucide-react';
 import type { Tab } from './TabBar';
 import { NOTE_DND_TYPE } from '../docEmbeds';
+import { usePopupMenu } from '../ui/popupMenu';
 import { isPane, type DropSide, type LayoutNode, type PaneNode, type SplitNode } from '../layout/tree';
 import {
   acquireInteractionLock,
@@ -146,6 +147,7 @@ function PaneTabStrip({
     .filter((t): t is Tab => Boolean(t));
 
   const [contextMenu, setContextMenu] = useState<TabStripMenu | null>(null);
+  const contextMenuRef = usePopupMenu<HTMLDivElement>(contextMenu);
   const [tabDropHint, setTabDropHint] = useState<{ tabId: string; placement: 'before' | 'after' } | null>(null);
 
   // Only listen while open (and after the opening gesture settles). A permanent
@@ -336,6 +338,7 @@ function PaneTabStrip({
       {/* Portaled: `.tab-bar` uses overflow-x/y that clips in-strip fixed menus. */}
       {contextMenu && createPortal(
         <div
+          ref={contextMenuRef}
           className="tab-context-menu"
           role="menu"
           aria-label={contextMenu.kind === 'new' ? 'New tab options' : 'Tab options'}
@@ -356,7 +359,7 @@ function PaneTabStrip({
               }}
             >
               <Hash size={13} />
-              New chat
+              New channel
             </button>
           )}
           {contextMenu.kind === 'new' && onOpenSuperkanban && (
@@ -369,7 +372,7 @@ function PaneTabStrip({
               }}
             >
               <LayoutDashboard size={13} />
-              Open Superkanban
+              Superkanban
             </button>
           )}
           {contextMenu.kind === 'tab' && onPopOut && (
@@ -382,7 +385,7 @@ function PaneTabStrip({
               }}
             >
               <ExternalLink size={13} />
-              Open in new window
+              Pop out
             </button>
           )}
           {contextMenu.kind === 'tab' && (

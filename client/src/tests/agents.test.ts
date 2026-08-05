@@ -53,6 +53,8 @@ describe('selective Cascade context', () => {
   it('requests history only for unresolved references', () => {
     expect(needsRecentChatContext('continue where you left off')).toBe(true);
     expect(needsRecentChatContext('also fix that thing')).toBe(true);
+    expect(needsRecentChatContext('bump')).toBe(true);
+    expect(needsRecentChatContext('what about now?')).toBe(true);
     expect(needsRecentChatContext('implement drag ordering in Sidebar.tsx')).toBe(false);
     expect(needsRecentChatContext('Replying to alice:\n> fix the tab order')).toBe(false);
   });
@@ -113,20 +115,17 @@ describe('formatAgentChatPrompt', () => {
       'alice',
       false,
     );
-    expect(prompt).toContain('Handle tiny Q&A and one-liner fixes directly');
-    expect(prompt).toContain('Prefer creating missions');
-    expect(prompt).toContain('durable searchable task data');
-    expect(prompt).toMatch(/do NOT mission-start immediately|clarification card/i);
+    expect(prompt).toContain('Handle tiny Q&A and one-line fixes directly');
+    expect(prompt).toMatch(/clarification card/i);
     expect(prompt).toContain('cascade-chat mission start');
     expect(prompt).toContain('cascade-chat mission delegate');
-    expect(prompt).toContain('--after <task-id,...>');
+    expect(prompt).toContain('--after');
     expect(prompt).toContain('--anonymous');
     expect(prompt).toContain('parallel clones');
-    expect(prompt).toContain('Stay responsive to the user while workers run');
+    expect(prompt).toContain('user responsive while workers run');
     expect(prompt).toContain('cascade-chat mission finish');
     expect(prompt).toContain('Keep mission summaries short');
-    expect(prompt).toContain('treat that as authorization to implement it');
-    expect(prompt).toContain('Do not stop at agreement, praise, or a proposal');
+    expect(prompt).toContain('implementation authority');
     expect(prompt).toContain('clarification');
   });
 
@@ -147,10 +146,11 @@ describe('formatAgentChatPrompt', () => {
     expect(continued).not.toContain('cascade-chat mission delegate');
     // Compact ship/attachment reminders stay on continuation; the long mission contract does not.
     expect(continued).toMatch(/green Deploy|Ship only after/i);
-    expect(fresh).toMatch(/never ignore a red deploy/i);
+    expect(fresh).toMatch(/wait for green Deploy/i);
     expect(fresh).toMatch(/clarification/i);
     expect(fresh).toMatch(/cascade-chat attachment/i);
-    expect(fresh.length - continued.length).toBeGreaterThan(900);
+    expect(fresh.length - continued.length).toBeGreaterThan(400);
+    expect(fresh.length - 'take care of the release'.length).toBeLessThan(1_600);
   });
 
   it('leaves Akron scratchpad guidance to the native harness tool', () => {

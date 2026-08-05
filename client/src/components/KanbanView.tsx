@@ -1,4 +1,5 @@
 import {
+  useEffect,
   useMemo,
   useState,
   type DragEvent,
@@ -13,6 +14,7 @@ import {
   ChevronDown,
   GripVertical,
   MoreVertical,
+  Pencil,
   Plus,
   Search,
   Trash2,
@@ -398,6 +400,24 @@ function KanbanViewInner({ content, onContentChange }: KanbanViewProps) {
   const [columnDraft, setColumnDraft] = useState('');
   const [search, setSearch] = useState('');
 
+  // The column menu is a popup like the context menus: Escape and an outside
+  // click must close it, not just a second press on its own trigger.
+  useEffect(() => {
+    if (!columnMenu) return;
+    const close = () => setColumnMenu(null);
+    // `KeyboardEvent` is React's synthetic type in this file; take the DOM one.
+    const onKeyDown = (event: WindowEventMap['keydown']) => {
+      if (event.key === 'Escape') close();
+    };
+    const timer = window.setTimeout(() => window.addEventListener('click', close), 0);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener('click', close);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [columnMenu]);
+
   if (!board.columns.length) {
     return (
       <div className="kanban-empty">
@@ -555,22 +575,26 @@ function KanbanViewInner({ content, onContentChange }: KanbanViewProps) {
                   className="kanban-column-menu-button"
                   onClick={() => setColumnMenu((current) => current === column.id ? null : column.id)}
                   aria-label={`More options for ${column.title}`}
+                  aria-haspopup="menu"
+                  aria-expanded={columnMenu === column.id}
                 >
                   <MoreVertical size={14} />
                 </button>
                 {columnMenu === column.id && (
-                  <div className="kanban-column-menu">
+                  <div className="kanban-column-menu" role="menu" aria-label={`${column.title} list options`}>
                     <button
                       type="button"
+                      role="menuitem"
                       onClick={() => {
                         setEditingColumn({ id: column.id, value: column.rawTitle });
                         setColumnMenu(null);
                       }}
                     >
-                      Rename list
+                      <Pencil size={13} /> Rename list
                     </button>
                     <button
                       type="button"
+                      role="menuitem"
                       disabled={!column.cards.length}
                       onClick={() => {
                         onContentChange(archiveKanbanColumnCards(content, column.id));
@@ -581,6 +605,7 @@ function KanbanViewInner({ content, onContentChange }: KanbanViewProps) {
                     </button>
                     <button
                       type="button"
+                      role="menuitem"
                       className="is-danger"
                       onClick={() => {
                         if (window.confirm(`Delete “${column.title}” and its ${column.cards.length} card(s)?`)) {

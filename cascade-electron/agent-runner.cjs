@@ -35,12 +35,7 @@ const CLAUDE_AGENT_CONTEXT = 'You are a local workspace assistant. This checkout
 // Nudge agents to behave like chat participants, not verbose coding CLIs: the
 // chat collapses step narration into a trace disclosure, so the actual message
 // should be short. Detailed reasoning belongs in thinking, not the reply.
-const CHAT_BREVITY_CONTEXT =
-  'Shared multiuser chat — match human chat speed, but resolve the user\'s actual intent before replying. '
-  + 'Short or context-dependent messages can still request real work; complete that work before replying. '
-  + 'For genuine conversation or Q&A, return a concise direct final answer. '
-  + 'Return the final answer normally; keep progress in the run trace instead of posting separate chat messages. '
-  + 'Do not confuse a mentioned @handle with the message author. Do not invent multi-step plans for questions you can answer immediately.';
+const CHAT_BREVITY_CONTEXT = 'Do not confuse a mentioned @handle with the message author.';
 
 // Live Cascade API config for helper wrappers, populated by the
 // desktop runner host once it knows the server URL + the user's auth token.

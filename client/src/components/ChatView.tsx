@@ -14,6 +14,7 @@ import {
 } from '../docEmbeds';
 import { escapeRegExp, normalizeMention } from '../chat/mentions';
 import { createChannelWorkItem } from '../chat/workItems';
+import { usePopupMenu } from '../ui/popupMenu';
 import { highlightJSON } from './jsonHighlighter';
 import { CascadeRunPanel } from './CascadeRunPanel';
 import { ChatSidebarButtons } from './ChatSidebarButtons';
@@ -1986,6 +1987,7 @@ export const ChatView = memo(function ChatView({
   const [replyTarget, setReplyTarget] = useState<ChatReplyRef | null>(null);
   const [replyNotifiesAgent, setReplyNotifiesAgent] = useState(true);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; message: ChatMessage } | null>(null);
+  const contextMenuRef = usePopupMenu<HTMLDivElement>(contextMenu);
   /** Delete is two-step in the context menu rather than a native confirm dialog. */
   const [deleteArmed, setDeleteArmed] = useState(false);
   const [pendingMedia, setPendingMedia] = useState<ChatMediaAttachment[]>([]);
@@ -2047,6 +2049,10 @@ export const ChatView = memo(function ChatView({
     if (!vaultId || !onHydrateMessage) return;
     for (const message of sortedMessages) {
       if (!message.hasImages || message.images?.length || hydratingImageIdsRef.current.has(message.id)) continue;
+      // A dispatch shell exists before its run is accepted and therefore has no
+      // persisted message to hydrate. Waiting for the server-owned replacement
+      // avoids a noisy 404 when an offline desktop rejects the dispatch.
+      if (message.id.startsWith('agent-dispatch-')) continue;
       hydratingImageIdsRef.current.add(message.id);
       void api<{ message: ChatMessage }>(
         `/api/vaults/${vaultId}/channels/${message.channelId}/messages/${encodeURIComponent(message.id)}`,
@@ -3162,16 +3168,19 @@ export const ChatView = memo(function ChatView({
 
       {contextMenu && (
         <div
+          ref={contextMenuRef}
           className="chat-context-menu"
+          role="menu"
+          aria-label="Message options"
           style={{ top: contextMenu.y, left: contextMenu.x }}
           onClick={(event) => event.stopPropagation()}
         >
-          <button type="button" onClick={() => startReply(contextMenu.message)}>
+          <button type="button" role="menuitem" onClick={() => startReply(contextMenu.message)}>
             <Reply size={14} />
             Reply
           </button>
           {onForwardMessage && (
-            <button type="button" onClick={() => startForward(contextMenu.message)}>
+            <button type="button" role="menuitem" onClick={() => startForward(contextMenu.message)}>
               <Forward size={14} />
               Forward
             </button>
@@ -3179,6 +3188,7 @@ export const ChatView = memo(function ChatView({
           {vaultId && (
             <button
               type="button"
+              role="menuitem"
               onClick={() => {
                 const message = contextMenu.message;
                 setContextMenu(null);
@@ -3196,18 +3206,22 @@ export const ChatView = memo(function ChatView({
               }}
             >
               <ClipboardList size={14} />
-              Create work item
+              Add to kanban
             </button>
           )}
           {onDeleteMessage && (
-            <button
-              type="button"
-              className={`is-danger${deleteArmed ? ' is-armed' : ''}`}
-              onClick={() => (deleteArmed ? deleteMessage(contextMenu.message) : setDeleteArmed(true))}
-            >
-              <Trash2 size={14} />
-              {deleteArmed ? 'Delete for everyone?' : 'Delete message'}
-            </button>
+            <>
+              <div className="menu-divider" role="separator" />
+              <button
+                type="button"
+                role="menuitem"
+                className={`is-danger${deleteArmed ? ' is-armed' : ''}`}
+                onClick={() => (deleteArmed ? deleteMessage(contextMenu.message) : setDeleteArmed(true))}
+              >
+                <Trash2 size={14} />
+                {deleteArmed ? 'Delete for everyone?' : 'Delete'}
+              </button>
+            </>
           )}
         </div>
       )}
@@ -3397,6 +3411,9 @@ export const ChatView = memo(function ChatView({
                 <div className="chat-user-copy">
                   <div className="chat-user-copy-head">
                     <strong>{agent.registration.displayName || agent.label}</strong>
+                    {agent.registration.orchestrator && (
+                      <span className="chat-agent-supervisor" title="Channel supervisor">Supervisor</span>
+                    )}
                     {planUsage && <PlanUsageMeters usage={planUsage} decal />}
                   </div>
                   <span className="chat-user-handle">@{agent.registration.mention || agent.id}</span>

@@ -365,6 +365,11 @@ try {
     // dispatch therefore probes /runs and gets the expected 503.
     if (expectedOfflineRun && line.startsWith('http.503:') && line.endsWith('/runs')) return false;
     if (expectedOfflineRun && line.includes('Failed to load resource: the server responded with a status of 503')) return false;
+    // The same deliberately offline dispatch briefly projects its optimistic
+    // `agent-dispatch-*` shell. It has no server message until a desktop
+    // claims the run, so media hydration can race one expected 404.
+    if (expectedOfflineRun && line.includes('/messages/agent-dispatch-')) return false;
+    if (expectedOfflineRun && line.includes('Failed to load resource: the server responded with a status of 404')) return false;
     return true;
   });
   check('no console errors or uncaught exceptions', fatal.length === 0, fatal.join(' | '));

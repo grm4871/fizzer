@@ -2507,9 +2507,12 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     const includeWorkspace = Boolean(targetChannelId)
       && !willResume
       && (!hermesChatParity || chatWorkspaceNeeded);
+    // A cold provider session needs recent chat only for an unresolved
+    // reference. The folded reply/batch is already in `prompt`; adding an
+    // arbitrary history window to every other provider wastes context.
     const includeRecentChat = Boolean(targetChannelId)
       && !willResume
-      && (!hermesChatParity || chatContextNeeded);
+      && Boolean(chatContextNeeded);
     const includeCascadeMemory = !willResume && !hermesChatParity;
 
     let effectivePrompt = prompt;
