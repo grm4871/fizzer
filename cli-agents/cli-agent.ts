@@ -2108,8 +2108,8 @@ async function runCopilot(prompt: string, cwd: string, emit: AgentEmit, resumeId
  */
 async function runHermes(prompt: string, cwd: string, emit: AgentEmit, resumeId?: string, runId?: number, env?: NodeJS.ProcessEnv): Promise<CliAgentResult> {
   const args = resumeId
-    ? ['chat', '-Q', '--resume', resumeId, '-q', prompt, '--yolo']
-    : ['-z', prompt, '--yolo'];
+    ? ['chat', '-Q', '--resume', resumeId, '-q', prompt, '--yolo', '--safe-mode']
+    : ['-z', prompt, '--yolo', '--safe-mode'];
 
   let text = '';
   let sessionId: string | undefined = resumeId;
