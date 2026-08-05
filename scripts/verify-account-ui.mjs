@@ -27,7 +27,9 @@ let browser;
 try {
   await wait(`${apiBase}/api/health`); await wait(appUrl);
   const username = `account_ui_${Date.now()}`;
+  const mateName = `account_mate_${Date.now()}`;
   const { token } = await json('/api/auth/register', { method: 'POST', body: JSON.stringify({ username, password: 'testpass12345' }) });
+  await json('/api/auth/register', { method: 'POST', body: JSON.stringify({ username: mateName, password: 'testpass12345' }) });
   const auth = { authorization: `Bearer ${token}` };
   await json('/api/vaults', { method: 'POST', headers: auth, body: JSON.stringify({ name: 'Profile workspace' }) });
   const { chromium } = await import('playwright');
@@ -48,7 +50,29 @@ try {
   if (!(await page.locator('.sidebar-footer .user-info').innerText()).includes('Multiplayer Person')) throw new Error('sidebar did not update after profile save');
   await page.reload({ waitUntil: 'networkidle' });
   if (!(await page.locator('.sidebar-footer .user-info').innerText()).includes('Multiplayer Person')) throw new Error('profile did not survive reload');
+  // Shared vault management: invite, re-role, and remove from the account modal.
   await page.locator('.sidebar-footer .user-info').click();
+  const sharing = page.locator('.account-settings');
+  await sharing.waitFor();
+  if (await page.locator('#vault-shared-badge').count()) throw new Error('a private vault should not show the shared badge');
+  await sharing.getByLabel('Invite by username').fill(mateName);
+  await sharing.getByLabel('Invite role').selectOption('editor');
+  await sharing.getByRole('button', { name: 'Invite' }).click();
+  await sharing.getByText(`Added @${mateName} as editor`).waitFor();
+  await sharing.locator(`.account-vault-members li:has-text("${mateName}")`).waitFor();
+  // The switcher badge proves the vault list refreshed after the membership change.
+  await page.locator('#vault-shared-badge').waitFor();
+  if ((await page.locator('#vault-shared-badge').innerText()).trim() !== '2') throw new Error('shared badge did not show 2 members');
+
+  await sharing.getByLabel(`Role for @${mateName}`).selectOption('viewer');
+  await sharing.getByText(`@${mateName} is now viewer`).waitFor();
+
+  page.once('dialog', (dialog) => dialog.accept());
+  await sharing.getByLabel(`Remove @${mateName}`).click();
+  await sharing.getByText(`Removed @${mateName}`).waitFor();
+  if (await sharing.locator(`.account-vault-members li:has-text("${mateName}")`).count()) throw new Error('removed member still listed');
+  await page.waitForFunction(() => !document.querySelector('#vault-shared-badge'));
+
   await page.getByLabel('Current password').fill('testpass12345');
   await page.getByLabel('New password', { exact: true }).fill('updatedpass12345');
   await page.getByLabel('Confirm new password').fill('updatedpass12345');
@@ -56,7 +80,7 @@ try {
   await page.getByRole('button', { name: 'Change password' }).click();
   await page.waitForFunction(() => document.querySelector('.account-settings')?.textContent?.includes('Password changed'));
   if (errors.length) throw new Error(errors.join('\n'));
-  console.log('[account-ui] OK — account modal, live profile update, reload persistence, and password change');
+  console.log('[account-ui] OK — account modal, live profile update, reload persistence, vault member invite/role/remove, and password change');
 } finally {
   if (browser) await browser.close();
   preview.kill('SIGTERM'); server.kill('SIGTERM');

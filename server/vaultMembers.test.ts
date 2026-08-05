@@ -100,6 +100,39 @@ test('viewer API access is read-only across nested vault routes', () => {
   }
 });
 
+test('members leave themselves without admin rights', () => {
+  const db = setup();
+  try {
+    addVaultMember(db, 'v1', 1, 2, 'viewer');
+    removeVaultMember(db, 'v1', 2, 2);
+    assert.equal(getVaultRole(db, 'v1', 2), null);
+    assert.throws(() => removeVaultMember(db, 'v1', 1, 1), /cannot remove the vault owner/i);
+  } finally {
+    db.close();
+  }
+});
+
+test('vault list carries the caller role and member count for the switcher', () => {
+  const db = setup();
+  try {
+    const before = listVaults(db, 1);
+    assert.equal(before.length, 1);
+    assert.equal(before[0].role, 'owner');
+    assert.equal(before[0].memberCount, 1);
+
+    addVaultMember(db, 'v1', 1, 2, 'editor');
+    assert.equal(listVaults(db, 1)[0].memberCount, 2);
+
+    const [asMember] = listVaults(db, 2);
+    assert.equal(asMember.role, 'editor');
+    assert.equal(asMember.memberCount, 2);
+
+    assert.deepEqual(listVaults(db, 3), []);
+  } finally {
+    db.close();
+  }
+});
+
 test('migrates legacy membership rows and removes the retired admin role', () => {
   const db = new Database(':memory:');
   try {

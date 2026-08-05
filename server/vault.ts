@@ -30,6 +30,12 @@ export type Vault = {
   created_at: string;
 };
 
+/** A vault plus the caller's own membership context (for the vault switcher). */
+export type VaultListEntry = Vault & {
+  role: string | null;
+  memberCount: number;
+};
+
 export type Folder = {
   id: string;
   vault_id: string;
@@ -253,19 +259,25 @@ function reIndexLinks(db: Db, noteId: string, vaultId: string, content: string):
 
 // ── Vaults ─────────────────────────────────────────────────────────
 
-export function listVaults(db: Db, userId: number): Vault[] {
+export function listVaults(db: Db, userId: number): VaultListEntry[] {
   // Membership-aware: owners (created_by) and invited members both see the vault.
+  // `role` and `memberCount` let the client label shared vaults in the switcher
+  // without a per-vault members request.
   // Falls back to created_by-only when vault_members has not been migrated yet.
   try {
     return db.prepare(`
-      SELECT v.*
+      SELECT
+        v.*,
+        m.role AS role,
+        (SELECT COUNT(*) FROM vault_members c WHERE c.vault_id = v.id) AS memberCount
       FROM vaults v
       JOIN vault_members m ON m.vault_id = v.id
       WHERE m.user_id = ?
       ORDER BY v.created_at DESC
-    `).all(userId) as Vault[];
+    `).all(userId) as VaultListEntry[];
   } catch {
-    return db.prepare('SELECT * FROM vaults WHERE created_by = ? ORDER BY created_at DESC').all(userId) as Vault[];
+    return (db.prepare('SELECT * FROM vaults WHERE created_by = ? ORDER BY created_at DESC').all(userId) as Vault[])
+      .map((vault) => ({ ...vault, role: 'owner', memberCount: 1 }));
   }
 }
 

@@ -18,15 +18,21 @@
  */
 
 import { memo, useState, useMemo, useEffect, useRef } from 'react';
-import type { Vault, Folder, NoteSummary, User } from '../api';
+import { isSharedVault, type Vault, type Folder, type NoteSummary, type User } from '../api';
 import { NOTE_DND_TYPE, noteEmbedMarkdown } from '../docEmbeds';
 import { usePopupMenu } from '../ui/popupMenu';
 import { CHAT_NOTE_MARKER } from './ChatView';
 import {
   Folder as FolderIcon, FolderOpen, FileText, Pin, Gem, Edit2, FolderPlus,
   Search, ChevronRight, PanelLeftClose, LogOut, Trash2, FilePlus, FolderInput, Pencil, RefreshCw,
-  Hash, Unlink, ShieldCheck, SkipBack, Play, Pause, SkipForward, Music2,
+  Hash, Unlink, ShieldCheck, SkipBack, Play, Pause, SkipForward, Music2, Users,
 } from 'lucide-react';
+
+/** Switcher label: "Team notes · shared · 3" so shared vaults are obvious. */
+export function vaultOptionLabel(vault: Vault): string {
+  if (!isSharedVault(vault)) return vault.name;
+  return `${vault.name} · shared · ${vault.memberCount}`;
+}
 
 const FOLDER_DND_TYPE = 'application/x-cascade-folder';
 const ROOT_DROP_ID = '__root__';
@@ -147,6 +153,11 @@ export const Sidebar = memo(function Sidebar({
   // Drop target highlight: a folder id, or ROOT_DROP_ID for the root area.
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const [dropHint, setDropHint] = useState<{ id: string; placement: DropPlacement } | null>(null);
+
+  const activeVault = useMemo(
+    () => vaults.find((v) => v.id === activeVaultId),
+    [vaults, activeVaultId],
+  );
 
   const rootFolders = useMemo(
     () => folders.filter((f) => f.parent_id === null).sort((a, b) => a.position - b.position),
@@ -623,8 +634,21 @@ export const Sidebar = memo(function Sidebar({
         <div className="vault-name">
           <span className="vault-icon" aria-hidden="true"><Gem size={15} /></span>
           <span className="vault-name-text">
-            {vaults.find((v) => v.id === activeVaultId)?.name || 'Cascade'}
+            {activeVault?.name || 'Cascade'}
           </span>
+          {activeVault && isSharedVault(activeVault) && (
+            <button
+              type="button"
+              className="vault-shared-badge"
+              id="vault-shared-badge"
+              onClick={onOpenAccount}
+              title={`Shared vault — ${activeVault.memberCount} members. You are ${activeVault.role || 'a member'}. Manage members in Account.`}
+              aria-label={`Shared vault with ${activeVault.memberCount} members, your role ${activeVault.role || 'member'}. Manage members.`}
+            >
+              <Users size={12} aria-hidden="true" />
+              {activeVault.memberCount}
+            </button>
+          )}
         </div>
         <div className="sidebar-actions sidebar-actions-desktop" role="toolbar" aria-label="Sidebar actions">{actionButtons('desktop')}</div>
         <button className="btn-icon sidebar-mobile-collapse" onClick={onCollapse} title="Collapse sidebar"><PanelLeftClose size={16} /></button>
@@ -635,11 +659,23 @@ export const Sidebar = memo(function Sidebar({
       {/* Vault selector */}
       {vaults.length > 1 && (
         <div className="sidebar-vault-select">
-          <select id="vault-select" value={activeVaultId ?? ''} onChange={(e) => onSelectVault(e.target.value)}>
+          <select
+            id="vault-select"
+            aria-label="Active vault"
+            value={activeVaultId ?? ''}
+            onChange={(e) => onSelectVault(e.target.value)}
+          >
             {vaults.map((v) => (
-              <option key={v.id} value={v.id}>{v.name}</option>
+              <option key={v.id} value={v.id}>{vaultOptionLabel(v)}</option>
             ))}
           </select>
+          {activeVault && (
+            <div className="sidebar-vault-meta">
+              {isSharedVault(activeVault)
+                ? <>Shared with {activeVault.memberCount! - 1} other{activeVault.memberCount === 2 ? '' : 's'} · you are {activeVault.role || 'a member'}</>
+                : <>Private vault · only you</>}
+            </div>
+          )}
         </div>
       )}
 

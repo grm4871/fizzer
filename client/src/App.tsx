@@ -3430,6 +3430,7 @@ export default function App() {
           onClose={() => setAccountOpen(false)}
           onUserChanged={setUser}
           onSessionChanged={() => setAuthEpoch((value) => value + 1)}
+          onMembershipChanged={() => { void loadVaults(); }}
         />
       )}
 

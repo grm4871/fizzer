@@ -97,6 +97,37 @@ try {
   const presence = await must(`/api/vaults/${linked.vaultId}/channels/${linked.channelId}/presence`, { headers: guest.auth });
   check('multiplayer presence exposes public profile metadata', presence.profiles?.[ownerName]?.displayName === 'Owner Display' && presence.profiles?.[ownerName]?.avatarUrl === avatarUrl);
 
+  // ── Shared vault membership (what the account UI drives) ──────────
+  const ownerVaults = await must('/api/vaults', { headers: owner.auth });
+  const listed = ownerVaults.vaults.find((v) => v.id === vault.id);
+  check('vault list reports the caller role', listed?.role === 'owner');
+  check('vault list reports a member count', listed?.memberCount === 1);
+  check('a private vault is invisible to non-members', !(await must('/api/vaults', { headers: guest.auth })).vaults.some((v) => v.id === vault.id));
+
+  const invited = await must(`/api/vaults/${vault.id}/members`, {
+    method: 'POST', headers: owner.auth, body: JSON.stringify({ username: guestName, role: 'editor' }),
+  });
+  check('owner invites a member by handle', invited.member.username === guestName && invited.member.role === 'editor');
+  check('invite rejects an unknown handle', (await request(`/api/vaults/${vault.id}/members`, { method: 'POST', headers: owner.auth, body: JSON.stringify({ username: 'nobody_here', role: 'editor' }) })).status === 404);
+  check('invite rejects the owner role', (await request(`/api/vaults/${vault.id}/members`, { method: 'POST', headers: owner.auth, body: JSON.stringify({ username: guestName, role: 'owner' }) })).status === 400);
+  check('shared vault appears in the invitee vault list with their role', (await must('/api/vaults', { headers: guest.auth })).vaults.some((v) => v.id === vault.id && v.role === 'editor' && v.memberCount === 2));
+
+  const guestMembers = await must(`/api/vaults/${vault.id}/members`, { headers: guest.auth });
+  check('members can see the roster and their own role', guestMembers.members.length === 2 && guestMembers.role === 'editor');
+  check('editors cannot invite other members', (await request(`/api/vaults/${vault.id}/members`, { method: 'POST', headers: guest.auth, body: JSON.stringify({ username: ownerName, role: 'viewer' }) })).status === 400);
+  check('editors cannot demote the owner', (await request(`/api/vaults/${vault.id}/members/${owner.user.id}`, { method: 'PATCH', headers: guest.auth, body: JSON.stringify({ role: 'viewer' }) })).status === 400);
+
+  const demoted = await must(`/api/vaults/${vault.id}/members/${guest.user.id}`, {
+    method: 'PATCH', headers: owner.auth, body: JSON.stringify({ role: 'viewer' }),
+  });
+  check('owner changes a member role', demoted.member.role === 'viewer');
+  check('viewers cannot write to the shared vault', (await request(`/api/vaults/${vault.id}/folders`, { method: 'POST', headers: guest.auth, body: JSON.stringify({ name: 'viewer folder' }) })).status >= 400);
+  check('the vault owner cannot be removed', (await request(`/api/vaults/${vault.id}/members/${owner.user.id}`, { method: 'DELETE', headers: owner.auth })).status === 400);
+
+  await must(`/api/vaults/${vault.id}/members/${guest.user.id}`, { method: 'DELETE', headers: guest.auth });
+  check('a member can leave the vault themselves', !(await must('/api/vaults', { headers: guest.auth })).vaults.some((v) => v.id === vault.id));
+  check('leaving revokes vault reads', (await request(`/api/vaults/${vault.id}/members`, { headers: guest.auth })).status === 404);
+
   const { token: agentToken } = await must('/api/auth/agent-token', { method: 'POST', headers: owner.auth });
   check('restricted agent token cannot mutate profile', (await request('/api/me/profile', { method: 'PUT', headers: { authorization: `Bearer ${agentToken}` }, body: JSON.stringify({ displayName: 'Nope', avatarUrl: '' }) })).status === 403);
 

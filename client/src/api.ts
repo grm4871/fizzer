@@ -20,13 +20,36 @@
 /** Authenticated user record. */
 export type User = { id: number; username: string; displayName: string; avatarUrl: string };
 
-/** A vault (workspace) containing folders and notes. */
+/** Vault membership roles, ordered from most to least privileged. */
+export type VaultRole = 'owner' | 'admin' | 'editor' | 'viewer';
+
+/** A member of a shared vault. */
+export type VaultMember = {
+  userId: number;
+  username: string;
+  displayName: string;
+  avatarUrl: string;
+  role: VaultRole;
+  createdAt: string;
+};
+
+/**
+ * A vault (workspace) containing folders and notes. `role` and `memberCount`
+ * come from `GET /api/vaults` and are absent on a freshly created vault.
+ */
 export type Vault = {
   id: string;
   name: string;
   root_path: string;
   created_at: string;
+  role?: VaultRole | null;
+  memberCount?: number;
 };
+
+/** True when a vault has anyone in it besides the caller. */
+export function isSharedVault(vault: Pick<Vault, 'memberCount'>): boolean {
+  return (vault.memberCount ?? 1) > 1;
+}
 
 /** A folder within a vault; supports nesting via `parent_id`. */
 export type Folder = {

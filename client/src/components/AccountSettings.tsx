@@ -1,24 +1,25 @@
 import { useEffect, useRef, useState } from 'react';
-import { Camera, KeyRound, Trash2, Users, X } from 'lucide-react';
-import { api, type User } from '../api';
+import { Camera, KeyRound, LogOut, Trash2, Users, X } from 'lucide-react';
+import { api, type User, type VaultMember, type VaultRole } from '../api';
 
-type VaultRole = 'owner' | 'admin' | 'editor' | 'viewer';
-type VaultMember = {
-  userId: number;
-  username: string;
-  displayName: string;
-  avatarUrl: string;
-  role: VaultRole;
-  createdAt: string;
+type AssignableRole = Exclude<VaultRole, 'owner'>;
+
+const ROLE_HELP: Record<VaultRole, string> = {
+  owner: 'Owns the vault. Cannot be removed or demoted here.',
+  admin: 'Can read, write, and manage members.',
+  editor: 'Can read and write notes, folders, and chats.',
+  viewer: 'Read-only access.',
 };
 
-export function AccountSettings({ user, vaultId, vaultName, onClose, onUserChanged, onSessionChanged }: {
+export function AccountSettings({ user, vaultId, vaultName, onClose, onUserChanged, onSessionChanged, onMembershipChanged }: {
   user: User;
   vaultId?: string | null;
   vaultName?: string;
   onClose: () => void;
   onUserChanged: (user: User) => void;
   onSessionChanged: () => void;
+  /** Lets the app refresh the vault list so the switcher's shared badge stays accurate. */
+  onMembershipChanged?: () => void;
 }) {
   const [displayName, setDisplayName] = useState(user.displayName || user.username);
   const [avatarUrl, setAvatarUrl] = useState(user.avatarUrl || '');
@@ -33,7 +34,7 @@ export function AccountSettings({ user, vaultId, vaultName, onClose, onUserChang
   const [members, setMembers] = useState<VaultMember[]>([]);
   const [myRole, setMyRole] = useState<VaultRole | null>(null);
   const [memberUsername, setMemberUsername] = useState('');
-  const [memberRole, setMemberRole] = useState<Exclude<VaultRole, 'owner'>>('editor');
+  const [memberRole, setMemberRole] = useState<AssignableRole>('editor');
   const [memberState, setMemberState] = useState('');
   const [memberBusy, setMemberBusy] = useState(false);
 
@@ -63,6 +64,15 @@ export function AccountSettings({ user, vaultId, vaultName, onClose, onUserChang
   }, [vaultId]);
 
   const canManageMembers = myRole === 'owner' || myRole === 'admin';
+  // Server rules: admins may not touch other admins, and only the owner grants admin.
+  const canManage = (member: VaultMember) => canManageMembers
+    && member.role !== 'owner'
+    && member.userId !== user.id
+    && !(myRole === 'admin' && member.role === 'admin');
+  const assignableRoles: AssignableRole[] = myRole === 'owner'
+    ? ['admin', 'editor', 'viewer']
+    : ['editor', 'viewer'];
+  const canLeave = Boolean(myRole) && myRole !== 'owner';
 
   const saveProfile = async () => {
     setBusy(true);
@@ -139,6 +149,7 @@ export function AccountSettings({ user, vaultId, vaultName, onClose, onUserChang
       setMemberUsername('');
       setMemberState(`Added @${username} as ${memberRole}`);
       await loadMembers();
+      onMembershipChanged?.();
     } catch (error) {
       setMemberState(error instanceof Error ? error.message : 'Could not add member');
     } finally {
@@ -146,7 +157,7 @@ export function AccountSettings({ user, vaultId, vaultName, onClose, onUserChang
     }
   };
 
-  const changeMemberRole = async (target: VaultMember, role: Exclude<VaultRole, 'owner'>) => {
+  const changeMemberRole = async (target: VaultMember, role: AssignableRole) => {
     if (!vaultId || target.role === 'owner') return;
     setMemberBusy(true);
     setMemberState('');
@@ -155,7 +166,9 @@ export function AccountSettings({ user, vaultId, vaultName, onClose, onUserChang
         method: 'PATCH',
         body: JSON.stringify({ role }),
       });
+      setMemberState(`@${target.username} is now ${role}`);
       await loadMembers();
+      onMembershipChanged?.();
     } catch (error) {
       setMemberState(error instanceof Error ? error.message : 'Could not update role');
     } finally {
@@ -165,14 +178,33 @@ export function AccountSettings({ user, vaultId, vaultName, onClose, onUserChang
 
   const removeMember = async (target: VaultMember) => {
     if (!vaultId || target.role === 'owner') return;
+    if (!window.confirm(`Remove @${target.username} from ${vaultName || 'this vault'}? They lose access to its notes and chats.`)) return;
     setMemberBusy(true);
     setMemberState('');
     try {
       await api(`/api/vaults/${vaultId}/members/${target.userId}`, { method: 'DELETE' });
+      setMemberState(`Removed @${target.username}`);
       await loadMembers();
+      onMembershipChanged?.();
     } catch (error) {
       setMemberState(error instanceof Error ? error.message : 'Could not remove member');
     } finally {
+      setMemberBusy(false);
+    }
+  };
+
+  // Any non-owner member may remove themselves; the vault disappears from their switcher.
+  const leaveVault = async () => {
+    if (!vaultId || !canLeave) return;
+    if (!window.confirm(`Leave ${vaultName || 'this vault'}? You lose access until someone invites you back.`)) return;
+    setMemberBusy(true);
+    setMemberState('');
+    try {
+      await api(`/api/vaults/${vaultId}/members/${user.id}`, { method: 'DELETE' });
+      onMembershipChanged?.();
+      onClose();
+    } catch (error) {
+      setMemberState(error instanceof Error ? error.message : 'Could not leave vault');
       setMemberBusy(false);
     }
   };
@@ -224,53 +256,79 @@ export function AccountSettings({ user, vaultId, vaultName, onClose, onUserChang
 
         {vaultId && (
           <div className="account-settings-section">
-            <div className="account-section-title"><Users size={15} /><strong>Vault members</strong></div>
+            <div className="account-section-title"><Users size={15} /><strong>Vault sharing</strong></div>
             <p className="account-settings-lede">
-              {vaultName || 'This vault'} · your role: <strong>{myRole || 'member'}</strong>
+              <strong>{vaultName || 'This vault'}</strong> ·{' '}
+              {members.length > 1
+                ? `shared with ${members.length - 1} other ${members.length === 2 ? 'person' : 'people'}`
+                : 'private to you'}
+              {' · you are '}<strong>{myRole || 'a member'}</strong>
             </p>
             <ul className="account-vault-members">
               {members.map((member) => (
                 <li key={member.userId}>
                   <div>
-                    <strong>{member.displayName || member.username}</strong>
+                    <strong>
+                      {member.displayName || member.username}
+                      {member.userId === user.id && <em className="account-vault-you"> (you)</em>}
+                    </strong>
                     <span>@{member.username}</span>
                   </div>
-                  {member.role === 'owner' || !canManageMembers ? (
-                    <span className="account-vault-role">{member.role}</span>
-                  ) : (
+                  {canManage(member) ? (
                     <div className="account-vault-member-actions">
                       <select
+                        aria-label={`Role for @${member.username}`}
                         value={member.role}
                         disabled={memberBusy}
-                        onChange={(event) => void changeMemberRole(member, event.target.value as Exclude<VaultRole, 'owner'>)}
+                        onChange={(event) => void changeMemberRole(member, event.target.value as AssignableRole)}
                       >
-                        <option value="admin">admin</option>
-                        <option value="editor">editor</option>
-                        <option value="viewer">viewer</option>
+                        {assignableRoles.map((role) => (
+                          <option key={role} value={role}>{role}</option>
+                        ))}
                       </select>
-                      <button type="button" disabled={memberBusy} onClick={() => void removeMember(member)} title="Remove member">
+                      <button
+                        type="button"
+                        disabled={memberBusy}
+                        onClick={() => void removeMember(member)}
+                        title={`Remove @${member.username}`}
+                        aria-label={`Remove @${member.username}`}
+                      >
                         <Trash2 size={13} />
                       </button>
                     </div>
+                  ) : (
+                    <span className="account-vault-role" title={ROLE_HELP[member.role]}>{member.role}</span>
                   )}
                 </li>
               ))}
             </ul>
-            {canManageMembers && (
+            {canManageMembers ? (
               <div className="account-vault-invite">
                 <input
                   value={memberUsername}
+                  aria-label="Invite by username"
                   placeholder="username"
                   onChange={(event) => setMemberUsername(event.target.value)}
+                  onKeyDown={(event) => { if (event.key === 'Enter') void inviteMember(); }}
                   autoComplete="off"
                 />
-                <select value={memberRole} onChange={(event) => setMemberRole(event.target.value as Exclude<VaultRole, 'owner'>)}>
-                  <option value="editor">editor</option>
-                  <option value="admin">admin</option>
-                  <option value="viewer">viewer</option>
+                <select aria-label="Invite role" value={memberRole} onChange={(event) => setMemberRole(event.target.value as AssignableRole)}>
+                  {assignableRoles.map((role) => (
+                    <option key={role} value={role}>{role}</option>
+                  ))}
                 </select>
                 <button type="button" disabled={memberBusy || !memberUsername.trim()} onClick={() => void inviteMember()}>
                   {memberBusy ? 'Working' : 'Invite'}
+                </button>
+              </div>
+            ) : (
+              <small className="account-settings-hint">Only the owner and admins can invite or remove members.</small>
+            )}
+            {canManageMembers && <small className="account-settings-hint">{ROLE_HELP[memberRole]}</small>}
+            {canLeave && (
+              <div className="account-settings-actions">
+                <button type="button" className="account-vault-leave" disabled={memberBusy} onClick={() => void leaveVault()}>
+                  <LogOut size={13} /> Leave vault
                 </button>
               </div>
             )}
