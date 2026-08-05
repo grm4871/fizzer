@@ -2013,6 +2013,10 @@ export default function App() {
       : (quotedMessage ? [quotedMessage] : precedingMessageBatch(contextMessages, triggeringMessage));
     const carriedImages: Array<{ media_type: string; data: string }> = [];
     for (const source of imageSources) {
+      // A queued dispatch shell is optimistic until its run is accepted. It
+      // cannot be hydrated from the server, even if a slim reconnect copy has
+      // inherited `hasImages` from the triggering turn.
+      if (source.id.startsWith('agent-dispatch-')) continue;
       let images = dataUrlsToRunImages(source.images);
       if (images.length === 0 && source.hasImages && vaultId) {
         try {
