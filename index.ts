@@ -850,6 +850,29 @@ function scheduleMissionWork(missionId?: string) {
   return result;
 }
 
+/**
+ * A mission worker dispatch is durable work, not a one-shot supervisor hint.
+ * Re-broadcast unclaimed task dispatches so a renderer that missed the original
+ * socket event (or had an orphaned local session queue) can claim them without
+ * waiting for a coordinator turn, tab change, or reconnect.
+ */
+function reannouncePendingMissionDispatches() {
+  const pending = db.prepare(`
+    SELECT t.dispatch_id AS dispatchId, m.created_by AS createdBy,
+      m.vault_id AS vaultId, m.channel_id AS channelId
+    FROM chat_mission_tasks t
+    JOIN chat_missions m ON m.id = t.mission_id
+    JOIN chat_agent_dispatches d ON d.id = t.dispatch_id
+    WHERE t.status = 'pending' AND t.run_id IS NULL
+      AND d.run_id IS NULL AND t.dispatch_id IS NOT NULL
+  `).all() as Array<{ dispatchId: string; createdBy: number; vaultId: string; channelId: string }>;
+  for (const item of pending) {
+    const dispatch = getChatAgentDispatch(db, item.createdBy, item.channelId, item.dispatchId);
+    if (!dispatch) continue;
+    emitChatMessageEvent(item.vaultId, item.channelId, 'vault:chatMessageUpdated', dispatch.message, [dispatch]);
+  }
+}
+
 function emitChatMessageDeleted(sourceVaultId: string, sourceChannelId: string, messageId: string) {
   for (const route of listChatChannelRoutes(db, sourceVaultId, sourceChannelId)) {
     emitVaultEvent(route.localVaultId, 'vault:chatMessageDeleted', {
@@ -3863,11 +3886,15 @@ httpServer.listen(PORT, () => {
   // Tasks may have become ready immediately before a server restart. Rebuild
   // their deterministic dispatch messages from durable dependency state.
   scheduleMissionWork();
+  reannouncePendingMissionDispatches();
   // Durable outbox reconciliation makes mission progress independent of a
   // renderer socket event. A transient dispatch/start failure stays pending
   // and is retried until it has a run or is explicitly stopped.
   setInterval(() => {
-    try { scheduleMissionWork(); } catch (error) {
+    try {
+      scheduleMissionWork();
+      reannouncePendingMissionDispatches();
+    } catch (error) {
       console.warn('mission scheduler reconciliation failed:', error instanceof Error ? error.message : error);
     }
   }, 5_000).unref();
