@@ -1317,7 +1317,9 @@ function ChatClarificationCard({
       </div>
       <p className="chat-clarification-lead">
         {pending
-          ? 'Use the choices (or free text), then Accept. That freezes a kanban contract and opens a mission the orchestrator drives until done, budget, or stop.'
+          ? (allAnswered
+            ? 'Prefilled — change only disagreements, then Accept → mission.'
+            : 'Answer, then Accept → mission.')
           : 'Accepted scope is frozen; the mission drives agents from here.'}
       </p>
       <div className="chat-clarification-questions">

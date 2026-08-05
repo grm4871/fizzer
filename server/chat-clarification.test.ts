@@ -59,6 +59,9 @@ test('clarification normalizes single/multi kinds and options', () => {
   assert.deepEqual(msg.clarification?.questions[0].options, ['MVP', 'Full']);
   assert.equal(msg.clarification?.questions[1].kind, 'multi');
   assert.equal(msg.clarification?.questions[2].kind, 'text');
+  // Discrete choices auto-prefill when agent omits answer.
+  assert.equal(msg.clarification?.questions[0].answer, 'MVP');
+  assert.equal(msg.clarification?.questions[1].answer, 'API');
   answerChatClarification(db, 1, 'ch1', msg.id, [
     { id: 'scope', answer: 'MVP' },
     { id: 'areas', answer: 'API | UI' },
@@ -68,5 +71,30 @@ test('clarification normalizes single/multi kinds and options', () => {
   assert.ok(accepted.workItemId);
   assert.match(accepted.contract, /MVP/);
   assert.match(accepted.contract, /API \| UI/);
+  db.close();
+});
+
+test('clarification caps at 3 questions and keeps explicit prefills', () => {
+  const db = setup();
+  const msg = createChatMessage(db, 1, 'v1', 'ch1', {
+    id: 'msg-clarif-2',
+    channelId: 'ch1',
+    author: 'Supagrok',
+    body: 'Small card.',
+    createdAt: new Date().toISOString(),
+    clarification: {
+      title: 'Tiny',
+      status: 'pending',
+      questions: [
+        { id: 'q1', prompt: 'A?', kind: 'single', options: ['x', 'y'], answer: 'y' },
+        { id: 'q2', prompt: 'B?', kind: 'single', options: ['1', '2'], answer: '2' },
+        { id: 'q3', prompt: 'C?', kind: 'text', answer: 'ok' },
+        { id: 'q4', prompt: 'Dropped?', kind: 'text', answer: 'nope' },
+      ],
+    },
+  });
+  assert.equal(msg.clarification?.questions.length, 3);
+  assert.equal(msg.clarification?.questions[0].answer, 'y');
+  assert.equal(msg.clarification?.questions.some((q) => q.id === 'q4'), false);
   db.close();
 });

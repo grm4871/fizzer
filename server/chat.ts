@@ -73,6 +73,10 @@ export type ChatClarificationQuestion = {
   kind?: ClarificationQuestionKind;
   /** Choice labels for single/multi. */
   options?: string[];
+  /**
+   * Prefill shown in the card (and counted as answered). Agents should always
+   * set this so Accept is one click when the user agrees with the recommendation.
+   */
   answer?: string;
 };
 
@@ -1788,19 +1792,26 @@ export function createChatMessage(
     };
   }
   if (input.clarification) {
+    // Keep cards tiny: max 3 questions. Agents must prefill answers so Accept is cheap.
     const questions = (Array.isArray(input.clarification.questions) ? input.clarification.questions : [])
-      .slice(0, 20)
+      .slice(0, 3)
       .map((q, index) => {
         const kind = normalizeClarificationQuestionKind(q?.kind ?? (q as { type?: string })?.type);
         const options = Array.isArray(q?.options)
-          ? q.options.map((opt: unknown) => String(opt || '').trim().slice(0, 200)).filter(Boolean).slice(0, 24)
+          ? q.options.map((opt: unknown) => String(opt || '').trim().slice(0, 200)).filter(Boolean).slice(0, 8)
           : [];
+        const rawDefault = q?.answer ?? (q as { default?: string; defaultAnswer?: string })?.default
+          ?? (q as { defaultAnswer?: string })?.defaultAnswer;
+        let answer = rawDefault != null ? String(rawDefault).trim().slice(0, 4000) : '';
+        // Auto-prefill discrete choices when the agent forgot: single → first option.
+        if (!answer && kind === 'single' && options.length) answer = options[0];
+        if (!answer && kind === 'multi' && options.length) answer = options[0];
         return {
           id: String(q?.id || `q${index + 1}`).slice(0, 40),
           prompt: String(q?.prompt || '').trim().slice(0, 2000),
           kind,
           ...(options.length && kind !== 'text' ? { options } : {}),
-          ...(q?.answer != null ? { answer: String(q.answer).trim().slice(0, 4000) } : {}),
+          ...(answer ? { answer } : {}),
         };
       })
       .filter((q) => q.prompt.length > 0);
