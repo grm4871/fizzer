@@ -203,6 +203,11 @@ function shouldRenderFullInWorkRun(
   return false;
 }
 
+function isDurableWorkArtifact(message: ChatMessage): boolean {
+  return Boolean(message.mission || message.changeRequest || message.clarification
+    || message.hasImages || message.images?.length || message.attachments?.length);
+}
+
 function groupMessages(messages: ChatMessage[]): ChatMessageGroup[] {
   const groups: ChatMessageGroup[] = [];
   for (const message of messages) {
@@ -263,40 +268,21 @@ export function segmentTranscript(
       continue;
     }
 
-    // Preserve exact chronology when a full-weight artifact appears inside a
-    // work run. A single trace + trailing fullGroups would move later compact
-    // messages ahead of that artifact.
-    const traceIds = new Set(trace.map((message) => message.id));
-    let compact: ChatMessage[] = [];
-    let fullWeight: ChatMessage[] = [];
-    const flushCompact = () => {
-      if (compact.length === 0) return;
-      segments.push({
-        kind: 'work',
-        id: compact[0].id,
-        trace: compact,
-        fullGroups: [],
-        ...(carrier ? { carrier } : {}),
-      });
-      compact = [];
-    };
-    const flushFull = () => {
-      if (fullWeight.length === 0) return;
-      for (const group of groupMessages(fullWeight)) segments.push({ kind: 'group', group });
-      fullWeight = [];
-    };
-    for (const message of work) {
-      if (carrier && message.id === carrier.id) continue;
-      if (traceIds.has(message.id)) {
-        flushFull();
-        compact.push(message);
-      } else {
-        flushCompact();
-        fullWeight.push(message);
-      }
-    }
-    flushCompact();
-    flushFull();
+    // Status is a single run-level trail, even when a mission/attachment is
+    // persisted between its updates. Splitting at that artifact used the same
+    // carrier twice (or synthesized another shell), producing duplicate agent
+    // headers and progress bubbles. Keep one carrier and render any durable
+    // artifact after its compact trail; it remains a normal full chat row.
+    const artifacts = full.filter(isDurableWorkArtifact);
+    const finalReplies = full.filter((message) => !isDurableWorkArtifact(message));
+    segments.push({
+      kind: 'work',
+      id: trace[0].id,
+      trace,
+      fullGroups: groupMessages(artifacts),
+      ...(carrier ? { carrier } : {}),
+    });
+    for (const group of groupMessages(finalReplies)) segments.push({ kind: 'group', group });
   }
 
   return segments;
