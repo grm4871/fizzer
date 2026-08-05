@@ -414,10 +414,11 @@ const CLI_PROGRESS_HEARTBEAT_MS = Math.max(10, Number(
 const AKRON_IDLE_TIMEOUT_MS = Math.max(1_000, Number(
   process.env.RUNNER_AKRON_IDLE_TIMEOUT_MS || 120_000,
 ));
-// Hermes can successfully launch while its provider bridge never produces a
-// first byte. Do not let that consume the generic 30-minute CLI lease.
+// Hermes can spend meaningful time planning and initializing its provider
+// bridge before its first byte. Keep a real wedge bound without making a
+// substantial prompt look broken just because a greeting is much faster.
 const HERMES_IDLE_TIMEOUT_MS = Math.max(1_000, Number(
-  process.env.RUNNER_HERMES_IDLE_TIMEOUT_MS || 45_000,
+  process.env.RUNNER_HERMES_IDLE_TIMEOUT_MS || 180_000,
 ));
 
 class CliIdleTimeoutError extends Error {}
@@ -2101,10 +2102,7 @@ async function runCopilot(prompt: string, cwd: string, emit: AgentEmit, resumeId
  * continuations use the equally quiet `hermes chat -Q -q` path that actually
  * loads and extends the requested session.
  *
- * With
- * `HERMES_CASCADE_EVENTS=1` it also streams reasoning deltas as NDJSON on stderr:
- *   - `reasoning.delta` → `{ type: 'thinking', thinking }`
- *   - `session_id`      → captured for conversation resume
+ * With `HERMES_CASCADE_EVENTS=1` it also streams reasoning deltas as NDJSON on stderr.
  */
 async function runHermes(prompt: string, cwd: string, emit: AgentEmit, resumeId?: string, runId?: number, env?: NodeJS.ProcessEnv): Promise<CliAgentResult> {
   const args = resumeId
