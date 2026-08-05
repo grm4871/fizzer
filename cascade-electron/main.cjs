@@ -825,6 +825,7 @@ ipcMain.handle('perf:getPath', async () => {
 ipcMain.handle('worktree:list', async (_event, { dir } = {}) => worktrees.listWorkspaces(dir));
 ipcMain.handle('worktree:status', async (_event, { dir } = {}) => worktrees.workspaceStatus(dir));
 ipcMain.handle('worktree:create', async (_event, opts = {}) => worktrees.createWorkspace(opts));
+ipcMain.handle('worktree:prepare', async (_event, opts = {}) => worktrees.prepareWorkspace(opts));
 ipcMain.handle('worktree:remove', async (_event, opts = {}) => worktrees.removeWorkspace(opts));
 ipcMain.handle('worktree:createPullRequest', async (_event, opts = {}) => worktrees.createPullRequest(opts));
 ipcMain.handle('worktree:pullRequest', async (_event, { dir } = {}) => worktrees.pullRequestStatus(dir));

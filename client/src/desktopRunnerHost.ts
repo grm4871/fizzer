@@ -13,6 +13,7 @@ type RunnerElectronAPI = {
   setRunnerToken?: (opts: { token: string; apiUrl?: string }) => Promise<{ success: boolean; error?: string }>;
   clearRunnerToken?: () => Promise<{ success: boolean }>;
   startAgentRun?: (opts: Record<string, unknown>) => Promise<{ success: boolean; error?: string }>;
+  prepareWorktree?: (opts: Record<string, unknown>) => Promise<Record<string, unknown>>;
   cancelAgentRun?: (runId: number) => Promise<{ success: boolean; error?: string }>;
   getAgentRunState?: (afterSeq?: number) => Promise<{
     instanceId?: string;
@@ -293,6 +294,25 @@ function wireSocketHandlers(activeSocket: Socket): void {
 
   activeSocket.on('run:delegate', (payload: DelegatedRunPayload) => {
     void handleDelegatedRun(payload);
+  });
+
+  activeSocket.on('workspace:prepare', async (
+    payload: Record<string, unknown>,
+    acknowledge?: (result: Record<string, unknown>) => void,
+  ) => {
+    const api = runnerElectronAPI();
+    if (!api?.prepareWorktree) {
+      acknowledge?.({ ok: false, error: 'This desktop build cannot prepare task workspaces' });
+      return;
+    }
+    try {
+      acknowledge?.(await api.prepareWorktree(payload));
+    } catch (error) {
+      acknowledge?.({
+        ok: false,
+        error: error instanceof Error ? error.message : 'Could not prepare task workspace',
+      });
+    }
   });
 
   activeSocket.on('run:cancel', async (

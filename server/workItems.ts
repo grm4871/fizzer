@@ -564,6 +564,52 @@ export function reportWorkItemGitState(
   return getWorkItem(db, userId, id);
 }
 
+/**
+ * Bind the host-local workspace prepared by the owner's desktop runner.
+ * Identity fields are write-once: reconnect may re-assert the same binding,
+ * but no runner acknowledgement can silently repoint an existing task.
+ */
+export function bindWorkItemWorkspace(
+  db: Db,
+  userId: number,
+  id: string,
+  input: {
+    repository: string;
+    baseCommit: string;
+    branch: string;
+    worktreePath: string;
+  },
+): WorkItem {
+  const row = getRow(db, id);
+  if (!row) throw new Error('Work item not found');
+  assertVaultAccess(db, row.vault_id, userId, true);
+  if (row.workspace_mode !== 'isolated' && row.workspace_mode !== 'existing') {
+    throw new Error('Work item does not permit a managed workspace');
+  }
+  const repository = cleanText(input.repository, 500);
+  const baseCommit = cleanText(input.baseCommit, 80);
+  const branch = cleanText(input.branch, 200);
+  const worktreePath = cleanText(input.worktreePath, 1000);
+  if (!repository || !baseCommit || !branch || !worktreePath) {
+    throw new Error('A complete repository, base, branch, and workspace path are required');
+  }
+  if (row.repository && row.repository !== repository) throw new Error('Prepared repository does not match this work item');
+  if (row.base_commit && row.base_commit !== baseCommit) throw new Error('Prepared base commit does not match this work item');
+  if (row.branch && row.branch !== branch) throw new Error('Prepared branch does not match this work item');
+  if (row.worktree_path && row.worktree_path !== worktreePath) throw new Error('Prepared path does not match this work item');
+
+  db.prepare(`
+    UPDATE work_items
+    SET repository = CASE WHEN repository = '' THEN ? ELSE repository END,
+        base_commit = CASE WHEN base_commit = '' THEN ? ELSE base_commit END,
+        branch = CASE WHEN branch = '' THEN ? ELSE branch END,
+        worktree_path = CASE WHEN worktree_path = '' THEN ? ELSE worktree_path END,
+        updated_at = datetime('now')
+    WHERE id = ?
+  `).run(repository, baseCommit, branch, worktreePath, id);
+  return getWorkItem(db, userId, id);
+}
+
 /** Acquire or renew a lease. Expired leases are stealable. */
 export function acquireWorkItemLease(
   db: Db,

@@ -184,7 +184,7 @@ function helperConfigPathForRun(runId) {
   return HELPER_CONFIG_PATH;
 }
 
-function writeHelperConfig({ runId, vaultId, channelId, messageId, triggeringMessageId, chatAuthor, agentId, agentMemoryKey, registrationId } = {}) {
+function writeHelperConfig({ runId, vaultId, channelId, messageId, triggeringMessageId, chatAuthor, agentId, agentMemoryKey, registrationId, workItemId } = {}) {
   const payload = {
     url: noteApi.configured ? noteApi.url : (noteApi.url || process.env.CASCADE_NOTE_URL || 'https://cscd.online'),
     token: noteApi.configured ? noteApi.token : (noteApi.token || process.env.CASCADE_NOTE_TOKEN || ''),
@@ -196,6 +196,7 @@ function writeHelperConfig({ runId, vaultId, channelId, messageId, triggeringMes
     agentId: agentId || '',
     agentMemoryKey: agentMemoryKey || '',
     registrationId: registrationId || '',
+    workItemId: workItemId || '',
     runId: Number.isFinite(Number(runId)) ? Number(runId) : undefined,
     helperDir: resolveWrapperDir(),
     updatedAt: new Date().toISOString(),
@@ -979,6 +980,8 @@ module.exports = {
   startLocalAgentRun,
   cancelLocalAgentRun,
   reapOrphanedLocalAgentRuns,
+  buildRunHelperEnv,
+  cleanupRunHelperConfig,
   chatTriggeringMessageId,
   helperAllowedTools,
   normalizeClaudeEffort,

@@ -59,6 +59,7 @@ import {
 import {
   acquireWorkItemLease,
   addWorkItemTokenUsage,
+  bindWorkItemWorkspace,
   createWorkItem,
   createWorkItemHandoff,
   ensureWorkItemSchema,
@@ -106,6 +107,7 @@ import {
   getDesktopRunnerStatus,
   initDesktopRunners,
   noteDesktopRunnerError,
+  prepareDesktopWorkspace,
   scheduleOrphanReclaimAfterRestart,
   waitForDesktopRunner,
 } from './server/desktop-runner.js';
@@ -2515,6 +2517,42 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
       : "This agent's owner is offline — their desktop runner isn't connected, so the agent can't run right now.";
     noteDesktopRunnerError(runnerUserId, error);
     return res.status(503).json({ error });
+  }
+
+  // A mission-owned isolated workspace is materialized by the owner's desktop,
+  // then bound durably before the run record or provider process exists. This
+  // makes first launch, retry, renderer reload, and agent handoff use the same
+  // task checkout without granting any publication authority.
+  if (chatWorkItemId) {
+    try {
+      const workItem = getWorkItem(db, runnerUserId, chatWorkItemId);
+      if (workItem.workspaceMode === 'isolated') {
+        const preparationDir = workItem.worktreePath || workItem.repository || selectedCwd;
+        if (!preparationDir) {
+          return res.status(409).json({
+            error: 'Mission task needs a repository cwd before its isolated workspace can be prepared.',
+          });
+        }
+        const prepared = await prepareDesktopWorkspace(runnerUserId, {
+          workItemId: workItem.id,
+          dir: preparationDir,
+          branch: workItem.branch,
+          baseBranch: workItem.gitState?.baseBranch || undefined,
+          channelId: targetChannelId,
+        });
+        bindWorkItemWorkspace(db, runnerUserId, workItem.id, {
+          repository: prepared.repository,
+          baseCommit: prepared.baseCommit,
+          branch: prepared.branch,
+          worktreePath: prepared.path,
+        });
+        selectedCwd = prepared.path;
+      }
+    } catch (error) {
+      return res.status(409).json({
+        error: error instanceof Error ? error.message : 'Could not prepare the mission task workspace',
+      });
+    }
   }
 
   // Sanitize image attachments to { media_type, data } base64 entries.

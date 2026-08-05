@@ -7,12 +7,36 @@ const { spawn } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
 const runnerLeaseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-runner-leases-'));
 process.env.CASCADE_AGENT_PROCESS_DIR = runnerLeaseDir;
-const { chatTriggeringMessageId, helperAllowedTools, normalizeClaudeEffort, startLocalAgentRun } = require('./agent-runner.cjs');
+const {
+  buildRunHelperEnv,
+  chatTriggeringMessageId,
+  cleanupRunHelperConfig,
+  helperAllowedTools,
+  normalizeClaudeEffort,
+  startLocalAgentRun,
+} = require('./agent-runner.cjs');
 
 test('chat triggering message id follows the mission root through runner payload shapes', () => {
   assert.equal(chatTriggeringMessageId({ chatTriggeringMessageId: 'root-top' }), 'root-top');
   assert.equal(chatTriggeringMessageId({ chat: { triggeringMessageId: 'root-nested' } }), 'root-nested');
   assert.equal(chatTriggeringMessageId({ chatMessageId: 'worker-placeholder' }), '');
+});
+
+test('durable work item identity reaches both the provider env and helper context', () => {
+  const runId = 91991;
+  const env = buildRunHelperEnv({
+    runId,
+    vaultId: 'vault-1',
+    chatChannelId: 'channel-1',
+    workItemId: 'work-item-1',
+  });
+  try {
+    assert.equal(env.CASCADE_WORK_ITEM_ID, 'work-item-1');
+    const helper = JSON.parse(fs.readFileSync(env.CASCADE_HELPER_CONFIG, 'utf8'));
+    assert.equal(helper.workItemId, 'work-item-1');
+  } finally {
+    cleanupRunHelperConfig(runId);
+  }
 });
 
 test('Cascade helpers are pre-authorized by command name and discovered paths', () => {

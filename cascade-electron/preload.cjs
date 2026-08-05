@@ -103,6 +103,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   listWorktrees: (dir) => ipcRenderer.invoke('worktree:list', { dir }),
   getWorktreeStatus: (dir) => ipcRenderer.invoke('worktree:status', { dir }),
   createWorktree: (opts) => ipcRenderer.invoke('worktree:create', opts),
+  prepareWorktree: (opts) => ipcRenderer.invoke('worktree:prepare', opts),
   removeWorktree: (opts) => ipcRenderer.invoke('worktree:remove', opts),
   createWorktreePullRequest: (opts) => ipcRenderer.invoke('worktree:createPullRequest', opts),
   getWorktreePullRequest: (dir) => ipcRenderer.invoke('worktree:pullRequest', { dir }),

@@ -4,6 +4,7 @@ import Database from 'better-sqlite3';
 import {
   acquireWorkItemLease,
   addWorkItemTokenUsage,
+  bindWorkItemWorkspace,
   createWorkItem,
   createWorkItemHandoff,
   ensureWorkItemSchema,
@@ -110,6 +111,44 @@ test('Git evidence binds one base and derives review readiness server-side', () 
     assert.deepEqual(dirty.reviewReadiness.blockers, [
       'working tree has uncommitted changes', 'workspace is 2 commits behind its base',
     ]);
+  } finally {
+    db.close();
+  }
+});
+
+test('desktop workspace binding is complete, idempotent, and immutable', () => {
+  const db = setup();
+  try {
+    const item = createWorkItem(db, 1, 'v1', {
+      title: 'Prepared task', workspaceMode: 'isolated', branch: 'cascade/prepared-task',
+    });
+    const bound = bindWorkItemWorkspace(db, 1, item.id, {
+      repository: '/repo/cascade',
+      baseCommit: 'a'.repeat(40),
+      branch: 'cascade/prepared-task',
+      worktreePath: '/worktrees/prepared-task',
+    });
+    assert.equal(bound.repository, '/repo/cascade');
+    assert.equal(bound.baseCommit, 'a'.repeat(40));
+    assert.equal(bound.worktreePath, '/worktrees/prepared-task');
+    assert.doesNotThrow(() => bindWorkItemWorkspace(db, 1, item.id, {
+      repository: '/repo/cascade',
+      baseCommit: 'a'.repeat(40),
+      branch: 'cascade/prepared-task',
+      worktreePath: '/worktrees/prepared-task',
+    }));
+    assert.throws(() => bindWorkItemWorkspace(db, 1, item.id, {
+      repository: '/repo/cascade',
+      baseCommit: 'b'.repeat(40),
+      branch: 'cascade/prepared-task',
+      worktreePath: '/worktrees/prepared-task',
+    }), /base commit/);
+    assert.throws(() => bindWorkItemWorkspace(db, 1, item.id, {
+      repository: '/repo/cascade',
+      baseCommit: 'a'.repeat(40),
+      branch: 'cascade/prepared-task',
+      worktreePath: '/worktrees/other',
+    }), /path/);
   } finally {
     db.close();
   }

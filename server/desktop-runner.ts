@@ -48,6 +48,23 @@ export type DelegatedRunPayload = {
   yolo?: boolean;
 };
 
+export type DesktopWorkspacePreparation = {
+  workItemId: string;
+  dir: string;
+  branch: string;
+  baseBranch?: string;
+  channelId?: string;
+};
+
+export type PreparedDesktopWorkspace = {
+  path: string;
+  repository: string;
+  branch: string;
+  baseBranch: string;
+  baseCommit: string;
+  resumed: boolean;
+};
+
 type RunnerUser = { id: number; username: string };
 
 type RunnerSocket = Socket & { data: { user?: RunnerUser } };
@@ -436,6 +453,42 @@ export async function waitForDesktopRunner(userId: number, timeoutMs = 6000): Pr
     if (isDesktopRunnerOnline(userId)) return true;
   }
   return false;
+}
+
+/** Prepare/recover a task worktree before the provider process is spawned. */
+export async function prepareDesktopWorkspace(
+  userId: number,
+  payload: DesktopWorkspacePreparation,
+  timeoutMs = 30_000,
+): Promise<PreparedDesktopWorkspace> {
+  const socket = runnersByUser.get(userId);
+  if (!socket?.connected) throw new Error('Desktop agent runner disconnected before workspace preparation');
+  return new Promise<PreparedDesktopWorkspace>((resolve, reject) => {
+    socket.timeout(timeoutMs).emit(
+      'workspace:prepare',
+      payload,
+      (error: Error | null, response?: Partial<PreparedDesktopWorkspace> & { ok?: boolean; error?: string }) => {
+        if (error) return reject(new Error('Desktop workspace preparation timed out'));
+        if (!response?.ok) return reject(new Error(response?.error || 'Desktop workspace preparation failed'));
+        const path = String(response.path || '').trim();
+        const repository = String(response.repository || '').trim();
+        const branch = String(response.branch || '').trim();
+        const baseBranch = String(response.baseBranch || '').trim();
+        const baseCommit = String(response.baseCommit || '').trim();
+        if (!path || !repository || !branch || !baseBranch || !baseCommit) {
+          return reject(new Error('Desktop returned an incomplete workspace binding'));
+        }
+        resolve({
+          path,
+          repository,
+          branch,
+          baseBranch,
+          baseCommit,
+          resumed: Boolean(response.resumed),
+        });
+      },
+    );
+  });
 }
 
 export function delegateRunToDesktop(userId: number, payload: DelegatedRunPayload, db?: Db): boolean {

@@ -73,6 +73,42 @@ test('creates an isolated workspace on its own branch, outside the checkout', as
   assert.equal(listed.workspaces.find((w) => w.isPrimary).managed, false);
 });
 
+test('prepares one exact task branch and recovers it idempotently by work item', async () => {
+  const repo = makeRepo('mission-owned');
+  const branch = 'cascade/mission-123/fix-renderer-task-9';
+  const first = await wt.prepareWorkspace({
+    dir: repo,
+    branch,
+    channelId: 'chan-mission',
+    workItemId: 'work-item-9',
+  });
+  assert.equal(first.ok, true, first.error);
+  assert.equal(first.resumed, undefined);
+  assert.equal(first.branch, branch);
+  assert.equal(first.repository, repo);
+  assert.ok(first.baseCommit);
+
+  const recovered = await wt.prepareWorkspace({
+    // Recovery is registry-owned and does not depend on the stale server path.
+    dir: path.join(repo, 'missing-old-path'),
+    branch,
+    channelId: 'chan-mission',
+    workItemId: 'work-item-9',
+  });
+  assert.equal(recovered.ok, true, recovered.error);
+  assert.equal(recovered.resumed, true);
+  assert.equal(recovered.path, first.path);
+  assert.equal(recovered.baseCommit, first.baseCommit);
+
+  const hijack = await wt.prepareWorkspace({
+    dir: repo,
+    branch,
+    workItemId: 'different-work-item',
+  });
+  assert.equal(hijack.ok, false);
+  assert.match(hijack.error, /owned by another workspace|already exists/);
+});
+
 test('status separates uncommitted changes from unpushed commits', async () => {
   const repo = makeRepo('beta');
   const created = await wt.createWorkspace({ dir: repo, slug: 'work' });

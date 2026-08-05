@@ -256,14 +256,17 @@ async function listWorkspaces(dir) {
  * Create an isolated workspace: a new branch off the current base, checked out
  * into a Cascade-managed directory outside the repository.
  */
-async function createWorkspace({ dir, slug, baseBranch, channelId, workItemId } = {}) {
+async function createWorkspace({ dir, slug, branch: requestedBranch, baseBranch, channelId, workItemId } = {}) {
   const repo = await resolveRepo(dir);
   if (!repo.isRepo) return { ok: false, error: repo.error || 'Not a git repository' };
 
   const name = normalizeSlug(slug);
   if (!name) return { ok: false, error: 'Workspace name must contain letters or numbers' };
 
-  const branch = `cascade/${name}`;
+  const branch = requestedBranch || `cascade/${name}`;
+  if (!branch.startsWith('cascade/')) return { ok: false, error: 'Managed branches must start with cascade/' };
+  const branchFormat = await git(['check-ref-format', '--branch', branch], repo.primaryRoot);
+  if (!branchFormat.ok) return { ok: false, error: 'Invalid managed branch' };
   const target = path.join(workspacesRoot(), repo.name, name);
 
   const branchExists = await git(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], repo.primaryRoot);
@@ -290,7 +293,80 @@ async function createWorkspace({ dir, slug, baseBranch, channelId, workItemId } 
     createdAt: new Date().toISOString(),
   });
 
-  return { ok: true, path: target, branch, baseBranch: base, baseCommit: baseSha.stdout };
+  return {
+    ok: true,
+    path: target,
+    repository: repo.primaryRoot,
+    repo: repo.name,
+    branch,
+    baseBranch: base,
+    baseCommit: baseSha.stdout,
+  };
+}
+
+/**
+ * Prepare or recover the one workspace owned by a durable work item.
+ *
+ * Unlike the manual create flow, this is idempotent: a desktop reconnect or
+ * provider handoff resumes the registry-owned worktree. Existing branches that
+ * are not owned by the same work item are refused rather than adopted.
+ */
+async function prepareWorkspace({ dir, branch, baseBranch, channelId, workItemId } = {}) {
+  const itemId = String(workItemId || '').trim();
+  const expectedBranch = String(branch || '').trim();
+  if (!itemId) return { ok: false, error: 'Work item id is required' };
+  if (!expectedBranch.startsWith('cascade/')) {
+    return { ok: false, error: 'Managed task branches must start with cascade/' };
+  }
+
+  const owned = readRegistry().filter((entry) => entry.workItemId === itemId);
+  if (owned.length > 1) return { ok: false, error: 'Work item owns multiple local workspaces' };
+  if (owned.length === 1) {
+    const entry = owned[0];
+    if (!fs.existsSync(entry.path)) {
+      return { ok: false, error: `Owned workspace is missing: ${entry.path}` };
+    }
+    const status = await workspaceStatus(entry.path);
+    if (!status.ok) return status;
+    if (status.branch !== expectedBranch || entry.branch !== expectedBranch) {
+      return { ok: false, error: 'Owned workspace branch does not match the work item' };
+    }
+    return {
+      ok: true,
+      resumed: true,
+      path: status.path,
+      repository: entry.repoRoot,
+      repo: entry.repo,
+      branch: status.branch,
+      baseBranch: entry.baseBranch,
+      baseCommit: entry.baseCommit,
+    };
+  }
+
+  const branchCheckDir = expandHome(dir);
+  const branchCheck = branchCheckDir && fs.existsSync(branchCheckDir)
+    ? await git(['check-ref-format', '--branch', expectedBranch], branchCheckDir)
+    : { ok: false };
+  if (!branchCheck.ok) return { ok: false, error: 'Invalid managed task branch' };
+
+  const repo = await resolveRepo(dir);
+  if (!repo.isRepo) return { ok: false, error: repo.error || 'Not a git repository' };
+  const ambiguous = readRegistry().find((entry) => (
+    path.resolve(entry.repoRoot) === path.resolve(repo.primaryRoot)
+    && entry.branch === expectedBranch
+  ));
+  if (ambiguous) return { ok: false, error: 'Task branch is already owned by another workspace' };
+
+  const name = normalizeSlug(expectedBranch.slice('cascade/'.length));
+  if (!name) return { ok: false, error: 'Managed task branch has no usable workspace name' };
+  return createWorkspace({
+    dir: repo.primaryRoot,
+    slug: name,
+    branch: expectedBranch,
+    baseBranch,
+    channelId,
+    workItemId: itemId,
+  });
 }
 
 /**
@@ -387,6 +463,7 @@ module.exports = {
   listWorkspaces,
   workspaceStatus,
   createWorkspace,
+  prepareWorkspace,
   removeWorkspace,
   createPullRequest,
   pullRequestStatus,
