@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import {
   bodyHasNoteRefs,
   findEmbeddedNote,
   splitDocEmbeds,
   splitWikilinks,
 } from '../docEmbeds';
+import { ChatView, type ChatMessage } from '../components/ChatView';
+import { chatMessageStore } from '../chat/messageStore';
 
 describe('splitDocEmbeds / splitWikilinks', () => {
   it('splits block embeds', () => {
@@ -41,5 +45,44 @@ describe('splitDocEmbeds / splitWikilinks', () => {
       { id: '1', title: 'One Room: social presence without audience capture', content_preview: '' },
     ] as any;
     expect(findEmbeddedNote(notes, 'one room: social presence without audience capture')?.id).toBe('1');
+  });
+
+  it('normalizes aliases and section targets identically for cards and citations', () => {
+    const target = 'Team plan';
+    expect(splitDocEmbeds('![[Team plan|the plan]] ![[Team plan#launch]]'))
+      .toEqual([
+        { type: 'embed', value: target },
+        { type: 'text', value: ' ' },
+        { type: 'embed', value: target },
+      ]);
+    expect(splitWikilinks('[[Team plan#launch]]')).toEqual([{ type: 'wikilink', value: target }]);
+  });
+
+  it('renders an actual in-chat embed card with a note preview', () => {
+    const channelId = 'embed-channel';
+    const message: ChatMessage = {
+      id: 'embed-message', channelId, author: 'asdfasdf', body: 'Read ![[Team plan|the plan]].', createdAt: 'now',
+    };
+    chatMessageStore.set(channelId, [message]);
+    const markup = renderToStaticMarkup(createElement(ChatView, {
+      channelId,
+      channelName: 'cascade-dev',
+      currentUser: 'asdfasdf',
+      presence: { participants: [], online: [] },
+      availableAgents: [],
+      registeredAgents: [],
+      onRegisterAgent: () => {}, onRemoveAgent: () => {},
+      onCreateInviteLink: async () => '', onInviteUser: async () => {},
+      onSendMessage: () => {}, onCancelRun: () => {},
+      notes: [{
+        id: 'plan', vault_id: 'vault', folder_id: null, title: 'Team plan', content_preview: 'Launch checklist',
+        is_pinned: 0, is_archived: 0, is_listed: 1, position: 0, word_count: 2,
+        created_at: 'now', updated_at: 'now', tags: [],
+      }],
+      onOpenNote: () => {},
+    }));
+    expect(markup).toContain('chat-doc-embed');
+    expect(markup).toContain('Team plan');
+    expect(markup).toContain('Launch checklist');
   });
 });

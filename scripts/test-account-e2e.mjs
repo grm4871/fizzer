@@ -82,10 +82,13 @@ try {
   check('another account cannot delete a private folder', (await request(`/api/folders/${folder.id}`, { method: 'DELETE', headers: guest.auth })).status === 404);
 
   const { note: channel } = await must(`/api/vaults/${vault.id}/notes`, { method: 'POST', headers: owner.auth, body: JSON.stringify({ title: 'shared', content: 'cascade://chat-channel' }) });
+  const { note: embeddedNote } = await must(`/api/vaults/${vault.id}/notes`, { method: 'POST', headers: owner.auth, body: JSON.stringify({ title: 'Release plan', content: '# Launch\nShip the shared vault flow.' }) });
   const ownerMessage = await must(`/api/vaults/${vault.id}/channels/${channel.id}/messages`, {
-    method: 'POST', headers: owner.auth, body: JSON.stringify({ id: `owner-${stamp}`, author: guestName, body: 'owner text' }),
+    method: 'POST', headers: owner.auth, body: JSON.stringify({ id: `owner-${stamp}`, author: guestName, body: 'owner text ![[Release plan|launch notes]]' }),
   });
   check('server, not the client, owns human authorship', ownerMessage.message.author === ownerName);
+  const embeds = await must(`/api/vaults/${vault.id}/channels/${channel.id}/messages/${ownerMessage.message.id}/embeds`, { headers: owner.auth });
+  check('chat embeds snapshot aliased note targets', embeds.notes?.length === 1 && embeds.notes[0].title === 'Release plan' && embeds.notes[0].content.includes('shared vault'));
   const { token: invite } = await must(`/api/vaults/${vault.id}/channels/${channel.id}/invite-link`, { method: 'POST', headers: owner.auth });
   const linked = await must(`/api/chat-invites/${encodeURIComponent(invite)}/accept`, { method: 'POST', headers: guest.auth });
   const guestPost = await must(`/api/vaults/${linked.vaultId}/channels/${linked.channelId}/messages`, {

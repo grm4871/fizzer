@@ -42,6 +42,7 @@ import { PaneGrid, type TabDragPayload } from './components/PaneGrid';
 import { SuperkanbanView } from './components/SuperkanbanView';
 import type { WorkItem } from './chat/workItems';
 import { AccountSettings } from './components/AccountSettings';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import * as Layout from './layout/tree';
 import type { LayoutNode } from './layout/tree';
 import { api, ApiError, type User, type Vault, type Folder, type NoteSummary, type Note } from './api';
@@ -3268,19 +3269,21 @@ export default function App() {
     }
     const entry = noteContents[tab.id];
     return (
-      <Suspense fallback={<div className="editor-loading" />}>
-        <NoteEditor
-          note={entry?.note ?? null}
-          content={entry?.draft ?? ''}
-          onContentChange={getNoteChangeHandler(tab.id)}
-          onSave={getNoteSaveHandler(tab.id)}
-          onRename={getNoteRenameHandler(tab.id)}
-          onExecuteDirective={handleExecuteDirective}
-          onOpenWikilink={handleOpenWikilink}
-          notes={notes}
-          onOpenNote={openNote}
-        />
-      </Suspense>
+      <ErrorBoundary label="Note">
+        <Suspense fallback={<div className="editor-loading" />}>
+          <NoteEditor
+            note={entry?.note ?? null}
+            content={entry?.draft ?? ''}
+            onContentChange={getNoteChangeHandler(tab.id)}
+            onSave={getNoteSaveHandler(tab.id)}
+            onRename={getNoteRenameHandler(tab.id)}
+            onExecuteDirective={handleExecuteDirective}
+            onOpenWikilink={handleOpenWikilink}
+            notes={notes}
+            onOpenNote={openNote}
+          />
+        </Suspense>
+      </ErrorBoundary>
     );
   }, [availableChatAgents, chatState.registeredAgentsByChannel, chatPresenceByChannel, currentUsername, loadingChatChannels, runnerHealth, vaultAgents, handleCancelChatRun, handleCreateChatInviteLink, handleInviteChatUser, handleRemoveChatParticipant, handleLeaveChatChannel, handleRegisterChatAgent, handleRemoveChatAgent, handleUpsertVaultAgent, handleDeleteVaultAgent, handleAddVaultAgentToChannel, handleSendChatMessage, handleForwardChatMessage, noteContents, notes, getNoteChangeHandler, getNoteSaveHandler, getNoteRenameHandler, handleExecuteDirective, handleOpenWikilink, openNote, chatMembersOpen, activeVaultId, handleHydrateChatMessage, handleOpenSharedChatNote, superkanbanNotes, superkanbanLiveWork, superkanbanLoading, superkanbanError, chatJumpTarget, handleChatJumpHandled]);
 

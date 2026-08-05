@@ -235,8 +235,17 @@ export function simplify(node: LayoutNode): LayoutNode {
  * Always yields a tree with at least one pane.
  */
 export function ensureValid(node: LayoutNode, validTabIds: Set<string>): LayoutNode {
+  // A stale or manually-corrupted persisted session can name one tab in more
+  // than one pane. Rendering that mounts two editors for the same note, which
+  // gives them competing drafts and has historically caused editor crashes.
+  // Keep the first pane in tree order as the authoritative home.
+  const claimed = new Set<string>();
   const pruned = mapPanes(node, (pane) => {
-    const tabIds = pane.tabIds.filter((id) => validTabIds.has(id));
+    const tabIds = pane.tabIds.filter((id) => {
+      if (!validTabIds.has(id) || claimed.has(id)) return false;
+      claimed.add(id);
+      return true;
+    });
     const activeTabId =
       pane.activeTabId && tabIds.includes(pane.activeTabId) ? pane.activeTabId : tabIds[0] ?? null;
     return { ...pane, tabIds, activeTabId };

@@ -2949,7 +2949,9 @@ function refreshChatNoteGrants(userId: number, localVaultId: string, sourceChann
   const pattern = /!\[\[([^\]\n]+)\]\]/g;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(message.body)) !== null) {
-    const title = match[1].trim();
+    // Keep the server-side snapshot lookup in lockstep with the renderer:
+    // `![[Plan|short label]]` and `![[Plan#section]]` both embed `Plan`.
+    const title = match[1].split('|', 1)[0].split('#', 1)[0].trim();
     if (title) titles.add(title);
   }
   // Snapshot at grant time: channel readers get frozen share content, not a live vault join.

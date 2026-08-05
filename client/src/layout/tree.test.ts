@@ -102,6 +102,18 @@ describe('layout tree', () => {
     expect(pane.activeTabId).toBe('a');
   });
 
+  it('deduplicates a corrupted restored tab across panes', () => {
+    const tree: LayoutNode = {
+      type: 'split', id: 'split-corrupt', direction: 'row', sizes: [0.5, 0.5], children: [
+        { type: 'pane', id: 'left', tabIds: ['a', 'b'], activeTabId: 'a' },
+        { type: 'pane', id: 'right', tabIds: ['a'], activeTabId: 'a' },
+      ],
+    };
+    const restored = ensureValid(tree, new Set(['a', 'b']));
+    expect(getAllPanes(restored)).toHaveLength(1);
+    expect(getAllPanes(restored)[0].tabIds).toEqual(['a', 'b']);
+  });
+
   it('migrates a legacy split session into a two-pane row', () => {
     const tree = migrateFromLegacy(['a', 'b', 'c'], 'a', 'b');
     expect(isPane(tree)).toBe(false);
