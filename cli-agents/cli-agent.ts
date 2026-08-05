@@ -414,6 +414,11 @@ const CLI_PROGRESS_HEARTBEAT_MS = Math.max(10, Number(
 const AKRON_IDLE_TIMEOUT_MS = Math.max(1_000, Number(
   process.env.RUNNER_AKRON_IDLE_TIMEOUT_MS || 120_000,
 ));
+// Hermes can successfully launch while its provider bridge never produces a
+// first byte. Do not let that consume the generic 30-minute CLI lease.
+const HERMES_IDLE_TIMEOUT_MS = Math.max(1_000, Number(
+  process.env.RUNNER_HERMES_IDLE_TIMEOUT_MS || 120_000,
+));
 
 class CliIdleTimeoutError extends Error {}
 
@@ -2132,18 +2137,30 @@ async function runHermes(prompt: string, cwd: string, emit: AgentEmit, resumeId?
     }
   };
 
-  const summaryText = await driveHermesProcess(
-    HERMES_BIN,
-    args,
-    cwd,
-    onStdoutLine,
-    onStderrLine,
-    () => text.trim() || 'Completed note operations successfully.',
-    'Hermes',
-    runId,
-    emit,
-    env,
-  );
+  let summaryText = '';
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      summaryText = await driveHermesProcess(
+        HERMES_BIN,
+        args,
+        cwd,
+        onStdoutLine,
+        onStderrLine,
+        () => text.trim() || 'Completed note operations successfully.',
+        'Hermes',
+        runId,
+        emit,
+        env,
+        HERMES_IDLE_TIMEOUT_MS,
+      );
+      break;
+    } catch (error) {
+      if (!(error instanceof CliIdleTimeoutError) || attempt > 0 || text.trim()) throw error;
+      // No model or tool output means the first request was never observable;
+      // a fresh provider bridge is safe to retry once without duplicating work.
+      emitHarness(emit, '\x1b[2m# provider returned no bytes; retrying Hermes once with a fresh bridge\x1b[0m\r\n');
+    }
+  }
   return { summary: summaryText, sessionId };
 }
 

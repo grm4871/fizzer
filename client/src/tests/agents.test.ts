@@ -115,7 +115,7 @@ describe('formatAgentChatPrompt', () => {
       'alice',
       false,
     );
-    expect(prompt).toContain('Handle tiny Q&A and one-line fixes directly');
+    expect(prompt).toContain('Handle clear requests directly');
     expect(prompt).toMatch(/clarification card/i);
     expect(prompt).toContain('cascade-chat mission start');
     expect(prompt).toContain('cascade-chat mission delegate');
@@ -140,7 +140,7 @@ describe('formatAgentChatPrompt', () => {
     const coordinator = { ...registration, orchestrator: true };
     const fresh = formatAgentChatPrompt('dev', coordinator, 'take care of the release', 'alice', false);
     const continued = formatAgentChatPrompt('dev', coordinator, 'and publish android', 'alice', true);
-    expect(continued).toMatch(/clarification card first|mission\+contract/i);
+    expect(continued).toMatch(/clarify only a user-requested mission\/kanban|material ambiguity/i);
     expect(continued).toMatch(/Delegate when another session adds value/i);
     expect(continued).toContain('Keep replies short');
     expect(continued).not.toContain('cascade-chat mission delegate');
