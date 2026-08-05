@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { Bot, ClipboardList, Copy, Forward, Hash, ImagePlus, Paperclip, Reply, Send, Trash2, X } from 'lucide-react';
+import { Bot, ChevronRight, ClipboardList, Copy, Forward, Hash, ImagePlus, Paperclip, Reply, Send, Trash2, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
@@ -3661,9 +3661,16 @@ export const ChatView = memo(function ChatView({
           {agentMenuOpen && agentPanelMode !== 'picker' && (
           <form className="chat-agent-menu" onSubmit={(e) => void submitAgentRegistration(e)} onClick={(event) => event.stopPropagation()}>
             <div className="chat-agent-menu-heading">
-              {agentPanelMode === 'edit-member' && 'Channel membership'}
-              {agentPanelMode === 'edit-identity' && 'Vault identity (all channels)'}
-              {agentPanelMode === 'create' && 'New vault agent'}
+              <strong>
+                {agentPanelMode === 'edit-member' && 'Channel membership'}
+                {agentPanelMode === 'edit-identity' && 'Vault identity'}
+                {agentPanelMode === 'create' && 'New vault agent'}
+              </strong>
+              <span>
+                {agentPanelMode === 'edit-member' && `Applies to #${channelName} only.`}
+                {agentPanelMode === 'edit-identity' && 'Applies to every channel in this vault.'}
+                {agentPanelMode === 'create' && 'Added to this vault, then to this channel.'}
+              </span>
             </div>
             {agentPanelMode !== 'edit-member' && (
               <>
@@ -3728,6 +3735,8 @@ export const ChatView = memo(function ChatView({
             </label>
               </>
             )}
+            <div className="chat-agent-group">
+              {agentPanelMode === 'edit-member' && <div className="chat-agent-group-title">Runtime</div>}
             <label>
               Model
               {activeFormAgent && activeFormAgent.models.length > 0 ? (
@@ -3788,54 +3797,82 @@ export const ChatView = memo(function ChatView({
                 <span className="chat-agent-field-hint">Default follows the local CLI configuration on the agent owner's desktop.</span>
               </label>
             )}
+            </div>
             {(agentPanelMode === 'edit-member' || agentPanelMode === 'create') && (
               <>
-            <label className="chat-agent-toggle">
-              <input
-                type="checkbox"
-                checked={agentForm.taggableByAgents}
-                onChange={(event) => setAgentForm((value) => ({ ...value, taggableByAgents: event.target.checked }))}
-              />
-              Taggable by other agents
-            </label>
-            <label className="chat-agent-toggle">
-              <input
-                type="checkbox"
-                checked={agentForm.orchestrator}
-                onChange={(event) => setAgentForm((value) => ({
-                  ...value,
-                  orchestrator: event.target.checked,
-                  replyToEveryMessage: event.target.checked,
-                }))}
-              />
-              Coordinate this channel
-            </label>
-            <span className="chat-agent-field-hint">Receives human messages, may create durable missions, and can dispatch other channel agents.</span>
-            <label className="chat-agent-toggle">
-              <input
-                type="checkbox"
-                checked={agentForm.replyToEveryMessage}
-                disabled={agentForm.orchestrator}
-                onChange={(event) => setAgentForm((value) => ({ ...value, replyToEveryMessage: event.target.checked }))}
-              />
-              Reply to every human message
-            </label>
-            <label className="chat-agent-toggle">
-              <input
-                type="checkbox"
-                checked={agentForm.pingableByOthers}
-                onChange={(event) => setAgentForm((value) => ({ ...value, pingableByOthers: event.target.checked }))}
-              />
-              Allow other users to ping this agent
-            </label>
-            <label className="chat-agent-toggle">
-              <input
-                type="checkbox"
-                checked={agentForm.yolo}
-                onChange={(event) => setAgentForm((value) => ({ ...value, yolo: event.target.checked }))}
-              />
-              Yolo mode (skip permission prompts)
-            </label>
+            <div className="chat-agent-group">
+              <div className="chat-agent-group-title">When it replies</div>
+              <label className="chat-agent-toggle">
+                <input
+                  type="checkbox"
+                  checked={agentForm.orchestrator}
+                  onChange={(event) => setAgentForm((value) => ({
+                    ...value,
+                    orchestrator: event.target.checked,
+                    replyToEveryMessage: event.target.checked,
+                  }))}
+                />
+                <span className="chat-agent-toggle-copy">
+                  <span className="chat-agent-toggle-name">Coordinate this channel</span>
+                  <span className="chat-agent-toggle-hint">Reads every human message, can open durable missions, and can dispatch the other agents here.</span>
+                </span>
+              </label>
+              <label className={`chat-agent-toggle${agentForm.orchestrator ? ' is-locked' : ''}`}>
+                <input
+                  type="checkbox"
+                  checked={agentForm.replyToEveryMessage}
+                  disabled={agentForm.orchestrator}
+                  onChange={(event) => setAgentForm((value) => ({ ...value, replyToEveryMessage: event.target.checked }))}
+                />
+                <span className="chat-agent-toggle-copy">
+                  <span className="chat-agent-toggle-name">Reply to every human message</span>
+                  <span className="chat-agent-toggle-hint">
+                    {agentForm.orchestrator
+                      ? 'Always on while coordinating.'
+                      : 'Otherwise it only answers when @mentioned.'}
+                  </span>
+                </span>
+              </label>
+            </div>
+            <div className="chat-agent-group">
+              <div className="chat-agent-group-title">Who can summon it</div>
+              <label className="chat-agent-toggle">
+                <input
+                  type="checkbox"
+                  checked={agentForm.taggableByAgents}
+                  onChange={(event) => setAgentForm((value) => ({ ...value, taggableByAgents: event.target.checked }))}
+                />
+                <span className="chat-agent-toggle-copy">
+                  <span className="chat-agent-toggle-name">Other agents</span>
+                  <span className="chat-agent-toggle-hint">Agents in this channel may @mention it.</span>
+                </span>
+              </label>
+              <label className="chat-agent-toggle">
+                <input
+                  type="checkbox"
+                  checked={agentForm.pingableByOthers}
+                  onChange={(event) => setAgentForm((value) => ({ ...value, pingableByOthers: event.target.checked }))}
+                />
+                <span className="chat-agent-toggle-copy">
+                  <span className="chat-agent-toggle-name">Other people</span>
+                  <span className="chat-agent-toggle-hint">Anyone in the vault, not just you, may @mention it.</span>
+                </span>
+              </label>
+            </div>
+            <div className="chat-agent-group">
+              <div className="chat-agent-group-title">Permissions</div>
+              <label className={`chat-agent-toggle${agentForm.yolo ? ' is-hot' : ''}`}>
+                <input
+                  type="checkbox"
+                  checked={agentForm.yolo}
+                  onChange={(event) => setAgentForm((value) => ({ ...value, yolo: event.target.checked }))}
+                />
+                <span className="chat-agent-toggle-copy">
+                  <span className="chat-agent-toggle-name">Yolo mode</span>
+                  <span className="chat-agent-toggle-hint">Runs tools without asking. Skips every permission prompt.</span>
+                </span>
+              </label>
+            </div>
               </>
             )}
             {agentPanelMode === 'edit-member' && agentForm.vaultAgentId && (
@@ -3844,7 +3881,11 @@ export const ChatView = memo(function ChatView({
                 className="chat-agent-identity-link"
                 onClick={(event) => editVaultIdentity(event, agentForm)}
               >
-                Edit vault identity (name, model, persona)…
+                <span className="chat-agent-toggle-copy">
+                  <span className="chat-agent-toggle-name">Edit vault identity</span>
+                  <span className="chat-agent-toggle-hint">Name, handle, persona — shared across all channels.</span>
+                </span>
+                <ChevronRight size={13} />
               </button>
             )}
             {agentFormError && <div className="chat-agent-form-error">{agentFormError}</div>}

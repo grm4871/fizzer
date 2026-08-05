@@ -5394,6 +5394,19 @@ button.chat-avatar-agent {
   color: var(--text-secondary);
   margin: 0 0 8px;
 }
+.chat-agent-menu-heading strong {
+  display: block;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.chat-agent-menu-heading span {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.6875rem;
+  font-weight: 400;
+  color: var(--text-secondary);
+}
 .chat-vault-agent-row {
   width: 100%;
   gap: 6px;
@@ -5447,17 +5460,31 @@ button.chat-avatar-agent {
 .chat-vault-pick-btn:disabled {
   cursor: default;
 }
+/* Navigation to a different scope, not a destructive/primary action — so it
+   reads as a row you can walk into, not an amber warning. */
 .chat-agent-identity-link {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   width: 100%;
-  margin: 4px 0 8px;
-  padding: 6px 0;
-  font-size: 0.75rem;
-  color: var(--accent);
+  margin: 0 0 10px;
+  padding: 7px 8px;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
   text-align: left;
+  cursor: pointer;
+  transition: border-color var(--transition-normal), background var(--transition-normal);
 }
 .chat-agent-identity-link:hover {
-  text-decoration: underline;
+  background: hsla(226, 12%, 17%, 0.6);
+  border-color: var(--border-active);
+}
+.chat-agent-identity-link svg {
+  flex-shrink: 0;
+  margin-left: auto;
+  color: var(--text-tertiary);
 }
 .chat-run-row {
   display: flex;
@@ -5549,11 +5576,11 @@ button.chat-avatar-agent {
 .chat-agent-menu,
 .chat-invite-menu {
   margin: 6px 0 10px;
-  padding: 11px;
-  border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--bg-base) 65%, var(--bg-raised));
-  box-shadow: var(--bevel), var(--shadow-sm);
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-base) 80%, var(--bg-raised));
+  box-shadow: inset 0 1px 0 hsla(220, 30%, 82%, 0.045), 0 8px 24px hsla(225, 20%, 3%, 0.24);
 }
 .chat-agent-menu label,
 .chat-invite-menu label {
@@ -5561,7 +5588,7 @@ button.chat-avatar-agent {
   flex-direction: column;
   gap: 5px;
   margin-bottom: 9px;
-  color: var(--text-tertiary);
+  color: var(--text-secondary);
   font-size: 0.6875rem;
   font-weight: 600;
 }
@@ -5594,18 +5621,126 @@ button.chat-avatar-agent {
   margin-top: 6px;
 }
 .chat-agent-field-hint {
-  color: var(--text-muted);
-  font-size: 0.625rem;
+  color: var(--text-secondary);
+  font-size: 0.6875rem;
   font-weight: 400;
   line-height: 1.35;
 }
-.chat-agent-toggle {
-  flex-direction: row !important;
-  align-items: center;
-  font-weight: 500;
+/* Grouped switch blocks: a rule + eyebrow separates unrelated concerns so the
+   panel reads as three short questions rather than one flat checkbox dump. */
+.chat-agent-group {
+  margin: 0 0 10px;
+  padding-top: 9px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
 }
-.chat-agent-toggle input {
-  width: auto;
+/* The group directly under the heading needs no separator; :first-of-type would
+   match the heading div instead, so key off adjacency. */
+.chat-agent-menu-heading + .chat-agent-group {
+  border-top: none;
+  padding-top: 0;
+}
+.chat-agent-group-title {
+  margin-bottom: 7px;
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+.chat-agent-menu .chat-agent-group > label:last-child {
+  margin-bottom: 0;
+}
+/* Checkbox in column 1, name + hint stacked in column 2, so a hint can never
+   float free and read as belonging to the next switch. */
+.chat-agent-menu .chat-agent-toggle {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: start;
+  gap: 3px 8px;
+  margin-bottom: 8px;
+  padding: 6px;
+  border-radius: 8px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--transition-normal);
+}
+.chat-agent-menu .chat-agent-toggle:hover {
+  background: hsla(226, 12%, 17%, 0.6);
+}
+.chat-agent-menu .chat-agent-toggle input {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  width: 30px;
+  height: 17px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--text-tertiary) 58%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-overlay) 74%, var(--bg-base));
+  cursor: pointer;
+  transition: background var(--transition-normal), border-color var(--transition-normal);
+}
+.chat-agent-menu .chat-agent-toggle input::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+  box-shadow: 0 1px 2px hsla(225, 20%, 3%, 0.5);
+  transition: transform var(--transition-normal), background var(--transition-normal);
+}
+.chat-agent-menu .chat-agent-toggle input:checked {
+  border-color: color-mix(in srgb, var(--accent) 68%, var(--border));
+  background: color-mix(in srgb, var(--accent) 70%, var(--bg-overlay));
+}
+.chat-agent-menu .chat-agent-toggle input:checked::after {
+  transform: translateX(13px);
+  background: hsl(225, 14%, 8%);
+}
+.chat-agent-menu .chat-agent-toggle input:focus-visible {
+  box-shadow: 0 0 0 3px var(--focus-ring-subtle);
+}
+.chat-agent-toggle-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.chat-agent-toggle-name {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  line-height: 1.25;
+}
+.chat-agent-toggle-hint {
+  font-size: 0.6875rem;
+  font-weight: 400;
+  line-height: 1.35;
+  color: var(--text-secondary);
+}
+.chat-agent-toggle.is-locked {
+  cursor: default;
+}
+.chat-agent-toggle.is-locked:hover {
+  background: transparent;
+}
+.chat-agent-toggle.is-locked input {
+  cursor: default;
+}
+.chat-agent-toggle.is-locked .chat-agent-toggle-name {
+  color: var(--text-tertiary);
+}
+/* Yolo reads as a live hazard once armed, not as one more grey checkbox. */
+.chat-agent-toggle.is-hot .chat-agent-toggle-name {
+  color: var(--danger);
+}
+.chat-agent-toggle.is-hot input {
+  border-color: color-mix(in srgb, var(--danger) 70%, var(--border));
+  background: color-mix(in srgb, var(--danger) 62%, var(--bg-overlay));
 }
 .chat-agent-form-error {
   margin-bottom: 8px;
@@ -5646,17 +5781,30 @@ button.chat-avatar-agent {
   display: flex;
   justify-content: flex-end;
   gap: 6px;
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
 }
 .chat-agent-menu-actions button {
   min-height: 28px;
-  padding: 5px 9px;
+  padding: 5px 12px;
+  border: 1px solid transparent;
   border-radius: var(--radius-sm);
-  background: var(--bg-raised);
+  background: transparent;
   color: var(--text-secondary);
+  font-size: 0.75rem;
   cursor: pointer;
+}
+.chat-agent-menu-actions button:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: hsla(226, 12%, 17%, 0.75);
 }
 .chat-agent-menu-actions button[type="submit"] {
   background: var(--accent);
+  color: hsl(226, 12%, 8%);
+  font-weight: 600;
+}
+.chat-agent-menu-actions button[type="submit"]:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 88%, white);
   color: hsl(226, 12%, 8%);
 }
 .chat-agent-menu-actions button:disabled {

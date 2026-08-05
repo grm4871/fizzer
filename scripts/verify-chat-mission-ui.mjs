@@ -348,6 +348,16 @@ try {
   await coordinatorToggle.waitFor({ timeout: 5_000 });
   check('coordinator toggle reflects persisted membership', await coordinatorToggle.isChecked());
   check('coordinator implies the default human-message route', await page.getByLabel('Reply to every human message').isDisabled());
+  const membershipMenu = page.locator('.chat-agent-menu');
+  const groupTitles = (await membershipMenu.locator('.chat-agent-group-title').allInnerTexts()).map((title) => title.toLowerCase());
+  check('agent settings separates runtime, reply policy, access, and permissions',
+    ['runtime', 'when it replies', 'who can summon it', 'permissions'].every((title) => groupTitles.includes(title)),
+    JSON.stringify(groupTitles));
+  const switchBox = await coordinatorToggle.boundingBox();
+  check('agent settings uses compact switch controls instead of raw checkboxes',
+    Boolean(switchBox) && switchBox.width >= 28 && switchBox.width > switchBox.height);
+  check('vault identity is presented as scoped navigation',
+    await membershipMenu.getByRole('button', { name: /Edit vault identity/ }).count() === 1);
 
   await coordinatorToggle.uncheck();
   await page.getByRole('button', { name: 'Save', exact: true }).click();
