@@ -2780,6 +2780,22 @@ export default function App() {
     }
   }, [activeVaultId, syncChatPresenceRooms, visibleChatChannelIds, recoverPendingChatAgentDispatches]);
 
+  // The dispatch outbox is durable, but a desktop/provider launch can fail
+  // after the create event has been delivered (or while this renderer is
+  // otherwise perfectly connected). Reconcile visible channels periodically
+  // so long-running mission work retries from that durable intent instead of
+  // waiting for a renderer reload, tab switch, or socket reconnect.
+  useEffect(() => {
+    if (!activeVaultId || visibleChatChannelIds.length === 0) return;
+    const retryPending = () => {
+      for (const channelId of visibleChatChannelIds) {
+        void recoverPendingChatAgentDispatches(channelId);
+      }
+    };
+    const timer = window.setInterval(retryPending, 10_000);
+    return () => window.clearInterval(timer);
+  }, [activeVaultId, visibleChatChannelIds, recoverPendingChatAgentDispatches]);
+
   // ═══════════════════════════════════════════════════════════════
   // NOTE / FOLDER OPERATIONS
   // ═══════════════════════════════════════════════════════════════
