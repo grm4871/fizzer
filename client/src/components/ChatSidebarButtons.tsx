@@ -14,7 +14,7 @@ export function ChatSidebarButtons(p: Props) {
     createSidebarButton({ id: 'collapse', icon: p.collapsed ? <PanelRightOpen size={15} /> : <PanelRightClose size={15} />, onClick: p.onToggleCollapsed, title: p.collapsed ? 'Expand members' : 'Collapse members' }),
     createSidebarButton({ id: 'invite', icon: <UserPlus size={15} />, onClick: p.onInvite, title: 'Invite person', selected: p.inviteSelected }),
     createSidebarButton({ id: 'agent', icon: <><Bot size={15} /><Plus size={11} className="csb-plus" /></>, onClick: p.onAgent, title: 'Add agent', selected: p.agentSelected }),
-    createSidebarButton({ id: 'settings', icon: <Settings2 size={15} />, onClick: p.onSettings, title: 'Agent settings', selected: p.settingsSelected }),
+    createSidebarButton({ id: 'settings', icon: <Settings2 size={15} />, onClick: p.onSettings, title: 'Project setup', selected: p.settingsSelected }),
   ];
   const click = (event: MouseEvent<HTMLButtonElement>, item: SidebarButtonItem) => { event.stopPropagation(); item.onClick(); };
   return (

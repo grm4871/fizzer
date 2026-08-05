@@ -298,7 +298,7 @@ function emitTerminalStatus(emit, runId, status, summary, sessionId) {
   const suppressChatBody = status === 'completed' && readUsedChatSend(runId);
   emit('status', {
     status,
-    summary: summary || (status === 'completed' ? 'Done.' : 'Agent failed.'),
+    summary: summary || (status === 'completed' ? 'Done.' : status === 'canceled' ? 'Run canceled.' : 'Agent failed.'),
     ...(sessionId ? { sessionId } : {}),
     ...(suppressChatBody ? { suppressChatBody: true } : {}),
   });
@@ -336,6 +336,11 @@ function helperAllowedTools() {
 
 // Live Claude SDK query streams, keyed by runId, so cancellation can close them.
 const activeClaudeQueries = new Map();
+// `stream.close()` is also how the SDK cooperatively stops. Keep that intent
+// separate from an ordinary empty stream so cancellation never looks like a
+// successful note operation.
+const canceledClaudeRuns = new Set();
+const CLAUDE_STARTUP_TIMEOUT_MS = 45_000;
 
 async function loadClaudeSdk() {
   if (!claudeSdkPromise) {
@@ -597,6 +602,13 @@ async function runClaudeLocally(opts, emit) {
   });
 
   activeClaudeQueries.set(runId, stream);
+  let sawSdkMessage = false;
+  let startupTimedOut = false;
+  const startupTimer = setTimeout(() => {
+    if (sawSdkMessage || canceledClaudeRuns.has(runId)) return;
+    startupTimedOut = true;
+    try { stream.close?.(); } catch { /* cooperative close best effort */ }
+  }, CLAUDE_STARTUP_TIMEOUT_MS);
   let summary = '';
   let streamedText = '';
   let latestAssistantText = '';
@@ -615,6 +627,8 @@ async function runClaudeLocally(opts, emit) {
   emitCascadeStats(emit, { model, maxTurns: maxTurns > 0 ? maxTurns : undefined });
   try {
     for await (const message of stream) {
+      sawSdkMessage = true;
+      clearTimeout(startupTimer);
       if (message.session_id && message.session_id !== sessionId) {
         sessionId = message.session_id;
         emit('session', { sessionId });
@@ -830,7 +844,18 @@ async function runClaudeLocally(opts, emit) {
     }
     throw error;
   } finally {
+    clearTimeout(startupTimer);
     activeClaudeQueries.delete(runId);
+  }
+  if (canceledClaudeRuns.has(runId)) {
+    const error = new Error('Run canceled.');
+    error.cascadeCanceled = true;
+    throw error;
+  }
+  if (startupTimedOut) {
+    const error = new Error('Claude produced no startup event; retrying the session.');
+    error.cascadeStartupTimeout = true;
+    throw error;
   }
   // Chat runs: prefer the streamed assistant text over a generic SDK result.
   // Non-chat note runs keep the SDK result as the summary for the run list.
@@ -876,6 +901,8 @@ async function startLocalAgentRun(opts, sendEvent) {
     let resume = typeof opts.resumeSessionId === 'string' ? opts.resumeSessionId : undefined;
     let runPrompt = prompt;
     let attempt = 0;
+    let startupRetries = 0;
+    canceledClaudeRuns.delete(runId);
     try {
       // eslint-disable-next-line no-constant-condition
       while (true) {
@@ -884,6 +911,15 @@ async function startLocalAgentRun(opts, sendEvent) {
           emitTerminalStatus(emit, runId, 'completed', result.summary, result.sessionId);
           return { sessionId: result.sessionId };
         } catch (error) {
+          if (error?.cascadeCanceled || canceledClaudeRuns.has(runId)) {
+            emitTerminalStatus(emit, runId, 'canceled', 'Run canceled.', error?.cascadeSessionId);
+            return { canceled: true };
+          }
+          if (error?.cascadeStartupTimeout && startupRetries < 1) {
+            startupRetries += 1;
+            emitHarness(emit, '\x1b[2m# Claude did not start — retrying once\x1b[0m\r\n');
+            continue;
+          }
           if (error && error.cascadeMaxTurns && error.cascadeSessionId && attempt < maxContinues) {
             attempt += 1;
             resume = error.cascadeSessionId;
@@ -902,6 +938,7 @@ async function startLocalAgentRun(opts, sendEvent) {
         }
       }
     } finally {
+      canceledClaudeRuns.delete(runId);
       cleanupRunHelperConfig(runId);
     }
   }
@@ -946,6 +983,7 @@ async function cancelLocalAgentRun(runId) {
   // Claude SDK runs: close the live query stream.
   const claudeStream = activeClaudeQueries.get(id);
   if (claudeStream) {
+    canceledClaudeRuns.add(id);
     try { claudeStream.close?.(); } catch { /* ignore */ }
     activeClaudeQueries.delete(id);
     return true;

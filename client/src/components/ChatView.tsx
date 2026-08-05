@@ -3361,10 +3361,10 @@ export const ChatView = memo(function ChatView({
         {!usersCollapsed && channelSettingsOpen && (
           <div className="chat-channel-settings-panel">
             <div className="chat-channel-settings-heading">
-              <strong>Agent settings</strong>
+              <strong>Project setup</strong>
               <button type="button" onClick={() => setChannelSettingsOpen(false)} aria-label="Close settings"><X size={12} /></button>
             </div>
-            <label htmlFor={`chat-cwd-${channelId}`}>Working directory</label>
+            <label htmlFor={`chat-cwd-${channelId}`}>Project folder</label>
             <div className="chat-channel-cwd">
               <input
                 id={`chat-cwd-${channelId}`}
@@ -3379,9 +3379,11 @@ export const ChatView = memo(function ChatView({
               />
               {channelCwdSaved && <span className="chat-channel-cwd-saved">saved</span>}
             </div>
-            <p>Overrides each agent's own working directory in this channel.</p>
-            <label htmlFor={`chat-board-${channelId}`}>Project board</label>
-            <div className="chat-channel-board-row">
+            <p>Where agents work in this channel. You can add this later.</p>
+            <details className="chat-project-tools" open={Boolean(channelCwd || channelKanbanNoteId)}>
+              <summary>Developer tools <span>board, work items, and isolated workspaces</span></summary>
+              <label htmlFor={`chat-board-${channelId}`}>Project board</label>
+              <div className="chat-channel-board-row">
               <select
                 id={`chat-board-${channelId}`}
                 value={channelKanbanNoteId}
@@ -3428,17 +3430,18 @@ export const ChatView = memo(function ChatView({
               >
                 Internal board
               </button>
-            </div>
-            <p className="chat-channel-board-hint">
-              Pointer to a vault board (e.g. project board in the sidebar). Superkanban collates every board.
-            </p>
-            <ChatWorkspacePanel
-              channelId={channelId}
-              channelName={channelName}
-              vaultId={vaultId}
-              cwd={channelCwd}
-              onUseWorkspace={(path) => { void saveChannelCwd(path); }}
-            />
+              </div>
+              <p className="chat-channel-board-hint">
+                Optional pointer to a vault board. Superkanban collates every board.
+              </p>
+              <ChatWorkspacePanel
+                channelId={channelId}
+                channelName={channelName}
+                vaultId={vaultId}
+                cwd={channelCwd}
+                onUseWorkspace={(path) => { void saveChannelCwd(path); }}
+              />
+            </details>
           </div>
         )}
 

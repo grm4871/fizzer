@@ -132,9 +132,10 @@ try {
   await plain.evaluate((t) => localStorage.setItem('docs_token', t), token);
   await plain.goto(APP_URL, { waitUntil: 'networkidle' });
   await plain.getByText('ws-chan', { exact: false }).first().click();
-  await plain.getByRole('button', { name: 'Agent settings' }).first().click();
+  await plain.getByRole('button', { name: 'Project setup' }).first().click();
   await plain.locator('.chat-channel-settings-panel').waitFor({ timeout: 15000 });
   check('settings panel is reachable from the chat sidebar', await plain.locator('.chat-channel-settings-panel').isVisible());
+  await plain.locator('.chat-project-tools > summary').click();
   check('browser keeps durable items visible but offers no host-local workspace controls',
     (await plain.locator('.chat-workspaces').innerText()).includes('Worktrees require the desktop app.')
       && await plain.locator('.chat-workspaces-list').count() === 0);
@@ -150,7 +151,8 @@ try {
   await page.evaluate((t) => localStorage.setItem('docs_token', t), token);
   await page.goto(APP_URL, { waitUntil: 'networkidle' });
   await page.getByText('ws-chan', { exact: false }).first().click();
-  await page.getByRole('button', { name: 'Agent settings' }).first().click();
+  await page.getByRole('button', { name: 'Project setup' }).first().click();
+  await page.locator('.chat-project-tools > summary').click();
 
   const panel = page.locator('.chat-workspaces');
   await panel.waitFor({ timeout: 15000 });
