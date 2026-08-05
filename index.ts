@@ -50,6 +50,7 @@ import {
   addVaultMember,
   ensureVaultMembersSchema,
   getVaultRole,
+  isReadOnlyVaultMutation,
   isVaultRole,
   listVaultMembers,
   removeVaultMember,
@@ -606,6 +607,9 @@ function requireAuth(req: AuthedRequest, res: Response, next: NextFunction) {
     if (req.user.access === 'agent') {
       const json = res.json.bind(res);
       res.json = ((body: unknown) => json(sanitizeAgentJson(body))) as Response['json'];
+    }
+    if (isReadOnlyVaultMutation(db, req.user.id, req.method, req.path)) {
+      return res.status(403).json({ error: 'Viewer role cannot modify this vault' });
     }
     next();
   } catch {
@@ -1404,12 +1408,15 @@ app.get('/api/vaults/:id/members', requireAuth, (req: AuthedRequest, res) => {
 app.post('/api/vaults/:id/members', requireAuth, (req: AuthedRequest, res) => {
   const vault = getVault(db, req.params.id, req.user!.id);
   if (!vault) return res.status(404).json({ error: 'Vault not found' });
+  if (getVaultRole(db, vault.id, req.user!.id) !== 'owner') {
+    return res.status(403).json({ error: 'Only the vault owner can invite members' });
+  }
   try {
     const username = String(req.body?.username || '').trim().replace(/^@+/, '').toLowerCase();
     if (!username) return res.status(400).json({ error: 'Username is required' });
     const roleRaw = String(req.body?.role || 'editor').trim().toLowerCase();
     if (!isVaultRole(roleRaw) || roleRaw === 'owner') {
-      return res.status(400).json({ error: 'Role must be admin, editor, or viewer' });
+      return res.status(400).json({ error: 'Role must be editor or viewer' });
     }
     const user = db.prepare('SELECT id FROM users WHERE username = ?').get(username) as { id: number } | undefined;
     if (!user) return res.status(404).json({ error: 'User not found' });
@@ -1423,12 +1430,15 @@ app.post('/api/vaults/:id/members', requireAuth, (req: AuthedRequest, res) => {
 app.patch('/api/vaults/:id/members/:userId', requireAuth, (req: AuthedRequest, res) => {
   const vault = getVault(db, req.params.id, req.user!.id);
   if (!vault) return res.status(404).json({ error: 'Vault not found' });
+  if (getVaultRole(db, vault.id, req.user!.id) !== 'owner') {
+    return res.status(403).json({ error: 'Only the vault owner can change roles' });
+  }
   try {
     const targetUserId = Number(req.params.userId);
     if (!Number.isInteger(targetUserId)) return res.status(400).json({ error: 'Invalid user id' });
     const roleRaw = String(req.body?.role || '').trim().toLowerCase();
     if (!isVaultRole(roleRaw) || roleRaw === 'owner') {
-      return res.status(400).json({ error: 'Role must be admin, editor, or viewer' });
+      return res.status(400).json({ error: 'Role must be editor or viewer' });
     }
     const member = setVaultMemberRole(db, vault.id, req.user!.id, targetUserId, roleRaw as VaultRole);
     res.json({ member });
@@ -1443,6 +1453,9 @@ app.delete('/api/vaults/:id/members/:userId', requireAuth, (req: AuthedRequest, 
   try {
     const targetUserId = Number(req.params.userId);
     if (!Number.isInteger(targetUserId)) return res.status(400).json({ error: 'Invalid user id' });
+    if (targetUserId !== req.user!.id && getVaultRole(db, vault.id, req.user!.id) !== 'owner') {
+      return res.status(403).json({ error: 'Only the vault owner can remove members' });
+    }
     removeVaultMember(db, vault.id, req.user!.id, targetUserId);
     res.json({ ok: true });
   } catch (error) {
@@ -1661,7 +1674,7 @@ app.patch('/api/folders/:id', requireAuth, (req: AuthedRequest, res) => {
   const owned = db.prepare(`
     SELECT f.id FROM folders f
     JOIN vault_members m ON m.vault_id = f.vault_id
-    WHERE f.id = ? AND m.user_id = ? AND m.role IN ('owner','admin','editor')
+    WHERE f.id = ? AND m.user_id = ? AND m.role IN ('owner','editor')
   `).get(req.params.id, req.user!.id);
   if (!owned) {
     const readable = db.prepare(`
@@ -1686,7 +1699,7 @@ app.delete('/api/folders/:id', requireAuth, (req: AuthedRequest, res) => {
   const owned = db.prepare(`
     SELECT f.id FROM folders f
     JOIN vault_members m ON m.vault_id = f.vault_id
-    WHERE f.id = ? AND m.user_id = ? AND m.role IN ('owner','admin','editor')
+    WHERE f.id = ? AND m.user_id = ? AND m.role IN ('owner','editor')
   `).get(req.params.id, req.user!.id);
   if (!owned) {
     const readable = db.prepare(`
@@ -2888,7 +2901,7 @@ app.post('/api/runs/:id/cancel', requireAuth, async (req: AuthedRequest, res) =>
   const run = getRun(db, Number(req.params.id));
   if (!run) return res.status(404).json({ error: 'Run not found' });
 
-  const vault = getVault(db, run.vault_id, req.user!.id);
+  const vault = getWritableVault(db, run.vault_id, req.user!.id);
   if (!vault) return res.status(403).json({ error: 'Access denied' });
 
   try {

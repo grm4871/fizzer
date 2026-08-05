@@ -290,7 +290,7 @@ export function getWritableVault(db: Db, vaultId: string, userId: number): Vault
       FROM vaults v
       JOIN vault_members m ON m.vault_id = v.id
       WHERE v.id = ? AND m.user_id = ?
-        AND m.role IN ('owner', 'admin', 'editor')
+        AND m.role IN ('owner', 'editor')
     `).get(vaultId, userId) as Vault | undefined;
   } catch {
     return getVault(db, vaultId, userId);
