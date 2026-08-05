@@ -701,7 +701,9 @@ export function listSchedulableMissionTasks(
   const args = missionId ? [missionId] : [];
   const missions = db.prepare(`
     SELECT m.* FROM chat_missions m
-    WHERE m.status IN ('active', 'blocked') ${missionFilter}
+    -- A coordinator review is a pause between waves, not a terminal state:
+    -- users can add a follow-up task while reviewing prior evidence.
+    WHERE m.status IN ('active', 'reviewing', 'blocked') ${missionFilter}
     ORDER BY m.created_at ASC, m.rowid ASC
   `).all(...args) as MissionRow[];
   const updates: MissionProjectionUpdate[] = [];

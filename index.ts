@@ -3863,4 +3863,12 @@ httpServer.listen(PORT, () => {
   // Tasks may have become ready immediately before a server restart. Rebuild
   // their deterministic dispatch messages from durable dependency state.
   scheduleMissionWork();
+  // Durable outbox reconciliation makes mission progress independent of a
+  // renderer socket event. A transient dispatch/start failure stays pending
+  // and is retried until it has a run or is explicitly stopped.
+  setInterval(() => {
+    try { scheduleMissionWork(); } catch (error) {
+      console.warn('mission scheduler reconciliation failed:', error instanceof Error ? error.message : error);
+    }
+  }, 5_000).unref();
 });

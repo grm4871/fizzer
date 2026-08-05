@@ -460,6 +460,16 @@ test('a coordinator mission persists, dispatches a focused task, and settles fro
     assert.equal(settled?.update.mission.tasks[0]?.status, 'completed');
     assert.equal(settled?.update.mission.tasks[0]?.summary, 'Reload and reconnect both passed.');
     assert.equal(settled?.wake?.coordinatorRegistrationId, coordinator.id);
+    // Follow-up work may be added while the coordinator is reviewing the
+    // completed wave; it must schedule rather than becoming a stranded row.
+    const followUp = addChatMissionTask(db, 1, 'channel-1', created.mission.id, {
+      coordinatorRegistrationId: coordinator.id,
+      title: 'Review the reconnect evidence', assignee: '@terra',
+    });
+    assert.deepEqual(
+      listSchedulableMissionTasks(db, created.mission.id).candidates.map((candidate) => candidate.taskId),
+      [followUp.task.id],
+    );
     // Terminal events can be replayed; the coordinator wake is claimed once.
     assert.equal(settleMissionTaskForRun(db, 42, 'completed', 'same')?.wake, null);
     assert.equal(
