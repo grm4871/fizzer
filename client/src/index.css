@@ -3958,6 +3958,7 @@ button.chat-avatar-agent {
   overflow: hidden;
 }
 .cascade-run-panel.is-running:not(.open) .crp-header {
+  width: 100%;
   border-color: transparent;
 }
 .cascade-run-panel.is-running:not(.open) {
@@ -4117,27 +4118,33 @@ button.chat-avatar-agent {
   min-height: 30px;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  margin: 3px 4px 3px 0;
-  padding: 4px 8px;
-  border: 1px solid hsla(357, 62%, 58%, 0.28);
-  border-radius: var(--radius-sm);
-  background: var(--danger-subtle);
-  color: var(--danger);
+  justify-content: center;
+  gap: 4px;
+  margin: 3px 6px 3px 0;
+  padding: 4px 9px;
+  border: 1px solid hsla(357, 62%, 58%, 0.2);
+  border-radius: 999px;
+  background: hsla(357, 62%, 58%, 0.07);
+  color: color-mix(in srgb, var(--danger) 82%, var(--text-secondary));
   font-family: var(--font-mono);
-  font-size: 0.6875rem;
-  font-weight: 600;
+  font-size: 0.625rem;
+  font-weight: 650;
+  letter-spacing: 0.025em;
   cursor: pointer;
+  transition: color var(--transition-fast), background var(--transition-fast), border-color var(--transition-fast);
 }
 .crp-stop:hover {
-  background: hsla(357, 62%, 58%, 0.18);
+  border-color: hsla(357, 70%, 62%, 0.56);
+  background: hsla(357, 62%, 58%, 0.16);
+  color: hsl(357, 88%, 76%);
 }
 /* Stop remains available on compact live harnesses: requiring expansion hid
    the only cancel affordance exactly while chat was most crowded. */
 .cascade-run-panel.is-running:not(.open) .crp-stop {
   min-height: 24px;
-  margin: 0 0 0 6px;
-  padding: 2px 7px;
+  align-self: center;
+  margin: 0 4px 0 12px;
+  padding: 2px 8px;
 }
 .crp-shell {
   display: flex;
@@ -5063,6 +5070,14 @@ button.chat-avatar-agent {
 .chat-user.chat-agent-user.is-editing {
   box-shadow: inset 2px 0 0 var(--accent), var(--bevel);
 }
+.chat-user.chat-agent-user.is-supervisor {
+  padding-top: 20px;
+  border-color: color-mix(in srgb, hsl(42, 88%, 59%) 52%, var(--border));
+  background:
+    linear-gradient(100deg, color-mix(in srgb, hsl(42, 82%, 46%) 19%, transparent), transparent 60%),
+    color-mix(in srgb, hsl(38, 42%, 16%) 72%, var(--bg-raised));
+  box-shadow: inset 3px 0 0 hsl(42, 84%, 54%), var(--bevel);
+}
 .chat-user-row {
   display: flex;
   align-items: center;
@@ -5105,17 +5120,35 @@ button.chat-avatar-agent {
   flex: 1;
 }
 .chat-agent-supervisor {
+  position: absolute;
+  top: 5px;
+  left: 8px;
   flex: 0 0 auto;
-  padding: 2px 5px;
-  border: 1px solid color-mix(in srgb, var(--accent) 48%, var(--border));
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--accent-subtle) 72%, transparent);
-  color: var(--accent-hover);
-  font-size: 0.54rem;
-  font-weight: 750;
-  letter-spacing: 0.055em;
+  padding: 2px 6px 2px 19px;
+  border: 1px solid color-mix(in srgb, hsl(42, 88%, 59%) 55%, var(--border));
+  border-radius: 4px;
+  background: color-mix(in srgb, hsl(42, 78%, 28%) 56%, var(--bg-raised));
+  color: hsl(43, 95%, 76%);
+  font-size: 0.56rem;
+  font-weight: 800;
+  letter-spacing: 0.075em;
   line-height: 1;
   text-transform: uppercase;
+}
+.chat-agent-supervisor-emblem {
+  position: absolute;
+  z-index: 1;
+  top: 6px;
+  left: 11px;
+  display: grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  border: 1px solid hsl(42, 88%, 64%);
+  border-radius: 4px;
+  background: hsl(39, 60%, 17%);
+  color: hsl(43, 96%, 71%);
+  box-shadow: 0 1px 5px hsl(38, 78%, 8%);
 }
 .chat-user-copy strong {
   color: inherit;

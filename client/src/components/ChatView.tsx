@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { Bot, ClipboardList, Copy, Forward, Hash, ImagePlus, Paperclip, Reply, Send, Trash2, X } from 'lucide-react';
+import { Bot, ClipboardList, Copy, Crown, Forward, Hash, ImagePlus, Paperclip, Reply, Send, Trash2, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
@@ -3398,7 +3398,7 @@ export const ChatView = memo(function ChatView({
           const planUsage = runnerHealth?.planUsage?.[planUsageProviderId(agent.registration.agentId)] || null;
           return (
             <div
-              className={`chat-user chat-agent-user${isEditing ? ' is-editing' : ''}`}
+              className={`chat-user chat-agent-user${agent.registration.orchestrator ? ' is-supervisor' : ''}${isEditing ? ' is-editing' : ''}`}
               key={agent.registration.id}
             >
               <button
@@ -3408,6 +3408,11 @@ export const ChatView = memo(function ChatView({
                 title="Channel settings for this agent"
               >
                 <ChatAvatar name={agent.registration.displayName || agent.label} kind="agent" avatarUrl={agent.registration.avatarUrl} size="sm" />
+                {agent.registration.orchestrator && (
+                  <span className="chat-agent-supervisor-emblem" title="Channel supervisor" aria-label="Channel supervisor">
+                    <Crown size={11} strokeWidth={2.6} />
+                  </span>
+                )}
                 <div className="chat-user-copy">
                   <div className="chat-user-copy-head">
                     <strong>{agent.registration.displayName || agent.label}</strong>
