@@ -114,8 +114,8 @@ try {
 
   const guestMembers = await must(`/api/vaults/${vault.id}/members`, { headers: guest.auth });
   check('members can see the roster and their own role', guestMembers.members.length === 2 && guestMembers.role === 'editor');
-  check('editors cannot invite other members', (await request(`/api/vaults/${vault.id}/members`, { method: 'POST', headers: guest.auth, body: JSON.stringify({ username: ownerName, role: 'viewer' }) })).status === 400);
-  check('editors cannot demote the owner', (await request(`/api/vaults/${vault.id}/members/${owner.user.id}`, { method: 'PATCH', headers: guest.auth, body: JSON.stringify({ role: 'viewer' }) })).status === 400);
+  check('editors cannot invite other members', (await request(`/api/vaults/${vault.id}/members`, { method: 'POST', headers: guest.auth, body: JSON.stringify({ username: ownerName, role: 'viewer' }) })).status === 403);
+  check('editors cannot demote the owner', (await request(`/api/vaults/${vault.id}/members/${owner.user.id}`, { method: 'PATCH', headers: guest.auth, body: JSON.stringify({ role: 'viewer' }) })).status === 403);
 
   const demoted = await must(`/api/vaults/${vault.id}/members/${guest.user.id}`, {
     method: 'PATCH', headers: owner.auth, body: JSON.stringify({ role: 'viewer' }),
