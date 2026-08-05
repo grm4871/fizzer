@@ -126,8 +126,8 @@ try {
   check('+ menu stays open after the opening right-click', await menu.isVisible());
 
   const labels = (await menu.locator('button').allInnerTexts()).map((t) => t.trim().toLowerCase());
-  check('+ menu offers New chat', labels.some((t) => t.includes('new chat')), JSON.stringify(labels));
-  check('+ menu offers Open Superkanban', labels.some((t) => t.includes('superkanban')), JSON.stringify(labels));
+  check('+ menu offers New channel/chat', labels.some((t) => t.includes('new channel') || t.includes('new chat')), JSON.stringify(labels));
+  check('+ menu offers Superkanban', labels.some((t) => t.includes('superkanban')), JSON.stringify(labels));
 
   // Clipped-menu regression: an overflow ancestor used to cut the menu off.
   const box = await menu.boundingBox();
