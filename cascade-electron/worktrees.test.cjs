@@ -135,6 +135,38 @@ test('status separates uncommitted changes from unpushed commits', async () => {
   assert.equal(primary.isPrimary, true);
 });
 
+test('review evidence is base-relative across commits, edits, and untracked files', async () => {
+  const repo = makeRepo('review-evidence');
+  const created = await wt.createWorkspace({ dir: repo, slug: 'review' });
+  fs.writeFileSync(path.join(created.path, 'README.md'), '# committed\n');
+  execFileSync('git', ['add', 'README.md'], { cwd: created.path });
+  execFileSync('git', ['commit', '-m', 'committed edit'], { cwd: created.path });
+  fs.writeFileSync(path.join(created.path, 'README.md'), '# working tree\n');
+  fs.writeFileSync(path.join(created.path, 'notes.txt'), 'untracked review note\n');
+
+  const evidence = await wt.workspaceDiff(created.path);
+  assert.equal(evidence.ok, true, evidence.error);
+  assert.equal(evidence.baseCommit, created.baseCommit);
+  assert.deepEqual(evidence.files.map((file) => file.path).sort(), ['README.md', 'notes.txt']);
+
+  const tracked = await wt.workspaceFileDiff({ dir: created.path, file: 'README.md' });
+  assert.equal(tracked.ok, true, tracked.error);
+  assert.equal(tracked.kind, 'patch');
+  assert.match(tracked.text, /\+\# working tree/);
+
+  const untracked = await wt.workspaceFileDiff({ dir: created.path, file: 'notes.txt' });
+  assert.equal(untracked.ok, true, untracked.error);
+  assert.equal(untracked.kind, 'text');
+  assert.equal(untracked.text, 'untracked review note\n');
+
+  const escaped = await wt.workspaceFileDiff({ dir: created.path, file: '../README.md' });
+  assert.equal(escaped.ok, false);
+  assert.match(escaped.error, /inside the workspace|not changed/);
+  const unchanged = await wt.workspaceFileDiff({ dir: created.path, file: 'not-changed.txt' });
+  assert.equal(unchanged.ok, false);
+  assert.match(unchanged.error, /not changed/);
+});
+
 test('removal refuses to discard work, and never touches the primary checkout', async () => {
   const repo = makeRepo('gamma');
   const created = await wt.createWorkspace({ dir: repo, slug: 'risky' });

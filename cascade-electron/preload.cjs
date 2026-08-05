@@ -102,6 +102,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // other. Creating, removing, pushing, and opening a PR are all explicit.
   listWorktrees: (dir) => ipcRenderer.invoke('worktree:list', { dir }),
   getWorktreeStatus: (dir) => ipcRenderer.invoke('worktree:status', { dir }),
+  getWorktreeDiff: (dir) => ipcRenderer.invoke('worktree:diff', { dir }),
+  getWorktreeFileDiff: (opts) => ipcRenderer.invoke('worktree:fileDiff', opts),
   createWorktree: (opts) => ipcRenderer.invoke('worktree:create', opts),
   prepareWorktree: (opts) => ipcRenderer.invoke('worktree:prepare', opts),
   removeWorktree: (opts) => ipcRenderer.invoke('worktree:remove', opts),

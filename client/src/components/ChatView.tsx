@@ -20,6 +20,7 @@ import { highlightJSON } from './jsonHighlighter';
 import { CascadeRunPanel } from './CascadeRunPanel';
 import { ChatSidebarButtons } from './ChatSidebarButtons';
 import { ChatWorkspacePanel } from './ChatWorkspacePanel';
+import { ChatTaskReview } from './ChatTaskReview';
 import { ChatWorkTrace } from './ChatWorkTrace';
 import { hasRunActivity } from '../chat/harnessActivity';
 import { isSteeringContinuationMessage, segmentTranscript } from '../chat/workTrace';
@@ -1548,6 +1549,9 @@ function ChatMissionCard({ mission }: { mission: ChatMission }) {
                     </div>
                   )}
                   {task.summary && <small>{task.summary}</small>}
+                  {task.workItemId && task.worktreePath && (
+                    <ChatTaskReview workItemId={task.workItemId} worktreePath={task.worktreePath} />
+                  )}
                 </div>
               </div>
             ))}

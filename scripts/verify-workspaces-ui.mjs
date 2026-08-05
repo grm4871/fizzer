@@ -73,13 +73,26 @@ const workspaces = [
 ];
 const status = (dir) => ({
   ok: true, path: dir, repo: 'cascade', branch: dir === '/repo' ? 'master' : 'cascade/native-prs',
-  head: 'abc1234', isPrimary: dir === '/repo', baseBranch: 'master', dirty: false, changedFiles: [],
+  head: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', isPrimary: dir === '/repo', baseBranch: 'master',
+  baseCommit: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', dirty: false,
+  changedFiles: dir === '/repo' ? [] : [{ status: 'M', path: 'client/src/review.tsx' }],
   commits: dir === '/repo' ? [] : [{ sha: 'def5678', subject: 'add native PRs' }],
   unpushed: dir === '/repo' ? 0 : 1, behindBase: 0, hasUpstream: false,
 });
 window.electronAPI = {
   listWorktrees: async (dir) => { record('list', dir); return { ok: true, repo: 'cascade', primaryRoot: '/repo', workspaces }; },
   getWorktreeStatus: async (dir) => { record('status', dir); return status(dir); },
+  getWorktreeDiff: async (dir) => { record('diff', dir); return {
+    ok: true, path: dir, repo: 'cascade', branch: 'cascade/native-prs',
+    head: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', baseBranch: 'master',
+    baseCommit: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', dirty: false,
+    files: [{ status: 'M', path: 'client/src/review.tsx' }],
+    summary: '1 file changed, 8 insertions(+), 1 deletion(-)',
+  }; },
+  getWorktreeFileDiff: async (opts) => { record('fileDiff', opts); return {
+    ok: true, path: opts.file, status: 'M', kind: 'patch', truncated: false,
+    text: 'diff --git a/client/src/review.tsx b/client/src/review.tsx\\n+native review',
+  }; },
   createWorktree: async (opts) => { record('create', opts); return { ok: true, path: '/ws/' + opts.slug, branch: 'cascade/' + opts.slug }; },
   removeWorktree: async (opts) => { record('remove', opts); return { ok: false, error: '1 commit(s) exist only here', needsForce: true }; },
   createWorktreePullRequest: async (opts) => { record('pr', opts); return { ok: true, url: 'https://github.com/x/y/pull/7', branch: 'cascade/native-prs', base: 'master', draft: opts.draft }; },
@@ -101,6 +114,14 @@ try {
   const { note } = await must(`${API_BASE}/api/vaults/${vault.id}/notes`, {
     method: 'POST', headers: auth, body: JSON.stringify({ title: 'ws-chan', content: 'cascade://chat-channel' }),
   });
+  const { item: reviewItem } = await must(`${API_BASE}/api/vaults/${vault.id}/work-items`, {
+    method: 'POST', headers: auth, body: JSON.stringify({
+      title: 'Review fixture', channelId: note.id, status: 'review', sourceKind: 'manual',
+      repository: '/repo', workspaceMode: 'isolated', worktreePath: '/ws/native-prs',
+      branch: 'cascade/native-prs', baseCommit: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      verification: 'headless review fixture',
+    }),
+  });
 
   const { chromium } = await import('playwright');
   browser = await chromium.launch({ headless: true });
@@ -114,7 +135,9 @@ try {
   await plain.getByRole('button', { name: 'Agent settings' }).first().click();
   await plain.locator('.chat-channel-settings-panel').waitFor({ timeout: 15000 });
   check('settings panel is reachable from the chat sidebar', await plain.locator('.chat-channel-settings-panel').isVisible());
-  check('no workspace panel without a desktop bridge', await plain.locator('.chat-workspaces').count() === 0);
+  check('browser keeps durable items visible but offers no host-local workspace controls',
+    (await plain.locator('.chat-workspaces').innerText()).includes('Worktrees require the desktop app.')
+      && await plain.locator('.chat-workspaces-list').count() === 0);
   await plain.close();
 
   // ── Desktop shell (bridge present).
@@ -150,6 +173,30 @@ try {
   await page.waitForFunction(() => document.querySelector('.chat-channel-cwd input')?.value === '/ws/native-prs', null, { timeout: 10000 });
   const settings = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${note.id}/settings`, { headers: auth });
   check('using a workspace persists the channel working directory', settings.settings?.cwd === '/ws/native-prs', JSON.stringify(settings.settings));
+
+  // ── Local review: disclose files, inspect one patch, then persist both
+  // review record kinds against the exact base/head snapshot.
+  await page.getByRole('button', { name: /Review fixture/ }).click();
+  const review = page.locator('.chat-task-review').first();
+  await review.locator('summary').click();
+  await review.getByRole('button', { name: /client\/src\/review\.tsx/ }).waitFor({ timeout: 10_000 });
+  await review.getByRole('button', { name: /client\/src\/review\.tsx/ }).click();
+  await review.locator('.chat-task-review-patch').waitFor({ timeout: 10_000 });
+  check('task review progressively loads the selected base-relative patch',
+    (await review.locator('.chat-task-review-patch').innerText()).includes('native review'));
+  const reviewNote = review.locator('textarea');
+  await reviewNote.fill('Keep this guard.');
+  await review.getByRole('button', { name: 'Comment' }).click();
+  await review.locator('.chat-task-review-comments', { hasText: 'Keep this guard.' }).waitFor({ timeout: 10_000 });
+  await review.getByRole('button', { name: 'Request changes' }).waitFor({ state: 'visible' });
+  await reviewNote.fill('Add a stale-snapshot regression test.');
+  await review.getByRole('button', { name: 'Request changes' }).click();
+  await review.locator('.chat-task-review-comments', { hasText: 'Add a stale-snapshot regression test.' }).waitFor({ timeout: 10_000 });
+  const persisted = await must(`${API_BASE}/api/work-items/${reviewItem.id}`, { headers: auth });
+  check('review comments and change requests survive an API reload',
+    persisted.reviews.some((entry) => entry.kind === 'comment' && entry.note === 'Keep this guard.')
+      && persisted.reviews.some((entry) => entry.kind === 'change_request' && entry.note.includes('stale-snapshot')),
+    JSON.stringify(persisted.reviews));
 
   // ── PR gating: available in a workspace with commits, refused on primary.
   const prButton = page.getByRole('button', { name: 'Open pull request' });

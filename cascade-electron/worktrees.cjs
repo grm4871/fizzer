@@ -33,6 +33,7 @@ const path = require('path');
 const GIT_TIMEOUT_MS = 20000;
 const GH_TIMEOUT_MS = 60000;
 const REGISTRY_FILE = 'workspaces.json';
+const MAX_REVIEW_TEXT_BYTES = 512 * 1024;
 
 /** Root for Cascade-managed worktrees. Overridable for tests. */
 function workspacesRoot() {
@@ -46,7 +47,9 @@ function run(file, args, cwd, timeout = GIT_TIMEOUT_MS) {
       resolve({
         ok: !error,
         code: error && typeof error.code === 'number' ? error.code : error ? 1 : 0,
-        stdout: String(stdout || '').trim(),
+        // Preserve leading spaces: porcelain status uses them for the index /
+        // worktree columns, and diff context lines begin with one by design.
+        stdout: String(stdout || '').trimEnd(),
         stderr: String(stderr || '').trim() || (error ? String(error.message) : ''),
       });
     });
@@ -107,7 +110,9 @@ async function resolveRepo(dir) {
   const root = top.stdout;
   const [branch, head, common] = await Promise.all([
     git(['rev-parse', '--abbrev-ref', 'HEAD'], root),
-    git(['rev-parse', '--short', 'HEAD'], root),
+    // Review annotations bind to an exact snapshot, so keep the full object id;
+    // renderers may shorten it for display.
+    git(['rev-parse', 'HEAD'], root),
     git(['rev-parse', '--path-format=absolute', '--git-common-dir'], root),
   ]);
   // In a worktree the common dir points at the primary checkout's .git, which
@@ -178,7 +183,9 @@ async function workspaceStatus(dir) {
       return { status, path: paths.at(-1) || '' };
     }).filter((file) => file.path)
     : [];
-  const changedFiles = [...new Map([...baseFiles, ...workingFiles].map((file) => [file.path, file])).values()];
+  // Prefer the base-relative classification (for example A over a later
+  // working-tree M); retain working-only entries such as untracked files.
+  const changedFiles = [...new Map([...workingFiles, ...baseFiles].map((file) => [file.path, file])).values()];
   const commits = logOut.ok && logOut.stdout
     ? logOut.stdout.split('\n').map((line) => {
       const [sha, ...rest] = line.split(' ');
@@ -216,6 +223,90 @@ async function workspaceStatus(dir) {
     behindBase,
     hasUpstream: Boolean(upstream.ok && upstream.stdout),
   };
+}
+
+function clipReviewText(value) {
+  const buffer = Buffer.from(String(value || ''), 'utf8');
+  if (buffer.length <= MAX_REVIEW_TEXT_BYTES) return { text: buffer.toString('utf8'), truncated: false };
+  return {
+    text: `${buffer.subarray(0, MAX_REVIEW_TEXT_BYTES).toString('utf8')}\n\n[Diff truncated by Cascade]`,
+    truncated: true,
+  };
+}
+
+/**
+ * Base-relative file inventory for local review. The immutable base commit
+ * recorded when Cascade prepared the worktree is preferred over a moving
+ * branch ref, so a reviewer sees the same comparison the task owns.
+ */
+async function workspaceDiff(dir) {
+  const status = await workspaceStatus(dir);
+  if (!status.ok) return status;
+  if (!status.baseCommit) return { ok: false, error: 'Workspace has no recorded base commit' };
+
+  const shortStat = await git(['diff', '--shortstat', '--no-ext-diff', status.baseCommit, '--'], status.path);
+  const untracked = status.changedFiles.filter((file) => file.status === '??').length;
+  const summary = [
+    shortStat.ok ? shortStat.stdout : '',
+    untracked ? `${untracked} untracked file${untracked === 1 ? '' : 's'}` : '',
+  ].filter(Boolean).join(' · ');
+  return {
+    ok: true,
+    path: status.path,
+    repo: status.repo,
+    branch: status.branch,
+    head: status.head,
+    baseBranch: status.baseBranch,
+    baseCommit: status.baseCommit,
+    dirty: status.dirty,
+    files: status.changedFiles,
+    summary,
+  };
+}
+
+/** Read one changed file's patch/content without granting arbitrary file IO. */
+async function workspaceFileDiff({ dir, file } = {}) {
+  const evidence = await workspaceDiff(dir);
+  if (!evidence.ok) return evidence;
+
+  const relative = String(file || '').trim();
+  if (!relative || path.isAbsolute(relative) || relative.includes('\0')) {
+    return { ok: false, error: 'A repository-relative changed file is required' };
+  }
+  const normalized = path.normalize(relative);
+  if (normalized === '..' || normalized.startsWith(`..${path.sep}`)) {
+    return { ok: false, error: 'File must stay inside the workspace' };
+  }
+  const changed = evidence.files.find((item) => item.path === relative);
+  if (!changed) return { ok: false, error: 'File is not changed relative to this workspace base' };
+
+  if (changed.status === '??') {
+    const absolute = path.resolve(evidence.path, normalized);
+    const rootPrefix = `${path.resolve(evidence.path)}${path.sep}`;
+    if (!absolute.startsWith(rootPrefix)) return { ok: false, error: 'File must stay inside the workspace' };
+    let info;
+    try { info = fs.lstatSync(absolute); } catch { return { ok: false, error: 'Changed file no longer exists' }; }
+    if (!info.isFile() || info.isSymbolicLink()) {
+      return { ok: true, path: relative, status: changed.status, kind: 'binary', text: '', truncated: false };
+    }
+    const bytesToRead = Math.min(info.size, MAX_REVIEW_TEXT_BYTES + 1);
+    const content = Buffer.alloc(bytesToRead);
+    const fd = fs.openSync(absolute, 'r');
+    try { fs.readSync(fd, content, 0, bytesToRead, 0); } finally { fs.closeSync(fd); }
+    if (content.subarray(0, Math.min(content.length, 8000)).includes(0)) {
+      return { ok: true, path: relative, status: changed.status, kind: 'binary', text: '', truncated: false };
+    }
+    const clipped = clipReviewText(content.toString('utf8'));
+    return { ok: true, path: relative, status: changed.status, kind: 'text', ...clipped };
+  }
+
+  const diff = await git([
+    'diff', '--no-color', '--no-ext-diff', '--find-renames', '--unified=4',
+    evidence.baseCommit, '--', relative,
+  ], evidence.path);
+  if (!diff.ok) return { ok: false, error: diff.stderr || 'Could not read file diff' };
+  const clipped = clipReviewText(diff.stdout);
+  return { ok: true, path: relative, status: changed.status, kind: 'patch', ...clipped };
 }
 
 /**
@@ -462,6 +553,8 @@ module.exports = {
   defaultBaseBranch,
   listWorkspaces,
   workspaceStatus,
+  workspaceDiff,
+  workspaceFileDiff,
   createWorkspace,
   prepareWorkspace,
   removeWorkspace,

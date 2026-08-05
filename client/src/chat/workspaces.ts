@@ -47,11 +47,36 @@ export type PullRequest = {
   checks: { total: number; failing: number; pending: number };
 };
 
+export type WorkspaceDiff = {
+  ok: true;
+  path: string;
+  repo: string;
+  branch: string;
+  head: string;
+  baseBranch: string;
+  baseCommit: string;
+  dirty: boolean;
+  files: Array<{ status: string; path: string }>;
+  summary: string;
+};
+
+export type WorkspaceFileDiff = {
+  ok: true;
+  path: string;
+  status: string;
+  kind: 'patch' | 'text' | 'binary';
+  text: string;
+  truncated: boolean;
+};
+
 type Failure = { ok: false; error: string; needsForce?: boolean };
 
 export type WorkspaceBridge = {
   listWorktrees: (dir: string) => Promise<{ ok: true; repo: string; primaryRoot: string; workspaces: Workspace[] } | Failure>;
   getWorktreeStatus: (dir: string) => Promise<WorkspaceStatus | Failure>;
+  /** Optional while older desktop shells remain in circulation. */
+  getWorktreeDiff?: (dir: string) => Promise<WorkspaceDiff | Failure>;
+  getWorktreeFileDiff?: (opts: { dir: string; file: string }) => Promise<WorkspaceFileDiff | Failure>;
   createWorktree: (opts: {
     dir: string;
     slug: string;

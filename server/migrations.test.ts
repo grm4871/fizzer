@@ -15,6 +15,7 @@ import {
 import { ensureChatDispatchSchema } from './chat-dispatch.js';
 import { ensureChatMissionSchema } from './chat-missions.js';
 import { ensureRunnerSchema } from './runner.js';
+import { ensureWorkItemSchema } from './workItems.js';
 
 /**
  * Release matrix — "API, persistence, migrations": a feature that works on a
@@ -182,6 +183,28 @@ test('mission and durable dispatch tables initialize idempotently on an upgraded
       ensureChatDispatchSchema(db);
       ensureChatMissionSchema(db);
     });
+  });
+});
+
+test('an existing work-item review table gains snapshot-bound review columns', () => {
+  withDb((db) => {
+    db.exec(`
+      CREATE TABLE work_item_reviews (
+        id TEXT PRIMARY KEY,
+        work_item_id TEXT NOT NULL,
+        from_registration_id TEXT,
+        to_registration_id TEXT,
+        note TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'requested',
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+    `);
+    ensureWorkItemSchema(db);
+    const reviewColumns = columns(db, 'work_item_reviews');
+    for (const required of ['kind', 'author_user_id', 'file_path', 'line', 'base_commit', 'head_commit']) {
+      assert.ok(reviewColumns.includes(required), `review migration did not add ${required}`);
+    }
+    assert.doesNotThrow(() => ensureWorkItemSchema(db));
   });
 });
 

@@ -55,9 +55,16 @@ export type WorkItem = {
 export type WorkItemReview = {
   id: string;
   workItemId: string;
+  kind: 'handoff' | 'comment' | 'change_request';
+  authorUserId: number | null;
+  authorUsername: string;
   fromRegistrationId: string | null;
   toRegistrationId: string | null;
   note: string;
+  filePath: string;
+  line: number | null;
+  baseCommit: string;
+  headCommit: string;
   status: string;
   createdAt: string;
 };
@@ -97,6 +104,24 @@ export async function fetchWorkItem(id: string) {
   return api<{ item: WorkItem; reviews: WorkItemReview[]; siblings: WorkItem[] }>(
     `/api/work-items/${encodeURIComponent(id)}`,
   );
+}
+
+export async function createWorkItemReview(
+  id: string,
+  input: {
+    kind: 'comment' | 'change_request';
+    note: string;
+    filePath?: string;
+    line?: number;
+    baseCommit: string;
+    headCommit: string;
+  },
+) {
+  const data = await api<{ review: WorkItemReview }>(`/api/work-items/${encodeURIComponent(id)}/reviews`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+  return data.review;
 }
 
 export async function patchWorkItem(id: string, patch: Partial<WorkItem> & { dependsOn?: string[] }) {

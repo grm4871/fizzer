@@ -22,6 +22,7 @@ import {
   type WorkItem,
   type WorkItemReview,
 } from '../chat/workItems';
+import { ChatTaskReview } from './ChatTaskReview';
 
 /**
  * @file ChatWorkspacePanel.tsx — durable work items + git task workspaces
@@ -357,6 +358,9 @@ export function ChatWorkspacePanel({ channelId, channelName, vaultId, cwd, onUse
                   <GitPullRequest size={11} />
                   PR {selected.prNumber ? `#${selected.prNumber}` : ''} {selected.prState || ''}
                 </a>
+              )}
+              {selected.worktreePath && (
+                <ChatTaskReview workItemId={selected.id} worktreePath={selected.worktreePath} />
               )}
             </div>
           )}

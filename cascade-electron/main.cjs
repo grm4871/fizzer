@@ -824,6 +824,8 @@ ipcMain.handle('perf:getPath', async () => {
 // channel's working directory and gets structured status back.
 ipcMain.handle('worktree:list', async (_event, { dir } = {}) => worktrees.listWorkspaces(dir));
 ipcMain.handle('worktree:status', async (_event, { dir } = {}) => worktrees.workspaceStatus(dir));
+ipcMain.handle('worktree:diff', async (_event, { dir } = {}) => worktrees.workspaceDiff(dir));
+ipcMain.handle('worktree:fileDiff', async (_event, opts = {}) => worktrees.workspaceFileDiff(opts));
 ipcMain.handle('worktree:create', async (_event, opts = {}) => worktrees.createWorkspace(opts));
 ipcMain.handle('worktree:prepare', async (_event, opts = {}) => worktrees.prepareWorkspace(opts));
 ipcMain.handle('worktree:remove', async (_event, opts = {}) => worktrees.removeWorkspace(opts));

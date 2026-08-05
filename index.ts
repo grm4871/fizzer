@@ -62,6 +62,7 @@ import {
   bindWorkItemWorkspace,
   createWorkItem,
   createWorkItemHandoff,
+  createWorkItemReview,
   ensureWorkItemSchema,
   getWorkItem,
   linkWorkItemRun,
@@ -1594,6 +1595,22 @@ app.post('/api/work-items/:id/handoff', requireAuth, (req: AuthedRequest, res) =
     res.status(201).json(result);
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : 'Could not hand off work item' });
+  }
+});
+
+app.post('/api/work-items/:id/reviews', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const review = createWorkItemReview(db, req.user!.id, req.params.id, {
+      kind: String(req.body?.kind || '') as 'comment' | 'change_request',
+      note: String(req.body?.note || ''),
+      filePath: req.body?.filePath != null ? String(req.body.filePath) : undefined,
+      line: req.body?.line != null ? Number(req.body.line) : undefined,
+      baseCommit: String(req.body?.baseCommit || ''),
+      headCommit: String(req.body?.headCommit || ''),
+    });
+    res.status(201).json({ review });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not save review comment' });
   }
 });
 

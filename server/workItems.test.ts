@@ -7,10 +7,12 @@ import {
   bindWorkItemWorkspace,
   createWorkItem,
   createWorkItemHandoff,
+  createWorkItemReview,
   ensureWorkItemSchema,
   getWorkItem,
   linkWorkItemRun,
   listSiblingWorkItems,
+  listWorkItemReviews,
   listWorkItems,
   reapExpiredWorkItemLeases,
   reportWorkItemGitState,
@@ -202,6 +204,41 @@ test('link runs handoff and sibling repository query', () => {
     const siblings = listSiblingWorkItems(db, 1, a.id);
     assert.equal(siblings.length, 1);
     assert.equal(siblings[0]?.id, b.id);
+  } finally {
+    db.close();
+  }
+});
+
+test('review comments and change requests persist against exact Git evidence', () => {
+  const db = setup();
+  try {
+    const item = createWorkItem(db, 1, 'v1', { title: 'Review me', verification: 'node --test' });
+    const baseCommit = 'a'.repeat(40);
+    const headCommit = 'b'.repeat(40);
+    reportWorkItemGitState(db, 1, item.id, {
+      baseCommit,
+      branch: 'cascade/review-me',
+      state: {
+        headCommit, baseBranch: 'master', branch: 'cascade/review-me',
+        changedFiles: 2, dirty: false, ahead: 1, behind: 0, unpushed: 1, hasUpstream: false,
+      },
+    });
+    const comment = createWorkItemReview(db, 1, item.id, {
+      kind: 'comment', note: 'Please keep the guard.', filePath: 'server/workItems.ts', line: 42,
+      baseCommit, headCommit,
+    });
+    assert.equal(comment.kind, 'comment');
+    assert.equal(comment.authorUsername, 'owner');
+    assert.equal(comment.status, 'done');
+    assert.equal(comment.filePath, 'server/workItems.ts');
+    const request = createWorkItemReview(db, 1, item.id, {
+      kind: 'change_request', note: 'Add a regression test.', baseCommit, headCommit,
+    });
+    assert.equal(request.status, 'requested');
+    assert.equal(listWorkItemReviews(db, 1, item.id).length, 2);
+    assert.throws(() => createWorkItemReview(db, 1, item.id, {
+      kind: 'comment', note: 'stale', baseCommit, headCommit: 'c'.repeat(40),
+    }), /latest desktop Git evidence/);
   } finally {
     db.close();
   }

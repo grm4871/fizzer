@@ -93,9 +93,16 @@ export type WorkItem = {
 export type WorkItemReview = {
   id: string;
   workItemId: string;
+  kind: 'handoff' | 'comment' | 'change_request';
+  authorUserId: number | null;
+  authorUsername: string;
   fromRegistrationId: string | null;
   toRegistrationId: string | null;
   note: string;
+  filePath: string;
+  line: number | null;
+  baseCommit: string;
+  headCommit: string;
   status: 'requested' | 'accepted' | 'done' | 'canceled';
   createdAt: string;
 };
@@ -216,9 +223,15 @@ export function ensureWorkItemSchema(db: Db): void {
     CREATE TABLE IF NOT EXISTS work_item_reviews (
       id TEXT PRIMARY KEY,
       work_item_id TEXT NOT NULL REFERENCES work_items(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL DEFAULT 'handoff',
+      author_user_id INTEGER,
       from_registration_id TEXT,
       to_registration_id TEXT,
       note TEXT NOT NULL DEFAULT '',
+      file_path TEXT NOT NULL DEFAULT '',
+      line INTEGER,
+      base_commit TEXT NOT NULL DEFAULT '',
+      head_commit TEXT NOT NULL DEFAULT '',
       status TEXT NOT NULL DEFAULT 'requested',
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -232,6 +245,13 @@ export function ensureWorkItemSchema(db: Db): void {
   if (!cols.includes('stop_reason')) db.exec("ALTER TABLE work_items ADD COLUMN stop_reason TEXT NOT NULL DEFAULT ''");
   if (!cols.includes('git_state_json')) db.exec("ALTER TABLE work_items ADD COLUMN git_state_json TEXT NOT NULL DEFAULT ''");
   if (!cols.includes('git_state_updated_at')) db.exec('ALTER TABLE work_items ADD COLUMN git_state_updated_at TEXT');
+  const reviewCols = (db.prepare('PRAGMA table_info(work_item_reviews)').all() as Array<{ name: string }>).map((c) => c.name);
+  if (!reviewCols.includes('kind')) db.exec("ALTER TABLE work_item_reviews ADD COLUMN kind TEXT NOT NULL DEFAULT 'handoff'");
+  if (!reviewCols.includes('author_user_id')) db.exec('ALTER TABLE work_item_reviews ADD COLUMN author_user_id INTEGER');
+  if (!reviewCols.includes('file_path')) db.exec("ALTER TABLE work_item_reviews ADD COLUMN file_path TEXT NOT NULL DEFAULT ''");
+  if (!reviewCols.includes('line')) db.exec('ALTER TABLE work_item_reviews ADD COLUMN line INTEGER');
+  if (!reviewCols.includes('base_commit')) db.exec("ALTER TABLE work_item_reviews ADD COLUMN base_commit TEXT NOT NULL DEFAULT ''");
+  if (!reviewCols.includes('head_commit')) db.exec("ALTER TABLE work_item_reviews ADD COLUMN head_commit TEXT NOT NULL DEFAULT ''");
 }
 
 type WorkItemRow = {
@@ -817,27 +837,65 @@ export function createWorkItemHandoff(
         updated_at = datetime('now')
     WHERE id = ?
   `).run(to, id);
-  const reviewRow = db.prepare('SELECT * FROM work_item_reviews WHERE id = ?').get(reviewId) as {
-    id: string;
-    work_item_id: string;
-    from_registration_id: string | null;
-    to_registration_id: string | null;
-    note: string;
-    status: string;
-    created_at: string;
-  };
+  const review = listWorkItemReviews(db, userId, id).find((item) => item.id === reviewId);
+  if (!review) throw new Error('Review handoff was not persisted');
   return {
     item: getWorkItem(db, userId, id),
-    review: {
-      id: reviewRow.id,
-      workItemId: reviewRow.work_item_id,
-      fromRegistrationId: reviewRow.from_registration_id,
-      toRegistrationId: reviewRow.to_registration_id,
-      note: reviewRow.note,
-      status: reviewRow.status as WorkItemReview['status'],
-      createdAt: reviewRow.created_at,
-    },
+    review,
   };
+}
+
+/**
+ * Persist a human review annotation against the exact local Git snapshot.
+ * A change request records review intent only: it deliberately does not push,
+ * merge, dispatch another worker, or mutate mission/task state.
+ */
+export function createWorkItemReview(
+  db: Db,
+  userId: number,
+  id: string,
+  input: {
+    kind: 'comment' | 'change_request';
+    note: string;
+    filePath?: string;
+    line?: number;
+    baseCommit: string;
+    headCommit: string;
+  },
+): WorkItemReview {
+  const row = getRow(db, id);
+  if (!row) throw new Error('Work item not found');
+  assertVaultAccess(db, row.vault_id, userId, true);
+  if (input.kind !== 'comment' && input.kind !== 'change_request') throw new Error('Invalid review kind');
+  const note = cleanText(input.note, 8000);
+  if (!note) throw new Error('Review comment is required');
+  const baseCommit = cleanText(input.baseCommit, 80);
+  const headCommit = cleanText(input.headCommit, 80);
+  const gitState = parseGitState(row.git_state_json);
+  if (!row.base_commit || baseCommit !== row.base_commit) throw new Error('Review base does not match this work item');
+  if (!gitState || headCommit !== gitState.headCommit) throw new Error('Review head does not match the latest desktop Git evidence');
+
+  const reviewId = crypto.randomUUID();
+  db.prepare(`
+    INSERT INTO work_item_reviews (
+      id, work_item_id, kind, author_user_id, note, file_path, line,
+      base_commit, head_commit, status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    reviewId,
+    id,
+    input.kind,
+    userId,
+    note,
+    cleanText(input.filePath, 1000),
+    Number.isInteger(input.line) && Number(input.line) > 0 ? Number(input.line) : null,
+    baseCommit,
+    headCommit,
+    input.kind === 'change_request' ? 'requested' : 'done',
+  );
+  const review = listWorkItemReviews(db, userId, id).find((item) => item.id === reviewId);
+  if (!review) throw new Error('Review comment was not persisted');
+  return review;
 }
 
 export function listWorkItemReviews(db: Db, userId: number, id: string): WorkItemReview[] {
@@ -845,21 +903,39 @@ export function listWorkItemReviews(db: Db, userId: number, id: string): WorkIte
   if (!row) throw new Error('Work item not found');
   assertVaultAccess(db, row.vault_id, userId, false);
   return (db.prepare(`
-    SELECT * FROM work_item_reviews WHERE work_item_id = ? ORDER BY created_at ASC
+    SELECT r.*, COALESCE(u.username, '') AS author_username
+    FROM work_item_reviews r
+    LEFT JOIN users u ON u.id = r.author_user_id
+    WHERE r.work_item_id = ?
+    ORDER BY r.created_at ASC, r.id ASC
   `).all(id) as Array<{
     id: string;
     work_item_id: string;
+    kind: string;
+    author_user_id: number | null;
+    author_username: string;
     from_registration_id: string | null;
     to_registration_id: string | null;
     note: string;
+    file_path: string;
+    line: number | null;
+    base_commit: string;
+    head_commit: string;
     status: string;
     created_at: string;
   }>).map((item) => ({
     id: item.id,
     workItemId: item.work_item_id,
+    kind: item.kind === 'comment' || item.kind === 'change_request' ? item.kind : 'handoff',
+    authorUserId: item.author_user_id,
+    authorUsername: item.author_username,
     fromRegistrationId: item.from_registration_id,
     toRegistrationId: item.to_registration_id,
     note: item.note,
+    filePath: item.file_path || '',
+    line: item.line,
+    baseCommit: item.base_commit || '',
+    headCommit: item.head_commit || '',
     status: item.status as WorkItemReview['status'],
     createdAt: item.created_at,
   }));
