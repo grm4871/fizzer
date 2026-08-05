@@ -69,6 +69,7 @@ import {
   listWorkItems,
   listWorkItemsForRun,
   reapExpiredWorkItemLeases,
+  reportWorkItemGitState,
   releaseWorkItemLease,
   stopWorkItem,
   updateWorkItem,
@@ -1502,6 +1503,20 @@ app.patch('/api/work-items/:id', requireAuth, (req: AuthedRequest, res) => {
     res.json({ item });
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : 'Could not update work item' });
+  }
+});
+
+/** Desktop workspaces publish base-relative Git evidence; readiness stays server-derived. */
+app.put('/api/work-items/:id/git-state', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const item = reportWorkItemGitState(db, req.user!.id, req.params.id, {
+      baseCommit: String(req.body?.baseCommit || ''),
+      branch: String(req.body?.branch || ''),
+      state: req.body?.state,
+    });
+    res.json({ item });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not report Git state' });
   }
 });
 

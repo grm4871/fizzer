@@ -246,6 +246,7 @@ try {
   check('active mission starts compact', !(await card.evaluate((node) => node.open)));
   await card.locator('summary').click();
   check('mission expands to its worker task', (await card.innerText()).includes('Verify multiplayer persistence'));
+  check('mission task renders durable change-state chips', await card.locator('.chat-mission-chips .chat-mission-chip').count() >= 1);
   check('mission exposes worker model and adaptive effort', (
     (await card.innerText()).includes('gpt-5.6-terra') && (await card.innerText()).includes('high effort')
   ));

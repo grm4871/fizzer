@@ -12,6 +12,7 @@ import {
   listSiblingWorkItems,
   listWorkItems,
   reapExpiredWorkItemLeases,
+  reportWorkItemGitState,
   releaseWorkItemLease,
   stopWorkItem,
   updateWorkItem,
@@ -72,6 +73,43 @@ test('create list update work items with dependencies', () => {
     const updated = updateWorkItem(db, 1, child.id, { status: 'blocked', summary: 'Waiting on foundation' });
     assert.equal(updated.status, 'blocked');
     assert.equal(updated.summary, 'Waiting on foundation');
+  } finally {
+    db.close();
+  }
+});
+
+test('Git evidence binds one base and derives review readiness server-side', () => {
+  const db = setup();
+  try {
+    const item = createWorkItem(db, 1, 'v1', { title: 'Evidence', verification: 'npm test' });
+    const reported = reportWorkItemGitState(db, 1, item.id, {
+      baseCommit: 'a'.repeat(40), branch: 'cascade/evidence',
+      state: {
+        headCommit: 'b'.repeat(40), baseBranch: 'master', branch: 'cascade/evidence',
+        changedFiles: 3, dirty: false, ahead: 1, behind: 0, unpushed: 1, hasUpstream: false,
+      },
+    });
+    assert.equal(reported.baseCommit, 'a'.repeat(40));
+    assert.equal(reported.gitState?.changedFiles, 3);
+    assert.deepEqual(reported.reviewReadiness, { ready: true, blockers: [] });
+    assert.throws(() => reportWorkItemGitState(db, 1, item.id, {
+      baseCommit: 'c'.repeat(40), branch: 'cascade/evidence',
+      state: {
+        headCommit: 'b'.repeat(40), baseBranch: 'master', branch: 'cascade/evidence',
+        changedFiles: 3, dirty: false, ahead: 1, behind: 0, unpushed: 1, hasUpstream: false,
+      },
+    }), /base commit/);
+    const dirty = reportWorkItemGitState(db, 1, item.id, {
+      baseCommit: 'a'.repeat(40), branch: 'cascade/evidence',
+      state: {
+        headCommit: 'b'.repeat(40), baseBranch: 'master', branch: 'cascade/evidence',
+        changedFiles: 3, dirty: true, ahead: 1, behind: 2, unpushed: 1, hasUpstream: false,
+      },
+    });
+    assert.equal(dirty.reviewReadiness.ready, false);
+    assert.deepEqual(dirty.reviewReadiness.blockers, [
+      'working tree has uncommitted changes', 'workspace is 2 commits behind its base',
+    ]);
   } finally {
     db.close();
   }

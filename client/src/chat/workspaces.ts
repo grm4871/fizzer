@@ -5,6 +5,7 @@
  * plus the pure helpers the panel needs. Git never runs in the renderer, so in
  * a browser tab the bridge is simply absent and the UI hides itself.
  */
+import { api } from '../api';
 
 export type Workspace = {
   path: string;
@@ -26,6 +27,7 @@ export type WorkspaceStatus = {
   head: string;
   isPrimary: boolean;
   baseBranch: string;
+  baseCommit: string;
   dirty: boolean;
   changedFiles: Array<{ status: string; path: string }>;
   commits: Array<{ sha: string; subject: string }>;
@@ -60,6 +62,38 @@ export type WorkspaceBridge = {
   createWorktreePullRequest: (opts: { dir: string; title?: string; body?: string; draft?: boolean }) => Promise<{ ok: true; url: string; branch: string; base: string; draft: boolean } | Failure>;
   getWorktreePullRequest: (dir: string) => Promise<{ ok: true; pr: PullRequest | null } | Failure>;
 };
+
+export type WorkItemGitState = {
+  headCommit: string;
+  baseBranch: string;
+  branch: string;
+  changedFiles: number;
+  dirty: boolean;
+  ahead: number;
+  behind: number;
+  unpushed: number;
+  hasUpstream: boolean;
+};
+
+/** Store desktop-only Git evidence against the durable work item. */
+export async function reportWorkItemGitState(workItemId: string, status: WorkspaceStatus) {
+  if (!status.baseCommit) return null;
+  const state: WorkItemGitState = {
+    headCommit: status.head,
+    baseBranch: status.baseBranch,
+    branch: status.branch,
+    changedFiles: status.changedFiles.length,
+    dirty: status.dirty,
+    ahead: status.commits.length,
+    behind: status.behindBase,
+    unpushed: status.unpushed,
+    hasUpstream: status.hasUpstream,
+  };
+  const data = await api<{ item: unknown }>(`/api/work-items/${encodeURIComponent(workItemId)}/git-state`, {
+    method: 'PUT', body: JSON.stringify({ baseCommit: status.baseCommit, branch: status.branch, state }),
+  });
+  return data.item;
+}
 
 /** The desktop bridge, or undefined in a browser / older desktop shell. */
 export function workspaceBridge(): WorkspaceBridge | undefined {

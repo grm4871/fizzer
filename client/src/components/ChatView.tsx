@@ -14,6 +14,7 @@ import {
 } from '../docEmbeds';
 import { escapeRegExp, normalizeMention } from '../chat/mentions';
 import { createChannelWorkItem } from '../chat/workItems';
+import { reportWorkItemGitState, workspaceBridge } from '../chat/workspaces';
 import { usePopupMenu } from '../ui/popupMenu';
 import { highlightJSON } from './jsonHighlighter';
 import { CascadeRunPanel } from './CascadeRunPanel';
@@ -152,9 +153,16 @@ export interface ChatMissionTask {
   workItemId?: string;
   workItemStatus?: string;
   workspaceMode?: string;
+  baseCommit?: string;
   branch?: string;
   worktreePath?: string;
   prUrl?: string;
+  prState?: string;
+  verification?: string;
+  reviewState?: 'none' | 'requested' | 'in_review' | 'ready';
+  gitState?: { changedFiles: number; dirty: boolean; behind: number; updatedAt: string };
+  reviewReady?: boolean;
+  reviewBlockers?: string[];
   updatedAt: string;
 }
 
@@ -1430,11 +1438,56 @@ function ChatClarificationCard({
   );
 }
 
+function missionTaskChangeChips(task: ChatMissionTask, fileCount?: number): Array<{ label: string; tone?: 'ok' | 'warn' | 'idle'; title?: string; href?: string }> {
+  const chips: Array<{ label: string; tone?: 'ok' | 'warn' | 'idle'; title?: string; href?: string }> = [];
+  if (task.branch || task.baseCommit) {
+    const base = task.baseCommit ? task.baseCommit.slice(0, 7) : task.workspaceMode || 'base unknown';
+    chips.push({ label: `${task.branch || 'workspace'} → ${base}`, tone: 'idle', title: task.worktreePath || undefined });
+  }
+  const reportedFiles = task.gitState?.changedFiles;
+  const files = fileCount ?? reportedFiles;
+  if (files != null) chips.push({ label: `${files} file${files === 1 ? '' : 's'}`, tone: files ? 'idle' : 'ok' });
+  if (task.verification) chips.push({ label: 'verified', tone: 'ok', title: task.verification });
+  else if (task.workItemStatus === 'review' || task.workItemStatus === 'done') chips.push({ label: 'unverified', tone: 'warn' });
+  if (task.reviewState === 'in_review') chips.push({ label: task.prState ? `PR ${task.prState}` : 'in review', tone: 'ok', href: task.prUrl });
+  else if (task.reviewState === 'requested') chips.push({ label: 'review requested', tone: 'warn' });
+  else if (task.reviewState === 'ready') chips.push({ label: 'reviewed', tone: 'ok' });
+  if (task.workItemStatus === 'review' || task.workItemStatus === 'done') {
+    chips.push(task.reviewReady
+      ? { label: 'review ready', tone: 'ok' }
+      : { label: 'review blocked', tone: 'warn', title: task.reviewBlockers?.join('\n') });
+  }
+  return chips;
+}
+
 function ChatMissionCard({ mission }: { mission: ChatMission }) {
   const [open, setOpen] = useState(mission.status === 'blocked');
+  const [fileCounts, setFileCounts] = useState<ReadonlyMap<string, number>>(() => new Map());
+  const bridge = useMemo(workspaceBridge, []);
   useEffect(() => {
     if (mission.status === 'blocked') setOpen(true);
   }, [mission.status]);
+  useEffect(() => {
+    if (!open || !bridge) return;
+    const paths = [...new Set(mission.tasks.map((task) => task.worktreePath).filter(Boolean))];
+    if (!paths.length) return;
+    let cancelled = false;
+    void Promise.all(paths.map(async (path) => {
+      const result = await bridge.getWorktreeStatus(path);
+      if (!result.ok) return null;
+      const task = mission.tasks.find((candidate) => candidate.worktreePath === path);
+      if (task?.workItemId) void reportWorkItemGitState(task.workItemId, result).catch(() => {});
+      return [path, result.changedFiles.length] as const;
+    })).then((results) => {
+      if (cancelled) return;
+      setFileCounts((previous) => {
+        const next = new Map(previous);
+        for (const result of results) if (result) next.set(result[0], result[1]);
+        return next;
+      });
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [bridge, mission.tasks, open]);
   const done = mission.tasks.filter((task) => task.status === 'completed' || task.status === 'canceled').length;
   const total = mission.tasks.length;
   const statusLabel = mission.status === 'active'
@@ -1480,12 +1533,19 @@ function ChatMissionCard({ mission }: { mission: ChatMission }) {
                     {task.reasoningEffort ? ` · ${task.reasoningEffort} effort` : ''}
                   </span>
                   {task.workItemId && (
-                    <span className="chat-mission-workspace" title={task.worktreePath || task.branch || task.workItemId}>
-                      {task.workspaceMode === 'isolated' ? 'isolated' : task.workspaceMode || 'workspace'}
-                      {task.branch ? ` · ${task.branch}` : ''}
-                      {task.workItemStatus ? ` · ${task.workItemStatus.replace(/_/g, ' ')}` : ''}
-                      {task.prUrl ? ' · PR' : ''}
-                    </span>
+                    <div className="chat-mission-chips">
+                      {missionTaskChangeChips(task, task.worktreePath ? fileCounts.get(task.worktreePath) : undefined).map((chip, index) => (
+                        chip.href ? (
+                          <a key={`${chip.label}:${index}`} className={`chat-mission-chip is-${chip.tone || 'idle'}`} href={chip.href} target="_blank" rel="noreferrer" title={chip.title}>
+                            {chip.label}
+                          </a>
+                        ) : (
+                          <span key={`${chip.label}:${index}`} className={`chat-mission-chip is-${chip.tone || 'idle'}`} title={chip.title}>
+                            {chip.label}
+                          </span>
+                        )
+                      ))}
+                    </div>
                   )}
                   {task.summary && <small>{task.summary}</small>}
                 </div>
@@ -1534,6 +1594,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
   scrollRootRef,
   vaultId,
   onHydrateMessage,
+  traceContent,
 }: {
   group: ChatMessageGroup;
   /** Pre-filtered by the parent: non-null only when the selection is inside this group. */
@@ -1562,6 +1623,8 @@ const ChatGroupRow = memo(function ChatGroupRow({
   scrollRootRef: RefObject<HTMLDivElement | null>;
   vaultId?: string;
   onHydrateMessage?: (message: ChatMessage) => void;
+  /** A collapsed workflow trace carried by this agent row. */
+  traceContent?: ReactNode;
 }) {
   const head = group.messages[0];
   const tail = group.messages[group.messages.length - 1];
@@ -1803,6 +1866,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
                 </SwipeToReply>
               );
             })}
+            {traceContent}
           </div>
         </>
       ) : (

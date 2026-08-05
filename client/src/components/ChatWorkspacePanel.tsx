@@ -215,10 +215,11 @@ export function ChatWorkspacePanel({ channelId, channelName, vaultId, cwd, onUse
 
   const bindWorkspaceToItem = () => act('bind', async () => {
     if (!selectedItemId || !status) return 'Select a work item and open a workspace first';
+    if (!status.baseCommit) return 'This workspace has no recorded base — create or select a Cascade-managed workspace first';
     await patchWorkItem(selectedItemId, {
       worktreePath: status.path,
       branch: status.branch,
-      baseCommit: status.head,
+      baseCommit: status.baseCommit,
       repository: cwd,
       workspaceMode: status.isPrimary ? 'shared' : 'isolated',
     });

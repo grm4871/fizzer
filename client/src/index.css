@@ -6624,10 +6624,10 @@ button.chat-avatar-agent {
 }
 
 /* ── Agent work trace: TUI-style collapsed multi-agent chatter ── */
-/* Left indent = message padding-x (18) + avatar (34) + group gap (12) so the
-   activity row sits under the message body column, not offset from it. */
+/* The trace now lives inside its agent carrier row, so it naturally shares the
+   message text axis (rather than needing a synthetic avatar indent). */
 .chat-work-trace {
-  margin: 8px 16px 10px 64px;
+  margin: 8px 0 10px;
   max-width: 720px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -6977,10 +6977,10 @@ button.chat-avatar-agent {
 /* Keep compact coordinator activity on the same x-axis as message copy. These
    overrides live after the base trace rule so narrow layouts cannot lose. */
 @media (max-width: 900px) {
-  .chat-work-trace { margin-left: 48px; margin-right: 12px; }
+  .chat-work-trace { margin-right: 12px; }
 }
 @media (max-width: 520px) {
-  .chat-work-trace { margin-left: 42px; margin-right: 8px; }
+  .chat-work-trace { margin-right: 8px; }
 }
 @keyframes chat-work-blink {
   50% { opacity: 0; }
@@ -7142,17 +7142,21 @@ button.chat-avatar-agent {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.chat-mission-workspace {
-  display: inline-flex;
-  align-items: center;
+.chat-mission-chips {
+  display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   margin-top: 3px;
   max-width: 100%;
+}
+.chat-mission-chip {
+  display: inline-flex;
+  align-items: center;
   padding: 1px 7px;
-  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+  border: 1px solid var(--border);
   border-radius: 999px;
-  background: color-mix(in srgb, var(--accent-subtle) 70%, transparent);
-  color: color-mix(in srgb, var(--accent-hover) 82%, var(--text-secondary));
+  background: color-mix(in srgb, var(--surface-subtle) 78%, transparent);
+  color: var(--text-muted);
   font-family: var(--font-mono);
   font-size: 0.625rem;
   font-weight: 500;
@@ -7161,6 +7165,17 @@ button.chat-avatar-agent {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.chat-mission-chip.is-ok {
+  border-color: color-mix(in srgb, var(--success) 36%, var(--border));
+  background: color-mix(in srgb, var(--success) 10%, transparent);
+  color: color-mix(in srgb, var(--success) 82%, var(--text-primary));
+}
+.chat-mission-chip.is-warn {
+  border-color: color-mix(in srgb, var(--warning) 38%, var(--border));
+  background: color-mix(in srgb, var(--warning) 9%, transparent);
+  color: color-mix(in srgb, var(--warning) 88%, var(--text-primary));
+}
+a.chat-mission-chip:hover { color: var(--text-primary); border-color: var(--accent); }
 
 .chat-clarification {
   margin-top: 10px;

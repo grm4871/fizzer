@@ -438,9 +438,25 @@ function projectMission(db: Db, row: MissionRow, tasks: TaskRow[]): ChatMission 
         workItemId: workItem.id,
         workItemStatus: workItem.status,
         workspaceMode: workItem.workspaceMode,
+        baseCommit: workItem.baseCommit,
         branch: workItem.branch,
         worktreePath: workItem.worktreePath,
         prUrl: workItem.prUrl || undefined,
+        prState: workItem.prState || undefined,
+        verification: workItem.verification || undefined,
+        gitState: workItem.gitState ? {
+          changedFiles: workItem.gitState.changedFiles,
+          dirty: workItem.gitState.dirty,
+          behind: workItem.gitState.behind,
+          updatedAt: workItem.gitStateUpdatedAt || '',
+        } : undefined,
+        reviewReady: workItem.reviewReadiness.ready,
+        reviewBlockers: workItem.reviewReadiness.blockers,
+        reviewState: workItem.status === 'review'
+          ? (workItem.prUrl ? 'in_review' : 'requested')
+          : workItem.status === 'done' && workItem.verification
+            ? 'ready'
+            : 'none',
       } : {}),
       updatedAt: task.updated_at,
     };

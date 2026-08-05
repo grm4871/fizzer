@@ -39,6 +39,9 @@ export type WorkItem = {
   prState: string;
   summary: string;
   verification: string;
+  gitState: import('./workspaces').WorkItemGitState | null;
+  gitStateUpdatedAt: string | null;
+  reviewReadiness: { ready: boolean; blockers: string[] };
   tokenBudget?: number;
   tokensUsed?: number;
   stopReason?: string;

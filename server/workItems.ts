@@ -33,6 +33,24 @@ export type SourceKind = (typeof SOURCE_KINDS)[number];
 
 export type WorkItemStopReason = '' | 'completed' | 'token_budget' | 'manual' | 'failed';
 
+/** A desktop-observed, base-relative Git snapshot. The server owns readiness. */
+export type WorkItemGitState = {
+  headCommit: string;
+  baseBranch: string;
+  branch: string;
+  changedFiles: number;
+  dirty: boolean;
+  ahead: number;
+  behind: number;
+  unpushed: number;
+  hasUpstream: boolean;
+};
+
+export type WorkItemReviewReadiness = {
+  ready: boolean;
+  blockers: string[];
+};
+
 export type WorkItem = {
   id: string;
   vaultId: string;
@@ -58,6 +76,9 @@ export type WorkItem = {
   prState: string;
   summary: string;
   verification: string;
+  gitState: WorkItemGitState | null;
+  gitStateUpdatedAt: string | null;
+  reviewReadiness: WorkItemReviewReadiness;
   /** Soft token ceiling for agent drive; 0 = unlimited. */
   tokenBudget: number;
   tokensUsed: number;
@@ -97,6 +118,47 @@ function isSourceKind(value: unknown): value is SourceKind {
   return typeof value === 'string' && (SOURCE_KINDS as readonly string[]).includes(value);
 }
 
+function cleanGitState(value: unknown): WorkItemGitState | null {
+  if (!value || typeof value !== 'object') return null;
+  const state = value as Record<string, unknown>;
+  const text = (key: string, max: number) => cleanText(state[key], max);
+  const count = (key: string) => Math.max(0, Math.floor(Number(state[key]) || 0));
+  const headCommit = text('headCommit', 80);
+  const baseBranch = text('baseBranch', 200);
+  const branch = text('branch', 200);
+  if (!headCommit || !baseBranch || !branch) return null;
+  return {
+    headCommit, baseBranch, branch,
+    changedFiles: count('changedFiles'), dirty: Boolean(state.dirty),
+    ahead: count('ahead'), behind: count('behind'), unpushed: count('unpushed'),
+    hasUpstream: Boolean(state.hasUpstream),
+  };
+}
+
+function parseGitState(value: string | undefined): WorkItemGitState | null {
+  try { return cleanGitState(JSON.parse(value || '')); } catch { return null; }
+}
+
+export function deriveReviewReadiness(input: {
+  baseCommit: string;
+  branch: string;
+  verification: string;
+  gitState: WorkItemGitState | null;
+}): WorkItemReviewReadiness {
+  const blockers: string[] = [];
+  if (!input.baseCommit) blockers.push('workspace base is not bound');
+  if (!input.branch) blockers.push('workspace branch is not bound');
+  if (!input.gitState) blockers.push('Git state has not been reported by a desktop workspace');
+  else {
+    if (input.gitState.branch !== input.branch) blockers.push('reported branch does not match the bound workspace');
+    if (input.gitState.dirty) blockers.push('working tree has uncommitted changes');
+    if (input.gitState.behind > 0) blockers.push(`workspace is ${input.gitState.behind} commit${input.gitState.behind === 1 ? '' : 's'} behind its base`);
+    if (input.gitState.changedFiles === 0) blockers.push('no base-relative changes were found');
+  }
+  if (!input.verification) blockers.push('verification evidence is missing');
+  return { ready: blockers.length === 0, blockers };
+}
+
 export function ensureWorkItemSchema(db: Db): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS work_items (
@@ -122,6 +184,8 @@ export function ensureWorkItemSchema(db: Db): void {
       pr_state TEXT NOT NULL DEFAULT '',
       summary TEXT NOT NULL DEFAULT '',
       verification TEXT NOT NULL DEFAULT '',
+      git_state_json TEXT NOT NULL DEFAULT '',
+      git_state_updated_at TEXT,
       contract TEXT NOT NULL DEFAULT '',
       token_budget INTEGER NOT NULL DEFAULT 0,
       tokens_used INTEGER NOT NULL DEFAULT 0,
@@ -166,6 +230,8 @@ export function ensureWorkItemSchema(db: Db): void {
   if (!cols.includes('token_budget')) db.exec('ALTER TABLE work_items ADD COLUMN token_budget INTEGER NOT NULL DEFAULT 0');
   if (!cols.includes('tokens_used')) db.exec('ALTER TABLE work_items ADD COLUMN tokens_used INTEGER NOT NULL DEFAULT 0');
   if (!cols.includes('stop_reason')) db.exec("ALTER TABLE work_items ADD COLUMN stop_reason TEXT NOT NULL DEFAULT ''");
+  if (!cols.includes('git_state_json')) db.exec("ALTER TABLE work_items ADD COLUMN git_state_json TEXT NOT NULL DEFAULT ''");
+  if (!cols.includes('git_state_updated_at')) db.exec('ALTER TABLE work_items ADD COLUMN git_state_updated_at TEXT');
 }
 
 type WorkItemRow = {
@@ -191,6 +257,8 @@ type WorkItemRow = {
   pr_state: string;
   summary: string;
   verification: string;
+  git_state_json?: string;
+  git_state_updated_at?: string | null;
   contract?: string;
   token_budget?: number;
   tokens_used?: number;
@@ -208,6 +276,10 @@ function hydrate(db: Db, row: WorkItemRow): WorkItem {
     SELECT run_id AS id FROM work_item_runs WHERE work_item_id = ? ORDER BY linked_at ASC
   `).all(row.id) as Array<{ id: number }>).map((item) => item.id);
   const stop = String(row.stop_reason || '') as WorkItemStopReason;
+  const gitState = parseGitState(row.git_state_json);
+  const reviewReadiness = deriveReviewReadiness({
+    baseCommit: row.base_commit || '', branch: row.branch || '', verification: row.verification || '', gitState,
+  });
   return {
     id: row.id,
     vaultId: row.vault_id,
@@ -232,6 +304,9 @@ function hydrate(db: Db, row: WorkItemRow): WorkItem {
     prState: row.pr_state || '',
     summary: row.summary || '',
     verification: row.verification || '',
+    gitState,
+    gitStateUpdatedAt: row.git_state_updated_at || null,
+    reviewReadiness,
     tokenBudget: Math.max(0, Number(row.token_budget) || 0),
     tokensUsed: Math.max(0, Number(row.tokens_used) || 0),
     stopReason: (['completed', 'token_budget', 'manual', 'failed'].includes(stop) ? stop : '') as WorkItemStopReason,
@@ -455,6 +530,37 @@ export function updateWorkItem(
     for (const dep of dependencies) insertDep.run(id, dep);
   }
 
+  return getWorkItem(db, userId, id);
+}
+
+/**
+ * Persist an observation from the desktop Git bridge. This is deliberately not
+ * a generic patch: a task gets one base/branch identity, and review readiness
+ * is always derived from evidence rather than accepted from a renderer.
+ */
+export function reportWorkItemGitState(
+  db: Db,
+  userId: number,
+  id: string,
+  input: { baseCommit: string; branch: string; state: unknown },
+): WorkItem {
+  const row = getRow(db, id);
+  if (!row) throw new Error('Work item not found');
+  assertVaultAccess(db, row.vault_id, userId, true);
+  const baseCommit = cleanText(input.baseCommit, 80);
+  const branch = cleanText(input.branch, 200);
+  const state = cleanGitState(input.state);
+  if (!baseCommit || !branch || !state) throw new Error('A complete Git state, base commit, and branch are required');
+  if (state.branch !== branch) throw new Error('Reported Git branch does not match the workspace branch');
+  if (row.base_commit && row.base_commit !== baseCommit) throw new Error('Reported base commit does not match this work item');
+  if (row.branch && row.branch !== branch) throw new Error('Reported branch does not match this work item');
+  db.prepare(`
+    UPDATE work_items
+    SET base_commit = CASE WHEN base_commit = '' THEN ? ELSE base_commit END,
+        branch = CASE WHEN branch = '' THEN ? ELSE branch END,
+        git_state_json = ?, git_state_updated_at = datetime('now'), updated_at = datetime('now')
+    WHERE id = ?
+  `).run(baseCommit, branch, JSON.stringify(state), id);
   return getWorkItem(db, userId, id);
 }
 

@@ -179,9 +179,16 @@ export type ChatMissionTask = {
   workItemId?: string;
   workItemStatus?: string;
   workspaceMode?: string;
+  baseCommit?: string;
   branch?: string;
   worktreePath?: string;
   prUrl?: string;
+  prState?: string;
+  verification?: string;
+  reviewState?: 'none' | 'requested' | 'in_review' | 'ready';
+  gitState?: { changedFiles: number; dirty: boolean; behind: number; updatedAt: string };
+  reviewReady?: boolean;
+  reviewBlockers?: string[];
   updatedAt: string;
 };
 

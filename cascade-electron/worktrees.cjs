@@ -156,18 +156,29 @@ async function workspaceStatus(dir) {
   const baseRef = entry?.baseBranch || await defaultBaseBranch(repo.root);
   const baseCommit = entry?.baseCommit || '';
 
-  const [statusOut, upstream, logOut] = await Promise.all([
+  const range = `${baseCommit || baseRef}...HEAD`;
+  const [statusOut, upstream, logOut, baseDiffOut] = await Promise.all([
     git(['status', '--porcelain'], repo.root),
     git(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], repo.root),
     git(['log', '--oneline', '--no-decorate', '-n', '25', `${baseCommit || baseRef}..HEAD`], repo.root),
+    git(['diff', '--name-status', range], repo.root),
   ]);
 
-  const changedFiles = statusOut.ok && statusOut.stdout
+  const workingFiles = statusOut.ok && statusOut.stdout
     ? statusOut.stdout.split('\n').map((line) => ({
       status: line.slice(0, 2).trim(),
       path: line.slice(3),
     }))
     : [];
+  // Base-relative changes include committed work; merge the working tree so a
+  // mission does not look empty merely because its agent committed.
+  const baseFiles = baseDiffOut.ok && baseDiffOut.stdout
+    ? baseDiffOut.stdout.split('\n').map((line) => {
+      const [status, ...paths] = line.split('\t');
+      return { status, path: paths.at(-1) || '' };
+    }).filter((file) => file.path)
+    : [];
+  const changedFiles = [...new Map([...baseFiles, ...workingFiles].map((file) => [file.path, file])).values()];
   const commits = logOut.ok && logOut.stdout
     ? logOut.stdout.split('\n').map((line) => {
       const [sha, ...rest] = line.split(' ');
@@ -198,7 +209,7 @@ async function workspaceStatus(dir) {
     isPrimary: repo.isPrimary,
     baseBranch: baseRef,
     baseCommit,
-    dirty: changedFiles.length > 0,
+    dirty: workingFiles.length > 0,
     changedFiles,
     commits,
     unpushed,
