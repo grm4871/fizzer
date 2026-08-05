@@ -2086,8 +2086,11 @@ app.get('/api/vaults/:id/agent-memory', requireAuth, (req: AuthedRequest, res) =
 });
 
 app.put('/api/vaults/:id/agent-memory', requireAuth, (req: AuthedRequest, res) => {
-  const vault = getVault(db, req.params.id, req.user!.id);
-  if (!vault) return res.status(404).json({ error: 'Vault not found' });
+  const vault = getWritableVault(db, req.params.id, req.user!.id);
+  if (!vault) {
+    if (getVault(db, req.params.id, req.user!.id)) return res.status(403).json({ error: 'Viewer role cannot edit agent memory' });
+    return res.status(404).json({ error: 'Vault not found' });
+  }
   try {
     if (typeof req.body?.enabled === 'boolean') {
       setAgentMemoryEnabled(db, vault.id, req.body.enabled);
@@ -2189,8 +2192,11 @@ app.get('/api/vaults/:id/tags', requireAuth, (req: AuthedRequest, res) => {
 app.post('/api/notes/:id/tags', requireAuth, (req: AuthedRequest, res) => {
   const note = getNote(db, req.params.id);
   if (!note) return res.status(404).json({ error: 'Note not found' });
-  const vault = getVault(db, note.vault_id, req.user!.id);
-  if (!vault) return res.status(404).json({ error: 'Note not found' });
+  const vault = getWritableVault(db, note.vault_id, req.user!.id);
+  if (!vault) {
+    if (getVault(db, note.vault_id, req.user!.id)) return res.status(403).json({ error: 'Viewer role cannot edit tags' });
+    return res.status(404).json({ error: 'Note not found' });
+  }
 
   try {
     addTag(db, req.params.id, vault.id, String(req.body.name || ''), req.body.color);
@@ -2204,8 +2210,11 @@ app.post('/api/notes/:id/tags', requireAuth, (req: AuthedRequest, res) => {
 app.delete('/api/notes/:id/tags/:tagId', requireAuth, (req: AuthedRequest, res) => {
   const note = getNote(db, req.params.id);
   if (!note) return res.status(404).json({ error: 'Note not found' });
-  const vault = getVault(db, note.vault_id, req.user!.id);
-  if (!vault) return res.status(404).json({ error: 'Note not found' });
+  const vault = getWritableVault(db, note.vault_id, req.user!.id);
+  if (!vault) {
+    if (getVault(db, note.vault_id, req.user!.id)) return res.status(403).json({ error: 'Viewer role cannot edit tags' });
+    return res.status(404).json({ error: 'Note not found' });
+  }
 
   removeTag(db, req.params.id, req.params.tagId);
   const updated = getNote(db, req.params.id);

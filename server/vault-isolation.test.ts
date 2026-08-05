@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import {
+  createFolder,
   createVault,
   enforceVaultStorageIsolation,
   listNotes,
@@ -150,6 +151,21 @@ test('enforceVaultStorageIsolation rehomes secondary shared-root vaults and purg
     db.close();
     try { fs.rmSync(shared, { recursive: true, force: true }); } catch { /* ignore */ }
     try { fs.rmSync(path.join(VAULTS_BASE_DIR, '2'), { recursive: true, force: true }); } catch { /* ignore */ }
+  }
+});
+
+test('folder names cannot escape the vault root', () => {
+  const db = setup();
+  try {
+    const vault = createVault(db, 1, { name: 'Safe' });
+    assert.throws(() => createFolder(db, vault.id, { name: '..' }));
+    assert.throws(() => createFolder(db, vault.id, { name: '../outside' }));
+    const ok = createFolder(db, vault.id, { name: 'Projects' });
+    assert.equal(ok.name, 'Projects');
+    assert.ok(path.resolve(ok.name) === 'Projects' || !ok.name.includes('..'));
+  } finally {
+    db.close();
+    try { fs.rmSync(path.join(VAULTS_BASE_DIR, '1'), { recursive: true, force: true }); } catch { /* ignore */ }
   }
 });
 

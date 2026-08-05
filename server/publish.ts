@@ -6,7 +6,7 @@ import crypto from 'node:crypto';
 import type { Request, Response } from 'express';
 import { marked } from 'marked';
 import type Database from 'better-sqlite3';
-import { getNote, getVault } from './vault.js';
+import { getNote, getVault, getWritableVault } from './vault.js';
 import { redactPrivateBlocksForPublic } from './privacy.js';
 
 type Db = Database.Database;
@@ -79,8 +79,24 @@ export function sanitizePublicContent(content: string): string {
   return out;
 }
 
+/** Strip active content after Markdown→HTML so public pages cannot host XSS. */
+function sanitizePublicHtml(html: string): string {
+  return html
+    .replace(/<script\b[\s\S]*?<\/script>/gi, '')
+    .replace(/<style\b[\s\S]*?<\/style>/gi, '')
+    .replace(/<iframe\b[\s\S]*?<\/iframe>/gi, '')
+    .replace(/<object\b[\s\S]*?<\/object>/gi, '')
+    .replace(/<embed\b[^>]*>/gi, '')
+    .replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+    .replace(/javascript:/gi, '')
+    .replace(/data:text\/html/gi, 'data:text/plain');
+}
+
 export function renderPublicMarkdown(content: string): string {
-  return marked.parse(sanitizePublicContent(content), { async: false }) as string;
+  // Prefer no raw HTML from the Markdown source — content is untrusted.
+  const stripped = sanitizePublicContent(content).replace(/<[^>\n]+>/g, '');
+  const html = marked.parse(stripped, { async: false }) as string;
+  return sanitizePublicHtml(html);
 }
 
 function previewText(content: string, maxLen = 200): string {
@@ -114,18 +130,18 @@ export function publishNote(
   noteId: string,
   userId: number,
   username: string,
-  snapshot?: { title?: string; content?: string },
+  _snapshot?: { title?: string; content?: string },
 ): { slug: string; published_at: string; updated_at: string } {
   const note = getNote(db, noteId);
   if (!note) throw new Error('Note not found');
   if (note.is_archived) throw new Error('Cannot publish archived notes');
-  const vault = getVault(db, note.vault_id, userId);
+  // Editor+ only; public snapshot always comes from the stored note (never client body).
+  const vault = getWritableVault(db, note.vault_id, userId);
   if (!vault) throw new Error('Note not found');
 
-  const title = String(snapshot?.title ?? note.title).trim() || note.title;
-  const content = sanitizePublicContent(
-    typeof snapshot?.content === 'string' ? snapshot.content : note.content,
-  );
+  void _snapshot; // accepted for API compat; intentionally ignored
+  const title = String(note.title).trim() || note.title;
+  const content = sanitizePublicContent(note.content);
 
   const existing = db.prepare('SELECT slug, published_at FROM published_notes WHERE note_id = ?').get(noteId) as { slug: string; published_at: string } | undefined;
   const slug = existing?.slug ?? newSlug();
@@ -150,7 +166,7 @@ export function publishNote(
 export function unpublishNote(db: Db, noteId: string, userId: number): boolean {
   const note = getNote(db, noteId);
   if (!note) return false;
-  const vault = getVault(db, note.vault_id, userId);
+  const vault = getWritableVault(db, note.vault_id, userId);
   if (!vault) return false;
   const result = db.prepare(`
     UPDATE published_notes SET revoked_at = ? WHERE note_id = ? AND revoked_at IS NULL

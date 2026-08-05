@@ -317,6 +317,7 @@ export function ensureChatSchema(db: Db): void {
       mission_task_id TEXT
     );
     CREATE INDEX IF NOT EXISTS chat_messages_channel_idx ON chat_messages(channel_id, created_at);
+    CREATE INDEX IF NOT EXISTS chat_messages_run_idx ON chat_messages(run_id);
     CREATE VIRTUAL TABLE IF NOT EXISTS chat_messages_fts USING fts5(author, body, content='chat_messages', content_rowid='rowid');
     CREATE TRIGGER IF NOT EXISTS chat_messages_ai AFTER INSERT ON chat_messages BEGIN
       INSERT INTO chat_messages_fts(rowid, author, body) VALUES (NEW.rowid, NEW.author, NEW.body);

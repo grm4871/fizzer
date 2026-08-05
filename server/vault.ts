@@ -100,6 +100,37 @@ function sanitizeFilename(title: string): string {
     .trim() || 'Untitled';
 }
 
+/**
+ * Single path segment for vault FS layout. Titles already use sanitizeFilename;
+ * folder names historically did not — `..` / separators could escape root_path.
+ */
+function sanitizePathSegment(name: string): string {
+  // Reject path traversal before separator folding (../x → .._x would otherwise pass).
+  const raw = String(name || '').trim();
+  if (!raw || raw === '.' || raw === '..' || /[/\\]/.test(raw)) {
+    throw new Error('Invalid folder or file name');
+  }
+  const cleaned = sanitizeFilename(raw)
+    .replace(/^\.+$/, '')
+    .replace(/^\.+/, '')
+    .trim();
+  // Block `..` and `.._outside` (from ../outside) without rejecting "v1..2" mid-title.
+  if (!cleaned || cleaned === '.' || cleaned === '..' || cleaned.startsWith('..')) {
+    throw new Error('Invalid folder or file name');
+  }
+  return cleaned;
+}
+
+/** Resolve a path under vault.root_path or throw if it escapes. */
+function resolveUnderVault(vaultRoot: string, ...parts: string[]): string {
+  const root = path.resolve(vaultRoot);
+  const resolved = path.resolve(root, ...parts);
+  if (resolved !== root && !resolved.startsWith(root + path.sep)) {
+    throw new Error('Path escapes vault root');
+  }
+  return resolved;
+}
+
 function stripMarkdown(content: string): string {
   const normalized = content.replace(/\\+`/g, '`');
   return normalized
@@ -149,7 +180,8 @@ function getFolderPath(vault: Vault, db: Db, folderId: string): string {
     db.prepare('SELECT id, parent_id, name FROM folders WHERE id = ?').get(folderId) as typeof current;
 
   while (current) {
-    parts.unshift(current.name);
+    // Re-sanitize on resolve so legacy bad names cannot escape the root.
+    parts.unshift(sanitizePathSegment(current.name));
     if (current.parent_id) {
       current = db.prepare('SELECT id, parent_id, name FROM folders WHERE id = ?').get(current.parent_id) as typeof current;
     } else {
@@ -157,7 +189,7 @@ function getFolderPath(vault: Vault, db: Db, folderId: string): string {
     }
   }
 
-  return path.join(vault.root_path, ...parts);
+  return resolveUnderVault(vault.root_path, ...parts);
 }
 
 
@@ -170,12 +202,14 @@ function resolveNotePath(db: Db, noteId: string): string | undefined {
   const vault = db.prepare('SELECT * FROM vaults WHERE id = ?').get(note.vault_id) as Vault | undefined;
   if (!vault) return undefined;
 
-  if (!note.is_listed) return path.join(vault.root_path, '.cascade-unlisted', `${sanitizeFilename(note.title)}.md`);
+  if (!note.is_listed) {
+    return resolveUnderVault(vault.root_path, '.cascade-unlisted', `${sanitizePathSegment(note.title)}.md`);
+  }
   if (note.folder_id) {
     const folderPath = getFolderPath(vault, db, note.folder_id);
-    return path.join(folderPath, `${sanitizeFilename(note.title)}.md`);
+    return resolveUnderVault(folderPath, `${sanitizePathSegment(note.title)}.md`);
   }
-  return path.join(vault.root_path, `${sanitizeFilename(note.title)}.md`);
+  return resolveUnderVault(vault.root_path, `${sanitizePathSegment(note.title)}.md`);
 }
 
 function getTagsForNote(db: Db, noteId: string): string[] {
@@ -431,7 +465,7 @@ export function listFolders(db: Db, vaultId: string): Folder[] {
 
 export function createFolder(db: Db, vaultId: string, opts: { name: string; parent_id?: string }): Folder {
   const id = crypto.randomUUID();
-  const name = String(opts.name || 'New Folder').trim() || 'New Folder';
+  const name = sanitizePathSegment(String(opts.name || 'New Folder').trim() || 'New Folder');
   const parentId = opts.parent_id || null;
 
   // Calculate next position
@@ -474,7 +508,9 @@ export function updateFolder(db: Db, folderId: string, opts: { name?: string; pa
   const vault = db.prepare('SELECT * FROM vaults WHERE id = ?').get(folder.vault_id) as Vault;
   const oldPath = getFolderPath(vault, db, folderId);
 
-  const name = opts.name !== undefined ? String(opts.name).trim() || folder.name : folder.name;
+  const name = opts.name !== undefined
+    ? sanitizePathSegment(String(opts.name).trim() || folder.name)
+    : folder.name;
   const parentId = opts.parent_id !== undefined ? opts.parent_id : folder.parent_id;
   const requestedPosition = opts.position !== undefined && Number.isFinite(opts.position)
     ? Math.max(0, Math.trunc(opts.position))
@@ -669,19 +705,19 @@ export function createNote(db: Db, vaultId: string, userId: number, opts: { id?:
   const vault = db.prepare('SELECT * FROM vaults WHERE id = ?').get(vaultId) as Vault;
   if (!vault) throw new Error('Vault not found');
 
-  // Determine file path
+  // Determine file path (always confined under vault.root_path).
   let filePath: string;
   if (!isListed) {
-    const unlistedPath = path.join(vault.root_path, '.cascade-unlisted');
+    const unlistedPath = resolveUnderVault(vault.root_path, '.cascade-unlisted');
     fs.mkdirSync(unlistedPath, { recursive: true });
-    filePath = path.join(unlistedPath, `${sanitizeFilename(title)}.md`);
+    filePath = resolveUnderVault(unlistedPath, `${sanitizePathSegment(title)}.md`);
   } else if (folderId) {
     const folderPath = getFolderPath(vault, db, folderId);
     fs.mkdirSync(folderPath, { recursive: true });
-    filePath = path.join(folderPath, `${sanitizeFilename(title)}.md`);
+    filePath = resolveUnderVault(folderPath, `${sanitizePathSegment(title)}.md`);
   } else {
     fs.mkdirSync(vault.root_path, { recursive: true });
-    filePath = path.join(vault.root_path, `${sanitizeFilename(title)}.md`);
+    filePath = resolveUnderVault(vault.root_path, `${sanitizePathSegment(title)}.md`);
   }
 
   // Write .md file to disk
