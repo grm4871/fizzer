@@ -39,12 +39,14 @@ function setup() {
 test('clarification normalizes single/multi kinds and options', () => {
   const db = setup();
   const msg = createChatMessage(db, 1, 'v1', 'ch1', {
+    id: 'msg-clarif-1',
     channelId: 'ch1',
     author: 'Supagrok',
     body: 'Need scope before starting.',
     createdAt: new Date().toISOString(),
     clarification: {
       title: 'Ship scope',
+      status: 'pending',
       tokenBudget: 5000,
       questions: [
         { id: 'scope', prompt: 'How deep?', kind: 'single', options: ['MVP', 'Full'] },
