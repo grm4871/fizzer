@@ -639,6 +639,12 @@ button:focus-visible,
   background: transparent;
 }
 .sidebar-header .vault-name {
+  appearance: none;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
   font-family: var(--font-display);
   font-weight: 700;
   font-style: italic;
@@ -652,6 +658,9 @@ button:focus-visible,
   min-width: 0;
   flex: 0 1 auto;
 }
+.sidebar-header .vault-name:hover .vault-name-text,
+.sidebar-header .vault-name:focus-visible .vault-name-text { color: var(--accent-hover); }
+.sidebar-header .vault-name:focus-visible { outline: 1px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
 .sidebar-header .vault-name-text {
   overflow: hidden;
   text-overflow: ellipsis;

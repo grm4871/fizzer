@@ -631,25 +631,31 @@ export const Sidebar = memo(function Sidebar({
     <aside className="sidebar" id="sidebar" style={{ gridColumn: 1 }}>
       {/* Header */}
       <div className="sidebar-header">
-        <div className="vault-name">
+        <button
+          type="button"
+          className="vault-name"
+          onClick={onOpenAccount}
+          title="Manage this vault"
+          aria-label={`Manage ${activeVault?.name || 'this vault'}`}
+        >
           <span className="vault-icon" aria-hidden="true"><Gem size={15} /></span>
           <span className="vault-name-text">
             {activeVault?.name || 'Cascade'}
           </span>
-          {activeVault && isSharedVault(activeVault) && (
-            <button
-              type="button"
-              className="vault-shared-badge"
-              id="vault-shared-badge"
-              onClick={onOpenAccount}
-              title={`Shared vault — ${activeVault.memberCount} members. You are ${activeVault.role || 'a member'}. Manage members in Account.`}
-              aria-label={`Shared vault with ${activeVault.memberCount} members, your role ${activeVault.role || 'member'}. Manage members.`}
-            >
-              <Users size={12} aria-hidden="true" />
-              {activeVault.memberCount}
-            </button>
-          )}
-        </div>
+        </button>
+        {activeVault && isSharedVault(activeVault) && (
+          <button
+            type="button"
+            className="vault-shared-badge"
+            id="vault-shared-badge"
+            onClick={onOpenAccount}
+            title={`Shared vault — ${activeVault.memberCount} members. You are ${activeVault.role || 'a member'}. Manage members in Account.`}
+            aria-label={`Shared vault with ${activeVault.memberCount} members, your role ${activeVault.role || 'member'}. Manage members.`}
+          >
+            <Users size={12} aria-hidden="true" />
+            {activeVault.memberCount}
+          </button>
+        )}
         <div className="sidebar-actions sidebar-actions-desktop" role="toolbar" aria-label="Sidebar actions">{actionButtons('desktop')}</div>
         <button className="btn-icon sidebar-mobile-collapse" onClick={onCollapse} title="Collapse sidebar"><PanelLeftClose size={16} /></button>
       </div>
