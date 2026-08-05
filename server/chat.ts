@@ -1323,8 +1323,10 @@ export function listChatMessages(
   ) as Array<ChatMessageRow & { has_harness?: number }>;
 
   rows.reverse();
+  // List windows are pure reads; full fetches may still persist ghost repairs.
+  const persist = detail === 'full';
   return rows.map((row) => ({
-    ...reconcileChatMessageRunStatus(db, row, detail),
+    ...reconcileChatMessageRunStatus(db, row, detail, { persist }),
     channelId: route.localChannelId,
   })).filter((message) => {
     // A helper-posted agent response leaves its original run row suppressed.
@@ -1647,43 +1649,51 @@ function reconcileChatMessageRunStatus(
   db: Db,
   row: ChatMessageRow & { has_harness?: number },
   detail: 'list' | 'full' = 'full',
+  opts: { persist?: boolean } = {},
 ): ChatMessage {
   const message = rowToMessage(row, { detail });
   if (message.status !== 'running') return message;
 
+  // List/history must stay a pure read under multi-client load. Persist repairs
+  // only on explicit settle paths (or full single-message fetch).
+  const persist = opts.persist === true;
+
   // Older clients persisted the optimistic shell before POST /runs. A renderer
   // reload in that gap leaves no run id and therefore no terminal event capable
-  // of settling the row. Repair those ghosts whenever channel history loads.
+  // of settling the row.
   const createdAt = Date.parse(message.createdAt);
   const staleUnlinked = row.run_id == null
     && Number.isFinite(createdAt)
     && Date.now() - createdAt >= AGENT_PLACEHOLDER_START_TIMEOUT_MS;
   if (staleUnlinked) {
-    return persistChatMessageRow(db, row.vault_id, row.channel_id, {
+    const next = {
       ...message,
       body: 'Agent run did not start. Please try again.',
-      status: 'failed',
-    });
+      status: 'failed' as const,
+    };
+    return persist ? persistChatMessageRow(db, row.vault_id, row.channel_id, next) : next;
   }
   if (row.run_id == null) return message;
 
   const run = db.prepare('SELECT id, status, summary FROM runs WHERE id = ?').get(row.run_id) as RunStatusRow | undefined;
   if (!run) {
     if (!Number.isFinite(createdAt) || Date.now() - createdAt < AGENT_PLACEHOLDER_START_TIMEOUT_MS) return message;
-    return persistChatMessageRow(db, row.vault_id, row.channel_id, {
+    const next = {
       ...message,
       body: 'Agent run record is missing. Please try again.',
-      status: 'failed',
-    });
+      status: 'failed' as const,
+    };
+    return persist ? persistChatMessageRow(db, row.vault_id, row.channel_id, next) : next;
   }
   const patch = terminalRunPatch(run, message);
   if (!patch) return message;
 
-  return persistChatMessageRow(db, row.vault_id, row.channel_id, {
+  const next = {
     ...message,
     body: patch.body,
     status: patch.status,
-  });
+  };
+  return persist ? persistChatMessageRow(db, row.vault_id, row.channel_id, next) : next;
 }
 
 export function settleChatMessagesForRun(db: Db, runId: number): Array<{ vaultId: string; channelId: string; message: ChatMessage }> {

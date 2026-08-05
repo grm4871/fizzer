@@ -30,6 +30,8 @@ RUN npm run build
 FROM node:22-bookworm-slim AS runner
 WORKDIR /app
 ENV NODE_ENV=production
+# Production image is network-facing by default — strict CORS / no dev JWT secret.
+ENV CASCADE_NETWORK_MODE=1
 
 COPY --chown=node:node package.json package-lock.json ./
 COPY --chown=node:node client/package.json ./client/

@@ -9,17 +9,17 @@ Survey of Cascade multi-tenant, auth, and performance design gaps. **Prefer rede
 | ID | Surface | Problem | Architectural direction | Status |
 | --- | --- | --- | --- | --- |
 | H1 | Vault FS paths (`server/vault.ts`) | Folder names were not path-safe; `..` / separators could escape `root_path` | Path segments sanitized; resolve always assert-under-root | **shipped** |
-| H2 | Chat `![[note]]` grants | Auto full-note capability from title mention into channel | Explicit share capability / preview snapshot; no live full-body auto-grant | open |
-| H3 | Agent JWT | 12h user-shaped token; broad allowlist; agent message patch skips author | Run/vault/channel capability tokens; server-owned authorship | open |
+| H2 | Chat `![[note]]` grants | Auto full-note capability from title mention into channel | Snapshot content at grant time; embeds serve snapshot not live join | **shipped** (snapshot grants) |
+| H3 | Agent JWT | 12h user-shaped token; broad allowlist; agent message patch skips author | Run/vault/channel capability tokens; server-owned authorship | **partial** (agents cannot edit human msgs / reassign author) |
 
 ### P1
 
 | ID | Surface | Problem | Architectural direction | Status |
 | --- | --- | --- | --- | --- |
 | H4 | Chat invite = open registration | Multi-use 7d JWT registers accounts + joins channel | Split account invites (single-use, stored) from channel joins | open |
-| H5 | Incomplete vault RBAC | Tags / agent-memory / publish used read membership for writes | Single `requireVaultRole` primitive; editor+ for mutates | **partial** (tags, memory, publish) |
-| H6 | Public publish HTML | marked → raw HTML; client snapshot accepted | Server note only; HTML allowlist/sanitize | **partial** (server body + basic HTML strip) |
-| H7 | Note assets SVG | Served as `image/svg+xml` on app origin | Separate origin / sandbox / disallow active SVG | open |
+| H5 | Incomplete vault RBAC | Tags / agent-memory / publish used read membership for writes | Single `requireVaultRole` primitive; editor+ for mutates | **shipped** (tags, memory, publish) |
+| H6 | Public publish HTML | marked → raw HTML; client snapshot accepted | Server note only; HTML allowlist/sanitize | **shipped** (server body + HTML strip) |
+| H7 | Note assets SVG | Served as `image/svg+xml` on app origin | Separate origin / sandbox / disallow active SVG | **shipped** (reject upload; legacy serve sandbox+attachment) |
 | H8 | Channel links | Second tenancy model without channel membership roles | First-class channel members + scopes | open |
 | H9 | Deploy token RCE | Long-lived secret → host git reset | CI OIDC only; pin refs | open |
 
@@ -27,8 +27,8 @@ Survey of Cascade multi-tenant, auth, and performance design gaps. **Prefer rede
 
 | ID | Surface | Problem | Direction | Status |
 | --- | --- | --- | --- | --- |
-| H10 | Dual note storage + `file_path` API | Host paths leak; dual SoT | Metadata index + no host paths to clients | open |
-| H11 | NETWORK_MODE optional | Prod can start open CORS | Fail closed in Docker image | open |
+| H10 | Dual note storage + `file_path` API | Host paths leak; dual SoT | Metadata index + no host paths to clients | **partial** (file_path stripped from API) |
+| H11 | NETWORK_MODE optional | Prod can start open CORS | Fail closed in Docker image | **shipped** (`CASCADE_NETWORK_MODE=1` in image) |
 | H12 | Profile broadcast / 30d JWT | Vault-wide / global fanout | Scope presence; shorter tokens | open |
 
 ## Efficiency (architecture, not micro-opts)
@@ -46,7 +46,7 @@ Survey of Cascade multi-tenant, auth, and performance design gaps. **Prefer rede
 | ID | Surface | Problem | Redesign | Status |
 | --- | --- | --- | --- | --- |
 | E4 | Dual stream owners | Client `/runs` + server fold both drive UI | Server projection sole owner; channel rooms | open |
-| E5 | SQLite N+1 lists | tags/agents/work-items per-row; list side-effects; no `run_id` index | Batch joins; pure reads; index | **partial** (`chat_messages_run_idx`) |
+| E5 | SQLite N+1 lists | tags/agents/work-items per-row; list side-effects; no `run_id` index | Batch joins; pure reads; index | **partial** (run_id index, batched listNotes tags, list reconcile non-writing) |
 | E6 | Prompt cold stack | App contract + project docs + chat stuffed every new session | Pin system contract; tool-fetch workspace docs | open |
 | E7 | Runner split-brain | Control plane in renderer, processes in main | Main-owned lease + process supervisor | open |
 | E8 | App shell fanout | Full `notes[]` into every ChatView | External note resolver / tree store | open |

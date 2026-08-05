@@ -59,6 +59,10 @@ export function uploadNoteAsset(
   if (!vault) throw new Error('Note not found');
 
   const mediaType = String(input.media_type || '').trim().toLowerCase();
+  // SVG is active content on the app origin — never accept as an inline asset.
+  if (mediaType === 'image/svg+xml' || mediaType === 'image/svg') {
+    throw new Error('SVG uploads are not supported');
+  }
   if (
     !mediaType.startsWith('image/')
     && mediaType !== 'audio/mpeg'
@@ -127,7 +131,15 @@ export function serveNoteAsset(db: Db) {
     if (!filePath || !fs.existsSync(filePath)) return res.status(404).json({ error: 'Not found' });
 
     const ext = path.extname(filePath).slice(1).toLowerCase();
-    res.setHeader('Content-Type', MIME_BY_EXT[ext] || 'application/octet-stream');
+    // Legacy SVG on disk: force download + sandbox so it cannot execute as page content.
+    if (ext === 'svg') {
+      res.setHeader('Content-Type', 'image/svg+xml');
+      res.setHeader('Content-Disposition', 'attachment');
+      res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+    } else {
+      res.setHeader('Content-Type', MIME_BY_EXT[ext] || 'application/octet-stream');
+    }
     res.setHeader('Cache-Control', 'private, max-age=3600');
     res.sendFile(filePath);
   };

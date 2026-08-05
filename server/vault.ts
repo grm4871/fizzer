@@ -644,9 +644,32 @@ export function listNotes(db: Db, vaultId: string, opts?: { folder_id?: string; 
   sql += ' ORDER BY n.is_pinned DESC, n.updated_at DESC';
 
   const rows = db.prepare(sql).all(...params) as Omit<NoteSummary, 'tags'>[];
+  if (rows.length === 0) return [];
+
+  // Batch-load tags once — avoid per-note SELECT N+1 on every vault list/soft reload.
+  const tagsByNote = new Map<string, string[]>();
+  const idList = rows.map((row) => row.id);
+  const placeholders = idList.map(() => '?').join(',');
+  try {
+    const tagRows = db.prepare(`
+      SELECT nt.note_id AS noteId, t.name AS name
+      FROM note_tags nt
+      JOIN tags t ON t.id = nt.tag_id
+      WHERE nt.note_id IN (${placeholders})
+      ORDER BY t.name ASC
+    `).all(...idList) as Array<{ noteId: string; name: string }>;
+    for (const tag of tagRows) {
+      const list = tagsByNote.get(tag.noteId) || [];
+      list.push(tag.name);
+      tagsByNote.set(tag.noteId, list);
+    }
+  } catch {
+    // Schema edge during tests without note_tags — fall through empty tags.
+  }
+
   return rows.map((row) => ({
     ...row,
-    tags: getTagsForNote(db, row.id),
+    tags: tagsByNote.get(row.id) || [],
   }));
 }
 

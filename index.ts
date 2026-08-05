@@ -479,6 +479,10 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS chat_note_grants_channel_idx ON chat_note_grants(channel_id, message_id);
 `);
+// Snapshots freeze what was shared at embed time — guests never get live vault content.
+try { db.exec('ALTER TABLE chat_note_grants ADD COLUMN title_snapshot TEXT'); } catch { /* exists */ }
+try { db.exec('ALTER TABLE chat_note_grants ADD COLUMN content_snapshot TEXT'); } catch { /* exists */ }
+try { db.exec('ALTER TABLE chat_note_grants ADD COLUMN preview_snapshot TEXT'); } catch { /* exists */ }
 ensurePublishSchema(db);
 ensureEvolutionSchema(db);
 ensureScratchpadSchema(db);
@@ -607,16 +611,25 @@ function isAgentRequest(req: AuthedRequest): boolean {
   return req.user?.access === 'agent';
 }
 
-function redactNoteForAgent<T extends { content?: string; content_preview?: string }>(
+/** Never expose host filesystem paths to clients or agents. */
+function stripNoteHostPath<T extends { file_path?: string }>(note: T | null | undefined): Omit<T, 'file_path'> | null | undefined {
+  if (!note) return note;
+  const { file_path: _omit, ...rest } = note as T & { file_path?: string };
+  void _omit;
+  return rest as Omit<T, 'file_path'>;
+}
+
+function redactNoteForAgent<T extends { content?: string; content_preview?: string; file_path?: string }>(
   req: AuthedRequest,
   note: T | null | undefined,
-): T | null | undefined {
-  if (!note || !isAgentRequest(req)) return note;
+): Omit<T, 'file_path'> | null | undefined {
+  const stripped = stripNoteHostPath(note);
+  if (!stripped || !isAgentRequest(req)) return stripped;
   return {
-    ...note,
-    ...(typeof note.content === 'string' ? { content: redactPrivateBlocks(note.content) } : {}),
-    ...(typeof note.content_preview === 'string'
-      ? { content_preview: redactPrivatePreview(note.content_preview) }
+    ...stripped,
+    ...(typeof stripped.content === 'string' ? { content: redactPrivateBlocks(stripped.content) } : {}),
+    ...(typeof stripped.content_preview === 'string'
+      ? { content_preview: redactPrivatePreview(stripped.content_preview) }
       : {}),
   };
 }
@@ -1632,7 +1645,9 @@ app.get('/api/vaults/:id/notes', requireAuth, (req: AuthedRequest, res) => {
   if (typeof req.query.title_contains === 'string') opts.title_contains = req.query.title_contains;
 
   const notes = listNotes(db, vault.id, opts);
-  res.json({ notes: isAgentRequest(req) ? notes.map((note) => redactNoteForAgent(req, note)) : notes });
+  res.json({
+    notes: notes.map((note) => redactNoteForAgent(req, note as { file_path?: string })),
+  });
 });
 
 app.post('/api/vaults/:id/notes', requireAuth, (req: AuthedRequest, res) => {
@@ -2796,31 +2811,87 @@ function refreshChatNoteGrants(userId: number, localVaultId: string, sourceChann
     const title = match[1].trim();
     if (title) titles.add(title);
   }
+  // Snapshot at grant time: channel readers get frozen share content, not a live vault join.
   const findNote = db.prepare(`
-    SELECT id FROM notes WHERE vault_id = ? AND title = ? COLLATE NOCASE AND is_archived = 0
+    SELECT id, title, content, content_preview FROM notes
+    WHERE vault_id = ? AND title = ? COLLATE NOCASE AND is_archived = 0
     ORDER BY updated_at DESC LIMIT 1
   `);
   const grant = db.prepare(`
-    INSERT OR IGNORE INTO chat_note_grants (message_id, channel_id, note_id, granted_by)
-    VALUES (?, ?, ?, ?)
+    INSERT OR IGNORE INTO chat_note_grants
+      (message_id, channel_id, note_id, granted_by, title_snapshot, content_snapshot, preview_snapshot)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
   `);
   for (const title of titles) {
-    const note = findNote.get(localVaultId, title) as { id: string } | undefined;
-    if (note) grant.run(message.id, sourceChannelId, note.id, userId);
+    const note = findNote.get(localVaultId, title) as {
+      id: string; title: string; content: string; content_preview: string;
+    } | undefined;
+    if (!note) continue;
+    // Prefer on-disk body when present (notes.content can lag).
+    const full = getNote(db, note.id);
+    const content = full?.content ?? note.content ?? '';
+    const preview = (full?.content_preview ?? note.content_preview ?? '').slice(0, 400);
+    grant.run(
+      message.id,
+      sourceChannelId,
+      note.id,
+      userId,
+      full?.title ?? note.title,
+      content,
+      preview,
+    );
   }
 }
 
 app.get('/api/vaults/:vaultId/channels/:channelId/messages/:messageId/embeds', requireAuth, (req: AuthedRequest, res) => {
   try {
     const { route } = assertChatChannel(db, req.params.channelId, req.user!.id);
+    // Prefer frozen snapshots; fall back to live note only for pre-migration rows
+    // and only when the reader is a member of the note's vault.
     const rows = db.prepare(`
-      SELECT n.id, n.title, n.content, n.content_preview
+      SELECT g.note_id AS id,
+             COALESCE(g.title_snapshot, n.title) AS title,
+             g.content_snapshot AS content,
+             COALESCE(g.preview_snapshot, n.content_preview) AS content_preview,
+             n.vault_id AS note_vault_id
       FROM chat_note_grants g
       JOIN notes n ON n.id = g.note_id
       WHERE g.channel_id = ? AND g.message_id = ?
-      ORDER BY n.title COLLATE NOCASE
-    `).all(route.sourceChannelId, req.params.messageId);
-    res.json({ notes: rows });
+      ORDER BY title COLLATE NOCASE
+    `).all(route.sourceChannelId, req.params.messageId) as Array<{
+      id: string;
+      title: string;
+      content: string | null;
+      content_preview: string;
+      note_vault_id: string;
+    }>;
+    const notes = rows.map((row) => {
+      if (row.content != null && row.content !== '') {
+        return {
+          id: row.id,
+          title: row.title,
+          content: row.content,
+          content_preview: row.content_preview,
+        };
+      }
+      // Legacy grant without snapshot: only vault members get live content.
+      if (getVault(db, row.note_vault_id, req.user!.id)) {
+        const live = getNote(db, row.id);
+        return {
+          id: row.id,
+          title: live?.title ?? row.title,
+          content: live?.content ?? '',
+          content_preview: live?.content_preview ?? row.content_preview,
+        };
+      }
+      return {
+        id: row.id,
+        title: row.title,
+        content: row.content_preview || '',
+        content_preview: row.content_preview || '',
+      };
+    });
+    res.json({ notes: isAgentRequest(req) ? notes.map((n) => redactNoteForAgent(req, n)) : notes });
   } catch {
     res.status(404).json({ error: 'Message not found' });
   }
@@ -2969,10 +3040,30 @@ app.patch('/api/vaults/:vaultId/channels/:channelId/messages/:messageId', requir
     const { route } = assertChatChannel(db, req.params.channelId, req.user!.id);
     const existing = getChatMessage(db, req.params.channelId, req.user!.id, req.params.messageId);
     if (!existing) return res.status(404).json({ error: 'Message not found' });
-    if (!isAgentRequest(req) && existing.author !== req.user!.username) {
+    if (isAgentRequest(req)) {
+      // Agents may only update agent-attributed rows (streaming shells), never human messages.
+      if (!existing.registrationId && !existing.agentId) {
+        return res.status(403).json({ error: 'Agents cannot edit human messages' });
+      }
+      if (typeof req.body?.author === 'string' && req.body.author !== existing.author) {
+        return res.status(403).json({ error: 'Agents cannot reassign message authors' });
+      }
+      if (
+        typeof req.body?.registrationId === 'string'
+        && existing.registrationId
+        && req.body.registrationId !== existing.registrationId
+      ) {
+        return res.status(403).json({ error: 'Agents cannot reassign registration ownership' });
+      }
+    } else if (existing.author !== req.user!.username) {
       return res.status(403).json({ error: 'You can only edit your own messages' });
     }
-    const patch = isAgentRequest(req) ? req.body : {
+    const patch = isAgentRequest(req) ? {
+      ...req.body,
+      author: existing.author,
+      registrationId: existing.registrationId,
+      agentId: existing.agentId,
+    } : {
       body: typeof req.body?.body === 'string' ? req.body.body : existing.body,
       images: req.body?.images,
       attachments: req.body?.attachments,
