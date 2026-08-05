@@ -289,13 +289,13 @@ function SuperkanbanViewInner({
         </select>
       </div>
       <div className="superkanban-pulse" aria-label="Work summary">
-        <span><strong>{activeCount}</strong> active</span>
-        <span className={blockedCount ? 'is-alert' : ''}><strong>{blockedCount}</strong> blocked</span>
-        <span><strong>{reviewCount}</strong> in review</span>
-        <span><strong>{sources.length}</strong> boards{liveCount > 0 ? ` · ${liveCount} live` : ''}</span>
+        <span className="superkanban-stat"><strong>{activeCount}</strong><span>Active</span></span>
+        <span className={`superkanban-stat${blockedCount ? ' is-alert' : ''}`}><strong>{blockedCount}</strong><span>Blocked</span></span>
+        <span className="superkanban-stat"><strong>{reviewCount}</strong><span>In review</span></span>
+        <span className="superkanban-stat"><strong>{sources.length}</strong><span>Boards{liveCount > 0 ? ` · ${liveCount} live` : ''}</span></span>
         <div className="superkanban-visibility">
-          <label><input type="checkbox" checked={showBacklog} onChange={(event) => setShowBacklog(event.target.checked)} /> Backlog</label>
-          <label><input type="checkbox" checked={showDone} onChange={(event) => setShowDone(event.target.checked)} /> Done</label>
+          <button type="button" className={showBacklog ? 'is-active' : ''} aria-pressed={showBacklog} onClick={() => setShowBacklog((value) => !value)}>Backlog</button>
+          <button type="button" className={showDone ? 'is-active' : ''} aria-pressed={showDone} onClick={() => setShowDone((value) => !value)}>Done</button>
         </div>
       </div>
       <div className="kanban-board">
@@ -325,7 +325,7 @@ function SuperkanbanViewInner({
                     )}
                   </article>
                 ))}
-                {cards.length === 0 && <div className="kanban-no-matches">No matching cards</div>}
+                {cards.length === 0 && <div className="kanban-no-matches">{normalizedQuery ? 'No matches' : 'No cards'}</div>}
               </div>
             </section>
           );

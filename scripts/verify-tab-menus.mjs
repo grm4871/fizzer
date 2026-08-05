@@ -191,6 +191,9 @@ try {
     check('Superkanban exposes board scope and health controls',
       await aggregate.getByLabel('Filter by board').count() === 1
         && await aggregate.getByLabel('Work summary').count() === 1);
+    if (process.env.CAPTURE_UI) {
+      await page.screenshot({ path: process.env.CAPTURE_UI, fullPage: true });
+    }
   }
 
   // ── The per-tab menu on the tab we just opened.
