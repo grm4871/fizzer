@@ -25,7 +25,7 @@ import { CHAT_NOTE_MARKER } from './ChatView';
 import {
   Folder as FolderIcon, FolderOpen, FileText, Pin, Gem, Edit2, FolderPlus,
   Search, ChevronRight, PanelLeftClose, LogOut, Trash2, FilePlus, FolderInput, Pencil, RefreshCw,
-  Hash, Unlink, ShieldCheck, SkipBack, Play, Pause, SkipForward, Music2, Users,
+  Hash, Unlink, ShieldCheck, SkipBack, Play, Pause, SkipForward, Music2, Users, Plus,
 } from 'lucide-react';
 
 /** Switcher label: "Team notes · shared · 3" so shared vaults are obvious. */
@@ -45,6 +45,7 @@ interface SidebarProps {
   notes: NoteSummary[];
   activeNoteId: string | null;
   onSelectVault: (id: string) => void;
+  onCreateVault: () => Promise<void>;
   onSelectNote: (id: string) => void;
   onOpenNoteInNewTab: (id: string) => void;
   onNewNote: () => void;
@@ -115,6 +116,7 @@ export const Sidebar = memo(function Sidebar({
   notes,
   activeNoteId,
   onSelectVault,
+  onCreateVault,
   onSelectNote,
   onOpenNoteInNewTab,
   onNewNote,
@@ -145,6 +147,7 @@ export const Sidebar = memo(function Sidebar({
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [editingValue, setEditingValue] = useState('');
   const [updating, setUpdating] = useState(false);
+  const [vaultMenuOpen, setVaultMenuOpen] = useState(false);
   const [audioTracks, setAudioTracks] = useState<Array<{ name: string; url: string }>>([]);
   const [audioTrackIndex, setAudioTrackIndex] = useState(0);
   const [audioPlaying, setAudioPlaying] = useState(false);
@@ -634,9 +637,10 @@ export const Sidebar = memo(function Sidebar({
         <button
           type="button"
           className="vault-name"
-          onClick={onOpenAccount}
-          title="Manage this vault"
-          aria-label={`Manage ${activeVault?.name || 'this vault'}`}
+          onClick={() => setVaultMenuOpen((open) => !open)}
+          title="Switch or create a vault"
+          aria-label={`Switch or create vaults; current vault ${activeVault?.name || 'Cascade'}`}
+          aria-expanded={vaultMenuOpen}
         >
           <span className="vault-icon" aria-hidden="true"><Gem size={15} /></span>
           <span className="vault-name-text">
@@ -659,6 +663,29 @@ export const Sidebar = memo(function Sidebar({
         <div className="sidebar-actions sidebar-actions-desktop" role="toolbar" aria-label="Sidebar actions">{actionButtons('desktop')}</div>
         <button className="btn-icon sidebar-mobile-collapse" onClick={onCollapse} title="Collapse sidebar"><PanelLeftClose size={16} /></button>
       </div>
+
+      {vaultMenuOpen && (
+        <div className="vault-switcher-menu" role="menu" aria-label="Vaults">
+          {vaults.map((vault) => (
+            <button
+              key={vault.id}
+              type="button"
+              role="menuitemradio"
+              aria-checked={vault.id === activeVaultId}
+              className={vault.id === activeVaultId ? 'is-active' : ''}
+              onClick={() => { onSelectVault(vault.id); setVaultMenuOpen(false); }}
+            >
+              <Gem size={13} aria-hidden="true" />
+              <span>{vault.name}</span>
+              {isSharedVault(vault) && <small>shared</small>}
+            </button>
+          ))}
+          <div className="vault-switcher-divider" role="separator" />
+          <button type="button" role="menuitem" className="vault-switcher-create" onClick={() => { setVaultMenuOpen(false); void onCreateVault(); }}>
+            <Plus size={14} aria-hidden="true" /> New vault
+          </button>
+        </div>
+      )}
 
       <div className="sidebar-actions sidebar-actions-mobile">{actionButtons('mobile')}</div>
 

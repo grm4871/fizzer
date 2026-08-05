@@ -661,6 +661,22 @@ button:focus-visible,
 .sidebar-header .vault-name:hover .vault-name-text,
 .sidebar-header .vault-name:focus-visible .vault-name-text { color: var(--accent-hover); }
 .sidebar-header .vault-name:focus-visible { outline: 1px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
+.vault-switcher-menu {
+  margin: 6px 8px 4px;
+  padding: 5px;
+  border: 1px solid var(--rail-edge);
+  border-radius: 6px;
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-lg);
+}
+.vault-switcher-menu button {
+  width: 100%; display: flex; align-items: center; gap: 8px; border: 0; padding: 8px;
+  background: transparent; color: var(--text-secondary); border-radius: 4px; text-align: left; cursor: pointer;
+}
+.vault-switcher-menu button:hover, .vault-switcher-menu button.is-active { background: var(--accent-subtle); color: var(--text-primary); }
+.vault-switcher-menu button small { margin-left: auto; color: var(--text-tertiary); font-size: .68rem; }
+.vault-switcher-divider { height: 1px; margin: 4px; background: var(--rail-edge); }
+.vault-switcher-menu .vault-switcher-create { color: var(--accent-hover); font-weight: 650; }
 .sidebar-header .vault-name-text {
   overflow: hidden;
   text-overflow: ellipsis;

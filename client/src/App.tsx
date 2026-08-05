@@ -400,6 +400,21 @@ export default function App() {
     }
   }, [activeVaultId]);
 
+  const handleCreateVault = useCallback(async () => {
+    const name = window.prompt('Name your new vault');
+    if (!name?.trim()) return;
+    try {
+      const data = await api<{ vault: Vault }>('/api/vaults', {
+        method: 'POST',
+        body: JSON.stringify({ name: name.trim() }),
+      });
+      setVaults((current) => [...current, data.vault]);
+      setActiveVaultId(data.vault.id);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not create vault');
+    }
+  }, []);
+
   useEffect(() => {
     const token = localStorage.getItem('docs_token');
     if (!token) return;
@@ -3395,6 +3410,7 @@ export default function App() {
           notes={notes}
           activeNoteId={activeTabId}
           onSelectVault={setActiveVaultId}
+          onCreateVault={handleCreateVault}
           onSelectNote={(id) => {
             openNote(id, 'replace');
             if (isMobileViewport()) setSidebarOpen(false);
