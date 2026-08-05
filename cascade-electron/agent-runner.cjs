@@ -223,6 +223,7 @@ function buildRunHelperEnv(opts) {
   const agentId = String(opts && opts.agent || '').trim();
   const agentMemoryKey = String(opts && opts.agentMemoryKey || '').trim();
   const registrationId = String(opts && opts.chatRegistrationId || '').trim();
+  const workItemId = String(opts && opts.workItemId || '').trim();
   const configPath = writeHelperConfig({
     runId,
     vaultId,
@@ -233,6 +234,7 @@ function buildRunHelperEnv(opts) {
     agentId,
     agentMemoryKey,
     registrationId,
+    workItemId,
   });
   const env = {
     CASCADE_NOTE_URL: noteApi.configured ? noteApi.url : (noteApi.url || process.env.CASCADE_NOTE_URL || 'https://cscd.online'),
@@ -255,6 +257,7 @@ function buildRunHelperEnv(opts) {
   if (messageId) env.CASCADE_CHAT_MESSAGE = messageId;
   if (triggeringMessageId) env.CASCADE_CHAT_TRIGGERING_MESSAGE = triggeringMessageId;
   if (chatAuthor) env.CASCADE_CHAT_AUTHOR = chatAuthor;
+  if (workItemId) env.CASCADE_WORK_ITEM_ID = workItemId;
   if (Number.isFinite(runId) && runId > 0) env.CASCADE_RUN_ID = String(runId);
   return env;
 }

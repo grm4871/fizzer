@@ -27,6 +27,7 @@ import {
   claimMissionCoordinatorWake,
   ensureChatMissionSchema,
   finishChatMission,
+  getMissionTaskWorkItemId,
   listSchedulableMissionTasks,
   linkMissionTaskDispatch,
   settleMissionTaskForRun,
@@ -57,6 +58,7 @@ test('scheduler respects dependencies, priority, one-active-task-per-agent, and 
 
     // Mission tasks compile into durable isolated work-item twins.
     assert.ok(first.task.workItemId);
+    assert.equal(getMissionTaskWorkItemId(db, first.task.id), first.task.workItemId);
     assert.equal(first.task.workspaceMode, 'isolated');
     assert.match(first.task.branch || '', /^cascade\//);
     assert.ok(second.task.workItemId);

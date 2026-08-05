@@ -177,6 +177,7 @@ import {
   ensureChatMissionSchema,
   finishChatMission,
   getChatMission,
+  getMissionTaskWorkItemId,
   linkMissionTaskDispatch,
   listSchedulableMissionTasks,
   missionRootMessage,
@@ -2394,6 +2395,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
   const chatDispatchId = typeof req.body?.chatDispatchId === 'string' ? req.body.chatDispatchId.trim() : '';
   let chatDispatch: ChatAgentDispatch | null = null;
   let chatMissionTaskId = '';
+  let chatWorkItemId = '';
   if (chatDispatchId) {
     if (!chatChannelId) return res.status(400).json({ error: 'Chat channel is required for dispatch' });
     chatDispatch = getChatAgentDispatch(db, req.user!.id, chatChannelId, chatDispatchId);
@@ -2413,6 +2415,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     registrationId = chatDispatch.registration.id;
     triggeringMessageId = chatDispatch.messageId;
     chatMissionTaskId = chatDispatch.message.missionTaskId || '';
+    chatWorkItemId = chatMissionTaskId ? (getMissionTaskWorkItemId(db, chatMissionTaskId) || '') : '';
     if (chatDispatch.runId != null) {
       const existing = getRun(db, chatDispatch.runId);
       if (existing) return res.json({ run: existing, reused: true });
@@ -2466,6 +2469,15 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     // in the channel runs from the same directory.
     const channelCwd = getChannelCwd(db, route.sourceChannelId);
     if (channelCwd) selectedCwd = normalizeRunCwd(channelCwd);
+    // A mission task's bound workspace is authoritative for every launch and
+    // resume. It must beat a broad channel cwd so parallel task branches never
+    // silently execute in the shared checkout.
+    if (chatWorkItemId) {
+      try {
+        const workItem = getWorkItem(db, runnerUserId, chatWorkItemId);
+        if (workItem.worktreePath) selectedCwd = workItem.worktreePath;
+      } catch { /* a stale/deleted twin falls back to the registered cwd */ }
+    }
     // Guests may invoke an explicitly pingable agent, but never with unattended
     // command approval. Only the owner can exercise the registration's yolo flag.
     yoloMode = requesterIsOwner && registration.yolo;
@@ -2733,6 +2745,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
       chatAuthor,
       agentMemoryKey: agentMemoryKey || selectedAgent,
       chatRegistrationId,
+      workItemId: chatWorkItemId || undefined,
       images: cleanImages,
       yolo: yoloMode,
     }, db);

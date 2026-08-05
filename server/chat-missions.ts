@@ -205,6 +205,12 @@ export function missionTaskStatusToWorkItemStatus(status: ChatMissionTaskStatus)
   }
 }
 
+/** Durable workspace identity for a dispatched mission task. */
+export function getMissionTaskWorkItemId(db: Db, taskId: string): string | null {
+  const row = db.prepare('SELECT work_item_id FROM chat_mission_tasks WHERE id = ?').get(taskId) as { work_item_id: string | null } | undefined;
+  return row?.work_item_id || null;
+}
+
 function slugifyBranchPart(value: string): string {
   return cleanText(value, 40)
     .toLowerCase()

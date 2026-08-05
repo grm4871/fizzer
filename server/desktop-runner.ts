@@ -41,6 +41,8 @@ export type DelegatedRunPayload = {
   chatAuthor?: string;
   agentMemoryKey?: string;
   chatRegistrationId?: string;
+  /** Durable task identity, made available to the provider helper context. */
+  workItemId?: string;
   images?: RunImage[];
   /** Run with permission prompts bypassed ("yolo"). */
   yolo?: boolean;
