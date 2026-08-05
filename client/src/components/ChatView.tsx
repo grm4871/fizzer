@@ -3398,7 +3398,7 @@ export const ChatView = memo(function ChatView({
           const planUsage = runnerHealth?.planUsage?.[planUsageProviderId(agent.registration.agentId)] || null;
           return (
             <div
-              className={`chat-user chat-agent-user${agent.registration.orchestrator ? ' is-supervisor' : ''}${isEditing ? ' is-editing' : ''}`}
+              className={`chat-user chat-agent-user${isEditing ? ' is-editing' : ''}`}
               key={agent.registration.id}
             >
               <button
@@ -3416,9 +3416,6 @@ export const ChatView = memo(function ChatView({
                 <div className="chat-user-copy">
                   <div className="chat-user-copy-head">
                     <strong>{agent.registration.displayName || agent.label}</strong>
-                    {agent.registration.orchestrator && (
-                      <span className="chat-agent-supervisor" title="Channel supervisor">Supervisor</span>
-                    )}
                     {planUsage && <PlanUsageMeters usage={planUsage} decal />}
                   </div>
                   <span className="chat-user-handle">@{agent.registration.mention || agent.id}</span>

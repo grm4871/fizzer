@@ -5070,14 +5070,6 @@ button.chat-avatar-agent {
 .chat-user.chat-agent-user.is-editing {
   box-shadow: inset 2px 0 0 var(--accent), var(--bevel);
 }
-.chat-user.chat-agent-user.is-supervisor {
-  padding-top: 20px;
-  border-color: color-mix(in srgb, hsl(42, 88%, 59%) 52%, var(--border));
-  background:
-    linear-gradient(100deg, color-mix(in srgb, hsl(42, 82%, 46%) 19%, transparent), transparent 60%),
-    color-mix(in srgb, hsl(38, 42%, 16%) 72%, var(--bg-raised));
-  box-shadow: inset 3px 0 0 hsl(42, 84%, 54%), var(--bevel);
-}
 .chat-user-row {
   display: flex;
   align-items: center;
@@ -5119,36 +5111,20 @@ button.chat-avatar-agent {
   min-width: 0;
   flex: 1;
 }
-.chat-agent-supervisor {
-  position: absolute;
-  top: 5px;
-  left: 8px;
-  flex: 0 0 auto;
-  padding: 2px 6px 2px 19px;
-  border: 1px solid color-mix(in srgb, hsl(42, 88%, 59%) 55%, var(--border));
-  border-radius: 4px;
-  background: color-mix(in srgb, hsl(42, 78%, 28%) 56%, var(--bg-raised));
-  color: hsl(43, 95%, 76%);
-  font-size: 0.56rem;
-  font-weight: 800;
-  letter-spacing: 0.075em;
-  line-height: 1;
-  text-transform: uppercase;
-}
 .chat-agent-supervisor-emblem {
   position: absolute;
   z-index: 1;
-  top: 6px;
-  left: 11px;
+  top: 23px;
+  left: 29px;
   display: grid;
   place-items: center;
   width: 15px;
   height: 15px;
-  border: 1px solid hsl(42, 88%, 64%);
-  border-radius: 4px;
-  background: hsl(39, 60%, 17%);
-  color: hsl(43, 96%, 71%);
-  box-shadow: 0 1px 5px hsl(38, 78%, 8%);
+  border: 1px solid hsl(42, 72%, 58%);
+  border-radius: 50%;
+  background: hsl(39, 44%, 14%);
+  color: hsl(43, 88%, 67%);
+  box-shadow: 0 1px 4px hsl(38, 78%, 8%);
 }
 .chat-user-copy strong {
   color: inherit;
