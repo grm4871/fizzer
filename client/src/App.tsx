@@ -178,7 +178,7 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidebarWidth, setSidebarWidth] = useState(() => Number(localStorage.getItem('cascade_sidebar_w')) || 268);
   const [isResizing, setIsResizing] = useState(false);
-  const mobileSidebarSwipeRef = useRef<{ x: number; y: number; at: number } | null>(null);
+  const mobileSidebarSwipeRef = useRef<{ x: number; y: number; at: number; pointerId: number } | null>(null);
   // Members panel open. Mobile starts closed (toolbar opens it like the folder
   // sidebar); desktop restores the previous expanded/collapsed rail preference.
   const [chatMembersOpen, setChatMembersOpen] = useState(() => {
@@ -357,20 +357,18 @@ export default function App() {
   // A left-edge gesture is deliberate enough to avoid stealing normal chat
   // swipes, but makes the hidden mobile drawer discoverable without hunting
   // for the tiny expand button.
-  const beginMobileSidebarSwipe = useCallback((event: React.TouchEvent<HTMLElement>) => {
+  const beginMobileSidebarSwipe = useCallback((event: React.PointerEvent<HTMLElement>) => {
     if (!isMobileViewport() || sidebarOpen) return;
-    const touch = event.touches[0];
-    if (!touch || touch.clientX > 28) return;
-    mobileSidebarSwipeRef.current = { x: touch.clientX, y: touch.clientY, at: Date.now() };
+    if (event.pointerType !== 'touch') return;
+    mobileSidebarSwipeRef.current = { x: event.clientX, y: event.clientY, at: Date.now(), pointerId: event.pointerId };
+    event.currentTarget.setPointerCapture?.(event.pointerId);
   }, [sidebarOpen]);
-  const finishMobileSidebarSwipe = useCallback((event: React.TouchEvent<HTMLElement>) => {
+  const finishMobileSidebarSwipe = useCallback((event: React.PointerEvent<HTMLElement>) => {
     const start = mobileSidebarSwipeRef.current;
     mobileSidebarSwipeRef.current = null;
-    if (!start || !isMobileViewport() || sidebarOpen) return;
-    const touch = event.changedTouches[0];
-    if (!touch) return;
-    const dx = touch.clientX - start.x;
-    const dy = Math.abs(touch.clientY - start.y);
+    if (!start || start.pointerId !== event.pointerId || !isMobileViewport() || sidebarOpen) return;
+    const dx = event.clientX - start.x;
+    const dy = Math.abs(event.clientY - start.y);
     if (Date.now() - start.at < 800 && dx >= 72 && dx > dy * 1.5) {
       setSidebarOpen(true);
       setChatMembersOpen(false);
@@ -3346,8 +3344,6 @@ export default function App() {
   return (
     <main
       className={`app-shell ${sidebarOpen ? 'sidebar-open' : 'sidebar-closed'}`}
-      onTouchStart={beginMobileSidebarSwipe}
-      onTouchEnd={finishMobileSidebarSwipe}
       style={{
         display: 'grid',
         '--sidebar-width': `${sidebarWidth}px`,
@@ -3356,6 +3352,15 @@ export default function App() {
         transition: isResizing ? 'none' : undefined,
       } as CSSProperties}
     >
+      {!sidebarOpen && (
+        <div
+          className="mobile-sidebar-swipe-edge"
+          aria-hidden="true"
+          onPointerDown={beginMobileSidebarSwipe}
+          onPointerUp={finishMobileSidebarSwipe}
+          onPointerCancel={() => { mobileSidebarSwipeRef.current = null; }}
+        />
+      )}
       {sidebarOpen && (
         <div className="resize-handle" style={{ left: sidebarWidth - 3 }} onMouseDown={startResize} role="separator" aria-orientation="vertical" aria-label="Resize sidebar" title="Drag to resize" />
       )}

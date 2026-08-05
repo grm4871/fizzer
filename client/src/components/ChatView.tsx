@@ -13,7 +13,7 @@ import {
   splitWikilinks,
 } from '../docEmbeds';
 import { escapeRegExp, normalizeMention } from '../chat/mentions';
-import { createChannelWorkItem } from '../chat/workItems';
+import { createChannelWorkItem, patchWorkItem } from '../chat/workItems';
 import { reportWorkItemGitState, workspaceBridge } from '../chat/workspaces';
 import { usePopupMenu } from '../ui/popupMenu';
 import { highlightJSON } from './jsonHighlighter';
@@ -1268,6 +1268,9 @@ function ChatClarificationCard({
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [budgetEditing, setBudgetEditing] = useState(false);
+  const [tokenBudget, setTokenBudget] = useState(clarification.tokenBudget || 0);
+  const [budgetDraft, setBudgetDraft] = useState(String(clarification.tokenBudget || ''));
   const pending = clarification.status === 'pending';
   const answeredCount = clarification.questions.filter((q) => String(answers[q.id] || '').trim()).length;
   const allAnswered = answeredCount === clarification.questions.length;
@@ -1309,6 +1312,23 @@ function ChatClarificationCard({
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not accept contract');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveBudget(nextValue = budgetDraft) {
+    if (!clarification.workItemId) return;
+    const next = Math.max(0, Math.floor(Number(nextValue) || 0));
+    setBusy(true);
+    setError('');
+    try {
+      await patchWorkItem(clarification.workItemId, { tokenBudget: next });
+      setTokenBudget(next);
+      setBudgetDraft(next > 0 ? String(next) : '');
+      setBudgetEditing(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not update token budget');
     } finally {
       setBusy(false);
     }
@@ -1409,9 +1429,21 @@ function ChatClarificationCard({
           );
         })}
       </div>
-      {clarification.tokenBudget ? (
-        <div className="chat-clarification-budget">Token budget: {clarification.tokenBudget}</div>
-      ) : null}
+      {clarification.workItemId ? (
+        <div className="chat-clarification-budget">
+          {budgetEditing ? (
+            <>
+              <label>Token budget <input type="number" min="0" step="1000" autoFocus value={budgetDraft} placeholder="No budget" onChange={(event) => setBudgetDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void saveBudget(); if (event.key === 'Escape') setBudgetEditing(false); }} /></label>
+              <button type="button" disabled={busy} onClick={() => void saveBudget()}>Save</button>
+              <button type="button" disabled={busy} onClick={() => void saveBudget('0')}>No budget</button>
+            </>
+          ) : (
+            <button type="button" className="chat-clarification-budget-value" onClick={() => setBudgetEditing(true)} title="Change token budget">
+              Token budget: {tokenBudget > 0 ? tokenBudget.toLocaleString() : 'No budget'}
+            </button>
+          )}
+        </div>
+      ) : clarification.tokenBudget ? <div className="chat-clarification-budget">Token budget: {clarification.tokenBudget.toLocaleString()}</div> : null}
       {(clarification.workItemId || clarification.missionId) && (
         <div className="chat-clarification-contract">
           {clarification.workItemId ? <>Contract <code>{clarification.workItemId.slice(0, 8)}</code></> : null}

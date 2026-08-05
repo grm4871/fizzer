@@ -6012,6 +6012,17 @@ button.chat-avatar-agent {
     -webkit-tap-highlight-color: transparent;
   }
 
+  /* Android's system back gesture owns the first few physical pixels. Start
+     just inside that zone, outside message rows, so drawer reveal never
+     competes with the chat's left-swipe-to-reply pointer handler. */
+  .mobile-sidebar-swipe-edge {
+    position: absolute;
+    inset: 0 auto 0 0;
+    z-index: 65;
+    width: 36px;
+    touch-action: pan-y;
+  }
+
   .sidebar {
     position: absolute;
     inset: 0 auto 0 0;
@@ -7524,6 +7535,11 @@ a.chat-mission-chip:hover { color: var(--text-primary); border-color: var(--acce
   font-size: 0.6875rem;
   font-family: var(--font-mono);
 }
+.chat-clarification-budget { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.chat-clarification-budget-value { color: inherit; font: inherit; cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
+.chat-clarification-budget label { display: inline-flex; align-items: center; gap: 5px; }
+.chat-clarification-budget input { width: 92px; padding: 3px 5px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-base); color: var(--text-primary); font: inherit; }
+.chat-clarification-budget button:not(.chat-clarification-budget-value) { padding: 3px 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-raised); color: var(--text-secondary); font: inherit; cursor: pointer; }
 .chat-clarification-error {
   margin-top: 8px;
   color: var(--danger);
