@@ -60,12 +60,19 @@ export type ChatChangeRequest = {
 };
 
 /**
- * Pre-contract clarification: agent asks; human answers; accept compiles into
- * a durable work-item contract that lives on the kanban and drives agents.
+ * Pre-contract clarification: agent asks (questionnaire); human answers; accept
+ * compiles into a work-item contract + mission that drives agents until done,
+ * token budget, or manual stop.
  */
+export type ClarificationQuestionKind = 'text' | 'single' | 'multi';
+
 export type ChatClarificationQuestion = {
   id: string;
   prompt: string;
+  /** text = freeform; single = radio; multi = checkboxes. Default text. */
+  kind?: ClarificationQuestionKind;
+  /** Choice labels for single/multi. */
+  options?: string[];
   answer?: string;
 };
 
@@ -77,9 +84,18 @@ export type ChatClarification = {
   tokenBudget?: number;
   assigneeRegistrationId?: string;
   workItemId?: string;
+  /** Mission opened on accept so the orchestrator can plan/delegate. */
+  missionId?: string;
   acceptedAt?: string;
   acceptedBy?: string;
 };
+
+function normalizeClarificationQuestionKind(raw: unknown): ClarificationQuestionKind {
+  const kind = String(raw || 'text').toLowerCase();
+  if (kind === 'single' || kind === 'choice' || kind === 'radio' || kind === 'select') return 'single';
+  if (kind === 'multi' || kind === 'multiple' || kind === 'checkbox' || kind === 'checkboxes') return 'multi';
+  return 'text';
+}
 
 export type ChatBlock = {
   type: 'text' | 'thinking' | 'tool_use' | 'tool_result';
@@ -1774,11 +1790,19 @@ export function createChatMessage(
   if (input.clarification) {
     const questions = (Array.isArray(input.clarification.questions) ? input.clarification.questions : [])
       .slice(0, 20)
-      .map((q, index) => ({
-        id: String(q?.id || `q${index + 1}`).slice(0, 40),
-        prompt: String(q?.prompt || '').trim().slice(0, 2000),
-        ...(q?.answer != null ? { answer: String(q.answer).trim().slice(0, 4000) } : {}),
-      }))
+      .map((q, index) => {
+        const kind = normalizeClarificationQuestionKind(q?.kind ?? (q as { type?: string })?.type);
+        const options = Array.isArray(q?.options)
+          ? q.options.map((opt: unknown) => String(opt || '').trim().slice(0, 200)).filter(Boolean).slice(0, 24)
+          : [];
+        return {
+          id: String(q?.id || `q${index + 1}`).slice(0, 40),
+          prompt: String(q?.prompt || '').trim().slice(0, 2000),
+          kind,
+          ...(options.length && kind !== 'text' ? { options } : {}),
+          ...(q?.answer != null ? { answer: String(q.answer).trim().slice(0, 4000) } : {}),
+        };
+      })
       .filter((q) => q.prompt.length > 0);
     if (questions.length) {
       message.clarification = {
@@ -1795,6 +1819,9 @@ export function createChatMessage(
           : {}),
         ...(input.clarification.workItemId
           ? { workItemId: String(input.clarification.workItemId).slice(0, 80) }
+          : {}),
+        ...(input.clarification.missionId
+          ? { missionId: String(input.clarification.missionId).slice(0, 80) }
           : {}),
       };
     }
@@ -2038,16 +2065,16 @@ export function answerChatClarification(
 }
 
 /**
- * Accept a filled clarification → durable work-item contract (kanban + agent drive).
- * Returns the updated message (with workItemId) and the created work item id.
+ * Accept a filled clarification → durable work-item contract (kanban) + contract text.
+ * Mission open + coordinator wake happen in the HTTP handler (avoids circular imports).
  */
 export function acceptChatClarification(
   db: Db,
   userId: number,
   channelId: string,
   messageId: string,
-  opts?: { tokenBudget?: number; title?: string },
-): { message: ChatMessage; workItemId: string } {
+  opts?: { tokenBudget?: number; title?: string; missionId?: string },
+): { message: ChatMessage; workItemId: string; contract: string; title: string; tokenBudget: number } {
   const { route } = assertChatChannel(db, channelId, userId);
   const row = db.prepare('SELECT *, rowid FROM chat_messages WHERE id = ? AND channel_id = ?')
     .get(messageId, route.sourceChannelId) as ChatMessageRow | undefined;
@@ -2056,10 +2083,25 @@ export function acceptChatClarification(
   const clarification = message.clarification;
   if (!clarification) throw new Error('Message is not a clarification');
   if (clarification.status === 'accepted' && clarification.workItemId) {
-    return { message: { ...message, channelId: route.localChannelId }, workItemId: clarification.workItemId };
+    return {
+      message: { ...message, channelId: route.localChannelId },
+      workItemId: clarification.workItemId,
+      contract: clarification.questions.map((q, i) => (
+        `Q${i + 1}: ${q.prompt}\nA${i + 1}: ${String(q.answer || '').trim()}`
+      )).join('\n\n'),
+      title: clarification.title,
+      tokenBudget: clarification.tokenBudget || 0,
+    };
   }
   if (clarification.status === 'canceled') throw new Error('Clarification was canceled');
-  const unanswered = clarification.questions.filter((q) => !String(q.answer || '').trim());
+  const unanswered = clarification.questions.filter((q) => {
+    const kind = q.kind || 'text';
+    // multi may be intentionally empty only if marked optional — require at least one pick when options exist
+    if (kind === 'multi' && (q.options?.length || 0) > 0) {
+      return !String(q.answer || '').trim();
+    }
+    return !String(q.answer || '').trim();
+  });
   if (unanswered.length) {
     throw new Error(`Answer all questions first (${unanswered.length} remaining)`);
   }
@@ -2086,12 +2128,14 @@ export function acceptChatClarification(
     tokenBudget,
     verification: 'Drive until completed, token budget hit, or manually stopped.',
   });
+  const missionId = opts?.missionId || clarification.missionId;
   const updated: ChatMessage = {
     ...message,
     clarification: {
       ...clarification,
       status: 'accepted',
       workItemId: item.id,
+      ...(missionId ? { missionId } : {}),
       tokenBudget,
       acceptedAt: new Date().toISOString(),
       acceptedBy: user.username,
@@ -2103,6 +2147,32 @@ export function acceptChatClarification(
       channelId: route.localChannelId,
     },
     workItemId: item.id,
+    contract,
+    title,
+    tokenBudget,
+  };
+}
+
+/** Attach mission id onto an already-accepted clarification card. */
+export function attachClarificationMission(
+  db: Db,
+  userId: number,
+  channelId: string,
+  messageId: string,
+  missionId: string,
+): ChatMessage {
+  const { route } = assertChatChannel(db, channelId, userId);
+  const row = db.prepare('SELECT *, rowid FROM chat_messages WHERE id = ? AND channel_id = ?')
+    .get(messageId, route.sourceChannelId) as ChatMessageRow | undefined;
+  if (!row) throw new Error('Message not found');
+  const message = rowToMessage(row);
+  if (!message.clarification) throw new Error('Message is not a clarification');
+  return {
+    ...persistChatMessageRow(db, route.sourceVaultId, route.sourceChannelId, {
+      ...message,
+      clarification: { ...message.clarification, missionId: String(missionId).slice(0, 80) },
+    }),
+    channelId: route.localChannelId,
   };
 }
 

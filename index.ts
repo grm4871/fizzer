@@ -138,6 +138,7 @@ import {
   mergeChatChangeRequest,
   answerChatClarification,
   acceptChatClarification,
+  attachClarificationMission,
   settleChatMessagesForRun,
   listChatAgentMembers,
   listChatChannelParticipants,
@@ -3182,7 +3183,12 @@ app.post('/api/vaults/:vaultId/channels/:channelId/messages/:messageId/clarifica
   }
 });
 
-/** Accept clarification → durable work-item contract on the kanban. */
+/**
+ * Accept clarification → work-item contract + mission.
+ * Flow: orchestrator asks scope via clarification card → human answers/accepts
+ * → kanban contract + mission root open → coordinator is woken to plan/delegate
+ * and drive until done, token budget, or manual stop.
+ */
 app.post('/api/vaults/:vaultId/channels/:channelId/messages/:messageId/clarification/accept', requireAuth, (req: AuthedRequest, res) => {
   try {
     const { route } = assertChatChannel(db, req.params.channelId, req.user!.id);
@@ -3190,8 +3196,88 @@ app.post('/api/vaults/:vaultId/channels/:channelId/messages/:messageId/clarifica
       tokenBudget: req.body?.tokenBudget != null ? Number(req.body.tokenBudget) : undefined,
       title: req.body?.title != null ? String(req.body.title) : undefined,
     });
-    emitChatMessageEvent(route.sourceVaultId, route.sourceChannelId, 'vault:chatMessageUpdated', result.message);
-    res.status(201).json({ message: result.message, workItemId: result.workItemId });
+    let message = result.message;
+    let missionId = message.clarification?.missionId;
+    const members = listChatAgentMembers(db, req.params.channelId, req.user!.id);
+    const coordinator = (
+      (message.registrationId && members.find((m) => m.id === message.registrationId && m.orchestrator))
+      || members.find((m) => m.orchestrator)
+      || (message.registrationId ? members.find((m) => m.id === message.registrationId) : undefined)
+      || (message.clarification?.assigneeRegistrationId
+        ? members.find((m) => m.id === message.clarification!.assigneeRegistrationId)
+        : undefined)
+    );
+    if (coordinator && !missionId) {
+      try {
+        const objective = [
+          'Accepted clarification contract — drive this until completed, token budget, or manual stop.',
+          result.tokenBudget > 0 ? `Token budget: ${result.tokenBudget}` : 'Token budget: unlimited',
+          `Work item: ${result.workItemId}`,
+          '',
+          'Contract:',
+          result.contract,
+        ].join('\n');
+        const missionUpdate = createChatMission(db, req.user!.id, req.params.vaultId, req.params.channelId, {
+          rootMessageId: message.id,
+          coordinatorRegistrationId: coordinator.id,
+          title: result.title,
+          objective,
+        });
+        missionId = missionUpdate.mission.id;
+        message = attachClarificationMission(
+          db,
+          req.user!.id,
+          req.params.channelId,
+          message.id,
+          missionId,
+        );
+        emitMissionProjection(missionUpdate);
+        // Kick the coordinator to plan/delegate under the accepted contract.
+        const wakeBody = [
+          `@${coordinator.mention || coordinator.agentId} Contract accepted for “${result.title}”.`,
+          `Mission ${missionId} is open. Work item (kanban contract): ${result.workItemId}.`,
+          result.tokenBudget > 0 ? `Token budget: ${result.tokenBudget}` : 'Token budget: unlimited',
+          '',
+          'Plan the work from the contract below, then `mission delegate` tasks (or execute yourself).',
+          'Drive until the mission is finished, the token budget is hit, or the user stops you.',
+          '',
+          'Contract:',
+          result.contract,
+        ].join('\n');
+        const wakeMessage = createChatMessage(db, req.user!.id, req.params.vaultId, req.params.channelId, {
+          id: `sys-contract-${missionId.slice(0, 8)}-${crypto.randomUUID().slice(0, 8)}`,
+          channelId: req.params.channelId,
+          author: 'Cascade',
+          body: wakeBody,
+          createdAt: new Date().toISOString(),
+        });
+        const dispatch = createChatAgentDispatchForRegistration(
+          db,
+          req.user!.id,
+          req.params.channelId,
+          wakeMessage,
+          coordinator.id,
+        );
+        emitChatMessageEvent(
+          route.sourceVaultId,
+          route.sourceChannelId,
+          'vault:chatMessageCreated',
+          wakeMessage,
+          [dispatch],
+        );
+      } catch (error) {
+        console.warn(
+          'clarification accept: mission open/wake skipped:',
+          error instanceof Error ? error.message : error,
+        );
+      }
+    }
+    emitChatMessageEvent(route.sourceVaultId, route.sourceChannelId, 'vault:chatMessageUpdated', message);
+    res.status(201).json({
+      message,
+      workItemId: result.workItemId,
+      missionId: missionId || null,
+    });
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
   }

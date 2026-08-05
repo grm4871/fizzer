@@ -3,12 +3,15 @@ import test from 'node:test';
 import Database from 'better-sqlite3';
 import {
   CHAT_NOTE_MARKER,
+  acceptChatClarification,
+  attachClarificationMission,
   createChatMessage,
   ensureChatSchema,
   getChatMessage,
   linkChatChannel,
   upsertChatAgentMember,
 } from './chat.js';
+import { ensureWorkItemSchema, getWorkItem } from './workItems.js';
 import {
   createChatAgentDispatchForRegistration,
   createChatAgentDispatches,
@@ -248,6 +251,51 @@ test('canceling a running task returns its run for route-level interruption', ()
   }
 });
 
+test('accepting clarification yields contract work item + mission root', () => {
+  const { db, coordinator } = setup();
+  try {
+    const card = createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: 'clarify-1',
+      channelId: 'channel-1',
+      author: 'Sol',
+      body: 'Need scope before starting.',
+      createdAt: '2026-08-04T00:00:00.000Z',
+      registrationId: coordinator.id,
+      clarification: {
+        title: 'Ship isolation',
+        questions: [
+          { id: 'q1', prompt: 'What is in scope?', answer: 'Vault path confinement only' },
+          { id: 'q2', prompt: 'Token budget?', answer: '50k' },
+        ],
+        status: 'pending',
+        tokenBudget: 50_000,
+      },
+    });
+    assert.equal(card.clarification?.status, 'pending');
+    const accepted = acceptChatClarification(db, 1, 'channel-1', card.id, { tokenBudget: 50_000 });
+    assert.ok(accepted.workItemId);
+    assert.match(accepted.contract, /Vault path confinement/);
+    const item = getWorkItem(db, 1, accepted.workItemId);
+    assert.equal(item.sourceKind, 'contract');
+    assert.equal(item.tokenBudget, 50_000);
+
+    const mission = createChatMission(db, 1, 'vault-1', 'channel-1', {
+      rootMessageId: card.id,
+      coordinatorRegistrationId: coordinator.id,
+      title: accepted.title,
+      objective: accepted.contract,
+    });
+    assert.equal(mission.mission.id.length > 0, true);
+    assert.equal(mission.rootMessageId, card.id);
+    const withMission = attachClarificationMission(db, 1, 'channel-1', card.id, mission.mission.id);
+    assert.equal(withMission.clarification?.missionId, mission.mission.id);
+    assert.equal(withMission.clarification?.workItemId, accepted.workItemId);
+    assert.equal(withMission.clarification?.status, 'accepted');
+  } finally {
+    db.close();
+  }
+});
+
 function setup() {
   const db = new Database(':memory:');
   db.exec(`
@@ -287,6 +335,7 @@ function setup() {
   ensureChatDispatchSchema(db);
   ensureRunnerSchema(db);
   ensureChatMissionSchema(db);
+  ensureWorkItemSchema(db);
   const coordinator = upsertChatAgentMember(db, 1, 'vault-1', 'channel-1', {
     id: 'reg-sol',
     agentId: 'codex',

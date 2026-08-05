@@ -116,7 +116,7 @@ describe('formatAgentChatPrompt', () => {
     expect(prompt).toContain('Handle tiny Q&A and one-liner fixes directly');
     expect(prompt).toContain('Prefer creating missions');
     expect(prompt).toContain('durable searchable task data');
-    expect(prompt).toContain('do not require subagents');
+    expect(prompt).toMatch(/do NOT mission-start immediately|clarification card/i);
     expect(prompt).toContain('cascade-chat mission start');
     expect(prompt).toContain('cascade-chat mission delegate');
     expect(prompt).toContain('--after <task-id,...>');
@@ -141,13 +141,14 @@ describe('formatAgentChatPrompt', () => {
     const coordinator = { ...registration, orchestrator: true };
     const fresh = formatAgentChatPrompt('dev', coordinator, 'take care of the release', 'alice', false);
     const continued = formatAgentChatPrompt('dev', coordinator, 'and publish android', 'alice', true);
-    expect(continued).toContain('bias to `mission start`');
-    expect(continued).toContain('Delegate only when another session adds clear value');
+    expect(continued).toMatch(/clarification card first|mission\+contract/i);
+    expect(continued).toMatch(/Delegate when another session adds value/i);
     expect(continued).toContain('Keep replies short');
     expect(continued).not.toContain('cascade-chat mission delegate');
     // Compact ship/attachment reminders stay on continuation; the long mission contract does not.
     expect(continued).toMatch(/green Deploy|Ship only after/i);
     expect(fresh).toMatch(/never ignore a red deploy/i);
+    expect(fresh).toMatch(/clarification/i);
     expect(fresh).toMatch(/cascade-chat attachment/i);
     expect(fresh.length - continued.length).toBeGreaterThan(900);
   });

@@ -108,14 +108,21 @@ export interface ChatMessage {
     mergedAt?: string;
     mergedBy?: string;
   };
-  /** Pre-work Q&A; accept compiles into a kanban work-item contract. */
+  /** Pre-work Q&A; accept → work-item contract + mission the orchestrator drives. */
   clarification?: {
     title: string;
-    questions: Array<{ id: string; prompt: string; answer?: string }>;
+    questions: Array<{
+      id: string;
+      prompt: string;
+      kind?: 'text' | 'single' | 'multi';
+      options?: string[];
+      answer?: string;
+    }>;
     status: 'pending' | 'accepted' | 'canceled';
     tokenBudget?: number;
     assigneeRegistrationId?: string;
     workItemId?: string;
+    missionId?: string;
     acceptedAt?: string;
     acceptedBy?: string;
   };
@@ -1301,36 +1308,81 @@ function ChatClarificationCard({
         <span className="chat-clarification-kicker">Clarification</span>
         <strong>{clarification.title}</strong>
         <span className="chat-clarification-status">
-          {clarification.status === 'accepted' ? 'contract live' : clarification.status}
+          {clarification.status === 'accepted' ? 'mission + contract live' : clarification.status}
         </span>
       </div>
       <p className="chat-clarification-lead">
-        Answers become the durable work-item contract on the kanban. Agents drive until done, budget, or stop.
+        Answer the scope questions, then accept. That opens a kanban contract <em>and</em> a mission;
+        the orchestrator plans/delegates and drives until done, token budget, or manual stop.
       </p>
       <div className="chat-clarification-questions">
-        {clarification.questions.map((q) => (
-          <label key={q.id} className="chat-clarification-q">
-            <span>{q.prompt}</span>
-            {pending ? (
-              <textarea
-                value={answers[q.id] || ''}
-                onChange={(event) => setAnswers((prev) => ({ ...prev, [q.id]: event.target.value }))}
-                rows={2}
-                placeholder="Your answer…"
-                disabled={busy}
-              />
-            ) : (
-              <small>{q.answer || '—'}</small>
-            )}
-          </label>
-        ))}
+        {clarification.questions.map((q, index) => {
+          const kind = q.kind || 'text';
+          const options = Array.isArray(q.options) ? q.options.filter(Boolean) : [];
+          const selected = new Set(
+            String(answers[q.id] || '')
+              .split(/\s*\|\s*|\n/)
+              .map((s) => s.trim())
+              .filter(Boolean),
+          );
+          const toggle = (option: string) => {
+            if (!pending || busy) return;
+            setAnswers((prev) => {
+              if (kind === 'single') return { ...prev, [q.id]: option };
+              const cur = new Set(
+                String(prev[q.id] || '')
+                  .split(/\s*\|\s*|\n/)
+                  .map((s) => s.trim())
+                  .filter(Boolean),
+              );
+              if (cur.has(option)) cur.delete(option);
+              else cur.add(option);
+              return { ...prev, [q.id]: Array.from(cur).join(' | ') };
+            });
+          };
+          return (
+            <fieldset key={q.id} className="chat-clarification-q">
+              <legend>
+                <span className="chat-clarification-q-num">{index + 1}</span>
+                <span>{q.prompt}</span>
+              </legend>
+              {pending && kind !== 'text' && options.length > 0 ? (
+                <div className="chat-clarification-choices">
+                  {options.map((option) => (
+                    <button
+                      key={option}
+                      type="button"
+                      className={`chat-clarification-choice${kind === 'multi' ? ' is-check' : ''}${selected.has(option) ? ' is-selected' : ''}`}
+                      onClick={() => toggle(option)}
+                      disabled={busy}
+                    >
+                      <span className="chat-clarification-choice-mark" aria-hidden="true" />
+                      <span>{option}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : pending ? (
+                <textarea
+                  value={answers[q.id] || ''}
+                  onChange={(event) => setAnswers((prev) => ({ ...prev, [q.id]: event.target.value }))}
+                  rows={2}
+                  placeholder="Your answer…"
+                  disabled={busy}
+                />
+              ) : (
+                <small>{q.answer || '—'}</small>
+              )}
+            </fieldset>
+          );
+        })}
       </div>
       {clarification.tokenBudget ? (
         <div className="chat-clarification-budget">Token budget: {clarification.tokenBudget}</div>
       ) : null}
       {clarification.workItemId && (
         <div className="chat-clarification-contract">
-          Contract work item <code>{clarification.workItemId.slice(0, 8)}</code>
+          Contract <code>{clarification.workItemId.slice(0, 8)}</code>
+          {clarification.missionId ? <> · mission <code>{clarification.missionId.slice(0, 8)}</code></> : null}
           {clarification.acceptedBy ? ` · accepted by ${clarification.acceptedBy}` : ''}
         </div>
       )}
@@ -1339,7 +1391,7 @@ function ChatClarificationCard({
         <div className="chat-clarification-actions">
           <button type="button" disabled={busy} onClick={() => void saveAnswers()}>Save answers</button>
           <button type="button" className="is-primary" disabled={busy} onClick={() => void acceptContract()}>
-            Accept → contract
+            Accept → mission
           </button>
         </div>
       )}
