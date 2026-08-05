@@ -21,7 +21,7 @@
 export type User = { id: number; username: string; displayName: string; avatarUrl: string };
 
 /** Vault membership roles, ordered from most to least privileged. */
-export type VaultRole = 'owner' | 'admin' | 'editor' | 'viewer';
+export type VaultRole = 'owner' | 'editor' | 'viewer';
 
 /** A member of a shared vault. */
 export type VaultMember = {

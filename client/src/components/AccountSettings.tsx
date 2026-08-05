@@ -6,7 +6,6 @@ type AssignableRole = Exclude<VaultRole, 'owner'>;
 
 const ROLE_HELP: Record<VaultRole, string> = {
   owner: 'Owns the vault. Cannot be removed or demoted here.',
-  admin: 'Can read, write, and manage members.',
   editor: 'Can read and write notes, folders, and chats.',
   viewer: 'Read-only access.',
 };
@@ -63,15 +62,11 @@ export function AccountSettings({ user, vaultId, vaultName, onClose, onUserChang
     void loadMembers();
   }, [vaultId]);
 
-  const canManageMembers = myRole === 'owner' || myRole === 'admin';
-  // Server rules: admins may not touch other admins, and only the owner grants admin.
+  const canManageMembers = myRole === 'owner';
   const canManage = (member: VaultMember) => canManageMembers
     && member.role !== 'owner'
-    && member.userId !== user.id
-    && !(myRole === 'admin' && member.role === 'admin');
-  const assignableRoles: AssignableRole[] = myRole === 'owner'
-    ? ['admin', 'editor', 'viewer']
-    : ['editor', 'viewer'];
+    && member.userId !== user.id;
+  const assignableRoles: AssignableRole[] = ['editor', 'viewer'];
   const canLeave = Boolean(myRole) && myRole !== 'owner';
 
   const saveProfile = async () => {
@@ -322,7 +317,7 @@ export function AccountSettings({ user, vaultId, vaultName, onClose, onUserChang
                 </button>
               </div>
             ) : (
-              <small className="account-settings-hint">Only the owner and admins can invite or remove members.</small>
+              <small className="account-settings-hint">Only the owner can invite, change, or remove members.</small>
             )}
             {canManageMembers && <small className="account-settings-hint">{ROLE_HELP[memberRole]}</small>}
             {canLeave && (
