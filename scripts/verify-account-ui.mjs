@@ -70,7 +70,7 @@ try {
   page.once('dialog', (dialog) => dialog.accept());
   await sharing.getByLabel(`Remove @${mateName}`).click();
   await sharing.getByText(`Removed @${mateName}`).waitFor();
-  if (await sharing.locator(`.account-vault-members li:has-text("${mateName}")`).count()) throw new Error('removed member still listed');
+  await sharing.locator(`.account-vault-members li:has-text("${mateName}")`).waitFor({ state: 'detached' });
   await page.waitForFunction(() => !document.querySelector('#vault-shared-badge'));
 
   await page.getByLabel('Current password').fill('testpass12345');
