@@ -5111,20 +5111,12 @@ button.chat-avatar-agent {
   min-width: 0;
   flex: 1;
 }
-.chat-agent-supervisor-emblem {
-  position: absolute;
-  z-index: 1;
-  top: 23px;
-  left: 29px;
-  display: grid;
-  place-items: center;
-  width: 15px;
-  height: 15px;
-  border: 1px solid hsl(42, 72%, 58%);
-  border-radius: 50%;
-  background: hsl(39, 44%, 14%);
-  color: hsl(43, 88%, 67%);
-  box-shadow: 0 1px 4px hsl(38, 78%, 8%);
+/* Supervisor rank is a hairline amber rim on the avatar — no badge, no label,
+   no card tint. Quiet enough to scan past, distinct once you know it. */
+.chat-user.chat-agent-user.is-supervisor .chat-avatar {
+  box-shadow:
+    inset 0 0 0 1px hsla(220, 30%, 82%, 0.08),
+    0 0 0 1.5px color-mix(in srgb, hsl(42, 80%, 58%) 62%, transparent);
 }
 .chat-user-copy strong {
   color: inherit;
@@ -6714,6 +6706,17 @@ button.chat-avatar-agent {
   font-size: 0.8125rem;
   font-weight: 560;
   letter-spacing: 0.005em;
+}
+.chat-work-trace-owner {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: hsl(222, 13%, 76%);
+  font-family: var(--font-sans, inherit);
+  font-size: 0.8125rem;
+  font-weight: 650;
 }
 .chat-work-trace:not(.is-open).is-live .chat-work-decal-mark,
 .chat-work-trace:not(.is-open).is-live .chat-work-decal-label {
