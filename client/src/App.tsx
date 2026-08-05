@@ -1629,9 +1629,35 @@ export default function App() {
       // asked to create a run yet, so it is safe to fail this startup locally.
       if (orchestrationQueue) {
         // Long worker tasks routinely exceed a minute. Their next assignment is
-        // durable and should wait for the provider session, not time out or
-        // interrupt it as if the user had steered the current answer.
-        await sessionTurn.preceding;
+        // durable and should wait for a real provider session, not time out or
+        // interrupt it as if the user had steered the current answer. But a
+        // prior *local* queue entry can fail before it creates any run; waiting
+        // on that orphaned promise forever makes the durable ping inert. Check
+        // periodically and only break the queue when no server-backed run owns
+        // the session. A real run remains fully serialized, however long it is.
+        while (sessionTurn.preceding) {
+          let predecessorSettled = false;
+          let livenessTimer: number | undefined;
+          try {
+            await Promise.race([
+              sessionTurn.preceding.then(() => { predecessorSettled = true; }),
+              new Promise<void>((resolve) => {
+                livenessTimer = window.setTimeout(resolve, 15_000);
+              }),
+            ]);
+          } finally {
+            if (livenessTimer != null) window.clearTimeout(livenessTimer);
+          }
+          if (predecessorSettled) break;
+          const precedingRunId = findProjectedActiveSessionRun(
+            chatMessageStore.getChannel(channelId),
+            registration.id,
+            registration.agentId,
+          );
+          if (precedingRunId != null) continue;
+          forceReleasePriorSessionTurns(watermarkKey);
+          break;
+        }
         applyMessageUpdateNow((message) => ({
           ...message,
           body: 'Thinking...',
