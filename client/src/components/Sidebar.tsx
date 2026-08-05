@@ -45,7 +45,7 @@ interface SidebarProps {
   notes: NoteSummary[];
   activeNoteId: string | null;
   onSelectVault: (id: string) => void;
-  onCreateVault: () => Promise<void>;
+  onCreateVault: (name: string) => Promise<boolean>;
   onSelectNote: (id: string) => void;
   onOpenNoteInNewTab: (id: string) => void;
   onNewNote: () => void;
@@ -148,6 +148,9 @@ export const Sidebar = memo(function Sidebar({
   const [editingValue, setEditingValue] = useState('');
   const [updating, setUpdating] = useState(false);
   const [vaultMenuOpen, setVaultMenuOpen] = useState(false);
+  const [creatingVault, setCreatingVault] = useState(false);
+  const [newVaultName, setNewVaultName] = useState('');
+  const [creatingVaultBusy, setCreatingVaultBusy] = useState(false);
   const [audioTracks, setAudioTracks] = useState<Array<{ name: string; url: string }>>([]);
   const [audioTrackIndex, setAudioTrackIndex] = useState(0);
   const [audioPlaying, setAudioPlaying] = useState(false);
@@ -630,6 +633,18 @@ export const Sidebar = memo(function Sidebar({
     <button key={action.id} id={`${action.id}-btn-${location}`} className="btn-icon" onClick={action.onClick} title={action.title}>{action.icon}</button>
   ));
 
+  const submitNewVault = async () => {
+    const name = newVaultName.trim();
+    if (!name || creatingVaultBusy) return;
+    setCreatingVaultBusy(true);
+    const created = await onCreateVault(name);
+    setCreatingVaultBusy(false);
+    if (!created) return;
+    setNewVaultName('');
+    setCreatingVault(false);
+    setVaultMenuOpen(false);
+  };
+
   return (
     <aside className="sidebar" id="sidebar" style={{ gridColumn: 1 }}>
       {/* Header */}
@@ -639,7 +654,7 @@ export const Sidebar = memo(function Sidebar({
           className="vault-name"
           onClick={() => setVaultMenuOpen((open) => !open)}
           title="Switch or create a vault"
-          aria-label={`Switch or create vaults; current vault ${activeVault?.name || 'Cascade'}`}
+          aria-label={`Vault switcher; current vault ${activeVault?.name || 'Cascade'}`}
           aria-expanded={vaultMenuOpen}
         >
           <span className="vault-icon" aria-hidden="true"><Gem size={15} /></span>
@@ -681,9 +696,32 @@ export const Sidebar = memo(function Sidebar({
             </button>
           ))}
           <div className="vault-switcher-divider" role="separator" />
-          <button type="button" role="menuitem" className="vault-switcher-create" onClick={() => { setVaultMenuOpen(false); void onCreateVault(); }}>
-            <Plus size={14} aria-hidden="true" /> New vault
-          </button>
+          {creatingVault ? (
+            <div className="vault-switcher-create-form">
+              <input
+                autoFocus
+                value={newVaultName}
+                placeholder="Vault name"
+                aria-label="New vault name"
+                disabled={creatingVaultBusy}
+                onChange={(event) => setNewVaultName(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') void submitNewVault();
+                  if (event.key === 'Escape') {
+                    setCreatingVault(false);
+                    setNewVaultName('');
+                  }
+                }}
+              />
+              <button type="button" disabled={!newVaultName.trim() || creatingVaultBusy} onClick={() => void submitNewVault()}>
+                {creatingVaultBusy ? 'Creating' : 'Create'}
+              </button>
+            </div>
+          ) : (
+            <button type="button" role="menuitem" className="vault-switcher-create" onClick={() => setCreatingVault(true)}>
+              <Plus size={14} aria-hidden="true" /> New vault
+            </button>
+          )}
         </div>
       )}
 

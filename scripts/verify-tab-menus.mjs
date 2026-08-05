@@ -108,6 +108,28 @@ try {
   await page.evaluate((t) => localStorage.setItem('docs_token', t), token);
   await page.goto(APP_URL, { waitUntil: 'networkidle' });
 
+  // ── Vault switcher: creation must work without window.prompt (unsupported
+  // in Electron renderers) and select the newly created vault.
+  const vaultButton = page.locator('.vault-name').first();
+  await vaultButton.waitFor({ timeout: 20000 });
+  await vaultButton.click();
+  await page.getByRole('menuitem', { name: 'New vault' }).click();
+  const vaultName = `Created ${stamp}`;
+  await page.getByLabel('New vault name').fill(vaultName);
+  await page.getByRole('button', { name: 'Create', exact: true }).click();
+  await page.waitForFunction(
+    (name) => document.querySelector('.vault-name-text')?.textContent?.trim() === name,
+    vaultName,
+    { timeout: 10000 },
+  );
+  check('vault switcher creates and selects a vault inline', true);
+  const createdVaults = await must(`${API_BASE}/api/vaults`, { headers: auth });
+  check('new vault persisted through the API', createdVaults.vaults.some((item) => item.name === vaultName));
+
+  // Switch back to the seeded vault for the menu tests below.
+  await vaultButton.click();
+  await page.getByRole('menuitemradio', { name: new RegExp(`Tabs ${stamp}`) }).click();
+
   const entry = page.getByText('menus-chan', { exact: false }).first();
   await entry.waitFor({ timeout: 20000 });
   await entry.click();
@@ -174,6 +196,17 @@ try {
   );
   check('Close tab removes the tab', true);
   check('the chat tab survived closing the other tab', await page.locator('.tab-bar .tab-item', { hasText: 'menus-chan' }).count() > 0);
+
+  // Desktop runner recovery is background state, not a page-load callout. A
+  // slow socket reconnect must not make the workspace look blocked on reload.
+  const desktopPage = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+  await desktopPage.addInitScript(() => { window.electronAPI = {}; });
+  await desktopPage.goto(APP_URL, { waitUntil: 'domcontentloaded' });
+  await desktopPage.evaluate((t) => localStorage.setItem('docs_token', t), token);
+  await desktopPage.goto(APP_URL, { waitUntil: 'networkidle' });
+  await desktopPage.locator('.workspace-toolbar').waitFor({ timeout: 20000 });
+  check('desktop reload does not show a runner reconnect gate', await desktopPage.getByText('Desktop agent runner is reconnecting').count() === 0);
+  await desktopPage.close();
 
   const fatal = errors.filter((line) => !line.includes('[VersionCheck]'));
   if (fatal.length > 0) {

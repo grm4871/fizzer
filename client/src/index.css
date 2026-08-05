@@ -677,6 +677,9 @@ button:focus-visible,
 .vault-switcher-menu button small { margin-left: auto; color: var(--text-tertiary); font-size: .68rem; }
 .vault-switcher-divider { height: 1px; margin: 4px; background: var(--rail-edge); }
 .vault-switcher-menu .vault-switcher-create { color: var(--accent-hover); font-weight: 650; }
+.vault-switcher-create-form { display: flex; gap: 6px; padding: 6px; }
+.vault-switcher-create-form input { min-width: 0; flex: 1; padding: 6px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-base); }
+.vault-switcher-create-form button { flex: none; width: auto; padding-inline: 9px; color: var(--accent-hover); }
 .sidebar-header .vault-name-text {
   overflow: hidden;
   text-overflow: ellipsis;

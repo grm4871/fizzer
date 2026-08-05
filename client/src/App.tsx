@@ -400,9 +400,8 @@ export default function App() {
     }
   }, [activeVaultId]);
 
-  const handleCreateVault = useCallback(async () => {
-    const name = window.prompt('Name your new vault');
-    if (!name?.trim()) return;
+  const handleCreateVault = useCallback(async (name: string): Promise<boolean> => {
+    if (!name.trim()) return false;
     try {
       const data = await api<{ vault: Vault }>('/api/vaults', {
         method: 'POST',
@@ -410,8 +409,10 @@ export default function App() {
       });
       setVaults((current) => [...current, data.vault]);
       setActiveVaultId(data.vault.id);
+      return true;
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Could not create vault');
+      return false;
     }
   }, []);
 
@@ -3496,13 +3497,11 @@ export default function App() {
             </button>}
         </div>
 
-        {!runnerHealth?.online && (
+        {!(window as unknown as { electronAPI?: unknown }).electronAPI && !runnerHealth?.online && (
           <div className="desktop-runner-callout" role="status">
             <div>
-              <strong>{(window as unknown as { electronAPI?: unknown }).electronAPI ? 'Desktop agent runner is reconnecting' : 'Agents run in Cascade desktop'}</strong>
-              <span>{(window as unknown as { electronAPI?: unknown }).electronAPI
-                ? 'Keep this app open; it will reconnect automatically. If it stays offline, refresh this window.'
-                : 'Notes and chats work here. To run an agent, open this same account in the desktop app.'}</span>
+              <strong>Agents run in Cascade desktop</strong>
+              <span>Notes and chats work here. To run an agent, open this same account in the desktop app.</span>
             </div>
           </div>
         )}
