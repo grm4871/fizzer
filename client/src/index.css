@@ -5333,6 +5333,33 @@ button.chat-avatar-agent {
   line-height: 1.3;
   word-break: break-word;
 }
+
+.auth-desktop-note {
+  margin: 4px 0 0;
+  color: var(--text-tertiary);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.desktop-runner-callout {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 8px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 32%, var(--border));
+  background: color-mix(in srgb, var(--bg-surface) 84%, var(--accent) 16%);
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+.desktop-runner-callout div { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.desktop-runner-callout strong { color: var(--text-primary); white-space: nowrap; }
+.desktop-runner-callout span { color: var(--text-tertiary); }
+@media (max-width: 640px) {
+  .desktop-runner-callout { align-items: flex-start; }
+  .desktop-runner-callout div { flex-direction: column; gap: 2px; }
+  .desktop-runner-callout strong { white-space: normal; }
+}
 .chat-agent-menu-heading {
   font-size: 0.75rem;
   font-weight: 600;

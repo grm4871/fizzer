@@ -3289,6 +3289,7 @@ export default function App() {
 
   if (!user) {
     const hasInvite = /^\/invite\/[^/]+$/.test(window.location.pathname);
+    const inDesktopApp = Boolean((window as unknown as { electronAPI?: unknown }).electronAPI);
     return (
       <main className="auth-shell">
         <form className="auth-panel" id="auth-panel" onSubmit={submitAuth}>
@@ -3321,6 +3322,11 @@ export default function App() {
               </label>
             </>
           )}
+          <p className="auth-desktop-note">
+            {inDesktopApp
+              ? 'This desktop app can run your local agents after you sign in.'
+              : 'Cascade agents run on your own desktop app. You can join this invite here, then open it in Cascade desktop to run agents.'}
+          </p>
           {authNotice && <div className="auth-notice">{authNotice}</div>}
           {authError && <div className="error">{authError}</div>}
           <button id="auth-submit" type="submit">
@@ -3472,7 +3478,18 @@ export default function App() {
             >
               <Users size={16} />
             </button>}
+        </div>
+
+        {!runnerHealth?.online && (
+          <div className="desktop-runner-callout" role="status">
+            <div>
+              <strong>{(window as unknown as { electronAPI?: unknown }).electronAPI ? 'Desktop agent runner is reconnecting' : 'Agents run in Cascade desktop'}</strong>
+              <span>{(window as unknown as { electronAPI?: unknown }).electronAPI
+                ? 'Keep this app open; it will reconnect automatically. If it stays offline, refresh this window.'
+                : 'Notes and chats work here. To run an agent, open this same account in the desktop app.'}</span>
+            </div>
           </div>
+        )}
 
         <div className="flex-1" style={{ position: 'relative', display: 'flex', overflow: 'hidden' }}>
           <PaneGrid
