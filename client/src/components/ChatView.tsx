@@ -3869,7 +3869,7 @@ export const ChatView = memo(function ChatView({
                 />
                 <span className="chat-agent-toggle-copy">
                   <span className="chat-agent-toggle-name">Yolo mode</span>
-                  <span className="chat-agent-toggle-hint">Runs tools without asking. Skips every permission prompt.</span>
+                  <span className="chat-agent-toggle-hint">On: skips prompts. Off: pauses risky Claude tools for your approval; Codex stays workspace-sandboxed.</span>
                 </span>
               </label>
             </div>

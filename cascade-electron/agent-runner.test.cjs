@@ -13,8 +13,31 @@ const {
   cleanupRunHelperConfig,
   helperAllowedTools,
   normalizeClaudeEffort,
+  resolveClaudePermission,
+  requestClaudePermission,
   startLocalAgentRun,
 } = require('./agent-runner.cjs');
+
+test('stale Claude permission responses are rejected', () => {
+  assert.equal(resolveClaudePermission('missing-request', 'allow'), false);
+});
+
+test('Claude permission requests pause until the desktop answers', async () => {
+  const events = [];
+  const decision = requestClaudePermission(17, 'Bash', { command: 'systemctl status demo' }, {
+    toolUseID: 'tool-1',
+    title: 'Run a system command?',
+    description: 'Reads service state outside the workspace.',
+  }, (type, payload) => events.push({ type, payload }));
+  assert.equal(events[0].type, 'permission');
+  assert.equal(events[0].payload.title, 'Run a system command?');
+  assert.equal(resolveClaudePermission(events[0].payload.requestId, 'allow'), true);
+  assert.deepEqual(await decision, {
+    behavior: 'allow',
+    toolUseID: 'tool-1',
+    decisionClassification: 'user_temporary',
+  });
+});
 
 test('chat triggering message id follows the mission root through runner payload shapes', () => {
   assert.equal(chatTriggeringMessageId({ chatTriggeringMessageId: 'root-top' }), 'root-top');

@@ -6196,6 +6196,32 @@ button.chat-avatar-agent {
 /* ═══════════════════════════════════════════════════════════
    TOAST
    ═══════════════════════════════════════════════════════════ */
+.agent-permission-card {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 210;
+  width: min(380px, calc(100vw - 32px));
+  padding: 16px;
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--border));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-raised) 94%, black);
+  box-shadow: 0 18px 50px hsla(225, 30%, 3%, 0.5), inset 0 1px 0 hsla(40, 80%, 90%, 0.05);
+}
+.agent-permission-eyebrow {
+  margin-bottom: 6px;
+  color: var(--accent);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.agent-permission-card > strong { display: block; color: var(--text-primary); font-size: 0.9375rem; }
+.agent-permission-card p { margin: 7px 0 0; color: var(--text-secondary); font-size: 0.75rem; line-height: 1.45; }
+.agent-permission-card code { display: block; margin-top: 8px; overflow: hidden; color: var(--text-secondary); font-size: 0.6875rem; text-overflow: ellipsis; white-space: nowrap; }
+.agent-permission-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.agent-permission-queue { display: block; margin-top: 8px; color: var(--text-tertiary); font-size: 0.6875rem; text-align: right; }
+
 .toast {
   position: fixed;
   bottom: 20px;

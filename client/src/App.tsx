@@ -48,7 +48,7 @@ import type { LayoutNode } from './layout/tree';
 import { api, ApiError, type User, type Vault, type Folder, type NoteSummary, type Note } from './api';
 import { connectRunsSocket, connectVaultSocket } from './socket';
 import { isLocalRunId, cancelLocalAgentRun } from './localAgentRunner';
-import { ensureDesktopRunnerHost, startDesktopRunnerHost } from './desktopRunnerHost';
+import { ensureDesktopRunnerHost, respondToAgentPermission, startDesktopRunnerHost } from './desktopRunnerHost';
 import {
   agentsAfterLoadFailure,
   agentLabel,
@@ -135,6 +135,15 @@ const loadChatMessagesInflight = new Map<string, Promise<{ channelId: string; me
 const EMPTY_CHAT_AGENTS: ChatAgentRegistration[] = [];
 const EMPTY_CHAT_PRESENCE: ChatChannelPresence = { participants: [], online: [], owner: '', profiles: {} };
 
+type AgentPermissionRequest = {
+  runId: number;
+  requestId: string;
+  toolName: string;
+  title: string;
+  description?: string;
+  blockedPath?: string;
+};
+
 export default function App() {
   // ═══════════════════════════════════════════════════════════════
   // STATE
@@ -200,6 +209,7 @@ export default function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const [runnerHealth, setRunnerHealth] = useState<DesktopRunnerHealth | null>(null);
   const [sessionManagerOpen, setSessionManagerOpen] = useState(false);
+  const [agentPermissions, setAgentPermissions] = useState<AgentPermissionRequest[]>([]);
   const [vaultAgents, setVaultAgents] = useState<VaultAgent[]>([]);
   // ─── Derived focus state ────────────────────────────────────────
   const focusedPane = Layout.findPane(layout, focusedPaneId) ?? Layout.getFirstPane(layout);
@@ -470,6 +480,24 @@ export default function App() {
       desktopRunnerStopRef.current = null;
     };
   }, [user]);
+
+  useEffect(() => {
+    const receivePermission = (event: Event) => {
+      const request = (event as CustomEvent<AgentPermissionRequest>).detail;
+      if (!request?.requestId) return;
+      setAgentPermissions((current) => current.some((item) => item.requestId === request.requestId)
+        ? current
+        : [...current, request]);
+    };
+    window.addEventListener('cascade:agent-permission', receivePermission);
+    return () => window.removeEventListener('cascade:agent-permission', receivePermission);
+  }, []);
+
+  const answerAgentPermission = useCallback(async (requestId: string, decision: 'allow' | 'deny') => {
+    const answered = await respondToAgentPermission(requestId, decision).catch(() => false);
+    if (!answered) setNotice('That permission request is no longer active.');
+    setAgentPermissions((current) => current.filter((item) => item.requestId !== requestId));
+  }, []);
 
   // Poll desktop runner health for the chat agent sidebar.
   // Only commit setState when the payload actually changes — identical JSON
@@ -3556,6 +3584,20 @@ export default function App() {
       />
       <CommandPalette open={commandPaletteOpen} onClose={() => setCommandPaletteOpen(false)} notes={notes} onSelectNote={(id) => openNote(id)} onCreateNote={handleCreateNote} />
       {adminOpen && <AdminPanel onClose={() => setAdminOpen(false)} />}
+
+      {agentPermissions[0] && (
+        <section className="agent-permission-card" role="dialog" aria-modal="false" aria-labelledby="agent-permission-title" onClick={(event) => event.stopPropagation()}>
+          <div className="agent-permission-eyebrow">Agent permission</div>
+          <strong id="agent-permission-title">{agentPermissions[0].title}</strong>
+          {agentPermissions[0].description && <p>{agentPermissions[0].description}</p>}
+          {agentPermissions[0].blockedPath && <code>{agentPermissions[0].blockedPath}</code>}
+          <div className="agent-permission-actions">
+            <button className="btn btn-ghost" type="button" onClick={() => void answerAgentPermission(agentPermissions[0].requestId, 'deny')}>Deny</button>
+            <button className="btn btn-primary" type="button" onClick={() => void answerAgentPermission(agentPermissions[0].requestId, 'allow')}>Allow once</button>
+          </div>
+          {agentPermissions.length > 1 && <span className="agent-permission-queue">{agentPermissions.length - 1} more request{agentPermissions.length === 2 ? '' : 's'} waiting</span>}
+        </section>
+      )}
 
       {notice && <div className="toast" role="status">{notice}</div>}
     </main>

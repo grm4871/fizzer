@@ -15,6 +15,7 @@ type RunnerElectronAPI = {
   startAgentRun?: (opts: Record<string, unknown>) => Promise<{ success: boolean; error?: string }>;
   prepareWorktree?: (opts: Record<string, unknown>) => Promise<Record<string, unknown>>;
   cancelAgentRun?: (runId: number) => Promise<{ success: boolean; error?: string }>;
+  respondAgentPermission?: (opts: { requestId: string; decision: 'allow' | 'deny' }) => Promise<{ success: boolean }>;
   getAgentRunState?: (afterSeq?: number) => Promise<{
     instanceId?: string;
     activeRunIds?: number[];
@@ -105,6 +106,14 @@ function saveBridgeCursor(): void {
 }
 
 function processAgentEvent(event: AgentEventPayload): void {
+  if (event?.type === 'permission' && typeof event.payload_json === 'string') {
+    try {
+      window.dispatchEvent(new CustomEvent('cascade:agent-permission', {
+        detail: { runId: Number(event.runId), ...JSON.parse(event.payload_json) },
+      }));
+    } catch { /* malformed permission events are ignored */ }
+    return;
+  }
   // Main keeps the replay copy. Do not acknowledge an event until there is a
   // connected server socket to receive it.
   if (!socket?.connected) return;
@@ -122,6 +131,11 @@ function processAgentEvent(event: AgentEventPayload): void {
   } catch {
     // Ignore one malformed IPC event; the run status will still settle.
   }
+}
+
+export async function respondToAgentPermission(requestId: string, decision: 'allow' | 'deny'): Promise<boolean> {
+  const result = await runnerElectronAPI()?.respondAgentPermission?.({ requestId, decision });
+  return result?.success === true;
 }
 
 async function restoreMainProcessRuns(): Promise<void> {

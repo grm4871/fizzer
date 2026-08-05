@@ -369,6 +369,21 @@ try {
   agents = await waitForCoordinator(vault.id, channel.id, auth, sol.id, true);
   check('re-enabling coordination persists', agents.find((item) => item.id === sol.id)?.orchestrator === true);
 
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent('cascade:agent-permission', { detail: {
+    runId: 991,
+    requestId: 'permission-smoke',
+    toolName: 'Bash',
+    title: 'Run a system command?',
+    description: 'The agent wants to inspect a process outside its workspace.',
+  } })));
+  const permissionCard = page.getByRole('dialog', { name: 'Run a system command?' });
+  await permissionCard.waitFor({ timeout: 5_000 });
+  check('non-Yolo permission request is actionable in the app',
+    await permissionCard.getByRole('button', { name: 'Allow once' }).count() === 1
+      && await permissionCard.getByRole('button', { name: 'Deny' }).count() === 1);
+  await permissionCard.getByRole('button', { name: 'Deny' }).click();
+  await permissionCard.waitFor({ state: 'detached', timeout: 5_000 });
+
   const expectedOfflineRun = errors.some((line) => line.startsWith('http.503:') && line.endsWith('/runs'));
   const fatal = errors.filter((line) => {
     if (line.includes('[VersionCheck]')) return false;

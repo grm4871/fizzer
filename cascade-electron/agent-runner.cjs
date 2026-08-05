@@ -336,6 +336,51 @@ function helperAllowedTools() {
 
 // Live Claude SDK query streams, keyed by runId, so cancellation can close them.
 const activeClaudeQueries = new Map();
+const pendingClaudePermissions = new Map();
+
+function resolveClaudePermission(requestId, decision) {
+  const pending = pendingClaudePermissions.get(String(requestId));
+  if (!pending) return false;
+  pendingClaudePermissions.delete(String(requestId));
+  pending.cleanup();
+  pending.resolve(decision === 'allow'
+    ? { behavior: 'allow', toolUseID: pending.toolUseID, decisionClassification: 'user_temporary' }
+    : { behavior: 'deny', message: 'Denied by the user in Cascade.', toolUseID: pending.toolUseID, decisionClassification: 'user_reject' });
+  return true;
+}
+
+function rejectClaudePermissionsForRun(runId, message = 'The run ended before permission was decided.') {
+  for (const [requestId, pending] of pendingClaudePermissions) {
+    if (pending.runId !== Number(runId)) continue;
+    pendingClaudePermissions.delete(requestId);
+    pending.cleanup();
+    pending.resolve({ behavior: 'deny', message, toolUseID: pending.toolUseID, decisionClassification: 'user_reject' });
+  }
+}
+
+function requestClaudePermission(runId, toolName, input, context, emit) {
+  return new Promise((resolve) => {
+    const requestId = `${runId}:${context.toolUseID}:${Date.now()}`;
+    const onAbort = () => {
+      const pending = pendingClaudePermissions.get(requestId);
+      if (!pending) return;
+      pendingClaudePermissions.delete(requestId);
+      pending.cleanup();
+      resolve({ behavior: 'deny', message: 'Permission request canceled.', toolUseID: context.toolUseID });
+    };
+    const cleanup = () => context.signal?.removeEventListener('abort', onAbort);
+    pendingClaudePermissions.set(requestId, { runId, toolUseID: context.toolUseID, resolve, cleanup });
+    context.signal?.addEventListener('abort', onAbort, { once: true });
+    emit('permission', {
+      requestId,
+      toolName,
+      title: context.title || `${toolName} needs permission`,
+      description: context.description || context.decisionReason || '',
+      blockedPath: context.blockedPath || '',
+      input,
+    });
+  });
+}
 // `stream.close()` is also how the SDK cooperatively stops. Keep that intent
 // separate from an ordinary empty stream so cancellation never looks like a
 // successful note operation.
@@ -543,6 +588,7 @@ async function runClaudeLocally(opts, emit) {
   const images = Array.isArray(opts.images)
     ? opts.images.filter((im) => im && typeof im.media_type === 'string' && typeof im.data === 'string')
     : [];
+  const canUseTool = (toolName, input, context) => requestClaudePermission(runId, toolName, input, context, emit);
 
   // With images, send a structured user message (text + image blocks);
   // otherwise a plain string prompt.
@@ -576,6 +622,7 @@ async function runClaudeLocally(opts, emit) {
       // only file edits.
       permissionMode: opts.yolo ? 'bypassPermissions' : 'acceptEdits',
       ...(opts.yolo ? { allowDangerouslySkipPermissions: true } : {}),
+      ...(!opts.yolo ? { canUseTool } : {}),
       // Even without yolo, let agents run the wrapper commands unprompted so
       // they can pull channel history/notes, use memory, and send chat messages.
       // Everything else still respects acceptEdits.
@@ -938,6 +985,7 @@ async function startLocalAgentRun(opts, sendEvent) {
         }
       }
     } finally {
+      rejectClaudePermissionsForRun(runId);
       canceledClaudeRuns.delete(runId);
       cleanupRunHelperConfig(runId);
     }
@@ -983,6 +1031,7 @@ async function cancelLocalAgentRun(runId) {
   // Claude SDK runs: close the live query stream.
   const claudeStream = activeClaudeQueries.get(id);
   if (claudeStream) {
+    rejectClaudePermissionsForRun(id, 'The run was canceled.');
     canceledClaudeRuns.add(id);
     try { claudeStream.close?.(); } catch { /* ignore */ }
     activeClaudeQueries.delete(id);
@@ -1018,6 +1067,8 @@ module.exports = {
   startLocalAgentRun,
   cancelLocalAgentRun,
   reapOrphanedLocalAgentRuns,
+  resolveClaudePermission,
+  requestClaudePermission,
   buildRunHelperEnv,
   cleanupRunHelperConfig,
   chatTriggeringMessageId,
