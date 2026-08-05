@@ -87,13 +87,20 @@ try {
   await must(`${API_BASE}/api/vaults/${vault.id}/notes`, {
     method: 'POST', headers: auth, body: JSON.stringify({ title: 'menus-chan', content: 'cascade://chat-channel' }),
   });
-  // A note with a Kanban board, so Superkanban has a populated state to render.
-  // The aggregate only picks up notes carrying the `kanban-plugin:` marker.
+  // An opted-in board populates the command center; an ordinary/test board
+  // below proves that a Kanban marker alone no longer leaks into the aggregate.
   await must(`${API_BASE}/api/vaults/${vault.id}/notes`, {
     method: 'POST', headers: auth,
     body: JSON.stringify({
       title: 'menus-board',
-      content: '---\n\nkanban-plugin: board\n\n---\n\n## To do\n\n- [ ] first card\n\n## Done\n\n- [x] shipped\n',
+      content: '---\n\nkanban-plugin: board\nsuperkanban: true\n\n---\n\n## To do\n\n- [ ] first card\n\n## Done\n\n- [x] shipped\n',
+    }),
+  });
+  await must(`${API_BASE}/api/vaults/${vault.id}/notes`, {
+    method: 'POST', headers: auth,
+    body: JSON.stringify({
+      title: 'Kanban Feature Test',
+      content: '---\nkanban-plugin: board\n---\n\n## In progress\n\n- [ ] should stay private to this board\n',
     }),
   });
 
@@ -174,7 +181,16 @@ try {
   const aggregate = page.locator('[aria-label="Superkanban"]');
   check('Superkanban opens to a board, not a blank pane', await aggregate.count() > 0);
   if (await aggregate.count()) {
-    check('Superkanban aggregates the seeded board', (await aggregate.innerText()).includes('first card'));
+    const aggregateText = await aggregate.innerText();
+    const aggregateTextLower = aggregateText.toLowerCase();
+    check('Superkanban aggregates the seeded board', aggregateText.includes('first card'));
+    check('Superkanban excludes boards that did not opt in', !aggregateText.includes('should stay private to this board'));
+    check('Superkanban presents the active command-center lanes',
+      ['ready', 'in progress', 'blocked', 'review'].every((lane) => aggregateTextLower.includes(lane)), aggregateText);
+    check('Superkanban hides completed work by default', !aggregateText.includes('shipped'));
+    check('Superkanban exposes board scope and health controls',
+      await aggregate.getByLabel('Filter by board').count() === 1
+        && await aggregate.getByLabel('Work summary').count() === 1);
   }
 
   // ── The per-tab menu on the tab we just opened.

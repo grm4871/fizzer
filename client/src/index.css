@@ -2144,6 +2144,64 @@ button:focus-visible,
   text-decoration: line-through;
 }
 .superkanban-column .kanban-card { cursor: default; grid-template-columns: minmax(0, 1fr); }
+.superkanban-view .kanban-toolbar {
+  flex-wrap: wrap;
+  min-height: 54px;
+}
+.superkanban-heading {
+  display: flex;
+  flex-direction: column;
+  min-width: 150px;
+  margin-right: 4px;
+}
+.superkanban-heading strong { color: var(--text-primary); font-size: 0.8125rem; }
+.superkanban-heading span { margin-top: 1px; color: var(--text-tertiary); font-size: 0.625rem; }
+.superkanban-board-filter {
+  min-width: 130px;
+  max-width: 190px;
+  height: 30px;
+  padding: 0 28px 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: 0.6875rem;
+}
+.superkanban-pulse {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  min-height: 36px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-base) 68%, var(--bg-surface));
+  color: var(--text-tertiary);
+  font-size: 0.6875rem;
+}
+.superkanban-pulse > span { white-space: nowrap; }
+.superkanban-pulse strong { margin-right: 3px; color: var(--text-primary); font: 600 0.75rem var(--font-mono); }
+.superkanban-pulse .is-alert, .superkanban-pulse .is-alert strong { color: var(--danger); }
+.superkanban-visibility { display: flex; gap: 12px; margin-left: auto; }
+.superkanban-visibility label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+.superkanban-visibility input { accent-color: var(--accent); }
+.kanban-command-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 0.6875rem;
+}
+.kanban-command-toggle:hover { border-color: var(--border-active); color: var(--text-secondary); }
+.kanban-command-toggle.is-active {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+  background: var(--accent-subtle);
+  color: var(--accent-hover);
+}
 .superkanban-column .kanban-card.is-live-work {
   border-color: color-mix(in srgb, var(--accent) 34%, var(--border));
   background: linear-gradient(

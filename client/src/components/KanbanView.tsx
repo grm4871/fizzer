@@ -13,6 +13,7 @@ import {
   Check,
   ChevronDown,
   GripVertical,
+  LayoutDashboard,
   MoreVertical,
   Pencil,
   Plus,
@@ -79,6 +80,29 @@ export function hasObsidianKanbanMarker(content: string) {
   if (typeof content !== 'string' || !content) return false;
   const frontmatter = content.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
   return Boolean(frontmatter && FRONTMATTER_KEY.test(frontmatter[1]));
+}
+
+export function hasSuperkanbanMarker(content: string) {
+  const frontmatter = typeof content === 'string'
+    ? content.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/)?.[1] || ''
+    : '';
+  return /^superkanban\s*:\s*true\s*$/im.test(frontmatter);
+}
+
+export function setSuperkanbanMarker(content: string, enabled: boolean): string {
+  const lines = content.split('\n');
+  const frontmatterEnd = findFrontmatterEnd(lines);
+  if (frontmatterEnd < 0) return content;
+  const markerIndex = lines.slice(1, frontmatterEnd)
+    .findIndex((line) => /^superkanban\s*:/.test(line));
+  if (markerIndex >= 0) {
+    const absoluteIndex = markerIndex + 1;
+    if (enabled) lines[absoluteIndex] = 'superkanban: true';
+    else lines.splice(absoluteIndex, 1);
+  } else if (enabled) {
+    lines.splice(frontmatterEnd, 0, 'superkanban: true');
+  }
+  return lines.join('\n');
 }
 
 export function parseKanbanMarkdown(content: string): KanbanBoard {
@@ -165,12 +189,12 @@ export function ensureKanbanFrontmatter(content: string): string {
       .slice(1, frontmatterEnd)
       .findIndex((line) => /^kanban-plugin\s*:/.test(line));
     if (existingIndex >= 0) return content;
-    lines.splice(frontmatterEnd, 0, 'kanban-plugin: board');
+    lines.splice(frontmatterEnd, 0, 'kanban-plugin: board', 'superkanban: true');
     return lines.join('\n');
   }
 
   const body = content.trimStart();
-  return `---\nkanban-plugin: board\n---\n\n${body}`;
+  return `---\nkanban-plugin: board\nsuperkanban: true\n---\n\n${body}`;
 }
 
 function settingsFooter() {
@@ -188,7 +212,13 @@ export function initializeKanbanMarkdown(content: string): string {
   const board = [
     '## Backlog',
     '',
+    '## Ready',
+    '',
     '## In progress',
+    '',
+    '## Blocked',
+    '',
+    '## Review',
     '',
     '## Done',
     '',
@@ -487,6 +517,7 @@ function KanbanViewInner({ content, onContentChange }: KanbanViewProps) {
     .flatMap((column) => column.cards)
     .filter((card) => card.checked).length;
   const normalizedSearch = search.trim().toLocaleLowerCase();
+  const inCommandCenter = hasSuperkanbanMarker(content);
 
   return (
     <div className="kanban-view" aria-label="Kanban board">
@@ -508,6 +539,16 @@ function KanbanViewInner({ content, onContentChange }: KanbanViewProps) {
         <span className="kanban-portability">
           {board.hasObsidianMarker ? 'Obsidian board' : 'Markdown board'}
         </span>
+        <button
+          type="button"
+          className={`kanban-command-toggle${inCommandCenter ? ' is-active' : ''}`}
+          aria-pressed={inCommandCenter}
+          onClick={() => onContentChange(setSuperkanbanMarker(content, !inCommandCenter))}
+          title="Choose whether this board appears in the vault command center"
+        >
+          <LayoutDashboard size={14} />
+          {inCommandCenter ? 'In command center' : 'Add to command center'}
+        </button>
         <button
           type="button"
           className="kanban-archive-complete"

@@ -2375,7 +2375,10 @@ export default function App() {
   const loadSuperkanban = useCallback(async () => {
     // Previews are whitespace-collapsed by the API, so detect the marker here
     // and validate the complete note body again inside mergeKanbanSources.
-    const boardSummaries = notesRef.current.filter((note) => /kanban-plugin\s*:/.test(note.content_preview));
+    const boardSummaries = notesRef.current.filter((note) => (
+      /kanban-plugin\s*:/.test(note.content_preview)
+      && (/superkanban\s*:\s*true/i.test(note.content_preview) || /cascade-channel\s*:/i.test(note.content_preview))
+    ));
     const vaultId = activeVaultIdRef.current;
     setSuperkanbanLoading(true);
     setSuperkanbanError(null);

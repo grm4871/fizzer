@@ -113,6 +113,8 @@ test('optional internal board is unlisted and becomes the pointer', () => {
       .get(created!.kanbanNoteId) as { title: string; content: string; is_listed: number };
     assert.equal(note.is_listed, 0);
     assert.match(note.content, /cascade-channel:\s*channel-1/);
+    assert.match(note.content, /superkanban:\s*true/);
+    assert.match(note.content, /## Ready[\s\S]*## In progress[\s\S]*## Blocked[\s\S]*## Review[\s\S]*## Done/);
     assert.equal(getChannelSettings(db, 'channel-1', 1).kanbanNoteId, created!.kanbanNoteId);
     // Idempotent.
     assert.equal(

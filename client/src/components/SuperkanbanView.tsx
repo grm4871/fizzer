@@ -33,6 +33,31 @@ function columnKey(title: string) {
   return title.trim().replace(/\s+/g, ' ').toLocaleLowerCase();
 }
 
+const STANDARD_LANES = ['Backlog', 'Ready', 'In progress', 'Blocked', 'Review', 'Done'] as const;
+
+function laneRank(title: string): number {
+  const rank = STANDARD_LANES.indexOf(title as typeof STANDARD_LANES[number]);
+  return rank < 0 ? STANDARD_LANES.length : rank;
+}
+
+function standardLane(title: string): string {
+  const key = columnKey(title);
+  if (/^(wishlist|ideas?|icebox|backlog)$/.test(key)) return 'Backlog';
+  if (/^(ready|to do|todo|queued?|open)$/.test(key)) return 'Ready';
+  if (/^(in progress|in-progress|doing|active|leased)$/.test(key)) return 'In progress';
+  if (/^(blocked|waiting|stalled|on hold)$/.test(key)) return 'Blocked';
+  if (/^(review|in review|reviewing|approval)$/.test(key)) return 'Review';
+  if (/^(done|complete|completed|shipped|closed|archive)$/.test(key)) return 'Done';
+  return title.trim();
+}
+
+export function isSuperkanbanSource(content: string): boolean {
+  if (!hasObsidianKanbanMarker(content)) return false;
+  const frontmatter = content.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/)?.[1] || '';
+  return /^superkanban\s*:\s*true\s*$/im.test(frontmatter)
+    || /^cascade-channel\s*:/im.test(frontmatter);
+}
+
 /** Map durable work-item status onto familiar Kanban lanes. */
 export function workItemStatusToKanbanColumn(status: WorkItemStatus | string): string {
   switch (status) {
@@ -46,10 +71,10 @@ export function workItemStatusToKanbanColumn(status: WorkItemStatus | string): s
     case 'done':
       return 'Done';
     case 'canceled':
-      return 'Archive';
+      return 'Done';
     case 'open':
     default:
-      return 'Backlog';
+      return 'Ready';
   }
 }
 
@@ -58,7 +83,7 @@ export function workItemStatusToKanbanColumn(status: WorkItemStatus | string): s
  * columns so chat orchestration and the board share one surface.
  */
 export function workItemsToLiveColumns(items: WorkItem[]): SuperkanbanColumn[] {
-  const order = ['Backlog', 'In progress', 'Blocked', 'Review', 'Done', 'Archive'];
+  const order = [...STANDARD_LANES];
   const byKey = new Map<string, SuperkanbanColumn>();
   for (const title of order) {
     const col: SuperkanbanColumn = { id: `live-${columnKey(title)}`, title, cards: [] };
@@ -118,13 +143,14 @@ export function mergeKanbanSources(sources: SuperkanbanSource[]): SuperkanbanCol
   const byKey = new Map<string, SuperkanbanColumn>();
 
   for (const source of sources) {
-    if (!hasObsidianKanbanMarker(source.content)) continue;
+    if (!isSuperkanbanSource(source.content)) continue;
     for (const column of parseKanbanMarkdown(source.content).columns) {
-      const key = columnKey(column.title);
+      const title = standardLane(column.title);
+      const key = columnKey(title);
       if (!key) continue;
       let merged = byKey.get(key);
       if (!merged) {
-        merged = { id: `super-column-${columns.length}`, title: column.title, cards: [] };
+        merged = { id: `super-column-${columns.length}`, title, cards: [] };
         byKey.set(key, merged);
         columns.push(merged);
       }
@@ -136,7 +162,9 @@ export function mergeKanbanSources(sources: SuperkanbanSource[]): SuperkanbanCol
       })));
     }
   }
-  return columns;
+  return columns.sort((a, b) => {
+    return laneRank(a.title) - laneRank(b.title);
+  });
 }
 
 /** Fold live work-item columns into note-backed Superkanban columns. */
@@ -192,7 +220,10 @@ function SuperkanbanViewInner({
   liveWorkItems = [],
 }: SuperkanbanViewProps) {
   const [query, setQuery] = useState('');
-  const columns = useMemo(() => {
+  const [source, setSource] = useState('all');
+  const [showBacklog, setShowBacklog] = useState(false);
+  const [showDone, setShowDone] = useState(false);
+  const allColumns = useMemo(() => {
     const boards = mergeKanbanSources((notes || []).map((note) => ({
       id: note.id,
       title: note.title,
@@ -200,10 +231,31 @@ function SuperkanbanViewInner({
     })));
     return mergeLiveWorkIntoKanban(boards, workItemsToLiveColumns(liveWorkItems || []));
   }, [notes, liveWorkItems]);
+  const sources = useMemo(() => Array.from(new Set(allColumns.flatMap((column) => (
+    column.cards.map((card) => card.sourceTitle)
+  )))).sort((a, b) => a.localeCompare(b)), [allColumns]);
+  const columns = useMemo(() => {
+    const visible = allColumns
+      .map((column) => ({
+        ...column,
+        cards: source === 'all' ? column.cards : column.cards.filter((card) => card.sourceTitle === source),
+      }))
+      .filter((column) => showBacklog || columnKey(column.title) !== 'backlog')
+      .filter((column) => showDone || columnKey(column.title) !== 'done');
+    for (const title of STANDARD_LANES.slice(1, 5)) {
+      if (!visible.some((column) => columnKey(column.title) === columnKey(title))) {
+        visible.push({ id: `command-${columnKey(title)}`, title, cards: [] });
+      }
+    }
+    return visible.sort((a, b) => laneRank(a.title) - laneRank(b.title));
+  }, [allColumns, source, showBacklog, showDone]);
   const liveCount = (liveWorkItems || []).filter((item) => (
     item.sourceKind === 'mission' || item.sourceKind === 'contract'
   )).length;
   const normalizedQuery = query.trim().toLocaleLowerCase();
+  const activeCount = allColumns.filter((column) => ['ready', 'in progress'].includes(columnKey(column.title))).reduce((sum, column) => sum + column.cards.length, 0);
+  const blockedCount = allColumns.find((column) => columnKey(column.title) === 'blocked')?.cards.length || 0;
+  const reviewCount = allColumns.find((column) => columnKey(column.title) === 'review')?.cards.length || 0;
 
   if (loading) return <div className="superkanban-empty">Loading your Kanban boards…</div>;
   if (error) return <div className="superkanban-empty">{error}</div>;
@@ -223,14 +275,28 @@ function SuperkanbanViewInner({
   return (
     <div className="kanban-view superkanban-view" aria-label="Superkanban">
       <div className="kanban-toolbar">
+        <div className="superkanban-heading">
+          <strong>Command center</strong>
+          <span>Active work across the vault</span>
+        </div>
         <div className="kanban-search">
           <Search size={14} aria-hidden="true" />
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter all boards" aria-label="Filter Superkanban cards" />
         </div>
-        <span className="kanban-portability">
-          {notes.length} boards · vault-wide collation
-          {liveCount > 0 ? ` · ${liveCount} live contracts/tasks` : ''}
-        </span>
+        <select className="superkanban-board-filter" value={source} onChange={(event) => setSource(event.target.value)} aria-label="Filter by board">
+          <option value="all">All boards</option>
+          {sources.map((title) => <option key={title} value={title}>{title}</option>)}
+        </select>
+      </div>
+      <div className="superkanban-pulse" aria-label="Work summary">
+        <span><strong>{activeCount}</strong> active</span>
+        <span className={blockedCount ? 'is-alert' : ''}><strong>{blockedCount}</strong> blocked</span>
+        <span><strong>{reviewCount}</strong> in review</span>
+        <span><strong>{sources.length}</strong> boards{liveCount > 0 ? ` · ${liveCount} live` : ''}</span>
+        <div className="superkanban-visibility">
+          <label><input type="checkbox" checked={showBacklog} onChange={(event) => setShowBacklog(event.target.checked)} /> Backlog</label>
+          <label><input type="checkbox" checked={showDone} onChange={(event) => setShowDone(event.target.checked)} /> Done</label>
+        </div>
       </div>
       <div className="kanban-board">
         {columns.map((column) => {

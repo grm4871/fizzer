@@ -7,11 +7,13 @@ import {
   deleteKanbanCard,
   ensureKanbanFrontmatter,
   hasObsidianKanbanMarker,
+  hasSuperkanbanMarker,
   initializeKanbanMarkdown,
   moveKanbanCard,
   parseKanbanMarkdown,
   renameKanbanCard,
   renameKanbanColumn,
+  setSuperkanbanMarker,
   toggleKanbanCard,
 } from '../components/KanbanView';
 import {
@@ -25,6 +27,7 @@ import type { WorkItem } from '../chat/workItems';
 const SAMPLE = [
   '---',
   'kanban-plugin: board',
+  'superkanban: true',
   '---',
   '',
   '# Project',
@@ -90,10 +93,12 @@ describe('Markdown-backed Kanban helpers', () => {
 
   it('initializes an Obsidian-compatible board around existing note content', () => {
     const next = initializeKanbanMarkdown('# Existing');
-    expect(next).toMatch(/^---\nkanban-plugin: board\n---\n\n# Existing\n\n## Backlog/);
+    expect(next).toMatch(/^---\nkanban-plugin: board\nsuperkanban: true\n---\n\n# Existing\n\n## Backlog/);
     expect(next).toContain('%% kanban:settings\n```\n{"kanban-plugin":"board"}');
     expect(hasObsidianKanbanMarker(next)).toBe(true);
-    expect(parseKanbanMarkdown(next).columns).toHaveLength(3);
+    expect(parseKanbanMarkdown(next).columns.map((column) => column.title)).toEqual([
+      'Backlog', 'Ready', 'In progress', 'Blocked', 'Review', 'Done',
+    ]);
   });
 
   it('adds and renames WIP-limited columns before the settings footer', () => {
@@ -110,8 +115,16 @@ describe('Markdown-backed Kanban helpers', () => {
 
   it('adds the marker to existing frontmatter without replacing metadata', () => {
     const next = ensureKanbanFrontmatter(['---', 'tags: [project]', '---', '', '# Plan'].join('\n'));
-    expect(next).toContain('tags: [project]\nkanban-plugin: board\n---');
+    expect(next).toContain('tags: [project]\nkanban-plugin: board\nsuperkanban: true\n---');
     expect(hasObsidianKanbanMarker(next)).toBe(true);
+  });
+
+  it('lets an existing board opt into and out of the command center', () => {
+    const legacy = SAMPLE.replace('superkanban: true\n', '');
+    expect(hasSuperkanbanMarker(legacy)).toBe(false);
+    const included = setSuperkanbanMarker(legacy, true);
+    expect(hasSuperkanbanMarker(included)).toBe(true);
+    expect(hasSuperkanbanMarker(setSuperkanbanMarker(included, false))).toBe(false);
   });
 
   it('archives cards using the Obsidian thematic-break archive format', () => {
@@ -143,6 +156,17 @@ describe('Markdown-backed Kanban helpers', () => {
       .toEqual(['First board', 'First board', 'Second board', 'Second board']);
   });
 
+  it('only aggregates opted-in boards and normalizes lifecycle aliases', () => {
+    const featureTest = SAMPLE.replace('superkanban: true\n', '').replace('# Project', '# Kanban Feature Test');
+    const aliases = SAMPLE.replace('## Backlog', '## Wishlist').replace('## Done', '## Shipped');
+    const columns = mergeKanbanSources([
+      { id: 'test', title: 'Kanban Feature Test', content: featureTest },
+      { id: 'product', title: 'Product', content: aliases },
+    ]);
+    expect(columns.map((column) => column.title)).toEqual(['Backlog', 'Done']);
+    expect(columns.flatMap((column) => column.cards).every((card) => card.sourceTitle === 'Product')).toBe(true);
+  });
+
   it('projects mission work items into Superkanban live columns', () => {
     const items: WorkItem[] = [
       {
@@ -166,13 +190,14 @@ describe('Markdown-backed Kanban helpers', () => {
     ];
     expect(workItemStatusToKanbanColumn('in_progress')).toBe('In progress');
     const live = workItemsToLiveColumns(items);
-    expect(live.map((c) => c.title)).toEqual(['Backlog', 'In progress']);
+    expect(live.map((c) => c.title)).toEqual(['Ready', 'In progress']);
     expect(live[1].cards[0].text).toContain('Ship isolation');
     expect(live[1].cards[0].live).toBe(true);
     const boards = mergeKanbanSources([{ id: 'b1', title: 'Board', content: SAMPLE }]);
     const merged = mergeLiveWorkIntoKanban(boards, live);
+    const ready = merged.find((c) => c.title === 'Ready')!;
+    expect(ready.cards[0].sourceTitle).toBe('Live mission work');
     const backlog = merged.find((c) => c.title === 'Backlog')!;
-    expect(backlog.cards[0].sourceTitle).toBe('Live mission work');
     expect(backlog.cards.some((c) => c.text === 'Draft brief')).toBe(true);
   });
 
