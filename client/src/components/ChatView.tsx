@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { Bot, ClipboardList, Copy, Crown, Forward, Hash, ImagePlus, Paperclip, Reply, Send, Trash2, X } from 'lucide-react';
+import { Bot, ClipboardList, Copy, Forward, Hash, ImagePlus, Paperclip, Reply, Send, Trash2, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
@@ -1565,7 +1565,8 @@ const ChatGroupRow = memo(function ChatGroupRow({
 }) {
   const head = group.messages[0];
   const tail = group.messages[group.messages.length - 1];
-  const groupHasRunWidget = group.messages.some((message) => message.status === 'running' || hasExpandableTrace(message));
+  const groupHasRunWidget = Boolean(traceContent)
+    || group.messages.some((message) => message.status === 'running' || hasExpandableTrace(message));
   const groupSelected = group.messages.some((message) => message.id === selectedMessageId);
   const articleRef = useRef<HTMLElement | null>(null);
   const heightRef = useRef(0);
@@ -1842,7 +1843,8 @@ const ChatGroupRow = memo(function ChatGroupRow({
   && prev.onAgentAvatarClick === next.onAgentAvatarClick
   && prev.scrollRootRef === next.scrollRootRef
   && prev.vaultId === next.vaultId
-  && prev.onHydrateMessage === next.onHydrateMessage;
+  && prev.onHydrateMessage === next.onHydrateMessage
+  && prev.traceContent === next.traceContent;
 });
 
 export const ChatView = memo(function ChatView({
@@ -2921,22 +2923,66 @@ export const ChatView = memo(function ChatView({
           ) : (
             transcriptSegments.flatMap((segment) => {
               if (segment.kind === 'work') {
+                // A trace is always nested in an agent row. System notices
+                // that start a run are attributed when persisted; older
+                // unowned notices deliberately stay out of the transcript
+                // instead of looking like progress on the human message.
+                const host = segment.carrier
+                  || segment.trace.find((message) => message.registrationId || message.agentId);
+                if (!host) return [];
+                // A real carrier is persisted for system-only work. Existing
+                // agent traces use the same empty shell shape at render time.
+                const carrier = segment.carrier || {
+                  ...host,
+                  id: `agent-trace-${segment.id}`,
+                  body: '',
+                  status: undefined,
+                };
+                const traceSelected = selectedMessageId != null
+                  && segment.trace.some((message) => message.id === selectedMessageId);
                 const nodes: ReactNode[] = [
-                  <ChatWorkTrace
+                  <ChatGroupRow
                     key={`work-${segment.id}`}
-                    trace={segment.trace}
-                    selectedMessageId={
-                      selectedMessageId
-                      && segment.trace.some((message) => message.id === selectedMessageId)
-                        ? selectedMessageId
-                        : null
-                    }
+                    group={{ messages: [carrier] }}
+                    selectedMessageId={traceSelected ? selectedMessageId : null}
+                    avatarKind="agent"
+                    avatarUrl={getMessageAvatarUrl(carrier)}
+                    authorLabel={getMessageAuthorLabel(carrier)}
+                    ownerLabel={getMessageOwnerLabel(carrier)}
+                    planUsage={getMessagePlanUsage(carrier)}
+                    latestRunningMessageId={undefined}
+                    runningSiblingCount={0}
+                    steeringPromptLabels={steeringPromptLabels}
+                    mentionableAliases={mentionableAliases}
+                    notes={notes}
+                    onOpenNote={onOpenNote}
+                    onOpenSharedNote={openSharedNote}
                     onCancelRun={onCancelRun}
+                    onToggleSelect={toggleMessageSelection}
                     onContextMenu={openMessageContextMenu}
                     onReply={startReply}
+                    onLightbox={openLightbox}
+                    onImageLoad={scrollToBottomIfSticky}
+                    onAgentAvatarClick={
+                      resolveMessageRegistration(carrier)
+                        ? (event) => openAgentSettingsFromMessage(carrier, event)
+                        : undefined
+                    }
+                    scrollRootRef={messagesRef}
                     vaultId={vaultId}
                     onHydrateMessage={onHydrateMessage}
-                    runningMessageState={runningMessageState}
+                    traceContent={(
+                      <ChatWorkTrace
+                        trace={segment.trace}
+                        selectedMessageId={traceSelected ? selectedMessageId : null}
+                        onCancelRun={onCancelRun}
+                        onContextMenu={openMessageContextMenu}
+                        onReply={startReply}
+                        vaultId={vaultId}
+                        onHydrateMessage={onHydrateMessage}
+                        runningMessageState={runningMessageState}
+                      />
+                    )}
                   />,
                 ];
                 for (const group of segment.fullGroups) {
@@ -3398,7 +3444,7 @@ export const ChatView = memo(function ChatView({
           const planUsage = runnerHealth?.planUsage?.[planUsageProviderId(agent.registration.agentId)] || null;
           return (
             <div
-              className={`chat-user chat-agent-user${isEditing ? ' is-editing' : ''}`}
+              className={`chat-user chat-agent-user${agent.registration.orchestrator ? ' is-supervisor' : ''}${isEditing ? ' is-editing' : ''}`}
               key={agent.registration.id}
             >
               <button
@@ -3408,11 +3454,9 @@ export const ChatView = memo(function ChatView({
                 title="Channel settings for this agent"
               >
                 <ChatAvatar name={agent.registration.displayName || agent.label} kind="agent" avatarUrl={agent.registration.avatarUrl} size="sm" />
-                {agent.registration.orchestrator && (
-                  <span className="chat-agent-supervisor-emblem" title="Channel supervisor" aria-label="Channel supervisor">
-                    <Crown size={11} strokeWidth={2.6} />
-                  </span>
-                )}
+                {/* Supervisor reads as a hairline ring on the avatar (see .is-supervisor);
+                    the rank still needs a name for screen readers. */}
+                {agent.registration.orchestrator && <span className="sr-only">Channel supervisor</span>}
                 <div className="chat-user-copy">
                   <div className="chat-user-copy-head">
                     <strong>{agent.registration.displayName || agent.label}</strong>

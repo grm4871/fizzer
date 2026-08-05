@@ -123,6 +123,16 @@ describe('workTrace', () => {
     expect(segments[2]).toMatchObject({ kind: 'group', group: { messages: [final] } });
   });
 
+  it('nests a system wake in its persisted empty agent carrier', () => {
+    const carrier = msg({
+      id: 'agent-trace-mission-1-wake', author: 'Terra', body: '', agentId: 'codex', registrationId: 'terra-reg',
+    });
+    const wake = msg({ id: 'sys-mission-mission-1-wake', author: 'Cascade', body: '@terra review' });
+    const segments = segmentTranscript([carrier, wake]);
+    expect(segments).toHaveLength(1);
+    expect(segments[0]).toMatchObject({ kind: 'work', carrier, trace: [wake] });
+  });
+
   it('preserves chronology around full-weight artifacts inside work', () => {
     const before = msg({ id: 'a1', author: 'Sol', body: 'Before', agentId: 'codex' });
     const artifact = msg({

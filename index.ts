@@ -930,12 +930,29 @@ function enqueueMissionCoordinatorWake(wake: MissionWake) {
     'Review the evidence, resolve or explain failures, perform any integration and verification still needed, then reply to the user with the outcome. Keep the mission state accurate.',
   ].join('\n');
   try {
-    const message = createChatMessage(db, wake.createdBy, wake.vaultId, wake.channelId, {
-      id: `sys-mission-${wake.mission.id}-${crypto.randomUUID().slice(0, 8)}`,
+    const wakeSuffix = crypto.randomUUID().slice(0, 8);
+    // A workflow trace must live under an agent row, never directly under the
+    // human message that happened to complete the mission. Persist a real,
+    // intentionally empty coordinator shell before the system wake; the
+    // renderer recognizes this narrow id form and nests the trace inside it.
+    const carrier = createChatMessage(db, wake.createdBy, wake.vaultId, wake.channelId, {
+      id: `agent-trace-${wake.mission.id}-${wakeSuffix}`,
       channelId: wake.channelId,
-      author: 'Cascade',
+      author: '',
+      body: '',
+      createdAt: new Date().toISOString(),
+      registrationId: wake.coordinatorRegistrationId,
+    });
+    const message = createChatMessage(db, wake.createdBy, wake.vaultId, wake.channelId, {
+      id: `sys-mission-${wake.mission.id}-${wakeSuffix}`,
+      channelId: wake.channelId,
+      // A coordinator wake is agent work, not ambient system chatter. Keeping
+      // its registration makes the renderer host the trace in the coordinator
+      // row even before the desktop has claimed its dispatch.
+      author: '',
       body,
       createdAt: new Date().toISOString(),
+      registrationId: wake.coordinatorRegistrationId,
     });
     const dispatch = createChatAgentDispatchForRegistration(
       db,
@@ -944,6 +961,7 @@ function enqueueMissionCoordinatorWake(wake: MissionWake) {
       message,
       wake.coordinatorRegistrationId,
     );
+    emitChatMessageEvent(wake.vaultId, wake.channelId, 'vault:chatMessageCreated', carrier);
     emitChatMessageEvent(wake.vaultId, wake.channelId, 'vault:chatMessageCreated', message, [dispatch]);
   } catch (error) {
     // The mission remains durably completed/blocked and visible. A missing
@@ -3247,12 +3265,24 @@ app.post('/api/vaults/:vaultId/channels/:channelId/messages/:messageId/clarifica
           'Contract:',
           result.contract,
         ].join('\n');
-        const wakeMessage = createChatMessage(db, req.user!.id, req.params.vaultId, req.params.channelId, {
-          id: `sys-contract-${missionId.slice(0, 8)}-${crypto.randomUUID().slice(0, 8)}`,
+        const wakeSuffix = crypto.randomUUID().slice(0, 8);
+        const carrier = createChatMessage(db, req.user!.id, req.params.vaultId, req.params.channelId, {
+          id: `agent-trace-${missionId}-${wakeSuffix}`,
           channelId: req.params.channelId,
-          author: 'Cascade',
+          author: '',
+          body: '',
+          createdAt: new Date().toISOString(),
+          registrationId: coordinator.id,
+        });
+        const wakeMessage = createChatMessage(db, req.user!.id, req.params.vaultId, req.params.channelId, {
+          id: `sys-contract-${missionId.slice(0, 8)}-${wakeSuffix}`,
+          channelId: req.params.channelId,
+          // This is the coordinator's durable work prompt. Attribute it now
+          // so there is an agent shell before its dispatch is claimed.
+          author: '',
           body: wakeBody,
           createdAt: new Date().toISOString(),
+          registrationId: coordinator.id,
         });
         const dispatch = createChatAgentDispatchForRegistration(
           db,
@@ -3260,6 +3290,12 @@ app.post('/api/vaults/:vaultId/channels/:channelId/messages/:messageId/clarifica
           req.params.channelId,
           wakeMessage,
           coordinator.id,
+        );
+        emitChatMessageEvent(
+          route.sourceVaultId,
+          route.sourceChannelId,
+          'vault:chatMessageCreated',
+          carrier,
         );
         emitChatMessageEvent(
           route.sourceVaultId,

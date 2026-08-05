@@ -193,9 +193,6 @@ export const ChatWorkTrace = memo(function ChatWorkTrace({
   const summary = useMemo(() => workTraceSummary(trace), [trace]);
   const decals = useMemo(() => workTraceDecals(trace), [trace]);
   const currentPhase = decals[decals.length - 1]?.phase || 'working';
-  const owner = trace.find((message) => message.agentId || message.registrationId)?.author
-    || trace[0]?.author
-    || 'Agent';
 
   useEffect(() => {
     if (!selectedMessageId) return;
@@ -237,7 +234,6 @@ export const ChatWorkTrace = memo(function ChatWorkTrace({
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
       >
-        <span className="chat-work-trace-owner">{owner}</span>
         <span className="chat-work-trace-kicker">flow</span>
         <span className="chat-work-decals" aria-label={`Workflow: ${decals.map((decal) => decal.label).join(', ')}`}>
           {decals.map((decal, index) => {

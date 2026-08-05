@@ -29,7 +29,16 @@ export type TranscriptSegment =
       trace: ChatMessage[];
       /** Full-weight bubbles after the trace (final answer, live run, mission). */
       fullGroups: ChatMessageGroup[];
+      /** Empty persisted agent shell that owns a system-only trace. */
+      carrier?: ChatMessage;
     };
+
+/** A persisted, empty agent row used to give system workflow status a home. */
+export function isWorkTraceCarrier(message: Pick<ChatMessage, 'id' | 'body' | 'agentId' | 'registrationId'>): boolean {
+  return String(message.id || '').startsWith('agent-trace-')
+    && !String(message.body || '').trim()
+    && Boolean(message.agentId || message.registrationId);
+}
 
 export function isSystemCascadeMessage(message: Pick<ChatMessage, 'id' | 'author'>): boolean {
   return message.author === 'Cascade' || String(message.id || '').startsWith('sys-mission-');
@@ -241,7 +250,12 @@ export function segmentTranscript(
       index += 1;
     }
 
-    const { trace, full } = partitionWorkRun(work);
+    const { trace: rawTrace, full } = partitionWorkRun(work);
+    // Mission wakes are system messages, but their empty coordinator shell is
+    // a real agent message. Keep that shell as the visual owner rather than
+    // rendering the workflow immediately beneath the preceding human turn.
+    const carrier = rawTrace.find(isWorkTraceCarrier);
+    const trace = carrier ? rawTrace.filter((message) => message.id !== carrier.id) : rawTrace;
     if (trace.length === 0) {
       for (const group of groupMessages(full.length ? full : work)) {
         segments.push({ kind: 'group', group });
@@ -262,6 +276,7 @@ export function segmentTranscript(
         id: compact[0].id,
         trace: compact,
         fullGroups: [],
+        ...(carrier ? { carrier } : {}),
       });
       compact = [];
     };
@@ -271,6 +286,7 @@ export function segmentTranscript(
       fullWeight = [];
     };
     for (const message of work) {
+      if (carrier && message.id === carrier.id) continue;
       if (traceIds.has(message.id)) {
         flushFull();
         compact.push(message);

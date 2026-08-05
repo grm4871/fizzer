@@ -884,6 +884,13 @@ export function finishChatMission(
   for (const wakeMessage of obsoleteWakeRows) {
     db.prepare('DELETE FROM chat_messages WHERE id = ? AND channel_id = ?')
       .run(wakeMessage.id, row.channel_id);
+    // Wakes have a paired empty coordinator shell (`agent-trace-*`) so their
+    // compact status never hangs under the preceding human message. If a
+    // manual finish removes the unlaunched wake, remove that otherwise-empty
+    // shell in the same transition.
+    const carrierId = wakeMessage.id.replace(/^sys-mission-/, 'agent-trace-');
+    db.prepare('DELETE FROM chat_messages WHERE id = ? AND channel_id = ?')
+      .run(carrierId, row.channel_id);
   }
   const canceledWakeRunIds = obsoleteWakeRows.flatMap((item) => item.run_id == null ? [] : [item.run_id]);
   for (const task of taskRows(db, row.id)) {

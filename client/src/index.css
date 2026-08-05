@@ -6707,17 +6707,6 @@ button.chat-avatar-agent {
   font-weight: 560;
   letter-spacing: 0.005em;
 }
-.chat-work-trace-owner {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: hsl(222, 13%, 76%);
-  font-family: var(--font-sans, inherit);
-  font-size: 0.8125rem;
-  font-weight: 650;
-}
 .chat-work-trace:not(.is-open).is-live .chat-work-decal-mark,
 .chat-work-trace:not(.is-open).is-live .chat-work-decal-label {
   animation: chat-activity-flicker 1.45s ease-in-out infinite;
