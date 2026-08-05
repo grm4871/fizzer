@@ -351,8 +351,11 @@ try {
   const membershipMenu = page.locator('.chat-agent-menu');
   const groupTitles = (await membershipMenu.locator('.chat-agent-group-title').allInnerTexts()).map((title) => title.toLowerCase());
   check('agent settings separates runtime, reply policy, access, and permissions',
-    ['runtime', 'when it replies', 'who can summon it', 'permissions'].every((title) => groupTitles.includes(title)),
+    ['runtime', 'when it replies', 'who can summon it', 'execution'].every((title) => groupTitles.includes(title)),
     JSON.stringify(groupTitles));
+  check('safe autonomous execution is the default',
+    await membershipMenu.getByText('Auto', { exact: true }).count() === 1
+      && await membershipMenu.getByLabel('Full host access').isChecked() === false);
   const switchBox = await coordinatorToggle.boundingBox();
   check('agent settings uses compact switch controls instead of raw checkboxes',
     Boolean(switchBox) && switchBox.width >= 28 && switchBox.width > switchBox.height);

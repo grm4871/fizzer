@@ -5647,6 +5647,23 @@ button.chat-avatar-agent {
   text-transform: uppercase;
   color: var(--text-tertiary);
 }
+.chat-agent-mode-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 2px 0 5px;
+  color: var(--text-primary);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.chat-agent-mode-summary span:last-child {
+  padding: 2px 6px;
+  border: 1px solid color-mix(in srgb, var(--success) 28%, var(--border));
+  border-radius: 999px;
+  color: var(--success);
+  font-size: 0.625rem;
+  font-weight: 600;
+}
 .chat-agent-menu .chat-agent-group > label:last-child {
   margin-bottom: 0;
 }

@@ -3860,7 +3860,12 @@ export const ChatView = memo(function ChatView({
               </label>
             </div>
             <div className="chat-agent-group">
-              <div className="chat-agent-group-title">Permissions</div>
+              <div className="chat-agent-group-title">Execution</div>
+              <div className="chat-agent-mode-summary">
+                <span>Auto</span>
+                <span>Recommended</span>
+              </div>
+              <span className="chat-agent-field-hint">Works autonomously inside its workspace. Cascade only interrupts when an action crosses the safety boundary.</span>
               <label className={`chat-agent-toggle${agentForm.yolo ? ' is-hot' : ''}`}>
                 <input
                   type="checkbox"
@@ -3868,8 +3873,8 @@ export const ChatView = memo(function ChatView({
                   onChange={(event) => setAgentForm((value) => ({ ...value, yolo: event.target.checked }))}
                 />
                 <span className="chat-agent-toggle-copy">
-                  <span className="chat-agent-toggle-name">Yolo mode</span>
-                  <span className="chat-agent-toggle-hint">On: skips prompts. Off: pauses risky Claude tools for your approval; Codex stays workspace-sandboxed.</span>
+                  <span className="chat-agent-toggle-name">Full host access</span>
+                  <span className="chat-agent-toggle-hint">Bypasses every prompt and workspace boundary. Use only on a machine you are willing to hand to this agent.</span>
                 </span>
               </label>
             </div>
