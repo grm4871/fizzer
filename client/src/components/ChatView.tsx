@@ -1149,6 +1149,9 @@ function SwipeToReply({
 
   // If virtualization unmounts this row mid-swipe, release capture + gesture flag.
   useEffect(() => () => {
+    // Do not let the release below turn into a late lostpointercapture reply
+    // while React is removing this virtualized row.
+    finishedRef.current = true;
     const start = startRef.current;
     releaseCapture(start?.pointerId);
     if (capturingRef.current) {
@@ -1197,7 +1200,12 @@ function SwipeToReply({
       const onWinEnd = (ev: Event) => {
         const pe = ev as PointerEvent;
         if ('pointerId' in pe && pe.pointerId !== pointerId) return;
-        const committed = axisRef.current === 'h' && offsetRef.current >= SWIPE_REPLY_THRESHOLD;
+        // `pointercancel` and `blur` are interruption paths, never a reply.
+        // Some Android webviews cancel a pointer when a scroll/context gesture
+        // takes over, often after it has crossed the horizontal threshold.
+        const committed = ev.type === 'pointerup'
+          && axisRef.current === 'h'
+          && offsetRef.current >= SWIPE_REPLY_THRESHOLD;
         completeGesture(committed, true);
       };
       window.addEventListener('pointerup', onWinEnd, true);
@@ -1227,6 +1235,12 @@ function SwipeToReply({
     completeGesture(committed, true);
   };
 
+  const cancel = (event: React.PointerEvent<HTMLDivElement>) => {
+    const start = startRef.current;
+    if (start && event.pointerId === start.pointerId) completeGesture(false, true);
+    else releaseCapture(event.pointerId);
+  };
+
   return (
     <div
       ref={rootRef}
@@ -1235,10 +1249,15 @@ function SwipeToReply({
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={finish}
-      onPointerCancel={finish}
+      onPointerCancel={cancel}
       onLostPointerCapture={() => {
-        // Capture lost without up/cancel — still clear gesture so IO can unmount.
-        if (capturingRef.current || startRef.current) completeGesture(false, false);
+        // Android can deliver lostpointercapture instead of routing the final
+        // pointerup back through React. Preserve an already-armed horizontal
+        // swipe, but all explicit cancellation paths above have already reset.
+        if (!finishedRef.current && (capturingRef.current || startRef.current)) {
+          const committed = axisRef.current === 'h' && offsetRef.current >= SWIPE_REPLY_THRESHOLD;
+          completeGesture(committed, true);
+        }
       }}
       onClick={onClick}
       onContextMenu={onContextMenu}
