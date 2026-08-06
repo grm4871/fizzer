@@ -97,6 +97,8 @@ try {
     localStorage.setItem('cascade_session', JSON.stringify(savedSession));
   }, { token, savedSession: session });
   await page.reload({ waitUntil: 'networkidle' });
+  const initialExpand = page.locator('#sidebar-expand-btn');
+  if (await initialExpand.isVisible()) await initialExpand.click();
   await page.locator(`#note-${channel.id}`).click();
   await page.locator('.chat-header h2', { hasText: 'touch-target' }).waitFor({ timeout: 15000 });
 

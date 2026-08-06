@@ -147,6 +147,15 @@ try {
   const computedTouchAction = await row.evaluate((element) => getComputedStyle(element).touchAction);
   if (computedTouchAction !== 'pan-y') throw new Error(`reply row lost pan-y touch action: ${computedTouchAction}`);
   const client = await context.newCDPSession(page);
+  await page.evaluate(() => {
+    window.__swipeTrace = [];
+    for (const type of ['pointerdown', 'pointermove', 'pointerup', 'pointercancel', 'lostpointercapture']) {
+      document.addEventListener(type, (event) => {
+        const pointer = event;
+        window.__swipeTrace.push({ type, x: pointer.clientX, y: pointer.clientY, pointerType: pointer.pointerType });
+      }, true);
+    }
+  });
 
   // A vertical pan must remain a scroll gesture and never arm a reply.
   const scroller = page.locator('.chat-messages');
@@ -165,7 +174,13 @@ try {
   if (!swipeBox) throw new Error('target message disappeared before swipe');
   await dispatchSwipe(client, { x: swipeBox.x + Math.min(230, swipeBox.width - 20), y: swipeBox.y + swipeBox.height / 2 }, -82, 3);
   const replyBar = page.locator('.chat-reply-bar');
-  await replyBar.waitFor({ timeout: 5000 });
+  try {
+    await replyBar.waitFor({ timeout: 5000 });
+  } catch (error) {
+    const trace = await page.evaluate(() => window.__swipeTrace);
+    const state = await row.evaluate((element) => ({ className: element.className, transform: element.querySelector('.chat-swipe-content')?.style.transform }));
+    throw new Error(`reply did not open; trace=${JSON.stringify(trace)} state=${JSON.stringify(state)} cause=${error}`);
+  }
   if (!await replyBar.getByText('@sol', { exact: false }).count()) {
     throw new Error('swipe reply did not quote the touched message author');
   }

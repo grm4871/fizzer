@@ -1251,12 +1251,12 @@ function SwipeToReply({
       onPointerUp={finish}
       onPointerCancel={cancel}
       onLostPointerCapture={() => {
-        // Android can deliver lostpointercapture instead of routing the final
-        // pointerup back through React. Preserve an already-armed horizontal
-        // swipe, but all explicit cancellation paths above have already reset.
-        if (!finishedRef.current && (capturingRef.current || startRef.current)) {
-          const committed = axisRef.current === 'h' && offsetRef.current >= SWIPE_REPLY_THRESHOLD;
-          completeGesture(committed, true);
+        // Chromium Android may drop pointer capture immediately after the
+        // first horizontal move, before the swipe has crossed the reply
+        // threshold. Keep the window-level end listener alive in that case;
+        // ending here makes every longer swipe stop at its first move.
+        if (!windowEndRef.current && !finishedRef.current && (capturingRef.current || startRef.current)) {
+          completeGesture(false, false);
         }
       }}
       onClick={onClick}
