@@ -388,12 +388,17 @@ function parseNousUsageJson(payload) {
 async function collectNousUsage() {
   // Resolve the Hermes venv python from the `hermes` launcher symlink so
   // this works regardless of install path.  The launcher lives at
-  // <venv>/bin/hermes, so the venv python is <venv>/bin/python3.
+  // <hermes-home>/hermes-agent/venv/bin/hermes, so:
+  //   realpath → .../hermes-agent/venv/bin/hermes
+  //   venvPython → .../hermes-agent/venv/bin/python3
+  //   sourceDir  → .../hermes-agent          (parent of venv)
+  //   hermesHome → .../.hermes                (parent of hermes-agent)
   const hermesPath = await resolveHermesPath();
-  const venvPython = path.join(path.dirname(hermesPath), 'python3');
-  const hermesHome = path.dirname(path.dirname(hermesPath)); // <venv> -> parent
-  // Hermes source is installed alongside the venv under hermes-agent/
-  const sourceDir = path.join(hermesHome, 'hermes-agent');
+  const binDir = path.dirname(hermesPath);          // .../venv/bin
+  const venvDir = path.dirname(binDir);             // .../venv
+  const sourceDir = path.dirname(venvDir);          // .../hermes-agent
+  const hermesHome = path.dirname(sourceDir);       // .../.hermes
+  const venvPython = path.join(binDir, 'python3');
 
   const script = `
 import sys, json, os
