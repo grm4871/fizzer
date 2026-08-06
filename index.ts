@@ -3906,7 +3906,10 @@ if (fs.existsSync(CLIENT_APP_HTML)) {
   });
   // Marketing / download page for new visitors at the root. Signed-in users are
   // bounced to /app by an inline script on the page itself.
-  app.get('/', (_req, res, next) => {
+  // `/download` is intentionally distinct from `/`: signed-in browser users
+  // need to reach the installer chooser instead of being bounced back into the
+  // web app by the landing page's returning-user shortcut.
+  app.get(['/', '/download'], (_req, res, next) => {
     if (fs.existsSync(LANDING_HTML)) return res.sendFile(LANDING_HTML);
     next();
   });

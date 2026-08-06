@@ -12,6 +12,8 @@ reviewed with the code they describe.
   shell, persistence, and realtime boundaries.
 - [Agent runtime](agent-runtime.md) — understand local agent execution,
   sessions, streaming, helpers, and security boundaries.
+- [First beta contract](first-beta-contract.md) — the supported friend,
+  desktop, and managed-path boundaries for the current beta.
 - [Development and testing](development.md) — make and verify changes.
 - [Deployment and operations](deployment.md) — build, deploy, verify, and
   refresh production safely.

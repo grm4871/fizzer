@@ -50,6 +50,9 @@ try {
   if (!(await page.locator('.sidebar-footer .user-info').innerText()).includes('Multiplayer Person')) throw new Error('sidebar did not update after profile save');
   await page.reload({ waitUntil: 'networkidle' });
   if (!(await page.locator('.sidebar-footer .user-info').innerText()).includes('Multiplayer Person')) throw new Error('profile did not survive reload');
+  const desktopLink = page.getByRole('link', { name: 'Get desktop' });
+  await desktopLink.waitFor();
+  if (await desktopLink.getAttribute('href') !== '/download') throw new Error('browser-only desktop handoff did not point to /download');
   // Shared vault management: invite, re-role, and remove from the account modal.
   await page.locator('.sidebar-footer .user-info').click();
   const sharing = page.locator('.account-settings');

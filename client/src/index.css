@@ -5473,6 +5473,13 @@ button.chat-avatar-agent {
   font-size: 0.78rem;
   line-height: 1.4;
 }
+.auth-desktop-note a,
+.desktop-runner-download {
+  color: var(--accent);
+  text-decoration: none;
+}
+.auth-desktop-note a:hover,
+.desktop-runner-download:hover { text-decoration: underline; }
 
 .desktop-runner-callout {
   display: flex;
@@ -5488,6 +5495,7 @@ button.chat-avatar-agent {
 .desktop-runner-callout div { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .desktop-runner-callout strong { color: var(--text-primary); white-space: nowrap; }
 .desktop-runner-callout span { color: var(--text-tertiary); }
+.desktop-runner-download { display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; white-space: nowrap; }
 @media (max-width: 640px) {
   .desktop-runner-callout { align-items: flex-start; }
   .desktop-runner-callout div { flex-direction: column; gap: 2px; }

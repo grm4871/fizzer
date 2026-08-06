@@ -27,8 +27,11 @@ function check(label, condition) {
   console.log(`[account-e2e] ${condition ? 'OK ' : 'FAIL'} ${label}`);
   if (!condition) failures += 1;
 }
-async function register(username) {
-  const data = await must('/api/auth/register', { method: 'POST', body: JSON.stringify({ username, password: 'testpass12345' }) });
+async function register(username, inviteToken = '') {
+  const data = await must('/api/auth/register', {
+    method: 'POST',
+    body: JSON.stringify({ username, password: 'testpass12345', ...(inviteToken ? { inviteToken } : {}) }),
+  });
   return { ...data, auth: { authorization: `Bearer ${data.token}` } };
 }
 
@@ -45,7 +48,7 @@ try { fs.unlinkSync(dbPath); } catch {}
 }
 const server = spawn('node', ['dist/index.js'], {
   cwd: root,
-  env: { ...process.env, API_PORT: String(port), API_HOST: '127.0.0.1', DOCS_DB_PATH: dbPath, JWT_SECRET: 'account-test-secret', CASCADE_ALLOW_OPEN_REGISTRATION: '1' },
+  env: { ...process.env, API_PORT: String(port), API_HOST: '127.0.0.1', DOCS_DB_PATH: dbPath, JWT_SECRET: 'account-test-secret' },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 server.stderr.on('data', (chunk) => process.stderr.write(`[server] ${chunk}`));
@@ -55,11 +58,16 @@ try {
     try { if ((await request('/api/health')).ok) break; } catch {}
     await delay(100);
   }
+  const download = await fetch(`${base}/download`);
+  const downloadHtml = await download.text();
+  check('desktop handoff route serves the installer chooser', download.ok && downloadHtml.includes('Install the desktop app'));
   const stamp = Date.now();
   const ownerName = `owner_${stamp}`;
   const guestName = `guest_${stamp}`;
   const owner = await register(ownerName);
-  const guest = await register(guestName);
+  check('registration closes after the bootstrap account', (await request('/api/auth/register', {
+    method: 'POST', body: JSON.stringify({ username: `uninvited_${stamp}`, password: 'testpass12345' }),
+  })).status === 403);
 
   const avatarUrl = 'data:image/png;base64,iVBORw0KGgo=';
   const profile = await must('/api/me/profile', {
@@ -78,8 +86,6 @@ try {
 
   const { vault } = await must('/api/vaults', { method: 'POST', headers: owner.auth, body: JSON.stringify({ name: 'Account permissions' }) });
   const { folder } = await must(`/api/vaults/${vault.id}/folders`, { method: 'POST', headers: owner.auth, body: JSON.stringify({ name: 'private' }) });
-  check('another account cannot rename a private folder', (await request(`/api/folders/${folder.id}`, { method: 'PATCH', headers: guest.auth, body: JSON.stringify({ name: 'stolen' }) })).status === 404);
-  check('another account cannot delete a private folder', (await request(`/api/folders/${folder.id}`, { method: 'DELETE', headers: guest.auth })).status === 404);
 
   const { note: channel } = await must(`/api/vaults/${vault.id}/notes`, { method: 'POST', headers: owner.auth, body: JSON.stringify({ title: 'shared', content: 'cascade://chat-channel' }) });
   const { note: embeddedNote } = await must(`/api/vaults/${vault.id}/notes`, { method: 'POST', headers: owner.auth, body: JSON.stringify({ title: 'Release plan', content: '# Launch\nShip the shared vault flow.' }) });
@@ -90,7 +96,12 @@ try {
   const embeds = await must(`/api/vaults/${vault.id}/channels/${channel.id}/messages/${ownerMessage.message.id}/embeds`, { headers: owner.auth });
   check('chat embeds snapshot aliased note targets', embeds.notes?.length === 1 && embeds.notes[0].title === 'Release plan' && embeds.notes[0].content.includes('shared vault'));
   const { token: invite } = await must(`/api/vaults/${vault.id}/channels/${channel.id}/invite-link`, { method: 'POST', headers: owner.auth });
+  const guest = await register(guestName, invite);
+  check('invite token permits a new friend to register', guest.user.username === guestName);
+  check('another account cannot rename a private folder', (await request(`/api/folders/${folder.id}`, { method: 'PATCH', headers: guest.auth, body: JSON.stringify({ name: 'stolen' }) })).status === 404);
+  check('another account cannot delete a private folder', (await request(`/api/folders/${folder.id}`, { method: 'DELETE', headers: guest.auth })).status === 404);
   const linked = await must(`/api/chat-invites/${encodeURIComponent(invite)}/accept`, { method: 'POST', headers: guest.auth });
+  check('friend receives a local linked chat, not the source vault', !(await must('/api/vaults', { headers: guest.auth })).vaults.some((item) => item.id === vault.id) && linked.vaultId !== vault.id);
   const guestPost = await must(`/api/vaults/${linked.vaultId}/channels/${linked.channelId}/messages`, {
     method: 'POST', headers: guest.auth, body: JSON.stringify({ id: `guest-${stamp}`, author: ownerName, body: 'guest text' }),
   });

@@ -86,7 +86,7 @@ import {
 } from './chat/session';
 import { chatMessageStore } from './chat/messageStore';
 import { consumePendingSessionSteer, enqueueSessionTurn, findProjectedActiveSessionRun, forceReleasePriorSessionTurns, queuesBehindActiveSession, requestSessionSteer, shouldSteerActiveSession } from './chat/sessionTurns';
-import { Activity, Gem, PanelLeftOpen, Users } from 'lucide-react';
+import { Activity, Download, Gem, PanelLeftOpen, Users } from 'lucide-react';
 
 type ChatAgentDispatch = {
   id: string;
@@ -3373,6 +3373,7 @@ export default function App() {
             {inDesktopApp
               ? 'This desktop app can run your local agents after you sign in.'
               : 'Cascade agents run on your own desktop app. You can join this invite here, then open it in Cascade desktop to run agents.'}
+            {!inDesktopApp && <> <a href="/download">Get Cascade desktop</a></>}
           </p>
           {authNotice && <div className="auth-notice">{authNotice}</div>}
           {authError && <div className="error">{authError}</div>}
@@ -3534,6 +3535,10 @@ export default function App() {
               <strong>Agents run in Cascade desktop</strong>
               <span>Notes and chats work here. To run an agent, open this same account in the desktop app.</span>
             </div>
+            <a className="desktop-runner-download" href="/download">
+              <Download size={13} aria-hidden="true" />
+              Get desktop
+            </a>
           </div>
         )}
 

@@ -25,7 +25,7 @@
     // Returning users (already signed in on this browser) skip the pitch and
     // go straight to the app.
     try {
-      if (localStorage.getItem('docs_token')) location.replace('/app');
+      if (location.pathname === '/' && localStorage.getItem('docs_token')) location.replace('/app');
     } catch (e) { /* private mode / storage blocked — show the landing */ }
   </script>
 
