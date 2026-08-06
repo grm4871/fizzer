@@ -202,7 +202,7 @@ import {
   servePublicNotePage,
 } from './server/publish.js';
 import { deleteNoteAssets, serveNoteAsset, uploadNoteAsset } from './server/noteAssets.js';
-import { ensureManagedAgentSchema, getManagedEntitlement, setManagedEntitlement } from './server/managedAgents.js';
+import { ensureManagedAgentSchema, getManagedAgentOperatorStatus, getManagedEntitlement, setManagedEntitlement } from './server/managedAgents.js';
 import {
   backfillChatNoteBacklinks,
   buildAgentMemoryInjection,
@@ -1469,7 +1469,11 @@ app.delete('/api/vaults/:id/members/:userId', requireAuth, (req: AuthedRequest, 
 app.get('/api/vaults/:id/managed-agent/entitlement', requireAuth, (req: AuthedRequest, res) => {
   const vault = getVault(db, req.params.id, req.user!.id);
   if (!vault) return res.status(404).json({ error: 'Vault not found' });
-  res.json({ entitlement: getManagedEntitlement(db, vault.id), admin: getVaultRole(db, vault.id, req.user!.id) === 'owner' });
+  res.json({
+    entitlement: getManagedEntitlement(db, vault.id),
+    admin: getVaultRole(db, vault.id, req.user!.id) === 'owner',
+    operator: getManagedAgentOperatorStatus(db, vault.id),
+  });
 });
 
 app.put('/api/vaults/:id/managed-agent/entitlement', requireAuth, (req: AuthedRequest, res) => {
