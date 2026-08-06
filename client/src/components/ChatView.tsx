@@ -453,7 +453,9 @@ function formatTime(value: string) {
 }
 
 function planUsageProviderId(agentId: string) {
-  return agentId === 'akron-grok' ? 'grok' : agentId;
+  if (agentId === 'akron-grok') return 'grok';
+  if (agentId === 'hermes') return 'nous';
+  return agentId;
 }
 
 function planUsageWindows(usage?: PlanUsage | null): PlanUsageWindow[] {
@@ -478,9 +480,10 @@ function formatPlanUsageTitle(usage?: PlanUsage | null) {
       const date = new Date(window.resetsAt);
       if (!Number.isNaN(date.getTime())) reset = CHAT_TIME_FORMATTER.format(date);
     }
-    return `${window.label}: ${Math.round(window.usedPercent)}% used${reset ? ` · resets ${reset}` : ''}`;
+    return `${window.label}: ${Math.round(window.usedPercent)}% used${reset ? ` · ${reset}` : ''}`;
   });
   if (usage.planType) lines.push(`Plan: ${usage.planType}`);
+  if (usage.detail) lines.push(usage.detail);
   return lines.join('\n');
 }
 
@@ -529,6 +532,13 @@ function PlanUsageMeters({
           </span>
         );
       })}
+      {!decal && usage.detail && (() => {
+        const topUpMatch = usage.detail.match(/Top-up credits:\s*\$?([\d.]+)/i);
+        const totalMatch = usage.detail.match(/Total usable:\s*\$?([\d.]+)/i);
+        if (!topUpMatch && !totalMatch) return null;
+        const label = topUpMatch ? `top-up $${topUpMatch[1]}` : `usable $${totalMatch![1]}`;
+        return <span className="chat-plan-meter-detail">{label}</span>;
+      })()}
     </span>
   );
 }

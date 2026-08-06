@@ -320,7 +320,7 @@ export function initDesktopRunners(io: Server, db: Db, hooks: RunnerHooks): void
       if (payload?.usage && typeof payload.usage === 'object') {
         const cleaned: Record<string, PlanUsage> = {};
         for (const [agent, raw] of Object.entries(payload.usage)) {
-          if (agent !== 'claude-code' && agent !== 'codex' && agent !== 'grok') continue;
+          if (agent !== 'claude-code' && agent !== 'codex' && agent !== 'grok' && agent !== 'nous') continue;
           if (!raw || typeof raw !== 'object') continue;
           const status = raw.status === 'ok' || raw.status === 'error' ? raw.status : 'unknown';
           const pct = Number(raw.usedPercent);

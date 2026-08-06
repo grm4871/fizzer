@@ -5,6 +5,7 @@ const {
   parseClaudeUsageText,
   parseCodexRateLimits,
   parseGrokUsageScreen,
+  parseNousUsageJson,
 } = require('./plan-usage.cjs');
 
 test('parses Claude session and weekly subscription windows', () => {
@@ -51,4 +52,33 @@ test('parses Grok TUI usage through terminal control sequences', () => {
   assert.equal(usage.usedPercent, 12);
   assert.equal(usage.windows[0].label, 'week');
   assert.equal(usage.windows[0].resetsLabel, 'August 2, 09:02');
+});
+
+test('parses Nous credits subscription window from Hermes portal snapshot', () => {
+  const usage = parseNousUsageJson({
+    provider: 'nous',
+    plan: 'Free',
+    windows: [{ label: 'Subscription', usedPercent: 100, detail: '$0.00 of $0.10 left' }],
+    details: ['Subscription credits: $0.00', 'Top-up credits: $9.99', 'Total usable: $9.99'],
+  });
+
+  assert.equal(usage.status, 'ok');
+  assert.equal(usage.planType, 'Free');
+  assert.equal(usage.usedPercent, 100);
+  assert.equal(usage.windows[0].label, 'Subscription');
+  assert.equal(usage.windows[0].resetsLabel, '$0.00 of $0.10 left');
+  assert.match(usage.detail, /Top-up credits: \$9.99/);
+});
+
+test('parses Nous snapshot with no subscription window (top-up only)', () => {
+  const usage = parseNousUsageJson({
+    provider: 'nous',
+    plan: null,
+    windows: [],
+    details: ['Top-up credits: $5.00', 'Total usable: $5.00'],
+  });
+
+  assert.equal(usage.status, 'ok');
+  assert.equal(usage.windows.length, 0);
+  assert.match(usage.detail, /Total usable: \$5.00/);
 });

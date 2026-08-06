@@ -3660,6 +3660,12 @@ button.chat-avatar-agent {
   border-radius: inherit;
   background: color-mix(in srgb, var(--text-secondary) 62%, transparent);
 }
+.chat-plan-meter-detail {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--text-tertiary);
+  opacity: 0.8;
+}
 .chat-message-status {
   display: inline-flex;
   align-items: center;

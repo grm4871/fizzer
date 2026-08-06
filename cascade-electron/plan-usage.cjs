@@ -8,10 +8,12 @@
  */
 
 const { spawn } = require('child_process');
+const path = require('path');
 
 const CLAUDE_BIN = process.env.CLAUDE_BIN || 'claude';
 const CODEX_BIN = process.env.CODEX_BIN || 'codex';
 const GROK_BIN = process.env.GROK_BIN || 'grok';
+const HERMES_BIN = process.env.HERMES_BIN || 'hermes';
 const COMMAND_TIMEOUT_MS = 15_000;
 
 let grokProbeHasSession = false;
@@ -337,6 +339,109 @@ async function collectGrokUsage(grokCwd) {
   }
 }
 
+// ── Nous credits ─────────────────────────────────────────────────────
+//
+// Hermes stores Nous Portal account info locally and exposes it via the
+// `account_usage` Python module.  We shell out to the Hermes venv to pull a
+// structured snapshot, then map it to the same PlanUsage shape the other
+// providers use so the existing meter components render it unchanged.
+
+function parseNousUsageJson(payload) {
+  if (!payload || typeof payload !== 'object') throw new Error('Hermes returned no Nous usage');
+  const windows = Array.isArray(payload.windows) ? payload.windows : [];
+  const clean = windows
+    .map((window) => {
+      const usedPercent = clampPercent(window.usedPercent);
+      if (usedPercent == null) return null;
+      return {
+        label: String(window.label || 'usage'),
+        usedPercent,
+        ...(typeof window.detail === 'string' ? { resetsLabel: window.detail } : {}),
+      };
+    })
+    .filter(Boolean);
+  const details = Array.isArray(payload.details) ? payload.details : [];
+  const planType = typeof payload.plan === 'string' && payload.plan ? payload.plan : null;
+  if (clean.length === 0) {
+    // No usage windows (e.g. no subscription denominator) — still report ok
+    // so the details (top-up credits, total usable) surface in the title.
+    return {
+      status: 'ok',
+      ...(planType ? { planType } : {}),
+      windows: [],
+      detail: details.length ? details.join('\n') : null,
+      fetchedAt: new Date().toISOString(),
+    };
+  }
+  const worst = [...clean].sort((a, b) => b.usedPercent - a.usedPercent)[0];
+  return {
+    status: 'ok',
+    usedPercent: worst.usedPercent,
+    ...(worst.resetsLabel ? { resetsLabel: worst.resetsLabel } : {}),
+    windows: clean,
+    ...(planType ? { planType } : {}),
+    detail: details.length ? details.join('\n') : null,
+    fetchedAt: new Date().toISOString(),
+  };
+}
+
+async function collectNousUsage() {
+  // Resolve the Hermes venv python from the `hermes` launcher symlink so
+  // this works regardless of install path.  The launcher lives at
+  // <venv>/bin/hermes, so the venv python is <venv>/bin/python3.
+  const hermesPath = await resolveHermesPath();
+  const venvPython = path.join(path.dirname(hermesPath), 'python3');
+  const hermesHome = path.dirname(path.dirname(hermesPath)); // <venv> -> parent
+  // Hermes source is installed alongside the venv under hermes-agent/
+  const sourceDir = path.join(hermesHome, 'hermes-agent');
+
+  const script = `
+import sys, json, os
+sys.path.insert(0, ${JSON.stringify(sourceDir)})
+os.environ.setdefault("HERMES_HOME", ${JSON.stringify(hermesHome)})
+from agent.account_usage import build_nous_credits_snapshot
+from hermes_cli.nous_account import get_nous_portal_account_info
+import concurrent.futures
+with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+    account = pool.submit(get_nous_portal_account_info, force_fresh=True).result(timeout=10)
+snapshot = build_nous_credits_snapshot(account)
+if snapshot is None:
+    print(json.dumps({"status": "unknown", "detail": "Not logged into Nous"}))
+else:
+    print(json.dumps({
+        "provider": snapshot.provider,
+        "plan": snapshot.plan,
+        "windows": [{"label": w.label, "usedPercent": w.used_percent, "detail": w.detail} for w in snapshot.windows],
+        "details": list(snapshot.details),
+    }))
+`;
+
+  const { stdout } = await runCommand(venvPython, ['-c', script], 20_000);
+  const match = stdout.trim().match(/\{[\s\S]*\}/);
+  if (!match) throw new Error('Hermes did not return JSON for Nous usage');
+  return parseNousUsageJson(JSON.parse(match[0]));
+}
+
+function resolveHermesPath() {
+  return new Promise((resolve, reject) => {
+    const child = spawn('which', [HERMES_BIN], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+    child.once('error', reject);
+    child.once('close', (code) => {
+      const bin = stdout.trim().split('\n')[0];
+      if (!bin || code !== 0) return reject(new Error('hermes not found in PATH'));
+      // Resolve symlinks — `which` returns the symlink, we need the real path.
+      try {
+        const fs = require('fs');
+        resolve(fs.realpathSync(bin));
+      } catch {
+        resolve(bin); // fall back to the symlink path
+      }
+    });
+  });
+}
+
 function failedUsage(provider, reason) {
   const message = reason instanceof Error ? reason.message : String(reason);
   const missing = /ENOENT|not found|spawn .* ENOENT/i.test(message);
@@ -352,11 +457,13 @@ async function collectPlanUsage({ grokCwd } = {}) {
     collectClaudeUsage().catch((error) => failedUsage('Claude', error)),
     collectCodexUsage().catch((error) => failedUsage('Codex', error)),
     collectGrokUsage(grokCwd || process.cwd()).catch((error) => failedUsage('Grok', error)),
+    collectNousUsage().catch((error) => failedUsage('Nous', error)),
   ]);
   return {
     'claude-code': entries[0],
     codex: entries[1],
     grok: entries[2],
+    nous: entries[3],
   };
 }
 
@@ -366,5 +473,6 @@ module.exports = {
   parseClaudeUsageText,
   parseCodexRateLimits,
   parseGrokUsageScreen,
+  parseNousUsageJson,
   stripTerminalControls,
 };
