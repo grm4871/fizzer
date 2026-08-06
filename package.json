@@ -52,6 +52,7 @@
     "verify:account-ui": "node scripts/verify-account-ui.mjs",
     "verify:tab-menus": "node scripts/verify-tab-menus.mjs",
     "verify:workspaces-ui": "node scripts/verify-workspaces-ui.mjs",
+    "verify:mobile-navigation-ui": "node scripts/verify-mobile-navigation-ui.mjs",
     "start": "electron-forge start",
     "package": "electron-forge package",
     "make": "electron-forge make",

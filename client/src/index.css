@@ -6441,7 +6441,10 @@ button.chat-avatar-agent {
      competes with the chat's left-swipe-to-reply pointer handler. */
   .mobile-sidebar-swipe-edge {
     position: absolute;
-    inset: 0 auto 0 0;
+    /* Leave the toolbar clear. Before this, the transparent 36px edge
+       recognizer was painted over the toolbar's sidebar button, so Android
+       could only hit the few pixels of the button outside the recognizer. */
+    inset: calc(54px + env(safe-area-inset-top, 0px)) auto 0 0;
     z-index: 65;
     width: 36px;
     touch-action: pan-y;
@@ -6683,6 +6686,16 @@ button.chat-avatar-agent {
     width: 36px;
     height: 36px;
     min-width: 36px;
+  }
+
+  /* Keep the drawer affordance comfortably above Android's 48dp touch-target
+     guidance. The edge recognizer starts below this toolbar, so the full
+     button remains both tappable and visible. */
+  #sidebar-expand-btn {
+    width: 48px;
+    height: 48px;
+    min-width: 48px;
+    min-height: 48px;
   }
 
   .tab-bar {

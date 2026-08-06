@@ -3500,7 +3500,14 @@ export default function App() {
       <div className="workspace flex flex-col flex-1" style={{ height: '100%', overflow: 'hidden' }}>
         <div className="workspace-toolbar" style={{ alignItems: 'center', background: 'var(--bg-surface)', padding: '4px 8px', paddingTop: 'calc(4px + env(safe-area-inset-top))', gap: 4, borderBottom: '1px solid var(--border)' }}>
             {!sidebarOpen && (
-              <button id="sidebar-expand-btn" className="btn-icon" onClick={() => { setSidebarOpen(true); setChatMembersOpen(false); }} title="Expand sidebar">
+              <button
+                id="sidebar-expand-btn"
+                type="button"
+                className="btn-icon"
+                onClick={() => { setSidebarOpen(true); setChatMembersOpen(false); }}
+                title="Expand sidebar"
+                aria-label="Expand sidebar"
+              >
                 <PanelLeftOpen size={16} />
               </button>
             )}
