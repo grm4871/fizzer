@@ -49,6 +49,7 @@ import { api, ApiError, type User, type Vault, type Folder, type NoteSummary, ty
 import { connectRunsSocket, connectVaultSocket } from './socket';
 import { isLocalRunId, cancelLocalAgentRun } from './localAgentRunner';
 import { ensureDesktopRunnerHost, respondToAgentPermission, startDesktopRunnerHost } from './desktopRunnerHost';
+import { describeDesktopExperience } from './desktopExperience';
 import {
   agentsAfterLoadFailure,
   agentLabel,
@@ -86,7 +87,7 @@ import {
 } from './chat/session';
 import { chatMessageStore } from './chat/messageStore';
 import { consumePendingSessionSteer, enqueueSessionTurn, findProjectedActiveSessionRun, forceReleasePriorSessionTurns, queuesBehindActiveSession, requestSessionSteer, shouldSteerActiveSession } from './chat/sessionTurns';
-import { Activity, Download, Gem, PanelLeftOpen, Users } from 'lucide-react';
+import { Activity, Gem, PanelLeftOpen, Users } from 'lucide-react';
 
 type ChatAgentDispatch = {
   id: string;
@@ -3398,6 +3399,9 @@ export default function App() {
     );
   }
 
+  const inDesktopApp = Boolean((window as unknown as { electronAPI?: unknown }).electronAPI);
+  const desktopExperience = describeDesktopExperience(inDesktopApp, runnerHealth);
+
   return (
     <main
       className={`app-shell ${sidebarOpen ? 'sidebar-open' : 'sidebar-closed'}`}
@@ -3529,16 +3533,20 @@ export default function App() {
             </button>}
         </div>
 
-        {!(window as unknown as { electronAPI?: unknown }).electronAPI && !runnerHealth?.online && (
-          <div className="desktop-runner-callout" role="status">
+        {desktopExperience && (
+          <div className={`desktop-runner-callout is-${desktopExperience.tone}`} role="status">
             <div>
-              <strong>Agents run in Cascade desktop</strong>
-              <span>Notes and chats work here. To run an agent, open this same account in the desktop app.</span>
+              <strong>{desktopExperience.title}</strong>
+              <span>{desktopExperience.detail}</span>
             </div>
-            <a className="desktop-runner-download" href="/download">
-              <Download size={13} aria-hidden="true" />
-              Get desktop
-            </a>
+            {desktopExperience.action === 'download' && (
+              <a className="desktop-runner-callout-action" href="/download">{desktopExperience.actionLabel}</a>
+            )}
+            {desktopExperience.action === 'reload' && (
+              <button className="desktop-runner-callout-action" type="button" onClick={() => window.location.reload()}>
+                {desktopExperience.actionLabel}
+              </button>
+            )}
           </div>
         )}
 

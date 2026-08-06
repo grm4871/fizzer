@@ -3865,6 +3865,7 @@ export const ChatView = memo(function ChatView({
                 <span>Auto</span>
                 <span>Recommended</span>
               </div>
+              <span className="chat-agent-field-hint">Runs on this agent owner’s desktop with their local CLI account; provider usage follows that account’s plan, not Cascade-managed credits. Private note blocks are redacted from agent context.</span>
               <span className="chat-agent-field-hint">Works autonomously inside its workspace. Cascade only interrupts when an action crosses the safety boundary.</span>
               <label className={`chat-agent-toggle${agentForm.yolo ? ' is-hot' : ''}`}>
                 <input

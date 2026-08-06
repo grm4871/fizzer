@@ -5486,17 +5486,32 @@ button.chat-avatar-agent {
   align-items: center;
   justify-content: space-between;
   gap: 14px;
-  padding: 8px 12px;
-  border-bottom: 1px solid color-mix(in srgb, var(--accent) 32%, var(--border));
-  background: color-mix(in srgb, var(--bg-surface) 84%, var(--accent) 16%);
-  color: var(--text-secondary);
-  font-size: 0.78rem;
+  padding: 8px 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+  background: color-mix(in srgb, var(--accent) 7%, var(--bg-surface));
+  font-size: 0.75rem;
+}
+.desktop-runner-callout.is-repair {
+  border-bottom-color: color-mix(in srgb, #ef9a4f 45%, var(--border));
+  background: color-mix(in srgb, #ef9a4f 8%, var(--bg-surface));
 }
 .desktop-runner-callout div { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .desktop-runner-callout strong { color: var(--text-primary); white-space: nowrap; }
 .desktop-runner-callout span { color: var(--text-tertiary); }
-.desktop-runner-download { display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; white-space: nowrap; }
-@media (max-width: 640px) {
+.desktop-runner-callout-action {
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--accent) 50%, var(--border));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--text-primary);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 650;
+  padding: 5px 8px;
+  text-decoration: none;
+}
+.desktop-runner-callout-action:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+@media (max-width: 700px) {
   .desktop-runner-callout { align-items: flex-start; }
   .desktop-runner-callout div { flex-direction: column; gap: 2px; }
   .desktop-runner-callout strong { white-space: normal; }
