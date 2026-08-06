@@ -5710,6 +5710,96 @@ button.chat-avatar-agent {
   background: color-mix(in srgb, var(--bg-base) 80%, var(--bg-raised));
   box-shadow: inset 0 1px 0 hsla(220, 30%, 82%, 0.045), 0 8px 24px hsla(225, 20%, 3%, 0.24);
 }
+.chat-agent-editor {
+  position: fixed;
+  inset: 0;
+  z-index: 260;
+  width: 100vw;
+  height: 100dvh;
+  margin: 0;
+  padding: clamp(28px, 5vw, 72px) max(24px, calc((100vw - 1040px) / 2));
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
+  gap: 20px 28px;
+  overflow-y: auto;
+  border: 0;
+  border-radius: 0;
+  background:
+    radial-gradient(circle at 75% -20%, color-mix(in srgb, var(--accent) 9%, transparent), transparent 38%),
+    var(--bg-base);
+  box-shadow: none;
+}
+.chat-agent-editor > .chat-agent-menu-heading,
+.chat-agent-editor > .chat-agent-menu-actions,
+.chat-agent-editor > .chat-agent-form-error,
+.chat-agent-editor > .chat-agent-identity-link {
+  grid-column: 1 / -1;
+}
+.chat-agent-editor > label,
+.chat-agent-editor > .chat-agent-group {
+  min-width: 0;
+  margin: 0;
+  padding: 18px;
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-raised) 68%, transparent);
+}
+.chat-agent-editor > label {
+  align-self: start;
+}
+.chat-agent-editor .chat-agent-group {
+  padding-top: 18px;
+}
+.chat-agent-editor .chat-agent-group-title {
+  margin-bottom: 12px;
+  color: var(--text-secondary);
+}
+.chat-agent-editor-heading {
+  position: relative;
+  margin-bottom: 6px;
+  padding-right: 48px;
+}
+.chat-agent-editor-heading strong {
+  font-family: var(--font-display);
+  font-size: clamp(1.35rem, 2.4vw, 2rem);
+  font-weight: 650;
+  letter-spacing: -0.025em;
+}
+.chat-agent-editor-heading span {
+  margin-top: 6px;
+  font-size: 0.8125rem;
+}
+.chat-agent-editor-close {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.chat-agent-editor-close:hover {
+  background: var(--bg-overlay);
+  color: var(--text-primary);
+}
+.chat-agent-editor .chat-agent-menu-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  margin-top: 8px;
+  padding: 16px 0;
+  background: color-mix(in srgb, var(--bg-base) 92%, transparent);
+  backdrop-filter: blur(14px);
+}
+.chat-agent-editor .chat-agent-menu-actions button {
+  min-height: 40px;
+  padding-inline: 18px;
+}
 .chat-agent-menu label,
 .chat-invite-menu label {
   display: flex;
@@ -5955,6 +6045,22 @@ button.chat-avatar-agent {
 .chat-agent-menu-actions button:disabled {
   opacity: 0.55;
   cursor: default;
+}
+@media (max-width: 700px) {
+  .chat-agent-editor {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+    padding: calc(20px + env(safe-area-inset-top)) 16px calc(20px + env(safe-area-inset-bottom));
+  }
+  .chat-agent-editor .chat-agent-menu-actions {
+    bottom: 0;
+    margin-top: 4px;
+    padding: 12px 0 calc(12px + env(safe-area-inset-bottom));
+  }
+  .chat-agent-editor > label,
+  .chat-agent-editor > .chat-agent-group {
+    padding: 14px;
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════

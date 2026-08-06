@@ -3678,9 +3678,16 @@ export const ChatView = memo(function ChatView({
           )}
 
           {agentMenuOpen && agentPanelMode !== 'picker' && (
-          <form className="chat-agent-menu" onSubmit={(e) => void submitAgentRegistration(e)} onClick={(event) => event.stopPropagation()}>
-            <div className="chat-agent-menu-heading">
-              <strong>
+          <form
+            className="chat-agent-menu chat-agent-editor"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="chat-agent-editor-title"
+            onSubmit={(e) => void submitAgentRegistration(e)}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="chat-agent-menu-heading chat-agent-editor-heading">
+              <strong id="chat-agent-editor-title">
                 {agentPanelMode === 'edit-member' && 'Channel membership'}
                 {agentPanelMode === 'edit-identity' && 'Vault identity'}
                 {agentPanelMode === 'create' && 'New vault agent'}
@@ -3690,6 +3697,19 @@ export const ChatView = memo(function ChatView({
                 {agentPanelMode === 'edit-identity' && 'Applies to every channel in this vault.'}
                 {agentPanelMode === 'create' && 'Added to this vault, then to this channel.'}
               </span>
+              <button
+                type="button"
+                className="chat-agent-editor-close"
+                aria-label="Close agent editor"
+                onClick={() => {
+                  setAgentMenuOpen(false);
+                  setEditingRegistrationId(null);
+                  setAgentPanelMode('picker');
+                  setAgentFormError('');
+                }}
+              >
+                <X size={18} />
+              </button>
             </div>
             {agentPanelMode !== 'edit-member' && (
               <>
@@ -3820,7 +3840,7 @@ export const ChatView = memo(function ChatView({
             {(agentPanelMode === 'edit-member' || agentPanelMode === 'create') && (
               <>
             <div className="chat-agent-group">
-              <div className="chat-agent-group-title">When it replies</div>
+              <div className="chat-agent-group-title">Replies</div>
               <label className="chat-agent-toggle">
                 <input
                   type="checkbox"
@@ -3833,7 +3853,7 @@ export const ChatView = memo(function ChatView({
                 />
                 <span className="chat-agent-toggle-copy">
                   <span className="chat-agent-toggle-name">Coordinate this channel</span>
-                  <span className="chat-agent-toggle-hint">Reads every human message, can open durable missions, and can dispatch the other agents here.</span>
+                  <span className="chat-agent-toggle-hint">Reads every human message and can delegate durable work.</span>
                 </span>
               </label>
               <label className={`chat-agent-toggle${agentForm.orchestrator ? ' is-locked' : ''}`}>
@@ -3854,7 +3874,7 @@ export const ChatView = memo(function ChatView({
               </label>
             </div>
             <div className="chat-agent-group">
-              <div className="chat-agent-group-title">Who can summon it</div>
+              <div className="chat-agent-group-title">Mentions</div>
               <label className="chat-agent-toggle">
                 <input
                   type="checkbox"
@@ -3884,8 +3904,7 @@ export const ChatView = memo(function ChatView({
                 <span>Auto</span>
                 <span>Recommended</span>
               </div>
-              <span className="chat-agent-field-hint">Runs on this agent owner’s desktop with their local CLI account; provider usage follows that account’s plan, not Cascade-managed credits. Private note blocks are redacted from agent context.</span>
-              <span className="chat-agent-field-hint">Works autonomously inside its workspace. Cascade only interrupts when an action crosses the safety boundary.</span>
+              <span className="chat-agent-field-hint">Uses the owner’s desktop CLI and stays inside its workspace. Provider usage follows that local account; private note blocks remain hidden.</span>
               <label className={`chat-agent-toggle${agentForm.yolo ? ' is-hot' : ''}`}>
                 <input
                   type="checkbox"
@@ -3894,7 +3913,7 @@ export const ChatView = memo(function ChatView({
                 />
                 <span className="chat-agent-toggle-copy">
                   <span className="chat-agent-toggle-name">Full host access</span>
-                  <span className="chat-agent-toggle-hint">Bypasses every prompt and workspace boundary. Use only on a machine you are willing to hand to this agent.</span>
+                  <span className="chat-agent-toggle-hint">Bypasses prompts and workspace boundaries.</span>
                 </span>
               </label>
             </div>

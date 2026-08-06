@@ -351,8 +351,16 @@ try {
   const membershipMenu = page.locator('.chat-agent-menu');
   const groupTitles = (await membershipMenu.locator('.chat-agent-group-title').allInnerTexts()).map((title) => title.toLowerCase());
   check('agent settings separates runtime, reply policy, access, and permissions',
-    ['runtime', 'when it replies', 'who can summon it', 'execution'].every((title) => groupTitles.includes(title)),
+    ['runtime', 'replies', 'mentions', 'execution'].every((title) => groupTitles.includes(title)),
     JSON.stringify(groupTitles));
+  const editorBox = await membershipMenu.boundingBox();
+  const viewport = page.viewportSize();
+  check('agent editor is a focused full-screen workspace',
+    Boolean(editorBox && viewport)
+      && editorBox.x <= 1
+      && editorBox.y <= 1
+      && editorBox.width >= viewport.width - 2
+      && editorBox.height >= viewport.height - 2);
   check('safe autonomous execution is the default',
     await membershipMenu.getByText('Auto', { exact: true }).count() === 1
       && await membershipMenu.getByLabel('Full host access').isChecked() === false);
@@ -361,6 +369,9 @@ try {
     Boolean(switchBox) && switchBox.width >= 28 && switchBox.width > switchBox.height);
   check('vault identity is presented as scoped navigation',
     await membershipMenu.getByRole('button', { name: /Edit vault identity/ }).count() === 1);
+  if (process.env.CAPTURE_AGENT_EDITOR) {
+    await page.screenshot({ path: process.env.CAPTURE_AGENT_EDITOR, fullPage: true });
+  }
 
   await coordinatorToggle.uncheck();
   await page.getByRole('button', { name: 'Save', exact: true }).click();
