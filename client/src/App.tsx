@@ -2589,6 +2589,17 @@ export default function App() {
 
   /** Rename a note tab (title + on-disk file + wikilink references). */
   const renameNoteTab = useCallback(async (tabId: string, title: string) => {
+    // A brand-new draft has no server row yet (see openDraftNote) — the server
+    // rename would 404 with "Note not found" and the alert makes it look like
+    // the note was never created. Keep the new title locally; the first save
+    // persists the draft under it (createFromDraft sends entry.note.title).
+    if (unsavedNoteIdsRef.current.has(tabId)) {
+      setNoteContents((prev) => (
+        prev[tabId] ? { ...prev, [tabId]: { ...prev[tabId], note: { ...prev[tabId].note, title } } } : prev
+      ));
+      setOpenTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, title } : t)));
+      return;
+    }
     try {
       const data = await api<{ note: Note }>(`/api/notes/${tabId}/rename`, {
         method: 'POST',
@@ -3397,6 +3408,7 @@ export default function App() {
             onOpenWikilink={handleOpenWikilink}
             notes={notes}
             onOpenNote={openNote}
+            isDraft={unsavedNoteIdsRef.current.has(tab.id)}
           />
         </Suspense>
       </ErrorBoundary>

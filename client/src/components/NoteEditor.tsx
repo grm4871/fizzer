@@ -34,6 +34,8 @@ interface NoteEditorProps {
   onOpenWikilink?: (title: string) => void;
   notes?: NoteSummary[];
   onOpenNote?: (id: string) => void;
+  /** True while the note is a client-only draft with no server row yet. */
+  isDraft?: boolean;
 }
 
 /* ─── Custom Dark Theme ──────────────────────────────────── */
@@ -1627,7 +1629,7 @@ const checkboxClickHandler = EditorView.domEventHandlers({
 });
 
 /* ─── Component ──────────────────────────────────────────── */
-export const NoteEditor = memo(function NoteEditor({ note, content, onContentChange, onSave, onRename, onExecuteDirective, onOpenWikilink, notes = [], onOpenNote }: NoteEditorProps) {
+export const NoteEditor = memo(function NoteEditor({ note, content, onContentChange, onSave, onRename, onExecuteDirective, onOpenWikilink, notes = [], onOpenNote, isDraft = false }: NoteEditorProps) {
   const [publishInfo, setPublishInfo] = useState<NotePublishInfo>({ published: false });
   const [publishBusy, setPublishBusy] = useState(false);
   const [publishNotice, setPublishNotice] = useState('');
@@ -1682,7 +1684,7 @@ export const NoteEditor = memo(function NoteEditor({ note, content, onContentCha
   }, [titleDraft, note, onRename]);
 
   useEffect(() => {
-    if (!note?.id) {
+    if (!note?.id || isDraft) {
       setPublishInfo({ published: false });
       return;
     }
@@ -1691,7 +1693,7 @@ export const NoteEditor = memo(function NoteEditor({ note, content, onContentCha
       .then((info) => { if (!cancelled) setPublishInfo(info); })
       .catch(() => { if (!cancelled) setPublishInfo({ published: false }); });
     return () => { cancelled = true; };
-  }, [note?.id, note?.updated_at]);
+  }, [note?.id, note?.updated_at, isDraft]);
 
   const flashPublishNotice = useCallback((message: string) => {
     setPublishNotice(message);
