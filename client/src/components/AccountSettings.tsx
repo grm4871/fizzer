@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Camera, KeyRound, LogOut, Trash2, Users, X } from 'lucide-react';
+import { Camera, KeyRound, Link as LinkIcon, LogOut, Trash2, Users, X } from 'lucide-react';
 import { api, type User, type VaultMember, type VaultRole } from '../api';
 
 type AssignableRole = Exclude<VaultRole, 'owner'>;
@@ -36,6 +36,7 @@ export function AccountSettings({ user, vaultId, vaultName, onClose, onUserChang
   const [memberRole, setMemberRole] = useState<AssignableRole>('editor');
   const [memberState, setMemberState] = useState('');
   const [memberBusy, setMemberBusy] = useState(false);
+  const [inviteLinkCopied, setInviteLinkCopied] = useState(false);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
@@ -147,6 +148,35 @@ export function AccountSettings({ user, vaultId, vaultName, onClose, onUserChang
       onMembershipChanged?.();
     } catch (error) {
       setMemberState(error instanceof Error ? error.message : 'Could not add member');
+    } finally {
+      setMemberBusy(false);
+    }
+  };
+
+  /**
+   * Share link for someone whose username you don't know, or who has no
+   * account yet — inviting by username needs both.
+   */
+  const copyInviteLink = async () => {
+    if (!vaultId) return;
+    setMemberBusy(true);
+    setMemberState('');
+    try {
+      const { url } = await api<{ url: string }>(`/api/vaults/${vaultId}/invite-link`, {
+        method: 'POST',
+        body: JSON.stringify({ role: memberRole }),
+      });
+      try {
+        await navigator.clipboard.writeText(url);
+        setInviteLinkCopied(true);
+        window.setTimeout(() => setInviteLinkCopied(false), 2500);
+        setMemberState(`${memberRole} invite link copied — valid for 7 days`);
+      } catch {
+        // Clipboard is blocked in some webviews; the link is useless unseen.
+        setMemberState(url);
+      }
+    } catch (error) {
+      setMemberState(error instanceof Error ? error.message : 'Could not create invite link');
     } finally {
       setMemberBusy(false);
     }
@@ -320,6 +350,13 @@ export function AccountSettings({ user, vaultId, vaultName, onClose, onUserChang
               <small className="account-settings-hint">Only the owner can invite, change, or remove members.</small>
             )}
             {canManageMembers && <small className="account-settings-hint">{ROLE_HELP[memberRole]}</small>}
+            {canManageMembers && (
+              <div className="account-settings-actions">
+                <button type="button" disabled={memberBusy} onClick={() => void copyInviteLink()}>
+                  <LinkIcon size={13} /> {inviteLinkCopied ? 'Link copied' : `Copy ${memberRole} invite link`}
+                </button>
+              </div>
+            )}
             {canLeave && (
               <div className="account-settings-actions">
                 <button type="button" className="account-vault-leave" disabled={memberBusy} onClick={() => void leaveVault()}>

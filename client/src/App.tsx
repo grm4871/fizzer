@@ -1308,6 +1308,32 @@ export default function App() {
     })();
   }, [loadVaultData, loadVaults, openChatChannel, user]);
 
+  // Redeem a vault share link. Unlike the chat invite above this joins the
+  // vault itself, so the whole vault appears in the switcher.
+  useEffect(() => {
+    const match = window.location.pathname.match(/^\/vault-invite\/([^/]+)$/);
+    const token = match ? decodeURIComponent(match[1]) : '';
+    if (!token || !user || acceptedInviteTokenRef.current === token) return;
+    acceptedInviteTokenRef.current = token;
+    (async () => {
+      try {
+        const data = await api<{ vaultId: string; name: string; role: string; alreadyMember?: boolean }>(
+          `/api/vault-invites/${encodeURIComponent(token)}/accept`,
+          { method: 'POST' },
+        );
+        await loadVaults();
+        setActiveVaultId(data.vaultId);
+        await loadVaultData(data.vaultId);
+        window.history.replaceState({}, '', '/app.html');
+        setNotice(data.alreadyMember
+          ? `You already have access to ${data.name}.`
+          : `Joined ${data.name} as ${data.role}.`);
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : 'Could not accept invite link');
+      }
+    })();
+  }, [loadVaultData, loadVaults, user]);
+
   const handleCreateChannel = useCallback(async (folderId: string | null = null) => {
     const vaultId = activeVaultIdRef.current;
     if (!vaultId) return undefined;

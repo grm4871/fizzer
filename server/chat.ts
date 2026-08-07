@@ -484,6 +484,10 @@ export function ensureChatSchema(db: Db): void {
     );
   `);
 
+  // Agents belong to the person who made them, not to a vault, so the same
+  // roster follows you into every vault you are a member of.
+  migrateVaultAgentsToOwnerScope(db);
+
   // Backfill vault_agents from existing channel memberships (idempotent).
   backfillVaultAgentsFromMembers(db);
   // Enforce unique handles (case-insensitive); resolve conflicts preferring #cascade-dev.
@@ -649,6 +653,86 @@ function agentInChannel(db: Db, vaultAgentId: string, channelId: string): boolea
 }
 
 /** Mint a free mention in the vault (base, base-2, base-3, …). */
+/**
+ * Re-key vault_agents from UNIQUE(vault_id, mention) to UNIQUE(owner_user_id,
+ * mention) so an agent roster belongs to a person rather than to one vault.
+ *
+ * Handles were only unique per vault, so the same owner can legitimately hold
+ * two `@claude` rows in different vaults today. Those are renamed *before* the
+ * table is rebuilt — the old constraint still allows it, the new one would not.
+ */
+function migrateVaultAgentsToOwnerScope(db: Db): void {
+  const schema = db.prepare(
+    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'vault_agents'",
+  ).get() as { sql: string } | undefined;
+  if (!schema || /UNIQUE\s*\(\s*owner_user_id\s*,\s*mention\s*\)/i.test(schema.sql)) return;
+
+  const dupes = db.prepare(`
+    SELECT owner_user_id AS owner, LOWER(mention) AS handle, COUNT(*) AS n
+    FROM vault_agents WHERE owner_user_id IS NOT NULL
+    GROUP BY owner, handle HAVING n > 1
+  `).all() as Array<{ owner: number; handle: string; n: number }>;
+  for (const dupe of dupes) {
+    const rows = db.prepare(`
+      SELECT id, vault_id, mention FROM vault_agents
+      WHERE owner_user_id = ? AND mention = ? COLLATE NOCASE
+      ORDER BY created_at ASC
+    `).all(dupe.owner, dupe.handle) as Array<{ id: string; vault_id: string; mention: string }>;
+    // Oldest keeps the plain handle; the rest are suffixed.
+    for (const row of rows.slice(1)) {
+      const next = allocateUniqueOwnerMention(db, dupe.owner, row.vault_id, dupe.handle, row.id);
+      db.prepare("UPDATE vault_agents SET mention = ?, updated_at = datetime('now') WHERE id = ?").run(next, row.id);
+      db.prepare("UPDATE chat_agent_members SET mention = ?, updated_at = datetime('now') WHERE vault_agent_id = ?").run(next, row.id);
+    }
+  }
+
+  db.exec(`
+    CREATE TABLE vault_agents_owner_scoped (
+      id TEXT PRIMARY KEY,
+      vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
+      agent_id TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      avatar_url TEXT NOT NULL DEFAULT '',
+      mention TEXT NOT NULL,
+      model TEXT NOT NULL DEFAULT '',
+      cwd TEXT NOT NULL DEFAULT '',
+      context_prompt TEXT NOT NULL DEFAULT '',
+      owner_user_id INTEGER REFERENCES users(id),
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(owner_user_id, mention)
+    );
+    INSERT INTO vault_agents_owner_scoped
+      (id, vault_id, agent_id, display_name, avatar_url, mention, model, cwd, context_prompt, owner_user_id, created_at, updated_at)
+      SELECT id, vault_id, agent_id, display_name, avatar_url, mention, model, cwd, context_prompt, owner_user_id, created_at, updated_at
+      FROM vault_agents;
+    DROP TABLE vault_agents;
+    ALTER TABLE vault_agents_owner_scoped RENAME TO vault_agents;
+    CREATE INDEX IF NOT EXISTS vault_agents_vault_idx ON vault_agents(vault_id);
+    CREATE INDEX IF NOT EXISTS vault_agents_owner_idx ON vault_agents(owner_user_id);
+  `);
+}
+
+/** Free handle for one owner, across every vault their agents live in. */
+function allocateUniqueOwnerMention(
+  db: Db, ownerUserId: number | null, vaultId: string, base: string, excludeId: string,
+): string {
+  const root = normalizeMention(base, 'agent');
+  let candidate = root;
+  let n = 2;
+  for (;;) {
+    const clash = db.prepare(`
+      SELECT id FROM vault_agents
+      WHERE mention = ? COLLATE NOCASE AND id != ?
+        AND (owner_user_id IS ? OR vault_id = ?)
+      LIMIT 1
+    `).get(candidate, excludeId, ownerUserId, vaultId) as { id: string } | undefined;
+    if (!clash) return candidate;
+    candidate = `${root}-${n++}`;
+    if (n > 500) return `${root}-${crypto.randomUUID().slice(0, 8)}`;
+  }
+}
+
 function allocateUniqueMention(db: Db, vaultId: string, base: string, excludeId: string): string {
   const root = normalizeMention(base, 'agent');
   let candidate = root;
@@ -676,7 +760,8 @@ export function reconcileVaultAgentIdentities(db: Db): { renamed: Array<{ id: st
     .map((r) => r.id);
 
   for (const vaultId of vaultIds) {
-    // Normalize every mention to canonical form first.
+    // Scoped per vault because that is where an @mention has to be unambiguous;
+    // ownership uniqueness is enforced by UNIQUE(owner_user_id, mention).
     const all = db.prepare('SELECT * FROM vault_agents WHERE vault_id = ?').all(vaultId) as VaultAgentRow[];
     for (const row of all) {
       const next = normalizeMention(row.mention || row.agent_id, row.agent_id || 'agent');
@@ -904,11 +989,15 @@ function ensureVaultAgentForMember(
 export function listVaultAgents(db: Db, userId: number, vaultId: string): VaultAgentWithChannels[] {
   const vault = getVault(db, vaultId, userId);
   if (!vault) throw new Error('Vault not found');
+  // Your own roster, wherever it was created, plus any agent already placed in
+  // this vault's channels — so a shared vault still shows the owner's agents
+  // to the people they invited.
   const rows = db.prepare(`
     SELECT va.*, u.username AS owner_username
     FROM vault_agents va LEFT JOIN users u ON u.id = va.owner_user_id
-    WHERE va.vault_id = ? ORDER BY va.display_name ASC, va.mention ASC
-  `).all(vaultId) as VaultAgentRow[];
+    WHERE va.owner_user_id = ? OR va.vault_id = ?
+    ORDER BY va.display_name ASC, va.mention ASC
+  `).all(userId, vaultId) as VaultAgentRow[];
   return rows.map((row) => {
     const channelIds = (db.prepare(`
       SELECT DISTINCT channel_id FROM chat_agent_members WHERE vault_agent_id = ?
@@ -920,8 +1009,9 @@ export function listVaultAgents(db: Db, userId: number, vaultId: string): VaultA
 export function getVaultAgent(db: Db, userId: number, vaultId: string, vaultAgentId: string): VaultAgentWithChannels | undefined {
   const vault = getVault(db, vaultId, userId);
   if (!vault) throw new Error('Vault not found');
-  const row = db.prepare('SELECT * FROM vault_agents WHERE id = ? AND vault_id = ?')
-    .get(vaultAgentId, vaultId) as VaultAgentRow | undefined;
+  const row = db.prepare(
+    'SELECT * FROM vault_agents WHERE id = ? AND (owner_user_id = ? OR vault_id = ?)',
+  ).get(vaultAgentId, userId, vaultId) as VaultAgentRow | undefined;
   if (!row) return undefined;
   const channelIds = (db.prepare(`
     SELECT DISTINCT channel_id FROM chat_agent_members WHERE vault_agent_id = ?
@@ -946,15 +1036,21 @@ export function upsertVaultAgent(
   const contextPrompt = String(input.contextPrompt || '');
   const id = String(input.id || '').trim() || crypto.randomUUID();
 
-  const existing = db.prepare('SELECT * FROM vault_agents WHERE id = ? AND vault_id = ?')
-    .get(id, vaultId) as VaultAgentRow | undefined;
+  const existing = db.prepare(
+    'SELECT * FROM vault_agents WHERE id = ? AND (owner_user_id = ? OR vault_id = ?)',
+  ).get(id, userId, vaultId) as VaultAgentRow | undefined;
+  if (existing && existing.owner_user_id != null && existing.owner_user_id !== userId) {
+    throw new Error('Only the agent owner can edit it');
+  }
   const avatarUrl = String(input.avatarUrl || existing?.avatar_url || '').trim();
 
-  // Unique handle on both create and update (case-insensitive).
+  // Handles are unique per owner, and additionally must not collide with an
+  // agent already living in this vault (both could be @-mentioned here).
   const clash = db.prepare(`
-    SELECT id FROM vault_agents WHERE vault_id = ? AND mention = ? COLLATE NOCASE AND id != ?
-  `).get(vaultId, mention, id) as { id: string } | undefined;
-  if (clash) throw new Error(`Mention @${mention} is already used by another vault agent`);
+    SELECT id FROM vault_agents
+    WHERE mention = ? COLLATE NOCASE AND id != ? AND (owner_user_id = ? OR vault_id = ?)
+  `).get(mention, id, userId, vaultId) as { id: string } | undefined;
+  if (clash) throw new Error(`Mention @${mention} is already used by another agent`);
 
   if (existing) {
     db.prepare(`
@@ -970,10 +1066,12 @@ export function upsertVaultAgent(
       WHERE vault_agent_id = ?
     `).run(agentId, displayName, avatarUrl, mention, model, cwd, contextPrompt, id);
   } else {
+    // Owned at creation: the roster is the person's, and UNIQUE(owner_user_id,
+    // mention) only holds if the owner is set in the same statement.
     db.prepare(`
-      INSERT INTO vault_agents (id, vault_id, agent_id, display_name, avatar_url, mention, model, cwd, context_prompt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, vaultId, agentId, displayName, avatarUrl, mention, model, cwd, contextPrompt);
+      INSERT INTO vault_agents (id, vault_id, agent_id, display_name, avatar_url, mention, model, cwd, context_prompt, owner_user_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, vaultId, agentId, displayName, avatarUrl, mention, model, cwd, contextPrompt, userId);
   }
   db.prepare('UPDATE vault_agents SET owner_user_id = COALESCE(owner_user_id, ?) WHERE id = ?').run(userId, id);
   return rowToVaultAgent(db.prepare(`
@@ -986,9 +1084,17 @@ export function upsertVaultAgent(
 export function deleteVaultAgent(db: Db, userId: number, vaultId: string, vaultAgentId: string): boolean {
   const vault = getVault(db, vaultId, userId);
   if (!vault) throw new Error('Vault not found');
+  // Only the owner can retire an agent; a vault member removing it from their
+  // view should be removing it from the channel, not deleting someone's agent.
+  const target = db.prepare('SELECT owner_user_id FROM vault_agents WHERE id = ?')
+    .get(vaultAgentId) as { owner_user_id: number | null } | undefined;
+  if (!target) return false;
+  if (target.owner_user_id != null && target.owner_user_id !== userId) {
+    throw new Error('Only the agent owner can delete it');
+  }
   // Drop all channel memberships first
   db.prepare('DELETE FROM chat_agent_members WHERE vault_agent_id = ?').run(vaultAgentId);
-  const result = db.prepare('DELETE FROM vault_agents WHERE id = ? AND vault_id = ?').run(vaultAgentId, vaultId);
+  const result = db.prepare('DELETE FROM vault_agents WHERE id = ?').run(vaultAgentId);
   return result.changes > 0;
 }
 

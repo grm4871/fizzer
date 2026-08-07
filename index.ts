@@ -305,6 +305,12 @@ type ChatInviteToken = {
   sourceVaultId: string;
   sourceChannelId: string;
 };
+/** Share link that adds its redeemer to a vault's member list at `role`. */
+type VaultInviteToken = {
+  type: 'vault-invite';
+  vaultId: string;
+  role: VaultRole;
+};
 
 // ── Database ───────────────────────────────────────────────────────
 
@@ -581,6 +587,24 @@ function verifyChatInvite(token: string): ChatInviteToken {
     sourceVaultId: decoded.sourceVaultId,
     sourceChannelId: decoded.sourceChannelId,
   };
+}
+
+function signVaultInvite(vaultId: string, role: VaultRole) {
+  return jwt.sign(
+    { type: 'vault-invite', vaultId, role } satisfies VaultInviteToken,
+    JWT_SECRET,
+    { expiresIn: '7d' },
+  );
+}
+
+function verifyVaultInvite(token: string): VaultInviteToken {
+  const decoded = jwt.verify(token, JWT_SECRET) as Partial<VaultInviteToken>;
+  if (decoded.type !== 'vault-invite' || typeof decoded.vaultId !== 'string' || !isVaultRole(decoded.role)) {
+    throw new Error('Invalid invite link');
+  }
+  // An invite can never mint another owner, whatever the token claims.
+  if (decoded.role === 'owner') throw new Error('Invalid invite link');
+  return { type: 'vault-invite', vaultId: decoded.vaultId, role: decoded.role };
 }
 
 function agentRouteAllowed(method: string, pathname: string): boolean {
@@ -1462,6 +1486,52 @@ app.delete('/api/vaults/:id/members/:userId', requireAuth, (req: AuthedRequest, 
     res.json({ ok: true });
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : 'Could not remove member' });
+  }
+});
+
+// A share link is how you invite someone who has no account yet, or whose
+// username you don't know — the by-username route above needs both.
+app.post('/api/vaults/:id/invite-link', requireAuth, (req: AuthedRequest, res) => {
+  const vault = getVault(db, req.params.id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Vault not found' });
+  if (getVaultRole(db, vault.id, req.user!.id) !== 'owner') {
+    return res.status(403).json({ error: 'Only the vault owner can create invite links' });
+  }
+  const roleRaw = String(req.body?.role || 'editor').trim().toLowerCase();
+  if (!isVaultRole(roleRaw) || roleRaw === 'owner') {
+    return res.status(400).json({ error: 'Role must be editor or viewer' });
+  }
+  const token = signVaultInvite(vault.id, roleRaw as VaultRole);
+  res.json({ token, role: roleRaw, url: `${publicBaseUrl(req)}/vault-invite/${encodeURIComponent(token)}` });
+});
+
+app.get('/api/vault-invites/:token', (req, res) => {
+  try {
+    const invite = verifyVaultInvite(req.params.token);
+    const vault = db.prepare('SELECT id, name, created_by FROM vaults WHERE id = ?')
+      .get(invite.vaultId) as { id: string; name: string; created_by: number } | undefined;
+    if (!vault) return res.status(404).json({ error: 'Invite not found' });
+    const owner = db.prepare('SELECT username FROM users WHERE id = ?')
+      .get(vault.created_by) as { username: string } | undefined;
+    res.json({ invite: { vaultName: vault.name, role: invite.role, owner: owner?.username || 'unknown' } });
+  } catch {
+    res.status(404).json({ error: 'Invite not found' });
+  }
+});
+
+app.post('/api/vault-invites/:token/accept', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const invite = verifyVaultInvite(req.params.token);
+    const vault = db.prepare('SELECT id, name, created_by FROM vaults WHERE id = ?')
+      .get(invite.vaultId) as { id: string; name: string; created_by: number } | undefined;
+    if (!vault) return res.status(404).json({ error: 'Invite not found' });
+    const current = getVaultRole(db, vault.id, req.user!.id);
+    // Redeeming twice, or as the owner, is a no-op rather than a demotion.
+    if (current) return res.json({ vaultId: vault.id, name: vault.name, role: current, alreadyMember: true });
+    addVaultMember(db, vault.id, vault.created_by, req.user!.id, invite.role);
+    res.status(201).json({ vaultId: vault.id, name: vault.name, role: invite.role });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Could not accept invite' });
   }
 });
 
