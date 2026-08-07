@@ -85,11 +85,11 @@ test('a member cannot delete another person agent', () => {
   }
 });
 
-test('the owner-scope migration renames one owner duplicate handles, keeping both agents', () => {
+test('the migration merges one person per-vault copies into a single agent', () => {
   const db = setup();
   try {
-    // Rebuild the pre-migration shape: unique per vault, so one owner could
-    // hold @claude twice across two vaults.
+    // Rebuild the pre-migration shape: unique per vault, so one owner ended up
+    // with a separate @claude row in each vault.
     db.exec(`
       DROP TABLE vault_agents;
       CREATE TABLE vault_agents (
@@ -104,13 +104,24 @@ test('the owner-scope migration renames one owner duplicate handles, keeping bot
       INSERT INTO vault_agents (id, vault_id, agent_id, display_name, mention, owner_user_id, created_at)
       VALUES ('a1', 'v1', 'claude-code', 'Claude', 'claude', 2, '2020-01-01'),
              ('a2', 'v2', 'claude-code', 'Claude', 'claude', 2, '2020-01-02');
+      INSERT INTO notes (id, vault_id, title) VALUES ('c1', 'v1', 'c1'), ('c2', 'v2', 'c2');
+      INSERT INTO chat_agent_members (id, channel_id, vault_id, vault_agent_id, agent_id, display_name, mention, conversation_id)
+      VALUES ('m1', 'c1', 'v1', 'a1', 'claude-code', 'Claude', 'claude', 'x1'),
+             ('m2', 'c2', 'v2', 'a2', 'claude-code', 'Claude', 'claude', 'x2');
     `);
     ensureChatSchema(db);
 
-    const rows = db.prepare('SELECT id, mention FROM vault_agents ORDER BY id').all() as Array<{ id: string; mention: string }>;
-    assert.equal(rows.length, 2, 'migration must not drop an agent');
-    assert.equal(rows[0].mention, 'claude', 'the older agent keeps the plain handle');
-    assert.notEqual(rows[1].mention, 'claude', 'the duplicate must be suffixed');
+    const rows = db.prepare('SELECT id, mention FROM vault_agents').all() as Array<{ id: string; mention: string }>;
+    assert.equal(rows.length, 1, 'the two copies were always the same agent');
+    assert.equal(rows[0].id, 'a1', 'the older row survives');
+    assert.equal(rows[0].mention, 'claude', 'and keeps the handle — no @claude-2');
+
+    // Crucially the memberships in *both* vaults survive, now pointing at one agent.
+    const members = db.prepare(
+      'SELECT channel_id FROM chat_agent_members WHERE vault_agent_id = ? ORDER BY channel_id',
+    ).all('a1') as Array<{ channel_id: string }>;
+    assert.deepEqual(members.map((m) => m.channel_id), ['c1', 'c2']);
+
     const sql = (db.prepare("SELECT sql FROM sqlite_master WHERE name = 'vault_agents'").get() as { sql: string }).sql;
     assert.match(sql, /UNIQUE\(owner_user_id, mention\)/);
   } finally {

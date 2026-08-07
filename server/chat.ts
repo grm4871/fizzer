@@ -657,9 +657,11 @@ function agentInChannel(db: Db, vaultAgentId: string, channelId: string): boolea
  * Re-key vault_agents from UNIQUE(vault_id, mention) to UNIQUE(owner_user_id,
  * mention) so an agent roster belongs to a person rather than to one vault.
  *
- * Handles were only unique per vault, so the same owner can legitimately hold
- * two `@claude` rows in different vaults today. Those are renamed *before* the
- * table is rebuilt — the old constraint still allows it, the new one would not.
+ * Handles were only unique per vault, so one owner could end up with a separate
+ * `@claude` row per vault. Those rows were always meant to be the same agent, so
+ * they are *merged* — the oldest survives and inherits the others' channel
+ * memberships — rather than renamed into `@claude-2`. Merging happens before the
+ * rebuild: the old constraint tolerates the duplicates, the new one would not.
  */
 function migrateVaultAgentsToOwnerScope(db: Db): void {
   const schema = db.prepare(
@@ -678,11 +680,25 @@ function migrateVaultAgentsToOwnerScope(db: Db): void {
       WHERE owner_user_id = ? AND mention = ? COLLATE NOCASE
       ORDER BY created_at ASC
     `).all(dupe.owner, dupe.handle) as Array<{ id: string; vault_id: string; mention: string }>;
-    // Oldest keeps the plain handle; the rest are suffixed.
-    for (const row of rows.slice(1)) {
-      const next = allocateUniqueOwnerMention(db, dupe.owner, row.vault_id, dupe.handle, row.id);
-      db.prepare("UPDATE vault_agents SET mention = ?, updated_at = datetime('now') WHERE id = ?").run(next, row.id);
-      db.prepare("UPDATE chat_agent_members SET mention = ?, updated_at = datetime('now') WHERE vault_agent_id = ?").run(next, row.id);
+    // Oldest survives and absorbs the rest: same handle, same person, so the
+    // duplicates were only ever an artifact of per-vault storage.
+    const winner = rows[0];
+    if (!winner) continue;
+    for (const loser of rows.slice(1)) {
+      // A channel can only hold one membership per agent; drop any that would
+      // duplicate the winner's before repointing the remainder.
+      db.prepare(`
+        DELETE FROM chat_agent_members
+        WHERE vault_agent_id = ? AND channel_id IN (
+          SELECT channel_id FROM chat_agent_members WHERE vault_agent_id = ?
+        )
+      `).run(loser.id, winner.id);
+      db.prepare(`
+        UPDATE chat_agent_members
+        SET vault_agent_id = ?, mention = ?, updated_at = datetime('now')
+        WHERE vault_agent_id = ?
+      `).run(winner.id, winner.mention, loser.id);
+      db.prepare('DELETE FROM vault_agents WHERE id = ?').run(loser.id);
     }
   }
 
@@ -711,26 +727,6 @@ function migrateVaultAgentsToOwnerScope(db: Db): void {
     CREATE INDEX IF NOT EXISTS vault_agents_vault_idx ON vault_agents(vault_id);
     CREATE INDEX IF NOT EXISTS vault_agents_owner_idx ON vault_agents(owner_user_id);
   `);
-}
-
-/** Free handle for one owner, across every vault their agents live in. */
-function allocateUniqueOwnerMention(
-  db: Db, ownerUserId: number | null, vaultId: string, base: string, excludeId: string,
-): string {
-  const root = normalizeMention(base, 'agent');
-  let candidate = root;
-  let n = 2;
-  for (;;) {
-    const clash = db.prepare(`
-      SELECT id FROM vault_agents
-      WHERE mention = ? COLLATE NOCASE AND id != ?
-        AND (owner_user_id IS ? OR vault_id = ?)
-      LIMIT 1
-    `).get(candidate, excludeId, ownerUserId, vaultId) as { id: string } | undefined;
-    if (!clash) return candidate;
-    candidate = `${root}-${n++}`;
-    if (n > 500) return `${root}-${crypto.randomUUID().slice(0, 8)}`;
-  }
 }
 
 function allocateUniqueMention(db: Db, vaultId: string, base: string, excludeId: string): string {
@@ -914,8 +910,10 @@ function ensureVaultAgentForMember(
   const mention = normalizeMention(member.mention || '', member.agentId);
 
   if (member.vaultAgentId) {
-    const existing = db.prepare('SELECT * FROM vault_agents WHERE id = ? AND vault_id = ?')
-      .get(member.vaultAgentId, vaultId) as VaultAgentRow | undefined;
+    // Not scoped to this vault: the same agent identity is reused across every
+    // vault it has been added to, so its row lives wherever it was created.
+    const existing = db.prepare('SELECT * FROM vault_agents WHERE id = ?')
+      .get(member.vaultAgentId) as VaultAgentRow | undefined;
     if (existing) {
       // Handle must stay unique if the membership is renaming identity.
       const clash = db.prepare(`
@@ -1113,9 +1111,20 @@ export function addVaultAgentToChannel(
   const { route } = assertChatChannel(db, channelId, userId);
   if (route.localVaultId !== vaultId) throw new Error('Chat channel not found');
   assertAgentManagementOwner(db, userId, route.sourceVaultId);
-  const va = db.prepare('SELECT * FROM vault_agents WHERE id = ? AND vault_id = ?')
-    .get(vaultAgentId, route.sourceVaultId) as VaultAgentRow | undefined;
+  // One agent, many vaults: an agent you own can join a channel anywhere you
+  // can manage agents, not only in the vault it happened to be created in.
+  const va = db.prepare(
+    'SELECT * FROM vault_agents WHERE id = ? AND (owner_user_id = ? OR vault_id = ?)',
+  ).get(vaultAgentId, userId, route.sourceVaultId) as VaultAgentRow | undefined;
   if (!va) throw new Error('Vault agent not found');
+  // The handle has to stay unambiguous inside the vault it is joining.
+  const handleClash = db.prepare(`
+    SELECT id FROM vault_agents
+    WHERE vault_id = ? AND mention = ? COLLATE NOCASE AND id != ?
+  `).get(route.sourceVaultId, va.mention, va.id) as { id: string } | undefined;
+  if (handleClash) {
+    throw new Error(`@${va.mention} is already used by another agent in this vault`);
+  }
 
   const existing = db.prepare(`
     SELECT * FROM chat_agent_members WHERE vault_agent_id = ? AND channel_id = ?
