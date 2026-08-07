@@ -35,7 +35,7 @@ const CLAUDE_AGENT_CONTEXT = 'You are a local workspace assistant. This checkout
 // Nudge agents to behave like chat participants, not verbose coding CLIs: the
 // chat collapses step narration into a trace disclosure, so the actual message
 // should be short. Detailed reasoning belongs in thinking, not the reply.
-const CHAT_BREVITY_CONTEXT = 'Do not confuse a mentioned @handle with the message author.';
+const CHAT_BREVITY_CONTEXT = 'You are a chat participant, not a coding CLI. Reply like a person in a chat channel: a few short sentences of plain prose, lead with the outcome. Do NOT format the reply as a report — no headings, no bold/italic emphasis, no bullet lists, no em-dash asides, and no restating the question. Keep it to one short paragraph where possible; use a blank line only to separate genuinely distinct points, never after every sentence. Put reasoning, step narration, and detail in thinking or the run trace, not the message. Do not confuse a mentioned @handle with the message author.';
 
 // Live Cascade API config for helper wrappers, populated by the
 // desktop runner host once it knows the server URL + the user's auth token.
@@ -544,11 +544,34 @@ function resolveAgentCwd(inputCwd, vaultRoot) {
   return os.homedir();
 }
 
+let warnedStaleCliAgentBuildAt = 0;
+
+/**
+ * CLI agents run from `dist/`, never from the TypeScript sources. Editing
+ * `cli-agents/cli-agent.ts` without rebuilding therefore changes nothing at
+ * runtime, and the symptom is indistinguishable from the fix not working. Say
+ * so out loud instead of silently running last build's code.
+ */
+function warnIfCliAgentBuildIsStale(modPath, builtMtimeMs) {
+  const srcPath = path.join(__dirname, '..', 'cli-agents', 'cli-agent.ts');
+  let srcMtimeMs = 0;
+  try { srcMtimeMs = fs.statSync(srcPath).mtimeMs; } catch { return; }
+  if (!builtMtimeMs || srcMtimeMs <= builtMtimeMs) return;
+  // Once a minute is enough; this is checked before every CLI launch.
+  if (Date.now() - warnedStaleCliAgentBuildAt < 60_000) return;
+  warnedStaleCliAgentBuildAt = Date.now();
+  console.warn(
+    `[agent-runner] STALE BUILD: ${srcPath} is newer than ${modPath}. `
+    + 'CLI agents are running the previous build — run `npm run build` to apply your changes.',
+  );
+}
+
 async function loadCliAgentModule() {
   const modPath = path.join(__dirname, '..', 'dist', 'cli-agents', 'cli-agent.js');
   // Bust cache when dist rebuilds so harness fixes apply without killing Electron.
   let mtimeMs = 0;
   try { mtimeMs = fs.statSync(modPath).mtimeMs; } catch { /* ignore */ }
+  warnIfCliAgentBuildIsStale(modPath, mtimeMs);
   if (!cliAgentModulePromise || cliAgentModuleMtimeMs !== mtimeMs) {
     cliAgentModuleMtimeMs = mtimeMs;
     const href = pathToFileURL(modPath).href + `?t=${mtimeMs || Date.now()}`;

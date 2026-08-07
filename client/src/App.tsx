@@ -126,6 +126,24 @@ function isMobileViewport(): boolean {
   return typeof window !== 'undefined' && window.matchMedia('(max-width: 900px)').matches;
 }
 
+/**
+ * Title for a note the user never named: its first markdown heading, else its
+ * first non-empty line. Empty when the draft opens with something that makes a
+ * poor title (a list, a fence), leaving the caller to fall back.
+ */
+function titleFromContent(content: string): string {
+  for (const raw of content.split('\n', 20)) {
+    const line = raw.trim();
+    if (!line || line.startsWith('```')) continue;
+    const heading = /^#{1,6}\s+(.*)$/.exec(line);
+    const candidate = (heading ? heading[1] : line).trim();
+    if (!candidate || /^[-*+>|]/.test(candidate)) return '';
+    // Path separators would be mangled into the note's filename.
+    return candidate.replace(/[\\/]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80);
+  }
+  return '';
+}
+
 // Module-level (not useRef): survives StrictMode remount and shares across any
 // rapid remount so concurrent loadVaultData / message fetches coalesce to one
 // network round-trip instead of stacking.
@@ -238,6 +256,13 @@ export default function App() {
   // something and saves — deferred so opening a blank tab doesn't litter the
   // vault. The real (server) id is minted here up front, so no remap on save.
   const unsavedNoteIdsRef = useRef<Set<string>>(new Set());
+  // Saves in flight, keyed by tab id. Ctrl+S reaches saveNoteTab twice (the
+  // CodeMirror `Mod-s` keymap and the window shortcut both fire), and the
+  // "is this still a draft" guard only clears after the POST resolves — so
+  // without this both calls create a note. The second one collides on the id
+  // the server already used and is silently given a fresh one, leaving an
+  // orphaned duplicate no tab points at.
+  const noteSavesInFlightRef = useRef<Map<string, Promise<Note | undefined>>>(new Map());
   const notesRef = useRef(notes); notesRef.current = notes;
   const desktopRunnerStopRef = useRef<(() => void) | null>(null);
   const chatStateRef = useRef(chatState); chatStateRef.current = chatState;
@@ -2457,47 +2482,90 @@ export default function App() {
   }, [loadNoteContent, openChatChannel]);
 
   /** Save a specific note tab's draft. */
-  const saveNoteTab = useCallback(async (tabId: string) => {
+  const saveNoteTabOnce = useCallback(async (tabId: string) => {
     const entry = noteContentsRef.current[tabId];
     if (!entry) return;
+
+    // Persist a draft the server doesn't have yet by creating it under the id
+    // the tab/layout already uses — no remapping. Covers both a brand-new draft
+    // and a tab whose note the server has since lost (see the PUT fallback).
+    const createFromDraft = async (): Promise<Note | undefined> => {
+      // Only persist once there's real content, so blank tabs never hit the vault.
+      if (!entry.draft.trim()) return undefined;
+      const vaultId = activeVaultIdRef.current;
+      if (!vaultId) return undefined;
+      // A never-renamed draft is still called "Untitled Note"; title it from its
+      // own first line so the sidebar isn't a stack of identical entries.
+      const currentTitle = entry.note.title?.trim() || '';
+      const title = (!currentTitle || currentTitle === 'Untitled Note')
+        ? titleFromContent(entry.draft) || 'Untitled Note'
+        : currentTitle;
+      const created = await api<{ note: Note }>(`/api/vaults/${vaultId}/notes`, {
+        method: 'POST',
+        body: JSON.stringify({
+          id: tabId,
+          title,
+          content: entry.draft,
+          folder_id: entry.note.folder_id ?? undefined,
+          // Human-authored drafts stay listed unless this draft was unlisted.
+          is_listed: entry.note.is_listed !== 0,
+        }),
+      });
+      unsavedNoteIdsRef.current.delete(tabId);
+      setNoteContents((prev) => ({ ...prev, [tabId]: { note: created.note, draft: created.note.content } }));
+      setOpenTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, title: created.note.title, dirty: false } : t)));
+      void loadVaultData(vaultId);
+      return created.note;
+    };
+
     try {
       if (unsavedNoteIdsRef.current.has(tabId)) {
-        // Deferred creation: only persist a new note once it has real content,
-        // so blank tabs never reach the vault. Created under the id already in
-        // use by the tab/layout, so nothing needs remapping.
-        if (!entry.draft.trim()) return;
-        const vaultId = activeVaultIdRef.current;
-        if (!vaultId) return;
-        const created = await api<{ note: Note }>(`/api/vaults/${vaultId}/notes`, {
-          method: 'POST',
-          body: JSON.stringify({
-            id: tabId,
-            title: 'Untitled Note',
-            content: entry.draft,
-            folder_id: entry.note.folder_id ?? undefined,
-            // Human-authored drafts stay listed unless this draft was unlisted.
-            is_listed: entry.note.is_listed !== 0,
-          }),
-        });
-        unsavedNoteIdsRef.current.delete(tabId);
-        setNoteContents((prev) => ({ ...prev, [tabId]: { note: created.note, draft: created.note.content } }));
-        setOpenTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, title: created.note.title, dirty: false } : t)));
-        if (vaultId) void loadVaultData(vaultId);
-        return created.note;
+        return await createFromDraft();
       }
-      const data = await api<{ note: Note }>(`/api/notes/${tabId}`, {
-        method: 'PUT',
-        body: JSON.stringify({ content: entry.draft }),
-      });
-      setNoteContents((prev) => ({ ...prev, [tabId]: { note: data.note, draft: data.note.content } }));
-      setOpenTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, title: data.note.title, dirty: false } : t)));
-      if (activeVaultIdRef.current) void loadVaultData(activeVaultIdRef.current);
-      return data.note;
+      try {
+        const data = await api<{ note: Note }>(`/api/notes/${tabId}`, {
+          method: 'PUT',
+          body: JSON.stringify({ content: entry.draft }),
+        });
+        setNoteContents((prev) => ({ ...prev, [tabId]: { note: data.note, draft: data.note.content } }));
+        setOpenTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, title: data.note.title, dirty: false } : t)));
+        if (activeVaultIdRef.current) void loadVaultData(activeVaultIdRef.current);
+        return data.note;
+      } catch (error) {
+        // The tab points at a note the server no longer has (a diverged id, a
+        // draft that never persisted, or a note deleted elsewhere). Don't strand
+        // the user's content behind a "note does not exist" error — recreate it
+        // under the same id. Restricted to UUID tabs so the server honors the id
+        // (and chat/superkanban tabs never take this path).
+        if (error instanceof ApiError && error.status === 404
+          && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tabId)) {
+          const recreated = await createFromDraft();
+          if (recreated) return recreated;
+        }
+        throw error;
+      }
     } catch (error) {
       console.error('Error saving note:', error);
       throw error;
     }
   }, [loadVaultData]);
+
+  /**
+   * Save a note tab, collapsing concurrent calls onto a single request.
+   *
+   * One Ctrl+S reaches this twice — CodeMirror's `Mod-s` keymap and the window
+   * shortcut both fire — and a brand-new draft is only marked "saved" once its
+   * POST resolves. Letting both through creates the note twice; the loser is
+   * handed a fresh id by the server and becomes an orphan no tab points at.
+   */
+  const saveNoteTab = useCallback((tabId: string): Promise<Note | undefined> => {
+    const inFlight = noteSavesInFlightRef.current.get(tabId);
+    if (inFlight) return inFlight;
+    const pending = saveNoteTabOnce(tabId)
+      .finally(() => { noteSavesInFlightRef.current.delete(tabId); });
+    noteSavesInFlightRef.current.set(tabId, pending);
+    return pending;
+  }, [saveNoteTabOnce]);
 
   /** Save whichever note is in the focused pane (Ctrl+S, AI panel). */
   const handleSaveActiveNote = useCallback(() => {

@@ -73,7 +73,22 @@ export const CHAT_AGENT_MODEL_PRESETS: Record<AgentId, { id: string; label: stri
     { id: 'claude-haiku-4.5', label: 'Claude Haiku 4.5' },
     { id: 'gpt-5.2', label: 'GPT-5.2' },
   ],
-  hermes: [],
+  // Nous-hosted ids from Hermes' own model catalog. Cascade runs Hermes with
+  // `--safe-mode`, which ignores ~/.hermes/config.yaml, so the picked id is
+  // passed through explicitly as `-m` rather than inherited from that config.
+  hermes: [
+    { id: 'z-ai/glm-5.2', label: 'GLM 5.2 (Hermes default)' },
+    { id: 'deepseek/deepseek-v4-flash-0731', label: 'DeepSeek V4 Flash 0731' },
+    { id: 'deepseek/deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
+    { id: 'anthropic/claude-opus-4.8', label: 'Claude Opus 4.8' },
+    { id: 'anthropic/claude-sonnet-5', label: 'Claude Sonnet 5' },
+    { id: 'openai/gpt-5.6-sol', label: 'GPT-5.6 Sol' },
+    { id: 'openai/gpt-5.5', label: 'GPT-5.5' },
+    { id: 'google/gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro' },
+    { id: 'x-ai/grok-4.5', label: 'Grok 4.5' },
+    { id: 'moonshotai/kimi-k3', label: 'Kimi K3' },
+    { id: 'qwen/qwen3.8-max', label: 'Qwen 3.8 Max' },
+  ],
   'akron-grok': [],
   omp: [
     { id: 'openai-codex/gpt-5.6-sol', label: 'Codex · GPT-5.6 Sol' },

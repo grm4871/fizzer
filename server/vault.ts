@@ -218,6 +218,30 @@ function resolveNotePath(db: Db, noteId: string): string | undefined {
   return resolveUnderVault(vault.root_path, `${sanitizePathSegment(note.title)}.md`);
 }
 
+/**
+ * A note's file path is derived from its title (see resolveNotePath), so two
+ * notes sharing a title in the same folder are the *same file* — the second
+ * create overwrites the first's content on disk and both rows then read back
+ * whatever was written last. Suffix the title until its path segment is free,
+ * the way a file manager would.
+ */
+function uniqueNoteTitle(
+  db: Db, vaultId: string, folderId: string | null, isListed: number, desired: string,
+): string {
+  const taken = new Set(
+    (db.prepare(
+      'SELECT title FROM notes WHERE vault_id = ? AND folder_id IS ? AND is_listed = ?',
+    ).all(vaultId, folderId, isListed) as { title: string }[])
+      .map((row) => sanitizePathSegment(row.title).toLowerCase()),
+  );
+  if (!taken.has(sanitizePathSegment(desired).toLowerCase())) return desired;
+  for (let n = 2; n < 1000; n += 1) {
+    const candidate = `${desired} ${n}`;
+    if (!taken.has(sanitizePathSegment(candidate).toLowerCase())) return candidate;
+  }
+  return `${desired} ${crypto.randomUUID().slice(0, 8)}`;
+}
+
 function getTagsForNote(db: Db, noteId: string): string[] {
   const rows = db.prepare(`
     SELECT t.name FROM tags t
@@ -717,17 +741,26 @@ export function createNote(db: Db, vaultId: string, userId: number, opts: { id?:
   // Accept a client-supplied id so the app can mint a note's real id up front,
   // keep it local-only while empty, and persist under the same id on first
   // save — no tab/layout remapping. Only honor a well-formed, unused UUID.
-  const providedId = typeof opts.id === 'string'
+  const wellFormedId = typeof opts.id === 'string'
     && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(opts.id)
-    && !db.prepare('SELECT 1 FROM notes WHERE id = ?').get(opts.id)
     ? opts.id
     : null;
+  const existing = wellFormedId
+    ? db.prepare('SELECT * FROM notes WHERE id = ?').get(wellFormedId) as Note | undefined
+    : undefined;
+  // A client that mints its own id and sends the create twice (a double-fired
+  // shortcut, a retry) must not get a *second* note under a fresh id — that
+  // leaves an orphan no tab points at. Same vault means it is the same create,
+  // so hand back the note that already exists instead of minting a duplicate.
+  if (existing && existing.vault_id === vaultId) return existing;
+  const providedId = existing ? null : wellFormedId;
   const id = providedId ?? crypto.randomUUID();
-  const title = String(opts.title || 'Untitled').trim() || 'Untitled';
   const rawContent = String(opts.content || '');
   const content = rawContent.replace(/\\+`/g, '`');
   const folderId = opts.folder_id || null;
   const isListed = opts.is_listed === false ? 0 : 1;
+  const requestedTitle = String(opts.title || 'Untitled').trim() || 'Untitled';
+  const title = uniqueNoteTitle(db, vaultId, folderId, isListed, requestedTitle);
   const nextPosition = isListed
     ? (db.prepare(`
         SELECT COALESCE(MAX(position), -1) + 1 AS next

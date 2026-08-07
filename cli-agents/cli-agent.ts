@@ -449,6 +449,34 @@ const CODEX_BIN = process.env.CODEX_BIN || 'codex';
 const GROK_BIN = process.env.GROK_BIN || 'grok';
 const COPILOT_BIN = process.env.COPILOT_BIN || 'copilot';
 const HERMES_BIN = process.env.HERMES_BIN || 'hermes';
+/** Borders of the box-drawn reasoning panel Hermes prints on stdout under `-Q`. */
+const HERMES_REASONING_OPEN = /^┌─+\s*Reasoning\s*─/;
+const HERMES_REASONING_CLOSE = /^└─+┘?$/;
+/**
+ * Hermes exhausts its own internal retries and then exits 0 with a plain
+ * "API call failed after N retries: HTTP 503 …" line as its answer. That is a
+ * transient upstream-capacity error, not a real reply, so Cascade retries the
+ * whole run rather than surfacing the 503 as the agent's message.
+ */
+const HERMES_UPSTREAM_UNAVAILABLE = /^(?:API call failed after \d+ retr(?:y|ies)\b|HTTP 5\d\d\b|(?:The )?requested model is temporarily unavailable\b)/i;
+/**
+ * True only when the upstream error *is* the entire reply.
+ *
+ * Matching the phrase anywhere would misfire on a real answer that discusses
+ * HTTP 503 (a plausible question in this repo), silently discarding the model's
+ * work and then spinning for the whole retry budget.
+ */
+function isHermesUpstreamFailure(output: string): boolean {
+  const lines = output.trim().split('\n').map((line) => line.trim()).filter(Boolean);
+  if (lines.length === 0 || lines.length > 2) return false;
+  return lines.every((line) => HERMES_UPSTREAM_UNAVAILABLE.test(line));
+}
+
+const HERMES_UPSTREAM_RETRIES = Math.max(0, Number(process.env.RUNNER_HERMES_UPSTREAM_RETRIES || 50));
+const HERMES_UPSTREAM_BACKOFF_MS = Math.max(250, Number(process.env.RUNNER_HERMES_UPSTREAM_BACKOFF_MS || 3_000));
+// Cap the escalating backoff so a long retry streak keeps polling on a steady
+// cadence instead of stretching to minutes between attempts.
+const HERMES_UPSTREAM_BACKOFF_CAP_MS = Math.max(HERMES_UPSTREAM_BACKOFF_MS, Number(process.env.RUNNER_HERMES_UPSTREAM_BACKOFF_CAP_MS || 30_000));
 const AKRON_BIN = process.env.AKRON_BIN || 'akron';
 const OMP_BIN = process.env.OMP_BIN || 'omp';
 
@@ -583,7 +611,7 @@ export async function runCliAgent(opts: CliAgentOpts): Promise<CliAgentResult> {
   } else if (opts.agent === 'copilot') {
     return runCopilot(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.runId, opts.model, opts.env);
   } else if (opts.agent === 'hermes') {
-    return runHermes(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.runId, opts.env);
+    return runHermes(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.runId, opts.env, opts.model);
   } else if (opts.agent === 'akron-grok') {
     return runAkronGrok(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.runId, opts.env);
   } else if (opts.agent === 'omp') {
@@ -2097,22 +2125,50 @@ async function runCopilot(prompt: string, cwd: string, emit: AgentEmit, resumeId
 /**
  * Runs the Hermes CLI and translates its output into content blocks.
  *
- * Fresh runs use oneshot, which keeps stdout machine-readable and exposes
- * Cascade reasoning events. Hermes oneshot currently ignores `--resume`, so
- * continuations use the equally quiet `hermes chat -Q -q` path that actually
- * loads and extends the requested session.
+ * Both fresh and resumed turns go through `hermes chat -Q -q`, which keeps
+ * stdout to the final response only and reports `session_id:` on stderr.
+ *
+ * Oneshot (`-z`) is deliberately not used for fresh runs: it is equally quiet
+ * on stdout but never reports a session id, so nothing could be resumed and
+ * every turn restarted cold. Hermes oneshot also ignores `--resume`, so the
+ * `chat` path is the only one that can both open and extend a session.
  *
  * With `HERMES_CASCADE_EVENTS=1` it also streams reasoning deltas as NDJSON on stderr.
  */
-async function runHermes(prompt: string, cwd: string, emit: AgentEmit, resumeId?: string, runId?: number, env?: NodeJS.ProcessEnv): Promise<CliAgentResult> {
+async function runHermes(prompt: string, cwd: string, emit: AgentEmit, resumeId?: string, runId?: number, env?: NodeJS.ProcessEnv, model?: string): Promise<CliAgentResult> {
+  // `--safe-mode` ignores ~/.hermes/config.yaml, so without an explicit `-m`
+  // the picked model is silently dropped and Hermes falls back to its default.
+  const modelArgs = model?.trim() ? ['-m', model.trim()] : [];
   const args = resumeId
-    ? ['chat', '-Q', '--resume', resumeId, '-q', prompt, '--yolo', '--safe-mode']
-    : ['-z', prompt, '--yolo', '--safe-mode'];
+    ? ['chat', '-Q', '--resume', resumeId, '-q', prompt, ...modelArgs, '--yolo', '--safe-mode']
+    : ['chat', '-Q', '-q', prompt, ...modelArgs, '--yolo', '--safe-mode'];
 
   let text = '';
   let sessionId: string | undefined = resumeId;
 
-  const onStdoutLine = (line: string) => {
+  // `-Q` suppresses the banner, spinner and tool previews but still renders a
+  // box-drawn "Reasoning" panel on stdout. Left alone it lands in the chat
+  // message as if it were the model's answer, so route it to thinking blocks
+  // and keep it out of the summary.
+  let inReasoning = false;
+  const onStdoutLine = (line: string, carriageReturn?: boolean) => {
+    if (HERMES_REASONING_OPEN.test(line)) {
+      inReasoning = true;
+      return;
+    }
+    if (inReasoning) {
+      // The panel's body lines are CR-terminated; the first LF-terminated line
+      // (or an explicit bottom border) is the real answer resuming.
+      if (HERMES_REASONING_CLOSE.test(line)) {
+        inReasoning = false;
+        return;
+      }
+      if (carriageReturn) {
+        emit('text', { message: { content: [{ type: 'thinking', thinking: line + '\n' }] } });
+        return;
+      }
+      inReasoning = false;
+    }
     text += line + '\n';
     // Keep the line break so multi-line output doesn't collapse onto one line.
     emit('text', { message: { content: [{ type: 'text', text: line + '\n' }] } });
@@ -2136,7 +2192,8 @@ async function runHermes(prompt: string, cwd: string, emit: AgentEmit, resumeId?
   };
 
   let summaryText = '';
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  const maxAttempts = Math.max(3, HERMES_UPSTREAM_RETRIES + 1);
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     try {
       summaryText = await driveHermesProcess(
         HERMES_BIN,
@@ -2151,13 +2208,28 @@ async function runHermes(prompt: string, cwd: string, emit: AgentEmit, resumeId?
         env,
         HERMES_IDLE_TIMEOUT_MS,
       );
-      break;
     } catch (error) {
       if (!(error instanceof CliIdleTimeoutError) || attempt >= 2 || text.trim()) throw error;
       // No model or tool output means the first request was never observable;
       // a fresh provider bridge is safe to retry without duplicating work.
       emitHarness(emit, `\x1b[2m# provider returned no bytes; retrying Hermes (${attempt + 1}/2) with a fresh bridge\x1b[0m\r\n`);
+      continue;
     }
+    // Hermes exits 0 even when it only managed to print an upstream 503 as its
+    // "answer". Treat that as transient and retry the whole turn with backoff
+    // rather than handing the capacity error back as the reply.
+    const upstreamFailure = isHermesUpstreamFailure(summaryText) || isHermesUpstreamFailure(text);
+    if (upstreamFailure && attempt < HERMES_UPSTREAM_RETRIES) {
+      const backoff = Math.min(HERMES_UPSTREAM_BACKOFF_CAP_MS, HERMES_UPSTREAM_BACKOFF_MS * (attempt + 1));
+      emitHarness(emit, `\x1b[33m# hermes hit a transient upstream error (503); retrying (${attempt + 1}/${HERMES_UPSTREAM_RETRIES}) after ${Math.round(backoff / 1000)}s\x1b[0m\r\n`);
+      // Discard the failed turn's output so the retry starts from a clean slate.
+      text = '';
+      inReasoning = false;
+      summaryText = '';
+      await sleep(backoff);
+      continue;
+    }
+    break;
   }
   return { summary: summaryText, sessionId };
 }
@@ -2229,7 +2301,7 @@ function driveHermesProcess(
   bin: string,
   args: string[],
   cwd: string,
-  onStdoutLine: (line: string) => void,
+  onStdoutLine: (line: string, carriageReturn?: boolean) => void,
   onStderrLine: (line: string) => void,
   getSummary: () => string,
   label: string,
@@ -2329,9 +2401,13 @@ function driveHermesProcess(
       while (nl >= 0) {
         const line = stdoutBuf.slice(0, nl);
         stdoutBuf = stdoutBuf.slice(nl + 1);
+        // Hermes renders its reasoning box with CR-terminated lines (they are
+        // meant to be redrawn in place) while the final answer ends with a bare
+        // LF. trim() destroys that distinction, so report it separately.
+        const carriageReturn = line.endsWith('\r');
         const trimmed = line.trim();
         if (trimmed) {
-          try { onStdoutLine(trimmed); } catch { /* ignore a single malformed line */ }
+          try { onStdoutLine(trimmed, carriageReturn); } catch { /* ignore a single malformed line */ }
         }
         nl = stdoutBuf.indexOf('\n');
       }
