@@ -2543,8 +2543,9 @@ export default function App() {
 
   useEffect(() => {
     if (!user || !focusedTab || (focusedTab.type !== 'note' && focusedTab.type !== 'chat')) return;
+    if (!(communityUpdates.counts.byTarget[focusedTab.id] > 0)) return;
     void markCommunityTargetRead(focusedTab.id);
-  }, [focusedTab?.id, focusedTab?.type, markCommunityTargetRead, user]);
+  }, [communityUpdates.counts.byTarget, focusedTab?.id, focusedTab?.type, markCommunityTargetRead, user]);
 
   const openCommunityUpdate = useCallback(async (item: CommunityUpdateItem) => {
     await markCommunityTargetRead(item.targetId);
