@@ -20,6 +20,7 @@
 const http = require('http');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { Worker } = require('worker_threads');
 const { setNoteApiConfig } = require('./agent-runner.cjs');
 
 let apiBase = 'https://cscd.online';
@@ -28,6 +29,11 @@ let currentToken = '';
 let helperProxyServer = null;
 /** Loopback base URL helpers should call, e.g. http://127.0.0.1:54321 */
 let helperProxyUrl = '';
+const MODEL_PROBE_CACHE_MS = 10 * 60 * 1000;
+const MODEL_PROBE_TIMEOUT_MS = 35 * 1000;
+let modelProbeCache = null;
+let modelProbeCacheAt = 0;
+let modelProbeInFlight = null;
 
 function normalizeApiBase(value) {
   const raw = String(value || '').trim();
@@ -264,6 +270,52 @@ function probeLocalModels() {
 }
 
 /**
+ * Run blocking third-party model discovery off Electron's main thread.
+ * Several provider CLIs have multi-second timeouts; doing this inside the IPC
+ * handler froze agent:start and made an online runner appear unavailable.
+ */
+function probeLocalModelsAsync(options = {}) {
+  const force = options.force === true;
+  if (!force && modelProbeCache && Date.now() - modelProbeCacheAt < MODEL_PROBE_CACHE_MS) {
+    return Promise.resolve(modelProbeCache);
+  }
+  if (modelProbeInFlight) return modelProbeInFlight;
+
+  modelProbeInFlight = new Promise((resolve) => {
+    const worker = new Worker(`
+      const { parentPort, workerData } = require('worker_threads');
+      try {
+        const { probeLocalModels } = require(workerData.modulePath);
+        parentPort.postMessage({ ok: true, models: probeLocalModels() });
+      } catch (error) {
+        parentPort.postMessage({ ok: false, error: error && error.message ? error.message : String(error) });
+      }
+    `, {
+      eval: true,
+      workerData: { modulePath: __filename },
+    });
+    let settled = false;
+    const finish = (models) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      void worker.terminate();
+      const next = models && typeof models === 'object' ? models : (modelProbeCache || {});
+      modelProbeCache = next;
+      modelProbeCacheAt = Date.now();
+      resolve(next);
+    };
+    const timer = setTimeout(() => finish(modelProbeCache || {}), MODEL_PROBE_TIMEOUT_MS);
+    worker.once('message', (message) => finish(message?.ok ? message.models : modelProbeCache || {}));
+    worker.once('error', () => finish(modelProbeCache || {}));
+    worker.once('exit', () => finish(modelProbeCache || {}));
+  }).finally(() => {
+    modelProbeInFlight = null;
+  });
+  return modelProbeInFlight;
+}
+
+/**
  * Configure child-process helper env (token/url). Socket ownership is renderer-side.
  * Kept name `connectDesktopRunner` for existing IPC callers.
  * Starts the Chromium-backed loopback proxy when the remote API is HTTPS.
@@ -305,6 +357,7 @@ module.exports = {
   isDesktopRunnerConnected: () => Boolean(currentToken),
   getActiveRunCount: () => 0,
   probeLocalModels,
+  probeLocalModelsAsync,
   // Test / diagnostics
   getHelperProxyUrl: () => helperProxyUrl,
   getRemoteApiBase: () => apiBase,

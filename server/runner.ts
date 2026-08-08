@@ -30,12 +30,20 @@ function nonNegativeNumber(value: string | undefined, fallback: number): number 
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
-// A chat member's conversation id stays stable for continuity, but its backing
+// A chat member's conversation id stays stable for continuity, and its backing
 // CLI session remains continuous by default, matching direct Codex/Claude Code
 // behavior and leaving context compaction to their harnesses. Operators can set
 // either value to impose an explicit rotation policy; 0 disables that bound.
-const CHAT_SESSION_MAX_RUNS = Math.floor(nonNegativeNumber(process.env.CHAT_SESSION_MAX_RUNS, 0));
-const CHAT_SESSION_MAX_AGE_HOURS = nonNegativeNumber(process.env.CHAT_SESSION_MAX_AGE_HOURS, 0);
+export const DEFAULT_CHAT_SESSION_MAX_RUNS = 0;
+export const DEFAULT_CHAT_SESSION_MAX_AGE_HOURS = 0;
+const CHAT_SESSION_MAX_RUNS = Math.floor(nonNegativeNumber(
+  process.env.CHAT_SESSION_MAX_RUNS,
+  DEFAULT_CHAT_SESSION_MAX_RUNS,
+));
+const CHAT_SESSION_MAX_AGE_HOURS = nonNegativeNumber(
+  process.env.CHAT_SESSION_MAX_AGE_HOURS,
+  DEFAULT_CHAT_SESSION_MAX_AGE_HOURS,
+);
 
 let eventSink: ((event: RunEvent) => void) | null = null;
 // Sink that mirrors a run's streamed output into its linked chat message, so the
@@ -276,7 +284,14 @@ export function getRun(db: Db, id: number) {
   return db.prepare('SELECT * FROM runs WHERE id = ?').get(id) as Run | undefined;
 }
 
-export function listRunEvents(db: Db, runId: number) {
+export function listRunEvents(db: Db, runId: number, afterSeq = 0) {
+  if (afterSeq > 0) {
+    return db.prepare(`
+      SELECT * FROM run_events
+      WHERE run_id = ? AND seq > ?
+      ORDER BY seq ASC
+    `).all(runId, afterSeq) as RunEvent[];
+  }
   return db.prepare('SELECT * FROM run_events WHERE run_id = ? ORDER BY seq ASC').all(runId) as RunEvent[];
 }
 

@@ -511,39 +511,58 @@ export function getCliAgentBin(agent: CliAgentId): string {
   }
 }
 
+const CLI_AVAILABILITY_CACHE_MS = 60_000;
+const cliAvailabilityCache = new Map<string, { available: boolean; checkedAt: number }>();
+
 function cliBinaryExists(bin: string): boolean {
+  const cached = cliAvailabilityCache.get(bin);
+  if (cached && Date.now() - cached.checkedAt < CLI_AVAILABILITY_CACHE_MS) {
+    return cached.available;
+  }
+  let available = false;
   if (path.isAbsolute(bin)) {
     try {
-      return fs.existsSync(bin) && fs.statSync(bin).isFile();
+      available = fs.existsSync(bin) && fs.statSync(bin).isFile();
     } catch {
-      return false;
+      available = false;
     }
+  } else {
+    const result = spawnSync('which', [bin], { stdio: 'ignore' });
+    available = result.status === 0;
   }
-  const result = spawnSync('which', [bin], { stdio: 'ignore' });
-  return result.status === 0;
+  cliAvailabilityCache.set(bin, { available, checkedAt: Date.now() });
+  return available;
+}
+
+function unavailableCliMessage(agent: CliAgentId, bin: string): string {
+  const variable = agent === 'akron-grok'
+    ? 'AKRON_BIN'
+    : `${agent.toUpperCase().replace('-', '_')}_BIN`;
+  return `${CLI_AGENT_LABELS[agent]} ('${bin}') is not installed or not on PATH. CLI agents run in the Cascade desktop app on this computer — install the CLI locally, or set ${variable} for the desktop app.`;
 }
 
 export function getCliAgentAvailability(): Record<CliAgentId, { available: boolean; bin: string; message?: string }> {
   const availability = {} as Record<CliAgentId, { available: boolean; bin: string; message?: string }>;
   for (const agent of Object.keys(CLI_AGENT_LABELS) as CliAgentId[]) {
     const bin = getCliAgentBin(agent);
-    const label = CLI_AGENT_LABELS[agent];
     const available = cliBinaryExists(bin);
     availability[agent] = available
       ? { available: true, bin }
       : {
         available: false,
         bin,
-        message: `${label} ('${bin}') is not installed or not on PATH. CLI agents run in the Cascade desktop app on this computer — install the CLI locally, or set ${agent === 'akron-grok' ? 'AKRON_BIN' : `${agent.toUpperCase().replace('-', '_')}_BIN`} for the desktop app.`,
+        message: unavailableCliMessage(agent, bin),
       };
   }
   return availability;
 }
 
 function assertCliAgentAvailable(agent: CliAgentId): void {
-  const status = getCliAgentAvailability()[agent];
-  if (!status.available) {
-    throw new Error(status.message || `${CLI_AGENT_LABELS[agent]} is not available on this computer.`);
+  // Launching one provider must not synchronously spawn `which` for every other
+  // integration. Full availability remains available to the health endpoint.
+  const bin = getCliAgentBin(agent);
+  if (!cliBinaryExists(bin)) {
+    throw new Error(unavailableCliMessage(agent, bin));
   }
 }
 

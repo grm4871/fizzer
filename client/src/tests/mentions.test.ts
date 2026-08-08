@@ -84,6 +84,18 @@ describe('precedingMessageBatchText', () => {
       { author: 'Terra', body: '@sol', agentId: 'codex', registrationId: 'sol-reg' },
     )).toBe('');
   });
+
+  it('bounds a long mention-only batch while preserving the newest request text', () => {
+    const messages = Array.from({ length: 100 }, (_, index) => ({
+      author: 'alice',
+      body: `part-${index}-${'x'.repeat(60)}`,
+    }));
+    const prompt = precedingMessageBatchText(messages, { author: 'alice', body: '@terra' }, 240, 4);
+    expect(prompt.length).toBeLessThanOrEqual(240);
+    expect(prompt).toContain('part-99');
+    expect(prompt).not.toContain('part-0-');
+    expect(prompt.startsWith('…')).toBe(true);
+  });
 });
 
 describe('buildQuotedReplyPrompt', () => {
@@ -150,5 +162,15 @@ describe('precedingMessageBatch', () => {
     ];
     const batch = precedingMessageBatch(messages, { author: 'asdfasdf', body: '@claude diagnose and fix' });
     expect(batch.map((message) => message.id)).toEqual(['m3']);
+  });
+
+  it('keeps only the newest bounded messages', () => {
+    const messages = Array.from({ length: 12 }, (_, index) => ({
+      id: `m${index}`,
+      author: 'asdfasdf',
+      body: String(index),
+    }));
+    const batch = precedingMessageBatch(messages, { author: 'asdfasdf', body: '@sol' }, 3);
+    expect(batch.map((message) => message.id)).toEqual(['m9', 'm10', 'm11']);
   });
 });

@@ -172,10 +172,12 @@ type BatchableChatMessage = {
 export function precedingMessageBatch<T extends BatchableChatMessage>(
   messages: T[],
   nextMessage: BatchableChatMessage,
+  maxMessages = 8,
 ) {
   const batch: T[] = [];
   const nextKey = nextMessage.registrationId ?? nextMessage.agentId ?? null;
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
+  const limit = Math.max(1, Math.floor(maxMessages));
+  for (let index = messages.length - 1; index >= 0 && batch.length < limit; index -= 1) {
     const message = messages[index];
     const messageKey = message.registrationId ?? message.agentId ?? null;
     if (message.author.trim() !== nextMessage.author.trim() || messageKey !== nextKey) break;
@@ -188,10 +190,14 @@ export function precedingMessageBatch<T extends BatchableChatMessage>(
 export function precedingMessageBatchText(
   messages: BatchableChatMessage[],
   nextMessage: BatchableChatMessage,
+  maxChars = 4_000,
+  maxMessages = 8,
 ) {
-  return precedingMessageBatch(messages, nextMessage)
+  const text = precedingMessageBatch(messages, nextMessage, maxMessages)
     .map((message) => message.body.trim())
     .filter(Boolean)
     .join('\n')
     .trim();
+  const limit = Math.max(80, Math.floor(maxChars));
+  return text.length > limit ? `…${text.slice(-(limit - 1))}` : text;
 }

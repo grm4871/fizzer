@@ -2420,6 +2420,128 @@ export type AgentChatContent = {
   done: boolean;
 };
 
+/** Incremental fold state for one run's append-only event stream. */
+export type AgentChatContentAccumulator = {
+  assistantText: string;
+  blocks: ChatBlock[];
+  harnessLog: string;
+  status: ChatMessage['status'];
+  terminalSummary: string;
+  suppressChatBody: boolean;
+  hasVisibleText: boolean;
+};
+
+export function createAgentChatContentAccumulator(): AgentChatContentAccumulator {
+  return {
+    assistantText: '',
+    blocks: [],
+    harnessLog: '',
+    status: 'running',
+    terminalSummary: '',
+    suppressChatBody: false,
+    hasVisibleText: false,
+  };
+}
+
+/** Fold only newly appended events into an existing projection. */
+export function appendAgentChatRunEvents(
+  current: AgentChatContentAccumulator,
+  events: Array<{ type: string; payload_json: string }>,
+): AgentChatContentAccumulator {
+  let blocks = current.blocks;
+  let status = current.status;
+  let terminalSummary = current.terminalSummary;
+  let suppressChatBody = current.suppressChatBody;
+  let hasVisibleText = current.hasVisibleText;
+  const assistantChunks: string[] = [];
+  const harnessChunks: string[] = [];
+
+  for (const event of events) {
+    let payload: any;
+    try {
+      payload = JSON.parse(event.payload_json);
+    } catch {
+      continue;
+    }
+    if (event.type === 'text') {
+      const text = textFromRunContent(payload?.message?.content);
+      if (text) assistantChunks.push(text);
+      if (payload?.chatVisible === true && text.trim()) hasVisibleText = true;
+      blocks = appendChatRunBlocks(blocks, normalizeChatRunBlocks(payload?.message?.content));
+    } else if (event.type === 'user') {
+      blocks = appendChatRunBlocks(blocks, normalizeChatRunBlocks(payload?.message?.content));
+    } else if (event.type === 'harness') {
+      const chunk = typeof payload?.data === 'string' ? payload.data : '';
+      if (chunk) harnessChunks.push(chunk);
+    } else if (event.type === 'status') {
+      const nextStatus = payload?.status;
+      if (payload?.suppressChatBody === true) suppressChatBody = true;
+      if (nextStatus === 'completed') {
+        status = undefined;
+        terminalSummary = String(payload?.summary || 'Done.');
+      } else if (nextStatus === 'failed') {
+        status = 'failed';
+        terminalSummary = String(payload?.summary || 'Agent failed.');
+      } else if (nextStatus === 'canceled') {
+        status = 'canceled';
+        terminalSummary = String(payload?.summary || 'Run canceled by user.');
+      }
+    }
+  }
+
+  return {
+    assistantText: current.assistantText + assistantChunks.join(''),
+    blocks,
+    harnessLog: harnessChunks.length
+      ? appendHarnessLog(current.harnessLog, harnessChunks.join(''))
+      : current.harnessLog,
+    status,
+    terminalSummary,
+    suppressChatBody,
+    hasVisibleText,
+  };
+}
+
+export function agentChatContentFromAccumulator(
+  state: AgentChatContentAccumulator,
+): AgentChatContent {
+  const {
+    assistantText,
+    blocks,
+    harnessLog,
+    status,
+    terminalSummary,
+    suppressChatBody,
+    hasVisibleText,
+  } = state;
+
+  const trimmed = assistantText.trim();
+  const done = status !== 'running';
+  // Successful chat body = the runner's latest final answer when available.
+  // Accumulated streamed text is a fallback because it may include progress.
+  // Full step narration lives in `blocks` / `harnessLog` for the terminal pane.
+  // Failures keep the scratchpad and append the reason. While still running,
+  // only adapters that explicitly mark assistant-visible text enter the body.
+  let body: string;
+  if (!done) {
+    body = hasVisibleText && trimmed ? trimmed : 'Thinking...';
+  } else if (status === 'failed' || status === 'canceled') {
+    const reason = terminalSummary.trim()
+      || (status === 'canceled' ? 'Run canceled by user.' : 'Agent failed.');
+    body = trimmed ? `${trimmed}\n\n> ⚠️ ${reason}` : reason;
+  } else if (suppressChatBody) {
+    body = '';
+  } else if (terminalSummary.trim() && !isGenericRunSummary(terminalSummary)) {
+    body = terminalSummary.trim();
+  } else if (trimmed) {
+    body = trimmed;
+  } else {
+    body = terminalSummary.trim() || 'Done.';
+  }
+
+  return { body, blocks, harnessLog, status, done };
+}
+
 /**
  * Fold an agent run's event log into the chat message shape (body + blocks +
  * harness log + status). This is the server-authoritative equivalent of the
@@ -2432,83 +2554,10 @@ export type AgentChatContent = {
 export function buildAgentChatContentFromRunEvents(
   events: Array<{ type: string; payload_json: string }>,
 ): AgentChatContent {
-  let assistantText = '';
-  let blocks: ChatBlock[] = [];
-  let harnessLog = '';
-  let status: ChatMessage['status'] = 'running';
-  let terminalSummary = '';
-  let suppressChatBody = false;
-  let hasVisibleText = false;
-
-  for (const event of events) {
-    let payload: any;
-    try {
-      payload = JSON.parse(event.payload_json);
-    } catch {
-      continue;
-    }
-    if (event.type === 'text') {
-      const text = textFromRunContent(payload?.message?.content);
-      assistantText += text;
-      if (payload?.chatVisible === true && text.trim()) hasVisibleText = true;
-      blocks = appendChatRunBlocks(blocks, normalizeChatRunBlocks(payload?.message?.content));
-    } else if (event.type === 'user') {
-      blocks = appendChatRunBlocks(blocks, normalizeChatRunBlocks(payload?.message?.content));
-    } else if (event.type === 'harness') {
-      const chunk = typeof payload?.data === 'string' ? payload.data : '';
-      harnessLog = appendHarnessLog(harnessLog, chunk);
-    } else if (event.type === 'status') {
-      const s = payload?.status;
-      if (payload?.suppressChatBody === true) suppressChatBody = true;
-      if (s === 'completed') {
-        status = undefined;
-        terminalSummary = String(payload?.summary || 'Done.');
-      } else if (s === 'failed') {
-        status = 'failed';
-        terminalSummary = String(payload?.summary || 'Agent failed.');
-      } else if (s === 'canceled') {
-        status = 'canceled';
-        terminalSummary = String(payload?.summary || 'Run canceled by user.');
-      }
-    }
-  }
-
-  const trimmed = assistantText.trim();
-  const done = status !== 'running';
-  // Successful chat body = the runner's latest final answer when available.
-  // Accumulated streamed text is a fallback because it may include progress.
-  // Full step narration lives in `blocks` / `harnessLog` for the terminal pane.
-  // Failures keep the scratchpad and append the reason.
-  // If the agent already posted via cascade-chat send, leave the run bubble
-  // body empty so we don't double-post the same reply.
-  //
-  // While still running, never put intermediate stream text in the chat body —
-  // models often emit plan/monologue/"thinking out loud" as type:text tokens
-  // (and real thinking blocks already stay in blocks). Showing that mid-run
-  // leaked "thinking traces" into the transcript. Harness + blocks still update.
-  let body: string;
-  if (!done) {
-    // Only adapters that can distinguish user-facing assistant prose from
-    // reasoning/monologue opt into live chat text. Legacy providers retain the
-    // conservative placeholder until their terminal summary is available.
-    body = hasVisibleText && trimmed ? trimmed : 'Thinking...';
-  } else if (status === 'failed' || status === 'canceled') {
-    const reason = terminalSummary.trim()
-      || (status === 'canceled' ? 'Run canceled by user.' : 'Agent failed.');
-    body = trimmed ? `${trimmed}\n\n> ⚠️ ${reason}` : reason;
-  } else if (suppressChatBody) {
-    body = '';
-  } else {
-    if (terminalSummary.trim() && !isGenericRunSummary(terminalSummary)) {
-      body = terminalSummary.trim();
-    } else if (trimmed) {
-      body = trimmed;
-    } else {
-      body = terminalSummary.trim() || 'Done.';
-    }
-  }
-
-  return { body, blocks, harnessLog, status, done };
+  return agentChatContentFromAccumulator(appendAgentChatRunEvents(
+    createAgentChatContentAccumulator(),
+    events,
+  ));
 }
 
 /**

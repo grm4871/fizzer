@@ -2136,26 +2136,26 @@ export default function App() {
     const quotedMessage = triggeringMessage.replyTo
       ? contextMessages.find((message) => message.id === triggeringMessage.replyTo?.messageId)
       : undefined;
-    const imageSources = ownImages.length > 0
+    const imageSources = (ownImages.length > 0
       ? []
-      : (quotedMessage ? [quotedMessage] : precedingMessageBatch(contextMessages, triggeringMessage));
-    const carriedImages: Array<{ media_type: string; data: string }> = [];
-    for (const source of imageSources) {
-      // A queued dispatch shell is optimistic until its run is accepted. It
-      // cannot be hydrated from the server, even if a slim reconnect copy has
-      // inherited `hasImages` from the triggering turn.
-      if (source.id.startsWith('agent-dispatch-')) continue;
-      let images = dataUrlsToRunImages(source.images);
-      if (images.length === 0 && source.hasImages && vaultId) {
-        try {
-          const full = await api<{ message: ChatMessage }>(
-            `/api/vaults/${vaultId}/channels/${channelId}/messages/${encodeURIComponent(source.id)}`,
-          );
-          images = dataUrlsToRunImages(full.message?.images);
-        } catch { /* Text and attachment names still carry the recoverable ask. */ }
+      : (quotedMessage ? [quotedMessage] : precedingMessageBatch(contextMessages, triggeringMessage)))
+      // Text-only rows cannot contribute media. Bound hydration before network
+      // work so a long mention-only batch never serially fetches old messages.
+      .filter((source) => !source.id.startsWith('agent-dispatch-')
+        && ((source.images?.length ?? 0) > 0 || source.hasImages))
+      .slice(-4);
+    const carriedImages = (await Promise.all(imageSources.map(async (source) => {
+      const inline = dataUrlsToRunImages(source.images);
+      if (inline.length > 0 || !source.hasImages || !vaultId) return inline;
+      try {
+        const full = await api<{ message: ChatMessage }>(
+          `/api/vaults/${vaultId}/channels/${channelId}/messages/${encodeURIComponent(source.id)}`,
+        );
+        return dataUrlsToRunImages(full.message?.images);
+      } catch {
+        return [];
       }
-      carriedImages.push(...images);
-    }
+    }))).flat();
     const runImages = [...ownImages, ...carriedImages.slice(-4)];
     const agentsWithoutImages = new Set<AgentId>(['grok', 'antigravity', 'copilot', 'hermes', 'akron-grok']);
 

@@ -124,11 +124,13 @@ import { fetchWidgetData } from './server/widgetData.js';
 import { corsOrigin, rateLimit, resolveDeploySecret, resolveJwtSecret } from './server/security.js';
 import {
   assertChatChannel,
+  agentChatContentFromAccumulator,
+  appendAgentChatRunEvents,
   buildAgentChannelWorkspaceContext,
-  buildAgentChatContentFromRunEvents,
   buildAgentChatContext,
   CASCADE_AGENT_APP_CONTEXT,
   CHAT_NOTE_MARKER,
+  createAgentChatContentAccumulator,
   ensureAgentChatMessage,
   ensureChatSchema,
   linkChatChannel,
@@ -162,6 +164,7 @@ import {
   setChannelKanbanNoteId,
   ensureChannelOrchestrationKanban,
   setChannelCwd,
+  type AgentChatContentAccumulator,
   type ChatMessage,
 } from './server/chat.js';
 import {
@@ -974,6 +977,10 @@ async function emitChatPresence(sourceVaultId: string, sourceChannelId: string) 
 type ChatRunTarget = { userId: number; vaultId: string; channelId: string; messageId: string };
 const chatRunTargets = new Map<number, ChatRunTarget>();
 const chatRunFlushTimers = new Map<number, NodeJS.Timeout>();
+const chatRunContent = new Map<number, {
+  lastSeq: number;
+  state: AgentChatContentAccumulator;
+}>();
 const CHAT_RUN_THROTTLE_MS = 250;
 
 function enqueueMissionCoordinatorWake(wake: MissionWake) {
@@ -1030,7 +1037,17 @@ function enqueueMissionCoordinatorWake(wake: MissionWake) {
 
 function syncRunToChatMessage(runId: number) {
   const target = chatRunTargets.get(runId);
-  const content = buildAgentChatContentFromRunEvents(listRunEvents(db, runId));
+  const cached = chatRunContent.get(runId);
+  const events = listRunEvents(db, runId, cached?.lastSeq ?? 0);
+  const state = appendAgentChatRunEvents(
+    cached?.state ?? createAgentChatContentAccumulator(),
+    events,
+  );
+  const lastSeq = events.length > 0
+    ? events[events.length - 1].seq
+    : cached?.lastSeq ?? 0;
+  chatRunContent.set(runId, { lastSeq, state });
+  const content = agentChatContentFromAccumulator(state);
   if (target) try {
     // Dual-post suppress: agent already posted via cascade-chat send. Drop the
     // Thinking placeholder instead of leaving an empty "(message)" shell that
@@ -1112,6 +1129,7 @@ function syncRunToChatMessage(runId: number) {
       }
     }
     chatRunTargets.delete(runId);
+    chatRunContent.delete(runId);
     const timer = chatRunFlushTimers.get(runId);
     if (timer) clearTimeout(timer);
     chatRunFlushTimers.delete(runId);

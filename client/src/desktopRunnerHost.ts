@@ -24,6 +24,7 @@ type RunnerElectronAPI = {
   }>;
   onAgentEvent?: (callback: (payload: AgentEventPayload) => void) => () => void;
   getRunnerModels?: () => Promise<{ models?: Record<string, string[]> }>;
+  getRunnerModelsAsync?: () => Promise<{ models?: Record<string, string[]> }>;
   getRunnerPlanUsage?: () => Promise<{ usage?: Record<string, unknown> }>;
 };
 
@@ -70,6 +71,36 @@ const recentTerminalEvents = new Map<number, { type: string; payload: unknown; a
 const BRIDGE_CURSOR_KEY = 'cascade_runner_bridge_cursor';
 let bridgeInstanceId = '';
 let bridgeCursor = 0;
+
+/**
+ * Keep one credential setup per current login and make teardown authoritative.
+ * The task receives a liveness check so late fetch/IPC completions cannot
+ * reconnect a runner after logout or supersede a newer account.
+ */
+export class LatestRunnerSetup {
+  private generation = 0;
+  private active: { key: string; promise: Promise<void> } | null = null;
+
+  ensure(key: string, task: (isCurrent: () => boolean) => Promise<void>): Promise<void> {
+    if (this.active?.key === key) return this.active.promise;
+    const generation = ++this.generation;
+    const entry = { key, promise: Promise.resolve() as Promise<void> };
+    entry.promise = Promise.resolve()
+      .then(() => task(() => this.generation === generation))
+      .finally(() => {
+        if (this.active === entry) this.active = null;
+      });
+    this.active = entry;
+    return entry.promise;
+  }
+
+  invalidate(): void {
+    this.generation += 1;
+    this.active = null;
+  }
+}
+
+const runnerCredentialSetup = new LatestRunnerSetup();
 
 /**
  * Main may report "not found" in the few milliseconds between child-registry
@@ -189,9 +220,12 @@ function emitRunEvent(runId: number, type: string, payload: unknown): void {
 
 async function probeModels(): Promise<Record<string, string[]>> {
   const api = runnerElectronAPI();
-  if (!api?.getRunnerModels) return {};
+  // Use the new off-main IPC only. Older Electron mains implement
+  // runner:models synchronously; falling back would freeze agent:start for the
+  // entire provider-probe timeout after an otherwise successful hot reload.
+  if (!api?.getRunnerModelsAsync) return {};
   try {
-    const res = await api.getRunnerModels();
+    const res = await api.getRunnerModelsAsync();
     return res?.models && typeof res.models === 'object' ? res.models : {};
   } catch {
     return {};
@@ -224,9 +258,18 @@ async function publishPlanUsage(activeSocket: Socket, force = false): Promise<vo
 
 async function registerWithServer(activeSocket: Socket): Promise<void> {
   await restoreMainProcessRuns();
-  const models = await probeModels();
   const ids = [...activeRunIds].filter((id) => Number.isFinite(id));
-  activeSocket.emit('runner:register', { models, activeRunIds: ids, runnerInstanceId: bridgeInstanceId || undefined });
+  // Registration is the availability boundary. Dynamic model discovery can
+  // involve slow local CLIs, so announce the runner first and publish models
+  // in a later capability refresh rather than blocking prompt dispatch.
+  activeSocket.emit('runner:register', {
+    activeRunIds: ids,
+    runnerInstanceId: bridgeInstanceId || undefined,
+  });
+  void probeModels().then((models) => {
+    if (!activeSocket.connected) return;
+    activeSocket.emit('runner:capabilities', { models });
+  });
   void publishPlanUsage(activeSocket);
   pruneRecentTerminals();
   for (const [runId, entry] of recentTerminalEvents.entries()) {
@@ -240,11 +283,9 @@ async function handleDelegatedRun(payload: DelegatedRunPayload): Promise<void> {
   const runId = Number(payload?.runId);
   if (!Number.isFinite(runId) || !api?.startAgentRun) return;
 
-  if (activeRunIds.has(runId) && api.cancelAgentRun) {
-    try { await api.cancelAgentRun(runId); } catch { /* ignore */ }
-    activeRunIds.delete(runId);
-  }
-
+  // Reconnect/re-register can re-deliver a delegation. Main owns the durable
+  // child registry and treats agent:start idempotently; canceling here destroyed
+  // the valid process immediately before asking main to "resume" it.
   activeRunIds.add(runId);
   try {
     const res = await api.startAgentRun(payload as Record<string, unknown>);
@@ -367,6 +408,7 @@ function connectDesktopRunnerSocket(token: string, nextApiBase: string): void {
   // Idempotent: same credentials + existing socket → keep it.
   if (socket && currentToken === authToken && apiBase === nextBase) {
     if (socket.connected) void registerWithServer(socket);
+    else socket.connect();
     return;
   }
 
@@ -407,37 +449,49 @@ export function startDesktopRunnerHost(opts?: { clearOnStop?: boolean }): () => 
 
   const resolvedBase = resolveApiBase();
 
-  // Child agents receive a short-lived, server-restricted credential. Keep the
-  // user's full session token in the renderer for the runner socket only.
-  if (api.setRunnerToken) {
-    void api.clearRunnerToken?.();
-    void fetch(`${resolvedBase}/api/auth/agent-token`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then(async (response) => {
-        const body = await response.json().catch(() => ({})) as { token?: string; error?: string };
-        if (!response.ok || !body.token) {
-          throw new Error(body.error || 'Could not create restricted agent credential');
-        }
-        return api.setRunnerToken!({ token: body.token, apiUrl: resolvedBase });
-      })
-      .then((result) => {
-        if (!result?.success) throw new Error(result?.error || 'Could not configure restricted agent credential');
-        connectDesktopRunnerSocket(token, resolvedBase);
-      })
-      .catch((error) => {
-        console.error('Desktop runner credential setup failed:', error);
-        void api.clearRunnerToken?.();
+  // Soft focus/online ensures must be a true no-op for an already configured
+  // login: retain the helper credential and the live runner socket.
+  if (socket && currentToken === token && apiBase === resolvedBase) {
+    connectDesktopRunnerSocket(token, resolvedBase);
+  } else if (api.setRunnerToken) {
+    const setupKey = `${resolvedBase}\n${token}`;
+    void runnerCredentialSetup.ensure(setupKey, async (isCurrent) => {
+      const response = await fetch(`${resolvedBase}/api/auth/agent-token`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
       });
+      const body = await response.json().catch(() => ({})) as { token?: string; error?: string };
+      if (!response.ok || !body.token) {
+        throw new Error(body.error || 'Could not create restricted agent credential');
+      }
+      if (!isCurrent()) return;
+      const result = await api.setRunnerToken!({ token: body.token, apiUrl: resolvedBase });
+      if (!isCurrent()) {
+        // Logout may race an IPC already in progress. Clear again after the late
+        // setup settles so it cannot resurrect helper authority.
+        await api.clearRunnerToken?.();
+        return;
+      }
+      if (!result?.success) {
+        throw new Error(result?.error || 'Could not configure restricted agent credential');
+      }
+      connectDesktopRunnerSocket(token, resolvedBase);
+    }).catch((error) => {
+      console.error('Desktop runner credential setup failed:', error);
+    });
   } else {
     // Legacy desktop bridge: socket still lives here so TLS uses Chromium.
     connectDesktopRunnerSocket(token, resolvedBase);
   }
 
+  // Child agents receive a short-lived, server-restricted credential. Keep the
+  // user's full session token in the renderer for the runner socket only.
   const clearOnStop = opts?.clearOnStop !== false;
+  let stopped = false;
   return () => {
-    if (!clearOnStop) return;
+    if (!clearOnStop || stopped) return;
+    stopped = true;
+    runnerCredentialSetup.invalidate();
     // Logout/unmount: cancel in-flight local agents, then drop the socket.
     const cancel = api.cancelAgentRun;
     if (cancel) {

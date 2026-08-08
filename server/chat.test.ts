@@ -2,10 +2,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import Database from 'better-sqlite3';
 import {
+  agentChatContentFromAccumulator,
+  appendAgentChatRunEvents,
   buildAgentChannelWorkspaceContext,
   buildAgentChatContentFromRunEvents,
   buildAgentChatContext,
   CASCADE_AGENT_APP_CONTEXT,
+  createAgentChatContentAccumulator,
 } from './chat.js';
 
 test('the app contract identifies Cascade and the live note helper unambiguously', () => {
@@ -126,4 +129,32 @@ test('a terminal summary still replaces streamed progress', () => {
   ]);
   assert.equal(content.body, 'The fix is verified.');
   assert.equal(content.done, true);
+});
+
+test('incremental run projection matches a one-shot fold', () => {
+  const events = [
+    {
+      type: 'harness',
+      payload_json: JSON.stringify({ data: 'first\n' }),
+    },
+    {
+      type: 'text',
+      payload_json: JSON.stringify({
+        chatVisible: true,
+        message: { content: [{ type: 'text', text: 'Working.' }] },
+      }),
+    },
+    {
+      type: 'harness',
+      payload_json: JSON.stringify({ data: 'second\n' }),
+    },
+    {
+      type: 'status',
+      payload_json: JSON.stringify({ status: 'completed', summary: 'Finished.' }),
+    },
+  ];
+  const first = appendAgentChatRunEvents(createAgentChatContentAccumulator(), events.slice(0, 2));
+  const incremental = agentChatContentFromAccumulator(appendAgentChatRunEvents(first, events.slice(2)));
+  assert.deepEqual(incremental, buildAgentChatContentFromRunEvents(events));
+  assert.equal(incremental.harnessLog, 'first\nsecond\n');
 });

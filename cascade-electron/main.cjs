@@ -33,7 +33,7 @@ if (explicitUserDataDir) {
 
 const db = require('./database.cjs');
 const { startLocalAgentRun, cancelLocalAgentRun, reapOrphanedLocalAgentRuns, resolveClaudePermission } = require('./agent-runner.cjs');
-const { connectDesktopRunner, disconnectDesktopRunner, isDesktopRunnerConnected, probeLocalModels } = require('./desktop-runner-host.cjs');
+const { connectDesktopRunner, disconnectDesktopRunner, isDesktopRunnerConnected, probeLocalModelsAsync } = require('./desktop-runner-host.cjs');
 const { collectPlanUsage } = require('./plan-usage.cjs');
 const { AgentRunState, settleCancelAcknowledgement } = require('./agent-run-state.cjs');
 const worktrees = require('./worktrees.cjs');
@@ -635,9 +635,20 @@ ipcMain.handle('runner:status', async () => ({
 
 ipcMain.handle('runner:models', async () => {
   try {
-    return { models: probeLocalModels() };
+    return { models: await probeLocalModelsAsync() };
   } catch (error) {
     console.error('[IPC] Failed to probe runner models:', error);
+    return { models: {} };
+  }
+});
+
+// New channel lets a hot-reloaded renderer distinguish the nonblocking worker
+// implementation from older mains whose runner:models handler was synchronous.
+ipcMain.handle('runner:modelsAsync', async () => {
+  try {
+    return { models: await probeLocalModelsAsync() };
+  } catch (error) {
+    console.error('[IPC] Failed to probe runner models asynchronously:', error);
     return { models: {} };
   }
 });
