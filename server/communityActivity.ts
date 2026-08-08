@@ -89,6 +89,10 @@ type NoteActivityRow = {
 };
 
 export function ensureCommunityActivitySchema(db: Db): void {
+  const readStateAlreadyExists = Boolean(db.prepare(`
+    SELECT 1 FROM sqlite_master
+    WHERE type = 'table' AND name = 'community_read_state'
+  `).get());
   db.exec(`
     CREATE TABLE IF NOT EXISTS community_read_state (
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -109,6 +113,21 @@ export function ensureCommunityActivitySchema(db: Db): void {
     CREATE INDEX IF NOT EXISTS community_note_activity_note_idx
       ON community_note_activity(note_id, changed_at DESC, id DESC);
   `);
+
+  // An upgraded installation already has chat history. Treat that history as
+  // read when the inbox is introduced so the first launch is useful rather
+  // than a wall of every message the account has ever received.
+  if (!readStateAlreadyExists) {
+    const seededAt = new Date().toISOString();
+    const users = db.prepare('SELECT id FROM users').all() as Array<{ id: number }>;
+    db.transaction(() => {
+      for (const user of users) {
+        for (const route of listAccessibleChannelRoutes(db, user.id)) {
+          writeReadState(db, user.id, 'channel', route.sourceChannelId, seededAt);
+        }
+      }
+    })();
+  }
 }
 
 /** Record an attributed note mutation after the underlying write succeeds. */
@@ -227,6 +246,7 @@ function latestExternalNoteActivities(db: Db, userId: number): NoteActivityRow[]
       ON state.user_id = ? AND state.source_type = 'note' AND state.source_id = n.id
     WHERE activity.actor_user_id != ?
       AND n.is_archived = 0
+      AND n.is_listed = 1
       AND (SELECT COUNT(*) FROM vault_members members WHERE members.vault_id = n.vault_id) > 1
       AND activity.id = (
         SELECT newer.id FROM community_note_activity newer
@@ -332,7 +352,14 @@ export function listCommunityUpdates(
     });
   }
 
-  items.sort((a, b) => b.timestamp.localeCompare(a.timestamp) || b.id.localeCompare(a.id));
+  const timestampMillis = (value: string) => {
+    const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:/.test(value)
+      ? `${value.replace(' ', 'T')}Z`
+      : value;
+    const parsed = Date.parse(normalized);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+  items.sort((a, b) => timestampMillis(b.timestamp) - timestampMillis(a.timestamp) || b.id.localeCompare(a.id));
   const visible = items.slice(0, limit);
   const groupsByVault = new Map<string, CommunityUpdateGroup>();
   for (const item of visible) {
@@ -384,7 +411,7 @@ export function markCommunityTargetRead(
     SELECT n.content_preview AS preview, n.content
     FROM notes n
     JOIN vault_members membership ON membership.vault_id = n.vault_id AND membership.user_id = ?
-    WHERE n.id = ? AND n.is_archived = 0
+    WHERE n.id = ? AND n.is_archived = 0 AND n.is_listed = 1
   `).get(userId, targetId) as { preview: string; content: string } | undefined;
   if (!note || isChatMarker(note.preview, note.content)) return false;
   writeReadState(db, userId, 'note', targetId, at);
@@ -404,7 +431,7 @@ export function markAllCommunityUpdatesRead(
       SELECT n.id
       FROM notes n
       JOIN vault_members membership ON membership.vault_id = n.vault_id AND membership.user_id = ?
-      WHERE n.is_archived = 0
+      WHERE n.is_archived = 0 AND n.is_listed = 1
         AND (SELECT COUNT(*) FROM vault_members members WHERE members.vault_id = n.vault_id) > 1
         AND n.content_preview NOT LIKE 'cascade://chat-channel%'
         AND n.content NOT LIKE 'cascade://chat-channel%'

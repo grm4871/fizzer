@@ -6,6 +6,7 @@
  */
 import type Database from 'better-sqlite3';
 import type { VaultRole } from './vaultMembers.js';
+import { isDirectMessageChannel } from './directMessages.js';
 
 type Db = Database.Database;
 
@@ -207,7 +208,7 @@ function assertReportTarget(
   db: Db,
   vault: { id: string; createdBy: number; visibility: string },
   reporterUserId: number,
-  targetType: ReportTargetType,
+  targetType: Exclude<ReportTargetType, 'message'>,
   targetId: string,
 ): void {
   if (targetType === 'vault') {
@@ -228,28 +229,47 @@ function assertReportTarget(
     if (!note) throw new Error('Report target does not belong to this vault');
     return;
   }
-  if (targetType === 'message') {
-    const message = db.prepare(`
-      SELECT 1 FROM chat_messages m
-      WHERE m.id = ? AND (
-        (m.vault_id = ? AND m.channel_id IN (
-          SELECT n.id FROM notes n WHERE n.vault_id = ?
-        ))
-        OR EXISTS (
-          SELECT 1 FROM chat_channel_links l
-          WHERE l.local_vault_id = ?
-            AND l.source_vault_id = m.vault_id
-            AND l.source_channel_id = m.channel_id
-        )
-      )
-    `).get(targetId, vault.id, vault.id, vault.id);
-    if (!message) throw new Error('Report target does not belong to this vault');
-    return;
-  }
   const targetUserId = Number(targetId);
   if (!Number.isSafeInteger(targetUserId) || targetUserId < 1) throw new Error('Invalid user id');
   if (targetUserId === reporterUserId) throw new Error('You cannot report yourself');
   if (!roleOf(db, vault.id, targetUserId)) throw new Error('Report target does not belong to this vault');
+}
+
+/** Resolve a message seen through a local mirror to its accountable source vault. */
+function resolveMessageReportVault(
+  db: Db,
+  requestedVaultId: string,
+  reporterUserId: number,
+  messageId: string,
+): { id: string; name: string; createdBy: number; visibility: string } {
+  if (!roleOf(db, requestedVaultId, reporterUserId)) {
+    throw new Error('Only a member of this vault can report its content');
+  }
+  const message = db.prepare(`
+    SELECT m.vault_id AS sourceVaultId, m.channel_id AS sourceChannelId
+    FROM chat_messages m
+    WHERE m.id = ? AND (
+      (m.vault_id = ? AND EXISTS (
+        SELECT 1 FROM notes n WHERE n.id = m.channel_id AND n.vault_id = ?
+      ))
+      OR EXISTS (
+        SELECT 1 FROM chat_channel_links l
+        WHERE l.local_vault_id = ?
+          AND l.source_vault_id = m.vault_id
+          AND l.source_channel_id = m.channel_id
+      )
+    )
+  `).get(messageId, requestedVaultId, requestedVaultId, requestedVaultId) as {
+    sourceVaultId: string;
+    sourceChannelId: string;
+  } | undefined;
+  if (!message) throw new Error('Report target does not belong to this vault');
+  if (isDirectMessageChannel(db, message.sourceChannelId)) {
+    throw new Error('Direct messages are handled with blocking, not reports');
+  }
+  const sourceVault = vaultRow(db, message.sourceVaultId);
+  if (!sourceVault) throw new Error('Vault not found');
+  return sourceVault;
 }
 
 function usernameFor(db: Db, userId: number): string | null {
@@ -265,8 +285,8 @@ export function createContentReport(db: Db, input: {
   reason: unknown;
   detail?: unknown;
 }): VaultReport {
-  const vault = vaultRow(db, input.vaultId);
-  if (!vault) throw new Error('Vault not found');
+  const requestedVault = vaultRow(db, input.vaultId);
+  if (!requestedVault) throw new Error('Vault not found');
   if (!isReportTargetType(input.targetType)) throw new Error('Report target must be a vault, note, message, or member');
   if (!isReportReason(input.reason)) throw new Error(`Reason must be one of: ${REPORT_REASONS.join(', ')}`);
   const targetId = String(input.targetId ?? '').trim();
@@ -274,14 +294,12 @@ export function createContentReport(db: Db, input: {
   const detail = String(input.detail ?? '').trim();
   if (detail.length > REPORT_DETAIL_MAX) throw new Error(`Details must be ${REPORT_DETAIL_MAX} characters or fewer`);
 
-  const dmVault = db.prepare(`
-    SELECT 1 FROM notes
-    WHERE vault_id = ? AND (trim(content) LIKE ? OR trim(content_preview) LIKE ?)
-      AND title LIKE 'DM — %' LIMIT 1
-  `).get(vault.id, `${CHAT_NOTE_PREFIX}%`, `${CHAT_NOTE_PREFIX}%`);
-  if (dmVault) throw new Error('Direct messages are handled with blocking, not reports');
-
-  assertReportTarget(db, vault, input.reporterUserId, input.targetType, targetId);
+  const vault = input.targetType === 'message'
+    ? resolveMessageReportVault(db, requestedVault.id, input.reporterUserId, targetId)
+    : requestedVault;
+  if (input.targetType !== 'message') {
+    assertReportTarget(db, vault, input.reporterUserId, input.targetType, targetId);
+  }
   const duplicate = db.prepare(`
     SELECT 1 FROM content_reports
     WHERE vault_id = ? AND target_type = ? AND target_id = ? AND reporter_user_id = ?

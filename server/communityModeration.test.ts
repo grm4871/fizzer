@@ -166,9 +166,13 @@ test('reports validate listed notes, members, local messages, and exact linked-c
     assert.equal(createContentReport(db, {
       vaultId: 'v1', reporterUserId: 3, targetType: 'message', targetId: 'local-message', reason: 'harassment',
     }).targetId, 'local-message');
-    assert.equal(createContentReport(db, {
+    const linkedReport = createContentReport(db, {
       vaultId: 'v2', reporterUserId: 3, targetType: 'message', targetId: 'linked-message', reason: 'hate',
-    }).targetId, 'linked-message');
+    });
+    assert.equal(linkedReport.targetId, 'linked-message');
+    assert.equal(linkedReport.vaultId, 'source', 'mirror reports route to the accountable source owner');
+    assert.deepEqual(listVaultReports(db, 'source', 5).map((row) => row.id), [linkedReport.id]);
+    assert.deepEqual(listVaultReports(db, 'v2', 4), []);
     assert.throws(() => createContentReport(db, {
       vaultId: 'v1', reporterUserId: 3, targetType: 'message', targetId: 'linked-message', reason: 'hate',
     }), /does not belong/);
@@ -178,6 +182,16 @@ test('reports validate listed notes, members, local messages, and exact linked-c
     assert.throws(() => createContentReport(db, {
       vaultId: 'v1', reporterUserId: 3, targetType: 'member', targetId: '3', reason: 'other',
     }), /report yourself/);
+
+    // DM identity comes from durable channel metadata, not its renameable title.
+    db.prepare(`
+      INSERT INTO direct_message_channels (
+        user_a_id, user_b_id, source_vault_id, source_channel_id, created_by
+      ) VALUES (2, 3, 'v1', 'chat-v1', 2)
+    `).run();
+    assert.throws(() => createContentReport(db, {
+      vaultId: 'v1', reporterUserId: 3, targetType: 'message', targetId: 'local-message', reason: 'spam',
+    }), /handled with blocking/);
   } finally { db.close(); }
 });
 

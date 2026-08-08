@@ -197,6 +197,11 @@ test('note changes start at membership time, are attributed, and disappear with 
     recordCommunityNoteChange(db, 'roadmap', 1, '2026-08-09T00:00:00.000Z');
     assert.equal(listCommunityUpdates(db, { id: 2, username: 'bob' }).counts.total, 1);
 
+    db.prepare("UPDATE notes SET is_listed = 0 WHERE id = 'roadmap'").run();
+    assert.equal(listCommunityUpdates(db, { id: 2, username: 'bob' }).counts.total, 0);
+    assert.equal(markCommunityTargetRead(db, 2, 'roadmap'), false);
+    db.prepare("UPDATE notes SET is_listed = 1 WHERE id = 'roadmap'").run();
+
     db.prepare("UPDATE notes SET is_archived = 1 WHERE id = 'roadmap'").run();
     assert.equal(listCommunityUpdates(db, { id: 2, username: 'bob' }).counts.total, 0);
     db.prepare("UPDATE notes SET is_archived = 0 WHERE id = 'roadmap'").run();
@@ -205,6 +210,30 @@ test('note changes start at membership time, are attributed, and disappear with 
     assert.equal(markCommunityTargetRead(db, 2, 'roadmap'), false);
     db.prepare("DELETE FROM notes WHERE id = 'roadmap'").run();
     assert.equal((db.prepare('SELECT COUNT(*) AS n FROM community_note_activity').get() as { n: number }).n, 0);
+  } finally {
+    close();
+  }
+});
+
+test('first upgrade seeds existing channel history as read', () => {
+  const { db, close } = setup();
+  try {
+    db.prepare("INSERT INTO vault_members (vault_id, user_id, role, invited_by, created_at) VALUES ('source', 2, 'viewer', 1, '2000-01-01T00:00:00.000Z')").run();
+    addNote(db, 'history', 'source', 'history', CHAT_NOTE_MARKER);
+    createChatMessage(db, 1, 'source', 'history', {
+      id: 'before-inbox', channelId: 'history', author: 'alice', body: 'old history',
+      createdAt: '2001-01-01T00:00:00.000Z',
+    });
+
+    db.exec('DROP TABLE community_read_state');
+    ensureCommunityActivitySchema(db);
+    assert.equal(listCommunityUpdates(db, { id: 2, username: 'bob' }).counts.total, 0);
+
+    createChatMessage(db, 1, 'source', 'history', {
+      id: 'after-inbox', channelId: 'history', author: 'alice', body: 'new history',
+      createdAt: '2099-01-01T00:00:00.000Z',
+    });
+    assert.equal(listCommunityUpdates(db, { id: 2, username: 'bob' }).counts.total, 1);
   } finally {
     close();
   }

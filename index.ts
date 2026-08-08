@@ -874,6 +874,37 @@ function emitCommunityChangedForChannel(sourceVaultId: string, sourceChannelId: 
   emitCommunityChangedForUsers(users.map((row) => row.userId));
 }
 
+/** Profile changes are visible only to accounts sharing a vault or chat route. */
+function emitUserProfileUpdated(userId: number, profile: ReturnType<typeof publicUser>): void {
+  const audience = db.prepare(`
+    WITH my_sources(sourceChannelId) AS (
+      SELECT DISTINCT COALESCE(link.source_channel_id, local.id)
+      FROM notes local
+      JOIN vault_members membership
+        ON membership.vault_id = local.vault_id AND membership.user_id = ?
+      LEFT JOIN chat_channel_links link ON link.local_channel_id = local.id
+      WHERE local.content_preview LIKE 'cascade://chat-channel%'
+         OR local.content LIKE 'cascade://chat-channel%'
+    ),
+    audience_vaults(vaultId) AS (
+      SELECT vault_id FROM vault_members WHERE user_id = ?
+      UNION
+      SELECT source.vault_id
+      FROM notes source JOIN my_sources mine ON mine.sourceChannelId = source.id
+      UNION
+      SELECT link.local_vault_id
+      FROM chat_channel_links link JOIN my_sources mine ON mine.sourceChannelId = link.source_channel_id
+    )
+    SELECT DISTINCT member.user_id AS userId
+    FROM audience_vaults audience
+    JOIN vault_members member ON member.vault_id = audience.vaultId
+    UNION SELECT ? AS userId
+  `).all(userId, userId, userId) as Array<{ userId: number }>;
+  for (const recipient of audience) {
+    vaultNamespace.to(`user:${recipient.userId}`).emit('vault:userProfileUpdated', profile);
+  }
+}
+
 setNoteMutationSink((database, noteId, actorUserId) => {
   recordCommunityNoteChange(database, noteId, actorUserId);
   const note = database.prepare('SELECT vault_id AS vaultId FROM notes WHERE id = ?')
@@ -1001,6 +1032,7 @@ function reannouncePendingMissionDispatches() {
 }
 
 function emitChatMessageDeleted(sourceVaultId: string, sourceChannelId: string, messageId: string) {
+  emitCommunityChangedForChannel(sourceVaultId, sourceChannelId);
   for (const route of listChatChannelRoutes(db, sourceVaultId, sourceChannelId)) {
     emitVaultEvent(route.localVaultId, 'vault:chatMessageDeleted', {
       vaultId: route.localVaultId,
@@ -1446,7 +1478,7 @@ app.put('/api/me/profile', requireAuth, requireUserAccess, (req: AuthedRequest, 
     .run(displayName, avatarUrl, req.user!.id);
   const updated = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user!.id) as User;
   const profile = publicUser(updated);
-  vaultNamespace.emit('vault:userProfileUpdated', profile);
+  emitUserProfileUpdated(req.user!.id, profile);
   res.json({ user: profile });
 });
 
