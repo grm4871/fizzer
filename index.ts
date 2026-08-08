@@ -58,6 +58,25 @@ import {
   type VaultRole,
 } from './server/vaultMembers.js';
 import {
+  ensurePublicVaultSchema,
+  getVaultVisibility,
+  joinPublicVault,
+  listPublicVaults,
+  setVaultVisibility,
+} from './server/publicVaults.js';
+import {
+  allowsDirectMessages,
+  blockUser,
+  ensureDirectMessageSchema,
+  findDirectMessageVaultId,
+  listBlockedUsers,
+  listDirectMessages,
+  openDirectMessage,
+  resolveUserByUsername,
+  setAllowDirectMessages,
+  unblockUser,
+} from './server/directMessages.js';
+import {
   acquireWorkItemLease,
   addWorkItemTokenUsage,
   bindWorkItemWorkspace,
@@ -474,6 +493,8 @@ ensureChatSchema(db);
 ensureChatDispatchSchema(db);
 ensureChatMissionSchema(db);
 ensureVaultMembersSchema(db);
+ensurePublicVaultSchema(db);
+ensureDirectMessageSchema(db);
 ensureManagedAgentSchema(db);
 // Hard boundary: rehome any vaults still sharing an on-disk root (legacy leak path).
 try {
@@ -1538,6 +1559,53 @@ app.post('/api/vault-invites/:token/accept', requireAuth, (req: AuthedRequest, r
     res.status(201).json({ vaultId: vault.id, name: vault.name, role: invite.role });
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : 'Could not accept invite' });
+  }
+});
+
+// ── Public vaults ──────────────────────────────────────────────────
+// Visibility is owner-only; browse and join are open to any signed-in user.
+
+app.get('/api/vaults/:id/visibility', requireAuth, (req: AuthedRequest, res) => {
+  const vault = getVault(db, req.params.id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Vault not found' });
+  const settings = getVaultVisibility(db, vault.id);
+  if (!settings) return res.status(404).json({ error: 'Vault not found' });
+  res.json({ ...settings, role: getVaultRole(db, vault.id, req.user!.id) });
+});
+
+app.put('/api/vaults/:id/visibility', requireAuth, requireUserAccess, (req: AuthedRequest, res) => {
+  const vault = getVault(db, req.params.id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Vault not found' });
+  try {
+    const settings = setVaultVisibility(db, vault.id, req.user!.id, {
+      visibility: req.body?.visibility,
+      joinRole: req.body?.joinRole,
+    });
+    emitVaultEvent(vault.id, 'vault:visibilityChanged', { vaultId: vault.id, ...settings });
+    res.json(settings);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Could not update visibility';
+    res.status(message.startsWith('Only the vault owner') ? 403 : 400).json({ error: message });
+  }
+});
+
+app.get('/api/public-vaults', requireAuth, (req: AuthedRequest, res) => {
+  const vaults = listPublicVaults(db, {
+    userId: req.user!.id,
+    query: typeof req.query.q === 'string' ? req.query.q : '',
+    limit: Number(req.query.limit) || undefined,
+    offset: Number(req.query.offset) || undefined,
+  });
+  res.json({ vaults });
+});
+
+app.post('/api/public-vaults/:id/join', requireAuth, requireUserAccess, (req: AuthedRequest, res) => {
+  try {
+    const result = joinPublicVault(db, req.params.id, req.user!.id);
+    res.status(result.alreadyMember ? 200 : 201).json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Could not join vault';
+    res.status(message === 'Vault not found' ? 404 : 400).json({ error: message });
   }
 });
 
@@ -3840,6 +3908,82 @@ app.post('/api/chat-invites/:token/accept', requireAuth, (req: AuthedRequest, re
     res.status(201).json({ vaultId: linked.vaultId, channelId: linked.channelId, title: linked.title, created: linked.created });
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : 'Could not accept invite' });
+  }
+});
+
+// ── Direct messages, blocks, and DM privacy ────────────────────────
+// A DM is a linked chat channel between exactly two accounts; see
+// server/directMessages.ts for the reachability rules enforced here.
+
+const directMessageDeps = {
+  // Never the generic "first owned vault": that one may be public or shared,
+  // which would hand the conversation to everyone in it.
+  homeVaultId: (userId: number): string => (
+    findDirectMessageVaultId(db, userId) ?? createVault(db, userId, { name: 'Direct Messages' }).id
+  ),
+  onChannelCreated: (input: { vaultId: string; channelId: string; title: string }) => {
+    emitVaultEvent(input.vaultId, 'vault:noteCreated', {
+      noteId: input.channelId,
+      vaultId: input.vaultId,
+      title: input.title,
+    });
+  },
+};
+
+app.get('/api/me/dm-settings', requireAuth, (req: AuthedRequest, res) => {
+  res.json({ allowDirectMessages: allowsDirectMessages(db, req.user!.id) });
+});
+
+app.put('/api/me/dm-settings', requireAuth, requireUserAccess, (req: AuthedRequest, res) => {
+  if (typeof req.body?.allowDirectMessages !== 'boolean') {
+    return res.status(400).json({ error: 'allowDirectMessages must be a boolean' });
+  }
+  const allowDirectMessages = setAllowDirectMessages(db, req.user!.id, req.body.allowDirectMessages);
+  res.json({ allowDirectMessages });
+});
+
+app.get('/api/me/blocks', requireAuth, (req: AuthedRequest, res) => {
+  res.json({ blocks: listBlockedUsers(db, req.user!.id) });
+});
+
+app.post('/api/me/blocks', requireAuth, requireUserAccess, (req: AuthedRequest, res) => {
+  try {
+    const target = resolveUserByUsername(db, req.body?.username);
+    const block = blockUser(db, req.user!.id, target.id);
+    res.status(201).json({ block });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Could not block user';
+    res.status(message === 'User not found' ? 404 : 400).json({ error: message });
+  }
+});
+
+app.delete('/api/me/blocks/:username', requireAuth, requireUserAccess, (req: AuthedRequest, res) => {
+  try {
+    const target = resolveUserByUsername(db, req.params.username);
+    unblockUser(db, req.user!.id, target.id);
+    res.json({ ok: true });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Could not unblock user';
+    res.status(message === 'User not found' ? 404 : 400).json({ error: message });
+  }
+});
+
+app.get('/api/me/direct-messages', requireAuth, (req: AuthedRequest, res) => {
+  res.json({ conversations: listDirectMessages(db, req.user!.id) });
+});
+
+app.post('/api/direct-messages', requireAuth, requireUserAccess, (req: AuthedRequest, res) => {
+  try {
+    const result = openDirectMessage(db, req.user!.id, req.body?.username, directMessageDeps);
+    res.status(result.created ? 201 : 200).json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Could not open direct message';
+    if (message === 'User not found') return res.status(404).json({ error: message });
+    // Blocked or DMs switched off — a refusal, not a malformed request.
+    if (message.startsWith('Unblock @') || message === 'This user is not accepting direct messages') {
+      return res.status(403).json({ error: message });
+    }
+    res.status(400).json({ error: message });
   }
 });
 
