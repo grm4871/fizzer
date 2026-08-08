@@ -5,12 +5,10 @@ Cascade beta. It is intentionally a product boundary, not a roadmap.
 
 ## Friend journey
 
-1. The first account can bootstrap a new installation. Afterwards,
-   registration requires a valid chat invite unless the operator explicitly
-   sets `CASCADE_ALLOW_OPEN_REGISTRATION`.
+1. Anyone can create an account directly from the login screen.
 2. A chat owner creates a copyable `/invite/<token>` link. A new person can
-   create an account on that link, then Cascade adds the chat to a vault owned
-   by that person.
+   create an account there or sign in, then Cascade adds the chat to a vault
+   owned by that person.
 3. The invite shares that chat, not the owner's vault. The recipient cannot
    browse the source vault or change the owner's execution directory. A
    recipient can post to the linked chat as themselves.
@@ -54,8 +52,8 @@ user-visible billing contract.
 
 ## Evidence that protects this contract
 
-- `npm run test:account` covers bootstrap closure, invite-based friend
-  registration, linked-chat isolation, and participant permissions.
+- `npm run test:account` covers open registration, invite acceptance,
+  linked-chat isolation, and participant permissions.
 - `npm run test:desktop-runner` covers desktop-only delegation, ownership,
   reconnect/reclaim, and visible failure when no desktop runner is connected.
 - `npm run verify:account-ui` checks the browser-only handoff link in the

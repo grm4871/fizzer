@@ -1275,18 +1275,6 @@ const authRateLimit = rateLimit({ windowMs: 15 * 60 * 1000, max: 30 });
 app.post('/api/auth/register', authRateLimit, async (req, res) => {
   const username = String(req.body.username || '').trim().toLowerCase();
   const password = String(req.body.password || '');
-  const inviteToken = String(req.body.inviteToken || '').trim();
-
-  const userCount = (db.prepare('SELECT COUNT(*) AS count FROM users').get() as { count: number }).count;
-  const openRegistration = /^(1|true|yes|on)$/i.test(process.env.CASCADE_ALLOW_OPEN_REGISTRATION || '');
-  if (userCount > 0 && !openRegistration) {
-    if (!inviteToken) return res.status(403).json({ error: 'An invite link is required to create an account' });
-    try {
-      verifyChatInvite(inviteToken);
-    } catch {
-      return res.status(403).json({ error: 'This invite link is invalid or expired' });
-    }
-  }
 
   if (!/^[a-z0-9_]{3,32}$/.test(username)) {
     return res.status(400).json({ error: 'Username must be 3-32 lowercase letters, numbers, or underscores' });

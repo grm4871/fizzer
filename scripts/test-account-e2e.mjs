@@ -65,9 +65,8 @@ try {
   const ownerName = `owner_${stamp}`;
   const guestName = `guest_${stamp}`;
   const owner = await register(ownerName);
-  check('registration closes after the bootstrap account', (await request('/api/auth/register', {
-    method: 'POST', body: JSON.stringify({ username: `uninvited_${stamp}`, password: 'testpass12345' }),
-  })).status === 403);
+  const uninvited = await register(`uninvited_${stamp}`);
+  check('registration remains open after the bootstrap account', uninvited.user.username === `uninvited_${stamp}`);
 
   const avatarUrl = 'data:image/png;base64,iVBORw0KGgo=';
   const profile = await must('/api/me/profile', {
@@ -96,8 +95,8 @@ try {
   const embeds = await must(`/api/vaults/${vault.id}/channels/${channel.id}/messages/${ownerMessage.message.id}/embeds`, { headers: owner.auth });
   check('chat embeds snapshot aliased note targets', embeds.notes?.length === 1 && embeds.notes[0].title === 'Release plan' && embeds.notes[0].content.includes('shared vault'));
   const { token: invite } = await must(`/api/vaults/${vault.id}/channels/${channel.id}/invite-link`, { method: 'POST', headers: owner.auth });
-  const guest = await register(guestName, invite);
-  check('invite token permits a new friend to register', guest.user.username === guestName);
+  const guest = await register(guestName);
+  check('a new friend can register before accepting an invite', guest.user.username === guestName);
   check('another account cannot rename a private folder', (await request(`/api/folders/${folder.id}`, { method: 'PATCH', headers: guest.auth, body: JSON.stringify({ name: 'stolen' }) })).status === 404);
   check('another account cannot delete a private folder', (await request(`/api/folders/${folder.id}`, { method: 'DELETE', headers: guest.auth })).status === 404);
   const linked = await must(`/api/chat-invites/${encodeURIComponent(invite)}/accept`, { method: 'POST', headers: guest.auth });
