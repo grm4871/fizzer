@@ -28,6 +28,8 @@ import {
   ensureChatMissionSchema,
   finishChatMission,
   getMissionTaskWorkItemId,
+  listChatMissionEvents,
+  listChatMissions,
   listSchedulableMissionTasks,
   linkMissionTaskDispatch,
   settleMissionTaskForRun,
@@ -189,7 +191,7 @@ test('anonymous subagents can fan out in parallel, including self-clones', () =>
   }
 });
 
-test('scheduler blocks multi-hop descendants of failed dependencies and wakes review', () => {
+test('scheduler keeps descendants pending across a retryable failure and wakes review', () => {
   const { db, coordinator, worker } = setup();
   try {
     const root = createChatMessage(db, 1, 'vault-1', 'channel-1', {
@@ -213,13 +215,57 @@ test('scheduler blocks multi-hop descendants of failed dependencies and wakes re
     updateChatMissionTask(db, 1, 'channel-1', parent.task.id, { status: 'failed', summary: 'Nope.' });
     const result = listSchedulableMissionTasks(db, mission.mission.id);
     assert.deepEqual(result.candidates, []);
-    const blocked = result.updates[0]?.mission.tasks.find((task) => task.id === child.task.id);
-    assert.equal(blocked?.status, 'blocked');
-    assert.match(blocked?.summary || '', /Dependency/);
-    const blockedGrandchild = result.updates[0]?.mission.tasks.find((task) => task.id === grandchild.task.id);
-    assert.equal(blockedGrandchild?.status, 'blocked');
+    const paused = getChatMessage(db, 'channel-1', 1, root.id)?.mission;
+    assert.equal(paused?.status, 'attention');
+    assert.equal(paused?.tasks.find((task) => task.id === child.task.id)?.status, 'pending');
+    assert.equal(paused?.tasks.find((task) => task.id === child.task.id)?.queueReason, 'dependency-attention');
+    assert.equal(paused?.tasks.find((task) => task.id === grandchild.task.id)?.status, 'pending');
+    assert.equal(paused?.tasks.find((task) => task.id === grandchild.task.id)?.queueReason, 'dependency-attention');
     assert.ok(claimMissionCoordinatorWake(db, mission.mission.id));
     assert.equal(claimMissionCoordinatorWake(db, mission.mission.id), null);
+
+    const retried = updateChatMissionTask(db, 1, 'channel-1', parent.task.id, {
+      status: 'pending', summary: 'Retry after transient failure.',
+    });
+    assert.equal(retried.mission.status, 'active');
+    assert.equal(retried.mission.tasks.find((task) => task.id === parent.task.id)?.attempt, 1);
+    const retryQueue = listSchedulableMissionTasks(db, mission.mission.id);
+    assert.deepEqual(retryQueue.candidates.map((task) => task.taskId), [parent.task.id]);
+    assert.equal(retryQueue.candidates[0]?.attempt, 1);
+    const events = listChatMissionEvents(db, 1, 'channel-1', mission.mission.id);
+    assert.ok(events.some((event) => event.kind === 'task_retried' && event.taskId === parent.task.id));
+  } finally {
+    db.close();
+  }
+});
+
+test('schema upgrade repairs legacy dependency blocks and refreshes the transcript projection', () => {
+  const { db, coordinator, worker } = setup();
+  try {
+    const root = createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: 'legacy-block-root', channelId: 'channel-1', author: 'owner', body: 'Continue after failure.',
+      createdAt: '2026-08-03T00:00:00.000Z',
+    });
+    const mission = createChatMission(db, 1, 'vault-1', 'channel-1', {
+      rootMessageId: root.id, coordinatorRegistrationId: coordinator.id, title: 'Legacy blocked graph',
+    });
+    const parent = addChatMissionTask(db, 1, 'channel-1', mission.mission.id, {
+      coordinatorRegistrationId: coordinator.id, title: 'Failed parent', assignee: worker.id,
+    });
+    const child = addChatMissionTask(db, 1, 'channel-1', mission.mission.id, {
+      coordinatorRegistrationId: coordinator.id, title: 'Legacy child', assignee: worker.id,
+      dependsOn: [parent.task.id],
+    });
+    db.prepare("UPDATE chat_mission_tasks SET status = 'failed' WHERE id = ?").run(parent.task.id);
+    db.prepare("UPDATE chat_mission_tasks SET status = 'blocked', summary = 'Dependency “Failed parent” ended failed.' WHERE id = ?")
+      .run(child.task.id);
+    db.prepare("UPDATE chat_missions SET status = 'blocked' WHERE id = ?").run(mission.mission.id);
+
+    ensureChatMissionSchema(db);
+    const repaired = getChatMessage(db, 'channel-1', 1, root.id)?.mission;
+    assert.equal(repaired?.status, 'attention');
+    assert.equal(repaired?.tasks.find((task) => task.id === child.task.id)?.status, 'pending');
+    assert.equal(repaired?.tasks.find((task) => task.id === child.task.id)?.queueReason, 'dependency-attention');
   } finally {
     db.close();
   }
@@ -639,7 +685,7 @@ test('an explicit blocked report survives a nominally successful worker exit', (
       status: 'blocked', summary: 'Needs production credentials.',
     });
     const settled = settleMissionTaskForRun(db, 99, 'completed', 'Done.');
-    assert.equal(settled?.update.mission.status, 'blocked');
+    assert.equal(settled?.update.mission.status, 'attention');
     assert.equal(settled?.update.mission.tasks[0]?.summary, 'Needs production credentials.');
   } finally {
     db.close();
@@ -674,6 +720,48 @@ test('mission and delegation retries are idempotent', () => {
   }
 });
 
+test('mission archive and append-only timeline survive completion', () => {
+  const { db, coordinator, worker } = setup();
+  try {
+    createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: 'history-root', channelId: 'channel-1', author: 'owner', body: 'Keep the evidence.',
+      createdAt: '2026-08-03T00:00:00.000Z',
+    });
+    const mission = createChatMission(db, 1, 'vault-1', 'channel-1', {
+      rootMessageId: 'history-root', coordinatorRegistrationId: coordinator.id, title: 'Durable history',
+    });
+    const task = addChatMissionTask(db, 1, 'channel-1', mission.mission.id, {
+      coordinatorRegistrationId: coordinator.id, title: 'Record outcome', assignee: worker.id,
+      prompt: 'Produce lasting evidence.',
+    });
+    updateChatMissionTask(db, 1, 'channel-1', task.task.id, {
+      status: 'completed', summary: 'Evidence recorded.',
+    });
+    finishChatMission(db, 1, 'channel-1', mission.mission.id, {
+      coordinatorRegistrationId: coordinator.id, status: 'completed', summary: 'Integrated.',
+    });
+
+    const archive = listChatMissions(db, 1, 'channel-1');
+    assert.equal(archive[0]?.id, mission.mission.id);
+    assert.equal(archive[0]?.rootMessageId, 'history-root');
+    assert.equal(archive[0]?.status, 'completed');
+    const events = listChatMissionEvents(db, 1, 'channel-1', mission.mission.id);
+    assert.deepEqual(events.map((event) => event.kind), [
+      'mission_created',
+      'task_added',
+      'task_status_changed',
+      'mission_status_changed',
+      'mission_completed',
+    ]);
+    assert.ok(events.every((event, index) => index === 0 || event.id > events[index - 1]!.id));
+    assert.equal(events.find((event) => event.kind === 'task_status_changed')?.summary, 'Evidence recorded.');
+    ensureChatMissionSchema(db);
+    assert.equal(listChatMissionEvents(db, 1, 'channel-1', mission.mission.id).length, events.length);
+  } finally {
+    db.close();
+  }
+});
+
 test('the coordinator wakes only after every worker has settled', () => {
   const { db, coordinator, worker } = setup();
   try {
@@ -703,7 +791,7 @@ test('the coordinator wakes only after every worker has settled', () => {
     assert.equal(first?.update.mission.status, 'active');
     assert.equal(first?.wake, null);
     const second = settleMissionTaskForRun(db, 201, 'failed', 'Second failed.');
-    assert.equal(second?.update.mission.status, 'blocked');
+    assert.equal(second?.update.mission.status, 'attention');
     assert.equal(second?.wake?.coordinatorRegistrationId, coordinator.id);
   } finally {
     db.close();

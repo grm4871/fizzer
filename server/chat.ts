@@ -173,7 +173,9 @@ export type ChatMissionTask = {
   reasoningEffort: string;
   /** Parallel clone of a channel agent; not a second named member. */
   anonymous: boolean;
-  queueReason: 'dependency' | 'agent-busy' | 'queued' | '';
+  queueReason: 'dependency' | 'dependency-attention' | 'agent-busy' | 'queued' | '';
+  /** Zero-based dispatch attempt; retries keep the same durable task id. */
+  attempt: number;
   runId?: number;
   /** Durable work-item twin (workspace / lease / PR). */
   workItemId?: string;
@@ -192,10 +194,11 @@ export type ChatMissionTask = {
   updatedAt: string;
 };
 
-export type ChatMissionStatus = 'active' | 'reviewing' | 'blocked' | 'completed' | 'canceled';
+export type ChatMissionStatus = 'active' | 'reviewing' | 'attention' | 'blocked' | 'completed' | 'canceled';
 
 export type ChatMission = {
   id: string;
+  rootMessageId: string;
   title: string;
   objective: string;
   status: ChatMissionStatus;

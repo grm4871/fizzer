@@ -88,6 +88,9 @@ cascade-chat mission start --title "..." --objective "..."
 cascade-chat mission delegate --mission <id> --to @agent --task "..." --message "..."
 cascade-chat mission delegate --mission <id> --to @agent --anonymous --effort high --task "..." --message "..."
 cascade-chat mission status --mission <id>
+cascade-chat mission list
+cascade-chat mission history --mission <id>
+cascade-chat mission retry --task <id> --summary "..."
 cascade-chat mission finish --mission <id> --summary "..."
 ```
 
@@ -96,13 +99,16 @@ Named assignees still get at most one active mission task at a time.
 extra channel membership) so a coordinator can fan out several sols at
 different effort levels without registering duplicate members.
 
-`chat_missions` and `chat_mission_tasks` are authoritative. A compact mission
+`chat_missions` and `chat_mission_tasks` are authoritative, while
+`chat_mission_events` is an append-only timeline with no retention window. A compact mission
 projection is materialized on the root chat message so it arrives in the normal
 transcript, Socket.IO updates, linked multiplayer channels, and reloads without
-a second client-owned task store. Worker terminal events update their task. The
-coordinator wakes once after all workers settle, reviews and integrates their
-evidence, and explicitly finishes the mission; worker completion alone puts a
-mission in `reviewing`, not `completed`.
+a second client-owned task store. Worker terminal events update their task. A
+failed or blocked task puts the still-open mission in `attention`; dependent
+tasks remain pending instead of being permanently blocked, and retrying keeps
+the task identity, workspace, and evidence. The coordinator reviews and
+integrates worker evidence, then explicitly finishes the mission; worker
+completion alone puts a mission in `reviewing`, not `completed`.
 
 Chat-to-agent intent is also an outbox (`chat_agent_dispatches`). Message and
 target survive renderer reloads and reconnects, and a unique run key ensures

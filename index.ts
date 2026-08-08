@@ -234,6 +234,8 @@ import {
   getChatMission,
   getMissionTaskWorkItemId,
   linkMissionTaskDispatch,
+  listChatMissionEvents,
+  listChatMissions,
   listSchedulableMissionTasks,
   missionRootMessage,
   refreshMissionProjection,
@@ -967,7 +969,9 @@ function scheduleMissionWork(missionId?: string) {
     }> = [];
     for (const candidate of scheduled.candidates) {
       const message = createChatMessage(db, candidate.createdBy, candidate.vaultId, candidate.channelId, {
-        id: `mission-task-${candidate.taskId}`,
+        id: candidate.attempt > 0
+          ? `mission-task-${candidate.taskId}-${candidate.attempt}`
+          : `mission-task-${candidate.taskId}`,
         channelId: candidate.channelId,
         author: '',
         body: `@${listChatAgentMembers(db, candidate.channelId, candidate.createdBy)
@@ -1113,8 +1117,11 @@ function enqueueMissionCoordinatorWake(wake: MissionWake) {
     `- ${task.title} — @${task.assigneeMention || task.assignee}: ${task.status}`
       + (task.summary ? ` — ${task.summary.slice(0, 600)}` : '')
   ));
+  const reviewState = wake.mission.status === 'attention'
+    ? 'one or more tasks need attention; the mission remains open'
+    : wake.mission.status;
   const body = [
-    `@${wake.mission.coordinatorMention} Mission ${wake.mission.id} (“${wake.mission.title}”) is ready for your review (${wake.mission.status}).`,
+    `@${wake.mission.coordinatorMention} Mission ${wake.mission.id} (“${wake.mission.title}”) is ready for your review (${reviewState}).`,
     ...taskLines,
     '',
     'Review the evidence, resolve or explain failures, perform any integration and verification still needed, then reply to the user with the outcome. Keep the mission state accurate.',
@@ -3576,6 +3583,34 @@ app.post('/api/vaults/:vaultId/channels/:channelId/missions', requireAuth, (req:
     res.status(201).json({ mission: update.mission });
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : 'Could not create mission' });
+  }
+});
+
+app.get('/api/vaults/:vaultId/channels/:channelId/missions', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const missions = listChatMissions(
+      db,
+      req.user!.id,
+      req.params.channelId,
+      typeof req.query.coordinator === 'string' ? req.query.coordinator : undefined,
+    );
+    res.json({ missions });
+  } catch (error) {
+    res.status(404).json({ error: error instanceof Error ? error.message : 'Missions not found' });
+  }
+});
+
+app.get('/api/vaults/:vaultId/channels/:channelId/missions/:missionId/history', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const events = listChatMissionEvents(
+      db,
+      req.user!.id,
+      req.params.channelId,
+      req.params.missionId,
+    );
+    res.json({ events });
+  } catch (error) {
+    res.status(404).json({ error: error instanceof Error ? error.message : 'Mission history not found' });
   }
 });
 

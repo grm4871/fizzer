@@ -250,6 +250,22 @@ try {
   check('mission exposes worker model and adaptive effort', (
     (await card.innerText()).includes('gpt-5.6-terra') && (await card.innerText()).includes('high effort')
   ));
+  await card.getByRole('button', { name: 'Timeline' }).click();
+  await card.locator('.chat-mission-event').first().waitFor({ timeout: 10_000 });
+  check('mission timeline loads durable state history', (
+    (await card.locator('.chat-mission-timeline').innerText()).includes('Mission opened')
+      && (await card.locator('.chat-mission-timeline').innerText()).includes('Task added')
+  ));
+  await page.getByRole('button', { name: 'Open mission history' }).click();
+  const archive = page.getByRole('dialog', { name: 'Mission history' });
+  await archive.waitFor({ timeout: 10_000 });
+  const archivedCard = archive.locator('.chat-mission-card', { hasText: 'Chat-first orchestration' });
+  await archivedCard.waitFor({ timeout: 10_000 });
+  check('channel mission archive exposes work beyond the message window', (
+    await archivedCard.count()
+  ) === 1);
+  await archive.getByRole('button', { name: 'Close mission history' }).click();
+  await archive.waitFor({ state: 'detached', timeout: 5_000 });
 
   // Compact lines are intentionally not mounted until the trace opens, so
   // select this fixture by its visible system author rather than :has().

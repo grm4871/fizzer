@@ -175,7 +175,8 @@ test('mission and durable dispatch tables initialize idempotently on an upgraded
     assert.ok(columns(db, 'chat_mission_tasks').includes('priority'));
     assert.ok(columns(db, 'chat_mission_tasks').includes('reasoning_effort'));
     assert.ok(columns(db, 'chat_mission_tasks').includes('work_item_id'));
-    assert.ok(columns(db, 'chat_mission_tasks').includes('work_item_id'));
+    assert.ok(columns(db, 'chat_mission_tasks').includes('attempt'));
+    assert.ok(columns(db, 'chat_mission_events').includes('source_key'));
     assert.ok(columns(db, 'work_items').includes('source_kind'));
     assert.ok(columns(db, 'chat_agent_dispatches').includes('run_id'));
     assert.ok(columns(db, 'chat_agent_dispatches').includes('reasoning_effort'));

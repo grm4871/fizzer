@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { Bot, ChevronRight, ClipboardList, Copy, Flag, Forward, Hash, ImagePlus, Paperclip, Reply, Send, Trash2, X } from 'lucide-react';
+import { Bot, ChevronRight, ClipboardList, Copy, Flag, Forward, Hash, History, ImagePlus, Paperclip, Reply, Send, Trash2, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
@@ -149,7 +149,8 @@ export interface ChatMissionTask {
   priority: number;
   reasoningEffort: string;
   anonymous?: boolean;
-  queueReason: 'dependency' | 'agent-busy' | 'queued' | '';
+  queueReason: 'dependency' | 'dependency-attention' | 'agent-busy' | 'queued' | '';
+  attempt: number;
   runId?: number;
   /** Durable work-item twin (workspace / lease / PR). */
   workItemId?: string;
@@ -170,15 +171,30 @@ export interface ChatMissionTask {
 
 export interface ChatMission {
   id: string;
+  rootMessageId: string;
   title: string;
   objective: string;
-  status: 'active' | 'reviewing' | 'blocked' | 'completed' | 'canceled';
+  status: 'active' | 'reviewing' | 'attention' | 'blocked' | 'completed' | 'canceled';
   coordinator: string;
   coordinatorMention: string;
   tasks: ChatMissionTask[];
   summary: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface ChatMissionEvent {
+  id: number;
+  missionId: string;
+  taskId?: string;
+  kind: string;
+  title: string;
+  fromStatus: string;
+  toStatus: string;
+  summary: string;
+  runId?: number;
+  attempt: number;
+  createdAt: string;
 }
 
 /** Desktop runner health from GET /api/me/desktop-runner */
@@ -1522,16 +1538,49 @@ function missionTaskChangeChips(task: ChatMissionTask, fileCount?: number): Arra
   return chips;
 }
 
-function ChatMissionCard({ mission }: { mission: ChatMission }) {
-  const [open, setOpen] = useState(mission.status === 'blocked');
+function missionEventLabel(event: ChatMissionEvent) {
+  if (event.kind === 'mission_created') return 'Mission opened';
+  if (event.kind === 'task_added') return 'Task added';
+  if (event.kind === 'task_dispatched') return 'Task dispatched';
+  if (event.kind === 'task_started') return 'Task started';
+  if (event.kind === 'task_retried') return 'Task retried';
+  if (event.kind === 'mission_completed') return 'Mission completed';
+  if (event.kind === 'mission_canceled') return 'Mission canceled';
+  if (event.fromStatus && event.toStatus && event.fromStatus !== event.toStatus) {
+    return `${event.fromStatus} → ${event.toStatus}`;
+  }
+  return event.toStatus || event.kind.replace(/_/g, ' ');
+}
+
+function ChatMissionCard({
+  mission,
+  vaultId,
+  channelId,
+}: {
+  mission: ChatMission;
+  vaultId?: string;
+  channelId?: string;
+}) {
+  const needsAttention = mission.status === 'attention' || mission.status === 'blocked';
+  const [open, setOpen] = useState(needsAttention);
+  const [timelineOpen, setTimelineOpen] = useState(false);
+  const [events, setEvents] = useState<ChatMissionEvent[] | null>(null);
+  const [historyError, setHistoryError] = useState('');
   const [fileCounts, setFileCounts] = useState<ReadonlyMap<string, number>>(() => new Map());
   const bridge = useMemo(workspaceBridge, []);
   useEffect(() => {
-    if (mission.status === 'blocked') setOpen(true);
+    if (mission.status === 'attention' || mission.status === 'blocked') setOpen(true);
   }, [mission.status]);
   useEffect(() => {
+    setEvents(null);
+    setTimelineOpen(false);
+    setHistoryError('');
+  }, [mission.id]);
+  useEffect(() => {
     if (!open || !bridge) return;
-    const paths = [...new Set(mission.tasks.map((task) => task.worktreePath).filter(Boolean))];
+    const paths = [...new Set(mission.tasks
+      .map((task) => task.worktreePath)
+      .filter((path): path is string => Boolean(path)))];
     if (!paths.length) return;
     let cancelled = false;
     void Promise.all(paths.map(async (path) => {
@@ -1554,8 +1603,22 @@ function ChatMissionCard({ mission }: { mission: ChatMission }) {
   const total = mission.tasks.length;
   const statusLabel = mission.status === 'active'
     ? (total ? `${done}/${total} tasks` : 'planning')
-    : mission.status;
+    : needsAttention ? 'needs review' : mission.status;
   const lead = mission.coordinatorMention || mission.coordinator;
+  async function toggleTimeline() {
+    const next = !timelineOpen;
+    setTimelineOpen(next);
+    if (!next || events || !vaultId || !channelId) return;
+    setHistoryError('');
+    try {
+      const result = await api<{ events: ChatMissionEvent[] }>(
+        `/api/vaults/${vaultId}/channels/${channelId}/missions/${mission.id}/history`,
+      );
+      setEvents(result.events || []);
+    } catch (error) {
+      setHistoryError(error instanceof Error ? error.message : 'Could not load mission history');
+    }
+  }
   return (
     <details
       className={`chat-mission-card is-${mission.status}`}
@@ -1588,7 +1651,9 @@ function ChatMissionCard({ mission }: { mission: ChatMission }) {
                   <span>
                     @{task.assigneeMention || task.assignee} · {task.status}
                     {task.anonymous ? ' · subagent' : ''}
+                    {task.attempt > 0 ? ` · attempt ${task.attempt + 1}` : ''}
                     {task.queueReason === 'dependency' ? ` · waiting for ${task.waitingFor.length}` : ''}
+                    {task.queueReason === 'dependency-attention' ? ' · waiting on review' : ''}
                     {task.queueReason === 'agent-busy' ? ' · agent busy' : ''}
                     {task.queueReason === 'queued' ? ' · queued' : ''}
                     {task.assigneeModel ? ` · ${task.assigneeModel}` : ''}
@@ -1621,6 +1686,33 @@ function ChatMissionCard({ mission }: { mission: ChatMission }) {
           <span className="chat-mission-empty">@{lead || mission.coordinator} is deciding how to handle this.</span>
         )}
         {mission.summary && <div className="chat-mission-summary">{mission.summary}</div>}
+        {vaultId && channelId && (
+          <div className="chat-mission-history">
+            <button type="button" onClick={() => void toggleTimeline()}>
+              <History size={12} />
+              {timelineOpen ? 'Hide timeline' : 'Timeline'}
+            </button>
+            {timelineOpen && (
+              <div className="chat-mission-timeline">
+                {events === null && !historyError && <span>Loading history…</span>}
+                {historyError && <span className="is-error">{historyError}</span>}
+                {events?.length === 0 && <span>No recorded events.</span>}
+                {events?.map((event) => (
+                  <div className="chat-mission-event" key={event.id}>
+                    <i aria-hidden="true" />
+                    <div>
+                      <strong>{missionEventLabel(event)}</strong>
+                      <time dateTime={event.createdAt}>{formatTime(event.createdAt)}</time>
+                      {event.title && event.title !== mission.title && <span>{event.title}</span>}
+                      {event.attempt > 0 && <span>Attempt {event.attempt + 1}</span>}
+                      {event.summary && <small>{event.summary}</small>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </details>
   );
@@ -1880,7 +1972,9 @@ const ChatGroupRow = memo(function ChatGroupRow({
                     && !isSteeringContinuationMessage(message)
                     && !(message.status === 'running' && /^Thinking(?:\.{3}|…)$/.test(message.body.trim()))
                     && <ChatMessageText messageId={message.id} body={message.body} streaming={message.status === 'running'} mentionableAliases={mentionableAliases} notes={notes} onOpenNote={onOpenNote} onOpenSharedNote={onOpenSharedNote} />}
-                  {message.mission && <ChatMissionCard mission={message.mission} />}
+                  {message.mission && (
+                    <ChatMissionCard mission={message.mission} vaultId={vaultId} channelId={message.channelId} />
+                  )}
                   {message.clarification && (
                     <ChatClarificationCard message={message} vaultId={vaultId} />
                   )}
@@ -2126,6 +2220,30 @@ export const ChatView = memo(function ChatView({
   const [mediaError, setMediaError] = useState('');
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const [sharedNote, setSharedNote] = useState<SharedChatNote | null>(null);
+  const [missionArchiveOpen, setMissionArchiveOpen] = useState(false);
+  const [missionArchive, setMissionArchive] = useState<ChatMission[]>([]);
+  const [missionArchiveBusy, setMissionArchiveBusy] = useState(false);
+  const [missionArchiveError, setMissionArchiveError] = useState('');
+  const loadMissionArchive = useCallback(async () => {
+    if (!vaultId) return;
+    setMissionArchiveBusy(true);
+    setMissionArchiveError('');
+    try {
+      const result = await api<{ missions: ChatMission[] }>(
+        `/api/vaults/${vaultId}/channels/${channelId}/missions`,
+      );
+      setMissionArchive(result.missions || []);
+    } catch (error) {
+      setMissionArchiveError(error instanceof Error ? error.message : 'Could not load missions');
+    } finally {
+      setMissionArchiveBusy(false);
+    }
+  }, [vaultId, channelId]);
+  useEffect(() => {
+    setMissionArchiveOpen(false);
+    setMissionArchive([]);
+    setMissionArchiveError('');
+  }, [channelId]);
   const messagesRef = useRef<HTMLDivElement | null>(null);
   /** Inner content wrapper — ResizeObserver watches height growth (harness, thinking). */
   const messagesContentRef = useRef<HTMLDivElement | null>(null);
@@ -3005,6 +3123,21 @@ export const ChatView = memo(function ChatView({
             <h2>{channelName}</h2>
             <span>{sortedMessages.length} messages</span>
           </div>
+          {vaultId && (
+            <button
+              type="button"
+              className="chat-mission-archive-button"
+              title="Mission history"
+              aria-label="Open mission history"
+              onClick={() => {
+                setMissionArchiveOpen(true);
+                void loadMissionArchive();
+              }}
+            >
+              <History size={15} />
+              <span>Missions</span>
+            </button>
+          )}
         </header>
 
         <div
@@ -3979,6 +4112,43 @@ export const ChatView = memo(function ChatView({
           </>
         )}
       </aside>
+
+      {missionArchiveOpen && (
+        <div
+          className="chat-mission-archive-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="chat-mission-archive-title"
+          onClick={() => setMissionArchiveOpen(false)}
+        >
+          <section className="chat-mission-archive" onClick={(event) => event.stopPropagation()}>
+            <header>
+              <div>
+                <strong id="chat-mission-archive-title">Mission history</strong>
+                <span>Durable work in #{channelName}</span>
+              </div>
+              <div>
+                <button type="button" disabled={missionArchiveBusy} onClick={() => void loadMissionArchive()}>
+                  Refresh
+                </button>
+                <button type="button" title="Close" aria-label="Close mission history" onClick={() => setMissionArchiveOpen(false)}>
+                  <X size={16} />
+                </button>
+              </div>
+            </header>
+            <div className="chat-mission-archive-list">
+              {missionArchiveBusy && missionArchive.length === 0 && <div className="chat-mission-archive-empty">Loading missions…</div>}
+              {missionArchiveError && <div className="chat-mission-archive-empty is-error">{missionArchiveError}</div>}
+              {!missionArchiveBusy && !missionArchiveError && missionArchive.length === 0 && (
+                <div className="chat-mission-archive-empty">No missions in this channel yet.</div>
+              )}
+              {missionArchive.map((mission) => (
+                <ChatMissionCard key={mission.id} mission={mission} vaultId={vaultId} channelId={channelId} />
+              ))}
+            </div>
+          </section>
+        </div>
+      )}
 
       {forwardSource && (
         <div

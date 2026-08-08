@@ -24,9 +24,12 @@ Usage:
   cascade-chat send --message <text>    send a standalone message to the channel
   cascade-chat members                  list people-callable agent teammates
   cascade-chat mission start --title T [--objective O]
+  cascade-chat mission list
   cascade-chat mission status [--mission <id|current>]
+  cascade-chat mission history --mission <id>
   cascade-chat mission delegate --mission <id> --to @agent --task T --message P [--after <task-id,...>] [--priority N] [--effort E] [--anonymous]
   cascade-chat mission update --task <id> --status <status> [--summary S]
+  cascade-chat mission retry --task <id> [--summary S]
   cascade-chat mission finish --mission <id> [--summary S]
   cascade-chat avatar --url <https-url> set this agent's profile picture
                         (also --avatar-url; --url here is the image, not API base)
@@ -516,6 +519,46 @@ async function main() {
       }
       return;
     }
+    if (sub === 'list') {
+      const coordinator = registrationId ? `?coordinator=${encodeURIComponent(registrationId)}` : '';
+      const result = await api(
+        url,
+        token,
+        'GET',
+        `/api/vaults/${vaultId}/channels/${channelId}/missions${coordinator}`,
+      );
+      if (args.json) process.stdout.write(JSON.stringify(result.missions || []) + '\n');
+      else {
+        const lines = (result.missions || []).map((mission) => (
+          `${mission.status.padEnd(10)}  ${mission.id}  ${mission.title}  · ${(mission.tasks || []).length} tasks`
+        ));
+        process.stdout.write((lines.join('\n') || '(no missions)') + '\n');
+      }
+      return;
+    }
+    if (sub === 'history') {
+      if (!missionRef || missionRef === 'current') {
+        fail('mission history needs --mission <id>.');
+      }
+      const result = await api(
+        url,
+        token,
+        'GET',
+        `/api/vaults/${vaultId}/channels/${channelId}/missions/${encodeURIComponent(missionRef)}/history`,
+      );
+      if (args.json) process.stdout.write(JSON.stringify(result.events || []) + '\n');
+      else {
+        const lines = (result.events || []).map((event) => {
+          const transition = event.fromStatus && event.toStatus
+            ? `${event.fromStatus} → ${event.toStatus}`
+            : event.toStatus || event.kind.replaceAll('_', ' ');
+          const attempt = event.attempt > 0 ? ` · attempt ${event.attempt + 1}` : '';
+          return `${event.createdAt}  ${transition}${attempt}  ${event.title || event.kind}${event.summary ? `\n    ${event.summary}` : ''}`;
+        });
+        process.stdout.write((lines.join('\n') || '(no mission events)') + '\n');
+      }
+      return;
+    }
     if (sub === 'delegate') {
       if (!registrationId) fail('mission delegate can only be used from a registered coordinator run.');
       const assignee = String(args.to || '').trim();
@@ -550,10 +593,10 @@ async function main() {
       }
       return;
     }
-    if (sub === 'update') {
+    if (sub === 'update' || sub === 'retry') {
       const taskId = String(args.task || args._[2] || '').trim();
-      const status = String(args.status || '').trim().toLowerCase();
-      if (!taskId) fail('mission update needs --task <id>.');
+      const status = sub === 'retry' ? 'pending' : String(args.status || '').trim().toLowerCase();
+      if (!taskId) fail(`mission ${sub} needs --task <id>.`);
       if (!['pending', 'running', 'completed', 'failed', 'blocked', 'canceled'].includes(status)) {
         fail('mission update needs --status pending|running|completed|failed|blocked|canceled.');
       }
@@ -565,7 +608,7 @@ async function main() {
         { status, summary: String(args.summary || '').trim() },
       );
       if (args.json) process.stdout.write(JSON.stringify(result.mission) + '\n');
-      else process.stdout.write(`task ${taskId} → ${status}\n`);
+      else process.stdout.write(sub === 'retry' ? `task ${taskId} queued for retry\n` : `task ${taskId} → ${status}\n`);
       return;
     }
     if (sub === 'finish' || sub === 'cancel') {
@@ -585,7 +628,7 @@ async function main() {
       else process.stdout.write(`mission ${result.mission.id} → ${result.mission.status}\n`);
       return;
     }
-    fail(`unknown mission command "${sub}". Use start|status|delegate|update|finish|cancel.`);
+    fail(`unknown mission command "${sub}". Use start|list|status|history|delegate|update|retry|finish|cancel.`);
   }
 
   if (cmd === 'avatar') {

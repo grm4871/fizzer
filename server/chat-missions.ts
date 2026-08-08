@@ -62,10 +62,39 @@ type TaskRow = {
   anonymous: number;
   dispatch_id: string | null;
   run_id: number | null;
+  attempt: number;
   /** Durable work-item twin — workspace/PR/lease live here. */
   work_item_id: string | null;
   created_at: string;
   updated_at: string;
+};
+
+type MissionEventRow = {
+  id: number;
+  mission_id: string;
+  task_id: string | null;
+  kind: string;
+  title: string;
+  from_status: string;
+  to_status: string;
+  summary: string;
+  run_id: number | null;
+  attempt: number;
+  created_at: string;
+};
+
+export type ChatMissionEvent = {
+  id: number;
+  missionId: string;
+  taskId?: string;
+  kind: string;
+  title: string;
+  fromStatus: string;
+  toStatus: string;
+  summary: string;
+  runId?: number;
+  attempt: number;
+  createdAt: string;
 };
 
 export type MissionProjectionUpdate = {
@@ -98,6 +127,7 @@ export type MissionTaskScheduleCandidate = {
   prompt: string;
   reasoningEffort: string;
   anonymous: boolean;
+  attempt: number;
 };
 
 export function ensureChatMissionSchema(db: Db): void {
@@ -135,6 +165,8 @@ export function ensureChatMissionSchema(db: Db): void {
       anonymous INTEGER NOT NULL DEFAULT 0,
       dispatch_id TEXT,
       run_id INTEGER,
+      attempt INTEGER NOT NULL DEFAULT 0,
+      work_item_id TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -144,6 +176,23 @@ export function ensureChatMissionSchema(db: Db): void {
       ON chat_mission_tasks(dispatch_id) WHERE dispatch_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS chat_mission_tasks_run_idx
       ON chat_mission_tasks(run_id) WHERE run_id IS NOT NULL;
+
+    CREATE TABLE IF NOT EXISTS chat_mission_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      mission_id TEXT NOT NULL REFERENCES chat_missions(id) ON DELETE CASCADE,
+      task_id TEXT,
+      kind TEXT NOT NULL,
+      title TEXT NOT NULL DEFAULT '',
+      from_status TEXT NOT NULL DEFAULT '',
+      to_status TEXT NOT NULL DEFAULT '',
+      summary TEXT NOT NULL DEFAULT '',
+      run_id INTEGER,
+      attempt INTEGER NOT NULL DEFAULT 0,
+      source_key TEXT UNIQUE,
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    );
+    CREATE INDEX IF NOT EXISTS chat_mission_events_mission_idx
+      ON chat_mission_events(mission_id, id);
   `);
   const taskColumns = db.prepare('PRAGMA table_info(chat_mission_tasks)').all() as Array<{ name: string }>;
   if (!taskColumns.some((column) => column.name === 'prompt')) {
@@ -164,6 +213,72 @@ export function ensureChatMissionSchema(db: Db): void {
   if (!taskColumns.some((column) => column.name === 'work_item_id')) {
     db.exec('ALTER TABLE chat_mission_tasks ADD COLUMN work_item_id TEXT');
   }
+  if (!taskColumns.some((column) => column.name === 'attempt')) {
+    db.exec('ALTER TABLE chat_mission_tasks ADD COLUMN attempt INTEGER NOT NULL DEFAULT 0');
+  }
+  // Older schedulers converted every downstream task into a terminal block.
+  // That made one retryable worker failure look like the whole mission ended
+  // and forced coordinators to rebuild the dependency graph. Restore only the
+  // unmistakable scheduler-generated rows; explicit worker blocks stay intact.
+  db.exec(`
+    UPDATE chat_mission_tasks
+    SET status = 'pending', summary = '', updated_at = datetime('now')
+    WHERE status = 'blocked'
+      AND dispatch_id IS NULL
+      AND run_id IS NULL
+      AND summary LIKE 'Dependency “%” ended %.'
+  `);
+  db.exec("UPDATE chat_missions SET status = 'attention' WHERE status = 'blocked'");
+
+  // Existing missions predate the append-only ledger. Preserve their durable
+  // snapshot without pretending we know transitions that were never recorded.
+  db.exec(`
+    INSERT OR IGNORE INTO chat_mission_events (
+      mission_id, kind, title, to_status, summary, attempt, created_at, source_key
+    )
+    SELECT id, 'mission_created', title, 'active', objective, 0, created_at,
+      'backfill:mission:' || id || ':created'
+    FROM chat_missions m
+    WHERE NOT EXISTS (
+      SELECT 1 FROM chat_mission_events e
+      WHERE e.mission_id = m.id AND e.kind = 'mission_created'
+    );
+
+    INSERT OR IGNORE INTO chat_mission_events (
+      mission_id, kind, title, to_status, summary, attempt, created_at, source_key
+    )
+    SELECT id, 'mission_snapshot', title, status, summary, 0, updated_at,
+      'backfill:mission:' || id || ':snapshot'
+    FROM chat_missions m
+    WHERE (status <> 'active' OR summary <> '' OR updated_at <> created_at)
+      AND EXISTS (
+        SELECT 1 FROM chat_mission_events e
+        WHERE e.source_key = 'backfill:mission:' || m.id || ':created'
+      );
+
+    INSERT OR IGNORE INTO chat_mission_events (
+      mission_id, task_id, kind, title, to_status, summary, attempt, created_at, source_key
+    )
+    SELECT mission_id, id, 'task_added', title, 'pending', prompt, attempt, created_at,
+      'backfill:task:' || id || ':created'
+    FROM chat_mission_tasks t
+    WHERE NOT EXISTS (
+      SELECT 1 FROM chat_mission_events e
+      WHERE e.task_id = t.id AND e.kind = 'task_added'
+    );
+
+    INSERT OR IGNORE INTO chat_mission_events (
+      mission_id, task_id, kind, title, to_status, summary, run_id, attempt, created_at, source_key
+    )
+    SELECT mission_id, id, 'task_snapshot', title, status, summary, run_id, attempt, updated_at,
+      'backfill:task:' || id || ':snapshot'
+    FROM chat_mission_tasks t
+    WHERE (status <> 'pending' OR summary <> '' OR run_id IS NOT NULL OR updated_at <> created_at)
+      AND EXISTS (
+        SELECT 1 FROM chat_mission_events e
+        WHERE e.source_key = 'backfill:task:' || t.id || ':created'
+      );
+  `);
   // Missions compile into work items; ensure the twin table exists on the same
   // upgrade path so projection can join without a separate migrate step.
   ensureWorkItemSchema(db);
@@ -185,6 +300,14 @@ export function ensureChatMissionSchema(db: Db): void {
         WHERE task.run_id = chat_messages.run_id
       )
   `);
+  // Re-project upgraded open missions immediately. The scheduler only emits
+  // state that changes after boot, so leaving this to its polling loop would
+  // keep legacy blocked descendants visible until someone opened the archive.
+  const openMissions = db.prepare(`
+    SELECT id FROM chat_missions
+    WHERE status IN ('active', 'reviewing', 'attention', 'blocked')
+  `).all() as Array<{ id: string }>;
+  for (const mission of openMissions) refreshMissionProjection(db, mission.id);
 }
 
 /** Map chat-mission task lifecycle onto the durable work-item status model. */
@@ -283,7 +406,7 @@ function syncWorkItemForMissionTask(
   userId: number,
   mission: MissionRow,
   task: TaskRow,
-  opts?: { runId?: number; lease?: boolean; release?: boolean },
+  opts?: { runId?: number; lease?: boolean; release?: boolean; reset?: boolean },
 ): void {
   let item: WorkItem;
   try {
@@ -303,7 +426,8 @@ function syncWorkItemForMissionTask(
     }
     updateWorkItem(db, userId, item.id, {
       status: nextStatus,
-      summary: task.summary || item.summary,
+      summary: opts?.reset ? '' : task.summary || item.summary,
+      ...(opts?.reset ? { verification: '', stopReason: '' } : {}),
       assigneeRegistrationId: task.assignee_registration_id,
     });
     if (opts?.release || ['done', 'canceled', 'blocked'].includes(nextStatus)) {
@@ -329,6 +453,65 @@ function taskDependencies(row: Pick<TaskRow, 'depends_on_json'>): string[] {
 
 function cleanText(value: unknown, max: number): string {
   return String(value || '').trim().slice(0, max);
+}
+
+function recordMissionEvent(
+  db: Db,
+  missionId: string,
+  input: {
+    taskId?: string;
+    kind: string;
+    title?: string;
+    fromStatus?: string;
+    toStatus?: string;
+    summary?: string;
+    runId?: number | null;
+    attempt?: number;
+  },
+): void {
+  db.prepare(`
+    INSERT INTO chat_mission_events (
+      mission_id, task_id, kind, title, from_status, to_status,
+      summary, run_id, attempt
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    missionId,
+    input.taskId || null,
+    input.kind,
+    input.title || '',
+    input.fromStatus || '',
+    input.toStatus || '',
+    input.summary || '',
+    input.runId ?? null,
+    input.attempt || 0,
+  );
+}
+
+function projectMissionEvent(row: MissionEventRow): ChatMissionEvent {
+  return {
+    id: row.id,
+    missionId: row.mission_id,
+    ...(row.task_id ? { taskId: row.task_id } : {}),
+    kind: row.kind,
+    title: row.title,
+    fromStatus: row.from_status,
+    toStatus: row.to_status,
+    summary: row.summary,
+    ...(row.run_id != null ? { runId: row.run_id } : {}),
+    attempt: row.attempt || 0,
+    createdAt: row.created_at,
+  };
+}
+
+function dependencyNeedsAttention(task: TaskRow, byId: ReadonlyMap<string, TaskRow>, seen = new Set<string>()): boolean {
+  if (seen.has(task.id)) return false;
+  seen.add(task.id);
+  return taskDependencies(task).some((id) => {
+    const dependency = byId.get(id);
+    if (!dependency) return false;
+    if (['failed', 'blocked', 'canceled'].includes(dependency.status)) return true;
+    return dependency.status === 'pending' && dependencyNeedsAttention(dependency, byId, seen);
+  });
 }
 
 function findRegistration(
@@ -386,7 +569,12 @@ function deriveMissionStatus(row: MissionRow, tasks: TaskRow[]): ChatMissionStat
   if (row.status === 'canceled') return 'canceled';
   if (row.status === 'completed') return 'completed';
   if (tasks.length === 0) return 'active';
-  if (tasks.some((task) => task.status === 'failed' || task.status === 'blocked')) return 'blocked';
+  const byId = new Map(tasks.map((task) => [task.id, task]));
+  // A worker failure is a review checkpoint, not a declaration that a large
+  // mission has stopped. Downstream tasks remain pending and can resume after
+  // the failed task is retried or replaced.
+  if (tasks.some((task) => task.status === 'failed' || task.status === 'blocked')) return 'attention';
+  if (tasks.some((task) => task.status === 'pending' && dependencyNeedsAttention(task, byId))) return 'attention';
   // Worker completion means the coordinator has evidence to reconcile, not
   // that the user's whole request is done. Only `finishChatMission` can make
   // the mission completed after integration and verification.
@@ -414,6 +602,7 @@ function projectMission(db: Db, row: MissionRow, tasks: TaskRow[]): ChatMission 
     const assignee = byId.get(task.assignee_registration_id);
     const dependsOn = taskDependencies(task);
     const waitingFor = dependsOn.filter((id) => byTaskId.get(id)?.status !== 'completed');
+    const waitingOnAttention = task.status === 'pending' && dependencyNeedsAttention(task, byTaskId);
     const anonymous = Boolean(task.anonymous);
     const baseMention = assignee?.mention || '';
     const workItem = task.work_item_id ? workItemsById.get(task.work_item_id) : undefined;
@@ -432,10 +621,11 @@ function projectMission(db: Db, row: MissionRow, tasks: TaskRow[]): ChatMission 
       priority: task.priority || 0,
       reasoningEffort: task.reasoning_effort || '',
       anonymous,
+      attempt: task.attempt || 0,
       queueReason: task.status !== 'pending'
         ? ''
         : waitingFor.length
-          ? 'dependency'
+          ? (waitingOnAttention ? 'dependency-attention' : 'dependency')
           : task.dispatch_id
             ? 'queued'
             : 'agent-busy',
@@ -469,6 +659,7 @@ function projectMission(db: Db, row: MissionRow, tasks: TaskRow[]): ChatMission 
   });
   return {
     id: row.id,
+    rootMessageId: row.root_message_id,
     title: row.title,
     objective: row.objective,
     status: deriveMissionStatus(row, tasks),
@@ -491,6 +682,12 @@ export function refreshMissionProjection(db: Db, missionId: string): MissionProj
     db.prepare(`
       UPDATE chat_missions SET status = ?, updated_at = datetime('now') WHERE id = ?
     `).run(status, missionId);
+    recordMissionEvent(db, missionId, {
+      kind: 'mission_status_changed',
+      title: row.title,
+      fromStatus: row.status,
+      toStatus: status,
+    });
   }
   const updated = missionRow(db, missionId)!;
   const mission = projectMission(db, updated, tasks);
@@ -553,6 +750,12 @@ export function createChatMission(
       objective,
       userId,
     );
+    recordMissionEvent(db, id, {
+      kind: 'mission_created',
+      title,
+      toStatus: 'active',
+      summary: objective,
+    });
   }
   return refreshMissionProjection(db, id);
 }
@@ -572,7 +775,7 @@ export function getChatMission(
       WHERE channel_id = ?
         AND (? = '' OR coordinator_registration_id = ?)
       ORDER BY
-        CASE WHEN status IN ('active', 'reviewing', 'blocked') THEN 0 ELSE 1 END,
+        CASE WHEN status IN ('active', 'reviewing', 'attention', 'blocked') THEN 0 ELSE 1 END,
         updated_at DESC, rowid DESC
       LIMIT 1
     `).get(route.sourceChannelId, coordinatorRegistrationId || '', coordinatorRegistrationId || '') as MissionRow | undefined;
@@ -582,6 +785,44 @@ export function getChatMission(
   }
   if (!row) throw new Error('Mission not found');
   return refreshMissionProjection(db, row.id);
+}
+
+/** Durable channel mission archive. Intentionally unbounded; callers opt in. */
+export function listChatMissions(
+  db: Db,
+  userId: number,
+  channelId: string,
+  coordinatorRegistrationId?: string,
+): ChatMission[] {
+  const { route } = assertChatChannel(db, channelId, userId);
+  const rows = db.prepare(`
+    SELECT * FROM chat_missions
+    WHERE channel_id = ?
+      AND (? = '' OR coordinator_registration_id = ?)
+    ORDER BY updated_at DESC, rowid DESC
+  `).all(
+    route.sourceChannelId,
+    coordinatorRegistrationId || '',
+    coordinatorRegistrationId || '',
+  ) as MissionRow[];
+  return rows.map((row) => refreshMissionProjection(db, row.id).mission);
+}
+
+/** Append-only mission timeline. No retention window or result cap. */
+export function listChatMissionEvents(
+  db: Db,
+  userId: number,
+  channelId: string,
+  missionId: string,
+): ChatMissionEvent[] {
+  const { route } = assertChatChannel(db, channelId, userId);
+  const row = missionRow(db, missionId);
+  if (!row || row.channel_id !== route.sourceChannelId) throw new Error('Mission not found');
+  return (db.prepare(`
+    SELECT * FROM chat_mission_events
+    WHERE mission_id = ?
+    ORDER BY created_at ASC, id ASC
+  `).all(missionId) as MissionEventRow[]).map(projectMissionEvent);
 }
 
 export function addChatMissionTask(
@@ -672,9 +913,26 @@ export function addChatMissionTask(
     db.prepare(`
       UPDATE chat_missions SET status = 'active', wake_sent = 0, updated_at = datetime('now') WHERE id = ?
     `).run(row.id);
+    if (row.status !== 'active') {
+      recordMissionEvent(db, row.id, {
+        kind: 'mission_status_changed',
+        title: row.title,
+        fromStatus: row.status,
+        toStatus: 'active',
+        summary: 'Follow-up work added.',
+      });
+    }
     // Compile into a durable work-item twin (isolated workspace identity).
     const taskRow = db.prepare('SELECT * FROM chat_mission_tasks WHERE id = ?').get(taskId) as TaskRow;
     ensureWorkItemForMissionTask(db, userId, row, taskRow);
+    recordMissionEvent(db, row.id, {
+      taskId,
+      kind: 'task_added',
+      title,
+      toStatus: 'pending',
+      summary: normalizedPrompt,
+      attempt: 0,
+    });
   } else if (!existing.work_item_id) {
     ensureWorkItemForMissionTask(db, userId, row, existing);
   }
@@ -687,7 +945,7 @@ export function addChatMissionTask(
 }
 
 /**
- * Reconcile dependency failures, then choose ready work without assigning more
+ * Choose ready work without assigning more
  * than one named (non-anonymous) active task to any agent. Anonymous subagents
  * are parallel clones and skip that occupancy limit. Dispatch materialization
  * remains in the route layer because it also broadcasts the synthetic worker
@@ -703,7 +961,7 @@ export function listSchedulableMissionTasks(
     SELECT m.* FROM chat_missions m
     -- A coordinator review is a pause between waves, not a terminal state:
     -- users can add a follow-up task while reviewing prior evidence.
-    WHERE m.status IN ('active', 'reviewing', 'blocked') ${missionFilter}
+    WHERE m.status IN ('active', 'reviewing', 'attention', 'blocked') ${missionFilter}
     ORDER BY m.created_at ASC, m.rowid ASC
   `).all(...args) as MissionRow[];
   const updates: MissionProjectionUpdate[] = [];
@@ -711,35 +969,13 @@ export function listSchedulableMissionTasks(
   const reserved = new Set<string>();
 
   for (const mission of missions) {
-    let tasks = taskRows(db, mission.id);
-    let changed = false;
-    // Walk to a fixed point so A → B → C cannot strand C pending when A fails.
-    while (true) {
-      const byId = new Map(tasks.map((task) => [task.id, task]));
-      let passChanged = false;
-      for (const task of tasks) {
-        if (task.status !== 'pending' || task.dispatch_id) continue;
-        const failedDependency = taskDependencies(task)
-          .map((id) => byId.get(id))
-          .find((dependency) => dependency && ['failed', 'blocked', 'canceled'].includes(dependency.status));
-        if (!failedDependency) continue;
-        db.prepare(`
-          UPDATE chat_mission_tasks
-          SET status = 'blocked', summary = ?, updated_at = datetime('now')
-          WHERE id = ? AND status = 'pending' AND dispatch_id IS NULL
-        `).run(`Dependency “${failedDependency.title}” ended ${failedDependency.status}.`, task.id);
-        passChanged = true;
-        changed = true;
-      }
-      if (!passChanged) break;
-      tasks = taskRows(db, mission.id);
-    }
+    const tasks = taskRows(db, mission.id);
 
     const occupied = new Set((db.prepare(`
       SELECT DISTINCT t.assignee_registration_id AS id
       FROM chat_mission_tasks t
       JOIN chat_missions m ON m.id = t.mission_id
-      WHERE m.channel_id = ? AND m.status IN ('active', 'reviewing', 'blocked')
+      WHERE m.channel_id = ? AND m.status IN ('active', 'reviewing', 'attention', 'blocked')
         AND COALESCE(t.anonymous, 0) = 0
         AND (t.status = 'running' OR (t.status = 'pending' AND t.dispatch_id IS NOT NULL))
     `).all(mission.channel_id) as Array<{ id: string }>).map((row) => row.id));
@@ -772,21 +1008,31 @@ export function listSchedulableMissionTasks(
         prompt: task.prompt || task.title,
         reasoningEffort: task.reasoning_effort || '',
         anonymous,
+        attempt: task.attempt || 0,
       });
     }
-    if (changed) updates.push(refreshMissionProjection(db, mission.id));
   }
   return { candidates, updates };
 }
 
 export function linkMissionTaskDispatch(db: Db, taskId: string, dispatchId: string): MissionProjectionUpdate {
-  const row = db.prepare('SELECT mission_id FROM chat_mission_tasks WHERE id = ?')
-    .get(taskId) as { mission_id: string } | undefined;
+  const row = db.prepare('SELECT * FROM chat_mission_tasks WHERE id = ?')
+    .get(taskId) as TaskRow | undefined;
   if (!row) throw new Error('Mission task not found');
-  db.prepare(`
+  const linked = db.prepare(`
     UPDATE chat_mission_tasks SET dispatch_id = COALESCE(dispatch_id, ?), updated_at = datetime('now')
-    WHERE id = ?
+    WHERE id = ? AND dispatch_id IS NULL
   `).run(dispatchId, taskId);
+  if (linked.changes > 0) {
+    recordMissionEvent(db, row.mission_id, {
+      taskId,
+      kind: 'task_dispatched',
+      title: row.title,
+      fromStatus: row.status,
+      toStatus: row.status,
+      attempt: row.attempt || 0,
+    });
+  }
   return refreshMissionProjection(db, row.mission_id);
 }
 
@@ -799,6 +1045,17 @@ export function attachRunToMissionTaskByDispatch(db: Db, dispatchId: string, run
     db.prepare(`
       UPDATE chat_mission_tasks SET run_id = ?, status = 'running', updated_at = datetime('now') WHERE id = ?
     `).run(runId, row.id);
+    if (row.status !== 'running' || row.run_id !== runId) {
+      recordMissionEvent(db, row.mission_id, {
+        taskId: row.id,
+        kind: 'task_started',
+        title: row.title,
+        fromStatus: row.status,
+        toStatus: 'running',
+        runId,
+        attempt: row.attempt || 0,
+      });
+    }
   }
   const mission = missionRow(db, row.mission_id);
   const updated = db.prepare('SELECT * FROM chat_mission_tasks WHERE id = ?').get(row.id) as TaskRow;
@@ -817,10 +1074,10 @@ export function updateChatMissionTask(
 ): MissionProjectionUpdate {
   const { route } = assertChatChannel(db, channelId, userId);
   const row = db.prepare(`
-    SELECT t.mission_id, t.run_id, m.channel_id, m.created_by, m.status AS mission_status FROM chat_mission_tasks t
+    SELECT t.*, m.channel_id AS owner_channel_id, m.created_by, m.status AS mission_status FROM chat_mission_tasks t
     JOIN chat_missions m ON m.id = t.mission_id WHERE t.id = ?
-  `).get(taskId) as { mission_id: string; run_id: number | null; channel_id: string; created_by: number; mission_status: ChatMissionStatus } | undefined;
-  if (!row || row.channel_id !== route.sourceChannelId || row.created_by !== userId) {
+  `).get(taskId) as (TaskRow & { owner_channel_id: string; created_by: number; mission_status: ChatMissionStatus }) | undefined;
+  if (!row || row.owner_channel_id !== route.sourceChannelId || row.created_by !== userId) {
     throw new Error('Mission task not found');
   }
   if (row.mission_status === 'completed' || row.mission_status === 'canceled') {
@@ -828,10 +1085,71 @@ export function updateChatMissionTask(
   }
   const allowed: ChatMissionTaskStatus[] = ['pending', 'running', 'completed', 'failed', 'blocked', 'canceled'];
   if (!allowed.includes(input.status)) throw new Error('Invalid mission task status');
-  db.prepare(`
-    UPDATE chat_mission_tasks SET status = ?, summary = ?, updated_at = datetime('now') WHERE id = ?
-  `).run(input.status, cleanText(input.summary, 4000), taskId);
-  if (['completed', 'failed', 'blocked', 'canceled'].includes(input.status)) {
+  const summary = cleanText(input.summary, 4000);
+  const terminalStatuses: ChatMissionTaskStatus[] = ['completed', 'failed', 'blocked', 'canceled'];
+  const retrying = input.status === 'pending' && terminalStatuses.includes(row.status);
+  if (input.status === 'pending' && row.status === 'running') {
+    throw new Error('Task is still running; cancel or wait for it before retrying');
+  }
+  if (retrying && row.run_id != null) {
+    const run = db.prepare('SELECT status FROM runs WHERE id = ?').get(row.run_id) as { status: string } | undefined;
+    if (run && ['queued', 'running'].includes(run.status)) {
+      throw new Error('Task run is still active; cancel or wait for it before retrying');
+    }
+  }
+  if (retrying) {
+    db.prepare(`
+      DELETE FROM chat_agent_dispatches
+      WHERE run_id IS NULL AND id = ?
+    `).run(row.dispatch_id);
+    db.prepare(`
+      UPDATE chat_mission_tasks
+      SET status = 'pending', summary = ?, dispatch_id = NULL, run_id = NULL,
+        attempt = attempt + 1, updated_at = datetime('now')
+      WHERE id = ?
+    `).run(summary, taskId);
+    db.prepare(`
+      UPDATE chat_missions
+      SET status = 'active', wake_sent = 0, updated_at = datetime('now')
+      WHERE id = ?
+    `).run(row.mission_id);
+    if (row.mission_status !== 'active') {
+      const missionTitle = missionRow(db, row.mission_id)?.title || '';
+      recordMissionEvent(db, row.mission_id, {
+        kind: 'mission_status_changed',
+        title: missionTitle,
+        fromStatus: row.mission_status,
+        toStatus: 'active',
+        summary: `Retrying ${row.title}.`,
+      });
+    }
+    recordMissionEvent(db, row.mission_id, {
+      taskId,
+      kind: 'task_retried',
+      title: row.title,
+      fromStatus: row.status,
+      toStatus: 'pending',
+      summary,
+      attempt: (row.attempt || 0) + 1,
+    });
+  } else {
+    db.prepare(`
+      UPDATE chat_mission_tasks SET status = ?, summary = ?, updated_at = datetime('now') WHERE id = ?
+    `).run(input.status, summary, taskId);
+    if (row.status !== input.status || row.summary !== summary) {
+      recordMissionEvent(db, row.mission_id, {
+        taskId,
+        kind: 'task_status_changed',
+        title: row.title,
+        fromStatus: row.status,
+        toStatus: input.status,
+        summary,
+        runId: row.run_id,
+        attempt: row.attempt || 0,
+      });
+    }
+  }
+  if (terminalStatuses.includes(input.status)) {
     db.prepare(`
       DELETE FROM chat_agent_dispatches
       WHERE run_id IS NULL
@@ -842,7 +1160,8 @@ export function updateChatMissionTask(
   const task = db.prepare('SELECT * FROM chat_mission_tasks WHERE id = ?').get(taskId) as TaskRow;
   if (mission && task) {
     syncWorkItemForMissionTask(db, mission.created_by, mission, task, {
-      release: ['completed', 'failed', 'blocked', 'canceled'].includes(input.status),
+      release: terminalStatuses.includes(input.status),
+      reset: retrying,
     });
   }
   return {
@@ -879,11 +1198,30 @@ export function finishChatMission(
   db.prepare(`
     UPDATE chat_missions SET status = ?, summary = ?, wake_sent = 1, updated_at = datetime('now') WHERE id = ?
   `).run(input.status, cleanText(input.summary, 4000), row.id);
+  recordMissionEvent(db, row.id, {
+    kind: input.status === 'completed' ? 'mission_completed' : 'mission_canceled',
+    title: row.title,
+    fromStatus: row.status,
+    toStatus: input.status,
+    summary: cleanText(input.summary, 4000),
+  });
   if (input.status === 'canceled') {
     db.prepare(`
       UPDATE chat_mission_tasks SET status = 'canceled', updated_at = datetime('now')
       WHERE mission_id = ? AND status IN ('pending', 'running')
     `).run(row.id);
+    for (const task of tasks.filter((item) => item.status === 'pending' || item.status === 'running')) {
+      recordMissionEvent(db, row.id, {
+        taskId: task.id,
+        kind: 'task_status_changed',
+        title: task.title,
+        fromStatus: task.status,
+        toStatus: 'canceled',
+        summary: 'Mission canceled.',
+        runId: task.run_id,
+        attempt: task.attempt || 0,
+      });
+    }
     db.prepare(`
       DELETE FROM chat_agent_dispatches
       WHERE run_id IS NULL
@@ -930,9 +1268,19 @@ export function finishChatMission(
 /** Claim the coordinator review wake exactly once after every task is terminal. */
 export function claimMissionCoordinatorWake(db: Db, missionId: string): MissionWake | null {
   const update = refreshMissionProjection(db, missionId);
-  const allWorkersSettled = update.mission.tasks.length > 0
-    && update.mission.tasks.every((item) => ['completed', 'failed', 'blocked', 'canceled'].includes(item.status));
-  if (!allWorkersSettled || (update.mission.status !== 'reviewing' && update.mission.status !== 'blocked')) {
+  const rows = taskRows(db, missionId);
+  const byId = new Map(rows.map((task) => [task.id, task]));
+  const allWorkersSettled = rows.length > 0
+    && rows.every((item) => ['completed', 'failed', 'blocked', 'canceled'].includes(item.status));
+  const workStillMoving = rows.some((task) => (
+    task.status === 'running'
+    || (task.status === 'pending' && task.dispatch_id != null)
+    || (task.status === 'pending' && !task.dispatch_id
+      && taskDependencies(task).every((id) => byId.get(id)?.status === 'completed'))
+  ));
+  const stalledForAttention = ['attention', 'blocked'].includes(update.mission.status) && !workStillMoving;
+  if ((!allWorkersSettled && !stalledForAttention)
+    || !['reviewing', 'attention', 'blocked'].includes(update.mission.status)) {
     return null;
   }
   const claimed = db.prepare(`
@@ -959,9 +1307,20 @@ export function settleMissionTaskForRun(
   // that higher-information state instead of converting it to completed.
   if (!['blocked', 'canceled', 'completed', 'failed'].includes(task.status)) {
     const next: ChatMissionTaskStatus = status === 'completed' ? 'completed' : status;
+    const cleanedSummary = cleanText(summary, 4000);
     db.prepare(`
       UPDATE chat_mission_tasks SET status = ?, summary = ?, updated_at = datetime('now') WHERE id = ?
-    `).run(next, cleanText(summary, 4000), task.id);
+    `).run(next, cleanedSummary, task.id);
+    recordMissionEvent(db, task.mission_id, {
+      taskId: task.id,
+      kind: 'task_status_changed',
+      title: task.title,
+      fromStatus: task.status,
+      toStatus: next,
+      summary: cleanedSummary,
+      runId,
+      attempt: task.attempt || 0,
+    });
   }
   const mission = missionRow(db, task.mission_id);
   const settled = db.prepare('SELECT * FROM chat_mission_tasks WHERE id = ?').get(task.id) as TaskRow;

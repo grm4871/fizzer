@@ -237,6 +237,29 @@ async function main() {
       dispatch.message?.missionTaskId === dependent.task.id && dispatch.registration?.id === terra.id
     )));
 
+    const failedDependent = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/missions/tasks/${dependent.task.id}`, {
+      method: 'PATCH', headers: agentAuth,
+      body: JSON.stringify({ status: 'failed', summary: 'Transient provider failure.' }),
+    });
+    check('worker failure asks for attention without closing the mission', failedDependent.mission?.status === 'attention');
+    const retriedDependent = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/missions/tasks/${dependent.task.id}`, {
+      method: 'PATCH', headers: agentAuth,
+      body: JSON.stringify({ status: 'pending', summary: 'Retry with the same task and workspace.' }),
+    });
+    check('retry keeps task identity and increments its attempt', (
+      retriedDependent.mission?.tasks?.find((task) => task.id === dependent.task.id)?.attempt === 1
+    ));
+    const retryOutbox = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/agent-dispatches/pending`, { headers: owner.auth });
+    check('retry gets a fresh durable dispatch instead of reusing the settled one', retryOutbox.dispatches.some((dispatch) => (
+      dispatch.message?.id === `mission-task-${dependent.task.id}-1`
+    )));
+    const history = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/missions/${mission.id}/history`, { headers: agentAuth });
+    check('append-only history retains the retry transition', history.events?.some((event) => (
+      event.kind === 'task_retried' && event.taskId === dependent.task.id
+    )));
+    const archive = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/missions`, { headers: agentAuth });
+    check('mission archive is independent of the transcript window', archive.missions?.some((item) => item.id === mission.id));
+
     ownerSocket.socket.disconnect();
     guestSocket.socket.disconnect();
     if (failures) throw new Error(`${failures} mission check(s) failed`);

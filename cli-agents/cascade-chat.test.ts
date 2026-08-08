@@ -30,7 +30,15 @@ test('coordinator helper starts and delegates a mission with structured API call
       res.end(JSON.stringify({ message: { id: body.id || 'sys-mission-root', body: body.body || '' } }));
       return;
     }
-    if (req.url === '/api/vaults/vault-1/channels/channel-1/missions') {
+    if (req.method === 'GET' && req.url === '/api/vaults/vault-1/channels/channel-1/missions?coordinator=reg-sol') {
+      res.end(JSON.stringify({ missions: [{ id: 'mission-1', title: 'Release', status: 'attention', tasks: [{ id: 'task-1' }] }] }));
+      return;
+    }
+    if (req.method === 'GET' && req.url === '/api/vaults/vault-1/channels/channel-1/missions/mission-1/history') {
+      res.end(JSON.stringify({ events: [{ id: 1, kind: 'task_retried', title: 'Verify browser', fromStatus: 'failed', toStatus: 'pending', summary: '', attempt: 1, createdAt: '2026-08-08T12:00:00.000Z' }] }));
+      return;
+    }
+    if (req.method === 'POST' && req.url === '/api/vaults/vault-1/channels/channel-1/missions') {
       res.statusCode = 201;
       res.end(JSON.stringify({ mission: { id: 'mission-1', title: 'Release', status: 'active', tasks: [] } }));
       return;
@@ -95,9 +103,20 @@ test('coordinator helper starts and delegates a mission with structured API call
     cli, 'mission', 'status', '--mission', 'mission-1', ...common,
   ], { env: withCoordinator });
   assert.match(status.stdout, /reviewing\s+mission-1/);
+  const listed = await execFileAsync(process.execPath, [
+    cli, 'mission', 'list', ...common,
+  ], { env: withCoordinator });
+  assert.match(listed.stdout, /attention\s+mission-1/);
+  const history = await execFileAsync(process.execPath, [
+    cli, 'mission', 'history', '--mission', 'mission-1', ...common,
+  ], { env: withCoordinator });
+  assert.match(history.stdout, /failed → pending · attempt 2/);
   await execFileAsync(process.execPath, [
     cli, 'mission', 'update', '--task', 'task-1', '--status', 'blocked',
     '--summary', 'Needs a credential', ...common,
+  ], { env: withCoordinator });
+  await execFileAsync(process.execPath, [
+    cli, 'mission', 'retry', '--task', 'task-1', '--summary', 'Try again', ...common,
   ], { env: withCoordinator });
   await execFileAsync(process.execPath, [
     cli, 'mission', 'finish', '--mission', 'mission-1', '--summary', 'Integrated', ...common,
@@ -107,6 +126,9 @@ test('coordinator helper starts and delegates a mission with structured API call
     'POST /api/vaults/vault-1/channels/channel-1/missions',
     'POST /api/vaults/vault-1/channels/channel-1/missions/mission-1/tasks',
     'GET /api/vaults/vault-1/channels/channel-1/missions/mission-1?coordinator=reg-sol',
+    'GET /api/vaults/vault-1/channels/channel-1/missions?coordinator=reg-sol',
+    'GET /api/vaults/vault-1/channels/channel-1/missions/mission-1/history',
+    'PATCH /api/vaults/vault-1/channels/channel-1/missions/tasks/task-1',
     'PATCH /api/vaults/vault-1/channels/channel-1/missions/tasks/task-1',
     'POST /api/vaults/vault-1/channels/channel-1/missions/mission-1/finish',
   ]);
@@ -129,8 +151,9 @@ test('coordinator helper starts and delegates a mission with structured API call
     reasoningEffort: 'high',
     anonymous: true,
   });
-  assert.deepEqual(requests[4]?.body, { status: 'blocked', summary: 'Needs a credential' });
-  assert.deepEqual(requests[5]?.body, {
+  assert.deepEqual(requests[6]?.body, { status: 'blocked', summary: 'Needs a credential' });
+  assert.deepEqual(requests[7]?.body, { status: 'pending', summary: 'Try again' });
+  assert.deepEqual(requests[8]?.body, {
     coordinatorRegistrationId: 'reg-sol',
     status: 'completed',
     summary: 'Integrated',
