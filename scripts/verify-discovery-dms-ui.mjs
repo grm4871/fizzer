@@ -75,6 +75,9 @@ try {
     const json = (body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
     if (path === '/api/me') return json({ user: { id: 1, username: 'ui_tester', displayName: 'UI Tester', avatarUrl: '' }, owner: false });
     if (path === '/api/me/desktop-runner') return json({ online: true, runners: [] });
+    if (path === '/api/community/updates' && method === 'GET') return json({
+      groups: [], counts: { total: 0, byVault: {}, byTarget: {} }, truncated: false,
+    });
     if (path === '/api/vaults' && method === 'GET') return json({ vaults: [
       { id: 'v-home', name: 'Home', root_path: '/tmp/home', created_at: '2026-08-08 04:00:00', role: 'owner', memberCount: 1 },
       ...(joinedPublicVault ? [{ id: 'v-public', name: 'Community Lab', root_path: '/tmp/public', created_at: '2026-08-08 04:30:00', role: 'viewer', memberCount: 13 }] : []),
