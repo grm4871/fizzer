@@ -42,6 +42,7 @@ export type CommunityUpdateGroup = {
 
 export type CommunityUpdateCounts = {
   total: number;
+  directMessages: number;
   byVault: Record<string, number>;
   byTarget: Record<string, number>;
 };
@@ -225,6 +226,12 @@ function addBoundedCount(record: Record<string, number>, key: string, amount: nu
   record[key] = Math.min(COMMUNITY_UPDATES_COUNT_CAP, (record[key] || 0) + amount);
 }
 
+/** DMs use the normal linked-channel transport, with this private marker. */
+function isDirectMessageRoute(route: ChannelRoute): boolean {
+  return [route.localPreview, route.localContent, route.sourcePreview, route.sourceContent]
+    .some((value) => /(?:^|\n)dm_with=/.test(value));
+}
+
 function latestExternalNoteActivities(db: Db, userId: number): NoteActivityRow[] {
   return db.prepare(`
     SELECT
@@ -271,7 +278,7 @@ export function listCommunityUpdates(
     Math.floor(requestedLimit) || COMMUNITY_UPDATES_DEFAULT_LIMIT,
   ));
   const items: CommunityUpdateItem[] = [];
-  const counts: CommunityUpdateCounts = { total: 0, byVault: {}, byTarget: {} };
+  const counts: CommunityUpdateCounts = { total: 0, directMessages: 0, byVault: {}, byTarget: {} };
 
   for (const route of listAccessibleChannelRoutes(db, user.id)) {
     const watermark = readAt(db, user.id, 'channel', route.sourceChannelId, route.subscribedAt);
@@ -306,6 +313,9 @@ export function listCommunityUpdates(
     const unreadCount = Math.min(unread.length, COMMUNITY_UPDATES_COUNT_CAP);
     if (unreadCount === 0) continue;
     counts.total = Math.min(COMMUNITY_TOTAL_COUNT_CAP, counts.total + unreadCount);
+    if (isDirectMessageRoute(route)) {
+      counts.directMessages = Math.min(COMMUNITY_UPDATES_COUNT_CAP, counts.directMessages + unreadCount);
+    }
     addBoundedCount(counts.byVault, route.localVaultId, unreadCount);
     counts.byTarget[route.localChannelId] = unreadCount;
 

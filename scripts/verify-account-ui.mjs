@@ -153,7 +153,7 @@ try {
     method: 'POST', headers: mateAuth,
     body: JSON.stringify({ targetType: 'vault', targetId: profileVault.id, reason: 'other', detail: 'Global report detail' }),
   });
-  await page.getByTitle('Admin').click();
+  await page.getByRole('button', { name: 'Admin', exact: true }).click();
   const admin = page.getByRole('dialog', { name: 'Admin' });
   const globalReport = admin.locator('.admin-report-queue article', { hasText: 'Global report detail' });
   await globalReport.waitFor();

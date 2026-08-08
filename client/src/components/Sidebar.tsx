@@ -25,7 +25,7 @@ import { CHAT_NOTE_MARKER } from './ChatView';
 import {
   Folder as FolderIcon, FolderOpen, FileText, Pin, Gem, Edit2, FolderPlus,
   Search, ChevronRight, ChevronDown, Check, PanelLeftClose, LogOut, Trash2, FilePlus, FolderInput, Pencil, RefreshCw,
-  Hash, Unlink, ShieldCheck, SkipBack, Play, Pause, SkipForward, Music2, Users, Plus, LogIn, Compass, MessageCircle,
+  Hash, Unlink, ShieldCheck, SkipBack, Play, Pause, SkipForward, Music2, Users, Plus, LogIn, Compass, Mail,
 } from 'lucide-react';
 
 /** Switcher label: "Team notes · shared · 3" so shared vaults are obvious. */
@@ -757,9 +757,6 @@ export const Sidebar = memo(function Sidebar({
           <button type="button" role="menuitem" className="vault-switcher-discover" onClick={() => { setVaultMenuOpen(false); onOpenPublicVaults(); }}>
             <Compass size={14} aria-hidden="true" /> Browse public vaults
           </button>
-          <button type="button" role="menuitem" className="vault-switcher-dms" onClick={() => { setVaultMenuOpen(false); onOpenDirectMessages(); }}>
-            <MessageCircle size={14} aria-hidden="true" /> Direct messages
-          </button>
           <div className="vault-switcher-divider" role="separator" />
           {creatingVault ? (
             <div className="vault-switcher-create-form">
@@ -883,6 +880,19 @@ export const Sidebar = memo(function Sidebar({
             {user.avatarUrl ? <img src={user.avatarUrl} alt="" /> : (user.displayName || user.username).charAt(0).toUpperCase()}
           </div>
           <span className="truncate">{user.displayName || user.username}</span>
+        </button>
+        <button
+          id="direct-messages-btn"
+          type="button"
+          className="btn-icon sidebar-dm-button"
+          onClick={onOpenDirectMessages}
+          title="Messages"
+          aria-label={updateCounts.directMessages > 0
+            ? `${countLabel(updateCounts.directMessages)} unread direct messages`
+            : 'Messages'}
+        >
+          <Mail size={16} />
+          {updateCounts.directMessages > 0 && <span className="sidebar-dm-dot" aria-hidden="true" />}
         </button>
         <button
           className="btn-icon"

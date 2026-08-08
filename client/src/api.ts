@@ -131,6 +131,7 @@ export type CommunityUpdates = {
   }>;
   counts: {
     total: number;
+    directMessages: number;
     byVault: Record<string, number>;
     byTarget: Record<string, number>;
   };

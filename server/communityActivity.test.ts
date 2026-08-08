@@ -154,6 +154,7 @@ test('a local mirror shares one canonical watermark and ignores own/nonterminal 
 
     let updates = listCommunityUpdates(db, { id: 2, username: 'bob' });
     assert.equal(updates.counts.total, 1);
+    assert.equal(updates.counts.directMessages, 0);
     assert.equal(updates.counts.byTarget['local-channel'], 1);
     assert.equal(updates.groups[0].items[0].kind, 'mention');
     assert.equal(updates.groups[0].items[0].targetId, 'local-channel');
@@ -173,6 +174,33 @@ test('a local mirror shares one canonical watermark and ignores own/nonterminal 
 
     assert.equal(markCommunityTargetRead(db, 2, 'source-channel', '2099-01-01T00:00:00.000Z'), true);
     assert.equal(listCommunityUpdates(db, { id: 2, username: 'bob' }).counts.total, 0);
+  } finally {
+    close();
+  }
+});
+
+test('DM updates are counted separately for the mailbox badge', () => {
+  const { db, close } = setup();
+  try {
+    addNote(db, 'dm-source', 'source', 'DM — @bob', `${CHAT_NOTE_MARKER}\ndm_with=bob`);
+    addNote(db, 'dm-local', 'local', 'DM — @alice', `${CHAT_NOTE_MARKER}\nshared_from=dm-source\ndm_with=alice`);
+    db.prepare(`
+      INSERT INTO chat_channel_links (
+        local_channel_id, local_vault_id, source_channel_id, source_vault_id, created_by, created_at
+      ) VALUES ('dm-local', 'local', 'dm-source', 'source', 1, '2026-08-05T00:00:00.000Z')
+    `).run();
+    createChatMessage(db, 1, 'source', 'dm-source', {
+      id: 'dm-unread', channelId: 'dm-source', author: 'alice', body: 'private hello',
+      createdAt: '2026-08-06T02:00:00.000Z',
+    });
+
+    const updates = listCommunityUpdates(db, { id: 2, username: 'bob' });
+    assert.equal(updates.counts.total, 1);
+    assert.equal(updates.counts.directMessages, 1);
+    assert.equal(updates.counts.byTarget['dm-local'], 1);
+
+    markCommunityTargetRead(db, 2, 'dm-local', '2026-08-06T03:00:00.000Z');
+    assert.equal(listCommunityUpdates(db, { id: 2, username: 'bob' }).counts.directMessages, 0);
   } finally {
     close();
   }

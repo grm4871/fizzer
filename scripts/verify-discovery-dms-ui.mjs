@@ -76,7 +76,7 @@ try {
     if (path === '/api/me') return json({ user: { id: 1, username: 'ui_tester', displayName: 'UI Tester', avatarUrl: '' }, owner: false });
     if (path === '/api/me/desktop-runner') return json({ online: true, runners: [] });
     if (path === '/api/community/updates' && method === 'GET') return json({
-      groups: [], counts: { total: 0, byVault: {}, byTarget: {} }, truncated: false,
+      groups: [], counts: { total: 2, directMessages: 2, byVault: { 'v-home': 2 }, byTarget: { 'dm-alice': 2 } }, truncated: false,
     });
     if (path === '/api/vaults' && method === 'GET') return json({ vaults: [
       { id: 'v-home', name: 'Home', root_path: '/tmp/home', created_at: '2026-08-08 04:00:00', role: 'owner', memberCount: 1 },
@@ -156,7 +156,7 @@ try {
 
   await page.getByRole('button', { name: /Vault switcher/ }).click();
   await page.getByRole('menuitem', { name: 'Browse public vaults' }).click();
-  const dialog = page.getByRole('dialog', { name: 'Connect' });
+  const dialog = page.getByRole('dialog', { name: 'Public vaults' });
   await dialog.getByText('Community Lab').waitFor();
   await dialog.getByLabel('Search public vaults').fill('design');
   await dialog.getByText('Community Lab').waitFor({ state: 'detached' });
@@ -191,22 +191,27 @@ try {
   await dialog.waitFor({ state: 'detached' });
   await page.getByRole('button', { name: /current vault Community Lab/ }).waitFor();
 
-  await page.getByRole('button', { name: /Vault switcher/ }).click();
-  await page.getByRole('menuitem', { name: 'Direct messages' }).click();
-  await dialog.getByText('Alice Example').waitFor();
-  const privacy = dialog.getByRole('switch', { name: 'Allow messages from strangers' });
+  const messagesButton = page.locator('#direct-messages-btn');
+  if ((await messagesButton.getAttribute('aria-label')) !== '2 unread direct messages') throw new Error('mailbox did not announce unread DMs');
+  await messagesButton.locator('.sidebar-dm-dot').waitFor();
+  await messagesButton.click();
+  const messagesDialog = page.getByRole('dialog', { name: 'Messages' });
+  await messagesDialog.getByText('Alice Example').waitFor();
+  await messagesDialog.getByLabel('2 unread messages').waitFor();
+  await messagesDialog.getByText('Privacy & blocking').click();
+  const privacy = messagesDialog.getByRole('switch', { name: 'Allow messages from strangers' });
   if ((await privacy.getAttribute('aria-checked')) !== 'true') throw new Error('DM privacy did not load as enabled');
   await privacy.click();
-  await dialog.getByText('New direct messages are turned off.').waitFor();
+  await messagesDialog.getByText('New direct messages are turned off.').waitFor();
   if ((await privacy.getAttribute('aria-checked')) !== 'false') throw new Error('DM privacy toggle did not update');
-  await dialog.getByRole('button', { name: 'Unblock', exact: true }).click();
-  await dialog.getByText('Nobody is blocked.').waitFor();
-  await dialog.getByLabel('Username to block').fill('charlie');
-  await dialog.getByRole('button', { name: 'Block', exact: true }).click();
-  await dialog.getByText('@charlie', { exact: true }).waitFor();
-  await dialog.getByLabel('Message someone').fill('dana');
-  await dialog.getByRole('button', { name: 'Start DM' }).click();
-  await dialog.waitFor({ state: 'detached' });
+  await messagesDialog.getByRole('button', { name: 'Unblock', exact: true }).click();
+  await messagesDialog.getByText('Nobody is blocked.').waitFor();
+  await messagesDialog.getByLabel('Username to block').fill('charlie');
+  await messagesDialog.getByRole('button', { name: 'Block', exact: true }).click();
+  await messagesDialog.getByText('@charlie', { exact: true }).waitFor();
+  await messagesDialog.getByLabel('New message').fill('dana');
+  await messagesDialog.getByRole('button', { name: 'Start DM' }).click();
+  await messagesDialog.waitFor({ state: 'detached' });
   await page.locator('.tab-title', { hasText: 'DM — @dana' }).waitFor();
 
   const expectedCalls = [
@@ -227,7 +232,7 @@ try {
   if (!requests.some((request) => request.method === 'GET' && request.path === '/api/public-vaults' && request.search === '?q=design')) {
     throw new Error('public directory search was not sent to the server');
   }
-  console.log('[discovery-dms-ui] OK — public search/detail/report/join policies, DM privacy, blocks, and conversation navigation');
+  console.log('[discovery-dms-ui] OK — public discovery plus dedicated mailbox, unread state, DM privacy, blocks, and conversation navigation');
 } finally {
   if (browser) await browser.close();
   preview.kill('SIGTERM');

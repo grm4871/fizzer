@@ -159,7 +159,7 @@ const AVAILABLE_CHAT_AGENTS = CHAT_AGENTS.map((agent) => ({
 }));
 const EMPTY_COMMUNITY_UPDATES: CommunityUpdates = {
   groups: [],
-  counts: { total: 0, byVault: {}, byTarget: {} },
+  counts: { total: 0, directMessages: 0, byVault: {}, byTarget: {} },
   truncated: false,
 };
 
@@ -3669,6 +3669,7 @@ export default function App() {
       {discoveryDmsOpen && (
         <DiscoveryDmsModal
           initialTab={discoveryDmsOpen}
+          updateCounts={communityUpdates.counts}
           onClose={() => setDiscoveryDmsOpen(null)}
           onVaultsChanged={loadVaults}
           onOpenLocation={async (vaultId, channelId, title) => {
