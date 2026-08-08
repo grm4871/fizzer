@@ -216,6 +216,14 @@ try {
   check('Close tab removes the tab', true);
   check('the chat tab survived closing the other tab', await page.locator('.tab-bar .tab-item', { hasText: 'menus-chan' }).count() > 0);
 
+  // The mobile swipe target must not participate in the desktop CSS grid. If
+  // it does, closing the sidebar creates an implicit first row and pushes the
+  // entire workspace halfway down the window.
+  await page.getByLabel('Collapse sidebar').first().click();
+  await page.locator('.app-shell.sidebar-closed').waitFor({ timeout: 5000 });
+  const workspaceTop = await page.locator('.workspace').evaluate((element) => element.getBoundingClientRect().top);
+  check('closing the desktop sidebar keeps the workspace at the top edge', workspaceTop <= 1, String(workspaceTop));
+
   // Desktop runner recovery is background state, not a page-load callout. A
   // slow socket reconnect must not make the workspace look blocked on reload.
   const desktopPage = await browser.newPage({ viewport: { width: 1280, height: 800 } });

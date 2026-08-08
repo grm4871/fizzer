@@ -591,6 +591,9 @@ button:focus-visible,
 .sidebar-backdrop {
   display: none;
 }
+.mobile-sidebar-swipe-edge {
+  display: none;
+}
 .sidebar {
   position: relative;
   background: var(--rail-surface);
@@ -6354,6 +6357,7 @@ button.chat-avatar.is-clickable:focus-visible {
      just inside that zone, outside message rows, so drawer reveal never
      competes with the chat's left-swipe-to-reply pointer handler. */
   .mobile-sidebar-swipe-edge {
+    display: block;
     position: absolute;
     /* Leave the toolbar clear. Before this, the transparent 36px edge
        recognizer was painted over the toolbar's sidebar button, so Android
