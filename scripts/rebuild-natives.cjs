@@ -156,13 +156,21 @@ function rebuildRoot() {
   log('root natives OK');
 }
 
-function findElectronRebuildBin() {
-  const candidates = [
-    path.join(ELECTRON_DIR, 'node_modules', '.bin', 'electron-rebuild'),
-    path.join(ROOT, 'node_modules', '.bin', 'electron-rebuild'),
-  ];
-  for (const bin of candidates) {
-    if (fs.existsSync(bin)) return bin;
+function findElectronRebuildCli() {
+  for (const fromDir of [ELECTRON_DIR, ROOT]) {
+    try {
+      const moduleEntry = require.resolve('@electron/rebuild', { paths: [fromDir] });
+      const packagePath = path.resolve(path.dirname(moduleEntry), '..', 'package.json');
+      const packageJson = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
+      const relativeCli = typeof packageJson.bin === 'string'
+        ? packageJson.bin
+        : packageJson.bin?.['electron-rebuild'];
+      if (!relativeCli) continue;
+      const cli = path.resolve(path.dirname(packagePath), relativeCli);
+      if (fs.existsSync(cli)) return cli;
+    } catch {
+      // Try the next dependency root.
+    }
   }
   return null;
 }
@@ -177,17 +185,19 @@ function rebuildElectron() {
     return;
   }
 
-  const bin = findElectronRebuildBin();
-  if (!bin) {
+  const cli = findElectronRebuildCli();
+  if (!cli) {
     warn(
       'electron-rebuild not found. Install Electron deps: npm install --prefix cascade-electron',
     );
     return;
   }
 
-  log(`rebuilding cascade-electron better-sqlite3 for Electron (via ${path.relative(ROOT, bin)})`);
-  // electron-rebuild is a node script; invoke through node for Windows + no-exec mounts.
-  run(process.execPath, [bin, '-f', '-w', 'better-sqlite3'], { cwd: ELECTRON_DIR });
+  log(`rebuilding cascade-electron better-sqlite3 for Electron (via ${path.relative(ROOT, cli)})`);
+  // Resolve the package's JavaScript entrypoint, not npm's platform-specific
+  // .bin shim. On Windows the extensionless shim is POSIX shell and cannot be
+  // parsed by node.exe.
+  run(process.execPath, [cli, '-f', '-w', 'better-sqlite3'], { cwd: ELECTRON_DIR });
 
   const binding = electronBindingPath();
   if (!fs.existsSync(binding)) {
@@ -258,7 +268,7 @@ function main() {
           rebuildElectron();
         } else if (!args.rootOnly) {
           // Conservative: if electron deps exist, rebuild so ABI matches current Electron.
-          if (packageInstalled('better-sqlite3', ELECTRON_DIR) && findElectronRebuildBin()) {
+          if (packageInstalled('better-sqlite3', ELECTRON_DIR) && findElectronRebuildCli()) {
             rebuildElectron();
           }
         }
@@ -279,6 +289,7 @@ if (require.main === module) {
 module.exports = {
   isAbiMismatchError,
   preferMacSystemPython,
+  findElectronRebuildCli,
   rootLoadOk,
   rebuildRoot,
   rebuildElectron,

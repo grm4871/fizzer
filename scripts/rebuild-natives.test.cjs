@@ -5,10 +5,17 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 
 const {
+  findElectronRebuildCli,
   isAbiMismatchError,
   preferMacSystemPython,
   rootLoadOk,
 } = require('./rebuild-natives.cjs');
+
+test('Electron rebuild resolves the portable JavaScript CLI, not an npm shell shim', () => {
+  const cli = findElectronRebuildCli();
+  assert.ok(cli);
+  assert.match(cli.replaceAll('\\', '/'), /@electron\/rebuild\/lib\/cli\.js$/);
+});
 
 test('isAbiMismatchError detects NODE_MODULE_VERSION failures', () => {
   assert.equal(
