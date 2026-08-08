@@ -6,6 +6,7 @@
  * owner | editor | viewer.
  */
 import type Database from 'better-sqlite3';
+import { assertNotVaultBanned } from './communityModeration.js';
 
 type Db = Database.Database;
 
@@ -56,6 +57,11 @@ export function isReadOnlyVaultMutation(
   }
   const selfRemoval = /^\/api\/vaults\/[^/]+\/members\/(\d+)\/?$/.exec(pathname);
   if (method.toUpperCase() === 'DELETE' && selfRemoval && Number(selfRemoval[1]) === userId) {
+    return false;
+  }
+  // Reporting is the only write available to viewers. The report service
+  // independently validates membership and target ownership/route.
+  if (method.toUpperCase() === 'POST' && /^\/api\/vaults\/[^/]+\/reports\/?$/.test(pathname)) {
     return false;
   }
   return getVaultRole(db, vaultId, userId) === 'viewer';
@@ -188,6 +194,7 @@ export function addVaultMember(
     throw new Error('Only the vault owner can invite members');
   }
   if (targetUserId === actorUserId) throw new Error('You are already a member of this vault');
+  assertNotVaultBanned(db, vaultId, targetUserId);
 
   const existing = getVaultRole(db, vaultId, targetUserId);
   if (existing) throw new Error('User is already a member of this vault');

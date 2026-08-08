@@ -10,6 +10,7 @@ import test from 'node:test';
 import Database from 'better-sqlite3';
 import { ensureChatSchema, listVaultAgents, upsertVaultAgent, deleteVaultAgent } from './chat.js';
 import { addVaultMember, ensureVaultMembersSchema } from './vaultMembers.js';
+import { ensureCommunityModerationSchema } from './communityModeration.js';
 
 function setup() {
   const db = new Database(':memory:');
@@ -35,6 +36,7 @@ function setup() {
   db.prepare("INSERT INTO users (id, username) VALUES (1, 'owner'), (2, 'alice')").run();
   db.prepare("INSERT INTO vaults (id, name, created_by) VALUES ('v1', 'Owner vault', 1), ('v2', 'Alice vault', 2)").run();
   ensureVaultMembersSchema(db);
+  ensureCommunityModerationSchema(db);
   ensureChatSchema(db);
   return db;
 }

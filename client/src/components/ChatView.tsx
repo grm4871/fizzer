@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { Bot, ChevronRight, ClipboardList, Copy, Forward, Hash, ImagePlus, Paperclip, Reply, Send, Trash2, X } from 'lucide-react';
+import { Bot, ChevronRight, ClipboardList, Copy, Flag, Forward, Hash, ImagePlus, Paperclip, Reply, Send, Trash2, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
@@ -22,6 +22,7 @@ import { ChatSidebarButtons } from './ChatSidebarButtons';
 import { ChatWorkspacePanel } from './ChatWorkspacePanel';
 import { ChatTaskReview } from './ChatTaskReview';
 import { ChatWorkTrace } from './ChatWorkTrace';
+import { ReportDialog } from './ReportDialog';
 import { hasRunActivity } from '../chat/harnessActivity';
 import { isSteeringContinuationMessage, segmentTranscript } from '../chat/workTrace';
 import { useChannelMessages } from '../chat/messageStore';
@@ -2117,6 +2118,7 @@ export const ChatView = memo(function ChatView({
   const [replyTarget, setReplyTarget] = useState<ChatReplyRef | null>(null);
   const [replyNotifiesAgent, setReplyNotifiesAgent] = useState(true);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; message: ChatMessage } | null>(null);
+  const [reportMessage, setReportMessage] = useState<ChatMessage | null>(null);
   const contextMenuRef = usePopupMenu<HTMLDivElement>(contextMenu);
   /** Delete is two-step in the context menu rather than a native confirm dialog. */
   const [deleteArmed, setDeleteArmed] = useState(false);
@@ -3383,6 +3385,19 @@ export const ChatView = memo(function ChatView({
               Add to kanban
             </button>
           )}
+          {vaultId && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setReportMessage(contextMenu.message);
+                setContextMenu(null);
+              }}
+            >
+              <Flag size={14} />
+              Report
+            </button>
+          )}
           {onDeleteMessage && (
             <>
               <div className="menu-divider" role="separator" />
@@ -4055,6 +4070,15 @@ export const ChatView = memo(function ChatView({
             </div>
           </article>
         </div>
+      )}
+      {reportMessage && vaultId && (
+        <ReportDialog
+          vaultId={vaultId}
+          targetType="message"
+          targetId={reportMessage.id}
+          title={`message from ${reportMessage.author}`}
+          onClose={() => setReportMessage(null)}
+        />
       )}
     </section>
   );

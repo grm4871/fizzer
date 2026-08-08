@@ -13,6 +13,7 @@ import {
   setVaultMemberRole,
 } from './vaultMembers.js';
 import { getVault, getWritableVault, listVaults } from './vault.js';
+import { ensureCommunityModerationSchema } from './communityModeration.js';
 
 function setup() {
   const db = new Database(':memory:');
@@ -35,6 +36,7 @@ function setup() {
   db.prepare("INSERT INTO users (id, username, display_name) VALUES (1, 'owner', 'Owner'), (2, 'alice', 'Alice'), (3, 'bob', 'Bob')").run();
   db.prepare("INSERT INTO vaults (id, name, created_by) VALUES ('v1', 'Main', 1)").run();
   ensureVaultMembersSchema(db);
+  ensureCommunityModerationSchema(db);
   return db;
 }
 
@@ -88,6 +90,7 @@ test('viewer API access is read-only across nested vault routes', () => {
     addVaultMember(db, 'v1', 1, 2, 'viewer');
     assert.equal(isReadOnlyVaultMutation(db, 2, 'GET', '/api/vaults/v1/notes'), false);
     assert.equal(isReadOnlyVaultMutation(db, 2, 'POST', '/api/vaults/v1/notes'), true);
+    assert.equal(isReadOnlyVaultMutation(db, 2, 'POST', '/api/vaults/v1/reports'), false);
     assert.equal(isReadOnlyVaultMutation(db, 2, 'PATCH', '/api/vaults/v1/channels/c1/messages/m1'), true);
     assert.equal(isReadOnlyVaultMutation(db, 2, 'DELETE', '/api/vaults/v1/vault-agents/a1'), true);
     assert.equal(isReadOnlyVaultMutation(db, 2, 'DELETE', '/api/vaults/v1/members/2'), false);

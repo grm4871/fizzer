@@ -69,6 +69,18 @@ import {
   setVaultVisibility,
 } from './server/publicVaults.js';
 import {
+  banVaultMember,
+  createContentReport,
+  ensureCommunityModerationSchema,
+  isReportStatus,
+  listGlobalReports,
+  listVaultBans,
+  listVaultReports,
+  reviewGlobalReport,
+  reviewVaultReport,
+  unbanVaultMember,
+} from './server/communityModeration.js';
+import {
   allowsDirectMessages,
   assertChannelPushAllowed,
   assertDirectMessageSendAllowed,
@@ -503,6 +515,7 @@ ensureChatDispatchSchema(db);
 ensureChatMissionSchema(db);
 ensureVaultMembersSchema(db);
 ensurePublicVaultSchema(db);
+ensureCommunityModerationSchema(db);
 ensureDirectMessageSchema(db);
 ensureManagedAgentSchema(db);
 // Hard boundary: rehome any vaults still sharing an on-disk root (legacy leak path).
@@ -1451,6 +1464,25 @@ app.get('/api/admin/users', requireAuth, (req: AuthedRequest, res) => {
   res.json({ users: users.map((user) => ({ ...publicUser(user), created_at: user.created_at })) });
 });
 
+app.get('/api/admin/reports', requireAuth, (req: AuthedRequest, res) => {
+  if (!isOwner(req.user!.id)) return res.status(403).json({ error: 'Owner only' });
+  const rawStatus = typeof req.query.status === 'string' ? req.query.status : 'open';
+  if (rawStatus !== 'all' && !isReportStatus(rawStatus)) return res.status(400).json({ error: 'Invalid report status' });
+  res.json({ reports: listGlobalReports(db, req.user!.id, rawStatus) });
+});
+
+app.patch('/api/admin/reports/:reportId', requireAuth, requireUserAccess, (req: AuthedRequest, res) => {
+  if (!isOwner(req.user!.id)) return res.status(403).json({ error: 'Owner only' });
+  const reportId = Number(req.params.reportId);
+  if (!Number.isSafeInteger(reportId) || reportId < 1) return res.status(400).json({ error: 'Invalid report id' });
+  try {
+    res.json(reviewGlobalReport(db, reportId, req.user!.id, req.body?.action));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Could not review report';
+    res.status(message === 'Report not found' ? 404 : 400).json({ error: message });
+  }
+});
+
 // ── Vault routes ───────────────────────────────────────────────────
 
 app.get('/api/vaults', requireAuth, (req: AuthedRequest, res) => {
@@ -1539,6 +1571,43 @@ app.delete('/api/vaults/:id/members/:userId', requireAuth, (req: AuthedRequest, 
     res.json({ ok: true });
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : 'Could not remove member' });
+  }
+});
+
+app.get('/api/vaults/:id/bans', requireAuth, (req: AuthedRequest, res) => {
+  const vault = getVault(db, req.params.id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Vault not found' });
+  try {
+    res.json({ bans: listVaultBans(db, vault.id, req.user!.id) });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Could not list bans';
+    res.status(message.startsWith('Only the vault owner') ? 403 : 400).json({ error: message });
+  }
+});
+
+app.post('/api/vaults/:id/bans', requireAuth, requireUserAccess, (req: AuthedRequest, res) => {
+  const vault = getVault(db, req.params.id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Vault not found' });
+  try {
+    const targetUserId = Number(req.body?.userId);
+    const ban = banVaultMember(db, vault.id, req.user!.id, targetUserId, req.body?.reason);
+    emitVaultEvent(vault.id, 'vault:membersChanged', { vaultId: vault.id });
+    res.status(201).json({ ban });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Could not ban member';
+    res.status(message.startsWith('Only the vault owner') ? 403 : 400).json({ error: message });
+  }
+});
+
+app.delete('/api/vaults/:id/bans/:userId', requireAuth, requireUserAccess, (req: AuthedRequest, res) => {
+  const vault = getVault(db, req.params.id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Vault not found' });
+  try {
+    unbanVaultMember(db, vault.id, req.user!.id, Number(req.params.userId));
+    res.json({ ok: true });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Could not unban member';
+    res.status(message.startsWith('Only the vault owner') ? 403 : 400).json({ error: message });
   }
 });
 
@@ -1697,6 +1766,52 @@ app.post('/api/public-vaults/:id/join', requireAuth, requireUserAccess, (req: Au
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Could not join vault';
     res.status(message === 'Vault not found' ? 404 : 400).json({ error: message });
+  }
+});
+
+// Reports are intentionally nested under a vault so target routing is always
+// explicit. POST is the sole viewer-safe mutation in the API-wide write guard.
+app.post('/api/vaults/:id/reports', requireAuth, requireUserAccess, (req: AuthedRequest, res) => {
+  try {
+    const report = createContentReport(db, {
+      vaultId: req.params.id,
+      reporterUserId: req.user!.id,
+      targetType: req.body?.targetType,
+      targetId: req.body?.targetId,
+      reason: req.body?.reason,
+      detail: req.body?.detail,
+    });
+    res.status(201).json({ report });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Could not create report';
+    res.status(message === 'Vault not found' ? 404 : 400).json({ error: message });
+  }
+});
+
+app.get('/api/vaults/:id/reports', requireAuth, (req: AuthedRequest, res) => {
+  const vault = getVault(db, req.params.id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Vault not found' });
+  const rawStatus = typeof req.query.status === 'string' ? req.query.status : 'open';
+  if (rawStatus !== 'all' && !isReportStatus(rawStatus)) return res.status(400).json({ error: 'Invalid report status' });
+  try {
+    res.json({ reports: listVaultReports(db, vault.id, req.user!.id, rawStatus) });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Could not list reports';
+    res.status(message.startsWith('Only the vault owner') ? 403 : 400).json({ error: message });
+  }
+});
+
+app.patch('/api/vaults/:id/reports/:reportId', requireAuth, requireUserAccess, (req: AuthedRequest, res) => {
+  const vault = getVault(db, req.params.id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Vault not found' });
+  const reportId = Number(req.params.reportId);
+  if (!Number.isSafeInteger(reportId) || reportId < 1) return res.status(400).json({ error: 'Invalid report id' });
+  try {
+    res.json({ report: reviewVaultReport(db, vault.id, reportId, req.user!.id, req.body?.action) });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Could not review report';
+    if (message.startsWith('Only the vault owner')) return res.status(403).json({ error: message });
+    res.status(message === 'Report not found' ? 404 : 400).json({ error: message });
   }
 });
 

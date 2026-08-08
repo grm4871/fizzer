@@ -35,6 +35,7 @@ try {
   let joinedPublicVault = false;
   let requestedDesignVault = false;
   let dmCreated = false;
+  let vaultReport = null;
   let allowDirectMessages = true;
   let blocks = [{ id: 3, username: 'bob', displayName: 'Bob Blocked', avatarUrl: '', createdAt: '2026-08-08 05:00:00' }];
   const socketReplies = [];
@@ -98,6 +99,10 @@ try {
     if (path === '/api/public-vaults/v-public/join' && method === 'POST') {
       joinedPublicVault = true;
       return json({ vaultId: 'v-public', name: 'Community Lab', role: 'viewer', alreadyMember: false, requestStatus: null }, 201);
+    }
+    if (path === '/api/vaults/v-public/reports' && method === 'POST') {
+      vaultReport = request.postDataJSON();
+      return json({ report: { id: 1, vaultId: 'v-public', ...vaultReport, status: 'open' } }, 201);
     }
     if (path === '/api/public-vaults/v-design/join' && method === 'POST') {
       requestedDesignVault = true;
@@ -169,6 +174,16 @@ try {
   await dialog.getByRole('button', { name: 'View Community Lab details' }).click();
   await dialog.getByText('Share sources and explain tradeoffs.').waitFor();
   await dialog.getByText('Welcome to the lab').waitFor();
+  await dialog.getByRole('button', { name: 'Report vault' }).click();
+  const reportDialog = page.getByRole('dialog', { name: 'Report Community Lab' });
+  await reportDialog.getByLabel('Reason').selectOption('harassment');
+  await reportDialog.getByLabel('Details optional').fill('Discovery report details');
+  await reportDialog.getByRole('button', { name: 'Send report' }).click();
+  await reportDialog.getByText('Your report was sent.').waitFor();
+  await reportDialog.getByRole('button', { name: 'Done' }).click();
+  if (vaultReport?.targetType !== 'vault' || vaultReport?.targetId !== 'v-public' || vaultReport?.reason !== 'harassment') {
+    throw new Error('public vault report did not preserve its target and reason');
+  }
   await dialog.getByRole('button', { name: 'Join as viewer' }).click();
   await dialog.waitFor({ state: 'detached' });
   await page.getByRole('button', { name: /current vault Community Lab/ }).waitFor();
@@ -196,6 +211,7 @@ try {
     ['POST', '/api/public-vaults/v-design/join'],
     ['GET', '/api/public-vaults/v-public'],
     ['POST', '/api/public-vaults/v-public/join'],
+    ['POST', '/api/vaults/v-public/reports'],
     ['PUT', '/api/me/dm-settings'],
     ['DELETE', '/api/me/blocks/bob'],
     ['POST', '/api/me/blocks'],
@@ -208,7 +224,7 @@ try {
   if (!requests.some((request) => request.method === 'GET' && request.path === '/api/public-vaults' && request.search === '?q=design')) {
     throw new Error('public directory search was not sent to the server');
   }
-  console.log('[discovery-dms-ui] OK — server-backed public search, safe detail preview, open/request/invite policies, DM privacy, blocks, and conversation navigation');
+  console.log('[discovery-dms-ui] OK — public search/detail/report/join policies, DM privacy, blocks, and conversation navigation');
 } finally {
   if (browser) await browser.close();
   preview.kill('SIGTERM');

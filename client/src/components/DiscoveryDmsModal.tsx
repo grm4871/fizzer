@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
-import { ArrowLeft, Ban, BookOpen, Clock3, Compass, Gem, LoaderCircle, MessageCircle, Search, ShieldCheck, UserPlus, X } from 'lucide-react';
+import { ArrowLeft, Ban, BookOpen, Clock3, Compass, Flag, Gem, LoaderCircle, MessageCircle, Search, ShieldCheck, UserPlus, X } from 'lucide-react';
 import { api, formatRelativeDate } from '../api';
+import { ReportDialog } from './ReportDialog';
 
 export type DiscoveryTab = 'public' | 'dms';
 
@@ -65,6 +66,7 @@ export function DiscoveryDmsModal({
   const [tab, setTab] = useState<DiscoveryTab>(initialTab);
   const [publicVaults, setPublicVaults] = useState<PublicVault[]>([]);
   const [publicVaultDetail, setPublicVaultDetail] = useState<PublicVaultDetail | null>(null);
+  const [reportVault, setReportVault] = useState<PublicVaultDetail | null>(null);
   const [dms, setDms] = useState<DirectMessage[]>([]);
   const [blockedUsers, setBlockedUsers] = useState<BlockedUser[]>([]);
   const [allowStrangerDms, setAllowStrangerDms] = useState(true);
@@ -298,9 +300,16 @@ export function DiscoveryDmsModal({
                       <p>{publicVaultDetail.homeNote.preview || 'This note does not have a preview yet.'}</p>
                     </section>
                   )}
-                  <button type="button" className="public-vault-primary-action" disabled={publicActionDisabled(publicVaultDetail)} onClick={() => void joinVault(publicVaultDetail)}>
-                    {busyAction === `join:${publicVaultDetail.id}` ? 'Working…' : publicActionLabel(publicVaultDetail)}
-                  </button>
+                  <div className="public-vault-detail-actions">
+                    {publicVaultDetail.role !== 'owner' && (
+                      <button type="button" className="public-vault-report-action" onClick={() => setReportVault(publicVaultDetail)}>
+                        <Flag size={13} /> Report vault
+                      </button>
+                    )}
+                    <button type="button" className="public-vault-primary-action" disabled={publicActionDisabled(publicVaultDetail)} onClick={() => void joinVault(publicVaultDetail)}>
+                      {busyAction === `join:${publicVaultDetail.id}` ? 'Working…' : publicActionLabel(publicVaultDetail)}
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <>
@@ -386,6 +395,15 @@ export function DiscoveryDmsModal({
         </div>
         {status && <div className="discovery-dms-status" role="status">{status}</div>}
       </section>
+      {reportVault && (
+        <ReportDialog
+          vaultId={reportVault.id}
+          targetType="vault"
+          targetId={reportVault.id}
+          title={reportVault.name}
+          onClose={() => setReportVault(null)}
+        />
+      )}
     </div>
   );
 }

@@ -10,6 +10,7 @@ import type Database from 'better-sqlite3';
 import { vaultHoldsDirectMessages } from './directMessages.js';
 import { redactPrivatePreview } from './privacy.js';
 import { getVaultRole, type VaultRole } from './vaultMembers.js';
+import { assertNotVaultBanned } from './communityModeration.js';
 
 type Db = Database.Database;
 
@@ -378,6 +379,7 @@ export function joinPublicVault(db: Db, vaultId: string, userId: number): JoinPu
   if (!vault || vault.visibility !== 'public') throw new Error('Vault not found');
   const existing = getVaultRole(db, vault.id, userId);
   if (existing) return { vaultId: vault.id, name: vault.name, role: existing, alreadyMember: true, requestStatus: null };
+  assertNotVaultBanned(db, vault.id, userId);
 
   const policy = isPublicJoinPolicy(vault.public_join_policy) ? vault.public_join_policy : 'invite';
   if (policy === 'invite') throw new Error('This vault is invite only');
@@ -429,6 +431,7 @@ export function reviewPublicVaultJoinRequest(
   if (action === 'approve' && (request.visibility !== 'public' || request.joinPolicy !== 'request')) {
     throw new Error('This vault is not accepting join requests');
   }
+  if (action === 'approve') assertNotVaultBanned(db, vaultId, request.userId);
   const status = action === 'approve' ? 'approved' : 'rejected';
   const review = db.transaction(() => {
     if (action === 'approve') {

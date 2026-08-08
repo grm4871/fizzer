@@ -136,6 +136,20 @@ try {
   await page.locator('img.chat-msg-image').first().waitFor({ timeout: 20000 });
 
   await target.click({ button: 'right' });
+  await page.locator('.chat-context-menu button', { hasText: 'Report' }).click();
+  const reportDialog = page.getByRole('dialog', { name: 'Report message from Claude' });
+  await reportDialog.getByLabel('Reason').selectOption('spam');
+  await reportDialog.getByLabel('Details optional').fill('Runtime moderation check');
+  await reportDialog.getByRole('button', { name: 'Send report' }).click();
+  await reportDialog.getByText('Your report was sent.').waitFor();
+  await reportDialog.getByRole('button', { name: 'Done' }).click();
+  const moderation = await must(`${API_BASE}/api/vaults/${vault.id}/reports`, { headers: auth });
+  if (moderation.reports.length !== 1 || moderation.reports[0].targetId !== `msg-${stamp}-fwd`
+    || 'reporterUsername' in moderation.reports[0]) {
+    throw new Error('message report was not queued anonymously for the vault owner');
+  }
+
+  await target.click({ button: 'right' });
   const forwardItem = page.locator('.chat-context-menu button', { hasText: 'Forward' });
   await forwardItem.waitFor({ timeout: 5000 });
   await forwardItem.click();
@@ -209,7 +223,7 @@ try {
     for (const line of fatal) console.error(`  - ${line}`);
     process.exit(1);
   }
-  console.log('[verify-chat-forward-ui] OK — forwarding persisted and reconnect backfilled a missed cross-client message');
+  console.log('[verify-chat-forward-ui] OK — message reporting, forwarding persistence, and reconnect backfill');
 } catch (error) {
   console.error('[verify-chat-forward-ui] FAILED:', error.message || error);
   process.exitCode = 1;

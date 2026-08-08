@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Camera, Globe2, KeyRound, Link as LinkIcon, LogOut, Trash2, Users, X } from 'lucide-react';
+import { Ban, Camera, Flag, Globe2, KeyRound, Link as LinkIcon, LogOut, Trash2, Users, X } from 'lucide-react';
 import { api, type User, type VaultMember, type VaultRole } from '../api';
 
 type AssignableRole = Exclude<VaultRole, 'owner'>;
@@ -20,6 +20,23 @@ type PublicJoinRequest = {
   displayName: string;
   avatarUrl: string;
   status: 'pending';
+  createdAt: string;
+};
+type VaultBan = {
+  userId: number;
+  username: string;
+  displayName: string;
+  avatarUrl: string;
+  reason: string;
+  createdAt: string;
+};
+type VaultReport = {
+  id: number;
+  targetType: 'vault' | 'note' | 'message' | 'member';
+  targetId: string;
+  targetUsername: string | null;
+  reason: 'spam' | 'harassment' | 'hate' | 'illegal' | 'other';
+  detail: string;
   createdAt: string;
 };
 
@@ -64,6 +81,8 @@ export function AccountSettings({ user, vaultId, vaultName, onClose, onUserChang
   const [publicJoinPolicy, setPublicJoinPolicy] = useState<PublicJoinPolicy>('open');
   const [publicHomeNotes, setPublicHomeNotes] = useState<PublicHomeNoteChoice[]>([]);
   const [publicJoinRequests, setPublicJoinRequests] = useState<PublicJoinRequest[]>([]);
+  const [vaultBans, setVaultBans] = useState<VaultBan[]>([]);
+  const [vaultReports, setVaultReports] = useState<VaultReport[]>([]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
@@ -75,6 +94,10 @@ export function AccountSettings({ user, vaultId, vaultName, onClose, onUserChang
     if (!vaultId) {
       setMembers([]);
       setMyRole(null);
+      setPublicHomeNotes([]);
+      setPublicJoinRequests([]);
+      setVaultBans([]);
+      setVaultReports([]);
       return;
     }
     try {
@@ -91,15 +114,21 @@ export function AccountSettings({ user, vaultId, vaultName, onClose, onUserChang
       setPublicHomeNoteId(visibility.homeNoteId || '');
       setPublicJoinPolicy(visibility.joinPolicy || 'open');
       if (result.role === 'owner') {
-        const [homeNotes, joinRequests] = await Promise.all([
+        const [homeNotes, joinRequests, bans, reports] = await Promise.all([
           api<{ notes: PublicHomeNoteChoice[] }>(`/api/vaults/${vaultId}/public-home-notes`),
           api<{ requests: PublicJoinRequest[] }>(`/api/vaults/${vaultId}/join-requests`),
+          api<{ bans: VaultBan[] }>(`/api/vaults/${vaultId}/bans`),
+          api<{ reports: VaultReport[] }>(`/api/vaults/${vaultId}/reports`),
         ]);
         setPublicHomeNotes(homeNotes.notes || []);
         setPublicJoinRequests(joinRequests.requests || []);
+        setVaultBans(bans.bans || []);
+        setVaultReports(reports.reports || []);
       } else {
         setPublicHomeNotes([]);
         setPublicJoinRequests([]);
+        setVaultBans([]);
+        setVaultReports([]);
       }
     } catch (error) {
       setMemberState(error instanceof Error ? error.message : 'Could not load vault members');
@@ -320,6 +349,69 @@ export function AccountSettings({ user, vaultId, vaultName, onClose, onUserChang
     }
   };
 
+  const banMember = async (target: VaultMember) => {
+    if (!vaultId || target.role === 'owner') return;
+    const reason = window.prompt(
+      `Remove and ban @${target.username} from ${vaultName || 'this vault'}? They will be unable to rejoin. Optional reason:`,
+      '',
+    );
+    if (reason === null) return;
+    setMemberBusy(true);
+    setMemberState('');
+    try {
+      await api(`/api/vaults/${vaultId}/bans`, {
+        method: 'POST',
+        body: JSON.stringify({ userId: target.userId, reason }),
+      });
+      setMemberState(`Removed and banned @${target.username}`);
+      await loadMembers();
+      onMembershipChanged?.();
+    } catch (error) {
+      setMemberState(error instanceof Error ? error.message : 'Could not ban member');
+    } finally {
+      setMemberBusy(false);
+    }
+  };
+
+  const unbanMember = async (target: VaultBan) => {
+    if (!vaultId) return;
+    setMemberBusy(true);
+    setMemberState('');
+    try {
+      await api(`/api/vaults/${vaultId}/bans/${target.userId}`, { method: 'DELETE' });
+      setVaultBans((current) => current.filter((ban) => ban.userId !== target.userId));
+      setMemberState(`Unbanned @${target.username}; they may rejoin normally.`);
+    } catch (error) {
+      setMemberState(error instanceof Error ? error.message : 'Could not unban member');
+    } finally {
+      setMemberBusy(false);
+    }
+  };
+
+  const reviewReport = async (report: VaultReport, action: 'dismiss' | 'resolve') => {
+    if (!vaultId) return;
+    setMemberBusy(true);
+    setMemberState('');
+    try {
+      await api(`/api/vaults/${vaultId}/reports/${report.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ action }),
+      });
+      setVaultReports((current) => current.filter((item) => item.id !== report.id));
+      setMemberState(action === 'dismiss' ? 'Report dismissed.' : 'Report resolved.');
+    } catch (error) {
+      setMemberState(error instanceof Error ? error.message : 'Could not review report');
+    } finally {
+      setMemberBusy(false);
+    }
+  };
+
+  const reportTargetLabel = (report: VaultReport) => (
+    report.targetType === 'member' && report.targetUsername
+      ? `member @${report.targetUsername}`
+      : `${report.targetType} ${report.targetId}`
+  );
+
   // Any non-owner member may remove themselves; the vault disappears from their switcher.
   const leaveVault = async () => {
     if (!vaultId || !canLeave) return;
@@ -455,6 +547,23 @@ export function AccountSettings({ user, vaultId, vaultName, onClose, onUserChang
                 {!publicJoinRequests.length && <small className="account-settings-hint">No pending requests.</small>}
               </div>
             )}
+            {canManageMembers && (
+              <div className="account-moderation-queue">
+                <div className="account-moderation-title"><Flag size={13} /><strong>Reports</strong><span>{vaultReports.length}</span></div>
+                {vaultReports.map((report) => (
+                  <article key={report.id}>
+                    <div><strong>{report.reason}</strong><span>{reportTargetLabel(report)}</span></div>
+                    {report.detail && <p>{report.detail}</p>}
+                    <small>Reporter identity is hidden from vault owners.</small>
+                    <div>
+                      <button type="button" disabled={memberBusy} onClick={() => void reviewReport(report, 'dismiss')}>Dismiss</button>
+                      <button type="button" disabled={memberBusy} onClick={() => void reviewReport(report, 'resolve')}>Resolve</button>
+                    </div>
+                  </article>
+                ))}
+                {!vaultReports.length && <small className="account-settings-hint">No open reports.</small>}
+              </div>
+            )}
             <ul className="account-vault-members">
               {members.map((member) => (
                 <li key={member.userId}>
@@ -477,14 +586,9 @@ export function AccountSettings({ user, vaultId, vaultName, onClose, onUserChang
                           <option key={role} value={role}>{role}</option>
                         ))}
                       </select>
-                      <button
-                        type="button"
-                        disabled={memberBusy}
-                        onClick={() => void removeMember(member)}
-                        title={`Remove @${member.username}`}
-                        aria-label={`Remove @${member.username}`}
-                      >
-                        <Trash2 size={13} />
+                      <button type="button" aria-label={`Remove @${member.username}`} disabled={memberBusy} onClick={() => void removeMember(member)}>Remove</button>
+                      <button type="button" aria-label={`Remove and ban @${member.username}`} className="is-danger" disabled={memberBusy} onClick={() => void banMember(member)}>
+                        <Ban size={12} /> Remove &amp; ban
                       </button>
                     </div>
                   ) : (
@@ -493,6 +597,18 @@ export function AccountSettings({ user, vaultId, vaultName, onClose, onUserChang
                 </li>
               ))}
             </ul>
+            {canManageMembers && (
+              <div className="account-banned-users">
+                <strong>Banned users</strong>
+                {vaultBans.map((ban) => (
+                  <div key={ban.userId}>
+                    <span>{ban.displayName || ban.username} <small>@{ban.username}</small>{ban.reason ? <em> · {ban.reason}</em> : null}</span>
+                    <button type="button" disabled={memberBusy} onClick={() => void unbanMember(ban)}>Unban</button>
+                  </div>
+                ))}
+                {!vaultBans.length && <small className="account-settings-hint">Nobody is banned.</small>}
+              </div>
+            )}
             {canManageMembers ? (
               <div className="account-vault-invite">
                 <input

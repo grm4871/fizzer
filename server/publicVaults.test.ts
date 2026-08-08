@@ -17,6 +17,7 @@ import { ensureVaultMembersSchema, getVaultRole } from './vaultMembers.js';
 import { ensureDirectMessageSchema } from './directMessages.js';
 import { ensureChatSchema } from './chat.js';
 import { getWritableVault } from './vault.js';
+import { ensureCommunityModerationSchema } from './communityModeration.js';
 
 function setup() {
   const db = new Database(':memory:');
@@ -60,6 +61,7 @@ function setup() {
   ensureChatSchema(db);
   ensureDirectMessageSchema(db);
   ensurePublicVaultSchema(db);
+  ensureCommunityModerationSchema(db);
   return db;
 }
 
