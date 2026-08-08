@@ -60,7 +60,7 @@ try {
   if (await page.locator('#vault-shared-badge').count()) throw new Error('a private vault should not show the shared badge');
   await sharing.getByLabel('Invite by username').fill(mateName);
   await sharing.getByLabel('Invite role').selectOption('editor');
-  await sharing.getByRole('button', { name: 'Invite' }).click();
+  await sharing.getByRole('button', { name: 'Invite', exact: true }).click();
   await sharing.getByText(`Added @${mateName} as editor`).waitFor();
   await sharing.locator(`.account-vault-members li:has-text("${mateName}")`).waitFor();
   // The switcher badge proves the vault list refreshed after the membership change.

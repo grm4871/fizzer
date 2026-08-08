@@ -17,8 +17,12 @@ import type Database from 'better-sqlite3';
 type Db = Database.Database;
 
 // Persistent base directory for vaults that don't specify their own root_path.
-// Lives under the user's home dir so notes survive reboots (unlike /tmp).
-export const VAULTS_BASE_DIR = path.join(os.homedir(), '.cascade', 'vaults');
+// Production defaults to the user's home so notes survive reboots. Tests and
+// managed deployments can isolate storage without impersonating another HOME.
+const configuredVaultsBaseDir = String(process.env.CASCADE_VAULTS_BASE_DIR || '').trim();
+export const VAULTS_BASE_DIR = configuredVaultsBaseDir
+  ? path.resolve(configuredVaultsBaseDir)
+  : path.join(os.homedir(), '.cascade', 'vaults');
 
 // ── Types ──────────────────────────────────────────────────────────
 

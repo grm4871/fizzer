@@ -26,10 +26,13 @@ jobs:
         include:
           - os: ubuntu-latest
             platform: linux
+            arch: x64
           - os: macos-latest
             platform: darwin
+            arch: arm64
           - os: windows-latest
             platform: win32
+            arch: x64
     defaults:
       run:
         working-directory: cascade-electron
@@ -38,20 +41,29 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
+
+      - name: Build local agent runtime
+        working-directory: .
+        run: |
+          npm ci --ignore-scripts
+          npm run build
 
       # postinstall runs electron-rebuild for better-sqlite3 against this OS.
       - name: Install dependencies
         run: npm ci
 
       - name: Make distributables
-        run: npx electron-forge make --platform ${{ matrix.platform }} --arch x64
+        run: npx electron-forge make --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
+
+      - name: Verify packaged runtime
+        run: node ../scripts/verify-desktop-package.mjs --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
 
       # Keep every run's output downloadable from the run page, tag or not.
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: cascade-${{ matrix.platform }}-x64
+          name: cascade-${{ matrix.platform }}-${{ matrix.arch }}
           path: cascade-electron/out/make/**/*
           if-no-files-found: error
 

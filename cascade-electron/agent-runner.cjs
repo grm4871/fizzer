@@ -42,9 +42,12 @@ const CHAT_BREVITY_CONTEXT = 'You are a chat participant, not a coding CLI. Repl
 // Children inherit these via process.env, so the wrapper authenticates against
 // the same live instance the desktop is connected to (cscd.online by default).
 const noteApi = { url: '', token: '', configured: false };
-const HELPER_CONFIG_PATH = path.join(os.homedir(), '.cascade', 'agent-helper-context.json');
-const RUN_CONTEXT_DIR = path.join(os.homedir(), '.cascade', 'run-contexts');
-const USER_BIN_DIR = path.join(os.homedir(), '.local', 'bin');
+const AGENT_STATE_DIR = process.env.CASCADE_AGENT_STATE_DIR
+  || process.env.CASCADE_USER_DATA_DIR
+  || path.join(os.homedir(), '.cascade');
+const HELPER_CONFIG_PATH = path.join(AGENT_STATE_DIR, 'agent-helper-context.json');
+const RUN_CONTEXT_DIR = path.join(AGENT_STATE_DIR, 'run-contexts');
+const USER_BIN_DIR = process.env.CASCADE_AGENT_BIN_DIR || path.join(os.homedir(), '.local', 'bin');
 // Electron launched from a desktop entry does not inherit the user's login
 // shell PATH. Include the conventional per-user CLI locations so agents
 // installed with Bun/npm (for example OMP in ~/.bun/bin) are discoverable.
@@ -826,7 +829,7 @@ async function runClaudeLocally(opts, emit) {
             emitHarness(emit, `${flag} tool_result\x1b[0m\r\n${preview}\r\n`);
             if (block.is_error) {
               // Auto-capture tool friction into the scratchpad journal (papercut).
-              void import(pathToFileURL(path.join(__dirname, '..', 'cli-agents', 'auto-papercut.mjs')).href)
+              void import(pathToFileURL(path.join(resolveWrapperDir(), 'auto-papercut.mjs')).href)
                 .then((mod) => mod.autoPapercut(preview, { tool: 'tool_result' }))
                 .catch(() => {});
             }

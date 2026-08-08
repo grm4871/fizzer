@@ -1,3 +1,5 @@
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import {
   addKanbanCard,
@@ -19,9 +21,11 @@ import {
 import {
   mergeKanbanSources,
   mergeLiveWorkIntoKanban,
+  SuperkanbanView,
   workItemStatusToKanbanColumn,
   workItemsToLiveColumns,
 } from '../components/SuperkanbanView';
+import type { Note } from '../api';
 import type { WorkItem } from '../chat/workItems';
 
 const SAMPLE = [
@@ -51,7 +55,58 @@ const SAMPLE = [
   '',
 ].join('\n');
 
+const BOARD_NOTE: Note = {
+  id: 'board-1',
+  vault_id: 'vault-1',
+  folder_id: null,
+  title: 'Product board',
+  content_preview: 'kanban-plugin: board superkanban: true',
+  content: SAMPLE,
+  file_path: 'Product board.md',
+  is_pinned: 0,
+  is_archived: 0,
+  is_listed: 1,
+  position: 0,
+  word_count: 1,
+  created_at: '',
+  updated_at: '',
+  tags: [],
+};
+
 describe('Markdown-backed Kanban helpers', () => {
+  it('uses an honest empty state before synthesizing standard Superkanban lanes', () => {
+    const markup = renderToStaticMarkup(createElement(SuperkanbanView, {
+      notes: [],
+      loading: false,
+      error: null,
+      onOpenNote: () => {},
+    }));
+    expect(markup).toContain('No Kanban boards yet');
+    expect(markup).not.toContain('Command center');
+  });
+
+  it('keeps cached Superkanban content visible during refresh and refresh failure', () => {
+    const loadingMarkup = renderToStaticMarkup(createElement(SuperkanbanView, {
+      notes: [BOARD_NOTE],
+      loading: true,
+      error: null,
+      onOpenNote: () => {},
+    }));
+    expect(loadingMarkup).toContain('Command center');
+    expect(loadingMarkup).toContain('Refreshing');
+    expect(loadingMarkup).not.toContain('Loading boards');
+
+    const errorMarkup = renderToStaticMarkup(createElement(SuperkanbanView, {
+      notes: [BOARD_NOTE],
+      loading: false,
+      error: 'Network unavailable',
+      onOpenNote: () => {},
+    }));
+    expect(errorMarkup).toContain('Command center');
+    expect(errorMarkup).toContain('Refresh failed');
+    expect(errorMarkup).not.toContain('Boards unavailable');
+  });
+
   it('parses h2 sections and checklist or bullet cards', () => {
     const board = parseKanbanMarkdown(SAMPLE);
     expect(board.columns.map((column) => column.title)).toEqual(['Backlog', 'Done']);

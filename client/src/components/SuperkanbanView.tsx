@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { LayoutDashboard, Search } from 'lucide-react';
+import { AlertTriangle, LayoutDashboard, Loader2, Search } from 'lucide-react';
 import { hasObsidianKanbanMarker, parseKanbanMarkdown, type KanbanCard } from './KanbanView';
 import { ErrorBoundary } from './ErrorBoundary';
 import type { Note } from '../api';
@@ -252,14 +252,30 @@ function SuperkanbanViewInner({
   const liveCount = (liveWorkItems || []).filter((item) => (
     item.sourceKind === 'mission' || item.sourceKind === 'contract'
   )).length;
+  const hasSources = allColumns.length > 0;
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const activeCount = allColumns.filter((column) => ['ready', 'in progress'].includes(columnKey(column.title))).reduce((sum, column) => sum + column.cards.length, 0);
   const blockedCount = allColumns.find((column) => columnKey(column.title) === 'blocked')?.cards.length || 0;
   const reviewCount = allColumns.find((column) => columnKey(column.title) === 'review')?.cards.length || 0;
 
-  if (loading) return <div className="superkanban-empty">Loading your Kanban boards…</div>;
-  if (error) return <div className="superkanban-empty">{error}</div>;
-  if (columns.length === 0) {
+  if (loading && !hasSources) {
+    return (
+      <div className="superkanban-empty is-loading" role="status">
+        <Loader2 className="is-spinning" size={24} aria-hidden="true" />
+        <strong>Loading boards</strong>
+      </div>
+    );
+  }
+  if (error && !hasSources) {
+    return (
+      <div className="superkanban-empty is-error" role="alert">
+        <AlertTriangle size={28} aria-hidden="true" />
+        <strong>Boards unavailable</strong>
+        <p>{error}</p>
+      </div>
+    );
+  }
+  if (!hasSources) {
     return (
       <div className="superkanban-empty">
         <LayoutDashboard size={32} aria-hidden="true" />
@@ -273,12 +289,24 @@ function SuperkanbanViewInner({
   }
 
   return (
-    <div className="kanban-view superkanban-view" aria-label="Superkanban">
+    <div className="kanban-view superkanban-view" aria-label="Superkanban" aria-busy={loading}>
       <div className="kanban-toolbar">
         <div className="superkanban-heading">
           <strong>Command center</strong>
           <span>Active work across the vault</span>
         </div>
+        {(loading || error) && (
+          <span
+            className={`superkanban-sync-status${error ? ' is-error' : ''}`}
+            role="status"
+            title={error || 'Refreshing boards'}
+          >
+            {error
+              ? <AlertTriangle size={12} aria-hidden="true" />
+              : <Loader2 className="is-spinning" size={12} aria-hidden="true" />}
+            {error ? 'Refresh failed' : 'Refreshing'}
+          </span>
+        )}
         <div className="kanban-search">
           <Search size={14} aria-hidden="true" />
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter all boards" aria-label="Filter Superkanban cards" />

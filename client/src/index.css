@@ -2157,6 +2157,15 @@ button:focus-visible,
 }
 .superkanban-heading strong { color: var(--text-primary); font-size: 0.8125rem; }
 .superkanban-heading span { margin-top: 1px; color: var(--text-tertiary); font-size: 0.625rem; }
+.superkanban-sync-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-tertiary);
+  font-size: 0.625rem;
+  white-space: nowrap;
+}
+.superkanban-sync-status.is-error { color: var(--danger); }
 .superkanban-view .kanban-search { width: auto; min-width: 180px; max-width: 320px; flex: 1; }
 .superkanban-board-filter {
   min-width: 130px;
@@ -2639,6 +2648,29 @@ button:focus-visible,
 
 .workspace-session-btn {
   position: relative;
+}
+.workspace-desktop-action {
+  min-height: 26px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 7px;
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+  color: var(--text-tertiary);
+  font-size: 0.625rem;
+  font-weight: 600;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: border-color var(--transition-fast), background var(--transition-fast), color var(--transition-fast);
+}
+.workspace-desktop-action:hover,
+.workspace-desktop-action:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 52%, var(--border));
+  background: var(--accent-subtle);
+  color: var(--accent-hover);
 }
 .workspace-session-badge {
   position: absolute;
@@ -5479,49 +5511,11 @@ button.chat-avatar-agent {
   font-size: 0.78rem;
   line-height: 1.4;
 }
-.auth-desktop-note a,
-.desktop-runner-download {
+.auth-desktop-note a {
   color: var(--accent);
   text-decoration: none;
 }
-.auth-desktop-note a:hover,
-.desktop-runner-download:hover { text-decoration: underline; }
-
-.desktop-runner-callout {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  padding: 8px 14px;
-  border-bottom: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
-  background: color-mix(in srgb, var(--accent) 7%, var(--bg-surface));
-  font-size: 0.75rem;
-}
-.desktop-runner-callout.is-repair {
-  border-bottom-color: color-mix(in srgb, #ef9a4f 45%, var(--border));
-  background: color-mix(in srgb, #ef9a4f 8%, var(--bg-surface));
-}
-.desktop-runner-callout div { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
-.desktop-runner-callout strong { color: var(--text-primary); white-space: nowrap; }
-.desktop-runner-callout span { color: var(--text-tertiary); }
-.desktop-runner-callout-action {
-  flex: 0 0 auto;
-  border: 1px solid color-mix(in srgb, var(--accent) 50%, var(--border));
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-  color: var(--text-primary);
-  cursor: pointer;
-  font: inherit;
-  font-weight: 650;
-  padding: 5px 8px;
-  text-decoration: none;
-}
-.desktop-runner-callout-action:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
-@media (max-width: 700px) {
-  .desktop-runner-callout { align-items: flex-start; }
-  .desktop-runner-callout div { flex-direction: column; gap: 2px; }
-  .desktop-runner-callout strong { white-space: normal; }
-}
+.auth-desktop-note a:hover { text-decoration: underline; }
 .chat-agent-menu-heading {
   font-size: 0.75rem;
   font-weight: 600;
@@ -6661,6 +6655,10 @@ button.chat-avatar-agent {
     background: var(--bg-surface);
   }
 
+  .workspace-desktop-action span {
+    display: none;
+  }
+
   .main-area {
     /* Fill the full visual viewport so fold hinge / system bar regions never
        show a mismatched native window color behind the WebView. */
@@ -7577,6 +7575,14 @@ button.chat-avatar-agent {
   50% { opacity: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
+  .is-spinning,
+  .chat-loading-dot,
+  .session-manager-live-dot,
+  .crp-term-cursor,
+  .chat-msg-media-loading::before,
+  .ai-spinner {
+    animation: none;
+  }
   .chat-work-cursor {
     animation: none;
   }

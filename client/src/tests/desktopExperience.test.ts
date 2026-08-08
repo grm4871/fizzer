@@ -14,20 +14,21 @@ const offline = {
 describe('desktop beta experience', () => {
   it('gives a web invitee a concrete desktop handoff without claiming free provider use', () => {
     const experience = describeDesktopExperience(false, offline);
-    expect(experience).toMatchObject({ tone: 'setup', action: 'download', actionLabel: 'Get desktop app' });
+    expect(experience).toMatchObject({ tone: 'setup', action: 'download', actionLabel: 'Get desktop' });
     expect(experience?.detail).toMatch(/provider usage follows that account/i);
+  });
+
+  it('does not flash a handoff while runner health is still unknown', () => {
+    expect(describeDesktopExperience(false, null)).toBeNull();
   });
 
   it('does not ask for a desktop install when the same account has a runner online', () => {
     expect(describeDesktopExperience(false, { ...offline, online: true })).toBeNull();
   });
 
-  it('turns a desktop runner failure into an in-place repair action', () => {
-    const experience = describeDesktopExperience(true, { ...offline, lastError: 'Restricted credential expired.' });
-    expect(experience).toMatchObject({ tone: 'repair', action: 'reload', detail: 'Restricted credential expired.' });
-  });
-
-  it('keeps a fresh desktop launch honest while health is still pending', () => {
-    expect(describeDesktopExperience(true, null)).toMatchObject({ tone: 'connecting', action: 'reload' });
+  it('keeps runner connection and run errors out of global desktop chrome', () => {
+    expect(describeDesktopExperience(true, null)).toBeNull();
+    expect(describeDesktopExperience(true, offline)).toBeNull();
+    expect(describeDesktopExperience(true, { ...offline, lastError: 'Restricted credential expired.' })).toBeNull();
   });
 });

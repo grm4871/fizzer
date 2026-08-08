@@ -1,13 +1,13 @@
 import type { DesktopRunnerHealth } from './components/ChatView';
 
-export type DesktopExperienceAction = 'download' | 'reload' | null;
+export type DesktopExperienceAction = 'download';
 
 export type DesktopExperience = {
-  tone: 'setup' | 'connecting' | 'repair';
+  tone: 'setup';
   title: string;
   detail: string;
   action: DesktopExperienceAction;
-  actionLabel?: string;
+  actionLabel: string;
 };
 
 /**
@@ -19,33 +19,15 @@ export function describeDesktopExperience(
   inDesktopApp: boolean,
   health: DesktopRunnerHealth | null,
 ): DesktopExperience | null {
-  if (!inDesktopApp) {
-    if (health?.online) return null;
-    return {
-      tone: 'setup',
-      title: 'Run agents in Cascade desktop',
-      detail: 'Your notes and chats are ready here. The desktop app runs agents with the local CLI account you choose; provider usage follows that account’s plan.',
-      action: 'download',
-      actionLabel: 'Get desktop app',
-    };
-  }
-
-  if (health?.online) return null;
-  if (health?.lastError) {
-    return {
-      tone: 'repair',
-      title: 'Desktop agent connection needs attention',
-      detail: health.lastError,
-      action: 'reload',
-      actionLabel: 'Reload desktop window',
-    };
-  }
-
+  // Runner state belongs in the agent/session surfaces inside desktop. In
+  // particular, null means "not checked yet" and an offline snapshot can be a
+  // normal socket reconnect; neither should shift the whole workspace.
+  if (inDesktopApp || !health || health.online) return null;
   return {
-    tone: 'connecting',
-    title: 'Connecting your desktop agent runner',
-    detail: 'Keep this window open while Cascade checks your local agent tools. A window reload is safe if this does not finish.',
-    action: 'reload',
-    actionLabel: 'Reload window',
+    tone: 'setup',
+    title: 'Run agents in Cascade desktop',
+    detail: 'The desktop app runs agents with the local CLI account you choose; provider usage follows that account’s plan.',
+    action: 'download',
+    actionLabel: 'Get desktop',
   };
 }

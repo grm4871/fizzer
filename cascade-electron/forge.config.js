@@ -6,6 +6,8 @@
 // platform tooling that produces them, so a build host only runs the makers it
 // can actually satisfy.
 import { execSync } from 'node:child_process';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { MakerZIP } from '@electron-forge/maker-zip';
 import { MakerSquirrel } from '@electron-forge/maker-squirrel';
 import { MakerDMG } from '@electron-forge/maker-dmg';
@@ -17,6 +19,7 @@ const has = (bin) => {
   try { execSync(`command -v ${bin}`, { stdio: 'ignore' }); return true; }
   catch { return false; }
 };
+const configDir = path.dirname(fileURLToPath(import.meta.url));
 
 // Always: a runnable zipped app bundle for whichever --platform is requested.
 const makers = [new MakerZIP({}, ['darwin', 'linux', 'win32'])];
@@ -32,6 +35,10 @@ export default {
     name: 'Cascade',
     executableName: 'cascade',
     asar: true,
+    // agent-runner.cjs loads the generated local-agent implementation from
+    // resources/dist at runtime. Packaging only this Electron directory makes
+    // a shell that opens but cannot run or reap agents.
+    extraResource: [path.resolve(configDir, '..', 'dist')],
   },
   makers,
   plugins: [new AutoUnpackNativesPlugin({})],

@@ -6,7 +6,11 @@ const fs = require('node:fs');
 const { spawn } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
 const runnerLeaseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-runner-leases-'));
+const runnerStateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-runner-state-'));
+const runnerBinDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-runner-bin-'));
 process.env.CASCADE_AGENT_PROCESS_DIR = runnerLeaseDir;
+process.env.CASCADE_AGENT_STATE_DIR = runnerStateDir;
+process.env.CASCADE_AGENT_BIN_DIR = runnerBinDir;
 const {
   buildRunHelperEnv,
   chatTriggeringMessageId,
@@ -66,7 +70,7 @@ test('Cascade helpers are pre-authorized by command name and discovered paths', 
   const rules = helperAllowedTools();
   assert.ok(rules.includes('Bash(cascade-note *)'));
   assert.ok(rules.includes(`Bash(${path.join(__dirname, '..', 'cli-agents', 'cascade-note')} *)`));
-  assert.ok(rules.includes(`Bash(${path.join(os.homedir(), '.local', 'bin', 'cascade-note')} *)`));
+  assert.ok(rules.includes(`Bash(${path.join(runnerBinDir, 'cascade-note')} *)`));
 });
 
 test('Claude effort overrides support every Agent SDK level and reject ultra', () => {

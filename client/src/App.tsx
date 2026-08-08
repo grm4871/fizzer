@@ -87,7 +87,7 @@ import {
 } from './chat/session';
 import { chatMessageStore } from './chat/messageStore';
 import { consumePendingSessionSteer, enqueueSessionTurn, findProjectedActiveSessionRun, forceReleasePriorSessionTurns, queuesBehindActiveSession, requestSessionSteer, shouldSteerActiveSession } from './chat/sessionTurns';
-import { Activity, Gem, PanelLeftOpen, Users } from 'lucide-react';
+import { Activity, Download, Gem, PanelLeftOpen, Users } from 'lucide-react';
 
 type ChatAgentDispatch = {
   id: string;
@@ -535,15 +535,6 @@ export default function App() {
     }
     let cancelled = false;
     let timer: number | null = null;
-    const OFFLINE: DesktopRunnerHealth = {
-      online: false,
-      activeRuns: 0,
-      lastError: null,
-      lastErrorAt: null,
-      lastSeenAt: null,
-      models: null,
-      planUsage: null,
-    };
     const sameHealth = (a: DesktopRunnerHealth | null, b: DesktopRunnerHealth): boolean => {
       if (!a) return false;
       if (a.online !== b.online) return false;
@@ -589,17 +580,9 @@ export default function App() {
         const data = await api<DesktopRunnerHealth>('/api/me/desktop-runner');
         if (!cancelled) apply(data);
       } catch {
-        // Offline ticks must not wipe cached plan usage.
-        if (!cancelled) {
-          setRunnerHealth((prev) => {
-            const offline: DesktopRunnerHealth = {
-              ...OFFLINE,
-              planUsage: prev?.planUsage ?? null,
-              models: prev?.models ?? null,
-            };
-            return sameHealth(prev, offline) ? prev : offline;
-          });
-        }
+        // A failed status request is transport-unknown, not proof that the
+        // runner is offline. Keep the last confirmed snapshot (or null during
+        // cold start) so a server/network blip cannot manufacture status UI.
       }
     };
     void tick();
@@ -3618,6 +3601,17 @@ export default function App() {
               </button>
             )}
             <NewsTicker />
+            {desktopExperience && (
+              <a
+                className="workspace-desktop-action"
+                href="/download"
+                title={`${desktopExperience.title}. ${desktopExperience.detail}`}
+                aria-label={desktopExperience.actionLabel}
+              >
+                <Download size={13} aria-hidden="true" />
+                <span>{desktopExperience.actionLabel}</span>
+              </a>
+            )}
             <button
               id="session-manager-btn"
               type="button"
@@ -3645,23 +3639,6 @@ export default function App() {
               <Users size={16} />
             </button>}
         </div>
-
-        {desktopExperience && (
-          <div className={`desktop-runner-callout is-${desktopExperience.tone}`} role="status">
-            <div>
-              <strong>{desktopExperience.title}</strong>
-              <span>{desktopExperience.detail}</span>
-            </div>
-            {desktopExperience.action === 'download' && (
-              <a className="desktop-runner-callout-action" href="/download">{desktopExperience.actionLabel}</a>
-            )}
-            {desktopExperience.action === 'reload' && (
-              <button className="desktop-runner-callout-action" type="button" onClick={() => window.location.reload()}>
-                {desktopExperience.actionLabel}
-              </button>
-            )}
-          </div>
-        )}
 
         <div className="flex-1" style={{ position: 'relative', display: 'flex', overflow: 'hidden' }}>
           <PaneGrid
