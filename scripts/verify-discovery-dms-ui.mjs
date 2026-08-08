@@ -33,6 +33,7 @@ try {
   const errors = [];
   const requests = [];
   let joinedPublicVault = false;
+  let requestedDesignVault = false;
   let dmCreated = false;
   let allowDirectMessages = true;
   let blocks = [{ id: 3, username: 'bob', displayName: 'Bob Blocked', avatarUrl: '', createdAt: '2026-08-08 05:00:00' }];
@@ -68,7 +69,7 @@ try {
     const url = new URL(request.url());
     const path = url.pathname;
     const method = request.method();
-    requests.push({ method, path, body: request.postDataJSON?.() });
+    requests.push({ method, path, search: url.search, body: request.postDataJSON?.() });
 
     const json = (body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
     if (path === '/api/me') return json({ user: { id: 1, username: 'ui_tester', displayName: 'UI Tester', avatarUrl: '' }, owner: false });
@@ -77,13 +78,30 @@ try {
       { id: 'v-home', name: 'Home', root_path: '/tmp/home', created_at: '2026-08-08 04:00:00', role: 'owner', memberCount: 1 },
       ...(joinedPublicVault ? [{ id: 'v-public', name: 'Community Lab', root_path: '/tmp/public', created_at: '2026-08-08 04:30:00', role: 'viewer', memberCount: 13 }] : []),
     ] });
-    if (path === '/api/public-vaults' && method === 'GET') return json({ vaults: [
-      { id: 'v-public', name: 'Community Lab', ownerUserId: 2, ownerUsername: 'alice', ownerDisplayName: 'Alice', ownerAvatarUrl: '', memberCount: 12, joinRole: 'viewer', createdAt: '2026-08-08 04:30:00', role: joinedPublicVault ? 'viewer' : null },
-      { id: 'v-design', name: 'Design Commons', ownerUserId: 4, ownerUsername: 'frank', ownerDisplayName: 'Frank', ownerAvatarUrl: '', memberCount: 6, joinRole: 'editor', createdAt: '2026-08-08 04:20:00', role: null },
-    ] });
+    const publicVaults = [
+      { id: 'v-public', name: 'Community Lab', ownerUserId: 2, ownerUsername: 'alice', ownerDisplayName: 'Alice', ownerAvatarUrl: '', memberCount: 12, summary: 'Open experiments for civic technology.', topics: ['civic tech', 'research'], joinPolicy: 'open', lastActivity: '2026-08-08 04:30:00', createdAt: '2026-08-01 04:30:00', role: joinedPublicVault ? 'viewer' : null, requestStatus: null },
+      { id: 'v-design', name: 'Design Commons', ownerUserId: 4, ownerUsername: 'frank', ownerDisplayName: 'Frank', ownerAvatarUrl: '', memberCount: 6, summary: 'A critique-friendly design systems workshop.', topics: ['design systems'], joinPolicy: 'request', lastActivity: '2026-08-08 04:20:00', createdAt: '2026-08-02 04:20:00', role: null, requestStatus: requestedDesignVault ? 'pending' : null },
+      { id: 'v-invite', name: 'Private Preview Guild', ownerUserId: 5, ownerUsername: 'dana', ownerDisplayName: 'Dana', ownerAvatarUrl: '', memberCount: 4, summary: 'Curated launch reviews.', topics: ['launches'], joinPolicy: 'invite', lastActivity: '2026-08-08 03:20:00', createdAt: '2026-08-03 04:20:00', role: null, requestStatus: null },
+    ];
+    if (path === '/api/public-vaults' && method === 'GET') {
+      const query = (url.searchParams.get('q') || '').toLowerCase();
+      const matches = publicVaults.filter((vault) => !query || [vault.name, vault.ownerUsername, vault.summary, ...vault.topics].some((value) => value.toLowerCase().includes(query)));
+      return json({ vaults: matches });
+    }
+    if (path === '/api/public-vaults/v-public' && method === 'GET') return json({ vault: {
+      ...publicVaults[0], guidelines: 'Share sources and explain tradeoffs.',
+      homeNote: { title: 'Welcome to the lab', preview: 'Start with the current research questions and open calls for help.', updatedAt: '2026-08-08 04:30:00' },
+    } });
+    if (path === '/api/public-vaults/v-design' && method === 'GET') return json({ vault: {
+      ...publicVaults[1], guidelines: 'Critique the work, never the person.', homeNote: null,
+    } });
     if (path === '/api/public-vaults/v-public/join' && method === 'POST') {
       joinedPublicVault = true;
-      return json({ vaultId: 'v-public', name: 'Community Lab', role: 'viewer', alreadyMember: false }, 201);
+      return json({ vaultId: 'v-public', name: 'Community Lab', role: 'viewer', alreadyMember: false, requestStatus: null }, 201);
+    }
+    if (path === '/api/public-vaults/v-design/join' && method === 'POST') {
+      requestedDesignVault = true;
+      return json({ vaultId: 'v-design', name: 'Design Commons', role: null, alreadyMember: false, requestStatus: 'pending' }, 201);
     }
     if (path === '/api/me/direct-messages' && method === 'GET') return json({ conversations: [{
       user: { id: 2, username: 'alice', displayName: 'Alice Example', avatarUrl: '' },
@@ -133,10 +151,25 @@ try {
   const dialog = page.getByRole('dialog', { name: 'Connect' });
   await dialog.getByText('Community Lab').waitFor();
   await dialog.getByLabel('Search public vaults').fill('design');
+  await dialog.getByText('Community Lab').waitFor({ state: 'detached' });
   await dialog.getByText('Design Commons').waitFor();
   if (await dialog.getByText('Community Lab').count()) throw new Error('public vault search did not filter rows');
+  await dialog.getByRole('button', { name: 'View Design Commons details' }).click();
+  await dialog.getByText('Critique the work, never the person.').waitFor();
+  await dialog.getByRole('button', { name: 'Request access' }).click();
+  await dialog.getByText('Request sent to @frank.').waitFor();
+  await dialog.getByRole('button', { name: 'Back to public vaults' }).click();
+  await dialog.getByLabel('Search public vaults').fill('guild');
+  await dialog.getByText('Design Commons').waitFor({ state: 'detached' });
+  const inviteOnly = dialog.getByRole('button', { name: 'Invite only' });
+  await inviteOnly.waitFor();
+  if (!(await inviteOnly.isDisabled())) throw new Error('invite-only vault exposed a self-join action');
   await dialog.getByLabel('Search public vaults').fill('community');
-  await dialog.getByRole('button', { name: 'Join', exact: true }).click();
+  await dialog.getByText('Private Preview Guild').waitFor({ state: 'detached' });
+  await dialog.getByRole('button', { name: 'View Community Lab details' }).click();
+  await dialog.getByText('Share sources and explain tradeoffs.').waitFor();
+  await dialog.getByText('Welcome to the lab').waitFor();
+  await dialog.getByRole('button', { name: 'Join as viewer' }).click();
   await dialog.waitFor({ state: 'detached' });
   await page.getByRole('button', { name: /current vault Community Lab/ }).waitFor();
 
@@ -159,6 +192,9 @@ try {
   await page.locator('.tab-title', { hasText: 'DM — @dana' }).waitFor();
 
   const expectedCalls = [
+    ['GET', '/api/public-vaults/v-design'],
+    ['POST', '/api/public-vaults/v-design/join'],
+    ['GET', '/api/public-vaults/v-public'],
     ['POST', '/api/public-vaults/v-public/join'],
     ['PUT', '/api/me/dm-settings'],
     ['DELETE', '/api/me/blocks/bob'],
@@ -169,7 +205,10 @@ try {
     if (!requests.some((request) => request.method === method && request.path === path)) throw new Error(`missing ${method} ${path}`);
   }
   if (errors.length) throw new Error(errors.join('\n'));
-  console.log('[discovery-dms-ui] OK — switcher entries, public browse/search/join, DM open, privacy, block/unblock, and conversation navigation');
+  if (!requests.some((request) => request.method === 'GET' && request.path === '/api/public-vaults' && request.search === '?q=design')) {
+    throw new Error('public directory search was not sent to the server');
+  }
+  console.log('[discovery-dms-ui] OK — server-backed public search, safe detail preview, open/request/invite policies, DM privacy, blocks, and conversation navigation');
 } finally {
   if (browser) await browser.close();
   preview.kill('SIGTERM');

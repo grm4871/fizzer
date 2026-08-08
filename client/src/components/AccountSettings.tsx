@@ -3,6 +3,25 @@ import { Camera, Globe2, KeyRound, Link as LinkIcon, LogOut, Trash2, Users, X } 
 import { api, type User, type VaultMember, type VaultRole } from '../api';
 
 type AssignableRole = Exclude<VaultRole, 'owner'>;
+type PublicJoinPolicy = 'open' | 'request' | 'invite';
+type PublicVaultSettings = {
+  visibility: 'private' | 'public';
+  summary: string;
+  topics: string[];
+  guidelines: string;
+  homeNoteId: string | null;
+  joinPolicy: PublicJoinPolicy;
+};
+type PublicHomeNoteChoice = { id: string; title: string };
+type PublicJoinRequest = {
+  id: number;
+  userId: number;
+  username: string;
+  displayName: string;
+  avatarUrl: string;
+  status: 'pending';
+  createdAt: string;
+};
 
 const ROLE_HELP: Record<VaultRole, string> = {
   owner: 'Owns the vault. Cannot be removed or demoted here.',
@@ -38,7 +57,13 @@ export function AccountSettings({ user, vaultId, vaultName, onClose, onUserChang
   const [memberBusy, setMemberBusy] = useState(false);
   const [inviteLinkCopied, setInviteLinkCopied] = useState(false);
   const [vaultVisibility, setVaultVisibility] = useState<'private' | 'public'>('private');
-  const [publicJoinRole, setPublicJoinRole] = useState<AssignableRole>('viewer');
+  const [publicSummary, setPublicSummary] = useState('');
+  const [publicTopics, setPublicTopics] = useState('');
+  const [publicGuidelines, setPublicGuidelines] = useState('');
+  const [publicHomeNoteId, setPublicHomeNoteId] = useState('');
+  const [publicJoinPolicy, setPublicJoinPolicy] = useState<PublicJoinPolicy>('open');
+  const [publicHomeNotes, setPublicHomeNotes] = useState<PublicHomeNoteChoice[]>([]);
+  const [publicJoinRequests, setPublicJoinRequests] = useState<PublicJoinRequest[]>([]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
@@ -53,12 +78,29 @@ export function AccountSettings({ user, vaultId, vaultName, onClose, onUserChang
       return;
     }
     try {
-      const result = await api<{ members: VaultMember[]; role: VaultRole | null }>(`/api/vaults/${vaultId}/members`);
+      const [result, visibility] = await Promise.all([
+        api<{ members: VaultMember[]; role: VaultRole | null }>(`/api/vaults/${vaultId}/members`),
+        api<PublicVaultSettings>(`/api/vaults/${vaultId}/visibility`),
+      ]);
       setMembers(result.members || []);
       setMyRole(result.role || null);
-      const visibility = await api<{ visibility: 'private' | 'public'; joinRole: AssignableRole }>(`/api/vaults/${vaultId}/visibility`);
       setVaultVisibility(visibility.visibility);
-      setPublicJoinRole(visibility.joinRole);
+      setPublicSummary(visibility.summary || '');
+      setPublicTopics((visibility.topics || []).join(', '));
+      setPublicGuidelines(visibility.guidelines || '');
+      setPublicHomeNoteId(visibility.homeNoteId || '');
+      setPublicJoinPolicy(visibility.joinPolicy || 'open');
+      if (result.role === 'owner') {
+        const [homeNotes, joinRequests] = await Promise.all([
+          api<{ notes: PublicHomeNoteChoice[] }>(`/api/vaults/${vaultId}/public-home-notes`),
+          api<{ requests: PublicJoinRequest[] }>(`/api/vaults/${vaultId}/join-requests`),
+        ]);
+        setPublicHomeNotes(homeNotes.notes || []);
+        setPublicJoinRequests(joinRequests.requests || []);
+      } else {
+        setPublicHomeNotes([]);
+        setPublicJoinRequests([]);
+      }
     } catch (error) {
       setMemberState(error instanceof Error ? error.message : 'Could not load vault members');
     }
@@ -187,20 +229,56 @@ export function AccountSettings({ user, vaultId, vaultName, onClose, onUserChang
     }
   };
 
-  const saveVisibility = async (visibility: 'private' | 'public', joinRole = publicJoinRole) => {
+  const saveDiscoverySettings = async (overrides: Partial<PublicVaultSettings> = {}) => {
+    if (!vaultId || !canManageMembers) return;
+    const visibility = overrides.visibility ?? vaultVisibility;
+    const summary = overrides.summary ?? publicSummary;
+    const topics = overrides.topics ?? publicTopics.split(',').map((topic) => topic.trim()).filter(Boolean);
+    const guidelines = overrides.guidelines ?? publicGuidelines;
+    const homeNoteId = overrides.homeNoteId !== undefined ? overrides.homeNoteId : (publicHomeNoteId || null);
+    const joinPolicy = overrides.joinPolicy ?? publicJoinPolicy;
+    setMemberBusy(true);
+    setMemberState('');
+    try {
+      const body = overrides.visibility === 'private'
+        ? { visibility: 'private' as const }
+        : { visibility, summary, topics, guidelines, homeNoteId, joinPolicy };
+      const result = await api<PublicVaultSettings>(`/api/vaults/${vaultId}/visibility`, {
+        method: 'PUT',
+        body: JSON.stringify(body),
+      });
+      setVaultVisibility(result.visibility);
+      setPublicSummary(result.summary);
+      setPublicTopics(result.topics.join(', '));
+      setPublicGuidelines(result.guidelines);
+      setPublicHomeNoteId(result.homeNoteId || '');
+      setPublicJoinPolicy(result.joinPolicy);
+      setMemberState(result.visibility === 'public' ? 'Public discovery profile saved.' : 'Discovery profile saved; vault is private.');
+      if (result.joinPolicy !== 'request') setPublicJoinRequests([]);
+    } catch (error) {
+      setMemberState(error instanceof Error ? error.message : 'Could not update vault visibility');
+    } finally {
+      setMemberBusy(false);
+    }
+  };
+
+  const reviewJoinRequest = async (request: PublicJoinRequest, action: 'approve' | 'reject') => {
     if (!vaultId || !canManageMembers) return;
     setMemberBusy(true);
     setMemberState('');
     try {
-      const result = await api<{ visibility: 'private' | 'public'; joinRole: AssignableRole }>(`/api/vaults/${vaultId}/visibility`, {
-        method: 'PUT',
-        body: JSON.stringify({ visibility, joinRole }),
+      await api(`/api/vaults/${vaultId}/join-requests/${request.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ action }),
       });
-      setVaultVisibility(result.visibility);
-      setPublicJoinRole(result.joinRole);
-      setMemberState(result.visibility === 'public' ? 'Vault is visible in public discovery.' : 'Vault is private.');
+      setPublicJoinRequests((current) => current.filter((item) => item.id !== request.id));
+      setMemberState(action === 'approve' ? `Added @${request.username} as viewer` : `Declined @${request.username}'s request`);
+      if (action === 'approve') {
+        await loadMembers();
+        onMembershipChanged?.();
+      }
     } catch (error) {
-      setMemberState(error instanceof Error ? error.message : 'Could not update vault visibility');
+      setMemberState(error instanceof Error ? error.message : 'Could not review join request');
     } finally {
       setMemberBusy(false);
     }
@@ -314,26 +392,67 @@ export function AccountSettings({ user, vaultId, vaultName, onClose, onUserChang
               {' · you are '}<strong>{myRole || 'a member'}</strong>
             </p>
             {canManageMembers && (
-              <div className="account-vault-visibility">
-                <Globe2 size={15} aria-hidden="true" />
+              <div className="account-public-discovery">
+                <div className="account-vault-visibility">
+                  <Globe2 size={15} aria-hidden="true" />
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={vaultVisibility === 'public'}
+                      disabled={memberBusy}
+                      onChange={(event) => void saveDiscoverySettings({ visibility: event.target.checked ? 'public' : 'private' })}
+                    />
+                    List this vault publicly
+                  </label>
+                </div>
                 <label>
-                  <input
-                    type="checkbox"
-                    checked={vaultVisibility === 'public'}
-                    disabled={memberBusy}
-                    onChange={(event) => void saveVisibility(event.target.checked ? 'public' : 'private')}
-                  />
-                  List this vault publicly
+                  Public summary
+                  <textarea value={publicSummary} maxLength={240} rows={2} onChange={(event) => setPublicSummary(event.target.value)} placeholder="What is this vault for?" />
+                  <small>{publicSummary.length}/240</small>
                 </label>
-                <select
-                  aria-label="Public vault join role"
-                  value={publicJoinRole}
-                  disabled={memberBusy || vaultVisibility !== 'public'}
-                  onChange={(event) => void saveVisibility(vaultVisibility, event.target.value as AssignableRole)}
-                >
-                  <option value="viewer">Join as viewer</option>
-                  <option value="editor">Join as editor</option>
-                </select>
+                <label>
+                  Topics
+                  <input value={publicTopics} onChange={(event) => setPublicTopics(event.target.value)} placeholder="research, design systems" />
+                  <small>1–5 comma-separated topics. Topics are normalized when saved.</small>
+                </label>
+                <label>
+                  Community guidelines
+                  <textarea value={publicGuidelines} maxLength={2000} rows={4} onChange={(event) => setPublicGuidelines(event.target.value)} placeholder="Set expectations before someone joins." />
+                  <small>{publicGuidelines.length}/2000</small>
+                </label>
+                <label>
+                  Curated home note preview
+                  <select value={publicHomeNoteId} onChange={(event) => setPublicHomeNoteId(event.target.value)}>
+                    <option value="">No home note preview</option>
+                    {publicHomeNotes.map((note) => <option key={note.id} value={note.id}>{note.title}</option>)}
+                  </select>
+                  <small>Only a sanitized preview of this listed non-chat note appears before membership.</small>
+                </label>
+                <label>
+                  Join policy
+                  <select value={publicJoinPolicy} onChange={(event) => setPublicJoinPolicy(event.target.value as PublicJoinPolicy)}>
+                    <option value="open">Open — anyone can join as viewer</option>
+                    <option value="request">Request — owner approval required</option>
+                    <option value="invite">Invite only — no self-join</option>
+                  </select>
+                  <small>Public discovery never grants editor access. Promote viewers deliberately below.</small>
+                </label>
+                <div className="account-settings-actions">
+                  <button type="button" disabled={memberBusy} onClick={() => void saveDiscoverySettings()}>Save discovery profile</button>
+                </div>
+              </div>
+            )}
+            {canManageMembers && (publicJoinPolicy === 'request' || publicJoinRequests.length > 0) && (
+              <div className="account-join-requests">
+                <strong>Join requests</strong>
+                {publicJoinRequests.map((request) => (
+                  <div key={request.id}>
+                    <span>{request.displayName || request.username} <small>@{request.username}</small></span>
+                    <button type="button" disabled={memberBusy} onClick={() => void reviewJoinRequest(request, 'reject')}>Decline</button>
+                    <button type="button" disabled={memberBusy} onClick={() => void reviewJoinRequest(request, 'approve')}>Approve as viewer</button>
+                  </div>
+                ))}
+                {!publicJoinRequests.length && <small className="account-settings-hint">No pending requests.</small>}
               </div>
             )}
             <ul className="account-vault-members">

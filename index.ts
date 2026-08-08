@@ -59,9 +59,13 @@ import {
 } from './server/vaultMembers.js';
 import {
   ensurePublicVaultSchema,
+  getPublicVaultDetail,
   getVaultVisibility,
   joinPublicVault,
+  listPublicHomeNoteChoices,
+  listPublicVaultJoinRequests,
   listPublicVaults,
+  reviewPublicVaultJoinRequest,
   setVaultVisibility,
 } from './server/publicVaults.js';
 import {
@@ -1611,15 +1615,62 @@ app.put('/api/vaults/:id/visibility', requireAuth, requireUserAccess, (req: Auth
   const vault = getVault(db, req.params.id, req.user!.id);
   if (!vault) return res.status(404).json({ error: 'Vault not found' });
   try {
+    const current = getVaultVisibility(db, vault.id);
+    if (req.body?.visibility === 'public' && current?.visibility !== 'public'
+      && !Array.isArray(req.body?.topics) && !current?.topics.length) {
+      return res.status(400).json({ error: 'Choose at least 1 topic before publishing' });
+    }
     const settings = setVaultVisibility(db, vault.id, req.user!.id, {
       visibility: req.body?.visibility,
-      joinRole: req.body?.joinRole,
+      summary: req.body?.summary,
+      topics: req.body?.topics,
+      guidelines: req.body?.guidelines,
+      homeNoteId: req.body?.homeNoteId,
+      joinPolicy: req.body?.joinPolicy,
     });
     emitVaultEvent(vault.id, 'vault:visibilityChanged', { vaultId: vault.id, ...settings });
     res.json(settings);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Could not update visibility';
     res.status(message.startsWith('Only the vault owner') ? 403 : 400).json({ error: message });
+  }
+});
+
+app.get('/api/vaults/:id/public-home-notes', requireAuth, (req: AuthedRequest, res) => {
+  const vault = getVault(db, req.params.id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Vault not found' });
+  try {
+    res.json({ notes: listPublicHomeNoteChoices(db, vault.id, req.user!.id) });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Could not list home notes';
+    res.status(message.startsWith('Only the vault owner') ? 403 : 400).json({ error: message });
+  }
+});
+
+app.get('/api/vaults/:id/join-requests', requireAuth, (req: AuthedRequest, res) => {
+  const vault = getVault(db, req.params.id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Vault not found' });
+  try {
+    res.json({ requests: listPublicVaultJoinRequests(db, vault.id, req.user!.id) });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Could not list join requests';
+    res.status(message.startsWith('Only the vault owner') ? 403 : 400).json({ error: message });
+  }
+});
+
+app.patch('/api/vaults/:id/join-requests/:requestId', requireAuth, requireUserAccess, (req: AuthedRequest, res) => {
+  const vault = getVault(db, req.params.id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Vault not found' });
+  try {
+    const requestId = Number(req.params.requestId);
+    if (!Number.isSafeInteger(requestId) || requestId < 1) return res.status(400).json({ error: 'Invalid join request id' });
+    const result = reviewPublicVaultJoinRequest(db, vault.id, requestId, req.user!.id, req.body?.action);
+    if (result.role) emitVaultEvent(vault.id, 'vault:membersChanged', { vaultId: vault.id });
+    res.json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Could not review join request';
+    if (message.startsWith('Only the vault owner')) return res.status(403).json({ error: message });
+    res.status(message === 'Join request not found' ? 404 : 400).json({ error: message });
   }
 });
 
@@ -1631,6 +1682,12 @@ app.get('/api/public-vaults', requireAuth, (req: AuthedRequest, res) => {
     offset: Number(req.query.offset) || undefined,
   });
   res.json({ vaults });
+});
+
+app.get('/api/public-vaults/:id', requireAuth, (req: AuthedRequest, res) => {
+  const vault = getPublicVaultDetail(db, req.params.id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Vault not found' });
+  res.json({ vault });
 });
 
 app.post('/api/public-vaults/:id/join', requireAuth, requireUserAccess, (req: AuthedRequest, res) => {

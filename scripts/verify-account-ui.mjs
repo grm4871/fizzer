@@ -28,11 +28,14 @@ try {
   await wait(`${apiBase}/api/health`); await wait(appUrl);
   const username = `account_ui_${Date.now()}`;
   const mateName = `account_mate_${Date.now()}`;
+  const requesterName = `account_requester_${Date.now()}`;
   const { token } = await json('/api/auth/register', { method: 'POST', body: JSON.stringify({ username, password: 'testpass12345' }) });
   const { token: mateToken } = await json('/api/auth/register', { method: 'POST', body: JSON.stringify({ username: mateName, password: 'testpass12345' }) });
+  const { token: requesterToken } = await json('/api/auth/register', { method: 'POST', body: JSON.stringify({ username: requesterName, password: 'testpass12345' }) });
   const auth = { authorization: `Bearer ${token}` };
   const mateAuth = { authorization: `Bearer ${mateToken}` };
-  await json('/api/vaults', { method: 'POST', headers: auth, body: JSON.stringify({ name: 'Profile workspace' }) });
+  const requesterAuth = { authorization: `Bearer ${requesterToken}` };
+  const { vault: profileVault } = await json('/api/vaults', { method: 'POST', headers: auth, body: JSON.stringify({ name: 'Profile workspace' }) });
   const { vault: mateVault } = await json('/api/vaults', { method: 'POST', headers: mateAuth, body: JSON.stringify({ name: 'Mate workspace' }) });
   const { url: mateVaultInvite } = await json(`/api/vaults/${mateVault.id}/invite-link`, {
     method: 'POST', headers: mateAuth, body: JSON.stringify({ role: 'editor' }),
@@ -63,9 +66,28 @@ try {
   const sharing = page.locator('.account-settings');
   await sharing.waitFor();
   if (await page.locator('#vault-shared-badge').count()) throw new Error('a private vault should not show the shared badge');
+  await sharing.getByLabel('Public summary').fill('A focused workspace for public product research.');
+  await sharing.getByLabel('Topics').fill('Research, Product Design, research');
+  await sharing.getByLabel('Community guidelines').fill('Bring evidence and keep critique constructive.');
+  await sharing.getByLabel('Join policy').selectOption('request');
   await sharing.getByLabel('List this vault publicly').click();
-  await sharing.getByText('Vault is visible in public discovery.').waitFor();
-  await sharing.getByLabel('Public vault join role').selectOption('editor');
+  await sharing.getByText('Public discovery profile saved.').waitFor();
+  const visibility = await json(`/api/vaults/${profileVault.id}/visibility`, { headers: auth });
+  if (visibility.joinPolicy !== 'request' || visibility.topics.join(',') !== 'research,product design') throw new Error('public discovery settings did not normalize and persist');
+  const requested = await json(`/api/public-vaults/${profileVault.id}/join`, { method: 'POST', headers: requesterAuth, body: '{}' });
+  if (requested.requestStatus !== 'pending' || requested.role !== null) throw new Error('request policy granted membership without review');
+  await page.keyboard.press('Escape');
+  await sharing.waitFor({ state: 'detached' });
+  await page.locator('.sidebar-footer .user-info').click();
+  await sharing.getByText(`@${requesterName}`).waitFor();
+  await sharing.getByRole('button', { name: 'Approve as viewer' }).click();
+  await sharing.getByText(`Added @${requesterName} as viewer`).waitFor();
+  const approvedMember = sharing.locator(`.account-vault-members li:has-text("${requesterName}")`);
+  await approvedMember.waitFor();
+  if ((await approvedMember.getByLabel(`Role for @${requesterName}`).inputValue()) !== 'viewer') throw new Error('approved public request received editor access');
+  page.once('dialog', (dialog) => dialog.accept());
+  await approvedMember.getByLabel(`Remove @${requesterName}`).click();
+  await sharing.getByText(`Removed @${requesterName}`).waitFor();
   await sharing.getByLabel('Invite by username').fill(mateName);
   await sharing.getByLabel('Invite role').selectOption('editor');
   await sharing.getByRole('button', { name: 'Invite', exact: true }).click();
