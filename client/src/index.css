@@ -702,6 +702,23 @@ button:focus-visible,
 .vault-switcher-copy strong { overflow: hidden; text-overflow: ellipsis; font-size: 0.8125rem; font-weight: 650; white-space: nowrap; }
 .vault-switcher-copy small { color: var(--text-tertiary); font-size: 0.625rem; font-weight: 500; text-transform: capitalize; }
 .vault-switcher-check { margin-left: auto; flex: none; color: var(--accent-hover); }
+.vault-switcher-update-badge,
+.vault-update-badge,
+.tree-update-badge {
+  flex: none;
+  min-width: 18px;
+  height: 18px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--bg-base);
+  font: 750 0.5625rem/1 var(--font-mono);
+}
+.vault-switcher-update-badge { margin-left: auto; }
+.vault-switcher-update-badge + .vault-switcher-check { margin-left: 0; }
+.vault-update-badge { min-width: 19px; height: 19px; }
 .vault-switcher-divider { height: 1px; margin: 5px 4px; background: var(--rail-edge); }
 .vault-switcher-menu .vault-switcher-create { color: var(--accent-hover); font-weight: 650; }
 .vault-switcher-menu .vault-switcher-join { color: var(--text-primary); font-weight: 650; }
@@ -992,6 +1009,12 @@ button:focus-visible,
   text-overflow: ellipsis;
   white-space: nowrap;
   line-height: 1.25;
+}
+.tree-item .tree-update-badge {
+  min-width: 17px;
+  height: 17px;
+  padding-inline: 4px;
+  box-shadow: 0 0 0 2px var(--bg-surface);
 }
 .tree-item .tree-chevron {
   flex-shrink: 0;
@@ -1678,6 +1701,97 @@ button:focus-visible,
   z-index: 1210;
   align-items: center;
   padding: 20px;
+}
+.updates-backdrop {
+  z-index: 1220;
+  align-items: center;
+  padding: 20px;
+}
+.updates-modal {
+  width: min(660px, 100%);
+  max-height: min(760px, 90vh);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--border));
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--bg-surface) 97%, transparent);
+  box-shadow: 0 24px 80px hsla(228, 30%, 2%, 0.6), var(--bevel);
+  animation: slideDown var(--transition-normal) ease;
+}
+.updates-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 18px 13px;
+  border-bottom: 1px solid var(--border);
+}
+.updates-header h2,
+.updates-header p { margin: 0; }
+.updates-header h2 { font: italic 750 1rem/1.2 var(--font-display); letter-spacing: 0.04em; text-transform: uppercase; }
+.updates-header p { margin-top: 4px; color: var(--text-tertiary); font-size: 0.72rem; }
+.updates-header-actions { display: flex; align-items: center; gap: 7px; }
+.updates-mark-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 29px;
+  padding: 0 9px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+  border-radius: 7px;
+  color: var(--accent-hover);
+  background: var(--accent-subtle);
+  font-size: 0.68rem;
+  font-weight: 650;
+}
+.updates-body { min-height: 180px; overflow: auto; padding: 12px 14px 16px; }
+.updates-group + .updates-group { margin-top: 15px; }
+.updates-group-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 4px 7px;
+}
+.updates-group-heading h3 { margin: 0; color: var(--text-secondary); font: italic 700 0.7rem/1 var(--font-display); letter-spacing: 0.08em; text-transform: uppercase; }
+.updates-group-heading > span { min-width: 18px; padding: 2px 5px; border-radius: 999px; background: var(--accent-subtle); color: var(--accent-hover); font: 700 0.56rem/1 var(--font-mono); text-align: center; }
+.updates-list { display: grid; gap: 5px; }
+.updates-item {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--bg-base) 76%, transparent);
+  color: var(--text-primary);
+  text-align: left;
+}
+.updates-item:hover,
+.updates-item:focus-visible { border-color: color-mix(in srgb, var(--accent) 32%, var(--border)); background: var(--bg-overlay); }
+.updates-kind { width: 28px; height: 28px; flex: none; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 8px; color: var(--text-secondary); background: var(--bg-raised); }
+.updates-kind.is-mention,
+.updates-kind.is-reply { border-color: color-mix(in srgb, var(--accent) 32%, var(--border)); color: var(--accent-hover); background: var(--accent-subtle); }
+.updates-copy { min-width: 0; flex: 1; display: grid; gap: 3px; }
+.updates-item-heading { display: flex; align-items: baseline; gap: 5px; min-width: 0; font-size: 0.7rem; }
+.updates-item-heading strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.updates-item-heading > span { color: var(--text-tertiary); }
+.updates-item-heading em { margin-left: auto; flex: none; color: var(--text-tertiary); font-style: normal; font-size: 0.62rem; }
+.updates-target { color: var(--accent-hover); font-size: 0.7rem; font-weight: 650; }
+.updates-preview { overflow: hidden; color: var(--text-secondary); font-size: 0.72rem; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
+.updates-empty { min-height: 210px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px; color: var(--text-tertiary); font-size: 0.73rem; text-align: center; }
+.updates-empty strong { color: var(--text-primary); font-size: 0.82rem; }
+.updates-error button { padding: 5px 9px; border: 1px solid var(--border); border-radius: 6px; color: var(--accent-hover); }
+.updates-truncated { padding: 12px 4px 2px; color: var(--text-tertiary); font-size: 0.65rem; text-align: center; }
+@media (max-width: 520px) {
+  .overlay-backdrop.updates-backdrop { align-items: end; padding: 0; }
+  .updates-modal { max-height: 92vh; border-radius: 14px 14px 0 0; }
+  .updates-header { padding-inline: 14px; }
+  .updates-header p { display: none; }
+  .updates-body { padding-inline: 9px; }
+  .updates-mark-all { font-size: 0; gap: 0; width: 30px; justify-content: center; }
+  .updates-mark-all svg { width: 15px; }
 }
 .discovery-dms-modal {
   width: min(680px, 100%);
@@ -2893,6 +3007,21 @@ button:focus-visible,
 
 .workspace-session-btn {
   position: relative;
+}
+.workspace-updates-btn { position: relative; }
+.workspace-updates-badge {
+  position: absolute;
+  top: -4px;
+  right: -5px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--bg-base);
+  font: 750 0.5rem/15px var(--font-mono);
+  text-align: center;
+  box-shadow: 0 0 0 2px var(--bg-surface);
 }
 .workspace-desktop-action {
   min-height: 26px;

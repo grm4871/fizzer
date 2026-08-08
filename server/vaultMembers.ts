@@ -76,7 +76,7 @@ function createVaultMembersTable(db: Db, name: string): void {
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       role TEXT NOT NULL DEFAULT 'editor' CHECK(role IN ('owner','editor','viewer')),
       invited_by INTEGER REFERENCES users(id),
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
       PRIMARY KEY (vault_id, user_id)
     )
   `);
@@ -205,9 +205,9 @@ export function addVaultMember(
   if (!user) throw new Error('User not found');
 
   db.prepare(`
-    INSERT INTO vault_members (vault_id, user_id, role, invited_by)
-    VALUES (?, ?, ?, ?)
-  `).run(vaultId, targetUserId, role, actorUserId);
+    INSERT INTO vault_members (vault_id, user_id, role, invited_by, created_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(vaultId, targetUserId, role, actorUserId, new Date().toISOString());
 
   return {
     userId: user.id,

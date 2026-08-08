@@ -42,10 +42,11 @@ import { SuperkanbanView } from './components/SuperkanbanView';
 import type { WorkItem } from './chat/workItems';
 import { AccountSettings } from './components/AccountSettings';
 import { DiscoveryDmsModal, type DiscoveryTab } from './components/DiscoveryDmsModal';
+import { UpdatesModal } from './components/UpdatesModal';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import * as Layout from './layout/tree';
 import type { LayoutNode } from './layout/tree';
-import { api, ApiError, type User, type Vault, type Folder, type NoteSummary, type Note } from './api';
+import { api, ApiError, type CommunityUpdateItem, type CommunityUpdates, type User, type Vault, type Folder, type NoteSummary, type Note } from './api';
 import { connectRunsSocket, connectVaultSocket } from './socket';
 import { isLocalRunId, cancelLocalAgentRun } from './localAgentRunner';
 import { ensureDesktopRunnerHost, respondToAgentPermission, startDesktopRunnerHost } from './desktopRunnerHost';
@@ -86,7 +87,7 @@ import {
 } from './chat/session';
 import { chatMessageStore } from './chat/messageStore';
 import { consumePendingSessionSteer, enqueueSessionTurn, findProjectedActiveSessionRun, forceReleasePriorSessionTurns, queuesBehindActiveSession, requestSessionSteer, shouldSteerActiveSession } from './chat/sessionTurns';
-import { Activity, Download, Gem, PanelLeftOpen, Users } from 'lucide-react';
+import { Activity, Bell, Download, Gem, PanelLeftOpen, Users } from 'lucide-react';
 
 type ChatAgentDispatch = {
   id: string;
@@ -156,6 +157,11 @@ const AVAILABLE_CHAT_AGENTS = CHAT_AGENTS.map((agent) => ({
   ...agent,
   models: CHAT_AGENT_MODEL_PRESETS[agent.id],
 }));
+const EMPTY_COMMUNITY_UPDATES: CommunityUpdates = {
+  groups: [],
+  counts: { total: 0, byVault: {}, byTarget: {} },
+  truncated: false,
+};
 
 type AgentPermissionRequest = {
   runId: number;
@@ -179,6 +185,7 @@ export default function App() {
   const [adminOpen, setAdminOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const [discoveryDmsOpen, setDiscoveryDmsOpen] = useState<DiscoveryTab | null>(null);
+  const [updatesOpen, setUpdatesOpen] = useState(false);
   const [authEpoch, setAuthEpoch] = useState(0);
   const [authMode, setAuthMode] = useState<'login' | 'register' | 'reset'>('login');
   const [username, setUsername] = useState('');
@@ -195,6 +202,9 @@ export default function App() {
   const [chatState, setChatState] = useState<ChatState>(loadChatState);
   const [loadingChatChannels, setLoadingChatChannels] = useState<Record<string, boolean>>({});
   const [chatPresenceByChannel, setChatPresenceByChannel] = useState<Record<string, ChatChannelPresence>>({});
+  const [communityUpdates, setCommunityUpdates] = useState<CommunityUpdates>(EMPTY_COMMUNITY_UPDATES);
+  const [communityUpdatesLoading, setCommunityUpdatesLoading] = useState(false);
+  const [communityUpdatesError, setCommunityUpdatesError] = useState('');
 
   // Tabs + tiling layout
   const [openTabs, setOpenTabs] = useState<Tab[]>(persistedSessionRef.current.openTabs);
@@ -296,6 +306,7 @@ export default function App() {
   const startingChatDispatchesRef = useRef<Set<string>>(new Set());
   // Debounce socket-driven soft vault reloads (note create/change/delete bursts).
   const socketVaultReloadTimerRef = useRef<number | null>(null);
+  const communityRefreshTimerRef = useRef<number | null>(null);
   // Repair focus if the focused pane disappears (e.g. after collapsing a split).
   useEffect(() => {
     if (!Layout.findPane(layout, focusedPaneId)) {
@@ -430,6 +441,74 @@ export default function App() {
       console.error('Error loading vaults:', error);
     }
   }, [activeVaultId]);
+
+  const loadCommunityUpdates = useCallback(async (quiet = false) => {
+    if (!localStorage.getItem('docs_token')) return;
+    if (!quiet) setCommunityUpdatesLoading(true);
+    try {
+      const data = await api<CommunityUpdates>('/api/community/updates?limit=80');
+      setCommunityUpdates(data);
+      setCommunityUpdatesError('');
+    } catch (error) {
+      if (!quiet) setCommunityUpdatesError(error instanceof Error ? error.message : 'Could not load updates');
+    } finally {
+      if (!quiet) setCommunityUpdatesLoading(false);
+    }
+  }, []);
+
+  const scheduleCommunityRefresh = useCallback((delay = 350) => {
+    if (communityRefreshTimerRef.current != null) return;
+    communityRefreshTimerRef.current = window.setTimeout(() => {
+      communityRefreshTimerRef.current = null;
+      void loadCommunityUpdates(true);
+    }, delay);
+  }, [loadCommunityUpdates]);
+
+  const markCommunityTargetRead = useCallback(async (targetId: string) => {
+    if (!targetId) return;
+    try {
+      await api('/api/community/updates/read', {
+        method: 'POST',
+        body: JSON.stringify({ targetId }),
+      });
+      await loadCommunityUpdates(true);
+    } catch (error) {
+      if (!(error instanceof ApiError && error.status === 404)) {
+        console.error('Could not mark update read:', error);
+      }
+    }
+  }, [loadCommunityUpdates]);
+
+  const markAllCommunityUpdatesRead = useCallback(async () => {
+    try {
+      await api('/api/community/updates/read-all', { method: 'POST' });
+      setCommunityUpdates(EMPTY_COMMUNITY_UPDATES);
+      await loadCommunityUpdates(true);
+    } catch (error) {
+      setCommunityUpdatesError(error instanceof Error ? error.message : 'Could not mark updates read');
+    }
+  }, [loadCommunityUpdates]);
+
+  useEffect(() => {
+    if (!user) {
+      setCommunityUpdates(EMPTY_COMMUNITY_UPDATES);
+      return;
+    }
+    void loadCommunityUpdates();
+    const timer = window.setInterval(() => void loadCommunityUpdates(true), 60_000);
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') scheduleCommunityRefresh(150);
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisibility);
+      if (communityRefreshTimerRef.current != null) {
+        window.clearTimeout(communityRefreshTimerRef.current);
+        communityRefreshTimerRef.current = null;
+      }
+    };
+  }, [loadCommunityUpdates, scheduleCommunityRefresh, user]);
 
   const handleCreateVault = useCallback(async (name: string): Promise<boolean> => {
     if (!name.trim()) return false;
@@ -2462,6 +2541,26 @@ export default function App() {
     void loadNoteContent(noteId);
   }, [loadNoteContent, openChatChannel]);
 
+  useEffect(() => {
+    if (!user || !focusedTab || (focusedTab.type !== 'note' && focusedTab.type !== 'chat')) return;
+    void markCommunityTargetRead(focusedTab.id);
+  }, [focusedTab?.id, focusedTab?.type, markCommunityTargetRead, user]);
+
+  const openCommunityUpdate = useCallback(async (item: CommunityUpdateItem) => {
+    await markCommunityTargetRead(item.targetId);
+    setUpdatesOpen(false);
+    if (activeVaultIdRef.current !== item.vaultId) {
+      setActiveVaultId(item.vaultId);
+      await loadVaultData(item.vaultId);
+    }
+    if (item.kind === 'note') {
+      openNote(item.targetId);
+      return;
+    }
+    openChatChannel(item.targetId, item.targetTitle);
+    if (item.messageId) setChatJumpTarget({ channelId: item.targetId, messageId: item.messageId });
+  }, [loadVaultData, markCommunityTargetRead, openChatChannel, openNote]);
+
   /** Save a specific note tab's draft. */
   const saveNoteTabOnce = useCallback(async (tabId: string) => {
     const entry = noteContentsRef.current[tabId];
@@ -2670,6 +2769,7 @@ export default function App() {
     };
     const handleConnect = () => {
       joinActiveVault();
+      scheduleCommunityRefresh(150);
       // Socket.IO rooms do not replay events emitted while this renderer was
       // disconnected. Reconcile every open transcript after a successful
       // (re)connect so a phone-started run cannot remain phone-only merely
@@ -2886,6 +2986,9 @@ export default function App() {
       ])));
     };
 
+    const handleCommunityChanged = () => scheduleCommunityRefresh();
+
+    socket.on('community:changed', handleCommunityChanged);
     socket.on('vault:noteChanged', handleNoteChanged);
     socket.on('vault:noteCreated', handleNoteCreated);
     socket.on('vault:noteDeleted', handleNoteDeleted);
@@ -2911,6 +3014,7 @@ export default function App() {
       joinedChatChannelsRef.current.clear();
       socket.emit('leaveVault', activeVaultId);
       vaultSocketRef.current = null;
+      socket.off('community:changed', handleCommunityChanged);
       socket.off('vault:noteChanged', handleNoteChanged);
       socket.off('vault:noteCreated', handleNoteCreated);
       socket.off('vault:noteDeleted', handleNoteDeleted);
@@ -2926,7 +3030,7 @@ export default function App() {
       socket.off('vault:userProfileUpdated', handleUserProfileUpdated);
       socket.disconnect();
     };
-  }, [activeVaultId, user?.id, authEpoch, loadVaultData, loadNoteContent, loadChatAgentMembers, loadChatMessages, openChatTabIds, openNote, syncChatPresenceRooms, dispatchChatAgentIntents, recoverPendingChatAgentDispatches]);
+  }, [activeVaultId, user?.id, authEpoch, loadVaultData, loadNoteContent, loadChatAgentMembers, loadChatMessages, openChatTabIds, openNote, syncChatPresenceRooms, dispatchChatAgentIntents, recoverPendingChatAgentDispatches, scheduleCommunityRefresh]);
 
   useEffect(() => {
     const socket = vaultSocketRef.current;
@@ -3507,6 +3611,7 @@ export default function App() {
           folders={folders}
           notes={notes}
           activeNoteId={activeTabId}
+          updateCounts={communityUpdates.counts}
           onSelectVault={setActiveVaultId}
           onCreateVault={handleCreateVault}
           onJoinVault={handleJoinVault}
@@ -3603,6 +3708,24 @@ export default function App() {
               </a>
             )}
             <button
+              id="community-updates-btn"
+              type="button"
+              className="btn-icon workspace-updates-btn"
+              onClick={() => {
+                setUpdatesOpen(true);
+                void loadCommunityUpdates();
+              }}
+              title="Updates"
+              aria-label={`${communityUpdates.counts.total || 'No'} unread updates`}
+            >
+              <Bell size={16} />
+              {communityUpdates.counts.total > 0 && (
+                <span className="workspace-updates-badge">
+                  {communityUpdates.counts.total >= 99 ? '99+' : communityUpdates.counts.total}
+                </span>
+              )}
+            </button>
+            <button
               id="session-manager-btn"
               type="button"
               className="btn-icon workspace-session-btn"
@@ -3679,6 +3802,16 @@ export default function App() {
         }}
       />
       <CommandPalette open={commandPaletteOpen} onClose={() => setCommandPaletteOpen(false)} notes={notes} onSelectNote={(id) => openNote(id)} onCreateNote={handleCreateNote} />
+      <UpdatesModal
+        open={updatesOpen}
+        loading={communityUpdatesLoading}
+        updates={communityUpdates}
+        error={communityUpdatesError}
+        onClose={() => setUpdatesOpen(false)}
+        onRefresh={() => void loadCommunityUpdates()}
+        onMarkAllRead={() => void markAllCommunityUpdatesRead()}
+        onOpenItem={(item) => void openCommunityUpdate(item)}
+      />
       {adminOpen && <AdminPanel onClose={() => setAdminOpen(false)} />}
 
       {agentPermissions[0] && (

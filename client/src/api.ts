@@ -105,6 +105,38 @@ export type SearchResult = {
   timestamp?: string;
 };
 
+export type CommunityUpdateKind = 'mention' | 'reply' | 'message' | 'note';
+
+export type CommunityUpdateItem = {
+  id: string;
+  kind: CommunityUpdateKind;
+  vaultId: string;
+  vaultName: string;
+  targetId: string;
+  targetTitle: string;
+  sourceId: string;
+  messageId?: string;
+  actor: string;
+  actorDisplayName: string;
+  preview: string;
+  timestamp: string;
+};
+
+export type CommunityUpdates = {
+  groups: Array<{
+    vaultId: string;
+    vaultName: string;
+    unreadCount: number;
+    items: CommunityUpdateItem[];
+  }>;
+  counts: {
+    total: number;
+    byVault: Record<string, number>;
+    byTarget: Record<string, number>;
+  };
+  truncated: boolean;
+};
+
 /* ─── API Client ─────────────────────────────────────────── */
 
 const API_BASE = import.meta.env.VITE_API_URL || '';

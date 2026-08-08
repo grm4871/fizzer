@@ -40,6 +40,7 @@ import {
   unlistNote,
   removeTag,
   renameNote,
+  setNoteMutationSink,
   toggleArchive,
   togglePin,
   updateFolder,
@@ -97,6 +98,13 @@ import {
   UNREACHABLE_USER_MESSAGE,
   vaultHoldsDirectMessages,
 } from './server/directMessages.js';
+import {
+  ensureCommunityActivitySchema,
+  listCommunityUpdates,
+  markAllCommunityUpdatesRead,
+  markCommunityTargetRead,
+  recordCommunityNoteChange,
+} from './server/communityActivity.js';
 import {
   acquireWorkItemLease,
   addWorkItemTokenUsage,
@@ -517,6 +525,7 @@ ensureVaultMembersSchema(db);
 ensurePublicVaultSchema(db);
 ensureCommunityModerationSchema(db);
 ensureDirectMessageSchema(db);
+ensureCommunityActivitySchema(db);
 ensureManagedAgentSchema(db);
 // Hard boundary: rehome any vaults still sharing an on-disk root (legacy leak path).
 try {
@@ -746,6 +755,8 @@ runsNamespace.use(socketAuth);
 vaultNamespace.use(socketAuth);
 
 vaultNamespace.on('connection', (socket) => {
+  const connectedUser = socket.data.user as { id: number };
+  socket.join(`user:${connectedUser.id}`);
   socket.on('joinVault', (vaultId: string) => {
     const user = socket.data.user as { id: number };
     const vault = getVault(db, vaultId, user.id);
@@ -834,7 +845,41 @@ setRunEventSink((event) => {
 
 function emitVaultEvent(vaultId: string, event: string, data: unknown) {
   vaultNamespace.to(`vault:${vaultId}`).emit(event, data);
+  if (event === 'vault:noteDeleted' || event === 'vault:membersChanged') {
+    emitCommunityChangedForVault(vaultId);
+  }
 }
+
+function emitCommunityChangedForUsers(userIds: Iterable<number>): void {
+  for (const userId of new Set(userIds)) {
+    vaultNamespace.to(`user:${userId}`).emit('community:changed', {});
+  }
+}
+
+function emitCommunityChangedForVault(vaultId: string): void {
+  const users = db.prepare('SELECT user_id AS userId FROM vault_members WHERE vault_id = ?')
+    .all(vaultId) as Array<{ userId: number }>;
+  emitCommunityChangedForUsers(users.map((row) => row.userId));
+}
+
+function emitCommunityChangedForChannel(sourceVaultId: string, sourceChannelId: string): void {
+  const users = db.prepare(`
+    SELECT user_id AS userId FROM vault_members WHERE vault_id = ?
+    UNION
+    SELECT membership.user_id AS userId
+    FROM chat_channel_links link
+    JOIN vault_members membership ON membership.vault_id = link.local_vault_id
+    WHERE link.source_channel_id = ?
+  `).all(sourceVaultId, sourceChannelId) as Array<{ userId: number }>;
+  emitCommunityChangedForUsers(users.map((row) => row.userId));
+}
+
+setNoteMutationSink((database, noteId, actorUserId) => {
+  recordCommunityNoteChange(database, noteId, actorUserId);
+  const note = database.prepare('SELECT vault_id AS vaultId FROM notes WHERE id = ?')
+    .get(noteId) as { vaultId: string } | undefined;
+  if (note) emitCommunityChangedForVault(note.vaultId);
+});
 
 setFeedNotifySink(emitVaultEvent);
 
@@ -845,6 +890,11 @@ function emitChatMessageEvent(
   message: ChatMessage,
   dispatches: ChatAgentDispatch[] = [],
 ) {
+  const countable = !message.agentId
+    || (!['sending', 'running'].includes(message.status || '')
+      && message.body.trim() !== ''
+      && message.body.trim() !== 'Thinking...');
+  if (countable) emitCommunityChangedForChannel(sourceVaultId, sourceChannelId);
   const sourceOwner = db.prepare('SELECT created_by FROM vaults WHERE id = ?')
     .get(sourceVaultId) as { created_by: number } | undefined;
   for (const route of listChatChannelRoutes(db, sourceVaultId, sourceChannelId)) {
@@ -1449,6 +1499,33 @@ app.post('/api/auth/reset', authRateLimit, async (req, res) => {
 app.get('/api/me', requireAuth, (req: AuthedRequest, res) => {
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user!.id) as User;
   res.json({ user: publicUser(user), owner: isOwner(req.user!.id) });
+});
+
+// ── Community updates ─────────────────────────────────────────────
+
+app.get('/api/community/updates', requireAuth, requireUserAccess, (req: AuthedRequest, res) => {
+  const requestedLimit = Number(req.query.limit);
+  res.json(listCommunityUpdates(
+    db,
+    req.user!,
+    Number.isFinite(requestedLimit) ? requestedLimit : undefined,
+  ));
+});
+
+app.post('/api/community/updates/read', requireAuth, requireUserAccess, (req: AuthedRequest, res) => {
+  const targetId = String(req.body?.targetId || '').trim();
+  if (!targetId) return res.status(400).json({ error: 'targetId is required' });
+  if (!markCommunityTargetRead(db, req.user!.id, targetId)) {
+    return res.status(404).json({ error: 'Update source not found' });
+  }
+  emitCommunityChangedForUsers([req.user!.id]);
+  res.json({ ok: true });
+});
+
+app.post('/api/community/updates/read-all', requireAuth, requireUserAccess, (req: AuthedRequest, res) => {
+  markAllCommunityUpdatesRead(db, req.user!.id);
+  emitCommunityChangedForUsers([req.user!.id]);
+  res.json({ ok: true });
 });
 
 // The desktop runner gives child agents this short-lived, restricted token
@@ -2086,7 +2163,7 @@ app.delete('/api/folders/:id', requireAuth, (req: AuthedRequest, res) => {
     return res.status(404).json({ error: 'Folder not found' });
   }
   try {
-    deleteFolder(db, req.params.id);
+    deleteFolder(db, req.params.id, req.user!.id);
     res.json({ ok: true });
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Could not delete folder';
@@ -2155,7 +2232,7 @@ app.put('/api/notes/:id', requireAuth, (req: AuthedRequest, res) => {
     const content = isAgentRequest(req)
       ? restorePrivateBlocks(proposed, existing.content)
       : proposed;
-    const note = updateNote(db, req.params.id, content);
+    const note = updateNote(db, req.params.id, content, req.user!.id);
     createNoteVersion(db, note.id, content, 'auto');
     emitVaultEvent(vault.id, 'vault:noteChanged', { noteId: note.id, vaultId: vault.id, title: note.title });
     res.json({ note: redactNoteForAgent(req, note) });
@@ -2174,7 +2251,7 @@ app.post('/api/notes/:id/rename', requireAuth, (req: AuthedRequest, res) => {
   }
 
   try {
-    const note = renameNote(db, req.params.id, String(req.body.title ?? ''));
+    const note = renameNote(db, req.params.id, String(req.body.title ?? ''), req.user!.id);
     try { reresolveChatBacklinksForNote(db, vault.id, note.id, note.title); } catch { /* ignore */ }
     emitVaultEvent(vault.id, 'vault:noteChanged', { noteId: note.id, vaultId: vault.id });
     res.json({ note: redactNoteForAgent(req, note) });
@@ -2215,7 +2292,7 @@ app.post('/api/notes/:id/move', requireAuth, (req: AuthedRequest, res) => {
   try {
     const folderId = req.body.folder_id !== undefined ? (req.body.folder_id || null) : null;
     const position = Number.isInteger(req.body.position) ? Number(req.body.position) : undefined;
-    moveNote(db, req.params.id, folderId, position);
+    moveNote(db, req.params.id, folderId, position, req.user!.id);
     const note = getNote(db, req.params.id);
     emitVaultEvent(vault.id, 'vault:noteChanged', { noteId: req.params.id, vaultId: vault.id, title: note?.title ?? existing.title });
     res.json({ note: redactNoteForAgent(req, note) });
@@ -2234,7 +2311,7 @@ app.post('/api/notes/:id/unlist', requireAuth, (req: AuthedRequest, res) => {
   }
 
   try {
-    unlistNote(db, req.params.id);
+    unlistNote(db, req.params.id, req.user!.id);
     const note = getNote(db, req.params.id);
     emitVaultEvent(vault.id, 'vault:noteChanged', { noteId: req.params.id, vaultId: vault.id, title: note?.title ?? existing.title });
     res.json({ note: redactNoteForAgent(req, note) });
@@ -2252,7 +2329,7 @@ app.post('/api/notes/:id/pin', requireAuth, (req: AuthedRequest, res) => {
     return res.status(404).json({ error: 'Note not found' });
   }
 
-  togglePin(db, req.params.id);
+  togglePin(db, req.params.id, req.user!.id);
   const note = getNote(db, req.params.id);
   emitVaultEvent(vault.id, 'vault:noteChanged', { noteId: req.params.id, vaultId: vault.id, title: note?.title ?? existing.title });
   res.json({ note: redactNoteForAgent(req, note) });
@@ -2279,7 +2356,7 @@ app.post('/api/notes/:id/archive', requireAuth, (req: AuthedRequest, res) => {
     return res.status(404).json({ error: 'Note not found' });
   }
 
-  toggleArchive(db, req.params.id);
+  toggleArchive(db, req.params.id, req.user!.id);
   const note = getNote(db, req.params.id);
   emitVaultEvent(vault.id, 'vault:noteChanged', { noteId: req.params.id, vaultId: vault.id, title: note?.title ?? existing.title });
   res.json({ note: redactNoteForAgent(req, note) });
@@ -2679,7 +2756,7 @@ app.post('/api/notes/:id/tags', requireAuth, (req: AuthedRequest, res) => {
   }
 
   try {
-    addTag(db, req.params.id, vault.id, String(req.body.name || ''), req.body.color);
+    addTag(db, req.params.id, vault.id, String(req.body.name || ''), req.body.color, req.user!.id);
     const updated = getNote(db, req.params.id);
     res.json({ note: redactNoteForAgent(req, updated) });
   } catch (error) {
@@ -2696,7 +2773,7 @@ app.delete('/api/notes/:id/tags/:tagId', requireAuth, (req: AuthedRequest, res) 
     return res.status(404).json({ error: 'Note not found' });
   }
 
-  removeTag(db, req.params.id, req.params.tagId);
+  removeTag(db, req.params.id, req.params.tagId, req.user!.id);
   const updated = getNote(db, req.params.id);
   res.json({ note: redactNoteForAgent(req, updated) });
 });

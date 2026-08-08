@@ -16,6 +16,26 @@ import type Database from 'better-sqlite3';
 
 type Db = Database.Database;
 
+export type NoteMutationKind = 'create' | 'content' | 'rename' | 'move' | 'unlist' | 'pin' | 'archive' | 'tag' | 'rescan';
+type NoteMutationSink = (db: Db, noteId: string, actorUserId: number, kind: NoteMutationKind) => void;
+let noteMutationSink: NoteMutationSink | null = null;
+
+/** Install the process-wide attributed activity sink after schemas initialize. */
+export function setNoteMutationSink(sink: NoteMutationSink | null): void {
+  noteMutationSink = sink;
+}
+
+/** Exposed for the few intentional direct metadata writes outside this module. */
+export function notifyNoteMutation(
+  db: Db,
+  noteId: string,
+  actorUserId: number | undefined,
+  kind: NoteMutationKind,
+): void {
+  if (actorUserId == null || !Number.isInteger(actorUserId)) return;
+  noteMutationSink?.(db, noteId, actorUserId, kind);
+}
+
 // Persistent base directory for vaults that don't specify their own root_path.
 // Production defaults to the user's home so notes survive reboots. Tests and
 // managed deployments can isolate storage without impersonating another HOME.
@@ -601,12 +621,15 @@ export function updateFolder(db: Db, folderId: string, opts: { name?: string; pa
   return db.prepare('SELECT * FROM folders WHERE id = ?').get(folderId) as Folder;
 }
 
-export function deleteFolder(db: Db, folderId: string): void {
+export function deleteFolder(db: Db, folderId: string, actorUserId?: number): void {
   const folder = db.prepare('SELECT * FROM folders WHERE id = ?').get(folderId) as Folder | undefined;
   if (!folder) throw new Error('Folder not found');
 
+  const movedNoteIds = (db.prepare('SELECT id FROM notes WHERE folder_id = ?').all(folderId) as Array<{ id: string }>)
+    .map((row) => row.id);
   // Move notes in this folder to parent folder (or root)
   db.prepare('UPDATE notes SET folder_id = ? WHERE folder_id = ?').run(folder.parent_id, folderId);
+  for (const noteId of movedNoteIds) notifyNoteMutation(db, noteId, actorUserId, 'move');
 
   // Move child folders to parent
   db.prepare('UPDATE folders SET parent_id = ? WHERE parent_id = ?').run(folder.parent_id, folderId);
@@ -797,16 +820,19 @@ export function createNote(db: Db, vaultId: string, userId: number, opts: { id?:
   // Index links
   reIndexLinks(db, id, vaultId, content);
 
+  notifyNoteMutation(db, id, userId, 'create');
+
   return getNote(db, id)!;
 }
 
-export function updateNote(db: Db, noteId: string, content: string): Note {
+export function updateNote(db: Db, noteId: string, content: string, actorUserId?: number): Note {
   const existing = db.prepare('SELECT * FROM notes WHERE id = ?').get(noteId) as {
-    id: string; vault_id: string; folder_id: string | null; title: string;
+    id: string; vault_id: string; folder_id: string | null; title: string; content: string;
   } | undefined;
   if (!existing) throw new Error('Note not found');
 
   const normalized = content.replace(/\\+`/g, '`');
+  if (normalized === existing.content) return getNote(db, noteId)!;
   const preview = makePreview(normalized);
   const wc = wordCount(normalized);
 
@@ -826,23 +852,25 @@ export function updateNote(db: Db, noteId: string, content: string): Note {
   // Re-index links
   reIndexLinks(db, noteId, existing.vault_id, normalized);
 
+  notifyNoteMutation(db, noteId, actorUserId, 'content');
+
   return getNote(db, noteId)!;
 }
 
 // Update [[Old Title]] / [[Old Title|alias]] / [[Old Title#heading]] references
 // across the vault to point at the new title (Obsidian-style link maintenance).
-function updateWikilinkTargets(db: Db, vaultId: string, oldTitle: string, newTitle: string): void {
+function updateWikilinkTargets(db: Db, vaultId: string, oldTitle: string, newTitle: string, actorUserId?: number): void {
   const escaped = oldTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const re = new RegExp(`(\\[\\[)${escaped}(?=[\\]|#])`, 'gi');
   const notes = db.prepare('SELECT id, content FROM notes WHERE vault_id = ?').all(vaultId) as { id: string; content: string }[];
   for (const n of notes) {
     if (!n.content.includes('[[')) continue;
     const updated = n.content.replace(re, `$1${newTitle}`);
-    if (updated !== n.content) updateNote(db, n.id, updated);
+    if (updated !== n.content) updateNote(db, n.id, updated, actorUserId);
   }
 }
 
-export function renameNote(db: Db, noteId: string, newTitleRaw: string): Note {
+export function renameNote(db: Db, noteId: string, newTitleRaw: string, actorUserId?: number): Note {
   const existing = db.prepare('SELECT * FROM notes WHERE id = ?').get(noteId) as {
     id: string; vault_id: string; title: string;
   } | undefined;
@@ -874,7 +902,8 @@ export function renameNote(db: Db, noteId: string, newTitleRaw: string): Note {
     }
   }
 
-  updateWikilinkTargets(db, existing.vault_id, oldTitle, newTitle);
+  updateWikilinkTargets(db, existing.vault_id, oldTitle, newTitle, actorUserId);
+  notifyNoteMutation(db, noteId, actorUserId, 'rename');
 
   return getNote(db, noteId)!;
 }
@@ -899,7 +928,7 @@ export function deleteNote(db: Db, noteId: string): void {
   db.prepare('DELETE FROM notes WHERE id = ?').run(noteId);
 }
 
-export function moveNote(db: Db, noteId: string, folderId: string | null, requestedPosition?: number): void {
+export function moveNote(db: Db, noteId: string, folderId: string | null, requestedPosition?: number, actorUserId?: number): void {
   const note = db.prepare('SELECT * FROM notes WHERE id = ?').get(noteId) as {
     id: string; vault_id: string; folder_id: string | null; title: string; is_listed: number;
   } | undefined;
@@ -960,9 +989,10 @@ export function moveNote(db: Db, noteId: string, folderId: string | null, reques
       // Ignore move failures
     }
   }
+  notifyNoteMutation(db, noteId, actorUserId, 'move');
 }
 
-export function unlistNote(db: Db, noteId: string): void {
+export function unlistNote(db: Db, noteId: string, actorUserId?: number): void {
   const note = db.prepare('SELECT id FROM notes WHERE id = ?').get(noteId) as { id: string } | undefined;
   if (!note) throw new Error('Note not found');
 
@@ -980,14 +1010,17 @@ export function unlistNote(db: Db, noteId: string): void {
       // Keep the database operation consistent with the existing move behavior.
     }
   }
+  notifyNoteMutation(db, noteId, actorUserId, 'unlist');
 }
 
-export function togglePin(db: Db, noteId: string): void {
+export function togglePin(db: Db, noteId: string, actorUserId?: number): void {
   db.prepare('UPDATE notes SET is_pinned = CASE WHEN is_pinned = 0 THEN 1 ELSE 0 END, updated_at = datetime(\'now\') WHERE id = ?').run(noteId);
+  notifyNoteMutation(db, noteId, actorUserId, 'pin');
 }
 
-export function toggleArchive(db: Db, noteId: string): void {
+export function toggleArchive(db: Db, noteId: string, actorUserId?: number): void {
   db.prepare('UPDATE notes SET is_archived = CASE WHEN is_archived = 0 THEN 1 ELSE 0 END, updated_at = datetime(\'now\') WHERE id = ?').run(noteId);
+  notifyNoteMutation(db, noteId, actorUserId, 'archive');
 }
 
 // ── Backlinks ──────────────────────────────────────────────────────
@@ -1020,7 +1053,7 @@ export function listTags(db: Db, vaultId: string): Tag[] {
   `).all(vaultId) as Tag[];
 }
 
-export function addTag(db: Db, noteId: string, vaultId: string, name: string, color?: string): void {
+export function addTag(db: Db, noteId: string, vaultId: string, name: string, color?: string, actorUserId?: number): void {
   const tagName = String(name).trim().toLowerCase();
   if (!tagName) throw new Error('Tag name is required');
 
@@ -1035,17 +1068,19 @@ export function addTag(db: Db, noteId: string, vaultId: string, name: string, co
   }
 
   // Link tag to note
-  db.prepare('INSERT OR IGNORE INTO note_tags (note_id, tag_id) VALUES (?, ?)').run(noteId, tag.id);
+  const linked = db.prepare('INSERT OR IGNORE INTO note_tags (note_id, tag_id) VALUES (?, ?)').run(noteId, tag.id);
+  if (linked.changes > 0 || color) notifyNoteMutation(db, noteId, actorUserId, 'tag');
 }
 
-export function removeTag(db: Db, noteId: string, tagId: string): void {
-  db.prepare('DELETE FROM note_tags WHERE note_id = ? AND tag_id = ?').run(noteId, tagId);
+export function removeTag(db: Db, noteId: string, tagId: string, actorUserId?: number): void {
+  const removed = db.prepare('DELETE FROM note_tags WHERE note_id = ? AND tag_id = ?').run(noteId, tagId);
 
   // Clean up orphan tags (no notes using them)
   const count = db.prepare('SELECT COUNT(*) AS c FROM note_tags WHERE tag_id = ?').get(tagId) as { c: number };
   if (count.c === 0) {
     db.prepare('DELETE FROM tags WHERE id = ?').run(tagId);
   }
+  if (removed.changes > 0) notifyNoteMutation(db, noteId, actorUserId, 'tag');
 }
 
 // ── Graph ──────────────────────────────────────────────────────────
@@ -1158,6 +1193,7 @@ export function rescanVault(db: Db, vaultId: string, userId: number): void {
           WHERE id = ?
         `).run(content, preview, wc, note.id);
         reIndexLinks(db, note.id, vaultId, content);
+        notifyNoteMutation(db, note.id, userId, 'rescan');
       }
     } else {
       const noteId = crypto.randomUUID();
@@ -1170,6 +1206,7 @@ export function rescanVault(db: Db, vaultId: string, userId: number): void {
         VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?)
       `).run(noteId, vaultId, folderId, title, content, preview, nextPosition, wc, userId);
       reIndexLinks(db, noteId, vaultId, content);
+      notifyNoteMutation(db, noteId, userId, 'rescan');
     }
   }
 }

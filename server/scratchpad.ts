@@ -734,7 +734,7 @@ export function createSkillNote(
     // evidence about content that no longer exists, so reset it rather than
     // let a fixed skill get retired on its predecessor's losses.
     if (existing.content.trim() !== body) deleteNoteStats(db, existing.id);
-    return updateNote(db, existing.id, `${body}\n`);
+    return updateNote(db, existing.id, `${body}\n`, userId);
   }
   // Skills are listed on purpose: procedures are the part of agent memory the
   // human most wants to see and correct.
@@ -874,7 +874,7 @@ export function promoteNote(
     : getOrCreateChildFolder(db, vault.id, SKILLS_FOLDER, shared.rootId).id;
   if (note.folder_id === targetId) return { note, kind }; // already shared
 
-  moveNote(db, note.id, targetId);
+  moveNote(db, note.id, targetId, undefined, userId);
 
   if (kind === 'memory') {
     const index = db.prepare(`
@@ -887,7 +887,7 @@ export function promoteNote(
       const next = index.content.includes('## Pointers')
         ? index.content.replace('## Pointers\n', `## Pointers\n\n${pointer}\n`)
         : `${index.content.trimEnd()}\n\n${pointer}\n`;
-      updateNote(db, index.id, next);
+      updateNote(db, index.id, next, userId);
     }
   }
   return { note: getNote(db, note.id)!, kind };

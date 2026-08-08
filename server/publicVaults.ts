@@ -393,8 +393,10 @@ export function joinPublicVault(db: Db, vaultId: string, userId: number): JoinPu
     return { vaultId: vault.id, name: vault.name, role: null, alreadyMember: false, requestStatus: 'pending' };
   }
 
-  db.prepare(`INSERT INTO vault_members (vault_id, user_id, role, invited_by) VALUES (?, ?, 'viewer', ?)`)
-    .run(vault.id, userId, vault.created_by);
+  db.prepare(`
+    INSERT INTO vault_members (vault_id, user_id, role, invited_by, created_at)
+    VALUES (?, ?, 'viewer', ?, ?)
+  `).run(vault.id, userId, vault.created_by, new Date().toISOString());
   return { vaultId: vault.id, name: vault.name, role: 'viewer', alreadyMember: false, requestStatus: null };
 }
 
@@ -436,9 +438,9 @@ export function reviewPublicVaultJoinRequest(
   const review = db.transaction(() => {
     if (action === 'approve') {
       db.prepare(`
-        INSERT OR IGNORE INTO vault_members (vault_id, user_id, role, invited_by)
-        VALUES (?, ?, 'viewer', ?)
-      `).run(vaultId, request.userId, actorUserId);
+        INSERT OR IGNORE INTO vault_members (vault_id, user_id, role, invited_by, created_at)
+        VALUES (?, ?, 'viewer', ?, ?)
+      `).run(vaultId, request.userId, actorUserId, new Date().toISOString());
     }
     db.prepare(`
       UPDATE public_vault_join_requests

@@ -14,6 +14,7 @@ import {
   getNote,
   getVault,
   listFolders,
+  notifyNoteMutation,
   updateNote,
   type Note,
 } from './vault.js';
@@ -457,7 +458,7 @@ export function distillChatToNote(
     if (!input.confirm) {
       return { status: 'needs_confirm', mode, draft, messageIds, priorNoteId: target.id };
     }
-    const note = updateNote(db, target.id, draft);
+    const note = updateNote(db, target.id, draft, userId);
     createNoteVersion(db, note.id, draft, 'distill-merge');
     // Index citations as chat backlinks onto the note for each source message
     for (const m of selected) {
@@ -489,7 +490,7 @@ export function distillChatToNote(
       '',
       bodyCore,
     ].join('\n');
-    const note = updateNote(db, target.id, section);
+    const note = updateNote(db, target.id, section, userId);
     createNoteVersion(db, note.id, section, 'distill-append');
     for (const m of selected) {
       indexChatMessageBacklinks(db, vaultId, route.sourceChannelId, {
@@ -566,10 +567,14 @@ function sanitizeAgentFolderName(name: string): string {
 
 function ensureIndexNote(db: Db, vaultId: string, userId: number, folderId: string, heading: string): void {
   const index = db.prepare(`
-    SELECT id FROM notes WHERE vault_id = ? AND folder_id = ? AND title = 'INDEX' COLLATE NOCASE
-  `).get(vaultId, folderId) as { id: string } | undefined;
+    SELECT id, is_listed AS isListed
+    FROM notes WHERE vault_id = ? AND folder_id = ? AND title = 'INDEX' COLLATE NOCASE
+  `).get(vaultId, folderId) as { id: string; isListed: number } | undefined;
   if (index) {
-    db.prepare('UPDATE notes SET is_listed = 1 WHERE id = ?').run(index.id);
+    if (!index.isListed) {
+      db.prepare('UPDATE notes SET is_listed = 1 WHERE id = ?').run(index.id);
+      notifyNoteMutation(db, index.id, userId, 'move');
+    }
     return;
   }
   createNote(db, vaultId, userId, {
@@ -797,7 +802,7 @@ export function createAgentMemoryNote(
     const next = index.content.includes('## Pointers')
       ? index.content.replace('## Pointers\n', `## Pointers\n\n${pointer}\n`)
       : `${index.content.trimEnd()}\n\n${pointer}\n`;
-    updateNote(db, index.id, next);
+    updateNote(db, index.id, next, userId);
   }
   return note;
 }

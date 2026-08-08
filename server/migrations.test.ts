@@ -99,7 +99,7 @@ test('a fresh database gets every chat_messages column the writers use', () => {
   withDb((db) => {
     ensureChatSchema(db);
     const cols = columns(db, 'chat_messages');
-    for (const required of ['harness_log', 'change_request_json', 'clarification_json', 'forwarded_from_json', 'mission_json', 'mission_task_id']) {
+    for (const required of ['activity_at', 'actor_user_id', 'harness_log', 'change_request_json', 'clarification_json', 'forwarded_from_json', 'mission_json', 'mission_task_id']) {
       assert.ok(cols.includes(required), `fresh schema is missing ${required}`);
     }
     assert.ok(columns(db, 'chat_agent_members').includes('reasoning_effort'));
@@ -119,7 +119,7 @@ test('an existing database is migrated to the current chat_messages shape', () =
     ensureChatSchema(db);
 
     const cols = columns(db, 'chat_messages');
-    for (const required of ['harness_log', 'change_request_json', 'clarification_json', 'forwarded_from_json', 'mission_json', 'mission_task_id']) {
+    for (const required of ['activity_at', 'actor_user_id', 'harness_log', 'change_request_json', 'clarification_json', 'forwarded_from_json', 'mission_json', 'mission_task_id']) {
       assert.ok(cols.includes(required), `migration did not add ${required}`);
     }
     // The upgrade must not drop or rewrite what was already there.

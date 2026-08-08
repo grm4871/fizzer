@@ -291,6 +291,8 @@ type ChatMessageRow = {
   author: string;
   body: string;
   created_at: string;
+  activity_at?: string | null;
+  actor_user_id?: number | null;
   status: string | null;
   agent_id: string | null;
   registration_id: string | null;
@@ -329,6 +331,8 @@ export function ensureChatSchema(db: Db): void {
       author TEXT NOT NULL,
       body TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      activity_at TEXT,
+      actor_user_id INTEGER REFERENCES users(id),
       status TEXT,
       agent_id TEXT,
       registration_id TEXT,
@@ -403,7 +407,7 @@ export function ensureChatSchema(db: Db): void {
       source_channel_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
       source_vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
       created_by INTEGER NOT NULL REFERENCES users(id),
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
       UNIQUE(local_vault_id, source_channel_id)
     );
     CREATE INDEX IF NOT EXISTS chat_channel_links_source_idx ON chat_channel_links(source_channel_id);
@@ -418,6 +422,13 @@ export function ensureChatSchema(db: Db): void {
 
   // Migrations: add columns to pre-existing tables.
   const messageCols = db.prepare("PRAGMA table_info(chat_messages)").all() as Array<{ name: string }>;
+  if (!messageCols.some((col) => col.name === 'activity_at')) {
+    db.exec('ALTER TABLE chat_messages ADD COLUMN activity_at TEXT');
+  }
+  if (!messageCols.some((col) => col.name === 'actor_user_id')) {
+    db.exec('ALTER TABLE chat_messages ADD COLUMN actor_user_id INTEGER REFERENCES users(id)');
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS chat_messages_activity_idx ON chat_messages(channel_id, activity_at)');
   if (!messageCols.some((col) => col.name === 'harness_log')) {
     db.exec('ALTER TABLE chat_messages ADD COLUMN harness_log TEXT');
   }
@@ -1360,9 +1371,16 @@ export function linkChatChannel(
 ): void {
   db.prepare(`
     INSERT OR IGNORE INTO chat_channel_links (
-      local_channel_id, local_vault_id, source_channel_id, source_vault_id, created_by
-    ) VALUES (?, ?, ?, ?, ?)
-  `).run(input.localChannelId, input.localVaultId, input.sourceChannelId, input.sourceVaultId, input.createdBy);
+      local_channel_id, local_vault_id, source_channel_id, source_vault_id, created_by, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?)
+  `).run(
+    input.localChannelId,
+    input.localVaultId,
+    input.sourceChannelId,
+    input.sourceVaultId,
+    input.createdBy,
+    new Date().toISOString(),
+  );
 }
 
 export function listChatChannelRoutes(db: Db, sourceVaultId: string, sourceChannelId: string): ChatChannelRoute[] {
@@ -1743,6 +1761,10 @@ function terminalRunPatch(run: RunStatusRow, message?: ChatMessage): Pick<ChatMe
 
 function persistChatMessageRow(db: Db, vaultId: string, channelId: string, message: ChatMessage): ChatMessage {
   const row = messageToRow(vaultId, channelId, message);
+  const countable = !row.agent_id
+    || (!['sending', 'running'].includes(row.status || '')
+      && row.body.trim() !== ''
+      && row.body.trim() !== 'Thinking...');
   db.prepare(`
     UPDATE chat_messages SET
       author = ?,
@@ -1761,7 +1783,11 @@ function persistChatMessageRow(db: Db, vaultId: string, channelId: string, messa
       change_request_json = ?,
       clarification_json = ?,
       mission_json = ?,
-      mission_task_id = ?
+      mission_task_id = ?,
+      activity_at = CASE
+        WHEN activity_at IS NULL AND ? = 1 THEN ?
+        ELSE activity_at
+      END
     WHERE id = ? AND channel_id = ?
   `).run(
     row.author,
@@ -1781,6 +1807,8 @@ function persistChatMessageRow(db: Db, vaultId: string, channelId: string, messa
     row.clarification_json,
     row.mission_json,
     row.mission_task_id,
+    countable ? 1 : 0,
+    new Date().toISOString(),
     message.id,
     channelId,
   );
@@ -1996,10 +2024,11 @@ export function createChatMessage(
   const info = db.prepare(`
     INSERT INTO chat_messages (
       id, channel_id, vault_id, author, body, created_at,
+      activity_at, actor_user_id,
       status, agent_id, registration_id, run_id,
       blocks_json, harness_log, images_json, attachments_json, reply_to_json,
       forwarded_from_json, change_request_json, clarification_json, mission_json, mission_task_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     row.id,
     row.channel_id,
@@ -2007,6 +2036,9 @@ export function createChatMessage(
     row.author,
     row.body,
     row.created_at,
+    (!row.agent_id || (!['sending', 'running'].includes(row.status || '')
+      && row.body.trim() !== '' && row.body.trim() !== 'Thinking...')) ? row.created_at : null,
+    userId,
     row.status,
     row.agent_id,
     row.registration_id,

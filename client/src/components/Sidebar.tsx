@@ -18,7 +18,7 @@
  */
 
 import { memo, useState, useMemo, useEffect, useRef } from 'react';
-import { isSharedVault, type Vault, type Folder, type NoteSummary, type User } from '../api';
+import { isSharedVault, type CommunityUpdates, type Vault, type Folder, type NoteSummary, type User } from '../api';
 import { NOTE_DND_TYPE, noteEmbedMarkdown } from '../docEmbeds';
 import { usePopupMenu } from '../ui/popupMenu';
 import { CHAT_NOTE_MARKER } from './ChatView';
@@ -44,6 +44,7 @@ interface SidebarProps {
   folders: Folder[];
   notes: NoteSummary[];
   activeNoteId: string | null;
+  updateCounts: CommunityUpdates['counts'];
   onSelectVault: (id: string) => void;
   onCreateVault: (name: string) => Promise<boolean>;
   onJoinVault: (inviteLink: string) => Promise<boolean>;
@@ -118,6 +119,7 @@ export const Sidebar = memo(function Sidebar({
   folders,
   notes,
   activeNoteId,
+  updateCounts,
   onSelectVault,
   onCreateVault,
   onJoinVault,
@@ -217,6 +219,7 @@ export const Sidebar = memo(function Sidebar({
   }, [childFolders]);
 
   const rootNotes = notesByFolder.get(null) ?? [];
+  const countLabel = (count: number) => count >= 99 ? '99+' : String(count);
 
   // Close the context menu on any outside click or Escape.
   useEffect(() => {
@@ -620,6 +623,11 @@ export const Sidebar = memo(function Sidebar({
       >
         <span className="tree-icon">{isChatChannel ? <Hash size={15} /> : <FileText size={15} />}</span>
         <span className="tree-label">{note.title || 'Untitled'}</span>
+        {(updateCounts.byTarget[note.id] || 0) > 0 && (
+          <span className="tree-update-badge" aria-label={`${countLabel(updateCounts.byTarget[note.id])} unread updates`}>
+            {countLabel(updateCounts.byTarget[note.id])}
+          </span>
+        )}
         {note.is_pinned ? <span className="pin-icon"><Pin size={11} fill="currentColor" /></span> : null}
         {note.tags.length > 0 && (
           <span className="tree-tags">
@@ -691,6 +699,11 @@ export const Sidebar = memo(function Sidebar({
           </span>
           <ChevronDown className="vault-name-chevron" size={14} aria-hidden="true" />
         </button>
+        {activeVault && (updateCounts.byVault[activeVault.id] || 0) > 0 && (
+          <span className="vault-update-badge" aria-label={`${countLabel(updateCounts.byVault[activeVault.id])} unread updates`}>
+            {countLabel(updateCounts.byVault[activeVault.id])}
+          </span>
+        )}
         {activeVault && isSharedVault(activeVault) && (
           <button
             type="button"
@@ -732,6 +745,11 @@ export const Sidebar = memo(function Sidebar({
                     : 'Private · only you'}
                 </small>
               </span>
+              {(updateCounts.byVault[vault.id] || 0) > 0 && (
+                <span className="vault-switcher-update-badge" aria-label={`${countLabel(updateCounts.byVault[vault.id])} unread updates`}>
+                  {countLabel(updateCounts.byVault[vault.id])}
+                </span>
+              )}
               {vault.id === activeVaultId && <Check className="vault-switcher-check" size={15} aria-hidden="true" />}
             </button>
           ))}
