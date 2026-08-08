@@ -197,6 +197,10 @@ try {
   await messagesButton.click();
   const messagesDialog = page.getByRole('dialog', { name: 'Messages' });
   await messagesDialog.getByText('Alice Example').waitFor();
+  const messagesBox = await messagesDialog.boundingBox();
+  if (!messagesBox || messagesBox.x !== 0 || messagesBox.y !== 0 || messagesBox.width !== 1180 || messagesBox.height !== 760) {
+    throw new Error(`messages menu is not fullscreen: ${JSON.stringify(messagesBox)}`);
+  }
   await messagesDialog.getByLabel('2 unread messages').waitFor();
   await messagesDialog.getByText('Privacy & blocking').click();
   const privacy = messagesDialog.getByRole('switch', { name: 'Allow messages from strangers' });
@@ -232,7 +236,7 @@ try {
   if (!requests.some((request) => request.method === 'GET' && request.path === '/api/public-vaults' && request.search === '?q=design')) {
     throw new Error('public directory search was not sent to the server');
   }
-  console.log('[discovery-dms-ui] OK — public discovery plus dedicated mailbox, unread state, DM privacy, blocks, and conversation navigation');
+  console.log('[discovery-dms-ui] OK — public discovery plus fullscreen mailbox, unread state, DM privacy, blocks, and conversation navigation');
 } finally {
   if (browser) await browser.close();
   preview.kill('SIGTERM');

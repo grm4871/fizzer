@@ -1815,6 +1815,32 @@ button:focus-visible,
   box-shadow: 0 24px 80px hsla(228, 30%, 2%, 0.6), var(--bevel);
   animation: slideDown var(--transition-normal) ease;
 }
+.discovery-dms-backdrop.is-messages { align-items: stretch; padding: 0; }
+.discovery-dms-modal.is-messages {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  border: 0;
+  border-radius: 0;
+  animation: none;
+}
+.discovery-dms-modal.is-messages .discovery-dms-body { flex: 1; display: flex; }
+.discovery-dms-modal.is-messages .dm-panel {
+  width: min(820px, 100%);
+  min-height: 0;
+  flex: 1;
+  margin: 0 auto;
+  padding: 24px 28px 28px;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+.discovery-dms-modal.is-messages .dm-panel > .dm-section {
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+.discovery-dms-modal.is-messages .dm-panel > .dm-section > .discovery-list {
+  align-content: start;
+  overflow: auto;
+}
 .discovery-dms-header {
   display: flex;
   align-items: flex-start;
@@ -2006,6 +2032,9 @@ button:focus-visible,
 @media (max-width: 520px) {
   .discovery-dms-backdrop { align-items: end; padding: 0; }
   .discovery-dms-modal { max-height: 92vh; border-radius: 14px 14px 0 0; }
+  .discovery-dms-backdrop.is-messages { align-items: stretch; }
+  .discovery-dms-modal.is-messages { height: 100%; max-height: none; border-radius: 0; }
+  .discovery-dms-modal.is-messages .dm-panel { padding: 16px 12px; }
   .discovery-dms-header { padding-top: 14px; }
   .discovery-panel { padding-inline: 12px; }
   .discovery-row-copy span { white-space: normal; }

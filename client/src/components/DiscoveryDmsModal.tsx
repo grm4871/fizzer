@@ -260,10 +260,10 @@ export function DiscoveryDmsModal({
   };
 
   return (
-    <div className="overlay-backdrop discovery-dms-backdrop" onMouseDown={(event) => {
+    <div className={`overlay-backdrop discovery-dms-backdrop ${initialTab === 'dms' ? 'is-messages' : ''}`} onMouseDown={(event) => {
       if (event.target === event.currentTarget) onClose();
     }}>
-      <section className="discovery-dms-modal" role="dialog" aria-modal="true" aria-labelledby="discovery-dms-title">
+      <section className={`discovery-dms-modal ${initialTab === 'dms' ? 'is-messages' : ''}`} role="dialog" aria-modal="true" aria-labelledby="discovery-dms-title">
         <header className="discovery-dms-header">
           <div>
             <h2 id="discovery-dms-title">{initialTab === 'public' ? 'Public vaults' : 'Messages'}</h2>
