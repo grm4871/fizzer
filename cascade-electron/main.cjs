@@ -86,23 +86,30 @@ function buildApplicationMenu() {
  * Creates the main application window with security-hardened webPreferences.
  * Sets up navigation guards, keyboard shortcuts, and window lifecycle
  * handlers. In production the window loads https://cscd.online; in development
- * it loads the URL specified by the `--APP_URL=` CLI flag (defaults to
- * http://localhost:5173).
+ * it loads the app route for the URL specified by the `--APP_URL=` CLI flag
+ * (defaults to http://localhost:5173/app).
  */
 /** Resolve the base URL the app loads from (prod vs dev `--APP_URL=`). */
 function getAppBaseUrl() {
-  if (app.isPackaged) return 'https://cscd.online';
-  if (process.env.APP_URL || process.env.CASCADE_APP_URL) {
-    return process.env.APP_URL || process.env.CASCADE_APP_URL;
+  let configuredUrl;
+  if (app.isPackaged) configuredUrl = 'https://cscd.online';
+  else if (process.env.APP_URL || process.env.CASCADE_APP_URL) {
+    configuredUrl = process.env.APP_URL || process.env.CASCADE_APP_URL;
   }
   const parsedArgs = {};
-  process.argv.slice(2).forEach((arg) => {
-    if (arg.startsWith('--')) {
-      const [key, value] = arg.slice(2).split('=');
-      parsedArgs[key] = value || true;
-    }
-  });
-  return parsedArgs['APP_URL'] || 'http://localhost:5173';
+  if (!configuredUrl) {
+    process.argv.slice(2).forEach((arg) => {
+      if (arg.startsWith('--')) {
+        const [key, value] = arg.slice(2).split('=');
+        parsedArgs[key] = value || true;
+      }
+    });
+    configuredUrl = parsedArgs['APP_URL'] || 'http://localhost:5173';
+  }
+
+  const appUrl = new URL(configuredUrl);
+  if (appUrl.pathname === '/') appUrl.pathname = '/app';
+  return appUrl.toString();
 }
 
 function getProjectRoot() {
@@ -328,7 +335,8 @@ function configureWindow(win) {
 
 /**
  * Creates the main application window with security-hardened webPreferences.
- * In production it loads https://cscd.online; in development the `--APP_URL=` URL.
+ * In production it loads https://cscd.online/app; in development the app route
+ * for the configured `--APP_URL=` URL.
  */
 async function createWindow() {
   // Always install (or clear) the app menu before windows open.
