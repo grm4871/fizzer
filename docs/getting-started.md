@@ -25,17 +25,16 @@ is a separate package (desktop shell) and needs its own install.
 
 ### Native modules (`better-sqlite3`, `bcrypt`)
 
-These compile against the current Node (and Electron) ABI. After a Node upgrade,
-or when Vite shows `ECONNREFUSED` to `localhost:3000` while the backend fails
-with `NODE_MODULE_VERSION`, rebuild:
+These API dependencies compile against the current Node ABI. After a Node
+upgrade, or when Vite shows `ECONNREFUSED` to `localhost:3000` while the backend
+fails with `NODE_MODULE_VERSION`, rebuild:
 
 ```bash
 npm run rebuild:native
 ```
 
-Root `postinstall` only rebuilds the API natives when a load-time ABI mismatch
-is detected (safe for Linux/server). Electron natives rebuild during
-`cascade-electron` install, or via `npm run rebuild:native`.
+Root `postinstall` rebuilds these API natives only when a load-time ABI mismatch
+is detected.
 
 On macOS, if node-gyp fails because Homebrew Python is broken (e.g. `pyexpat`),
 the rebuild script prefers `/usr/bin/python3`. You can also force it:

@@ -13,7 +13,6 @@ import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
 import { tags } from '@lezer/highlight';
 import { FileText, Link2, Box, Columns3, Globe, ExternalLink, LockKeyhole } from 'lucide-react';
 import { hasObsidianKanbanMarker, KanbanView } from './KanbanView';
-import { perfSpan } from '../perf';
 import {
   acquireInteractionLock,
   bindDragGesture,
@@ -1157,21 +1156,6 @@ export function buildDecorations(
   enableWidgetAutorun?: (from: number, to: number, source: string) => void,
   notes: NoteSummary[] = [],
 ): DecorationSet {
-  return perfSpan(
-    'note.buildDecorations',
-    () => buildDecorationsInner(state, requestWidgetAgent, fetchWidgetFeed, enableWidgetAutorun, notes),
-    { lines: state.doc.lines, chars: state.doc.length },
-    12,
-  );
-}
-
-function buildDecorationsInner(
-  state: EditorState,
-  requestWidgetAgent?: (prompt: string) => void,
-  fetchWidgetFeed?: (url: string, force?: boolean) => Promise<unknown>,
-  enableWidgetAutorun?: (from: number, to: number, source: string) => void,
-  notes: NoteSummary[] = [],
-): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
   const doc = state.doc;
   const cursorLine = state.selection.main.head;
@@ -2116,16 +2100,9 @@ export const NoteEditor = memo(function NoteEditor({ note, content, onContentCha
   useEffect(() => {
     const view = viewRef.current;
     if (view) {
-      perfSpan(
-        'note.reconfigureExtensions',
-        () => {
-          view.dispatch({
-            effects: StateEffect.reconfigure.of(extensions),
-          });
-        },
-        { noteId: note?.id, lines: view.state.doc.lines },
-        20,
-      );
+      view.dispatch({
+        effects: StateEffect.reconfigure.of(extensions),
+      });
     }
   }, [extensions, note?.id]);
 

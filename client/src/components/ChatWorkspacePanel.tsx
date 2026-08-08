@@ -527,5 +527,3 @@ export function ChatWorkspacePanel({ channelId, channelName, vaultId, cwd, onUse
     </div>
   );
 }
-
-export default ChatWorkspacePanel;

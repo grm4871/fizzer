@@ -2114,7 +2114,7 @@ export function updateChatMessage(
 }
 
 export function approveChatChangeRequest(
-  db: Db, userId: number, vaultId: string, channelId: string, messageId: string,
+  db: Db, userId: number, channelId: string, messageId: string,
 ): ChatMessage {
   const { route } = assertChatChannel(db, channelId, userId);
   const row = db.prepare('SELECT *, rowid FROM chat_messages WHERE id = ? AND channel_id = ?')
@@ -2135,7 +2135,7 @@ export function approveChatChangeRequest(
 }
 
 export function mergeChatChangeRequest(
-  db: Db, userId: number, vaultId: string, channelId: string, messageId: string,
+  db: Db, userId: number, channelId: string, messageId: string,
 ): ChatMessage {
   const { route } = assertChatChannel(db, channelId, userId);
   const sourceVault = db.prepare('SELECT * FROM vaults WHERE id = ?').get(route.sourceVaultId) as Vault | undefined;
@@ -2687,14 +2687,6 @@ function getChannelKanbanNoteId(db: Db, sourceChannelId: string): string {
   const row = db.prepare('SELECT kanban_note_id FROM chat_channel_settings WHERE channel_id = ?')
     .get(sourceChannelId) as { kanban_note_id: string | null } | undefined;
   return String(row?.kanban_note_id || '').trim();
-}
-
-function channelHasOrchestrator(db: Db, sourceChannelId: string): boolean {
-  const row = db.prepare(`
-    SELECT 1 AS ok FROM chat_agent_members
-    WHERE channel_id = ? AND orchestrator != 0 LIMIT 1
-  `).get(sourceChannelId) as { ok: number } | undefined;
-  return Boolean(row);
 }
 
 function channelKanbanMarkdown(channelId: string, channelTitle: string): string {

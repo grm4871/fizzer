@@ -70,13 +70,6 @@ export type Note = NoteSummary & {
   file_path: string;
 };
 
-export type SearchResult = {
-  id: string;
-  title: string;
-  snippet: string;
-  rank: number;
-};
-
 export type BacklinkResult = {
   id: string;
   title: string;
@@ -995,24 +988,6 @@ export function togglePin(db: Db, noteId: string): void {
 
 export function toggleArchive(db: Db, noteId: string): void {
   db.prepare('UPDATE notes SET is_archived = CASE WHEN is_archived = 0 THEN 1 ELSE 0 END, updated_at = datetime(\'now\') WHERE id = ?').run(noteId);
-}
-
-// ── Search ─────────────────────────────────────────────────────────
-
-export function searchNotes(db: Db, vaultId: string, query: string): SearchResult[] {
-  if (!query.trim()) return [];
-
-  // Use FTS5 MATCH with snippet
-  const rows = db.prepare(`
-    SELECT n.id, n.title, snippet(notes_fts, 1, '<mark>', '</mark>', '...', 32) AS snippet, rank
-    FROM notes_fts
-    JOIN notes n ON n.rowid = notes_fts.rowid
-    WHERE notes_fts MATCH ? AND n.vault_id = ?
-    ORDER BY rank
-    LIMIT 50
-  `).all(query, vaultId) as SearchResult[];
-
-  return rows;
 }
 
 // ── Backlinks ──────────────────────────────────────────────────────

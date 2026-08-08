@@ -178,5 +178,3 @@ export function ChatTaskReview({ workItemId, worktreePath }: Props) {
     </details>
   );
 }
-
-export default ChatTaskReview;

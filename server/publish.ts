@@ -6,7 +6,7 @@ import crypto from 'node:crypto';
 import type { Request, Response } from 'express';
 import { marked } from 'marked';
 import type Database from 'better-sqlite3';
-import { getNote, getVault, getWritableVault } from './vault.js';
+import { getNote, getWritableVault } from './vault.js';
 import { redactPrivateBlocksForPublic } from './privacy.js';
 
 type Db = Database.Database;

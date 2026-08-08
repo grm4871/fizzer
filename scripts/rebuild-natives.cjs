@@ -2,9 +2,8 @@
 /**
  * Rebuild native Node modules for the current runtime.
  *
- * Cascade uses better-sqlite3 (and bcrypt) on the API process (system Node ABI)
- * and better-sqlite3 again inside Electron (Electron ABI). After a Node upgrade,
- * or when prebuilds do not match, the .node binary can fail with:
+ * Cascade uses better-sqlite3 and bcrypt in the API process. After a Node
+ * upgrade, or when prebuilds do not match, a native binary can fail with:
  *
  *   was compiled against a different Node.js version using NODE_MODULE_VERSION N
  *   This version of Node.js requires NODE_MODULE_VERSION M
@@ -14,8 +13,6 @@
  *
  * Usage (repo root):
  *   npm run rebuild:native
- *   node scripts/rebuild-natives.cjs --root-only
- *   node scripts/rebuild-natives.cjs --electron-only
  *   node scripts/rebuild-natives.cjs --ensure   # rebuild only if load fails
  *
  * Env:
@@ -23,7 +20,7 @@
  *   npm_config_python / PYTHON     force the Python used by node-gyp
  *
  * On macOS, when PYTHON is unset, prefer /usr/bin/python3 so a broken Homebrew
- * Python (e.g. pyexpat on 3.14) does not fail electron-rebuild / node-gyp.
+ * Python (e.g. pyexpat on 3.14) does not fail node-gyp.
  */
 
 'use strict';
@@ -31,10 +28,8 @@
 const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
-const os = require('node:os');
 
 const ROOT = path.resolve(__dirname, '..');
-const ELECTRON_DIR = path.join(ROOT, 'cascade-electron');
 const ROOT_NATIVE_PACKAGES = ['better-sqlite3', 'bcrypt'];
 
 function log(msg) {
@@ -126,17 +121,6 @@ function rootLoadOk() {
   return { ok: true };
 }
 
-function electronBindingPath() {
-  return path.join(
-    ELECTRON_DIR,
-    'node_modules',
-    'better-sqlite3',
-    'build',
-    'Release',
-    'better_sqlite3.node',
-  );
-}
-
 function rebuildRoot() {
   const present = ROOT_NATIVE_PACKAGES.filter((pkg) => packageInstalled(pkg, ROOT));
   if (present.length === 0) {
@@ -156,63 +140,12 @@ function rebuildRoot() {
   log('root natives OK');
 }
 
-function findElectronRebuildCli() {
-  for (const fromDir of [ELECTRON_DIR, ROOT]) {
-    try {
-      const moduleEntry = require.resolve('@electron/rebuild', { paths: [fromDir] });
-      const packagePath = path.resolve(path.dirname(moduleEntry), '..', 'package.json');
-      const packageJson = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
-      const relativeCli = typeof packageJson.bin === 'string'
-        ? packageJson.bin
-        : packageJson.bin?.['electron-rebuild'];
-      if (!relativeCli) continue;
-      const cli = path.resolve(path.dirname(packagePath), relativeCli);
-      if (fs.existsSync(cli)) return cli;
-    } catch {
-      // Try the next dependency root.
-    }
-  }
-  return null;
-}
-
-function rebuildElectron() {
-  if (!fs.existsSync(path.join(ELECTRON_DIR, 'package.json'))) {
-    log('cascade-electron/ missing; skip Electron rebuild');
-    return;
-  }
-  if (!packageInstalled('better-sqlite3', ELECTRON_DIR)) {
-    log('cascade-electron better-sqlite3 not installed; run: npm install --prefix cascade-electron');
-    return;
-  }
-
-  const cli = findElectronRebuildCli();
-  if (!cli) {
-    warn(
-      'electron-rebuild not found. Install Electron deps: npm install --prefix cascade-electron',
-    );
-    return;
-  }
-
-  log(`rebuilding cascade-electron better-sqlite3 for Electron (via ${path.relative(ROOT, cli)})`);
-  // Resolve the package's JavaScript entrypoint, not npm's platform-specific
-  // .bin shim. On Windows the extensionless shim is POSIX shell and cannot be
-  // parsed by node.exe.
-  run(process.execPath, [cli, '-f', '-w', 'better-sqlite3'], { cwd: ELECTRON_DIR });
-
-  const binding = electronBindingPath();
-  if (!fs.existsSync(binding)) {
-    throw new Error(`Electron rebuild finished but binding missing: ${binding}`);
-  }
-  log(`Electron native binding present: ${path.relative(ROOT, binding)}`);
-}
-
 function printRecoveryHint(err) {
   warn('Native module rebuild failed.');
   if (err && err.message) warn(err.message);
   warn('Recovery:');
   warn('  1) npm run rebuild:native');
   warn('  2) or: npm rebuild better-sqlite3 bcrypt');
-  warn('  3) Electron: npm install --prefix cascade-electron && npm run rebuild:native -- --electron-only');
   if (process.platform === 'darwin') {
     warn('  macOS node-gyp tip: npm_config_python=/usr/bin/python3 npm run rebuild:native');
   }
@@ -221,8 +154,6 @@ function printRecoveryHint(err) {
 function parseArgs(argv) {
   const flags = new Set(argv);
   return {
-    rootOnly: flags.has('--root-only'),
-    electronOnly: flags.has('--electron-only'),
     ensure: flags.has('--ensure'),
     postinstall: flags.has('--postinstall'),
   };
@@ -235,46 +166,20 @@ function main() {
   }
 
   const args = parseArgs(process.argv.slice(2));
-  const doRoot = !args.electronOnly;
-  const doElectron = !args.rootOnly;
 
   try {
-    if (doRoot) {
-      if (args.ensure || args.postinstall) {
-        const check = rootLoadOk();
-        if (check.ok) {
-          if (!args.postinstall) log('root natives already load; skip root rebuild');
-        } else {
-          warn(
-            `ABI mismatch for ${check.pkg} (Node ${process.version}, modules ${process.versions.modules}); rebuilding`,
-          );
-          rebuildRoot();
-        }
+    if (args.ensure || args.postinstall) {
+      const check = rootLoadOk();
+      if (check.ok) {
+        if (!args.postinstall) log('root natives already load; skip root rebuild');
       } else {
+        warn(
+          `ABI mismatch for ${check.pkg} (Node ${process.version}, modules ${process.versions.modules}); rebuilding`,
+        );
         rebuildRoot();
       }
-    }
-
-    if (doElectron) {
-      // postinstall at repo root should not force Electron rebuild (Docker/server
-      // installs omit Electron). Explicit npm run rebuild:native still does both.
-      if (args.postinstall) {
-        // no-op for electron on root postinstall
-      } else if (args.ensure) {
-        // Only rebuild Electron if the package is installed; we cannot load the
-        // Electron-ABI binary under system Node, so rebuild when binding missing
-        // or when --ensure was requested with electron present after a failed start.
-        if (packageInstalled('better-sqlite3', ELECTRON_DIR) && !fs.existsSync(electronBindingPath())) {
-          rebuildElectron();
-        } else if (!args.rootOnly) {
-          // Conservative: if electron deps exist, rebuild so ABI matches current Electron.
-          if (packageInstalled('better-sqlite3', ELECTRON_DIR) && findElectronRebuildCli()) {
-            rebuildElectron();
-          }
-        }
-      } else {
-        rebuildElectron();
-      }
+    } else {
+      rebuildRoot();
     }
   } catch (err) {
     printRecoveryHint(err);
@@ -289,8 +194,6 @@ if (require.main === module) {
 module.exports = {
   isAbiMismatchError,
   preferMacSystemPython,
-  findElectronRebuildCli,
   rootLoadOk,
   rebuildRoot,
-  rebuildElectron,
 };

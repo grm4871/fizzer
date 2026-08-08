@@ -9,8 +9,8 @@ npm run dev-debug           # full stack with backend debug mode
 npm run build               # TypeScript server/agent build
 npm run build:client        # production renderer bundle
 npm test                    # client unit tests
-npm run test:native         # better-sqlite3 / native rebuild helper tests
-npm run rebuild:native      # rebuild API + Electron better-sqlite3 (and bcrypt)
+npm run test:native         # API native rebuild helper tests
+npm run rebuild:native      # rebuild API better-sqlite3 and bcrypt
 npm run test:desktop-runner # desktop runner integration test
 ```
 

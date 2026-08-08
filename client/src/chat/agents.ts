@@ -24,8 +24,7 @@ export function agentsAfterLoadFailure<T>(cached?: T[], legacy?: T[]): T[] {
 /**
  * Curated model presets shown in the agent picker.
  * Prefer ids known to work with the local CLI; dead ids (e.g. retired grok-build)
- * are intentionally omitted. Desktop may report additional live models via
- * `/api/me/desktop-runner` which the UI merges in.
+ * are intentionally omitted. The picker also accepts a custom model ID.
  */
 export const CHAT_AGENT_MODEL_PRESETS: Record<AgentId, { id: string; label: string }[]> = {
   'claude-code': [
@@ -49,8 +48,8 @@ export const CHAT_AGENT_MODEL_PRESETS: Record<AgentId, { id: string; label: stri
     { id: 'grok-4.5', label: 'Grok 4.5' },
     { id: 'grok-composer-2.5-fast', label: 'Grok Composer 2.5 Fast' },
   ],
-  // agentapi --model= only accepts flash_lite|flash|pro; desktop merges the full
-  // live catalog from GetAvailableModels (+ cascade config) on top.
+  // agentapi --model= only accepts flash_lite|flash|pro; named models below are
+  // normalized onto one of those execution tiers.
   antigravity: [
     { id: 'flash_lite', label: 'Gemini Flash Lite (tier)' },
     { id: 'flash', label: 'Gemini Flash (tier)' },
@@ -115,89 +114,6 @@ export const CHAT_AGENT_MODEL_PRESETS: Record<AgentId, { id: string; label: stri
     { id: 'xai-oauth/grok-composer-2.5-fast', label: 'Grok · Composer 2.5 Fast' },
   ],
 };
-
-/**
- * Merge curated presets with live models reported by the desktop runner.
- * Live entries may be bare ids or `id|label`. For antigravity, live catalog
- * wins on label collisions (presets are only fallbacks / agentapi tiers).
- */
-export function mergeAgentModelPresets(
-  agentId: AgentId,
-  liveModels: string[] | null | undefined,
-): { id: string; label: string }[] {
-  const presets = [...(CHAT_AGENT_MODEL_PRESETS[agentId] ?? [])];
-  if (!liveModels?.length) return presets;
-
-  const parsedLive: { id: string; label: string }[] = [];
-  for (const item of liveModels) {
-    const trimmed = item.trim();
-    if (!trimmed) continue;
-    if (trimmed.includes('|')) {
-      const [idPart, ...rest] = trimmed.split('|');
-      const id = idPart.trim();
-      const label = rest.join('|').trim() || id;
-      if (id) parsedLive.push({ id, label });
-    } else {
-      parsedLive.push({ id: trimmed, label: trimmed });
-    }
-  }
-  if (!parsedLive.length) return presets;
-
-  // Antigravity: prefer full live list; keep agentapi tiers pinned at top if present.
-  if (agentId === 'antigravity') {
-    const tierIds = new Set(['flash_lite', 'flash', 'pro']);
-    const tiers = presets.filter((p) => tierIds.has(p.id));
-    const byId = new Map<string, { id: string; label: string }>();
-    for (const t of tiers) byId.set(t.id, t);
-    for (const live of parsedLive) {
-      // Prefer human slug ids over enum-only when both exist later — last write
-      // for same id updates label if richer.
-      const prev = byId.get(live.id);
-      if (prev && prev.label.length >= live.label.length && prev.label !== live.id) continue;
-      byId.set(live.id, live);
-    }
-    // Also fold preset non-tier entries not returned live (offline fallback).
-    for (const p of presets) {
-      if (!byId.has(p.id)) byId.set(p.id, p);
-    }
-    // Dedupe by label only when ids differ and one is a raw enum — keep slug.
-    const out: { id: string; label: string }[] = [];
-    const usedLabels = new Set<string>();
-    const preferred = [...byId.values()].sort((a, b) => {
-      const aTier = tierIds.has(a.id) ? 0 : 1;
-      const bTier = tierIds.has(b.id) ? 0 : 1;
-      if (aTier !== bTier) return aTier - bTier;
-      return a.label.localeCompare(b.label);
-    });
-    for (const m of preferred) {
-      const lk = m.label.toLowerCase();
-      if (usedLabels.has(lk)) {
-        // Prefer non-MODEL_ / non-tier human slug when labels collide.
-        const existingIdx = out.findIndex((x) => x.label.toLowerCase() === lk);
-        if (existingIdx < 0) continue;
-        const existing = out[existingIdx];
-        const existingIsEnum = /^MODEL_/i.test(existing.id) || tierIds.has(existing.id);
-        const nextIsSlug = !/^MODEL_/i.test(m.id) && !tierIds.has(m.id);
-        if (existingIsEnum && nextIsSlug) out[existingIdx] = m;
-        continue;
-      }
-      usedLabels.add(lk);
-      out.push(m);
-    }
-    return out;
-  }
-
-  const base = [...presets];
-  const seenIds = new Set(base.map((m) => m.id));
-  const seenLabels = new Set(base.map((m) => m.label.toLowerCase()));
-  for (const live of parsedLive) {
-    if (seenIds.has(live.id) || seenLabels.has(live.label.toLowerCase())) continue;
-    seenIds.add(live.id);
-    seenLabels.add(live.label.toLowerCase());
-    base.push(live);
-  }
-  return base;
-}
 
 export function agentLabel(agentId: string) {
   return CHAT_AGENTS.find((agent) => agent.id === agentId)?.label ?? agentId;

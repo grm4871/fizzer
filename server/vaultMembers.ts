@@ -150,14 +150,6 @@ export function getVaultRole(db: Db, vaultId: string, userId: number): VaultRole
   return row.role;
 }
 
-export function addVaultOwnerMembership(db: Db, vaultId: string, userId: number): void {
-  db.prepare(`
-    INSERT INTO vault_members (vault_id, user_id, role, invited_by)
-    VALUES (?, ?, 'owner', ?)
-    ON CONFLICT(vault_id, user_id) DO UPDATE SET role = 'owner'
-  `).run(vaultId, userId, userId);
-}
-
 export function listVaultMembers(db: Db, vaultId: string): VaultMember[] {
   return (db.prepare(`
     SELECT

@@ -1,8 +1,7 @@
 import type { MouseEvent, ReactNode } from 'react';
 import { Bot, PanelRightClose, PanelRightOpen, Plus, Settings2, UserPlus } from 'lucide-react';
 
-export type SidebarButtonItem = { id: string; icon: ReactNode; onClick: () => void; title: string; selected?: boolean; badge?: number };
-export const createSidebarButton = (item: SidebarButtonItem) => item;
+type SidebarButtonItem = { id: string; icon: ReactNode; onClick: () => void; title: string; selected?: boolean; badge?: number };
 
 type Props = {
   collapsed: boolean; inviteSelected: boolean; agentSelected: boolean; settingsSelected: boolean;
@@ -10,11 +9,11 @@ type Props = {
 };
 
 export function ChatSidebarButtons(p: Props) {
-  const buttons = [
-    createSidebarButton({ id: 'collapse', icon: p.collapsed ? <PanelRightOpen size={15} /> : <PanelRightClose size={15} />, onClick: p.onToggleCollapsed, title: p.collapsed ? 'Expand members' : 'Collapse members' }),
-    createSidebarButton({ id: 'invite', icon: <UserPlus size={15} />, onClick: p.onInvite, title: 'Invite person', selected: p.inviteSelected }),
-    createSidebarButton({ id: 'agent', icon: <><Bot size={15} /><Plus size={11} className="csb-plus" /></>, onClick: p.onAgent, title: 'Add agent', selected: p.agentSelected }),
-    createSidebarButton({ id: 'settings', icon: <Settings2 size={15} />, onClick: p.onSettings, title: 'Project setup', selected: p.settingsSelected }),
+  const buttons: SidebarButtonItem[] = [
+    { id: 'collapse', icon: p.collapsed ? <PanelRightOpen size={15} /> : <PanelRightClose size={15} />, onClick: p.onToggleCollapsed, title: p.collapsed ? 'Expand members' : 'Collapse members' },
+    { id: 'invite', icon: <UserPlus size={15} />, onClick: p.onInvite, title: 'Invite person', selected: p.inviteSelected },
+    { id: 'agent', icon: <><Bot size={15} /><Plus size={11} className="csb-plus" /></>, onClick: p.onAgent, title: 'Add agent', selected: p.agentSelected },
+    { id: 'settings', icon: <Settings2 size={15} />, onClick: p.onSettings, title: 'Project setup', selected: p.settingsSelected },
   ];
   const click = (event: MouseEvent<HTMLButtonElement>, item: SidebarButtonItem) => { event.stopPropagation(); item.onClick(); };
   return (

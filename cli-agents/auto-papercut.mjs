@@ -63,5 +63,3 @@ export function autoPapercut(body, meta = {}) {
     /* never break the agent on journal capture */
   }
 }
-
-export default autoPapercut;

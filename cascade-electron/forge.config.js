@@ -1,10 +1,7 @@
 // Electron Forge config. The packaged app is a thin shell that loads
-// https://cscd.online (see main.cjs), plus a local better-sqlite3-backed runner
-// host — so the native module is platform-specific and correct installers must
-// be built on their target OS (or CI). The zip maker is pure-JS and works
-// everywhere; native installers (.dmg/.exe/.deb/.rpm) are gated behind the
-// platform tooling that produces them, so a build host only runs the makers it
-// can actually satisfy.
+// https://cscd.online (see main.cjs) and includes the local agent runtime.
+// The zip maker works everywhere; native installers (.dmg/.exe/.deb/.rpm) are
+// gated behind the platform tooling that produces them.
 import { execSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,7 +10,6 @@ import { MakerSquirrel } from '@electron-forge/maker-squirrel';
 import { MakerDMG } from '@electron-forge/maker-dmg';
 import { MakerDeb } from '@electron-forge/maker-deb';
 import { MakerRpm } from '@electron-forge/maker-rpm';
-import { AutoUnpackNativesPlugin } from '@electron-forge/plugin-auto-unpack-natives';
 
 const has = (bin) => {
   try { execSync(`command -v ${bin}`, { stdio: 'ignore' }); return true; }
@@ -41,5 +37,4 @@ export default {
     extraResource: [path.resolve(configDir, '..', 'dist')],
   },
   makers,
-  plugins: [new AutoUnpackNativesPlugin({})],
 };

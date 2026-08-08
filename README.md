@@ -16,7 +16,7 @@ npm install --prefix cascade-electron
 
 If the API fails to start after a Node upgrade (`NODE_MODULE_VERSION` /
 `better-sqlite3` ABI mismatch, often looking like Vite `ECONNREFUSED` on
-`/api/*`), rebuild natives:
+`/api/*`), rebuild the API's native modules:
 
 ```bash
 npm run rebuild:native

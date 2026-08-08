@@ -23,8 +23,6 @@ type RunnerElectronAPI = {
     cursor?: number;
   }>;
   onAgentEvent?: (callback: (payload: AgentEventPayload) => void) => () => void;
-  getRunnerModels?: () => Promise<{ models?: Record<string, string[]> }>;
-  getRunnerModelsAsync?: () => Promise<{ models?: Record<string, string[]> }>;
   getRunnerPlanUsage?: () => Promise<{ usage?: Record<string, unknown> }>;
 };
 
@@ -218,20 +216,6 @@ function emitRunEvent(runId: number, type: string, payload: unknown): void {
   socket?.emit('runner:runEvent', { runId, type, payload });
 }
 
-async function probeModels(): Promise<Record<string, string[]>> {
-  const api = runnerElectronAPI();
-  // Use the new off-main IPC only. Older Electron mains implement
-  // runner:models synchronously; falling back would freeze agent:start for the
-  // entire provider-probe timeout after an otherwise successful hot reload.
-  if (!api?.getRunnerModelsAsync) return {};
-  try {
-    const res = await api.getRunnerModelsAsync();
-    return res?.models && typeof res.models === 'object' ? res.models : {};
-  } catch {
-    return {};
-  }
-}
-
 async function publishPlanUsage(activeSocket: Socket, force = false): Promise<void> {
   const api = runnerElectronAPI();
   if (!api?.getRunnerPlanUsage || !activeSocket.connected) return;
@@ -259,16 +243,9 @@ async function publishPlanUsage(activeSocket: Socket, force = false): Promise<vo
 async function registerWithServer(activeSocket: Socket): Promise<void> {
   await restoreMainProcessRuns();
   const ids = [...activeRunIds].filter((id) => Number.isFinite(id));
-  // Registration is the availability boundary. Dynamic model discovery can
-  // involve slow local CLIs, so announce the runner first and publish models
-  // in a later capability refresh rather than blocking prompt dispatch.
   activeSocket.emit('runner:register', {
     activeRunIds: ids,
     runnerInstanceId: bridgeInstanceId || undefined,
-  });
-  void probeModels().then((models) => {
-    if (!activeSocket.connected) return;
-    activeSocket.emit('runner:capabilities', { models });
   });
   void publishPlanUsage(activeSocket);
   pruneRecentTerminals();

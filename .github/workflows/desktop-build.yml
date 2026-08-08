@@ -1,9 +1,8 @@
 name: Desktop builds
 
 # Builds the Cascade desktop app (a thin Electron shell that loads cscd.online)
-# on each target OS so native modules — better-sqlite3 in particular — are
-# compiled correctly per platform. Cross-building from one OS produces broken
-# binaries for the others, which is why this runs a matrix on native runners.
+# on each target OS. Native installer formats still require their target OS,
+# which is why this runs a matrix on native runners.
 #
 # Trigger by pushing a tag (v*) to cut a release, or run manually from the
 # Actions tab to produce downloadable artifacts without publishing.
@@ -49,7 +48,6 @@ jobs:
           npx --yes npm@11.16.0 ci --ignore-scripts
           npx --yes npm@11.16.0 run build
 
-      # postinstall runs electron-rebuild for better-sqlite3 against this OS.
       - name: Install dependencies
         # npm 11.16 records optional peers more strictly than earlier npm 11
         # releases. Pin the lockfile consumer so hosted-runner updates cannot

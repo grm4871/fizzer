@@ -121,7 +121,6 @@ export type DesktopRunnerHealth = {
   lastError: string | null;
   lastErrorAt: string | null;
   lastSeenAt: string | null;
-  models: Record<string, string[]> | null;
   /** Subscription usage keyed by agent id (claude-code / codex / grok). */
   planUsage: Record<string, PlanUsage> | null;
 };
@@ -131,8 +130,6 @@ const runnersByUser = new Map<number, RunnerSocket>();
 const delegatedRunOwners = new Map<number, number>();
 /** Last error reported by (or about) each user's desktop runner. */
 const runnerLastError = new Map<number, { message: string; at: string }>();
-/** Last capability probe payload from the desktop (agent → model ids). */
-const runnerModels = new Map<number, Record<string, string[]>>();
 /** Latest subscription usage per user, pushed by the desktop runner. */
 const runnerPlanUsage = new Map<number, Record<string, PlanUsage>>();
 const runnerLastSeen = new Map<number, string>();
@@ -251,7 +248,6 @@ export function initDesktopRunners(io: Server, db: Db, hooks: RunnerHooks): void
     }
 
     socket.on('runner:register', (payload?: {
-      models?: Record<string, string[]>;
       /** Local mid-flight run ids so the server can reclaim ownership after restart. */
       activeRunIds?: number[];
       /** Stable for renderer reloads; changes only when Electron main restarts. */
@@ -260,15 +256,6 @@ export function initDesktopRunners(io: Server, db: Db, hooks: RunnerHooks): void
       runnersByUser.set(user.id, socket);
       runnerLastSeen.set(user.id, new Date().toISOString());
       clearPendingDisconnectFail(user.id);
-      if (payload?.models && typeof payload.models === 'object') {
-        const cleaned: Record<string, string[]> = {};
-        for (const [agent, models] of Object.entries(payload.models)) {
-          if (Array.isArray(models)) {
-            cleaned[agent] = models.filter((m): m is string => typeof m === 'string' && m.trim().length > 0);
-          }
-        }
-        runnerModels.set(user.id, cleaned);
-      }
       const reclaimed = reclaimActiveRunsFromDesktop(db, user.id, payload?.activeRunIds);
       const nextInstanceId = typeof payload?.runnerInstanceId === 'string' ? payload.runnerInstanceId : '';
       const previousInstanceId = runnerInstanceIds.get(user.id);
@@ -299,19 +286,6 @@ export function initDesktopRunners(io: Server, db: Db, hooks: RunnerHooks): void
         }
       }
       socket.emit('runner:registered', { ok: true, reclaimed });
-    });
-
-    socket.on('runner:capabilities', (payload?: { models?: Record<string, string[]> }) => {
-      if (payload?.models && typeof payload.models === 'object') {
-        const cleaned: Record<string, string[]> = {};
-        for (const [agent, models] of Object.entries(payload.models)) {
-          if (Array.isArray(models)) {
-            cleaned[agent] = models.filter((m): m is string => typeof m === 'string' && m.trim().length > 0);
-          }
-        }
-        runnerModels.set(user.id, cleaned);
-      }
-      runnerLastSeen.set(user.id, new Date().toISOString());
     });
 
     // Subscription usage per provider. Only the desktop can read these — the
@@ -426,7 +400,6 @@ export function getDesktopRunnerStatus(userId: number, db?: Db): DesktopRunnerHe
     lastError: err?.message ?? null,
     lastErrorAt: err?.at ?? null,
     lastSeenAt: runnerLastSeen.get(userId) ?? null,
-    models: runnerModels.get(userId) ?? null,
     planUsage: runnerPlanUsage.get(userId) ?? null,
   };
 }
@@ -506,11 +479,6 @@ export function isDelegatedRun(runId: number): boolean {
 
 export function getDelegatedRunOwner(runId: number): number | undefined {
   return delegatedRunOwners.get(runId);
-}
-
-/** Restore in-memory ownership after server restart (desktop reclaimed the run). */
-export function reclaimDelegatedRun(runId: number, userId: number): void {
-  delegatedRunOwners.set(runId, userId);
 }
 
 export async function cancelDelegatedRun(userId: number, runId: number): Promise<boolean> {

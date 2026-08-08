@@ -1270,11 +1270,10 @@ function agyTryAutoApprove(conversationId: string): void {
   agyLsPost('ResolveOutstandingSteps', { cascadeId: conversationId });
 }
 
-/** Map UI / live model ids (slugs, enums, labels) to agentapi --model= tiers. */
+/** Map configured model ids (slugs, enums, labels) to agentapi --model= tiers. */
 export function resolveAntigravityModelTier(model?: string | null): AntigravityTier | undefined {
   if (!model || !String(model).trim()) return undefined;
   let raw = String(model).trim();
-  // "id|label" live entries from listAntigravityModels
   if (raw.includes('|')) raw = raw.split('|')[0].trim();
   const lower = raw.toLowerCase();
   if (ANTIGRAVITY_TIERS.has(lower)) return lower as AntigravityTier;
@@ -1403,159 +1402,6 @@ function discoverAntigravityEnv(cwd?: string): Record<string, string> {
   } catch { /* ignore */ }
 
   return env;
-}
-
-type AgyModelEntry = { id: string; label: string; recommended?: boolean };
-
-function agyLsJson(endpoint: string, body: Record<string, unknown> = {}): unknown | null {
-  const discovered = discoverAntigravityEnv();
-  const addr = discovered.ANTIGRAVITY_LS_ADDRESS || process.env.ANTIGRAVITY_LS_ADDRESS;
-  const token = discovered.ANTIGRAVITY_CSRF_TOKEN || process.env.ANTIGRAVITY_CSRF_TOKEN;
-  if (!addr || !token) return null;
-  const host = addr.includes('://') ? addr : `http://${addr}`;
-  const url = `${host.replace(/\/$/, '')}/exa.language_server_pb.LanguageServerService/${endpoint}`;
-  try {
-    const result = spawnSync(
-      'curl',
-      [
-        '-sS', '-m', '6',
-        '-X', 'POST', url,
-        '-H', 'Content-Type: application/json',
-        '-H', `X-Codeium-Csrf-Token: ${token}`,
-        '-d', JSON.stringify(body),
-      ],
-      { encoding: 'utf8', timeout: 8000 },
-    );
-    if (result.status !== 0 || !result.stdout?.trim()) return null;
-    return JSON.parse(result.stdout);
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Full live catalog from Antigravity LS.
- * Prefer GetAvailableModels (complete map with slugs + displayName); merge
- * GetCascadeModelConfigData (recommended cascade picker rows) so nothing the
- * IDE shows is dropped. Entries are `id|label` for the desktop/UI merge.
- */
-export function listAntigravityModels(): string[] {
-  const byId = new Map<string, AgyModelEntry>();
-  const add = (id: string, label: string, recommended = false) => {
-    const cleanId = id.trim();
-    const cleanLabel = (label || id).trim();
-    if (!cleanId) return;
-    // Skip autocomplete/tab-only internals.
-    if (/^tab[_-]|tab_jump|tab_flash/i.test(cleanId) || /^tab[_-]/i.test(cleanLabel)) return;
-    if (/^chat_\d+$/i.test(cleanId)) return;
-    const prev = byId.get(cleanId);
-    if (prev) {
-      // Prefer richer label / recommended flag.
-      if (cleanLabel.length > prev.label.length) prev.label = cleanLabel;
-      if (recommended) prev.recommended = true;
-      return;
-    }
-    byId.set(cleanId, { id: cleanId, label: cleanLabel, recommended });
-  };
-
-  // agentapi runnable tiers (always present even if LS is down).
-  add('flash_lite', 'Gemini Flash Lite (agentapi tier)', true);
-  add('flash', 'Gemini Flash (agentapi tier)', true);
-  add('pro', 'Gemini Pro (agentapi tier)', true);
-
-  // 1) Full registry — includes 2.5 Pro, 3 Flash, Flash Lite, Image, etc.
-  const available = agyLsJson('GetAvailableModels') as {
-    response?: { models?: Record<string, Record<string, unknown>> };
-    models?: Record<string, Record<string, unknown>>;
-  } | null;
-  const modelMap = available?.response?.models || available?.models || {};
-  for (const [slug, meta] of Object.entries(modelMap)) {
-    if (!meta || typeof meta !== 'object') continue;
-    const isInternal = Boolean(meta.isInternal ?? meta.is_internal);
-    const displayName = String(meta.displayName || meta.display_name || '').trim();
-    const enumId = String(meta.model || '').trim();
-    const recommended = Boolean(meta.recommended ?? meta.isRecommended);
-    // Keep public models (displayName) and recommended; drop nameless internals.
-    if (isInternal && !displayName && !recommended) continue;
-    if (!displayName && !recommended && isInternal) continue;
-    const label = displayName || slug;
-    // Prefer human slug as id when present; also index enum for resolve/mapping.
-    add(slug, label, recommended);
-    if (enumId && enumId !== slug) add(enumId, label, recommended);
-  }
-
-  // 2) Cascade picker rows (may include battle/recommended-only extras).
-  const cascade = agyLsJson('GetCascadeModelConfigData') as {
-    clientModelConfigs?: Array<{
-      label?: string;
-      isRecommended?: boolean;
-      modelOrAlias?: { model?: string; alias?: string };
-    }>;
-    battleModeModelConfigs?: Array<{
-      label?: string;
-      isRecommended?: boolean;
-      modelOrAlias?: { model?: string; alias?: string };
-    }>;
-  } | null;
-  for (const cfg of [
-    ...(cascade?.clientModelConfigs || []),
-    ...(cascade?.battleModeModelConfigs || []),
-  ]) {
-    const label = (cfg.label || '').trim();
-    const modelKey = (cfg.modelOrAlias?.model || cfg.modelOrAlias?.alias || '').trim();
-    if (modelKey) add(modelKey, label || modelKey, Boolean(cfg.isRecommended));
-    if (label) add(label, label, Boolean(cfg.isRecommended));
-  }
-
-  // Drop pure aliases: keep agentapi tiers + human slugs; drop MODEL_* enums
-  // and bare label-as-id when a slug already covers the same label.
-  const score = (e: AgyModelEntry): number => {
-    if (ANTIGRAVITY_TIERS.has(e.id)) return 40;
-    if (/^MODEL_/i.test(e.id)) return 10;
-    if (e.id === e.label) return 5;
-    if (/^[a-z0-9][a-z0-9._-]+$/i.test(e.id)) return 50; // slug
-    return 20;
-  };
-  // Group by lowercase label; within a group keep all distinct slugs (they are
-  // different model ids even when displayName collides), but only the best
-  // non-slug alias.
-  const groups = new Map<string, AgyModelEntry[]>();
-  for (const e of byId.values()) {
-    const lk = e.label.toLowerCase();
-    const arr = groups.get(lk) || [];
-    arr.push(e);
-    groups.set(lk, arr);
-  }
-  const picked: AgyModelEntry[] = [];
-  for (const [, group] of groups) {
-    const slugs = group.filter((e) => /^[a-z0-9][a-z0-9._-]+$/i.test(e.id) && !/^MODEL_/i.test(e.id) && e.id !== e.label);
-    if (slugs.length > 0) {
-      // Distinct slug ids share a displayName — disambiguate labels with id.
-      if (slugs.length === 1) {
-        picked.push(slugs[0]);
-      } else {
-        for (const s of slugs) {
-          picked.push({
-            ...s,
-            label: s.label.includes(s.id) ? s.label : `${s.label} · ${s.id}`,
-          });
-        }
-      }
-      continue;
-    }
-    group.sort((a, b) => score(b) - score(a));
-    picked.push(group[0]);
-  }
-
-  // Stable order: agentapi tiers first, then recommended, then label alpha.
-  const ordered = picked.sort((a, b) => {
-    const aTier = ANTIGRAVITY_TIERS.has(a.id) ? 0 : 1;
-    const bTier = ANTIGRAVITY_TIERS.has(b.id) ? 0 : 1;
-    if (aTier !== bTier) return aTier - bTier;
-    if (Boolean(a.recommended) !== Boolean(b.recommended)) return a.recommended ? -1 : 1;
-    return a.label.localeCompare(b.label);
-  });
-  return ordered.map((e) => (e.label && e.label !== e.id ? `${e.id}|${e.label}` : e.id));
 }
 
 function agyToolFriendlyName(name: string): string {
@@ -1784,7 +1630,6 @@ async function runAntigravity(
   const pendingToolIds: string[] = [];
   const emittedTools = new Set<string>();
   let emittedText = false;
-  let lastStepType = '';
 
   const checkTranscript = (): void => {
     let content: string;
@@ -1820,7 +1665,6 @@ async function runAntigravity(
       const source = step.source || '';
       const type = (step.type || '').toUpperCase();
       const status = (step.status || '').toUpperCase();
-      lastStepType = type;
 
       // Skip system noise in structured stream (still ignore raw dump).
       if (type === 'CONVERSATION_HISTORY' || type === 'USER_INPUT' || type === 'SYSTEM_MESSAGE') {
@@ -2639,40 +2483,4 @@ async function runOmp(
   } finally {
     cleanup();
   }
-}
-
-/**
- * Returns available models from OMP CLI.
- */
-export function listOmpModels(): string[] {
-  try {
-    const bin = getCliAgentBin('omp');
-    const result = spawnSync(bin, ['models'], {
-      encoding: 'utf8',
-      timeout: 5000,
-      env: process.env,
-    });
-    if (result.status === 0 && result.stdout) {
-      const ids: string[] = [];
-      let provider = '';
-      for (const line of result.stdout.split(/\r?\n/)) {
-        const providerMatch = line.match(/^([a-zA-Z0-9._-]+)\s+\(\d+\)\s*$/);
-        if (providerMatch) {
-          provider = providerMatch[1];
-          continue;
-        }
-        const modelMatch = line.match(/^\s*[│|]\s*([a-zA-Z0-9._-]+)\s*[│|]/);
-        if (provider && modelMatch) {
-          const modelId = modelMatch[1].trim();
-          if (modelId !== 'model' && !modelId.startsWith('──')) {
-            ids.push(`${provider}/${modelId}`);
-          }
-        }
-      }
-      return ids;
-    }
-  } catch {
-    // ignore
-  }
-  return [];
 }

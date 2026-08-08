@@ -14,7 +14,6 @@ import {
   workTraceAuthorKey,
   workTraceDecals,
   isSteeringContinuationMessage,
-  workTracePreview,
   workTraceStatusLabel,
   workTraceSummary,
 } from '../chat/workTrace';

@@ -79,10 +79,6 @@ export function privateBlocks(content: string): PrivateBlock[] {
   return blocks;
 }
 
-export function hasPrivateBlocks(content: string): boolean {
-  return privateBlocks(content).length > 0;
-}
-
 function agentPlaceholder(block: PrivateBlock): string {
   return [
     ':::private',

@@ -1,5 +1,0 @@
-{"q": "Which commit introduced the two-layer scratchpad memory system in Cascade?", "must_include": "9ec7e48a"}
-{"q": "What are the five journal entry kinds in cascade-scratchpad?", "must_include": "dead-end"}
-{"q": "What is the default value of SCRATCHPAD_DUE_ENTRIES?", "must_include": "10"}
-{"q": "What backend is agent 5.5 wired to, and what error did it fail with?", "must_include": "Codex exited with code 1"}
-{"q": "Which two older memory systems did the scratchpad replace?", "must_include": "exocortex"}

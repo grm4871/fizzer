@@ -1,13 +1,9 @@
 /**
- * @file evolution.ts — Cascade Evolution Features 1–4 (v1)
+ * @file evolution.ts — Cascade Evolution Features
  *
  * 1. Note ⇄ Chat backlinks (message references → note)
  * 2. Chat → note distillation (create / append / merge-with-confirm)
  * 3. Agent memory helpers (_agent/memory + INDEX injection)
- * 4. Unified search across notes + chat (FTS hybrid, scope filter)
- *
- * Vector embeddings (true semantic) deferred until an embedding provider is
- * configured; BM25 FTS across both corpora is the v1 retrieval layer.
  */
 
 import crypto from 'node:crypto';
@@ -18,10 +14,8 @@ import {
   getNote,
   getVault,
   listFolders,
-  searchNotes,
   updateNote,
   type Note,
-  type Vault,
 } from './vault.js';
 import { createNoteVersion } from './versions.js';
 import { redactPrivateBlocks } from './privacy.js';
@@ -807,120 +801,3 @@ export function createAgentMemoryNote(
   }
   return note;
 }
-
-// ── Feature 4: Unified search ──────────────────────────────────────
-
-export type UnifiedSearchHit = {
-  type: 'note' | 'chat';
-  id: string;
-  title: string;
-  channelId?: string;
-  snippet: string;
-  score: number;
-  timestamp?: string;
-};
-
-function sanitizeFts(raw: string): string {
-  const terms = raw
-    .toLowerCase()
-    .match(/[a-z0-9_@#./:-]{2,}/g)
-    ?.slice(0, 16) ?? [];
-  return Array.from(new Set(terms)).map((t) => `"${t.replace(/"/g, '""')}"`).join(' OR ');
-}
-
-export function unifiedSearch(
-  db: Db,
-  userId: number,
-  vaultId: string,
-  rawQuery: string,
-  opts: { scope?: 'notes' | 'chat' | 'all'; limit?: number; channelId?: string } = {},
-): UnifiedSearchHit[] {
-  const vault = getVault(db, vaultId, userId);
-  if (!vault) throw new Error('Vault not found');
-  const scope = opts.scope || 'all';
-  const limit = Math.max(1, Math.min(Number(opts.limit || 40), 100));
-  const fts = sanitizeFts(rawQuery);
-  if (!fts) return [];
-
-  const hits: UnifiedSearchHit[] = [];
-
-  if (scope === 'notes' || scope === 'all') {
-    // notes FTS accepts the same MATCH string the vault search route uses
-    try {
-      const noteHits = searchNotes(db, vaultId, fts);
-      for (const row of noteHits) {
-        hits.push({
-          type: 'note',
-          id: row.id,
-          title: row.title,
-          snippet: String(row.snippet || ''),
-          score: 500 - Math.abs(Number((row as { rank?: number }).rank) || 0),
-        });
-      }
-    } catch {
-      // Fall back to raw query if quoted MATCH fails
-      try {
-        const noteHits = searchNotes(db, vaultId, rawQuery);
-        for (const row of noteHits) {
-          hits.push({
-            type: 'note',
-            id: row.id,
-            title: row.title,
-            snippet: String(row.snippet || ''),
-            score: 450,
-          });
-        }
-      } catch { /* ignore */ }
-    }
-  }
-
-  if (scope === 'chat' || scope === 'all') {
-    // Only messages in channels the user can access via vault ownership / links.
-    // For v1: messages in this vault_id (local channels + source rows stored here).
-    const channelFilter = opts.channelId ? 'AND cm.channel_id = ?' : '';
-    const params = opts.channelId
-      ? [fts, vaultId, opts.channelId, limit]
-      : [fts, vaultId, limit];
-    const chatRows = db.prepare(`
-      SELECT cm.id, cm.channel_id, cm.author, cm.body, cm.created_at,
-             snippet(chat_messages_fts, 1, '<mark>', '</mark>', '...', 32) AS snippet,
-             rank
-      FROM chat_messages_fts
-      JOIN chat_messages cm ON cm.rowid = chat_messages_fts.rowid
-      WHERE chat_messages_fts MATCH ? AND cm.vault_id = ? ${channelFilter}
-      ORDER BY rank
-      LIMIT ?
-    `).all(...params) as Array<{
-      id: string;
-      channel_id: string;
-      author: string;
-      body: string;
-      created_at: string;
-      snippet: string;
-      rank: number;
-    }>;
-
-    for (const row of chatRows) {
-      // Permission: user must be able to assertChatChannel
-      try {
-        assertChatChannel(db, row.channel_id, userId);
-      } catch {
-        continue;
-      }
-      hits.push({
-        type: 'chat',
-        id: row.id,
-        title: `${row.author}`,
-        channelId: row.channel_id,
-        snippet: row.snippet || truncateSnippet(row.body, 200),
-        score: 200 - Math.abs(row.rank || 0),
-        timestamp: row.created_at,
-      });
-    }
-  }
-
-  return hits.sort((a, b) => b.score - a.score).slice(0, limit);
-}
-
-// silence unused Vault import warning if any
-export type { Vault };

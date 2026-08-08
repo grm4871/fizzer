@@ -1,8 +1,8 @@
 /**
  * @file main.cjs — Electron main process entry point
  *
- * Creates the main BrowserWindow, handles IPC for database operations and
- * keyboard shortcuts, and manages the application lifecycle. Provides
+ * Creates the main BrowserWindow, handles desktop IPC and keyboard shortcuts,
+ * and manages the application lifecycle. Provides
  * navigation security guards that restrict loading to the Cascade domains and local
  * dev origins. Keyboard shortcuts are intercepted at the main-process level
  * and forwarded to the renderer via IPC when Chromium would otherwise
@@ -19,7 +19,6 @@
 const { app, BrowserWindow, ipcMain, session, Menu, shell, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const os = require('os');
 const http = require('http');
 const https = require('https');
 const { spawn } = require('child_process');
@@ -31,9 +30,8 @@ if (explicitUserDataDir) {
   app.setPath('userData', userDataDir);
 }
 
-const db = require('./database.cjs');
 const { startLocalAgentRun, cancelLocalAgentRun, reapOrphanedLocalAgentRuns, resolveClaudePermission } = require('./agent-runner.cjs');
-const { connectDesktopRunner, disconnectDesktopRunner, isDesktopRunnerConnected, probeLocalModelsAsync } = require('./desktop-runner-host.cjs');
+const { connectDesktopRunner, disconnectDesktopRunner, isDesktopRunnerConnected } = require('./desktop-runner-host.cjs');
 const { collectPlanUsage } = require('./plan-usage.cjs');
 const { AgentRunState, settleCancelAcknowledgement } = require('./agent-run-state.cjs');
 const worktrees = require('./worktrees.cjs');
@@ -248,29 +246,16 @@ function configureWindow(win) {
     try { win.setAutoHideMenuBar(true); } catch { /* ignore */ }
   }
 
-  const logDesktopLifecycle = (name, detail = {}) => {
-    appendPerfLogLines({
-      iso: new Date().toISOString(),
-      t: Date.now(),
-      kind: 'desktop-lifecycle',
-      name,
-      detail: { windowId: win.id, ...detail },
-    });
-  };
-  win.on('unresponsive', () => logDesktopLifecycle('window.unresponsive'));
-  win.on('responsive', () => logDesktopLifecycle('window.responsive'));
   // Renderer OOM/crashes leave a dead shell unless we reload. Keep agents alive
   // in main; only bounce the webContents (same path as Ctrl/Cmd+R).
   win.webContents.on('render-process-gone', (_event, details) => {
     const reason = details?.reason || 'unknown';
     const exitCode = details?.exitCode;
-    logDesktopLifecycle('renderer.gone', { reason, exitCode });
     console.error('[Main] render-process-gone', { windowId: win.id, reason, exitCode });
     // clean-exit is a normal teardown (window close / app quit) — do not reload.
     if (reason === 'clean-exit' || win.isDestroyed() || win.webContents.isDestroyed()) return;
     setTimeout(() => {
       if (win.isDestroyed() || win.webContents.isDestroyed()) return;
-      logDesktopLifecycle('renderer.recover-reload', { reason, exitCode });
       win.webContents.reloadIgnoringCache();
     }, 250);
   });
@@ -411,64 +396,6 @@ function createPaneWindow(descriptor, bounds) {
   win.loadURL(getAppBaseUrl() + hash);
   return win;
 }
-
-// ═══════════════════════════════════════════════════════════════
-// DATABASE IPC HANDLERS
-// ═══════════════════════════════════════════════════════════════
-
-/** Returns the full application config object (includes db_path). */
-ipcMain.handle('db:getConfig', async () => {
-  try {
-    const config = db.getConfig();
-    return { success: true, config };
-  } catch (error) {
-    console.error('[IPC] Failed to get config:', error);
-    return { success: false, error: error.message };
-  }
-});
-
-/** Updates the database file path in config.json and persists to disk. */
-ipcMain.handle('db:updateDbPath', async (event, newPath) => {
-  try {
-    db.updateDbPath(newPath);
-    return { success: true };
-  } catch (error) {
-    console.error('[IPC] Failed to update db path:', error);
-    return { success: false, error: error.message };
-  }
-});
-
-/** Returns the absolute path to the application config directory. */
-ipcMain.handle('db:getConfigDir', async () => {
-  try {
-    const configDir = db.getAppDataPath();
-    return { success: true, configDir };
-  } catch (error) {
-    console.error('[IPC] Failed to get config dir:', error);
-    return { success: false, error: error.message };
-  }
-});
-
-/** Reads a small renderer setting from the local SQLite database. */
-ipcMain.handle('db:getSetting', async (_event, key) => {
-  try {
-    return { success: true, value: db.getSetting(String(key)) };
-  } catch (error) {
-    console.error('[IPC] Failed to get setting:', error);
-    return { success: false, error: error.message };
-  }
-});
-
-/** Persists a small renderer setting in the local SQLite database. */
-ipcMain.handle('db:setSetting', async (_event, { key, value }) => {
-  try {
-    db.setSetting(String(key), String(value ?? ''));
-    return { success: true };
-  } catch (error) {
-    console.error('[IPC] Failed to set setting:', error);
-    return { success: false, error: error.message };
-  }
-});
 
 // ═══════════════════════════════════════════════════════════════
 // WINDOW IPC HANDLERS
@@ -633,26 +560,6 @@ ipcMain.handle('runner:status', async () => ({
   connected: isDesktopRunnerConnected(),
 }));
 
-ipcMain.handle('runner:models', async () => {
-  try {
-    return { models: await probeLocalModelsAsync() };
-  } catch (error) {
-    console.error('[IPC] Failed to probe runner models:', error);
-    return { models: {} };
-  }
-});
-
-// New channel lets a hot-reloaded renderer distinguish the nonblocking worker
-// implementation from older mains whose runner:models handler was synchronous.
-ipcMain.handle('runner:modelsAsync', async () => {
-  try {
-    return { models: await probeLocalModelsAsync() };
-  } catch (error) {
-    console.error('[IPC] Failed to probe runner models asynchronously:', error);
-    return { models: {} };
-  }
-});
-
 ipcMain.handle('runner:planUsage', async () => {
   try {
     const grokCwd = path.join(app.getPath('userData'), 'usage-probe');
@@ -676,163 +583,6 @@ ipcMain.handle('clipboard:readImage', async () => {
     url,
     name: 'clipboard-image.png',
   };
-});
-
-// ═══════════════════════════════════════════════════════════════
-// NETDOC IPC HANDLERS
-// ═══════════════════════════════════════════════════════════════
-
-/** Checks whether a netdoc with the given ID exists in the local database. */
-ipcMain.handle('netdoc:exists', async (event, id) => {
-  try {
-    const exists = db.netdocExists(id);
-    return { success: true, exists };
-  } catch (error) {
-    console.error('[IPC] Failed to check netdoc exists:', error);
-    return { success: false, error: error.message };
-  }
-});
-
-/** Retrieves a single netdoc row by ID, or null if not found. */
-ipcMain.handle('netdoc:get', async (event, id) => {
-  try {
-    const netdoc = db.getNetdoc(id);
-    return { success: true, netdoc };
-  } catch (error) {
-    console.error('[IPC] Failed to get netdoc:', error);
-    return { success: false, error: error.message };
-  }
-});
-
-/** Inserts or upserts a netdoc (id, name, content, canEdit) into the database. */
-ipcMain.handle('netdoc:save', async (event, { id, name, content, canEdit }) => {
-  try {
-    const netdoc = db.saveNetdoc(id, name, content, canEdit);
-    return { success: true, netdoc };
-  } catch (error) {
-    console.error('[IPC] Failed to save netdoc:', error);
-    return { success: false, error: error.message };
-  }
-});
-
-/** Updates the name and text content of an existing netdoc. */
-ipcMain.handle('netdoc:updateContent', async (event, { id, name, content }) => {
-  try {
-    const updated = db.updateNetdocContent(id, name, content);
-    return { success: true, updated };
-  } catch (error) {
-    console.error('[IPC] Failed to update netdoc content:', error);
-    return { success: false, error: error.message };
-  }
-});
-
-/** Permanently deletes a netdoc by ID (cascades to versions/comments). */
-ipcMain.handle('netdoc:delete', async (event, id) => {
-  try {
-    const deleted = db.deleteNetdoc(id);
-    return { success: true, deleted };
-  } catch (error) {
-    console.error('[IPC] Failed to delete netdoc:', error);
-    return { success: false, error: error.message };
-  }
-});
-
-/** Returns all saved versions for a netdoc, ordered newest-first. */
-ipcMain.handle('netdoc:getVersions', async (event, netdocId) => {
-  try {
-    const versions = db.getNetdocVersions(netdocId);
-    return { success: true, versions };
-  } catch (error) {
-    console.error('[IPC] Failed to get netdoc versions:', error);
-    return { success: false, error: error.message };
-  }
-});
-
-/** Saves a new version snapshot for a netdoc (id, netdocId, content, title, author). */
-ipcMain.handle('netdoc:saveVersion', async (event, { id, netdocId, content, title, author }) => {
-  try {
-    db.saveNetdocVersion(id, netdocId, content, title, author);
-    return { success: true };
-  } catch (error) {
-    console.error('[IPC] Failed to save netdoc version:', error);
-    return { success: false, error: error.message };
-  }
-});
-
-/** Returns the text content of the most recent version for diff comparison. */
-ipcMain.handle('netdoc:getLatestVersionContent', async (event, netdocId) => {
-  try {
-    const content = db.getLatestVersionContent(netdocId);
-    return { success: true, content };
-  } catch (error) {
-    console.error('[IPC] Failed to get latest version content:', error);
-    return { success: false, error: error.message };
-  }
-});
-
-// ── Perf / freeze log (renderer → disk for agents) ───────────
-// JSONL append-only. Primary: userData/logs/cascade-perf.jsonl
-// Mirror: os.tmpdir()/cascade-perf.jsonl (easy for desktop agents).
-const PERF_LOG_MAX_BYTES = 2 * 1024 * 1024;
-
-function getPerfLogPaths() {
-  const primary = path.join(app.getPath('userData'), 'logs', 'cascade-perf.jsonl');
-  const mirror = path.join(os.tmpdir(), 'cascade-perf.jsonl');
-  return { primary, mirror, paths: [primary, mirror] };
-}
-
-function rotatePerfLogIfNeeded(filePath) {
-  try {
-    if (!fs.existsSync(filePath)) return;
-    const st = fs.statSync(filePath);
-    if (st.size < PERF_LOG_MAX_BYTES) return;
-    const text = fs.readFileSync(filePath, 'utf8');
-    // Keep roughly the last half so we don't thrash on every write after cap.
-    const keepFrom = Math.floor(text.length / 2);
-    const cut = text.indexOf('\n', keepFrom);
-    const kept = cut >= 0 ? text.slice(cut + 1) : text.slice(keepFrom);
-    fs.writeFileSync(filePath, kept, 'utf8');
-  } catch (err) {
-    console.warn('[perf] rotate failed', filePath, err?.message || err);
-  }
-}
-
-function appendPerfLogLines(lines) {
-  const rows = (Array.isArray(lines) ? lines : [lines])
-    .map((line) => (typeof line === 'string' ? line : JSON.stringify(line)))
-    .filter((line) => line && line.trim().length > 0);
-  if (rows.length === 0) return getPerfLogPaths();
-
-  const chunk = `${rows.join('\n')}\n`;
-  const { primary, mirror, paths } = getPerfLogPaths();
-  for (const filePath of paths) {
-    try {
-      fs.mkdirSync(path.dirname(filePath), { recursive: true });
-      rotatePerfLogIfNeeded(filePath);
-      fs.appendFileSync(filePath, chunk, 'utf8');
-    } catch (err) {
-      console.warn('[perf] append failed', filePath, err?.message || err);
-    }
-  }
-  return { primary, mirror, paths };
-}
-
-ipcMain.handle('perf:append', async (_event, lines) => {
-  try {
-    return { success: true, ...appendPerfLogLines(lines) };
-  } catch (error) {
-    console.error('[IPC] perf:append failed:', error);
-    return { success: false, error: error?.message || String(error) };
-  }
-});
-
-ipcMain.handle('perf:getPath', async () => {
-  try {
-    const { primary, mirror, paths } = getPerfLogPaths();
-    return { success: true, primary, mirror, paths };
-  } catch (error) {
-    return { success: false, error: error?.message || String(error) };
-  }
 });
 
 // ── Task workspaces (git worktrees) and pull requests ────────
@@ -892,17 +642,11 @@ ipcMain.handle('app:updateAndRestart', async () => {
 // APP LIFECYCLE
 // ═══════════════════════════════════════════════════════════════
 
-  app.whenReady().then(async () => {
+app.whenReady().then(async () => {
   try {
     await reapOrphanedLocalAgentRuns();
   } catch (error) {
     console.error('[Main] Failed to reap orphaned agent processes:', error);
-  }
-  // Initialize database
-  try {
-    db.initDatabase();
-  } catch (error) {
-    console.error('[Main] Failed to initialize database:', error);
   }
 
   // Allow app-shell permissions needed by the hosted app.
@@ -911,10 +655,7 @@ ipcMain.handle('app:updateAndRestart', async () => {
     callback(true);
   });
 
-  // Brief delay to ensure database initialization completes
-  setTimeout(() => {
-    void createWindow();
-  }, 1000);
+  void createWindow();
 });
 
 app.on('window-all-closed', () => {
@@ -923,9 +664,6 @@ app.on('window-all-closed', () => {
 
 app.on('will-quit', () => {
   disconnectDesktopRunner();
-  try {
-    db.closeDatabase();
-  } catch (_) {}
 });
 
 app.on('activate', () => {

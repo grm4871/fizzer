@@ -9,6 +9,11 @@ out/
 coverage/
 .vite/
 
+# Generated training environments, model outputs, and logs.
+experiments/**/.venv/
+experiments/**/adapter/
+experiments/**/*.log
+
 *.db
 *.db-shm
 *.db-wal

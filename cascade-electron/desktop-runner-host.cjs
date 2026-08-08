@@ -11,16 +11,11 @@
  * HTTP reverse proxy that re-issues upstream requests via Electron `net.fetch`
  * (Chromium network stack) and set CASCADE_NOTE_URL to that proxy.
  *
- * This module still:
- *  - stores the live API URL + JWT for cascade-note / cascade-chat child envs
- *  - probes locally installed CLI model lists for runner:register
- *  - tracks nothing about the socket (renderer owns connect/reconnect)
+ * This module stores the live API URL + JWT for cascade-note / cascade-chat
+ * child envs. It tracks nothing about the socket (renderer owns reconnects).
  */
 
 const http = require('http');
-const path = require('path');
-const { spawnSync } = require('child_process');
-const { Worker } = require('worker_threads');
 const { setNoteApiConfig } = require('./agent-runner.cjs');
 
 let apiBase = 'https://cscd.online';
@@ -29,11 +24,6 @@ let currentToken = '';
 let helperProxyServer = null;
 /** Loopback base URL helpers should call, e.g. http://127.0.0.1:54321 */
 let helperProxyUrl = '';
-const MODEL_PROBE_CACHE_MS = 10 * 60 * 1000;
-const MODEL_PROBE_TIMEOUT_MS = 35 * 1000;
-let modelProbeCache = null;
-let modelProbeCacheAt = 0;
-let modelProbeInFlight = null;
 
 function normalizeApiBase(value) {
   const raw = String(value || '').trim();
@@ -118,7 +108,7 @@ async function ensureHelperProxy(remoteBase) {
   stopHelperProxy();
   apiBase = target;
 
-  // Lazy require so unit-style loads outside Electron still work for probeLocalModels.
+  // Lazy require so unit tests can load this module outside Electron.
   let net;
   try {
     ({ net } = require('electron'));
@@ -214,108 +204,6 @@ async function ensureHelperProxy(remoteBase) {
 }
 
 /**
- * Probe locally installed CLIs for model lists (best-effort).
- * Returns { agentId: string[] } for agents that report models.
- */
-function probeLocalModels() {
-  const models = {};
-  try {
-    const result = spawnSync('grok', ['models'], {
-      encoding: 'utf8',
-      timeout: 8000,
-      env: process.env,
-    });
-    if (result.status === 0 && result.stdout) {
-      const ids = [];
-      for (const line of result.stdout.split(/\r?\n/)) {
-        // Lines like "  * grok-4.5 (default)" or "  - grok-composer-2.5-fast"
-        const m = line.match(/^\s*[*-]\s+([a-zA-Z0-9._-]+)/);
-        if (m) ids.push(m[1]);
-      }
-      if (ids.length) models.grok = ids;
-    }
-  } catch {
-    // grok not installed
-  }
-
-  // Antigravity: pull live IDE catalog via language_server (agentapi tiers + labels).
-  try {
-    // Prefer compiled dist (production); fall back when dist is missing.
-    let listAntigravityModels = null;
-    let listOmpModels = null;
-    try {
-      const cliAgentMod = require(path.join(__dirname, '..', 'dist', 'cli-agents', 'cli-agent.js'));
-      listAntigravityModels = cliAgentMod.listAntigravityModels;
-      listOmpModels = cliAgentMod.listOmpModels;
-    } catch {
-      listAntigravityModels = null;
-    }
-    if (typeof listAntigravityModels === 'function') {
-      const agy = listAntigravityModels();
-      if (Array.isArray(agy) && agy.length) models.antigravity = agy;
-    } else {
-      models.antigravity = ['flash_lite', 'flash', 'pro'];
-    }
-    if (typeof listOmpModels === 'function') {
-      const ompModels = listOmpModels();
-      if (Array.isArray(ompModels) && ompModels.length) models.omp = ompModels;
-    } else {
-      models.omp = ['claude-3-7-sonnet-20250219', 'claude-3-5-sonnet-20241022', 'gemini-2.5-pro', 'gemini-3.5-flash'];
-    }
-  } catch {
-    models.antigravity = ['flash_lite', 'flash', 'pro'];
-    models.omp = ['claude-3-7-sonnet-20250219', 'claude-3-5-sonnet-20241022', 'gemini-2.5-pro', 'gemini-3.5-flash'];
-  }
-  return models;
-}
-
-/**
- * Run blocking third-party model discovery off Electron's main thread.
- * Several provider CLIs have multi-second timeouts; doing this inside the IPC
- * handler froze agent:start and made an online runner appear unavailable.
- */
-function probeLocalModelsAsync(options = {}) {
-  const force = options.force === true;
-  if (!force && modelProbeCache && Date.now() - modelProbeCacheAt < MODEL_PROBE_CACHE_MS) {
-    return Promise.resolve(modelProbeCache);
-  }
-  if (modelProbeInFlight) return modelProbeInFlight;
-
-  modelProbeInFlight = new Promise((resolve) => {
-    const worker = new Worker(`
-      const { parentPort, workerData } = require('worker_threads');
-      try {
-        const { probeLocalModels } = require(workerData.modulePath);
-        parentPort.postMessage({ ok: true, models: probeLocalModels() });
-      } catch (error) {
-        parentPort.postMessage({ ok: false, error: error && error.message ? error.message : String(error) });
-      }
-    `, {
-      eval: true,
-      workerData: { modulePath: __filename },
-    });
-    let settled = false;
-    const finish = (models) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      void worker.terminate();
-      const next = models && typeof models === 'object' ? models : (modelProbeCache || {});
-      modelProbeCache = next;
-      modelProbeCacheAt = Date.now();
-      resolve(next);
-    };
-    const timer = setTimeout(() => finish(modelProbeCache || {}), MODEL_PROBE_TIMEOUT_MS);
-    worker.once('message', (message) => finish(message?.ok ? message.models : modelProbeCache || {}));
-    worker.once('error', () => finish(modelProbeCache || {}));
-    worker.once('exit', () => finish(modelProbeCache || {}));
-  }).finally(() => {
-    modelProbeInFlight = null;
-  });
-  return modelProbeInFlight;
-}
-
-/**
  * Configure child-process helper env (token/url). Socket ownership is renderer-side.
  * Kept name `connectDesktopRunner` for existing IPC callers.
  * Starts the Chromium-backed loopback proxy when the remote API is HTTPS.
@@ -356,8 +244,6 @@ module.exports = {
   // Socket is renderer-owned; main cannot observe it.
   isDesktopRunnerConnected: () => Boolean(currentToken),
   getActiveRunCount: () => 0,
-  probeLocalModels,
-  probeLocalModelsAsync,
   // Test / diagnostics
   getHelperProxyUrl: () => helperProxyUrl,
   getRemoteApiBase: () => apiBase,

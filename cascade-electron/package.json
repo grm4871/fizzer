@@ -12,15 +12,10 @@
     "start-live-instance": "APP_URL=https://cscd.online electron .",
     "start:watch": "nodemon --watch main.cjs --watch preload.cjs --watch agent-runner.cjs --watch desktop-runner-host.cjs --watch plan-usage.cjs --exec \"electron .\"",
     "package": "electron-forge package",
-    "make": "electron-forge make",
-    "postinstall": "node ../scripts/rebuild-natives.cjs --electron-only",
-    "rebuild:native": "node ../scripts/rebuild-natives.cjs --electron-only"
+    "make": "electron-forge make"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.175",
-    "better-sqlite3": "^12.5.0",
-    "express": "^4.18.2",
-    "socket.io-client": "^4.8.3"
+    "@anthropic-ai/claude-agent-sdk": "^0.3.175"
   },
   "devDependencies": {
     "@electron-forge/cli": "^7.2.0",
@@ -29,11 +24,7 @@
     "@electron-forge/maker-rpm": "^7.2.0",
     "@electron-forge/maker-squirrel": "^7.2.0",
     "@electron-forge/maker-zip": "^7.2.0",
-    "@electron-forge/plugin-auto-unpack-natives": "^7.2.0",
-    "@electron/rebuild": "^4.0.2",
-    "concurrently": "^9.1.2",
     "electron": "39.8.10",
-    "electron-reload": "^2.0.0-alpha.1",
     "nodemon": "^3.1.10"
   }
 }

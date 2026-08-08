@@ -148,18 +148,6 @@ export async function releaseWorkItem(id: string, holder?: string) {
   return data.item;
 }
 
-export async function stopChannelWorkItem(
-  id: string,
-  reason: 'manual' | 'completed' | 'token_budget' | 'failed' = 'manual',
-  summary?: string,
-) {
-  const data = await api<{ item: WorkItem }>(`/api/work-items/${encodeURIComponent(id)}/stop`, {
-    method: 'POST',
-    body: JSON.stringify({ reason, summary: summary || '' }),
-  });
-  return data.item;
-}
-
 export function workItemStatusLabel(status: WorkItemStatus): string {
   return status.replace(/_/g, ' ');
 }

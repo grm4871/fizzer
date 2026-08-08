@@ -2,52 +2,6 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-// Regex to detect bots and CLI tools for graceful degradation
-const BOT_CLI_REGEX = /curl|wget|lynx|links|httpie|googlebot|bingbot|baiduspider|duckduckbot|twitterbot|facebookexternalhit|discordbot|slackbot|telegrambot|whatsapp/i;
-
-// Plugin to proxy bot/CLI requests before Vite's SPA fallback kicks in
-function botProxyPlugin() {
-  return {
-    name: 'bot-proxy',
-    configureServer(server) {
-      // Add middleware BEFORE Vite's internal middleware
-      server.middlewares.use(async (req, res, next) => {
-        const userAgent = req.headers['user-agent'] || '';
-        const isBotOrCLI = BOT_CLI_REGEX.test(userAgent);
-        const isNetdocPath = /^\/netdoc\/\d+/.test(req.url);
-
-        if (isBotOrCLI && isNetdocPath) {
-          // Proxy to backend
-          const http = await import('http');
-          const proxyReq = http.request({
-            hostname: 'localhost',
-            port: Number(process.env.API_PORT || 3000),
-            path: req.url,
-            method: req.method,
-            headers: {
-              ...req.headers,
-              host: `localhost:${process.env.API_PORT || 3000}`
-            }
-          }, (proxyRes) => {
-            res.writeHead(proxyRes.statusCode, proxyRes.headers);
-            proxyRes.pipe(res);
-          });
-
-          proxyReq.on('error', (err) => {
-            console.error('[bot-proxy] Error:', err.message);
-            res.statusCode = 502;
-            res.end('Backend unavailable');
-          });
-
-          req.pipe(proxyReq);
-          return;
-        }
-        next();
-      });
-    }
-  };
-}
-
 const fs = await import('fs');
 const path = await import('path');
 
@@ -91,7 +45,6 @@ function versionGenerationPlugin() {
   };
 }
 
-// Plugin to serve app.html as index.html during dev
 // Plugin to serve app.html as index.html during dev
 function htmlFallbackPlugin() {
   return {
@@ -159,7 +112,7 @@ export default defineConfig({
       }
     }
   },
-  plugins: [botProxyPlugin(), autoRefreshFlagPlugin(), versionGenerationPlugin(), htmlFallbackPlugin(), react()],
+  plugins: [autoRefreshFlagPlugin(), versionGenerationPlugin(), htmlFallbackPlugin(), react()],
   server: {
     port: parseInt(process.env.VITE_PORT) || 5173,
     // Fail loudly on a port clash. Without this Vite silently falls back to the

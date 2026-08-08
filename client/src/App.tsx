@@ -1,7 +1,6 @@
 import { useEffect, useState, useCallback, useRef, useMemo, lazy, Suspense, type CSSProperties, type ReactNode } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { type Tab } from './components/TabBar';
-import { perfMark, perfReport, perfSpan, perfSpanAsync } from './perf';
 import {
   acquireInteractionLock,
   bindDragGesture,
@@ -49,14 +48,13 @@ import { api, ApiError, type User, type Vault, type Folder, type NoteSummary, ty
 import { connectRunsSocket, connectVaultSocket } from './socket';
 import { isLocalRunId, cancelLocalAgentRun } from './localAgentRunner';
 import { ensureDesktopRunnerHost, respondToAgentPermission, startDesktopRunnerHost } from './desktopRunnerHost';
-import { describeDesktopExperience } from './desktopExperience';
 import {
   agentsAfterLoadFailure,
   agentLabel,
+  CHAT_AGENT_MODEL_PRESETS,
   CHAT_AGENTS,
   chatAgentConversation,
   formatAgentChatPrompt,
-  mergeAgentModelPresets,
   needsCascadeWorkspaceContext,
   needsRecentChatContext,
   normalizeChatCwd,
@@ -153,6 +151,10 @@ const loadChatMessagesInflight = new Map<string, Promise<{ channelId: string; me
 /** Stable empty so ChatView memo doesn't bust when a channel has no agents yet. */
 const EMPTY_CHAT_AGENTS: ChatAgentRegistration[] = [];
 const EMPTY_CHAT_PRESENCE: ChatChannelPresence = { participants: [], online: [], owner: '', profiles: {} };
+const AVAILABLE_CHAT_AGENTS = CHAT_AGENTS.map((agent) => ({
+  ...agent,
+  models: CHAT_AGENT_MODEL_PRESETS[agent.id],
+}));
 
 type AgentPermissionRequest = {
   runId: number;
@@ -236,15 +238,6 @@ export default function App() {
   const focusedTab = openTabs.find((tab) => tab.id === activeTabId) ?? null;
   const focusedIsChat = focusedTab?.type === 'chat';
   const currentUsername = user?.username ?? '';
-  const availableChatAgents = useMemo(() => CHAT_AGENTS.map((agent) => ({
-    id: agent.id,
-    label: agent.label,
-    models: mergeAgentModelPresets(
-      agent.id,
-      runnerHealth?.models?.[agent.id] ?? null,
-    ),
-  })), [runnerHealth?.models]);
-
   // Refs mirror the latest state so event handlers stay stable (no dep churn)
   // and never read a stale closure during drags / async work.
   const layoutRef = useRef(layout); layoutRef.current = layout;
@@ -543,10 +536,9 @@ export default function App() {
       if (a.lastErrorAt !== b.lastErrorAt) return false;
       // lastSeenAt ticks on every runner socket event — ignore for UI identity
       // or the 12s health poll re-renders the whole chat tree while streaming.
-      if (a.models === b.models && a.planUsage === b.planUsage) return true;
+      if (a.planUsage === b.planUsage) return true;
       try {
-        return JSON.stringify(a.models) === JSON.stringify(b.models)
-          && JSON.stringify(a.planUsage) === JSON.stringify(b.planUsage);
+        return JSON.stringify(a.planUsage) === JSON.stringify(b.planUsage);
       } catch {
         return false;
       }
@@ -939,52 +931,41 @@ export default function App() {
 
     const run = (async () => {
       try {
-        await perfSpanAsync(
-          'vault.loadVaultData',
-          async () => {
-            // Prefer the focused chat tab first so cold start paints useful
-            // transcript ASAP; other open tabs hydrate after the shell settles.
-            const openChats = openChatTabIds();
-            const focusedChatId = openTabsRef.current.find((t) => t.type === 'chat' && t.id === focusedPaneRef.current.activeTabId)?.id
-              ?? openChats[0];
-            const primaryChats = focusedChatId ? [focusedChatId] : [];
-            const secondaryChats = openChats.filter((id) => id !== focusedChatId);
-            const silent = soft;
+        // Prefer the focused chat tab first so cold start paints useful
+        // transcript ASAP; other open tabs hydrate after the shell settles.
+        const openChats = openChatTabIds();
+        const focusedChatId = openTabsRef.current.find((t) => t.type === 'chat' && t.id === focusedPaneRef.current.activeTabId)?.id
+          ?? openChats[0];
+        const primaryChats = focusedChatId ? [focusedChatId] : [];
+        const secondaryChats = openChats.filter((id) => id !== focusedChatId);
+        const silent = soft;
 
-            const foldersP = api<{ folders: Folder[] }>(`/api/vaults/${vaultId}/folders`);
-            const notesP = api<{ notes: NoteSummary[] }>(`/api/vaults/${vaultId}/notes`);
-            // Primary chat + vault agents must not gate notes-tree paint.
-            const primaryChatP = primaryChats.length > 0
-              ? Promise.all([
-                  loadChatMessages(vaultId, [], { silent, channelIds: primaryChats }),
-                  loadChatAgentMembers(vaultId, [], { channelIds: primaryChats }),
-                  loadChatPresence(vaultId, [], { channelIds: primaryChats }),
-                ])
-              : Promise.resolve();
-            const vaultAgentsP = loadVaultAgents(vaultId);
+        const foldersP = api<{ folders: Folder[] }>(`/api/vaults/${vaultId}/folders`);
+        const notesP = api<{ notes: NoteSummary[] }>(`/api/vaults/${vaultId}/notes`);
+        // Primary chat + vault agents must not gate notes-tree paint.
+        const primaryChatP = primaryChats.length > 0
+          ? Promise.all([
+              loadChatMessages(vaultId, [], { silent, channelIds: primaryChats }),
+              loadChatAgentMembers(vaultId, [], { channelIds: primaryChats }),
+              loadChatPresence(vaultId, [], { channelIds: primaryChats }),
+            ])
+          : Promise.resolve();
+        const vaultAgentsP = loadVaultAgents(vaultId);
 
-            const [folderData, noteData] = await Promise.all([foldersP, notesP]);
-            const nextNotes = noteData.notes || [];
-            setFolders(folderData.folders || []);
-            setNotes(nextNotes);
-            void primaryChatP.catch(() => undefined);
-            void vaultAgentsP.catch(() => undefined);
-            if (secondaryChats.length > 0) {
-              // Defer background tabs one frame so the active channel can paint.
-              window.setTimeout(() => {
-                void loadChatMessages(vaultId, nextNotes, { silent: true, channelIds: secondaryChats }).catch(() => undefined);
-                void loadChatAgentMembers(vaultId, nextNotes, { channelIds: secondaryChats }).catch(() => undefined);
-                void loadChatPresence(vaultId, nextNotes, { channelIds: secondaryChats }).catch(() => undefined);
-              }, 0);
-            }
-          },
-          {
-            vaultId,
-            soft,
-            openChats: openChatTabIds().length,
-          },
-          200,
-        );
+        const [folderData, noteData] = await Promise.all([foldersP, notesP]);
+        const nextNotes = noteData.notes || [];
+        setFolders(folderData.folders || []);
+        setNotes(nextNotes);
+        void primaryChatP.catch(() => undefined);
+        void vaultAgentsP.catch(() => undefined);
+        if (secondaryChats.length > 0) {
+          // Defer background tabs one frame so the active channel can paint.
+          window.setTimeout(() => {
+            void loadChatMessages(vaultId, nextNotes, { silent: true, channelIds: secondaryChats }).catch(() => undefined);
+            void loadChatAgentMembers(vaultId, nextNotes, { channelIds: secondaryChats }).catch(() => undefined);
+            void loadChatPresence(vaultId, nextNotes, { channelIds: secondaryChats }).catch(() => undefined);
+          }, 0);
+        }
       } catch (error) {
         console.error('Error loading vault data:', error);
       } finally {
@@ -1182,7 +1163,6 @@ export default function App() {
       const now = Date.now();
       if (awayMs < STALE_AFTER_MS && now - lastSoftRefreshAt < STALE_AFTER_MS) return;
       lastSoftRefreshAt = now;
-      perfMark('vault.softRefresh', { awayMs, vaultId }, true);
       void loadVaultData(vaultId, { soft: true });
     };
 
@@ -1628,20 +1608,6 @@ export default function App() {
     let pendingHarnessChunks = '';
     let pendingHarnessRunId: number | null = null;
     let harnessFlushTimer: number | null = null;
-    const latencyStartedAt = Number.isFinite(Date.parse(triggeringMessage.createdAt))
-      ? Date.parse(triggeringMessage.createdAt)
-      : Date.now();
-    const reportedLatencyStages = new Set<string>();
-    const reportLatencyStage = (stage: string, detail: Record<string, unknown> = {}) => {
-      if (reportedLatencyStages.has(stage)) return;
-      reportedLatencyStages.add(stage);
-      perfReport(
-        `chat.latency.${stage}`,
-        Math.max(0, Date.now() - latencyStartedAt),
-        { agentId, channelId, dispatchId: dispatchId || undefined, ...detail },
-        0,
-      );
-    };
     // Dual-rate batching: structured content stays snappy; raw harness bytes
     // are much higher volume and don't need 30fps React commits.
     const STREAM_UI_MS = 48;
@@ -1654,11 +1620,9 @@ export default function App() {
         window.clearTimeout(harnessFlushTimer);
         harnessFlushTimer = null;
       }
-      let harnessChars = 0;
       if (pendingHarnessChunks) {
         const chunk = pendingHarnessChunks;
         const harnessRunId = pendingHarnessRunId;
-        harnessChars = chunk.length;
         pendingHarnessChunks = '';
         pendingHarnessRunId = null;
         pendingMessageUpdates.push((message) => ({
@@ -1670,15 +1634,8 @@ export default function App() {
       if (pendingMessageUpdates.length === 0) return;
       const updates = pendingMessageUpdates;
       pendingMessageUpdates = [];
-      perfSpan(
-        'chat.flushMessageUpdates',
-        () => {
-          updateChatMessage(channelId, agentMessageId, (message) =>
-            updates.reduce((next, update) => update(next), message));
-        },
-        { channelId, updates: updates.length, harnessChars },
-        24,
-      );
+      updateChatMessage(channelId, agentMessageId, (message) =>
+        updates.reduce((next, update) => update(next), message));
     };
 
     // CLI streams often emit text, structured blocks, and harness bytes as
@@ -1720,7 +1677,6 @@ export default function App() {
         ? { missionTaskId: triggeringMessage.missionTaskId }
         : {}),
     }, { persist: false });
-    reportLatencyStage('placeholder');
 
     try {
       // The prior terminal event is published only after its session id is
@@ -1855,12 +1811,10 @@ export default function App() {
           if (processedSeqs.has(event.seq)) return;
           processedSeqs.add(event.seq);
         }
-        reportLatencyStage('firstRunEvent', { runId, eventType: event.type });
         try {
           if (event.type === 'status') {
             const payload = JSON.parse(event.payload_json);
             if (payload.status === 'completed' || payload.status === 'failed' || payload.status === 'canceled') {
-              reportLatencyStage('terminal', { runId, status: payload.status });
               const terminal = payload.status as 'completed' | 'failed' | 'canceled';
               const suppressChatBody = payload.suppressChatBody === true;
               const finalBody = honestAgentChatBody(
@@ -1908,7 +1862,6 @@ export default function App() {
             if (text) assistantText += text;
             bufferedBlocks = appendChatRunBlocks(bufferedBlocks, blocks);
             const chatVisible = payload.chatVisible === true && Boolean(text.trim());
-            if (chatVisible) reportLatencyStage('firstVisibleText', { runId });
             queueMessageUpdate((message) => ({
               ...message,
               // Reasoning remains in the trace. Codex agent_message and Claude
@@ -2019,7 +1972,6 @@ export default function App() {
       }
 
       activeRunId = res.run.id;
-      reportLatencyStage('runCreated', { runId: res.run.id, reused: res.reused === true });
       activeAgentSessionRunRef.current.set(watermarkKey, res.run.id);
       // The run is registered server-side; the server now owns persistence of this
       // message's streamed updates. Skip our own debounced PATCH to avoid duplicate
@@ -2040,7 +1992,6 @@ export default function App() {
       runSocketsRef.current.set(res.run.id, runSocket);
       joinRunRoom = () => runSocket!.emit('joinRun', res.run.id);
       runSocket.on('connect', () => {
-        reportLatencyStage('runsSocketConnected', { runId: res.run.id });
         joinRunRoom();
       });
       runSocket.emit('joinRun', res.run.id);
@@ -3374,7 +3325,7 @@ export default function App() {
           isLoadingMessages={loadingChatChannels[channel.id] === true}
           currentUser={currentUsername}
           presence={chatPresenceByChannel[channel.id] ?? EMPTY_CHAT_PRESENCE}
-          availableAgents={availableChatAgents}
+          availableAgents={AVAILABLE_CHAT_AGENTS}
           registeredAgents={chatState.registeredAgentsByChannel[channel.id] ?? EMPTY_CHAT_AGENTS}
           vaultAgents={vaultAgents}
           runnerHealth={runnerHealth}
@@ -3422,7 +3373,7 @@ export default function App() {
         </Suspense>
       </ErrorBoundary>
     );
-  }, [availableChatAgents, chatState.registeredAgentsByChannel, chatPresenceByChannel, currentUsername, loadingChatChannels, runnerHealth, vaultAgents, handleCancelChatRun, handleCreateChatInviteLink, handleInviteChatUser, handleRemoveChatParticipant, handleLeaveChatChannel, handleRegisterChatAgent, handleRemoveChatAgent, handleUpsertVaultAgent, handleDeleteVaultAgent, handleAddVaultAgentToChannel, handleSendChatMessage, handleForwardChatMessage, noteContents, notes, getNoteChangeHandler, getNoteSaveHandler, getNoteRenameHandler, handleExecuteDirective, handleOpenWikilink, openNote, chatMembersOpen, activeVaultId, handleHydrateChatMessage, handleOpenSharedChatNote, superkanbanNotes, superkanbanLiveWork, superkanbanLoading, superkanbanError, chatJumpTarget, handleChatJumpHandled]);
+  }, [chatState.registeredAgentsByChannel, chatPresenceByChannel, currentUsername, loadingChatChannels, runnerHealth, vaultAgents, handleCancelChatRun, handleCreateChatInviteLink, handleInviteChatUser, handleRemoveChatParticipant, handleLeaveChatChannel, handleRegisterChatAgent, handleRemoveChatAgent, handleUpsertVaultAgent, handleDeleteVaultAgent, handleAddVaultAgentToChannel, handleSendChatMessage, handleForwardChatMessage, noteContents, notes, getNoteChangeHandler, getNoteSaveHandler, getNoteRenameHandler, handleExecuteDirective, handleOpenWikilink, openNote, chatMembersOpen, activeVaultId, handleHydrateChatMessage, handleOpenSharedChatNote, superkanbanNotes, superkanbanLiveWork, superkanbanLoading, superkanbanError, chatJumpTarget, handleChatJumpHandled]);
 
   if (!user) {
     const hasInvite = /^\/invite\/[^/]+$/.test(window.location.pathname);
@@ -3489,7 +3440,7 @@ export default function App() {
   }
 
   const inDesktopApp = Boolean((window as unknown as { electronAPI?: unknown }).electronAPI);
-  const desktopExperience = describeDesktopExperience(inDesktopApp, runnerHealth);
+  const showDesktopDownload = !inDesktopApp && runnerHealth != null && !runnerHealth.online;
 
   return (
     <main
@@ -3601,15 +3552,15 @@ export default function App() {
               </button>
             )}
             <NewsTicker />
-            {desktopExperience && (
+            {showDesktopDownload && (
               <a
                 className="workspace-desktop-action"
                 href="/download"
-                title={`${desktopExperience.title}. ${desktopExperience.detail}`}
-                aria-label={desktopExperience.actionLabel}
+                title="Run local agents with Cascade desktop"
+                aria-label="Get desktop"
               >
                 <Download size={13} aria-hidden="true" />
-                <span>{desktopExperience.actionLabel}</span>
+                <span>Get desktop</span>
               </a>
             )}
             <button

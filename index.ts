@@ -3406,7 +3406,7 @@ app.post('/api/vaults/:vaultId/channels/:channelId/messages/:messageId/forward',
 app.post('/api/vaults/:vaultId/channels/:channelId/messages/:messageId/approve', requireAuth, (req: AuthedRequest, res) => {
   try {
     const { route } = assertChatChannel(db, req.params.channelId, req.user!.id);
-    const message = approveChatChangeRequest(db, req.user!.id, req.params.vaultId, req.params.channelId, req.params.messageId);
+    const message = approveChatChangeRequest(db, req.user!.id, req.params.channelId, req.params.messageId);
     emitChatMessageEvent(route.sourceVaultId, route.sourceChannelId, 'vault:chatMessageUpdated', message);
     res.json({ message });
   } catch (err) {
@@ -3417,7 +3417,7 @@ app.post('/api/vaults/:vaultId/channels/:channelId/messages/:messageId/approve',
 app.post('/api/vaults/:vaultId/channels/:channelId/messages/:messageId/merge', requireAuth, (req: AuthedRequest, res) => {
   try {
     const { route } = assertChatChannel(db, req.params.channelId, req.user!.id);
-    const message = mergeChatChangeRequest(db, req.user!.id, req.params.vaultId, req.params.channelId, req.params.messageId);
+    const message = mergeChatChangeRequest(db, req.user!.id, req.params.channelId, req.params.messageId);
     emitChatMessageEvent(route.sourceVaultId, route.sourceChannelId, 'vault:chatMessageUpdated', message);
     res.json({ message });
   } catch (err) {

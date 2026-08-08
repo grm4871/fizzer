@@ -1,17 +1,13 @@
 /**
  * @file preload.cjs — Electron preload / context bridge
  *
- * Bridges the main process and the renderer via `contextBridge.exposeInMainWorld`.
- * All database and netdoc IPC calls are exposed as `window.electronAPI.*` so the
- * renderer never has direct access to Node or Electron internals.
+ * Bridges the main process and the renderer via `contextBridge.exposeInMainWorld`
+ * so the hosted renderer never has direct access to Node or Electron internals.
  *
  * Exposed API surface:
- *  - Database Config: getConfig, updateDbPath, getConfigDir
- *  - Netdoc CRUD:     netdocExists, getNetdoc, saveNetdoc,
- *                     updateNetdocContent, deleteNetdoc
- *  - Netdoc Versions: getNetdocVersions, saveNetdocVersion,
- *                     getLatestVersionContent
- *  - Shortcuts:       onShortcut (subscribe to main-process keyboard events)
+ *  - Desktop windows and shortcuts
+ *  - Local agent runner and plan usage
+ *  - Worktree and update helpers
  *
  * @module cascade-electron/preload
  */
@@ -20,30 +16,6 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 // Expose safe IPC methods to the renderer process
 contextBridge.exposeInMainWorld('electronAPI', {
-
-  // ── Database Config ──────────────────────────────────────────
-  /** Get the current config (includes db_path) */
-  getConfig: () => ipcRenderer.invoke('db:getConfig'),
-  /** Update the database path in config.json */
-  updateDbPath: (newPath) => ipcRenderer.invoke('db:updateDbPath', newPath),
-  /** Get the config directory path */
-  getConfigDir: () => ipcRenderer.invoke('db:getConfigDir'),
-  /** Read/write small app settings persisted in the local SQLite database */
-  getSetting: (key) => ipcRenderer.invoke('db:getSetting', key),
-  setSetting: ({ key, value }) => ipcRenderer.invoke('db:setSetting', { key, value }),
-
-  // ── Netdoc CRUD ──────────────────────────────────────────────
-  netdocExists: (id) => ipcRenderer.invoke('netdoc:exists', id),
-  getNetdoc: (id) => ipcRenderer.invoke('netdoc:get', id),
-  saveNetdoc: ({ id, name, content, canEdit }) => ipcRenderer.invoke('netdoc:save', { id, name, content, canEdit }),
-  updateNetdocContent: ({ id, name, content }) => ipcRenderer.invoke('netdoc:updateContent', { id, name, content }),
-  deleteNetdoc: (id) => ipcRenderer.invoke('netdoc:delete', id),
-
-  // ── Netdoc Versions ──────────────────────────────────────────
-  getNetdocVersions: (netdocId) => ipcRenderer.invoke('netdoc:getVersions', netdocId),
-  saveNetdocVersion: ({ id, netdocId, content, title, author }) => ipcRenderer.invoke('netdoc:saveVersion', { id, netdocId, content, title, author }),
-  getLatestVersionContent: (netdocId) => ipcRenderer.invoke('netdoc:getLatestVersionContent', netdocId),
-
   // ── Windows ─────────────────────────────────────────────────
   /**
    * Pop a tab out into its own OS window. Resolves with `{ popped }`: true when
@@ -82,9 +54,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setRunnerToken: ({ token, apiUrl }) => ipcRenderer.invoke('runner:setToken', { token, apiUrl }),
   clearRunnerToken: () => ipcRenderer.invoke('runner:clearToken'),
   getRunnerStatus: () => ipcRenderer.invoke('runner:status'),
-  /** Probe local CLI model lists for runner:register. */
-  getRunnerModels: () => ipcRenderer.invoke('runner:models'),
-  getRunnerModelsAsync: () => ipcRenderer.invoke('runner:modelsAsync'),
   /** Read locally authenticated Claude, Codex, and Grok plan usage. */
   getRunnerPlanUsage: () => ipcRenderer.invoke('runner:planUsage'),
   readClipboardImage: () => ipcRenderer.invoke('clipboard:readImage'),
@@ -120,10 +89,4 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('app:updateFailed', listener);
     return () => ipcRenderer.removeListener('app:updateFailed', listener);
   },
-
-  // ── Perf / freeze log (disk, agent-readable) ────────────────
-  /** Append JSONL line(s) to cascade-perf.jsonl (userData + /tmp mirror). */
-  appendPerfLog: (lines) => ipcRenderer.invoke('perf:append', lines),
-  /** Resolve on-disk paths for the perf log. */
-  getPerfLogPath: () => ipcRenderer.invoke('perf:getPath'),
 });

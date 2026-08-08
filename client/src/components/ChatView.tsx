@@ -207,7 +207,6 @@ export interface DesktopRunnerHealth {
   lastError: string | null;
   lastErrorAt: string | null;
   lastSeenAt: string | null;
-  models: Record<string, string[]> | null;
   planUsage: Record<string, PlanUsage> | null;
 }
 

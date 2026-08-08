@@ -293,7 +293,7 @@ function SuperkanbanViewInner({
       <div className="kanban-toolbar">
         <div className="superkanban-heading">
           <strong>Command center</strong>
-          <span>Active work across the vault</span>
+          <span>{error ? 'Refresh failed' : loading ? 'Refreshing…' : 'Active work across the vault'}</span>
         </div>
         {(loading || error) && (
           <span

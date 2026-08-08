@@ -178,5 +178,3 @@ export function NewsTicker() {
     </div>
   );
 }
-
-export default NewsTicker;

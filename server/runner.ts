@@ -203,38 +203,6 @@ export function getDelegatedRunOwnerFromDb(db: Db, runId: number): number | unde
   return row?.owner_user_id;
 }
 
-/**
- * Settle still-open runs that never reclaimed after a server restart grace
- * window. Prefer scheduleOrphanReclaimAfterRestart in desktop-runner so
- * reconnecting desktops can keep mid-flight agents alive.
- */
-export function failOrphanedRunsAfterRestart(
-  db: Db,
-  reason = 'Server restarted while this run was in progress.',
-): number {
-  const open = listOpenDelegatedRuns(db);
-  // Also settle any open runs with no delegated_runs row (legacy / edge).
-  const loose = db.prepare(`
-    SELECT id FROM runs
-    WHERE status IN ('queued', 'running')
-      AND id NOT IN (SELECT run_id FROM delegated_runs)
-  `).all() as Array<{ id: number }>;
-  if (open.length === 0 && loose.length === 0) {
-    db.prepare('DELETE FROM delegated_runs').run();
-    return 0;
-  }
-  const finish = db.prepare(`
-    UPDATE runs
-    SET status = 'failed', finished_at = datetime('now'),
-        summary = ?
-    WHERE id = ? AND status IN ('queued', 'running')
-  `);
-  for (const row of open) finish.run(reason, row.run_id);
-  for (const row of loose) finish.run(reason, row.id);
-  db.prepare('DELETE FROM delegated_runs').run();
-  return open.length + loose.length;
-}
-
 export function setRunEventSink(sink: ((event: RunEvent) => void) | null) {
   eventSink = sink;
 }

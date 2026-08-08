@@ -12,7 +12,6 @@ import {
   Activity,
   Bot,
   ChevronLeft,
-  Clock3,
   ExternalLink,
   Hash,
   Loader2,
