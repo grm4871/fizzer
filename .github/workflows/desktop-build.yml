@@ -46,12 +46,15 @@ jobs:
       - name: Build local agent runtime
         working-directory: .
         run: |
-          npm ci --ignore-scripts
-          npm run build
+          npx --yes npm@11.16.0 ci --ignore-scripts
+          npx --yes npm@11.16.0 run build
 
       # postinstall runs electron-rebuild for better-sqlite3 against this OS.
       - name: Install dependencies
-        run: npm ci
+        # npm 11.16 records optional peers more strictly than earlier npm 11
+        # releases. Pin the lockfile consumer so hosted-runner updates cannot
+        # silently change clean-install behavior.
+        run: npx --yes npm@11.16.0 ci
 
       - name: Make distributables
         run: npx electron-forge make --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
