@@ -41,6 +41,7 @@ import { PaneGrid, type TabDragPayload } from './components/PaneGrid';
 import { SuperkanbanView } from './components/SuperkanbanView';
 import type { WorkItem } from './chat/workItems';
 import { AccountSettings } from './components/AccountSettings';
+import { DiscoveryDmsModal, type DiscoveryTab } from './components/DiscoveryDmsModal';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import * as Layout from './layout/tree';
 import type { LayoutNode } from './layout/tree';
@@ -177,6 +178,7 @@ export default function App() {
   const [isOwner, setIsOwner] = useState(false);
   const [adminOpen, setAdminOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
+  const [discoveryDmsOpen, setDiscoveryDmsOpen] = useState<DiscoveryTab | null>(null);
   const [authEpoch, setAuthEpoch] = useState(0);
   const [authMode, setAuthMode] = useState<'login' | 'register' | 'reset'>('login');
   const [username, setUsername] = useState('');
@@ -3508,6 +3510,8 @@ export default function App() {
           onSelectVault={setActiveVaultId}
           onCreateVault={handleCreateVault}
           onJoinVault={handleJoinVault}
+          onOpenPublicVaults={() => setDiscoveryDmsOpen('public')}
+          onOpenDirectMessages={() => setDiscoveryDmsOpen('dms')}
           onSelectNote={(id) => {
             openNote(id, 'replace');
             if (isMobileViewport()) setSidebarOpen(false);
@@ -3553,6 +3557,21 @@ export default function App() {
           onUserChanged={setUser}
           onSessionChanged={() => setAuthEpoch((value) => value + 1)}
           onMembershipChanged={() => { void loadVaults(); }}
+        />
+      )}
+
+      {discoveryDmsOpen && (
+        <DiscoveryDmsModal
+          initialTab={discoveryDmsOpen}
+          onClose={() => setDiscoveryDmsOpen(null)}
+          onVaultsChanged={loadVaults}
+          onOpenLocation={async (vaultId, channelId, title) => {
+            setActiveVaultId(vaultId);
+            if (channelId) {
+              await loadVaultData(vaultId);
+              openChatChannel(channelId, title || 'Direct message');
+            }
+          }}
         />
       )}
 

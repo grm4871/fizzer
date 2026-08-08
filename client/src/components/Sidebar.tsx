@@ -25,7 +25,7 @@ import { CHAT_NOTE_MARKER } from './ChatView';
 import {
   Folder as FolderIcon, FolderOpen, FileText, Pin, Gem, Edit2, FolderPlus,
   Search, ChevronRight, ChevronDown, Check, PanelLeftClose, LogOut, Trash2, FilePlus, FolderInput, Pencil, RefreshCw,
-  Hash, Unlink, ShieldCheck, SkipBack, Play, Pause, SkipForward, Music2, Users, Plus, LogIn,
+  Hash, Unlink, ShieldCheck, SkipBack, Play, Pause, SkipForward, Music2, Users, Plus, LogIn, Compass, MessageCircle,
 } from 'lucide-react';
 
 /** Switcher label: "Team notes · shared · 3" so shared vaults are obvious. */
@@ -47,6 +47,8 @@ interface SidebarProps {
   onSelectVault: (id: string) => void;
   onCreateVault: (name: string) => Promise<boolean>;
   onJoinVault: (inviteLink: string) => Promise<boolean>;
+  onOpenPublicVaults: () => void;
+  onOpenDirectMessages: () => void;
   onSelectNote: (id: string) => void;
   onOpenNoteInNewTab: (id: string) => void;
   onNewNote: () => void;
@@ -119,6 +121,8 @@ export const Sidebar = memo(function Sidebar({
   onSelectVault,
   onCreateVault,
   onJoinVault,
+  onOpenPublicVaults,
+  onOpenDirectMessages,
   onSelectNote,
   onOpenNoteInNewTab,
   onNewNote,
@@ -731,6 +735,13 @@ export const Sidebar = memo(function Sidebar({
               {vault.id === activeVaultId && <Check className="vault-switcher-check" size={15} aria-hidden="true" />}
             </button>
           ))}
+          <div className="vault-switcher-divider" role="separator" />
+          <button type="button" role="menuitem" className="vault-switcher-discover" onClick={() => { setVaultMenuOpen(false); onOpenPublicVaults(); }}>
+            <Compass size={14} aria-hidden="true" /> Browse public vaults
+          </button>
+          <button type="button" role="menuitem" className="vault-switcher-dms" onClick={() => { setVaultMenuOpen(false); onOpenDirectMessages(); }}>
+            <MessageCircle size={14} aria-hidden="true" /> Direct messages
+          </button>
           <div className="vault-switcher-divider" role="separator" />
           {creatingVault ? (
             <div className="vault-switcher-create-form">
