@@ -25,7 +25,7 @@ import { CHAT_NOTE_MARKER } from './ChatView';
 import {
   Folder as FolderIcon, FolderOpen, FileText, Pin, Gem, Edit2, FolderPlus,
   Search, ChevronRight, ChevronDown, Check, PanelLeftClose, LogOut, Trash2, FilePlus, FolderInput, Pencil, RefreshCw,
-  Hash, Unlink, ShieldCheck, SkipBack, Play, Pause, SkipForward, Music2, Users, Plus,
+  Hash, Unlink, ShieldCheck, SkipBack, Play, Pause, SkipForward, Music2, Users, Plus, LogIn,
 } from 'lucide-react';
 
 /** Switcher label: "Team notes · shared · 3" so shared vaults are obvious. */
@@ -46,6 +46,7 @@ interface SidebarProps {
   activeNoteId: string | null;
   onSelectVault: (id: string) => void;
   onCreateVault: (name: string) => Promise<boolean>;
+  onJoinVault: (inviteLink: string) => Promise<boolean>;
   onSelectNote: (id: string) => void;
   onOpenNoteInNewTab: (id: string) => void;
   onNewNote: () => void;
@@ -117,6 +118,7 @@ export const Sidebar = memo(function Sidebar({
   activeNoteId,
   onSelectVault,
   onCreateVault,
+  onJoinVault,
   onSelectNote,
   onOpenNoteInNewTab,
   onNewNote,
@@ -151,6 +153,9 @@ export const Sidebar = memo(function Sidebar({
   const [creatingVault, setCreatingVault] = useState(false);
   const [newVaultName, setNewVaultName] = useState('');
   const [creatingVaultBusy, setCreatingVaultBusy] = useState(false);
+  const [joiningVault, setJoiningVault] = useState(false);
+  const [vaultInviteLink, setVaultInviteLink] = useState('');
+  const [joiningVaultBusy, setJoiningVaultBusy] = useState(false);
   const [audioTracks, setAudioTracks] = useState<Array<{ name: string; url: string }>>([]);
   const [audioTrackIndex, setAudioTrackIndex] = useState(0);
   const [audioPlaying, setAudioPlaying] = useState(false);
@@ -645,6 +650,18 @@ export const Sidebar = memo(function Sidebar({
     setVaultMenuOpen(false);
   };
 
+  const submitJoinVault = async () => {
+    const inviteLink = vaultInviteLink.trim();
+    if (!inviteLink || joiningVaultBusy) return;
+    setJoiningVaultBusy(true);
+    const joined = await onJoinVault(inviteLink);
+    setJoiningVaultBusy(false);
+    if (!joined) return;
+    setVaultInviteLink('');
+    setJoiningVault(false);
+    setVaultMenuOpen(false);
+  };
+
   return (
     <aside className="sidebar" id="sidebar" style={{ gridColumn: 1 }}>
       {/* Header */}
@@ -737,8 +754,34 @@ export const Sidebar = memo(function Sidebar({
               </button>
             </div>
           ) : (
-            <button type="button" role="menuitem" className="vault-switcher-create" onClick={() => setCreatingVault(true)}>
+            <button type="button" role="menuitem" className="vault-switcher-create" onClick={() => { setJoiningVault(false); setCreatingVault(true); }}>
               <Plus size={14} aria-hidden="true" /> New vault
+            </button>
+          )}
+          {joiningVault ? (
+            <div className="vault-switcher-create-form">
+              <input
+                autoFocus
+                value={vaultInviteLink}
+                placeholder="Paste vault invite link"
+                aria-label="Vault invite link"
+                disabled={joiningVaultBusy}
+                onChange={(event) => setVaultInviteLink(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') void submitJoinVault();
+                  if (event.key === 'Escape') {
+                    setJoiningVault(false);
+                    setVaultInviteLink('');
+                  }
+                }}
+              />
+              <button type="button" disabled={!vaultInviteLink.trim() || joiningVaultBusy} onClick={() => void submitJoinVault()}>
+                {joiningVaultBusy ? 'Joining' : 'Join'}
+              </button>
+            </div>
+          ) : (
+            <button type="button" role="menuitem" className="vault-switcher-join" onClick={() => { setCreatingVault(false); setJoiningVault(true); }}>
+              <LogIn size={14} aria-hidden="true" /> Join vault
             </button>
           )}
         </div>

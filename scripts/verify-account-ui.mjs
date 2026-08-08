@@ -29,9 +29,14 @@ try {
   const username = `account_ui_${Date.now()}`;
   const mateName = `account_mate_${Date.now()}`;
   const { token } = await json('/api/auth/register', { method: 'POST', body: JSON.stringify({ username, password: 'testpass12345' }) });
-  await json('/api/auth/register', { method: 'POST', body: JSON.stringify({ username: mateName, password: 'testpass12345' }) });
+  const { token: mateToken } = await json('/api/auth/register', { method: 'POST', body: JSON.stringify({ username: mateName, password: 'testpass12345' }) });
   const auth = { authorization: `Bearer ${token}` };
+  const mateAuth = { authorization: `Bearer ${mateToken}` };
   await json('/api/vaults', { method: 'POST', headers: auth, body: JSON.stringify({ name: 'Profile workspace' }) });
+  const { vault: mateVault } = await json('/api/vaults', { method: 'POST', headers: mateAuth, body: JSON.stringify({ name: 'Mate workspace' }) });
+  const { url: mateVaultInvite } = await json(`/api/vaults/${mateVault.id}/invite-link`, {
+    method: 'POST', headers: mateAuth, body: JSON.stringify({ role: 'editor' }),
+  });
   const { chromium } = await import('playwright');
   browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
@@ -82,8 +87,17 @@ try {
   await page.locator('.account-settings').evaluate((node) => { node.scrollTop = node.scrollHeight; });
   await page.getByRole('button', { name: 'Change password' }).click();
   await page.waitForFunction(() => document.querySelector('.account-settings')?.textContent?.includes('Password changed'));
+  await page.keyboard.press('Escape');
+  await sharing.waitFor({ state: 'detached' });
+
+  await page.getByRole('button', { name: /Vault switcher/ }).click();
+  await page.getByRole('menuitem', { name: 'Join vault' }).click();
+  await page.getByLabel('Vault invite link').fill(mateVaultInvite);
+  await page.getByRole('button', { name: 'Join', exact: true }).click();
+  await page.getByText('Joined Mate workspace as editor.').waitFor();
+  await page.getByRole('button', { name: /Vault switcher; current vault Mate workspace/ }).waitFor();
   if (errors.length) throw new Error(errors.join('\n'));
-  console.log('[account-ui] OK — account modal, live profile update, reload persistence, vault member invite/role/remove, and password change');
+  console.log('[account-ui] OK — account settings, vault member management, password change, and pasted vault invite join');
 } finally {
   if (browser) await browser.close();
   preview.kill('SIGTERM'); server.kill('SIGTERM');

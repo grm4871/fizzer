@@ -1271,6 +1271,37 @@ export default function App() {
     })();
   }, [loadVaultData, loadVaults, openChatChannel, user]);
 
+  const acceptVaultInvite = useCallback(async (token: string): Promise<boolean> => {
+    try {
+      const data = await api<{ vaultId: string; name: string; role: string; alreadyMember?: boolean }>(
+        `/api/vault-invites/${encodeURIComponent(token)}/accept`,
+        { method: 'POST' },
+      );
+      await loadVaults();
+      setActiveVaultId(data.vaultId);
+      await loadVaultData(data.vaultId);
+      setNotice(data.alreadyMember
+        ? `You already have access to ${data.name}.`
+        : `Joined ${data.name} as ${data.role}.`);
+      return true;
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not accept invite link');
+      return false;
+    }
+  }, [loadVaultData, loadVaults]);
+
+  const handleJoinVault = useCallback(async (inviteLink: string): Promise<boolean> => {
+    try {
+      const parsed = new URL(inviteLink, window.location.origin);
+      const match = parsed.pathname.match(/^\/vault-invite\/([^/]+)$/);
+      if (!match) throw new Error('Paste a valid vault invite link');
+      return await acceptVaultInvite(decodeURIComponent(match[1]));
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Paste a valid vault invite link');
+      return false;
+    }
+  }, [acceptVaultInvite]);
+
   // Redeem a vault share link. Unlike the chat invite above this joins the
   // vault itself, so the whole vault appears in the switcher.
   useEffect(() => {
@@ -1279,23 +1310,11 @@ export default function App() {
     if (!token || !user || acceptedInviteTokenRef.current === token) return;
     acceptedInviteTokenRef.current = token;
     (async () => {
-      try {
-        const data = await api<{ vaultId: string; name: string; role: string; alreadyMember?: boolean }>(
-          `/api/vault-invites/${encodeURIComponent(token)}/accept`,
-          { method: 'POST' },
-        );
-        await loadVaults();
-        setActiveVaultId(data.vaultId);
-        await loadVaultData(data.vaultId);
+      if (await acceptVaultInvite(token)) {
         window.history.replaceState({}, '', '/app.html');
-        setNotice(data.alreadyMember
-          ? `You already have access to ${data.name}.`
-          : `Joined ${data.name} as ${data.role}.`);
-      } catch (error) {
-        setNotice(error instanceof Error ? error.message : 'Could not accept invite link');
       }
     })();
-  }, [loadVaultData, loadVaults, user]);
+  }, [acceptVaultInvite, user]);
 
   const handleCreateChannel = useCallback(async (folderId: string | null = null) => {
     const vaultId = activeVaultIdRef.current;
@@ -3488,6 +3507,7 @@ export default function App() {
           activeNoteId={activeTabId}
           onSelectVault={setActiveVaultId}
           onCreateVault={handleCreateVault}
+          onJoinVault={handleJoinVault}
           onSelectNote={(id) => {
             openNote(id, 'replace');
             if (isMobileViewport()) setSidebarOpen(false);
