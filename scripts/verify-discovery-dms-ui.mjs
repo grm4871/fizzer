@@ -85,27 +85,27 @@ try {
       joinedPublicVault = true;
       return json({ vaultId: 'v-public', name: 'Community Lab', role: 'viewer', alreadyMember: false }, 201);
     }
-    if (path === '/api/dms' && method === 'GET') return json({ conversations: [{
+    if (path === '/api/me/direct-messages' && method === 'GET') return json({ conversations: [{
       user: { id: 2, username: 'alice', displayName: 'Alice Example', avatarUrl: '' },
       vaultId: 'v-home', channelId: 'dm-alice', title: 'DM — @alice', createdAt: '2026-08-08 05:00:00',
     }] });
-    if (path === '/api/dms' && method === 'POST') {
+    if (path === '/api/direct-messages' && method === 'POST') {
       dmCreated = true;
       return json({ user: { id: 5, username: 'dana', displayName: 'Dana', avatarUrl: '' }, vaultId: 'v-home', channelId: 'dm-dana', title: 'DM — @dana', createdAt: '2026-08-08 06:00:00', created: true }, 201);
     }
-    if (path === '/api/dms/privacy' && method === 'GET') return json({ allowDirectMessages });
-    if (path === '/api/dms/privacy' && method === 'PUT') {
+    if (path === '/api/me/dm-settings' && method === 'GET') return json({ allowDirectMessages });
+    if (path === '/api/me/dm-settings' && method === 'PUT') {
       allowDirectMessages = Boolean(request.postDataJSON().allowDirectMessages);
       return json({ allowDirectMessages });
     }
-    if (path === '/api/dms/blocks' && method === 'GET') return json({ blocks });
-    if (path === '/api/dms/blocks' && method === 'POST') {
+    if (path === '/api/me/blocks' && method === 'GET') return json({ blocks });
+    if (path === '/api/me/blocks' && method === 'POST') {
       const username = request.postDataJSON().username;
       const block = { id: 6, username, displayName: username === 'charlie' ? 'Charlie' : username, avatarUrl: '', createdAt: '2026-08-08 06:00:00' };
       blocks = [block, ...blocks.filter((item) => item.username !== username)];
       return json({ block }, 201);
     }
-    if (path === '/api/dms/blocks/bob' && method === 'DELETE') {
+    if (path === '/api/me/blocks/bob' && method === 'DELETE') {
       blocks = blocks.filter((item) => item.username !== 'bob');
       return json({ ok: true });
     }
@@ -160,10 +160,10 @@ try {
 
   const expectedCalls = [
     ['POST', '/api/public-vaults/v-public/join'],
-    ['PUT', '/api/dms/privacy'],
-    ['DELETE', '/api/dms/blocks/bob'],
-    ['POST', '/api/dms/blocks'],
-    ['POST', '/api/dms'],
+    ['PUT', '/api/me/dm-settings'],
+    ['DELETE', '/api/me/blocks/bob'],
+    ['POST', '/api/me/blocks'],
+    ['POST', '/api/direct-messages'],
   ];
   for (const [method, path] of expectedCalls) {
     if (!requests.some((request) => request.method === method && request.path === path)) throw new Error(`missing ${method} ${path}`);

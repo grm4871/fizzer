@@ -83,9 +83,9 @@ export function DiscoveryDmsModal({
     setStatus('');
     try {
       const [dmData, privacyData, blocksData] = await Promise.all([
-        api<{ conversations: DirectMessage[] }>('/api/dms'),
-        api<{ allowDirectMessages: boolean }>('/api/dms/privacy'),
-        api<{ blocks: BlockedUser[] }>('/api/dms/blocks'),
+        api<{ conversations: DirectMessage[] }>('/api/me/direct-messages'),
+        api<{ allowDirectMessages: boolean }>('/api/me/dm-settings'),
+        api<{ blocks: BlockedUser[] }>('/api/me/blocks'),
       ]);
       setDms(dmData.conversations);
       setAllowStrangerDms(privacyData.allowDirectMessages);
@@ -150,7 +150,7 @@ export function DiscoveryDmsModal({
     setBusyAction('create-dm');
     setStatus('');
     try {
-      const created = await api<DirectMessage>('/api/dms', {
+      const created = await api<DirectMessage>('/api/direct-messages', {
         method: 'POST',
         body: JSON.stringify({ username }),
       });
@@ -170,7 +170,7 @@ export function DiscoveryDmsModal({
     setBusyAction('privacy');
     setStatus('');
     try {
-      const data = await api<{ allowDirectMessages: boolean }>('/api/dms/privacy', {
+      const data = await api<{ allowDirectMessages: boolean }>('/api/me/dm-settings', {
         method: 'PUT',
         body: JSON.stringify({ allowDirectMessages: next }),
       });
@@ -190,7 +190,7 @@ export function DiscoveryDmsModal({
     setBusyAction(`block:${username}`);
     setStatus('');
     try {
-      const data = await api<{ block: BlockedUser }>('/api/dms/blocks', {
+      const data = await api<{ block: BlockedUser }>('/api/me/blocks', {
         method: 'POST',
         body: JSON.stringify({ username }),
       });
@@ -208,7 +208,7 @@ export function DiscoveryDmsModal({
     setBusyAction(`unblock:${username}`);
     setStatus('');
     try {
-      await api(`/api/dms/blocks/${encodeURIComponent(username)}`, {
+      await api(`/api/me/blocks/${encodeURIComponent(username)}`, {
         method: 'DELETE',
       });
       setBlockedUsers((current) => current.filter((user) => user.username !== username));

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Camera, KeyRound, Link as LinkIcon, LogOut, Trash2, Users, X } from 'lucide-react';
+import { Camera, Globe2, KeyRound, Link as LinkIcon, LogOut, Trash2, Users, X } from 'lucide-react';
 import { api, type User, type VaultMember, type VaultRole } from '../api';
 
 type AssignableRole = Exclude<VaultRole, 'owner'>;
@@ -37,6 +37,8 @@ export function AccountSettings({ user, vaultId, vaultName, onClose, onUserChang
   const [memberState, setMemberState] = useState('');
   const [memberBusy, setMemberBusy] = useState(false);
   const [inviteLinkCopied, setInviteLinkCopied] = useState(false);
+  const [vaultVisibility, setVaultVisibility] = useState<'private' | 'public'>('private');
+  const [publicJoinRole, setPublicJoinRole] = useState<AssignableRole>('viewer');
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
@@ -54,6 +56,9 @@ export function AccountSettings({ user, vaultId, vaultName, onClose, onUserChang
       const result = await api<{ members: VaultMember[]; role: VaultRole | null }>(`/api/vaults/${vaultId}/members`);
       setMembers(result.members || []);
       setMyRole(result.role || null);
+      const visibility = await api<{ visibility: 'private' | 'public'; joinRole: AssignableRole }>(`/api/vaults/${vaultId}/visibility`);
+      setVaultVisibility(visibility.visibility);
+      setPublicJoinRole(visibility.joinRole);
     } catch (error) {
       setMemberState(error instanceof Error ? error.message : 'Could not load vault members');
     }
@@ -182,6 +187,25 @@ export function AccountSettings({ user, vaultId, vaultName, onClose, onUserChang
     }
   };
 
+  const saveVisibility = async (visibility: 'private' | 'public', joinRole = publicJoinRole) => {
+    if (!vaultId || !canManageMembers) return;
+    setMemberBusy(true);
+    setMemberState('');
+    try {
+      const result = await api<{ visibility: 'private' | 'public'; joinRole: AssignableRole }>(`/api/vaults/${vaultId}/visibility`, {
+        method: 'PUT',
+        body: JSON.stringify({ visibility, joinRole }),
+      });
+      setVaultVisibility(result.visibility);
+      setPublicJoinRole(result.joinRole);
+      setMemberState(result.visibility === 'public' ? 'Vault is visible in public discovery.' : 'Vault is private.');
+    } catch (error) {
+      setMemberState(error instanceof Error ? error.message : 'Could not update vault visibility');
+    } finally {
+      setMemberBusy(false);
+    }
+  };
+
   const changeMemberRole = async (target: VaultMember, role: AssignableRole) => {
     if (!vaultId || target.role === 'owner') return;
     setMemberBusy(true);
@@ -289,6 +313,29 @@ export function AccountSettings({ user, vaultId, vaultName, onClose, onUserChang
                 : 'private to you'}
               {' · you are '}<strong>{myRole || 'a member'}</strong>
             </p>
+            {canManageMembers && (
+              <div className="account-vault-visibility">
+                <Globe2 size={15} aria-hidden="true" />
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={vaultVisibility === 'public'}
+                    disabled={memberBusy}
+                    onChange={(event) => void saveVisibility(event.target.checked ? 'public' : 'private')}
+                  />
+                  List this vault publicly
+                </label>
+                <select
+                  aria-label="Public vault join role"
+                  value={publicJoinRole}
+                  disabled={memberBusy || vaultVisibility !== 'public'}
+                  onChange={(event) => void saveVisibility(vaultVisibility, event.target.value as AssignableRole)}
+                >
+                  <option value="viewer">Join as viewer</option>
+                  <option value="editor">Join as editor</option>
+                </select>
+              </div>
+            )}
             <ul className="account-vault-members">
               {members.map((member) => (
                 <li key={member.userId}>

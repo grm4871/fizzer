@@ -235,6 +235,20 @@ export function directMessagePermission(
   return { allowed: true };
 }
 
+/** Refuse new messages in an existing DM when either participant has blocked the other. */
+export function assertDirectMessageSendAllowed(db: Db, sourceChannelId: string, actorUserId: number): void {
+  const pair = db.prepare(`
+    SELECT user_a_id AS userAId, user_b_id AS userBId
+    FROM direct_message_channels WHERE source_channel_id = ?
+  `).get(sourceChannelId) as { userAId: number; userBId: number } | undefined;
+  if (!pair) return;
+  if (actorUserId !== pair.userAId && actorUserId !== pair.userBId) throw new Error('Direct message unavailable');
+  const otherUserId = actorUserId === pair.userAId ? pair.userBId : pair.userAId;
+  if (isBlocked(db, actorUserId, otherUserId) || isBlocked(db, otherUserId, actorUserId)) {
+    throw new Error('Direct message unavailable');
+  }
+}
+
 // ── Conversations ──────────────────────────────────────────────────
 
 type PairRow = {

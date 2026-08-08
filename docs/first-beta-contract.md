@@ -13,6 +13,11 @@ Cascade beta. It is intentionally a product boundary, not a roadmap.
    browse the source vault or change the owner's execution directory. A
    recipient can post to the linked chat as themselves.
 
+Owners may also list a vault in public discovery and choose whether self-joiners
+receive viewer or editor access. Direct messages use private one-person vaults;
+either participant can block the other, and accounts may refuse new DMs. Vaults
+containing DMs cannot be published or shared with additional members.
+
 The current chat link is a seven-day, multi-use JWT. It is appropriate only
 for a small, trusted beta group; it has no per-recipient revocation or
 single-use redemption record. Account invites and channel joins must be split
@@ -58,6 +63,8 @@ user-visible billing contract.
   reconnect/reclaim, and visible failure when no desktop runner is connected.
 - `npm run verify:account-ui` checks the browser-only handoff link in the
   built renderer.
+- `npm run verify:discovery-dms-ui` covers public browse/join, DM creation,
+  inbox privacy, and block management in the built renderer.
 
 The release matrix's agent and API/persistence rows apply to any change to
 these flows. Installer publication itself is a release operation: `/download`

@@ -66,6 +66,7 @@ import {
 } from './server/publicVaults.js';
 import {
   allowsDirectMessages,
+  assertDirectMessageSendAllowed,
   blockUser,
   ensureDirectMessageSchema,
   findDirectMessageVaultId,
@@ -75,6 +76,7 @@ import {
   resolveUserByUsername,
   setAllowDirectMessages,
   unblockUser,
+  vaultHoldsDirectMessages,
 } from './server/directMessages.js';
 import {
   acquireWorkItemLease,
@@ -1464,6 +1466,9 @@ app.post('/api/vaults/:id/members', requireAuth, (req: AuthedRequest, res) => {
   if (getVaultRole(db, vault.id, req.user!.id) !== 'owner') {
     return res.status(403).json({ error: 'Only the vault owner can invite members' });
   }
+  if (vaultHoldsDirectMessages(db, vault.id)) {
+    return res.status(400).json({ error: 'A vault containing direct messages cannot be shared' });
+  }
   try {
     const username = String(req.body?.username || '').trim().replace(/^@+/, '').toLowerCase();
     if (!username) return res.status(400).json({ error: 'Username is required' });
@@ -1523,6 +1528,9 @@ app.post('/api/vaults/:id/invite-link', requireAuth, (req: AuthedRequest, res) =
   if (!vault) return res.status(404).json({ error: 'Vault not found' });
   if (getVaultRole(db, vault.id, req.user!.id) !== 'owner') {
     return res.status(403).json({ error: 'Only the vault owner can create invite links' });
+  }
+  if (vaultHoldsDirectMessages(db, vault.id)) {
+    return res.status(400).json({ error: 'A vault containing direct messages cannot be shared' });
   }
   const roleRaw = String(req.body?.role || 'editor').trim().toLowerCase();
   if (!isVaultRole(roleRaw) || roleRaw === 'owner') {
@@ -3212,6 +3220,7 @@ app.get('/api/vaults/:vaultId/channels/:channelId/messages/:messageId/embeds', r
 app.post('/api/vaults/:vaultId/channels/:channelId/messages', requireAuth, (req: AuthedRequest, res) => {
   try {
     const { route } = assertChatChannel(db, req.params.channelId, req.user!.id);
+    assertDirectMessageSendAllowed(db, route.sourceChannelId, req.user!.id);
     const input = isAgentRequest(req) ? req.body : { ...req.body, author: req.user!.username, agentId: undefined, registrationId: undefined };
     const message = createChatMessage(db, req.user!.id, req.params.vaultId, req.params.channelId, input);
     const dispatches = createChatAgentDispatches(

@@ -6,6 +6,7 @@ import path from 'node:path';
 import Database from 'better-sqlite3';
 import {
   allowsDirectMessages,
+  assertDirectMessageSendAllowed,
   blockUser,
   directMessagePermission,
   ensureDirectMessageSchema,
@@ -262,6 +263,19 @@ test('a block applies to an existing conversation, not just the first open', () 
     blockUser(db, 2, 1);
     assert.throws(() => openDirectMessage(db, 1, 'bob', deps), /not accepting direct messages/);
     assert.throws(() => openDirectMessage(db, 2, 'alice', deps), /Unblock @alice/);
+  } finally {
+    cleanup();
+  }
+});
+
+test('blocking either participant stops new messages in an existing DM', () => {
+  const { db, deps, cleanup } = setup();
+  try {
+    const opened = openDirectMessage(db, 1, 'bob', deps);
+    assert.doesNotThrow(() => assertDirectMessageSendAllowed(db, opened.channelId, 1));
+    blockUser(db, 2, 1);
+    assert.throws(() => assertDirectMessageSendAllowed(db, opened.channelId, 1), /unavailable/);
+    assert.throws(() => assertDirectMessageSendAllowed(db, opened.channelId, 2), /unavailable/);
   } finally {
     cleanup();
   }

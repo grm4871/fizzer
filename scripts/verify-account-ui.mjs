@@ -63,6 +63,9 @@ try {
   const sharing = page.locator('.account-settings');
   await sharing.waitFor();
   if (await page.locator('#vault-shared-badge').count()) throw new Error('a private vault should not show the shared badge');
+  await sharing.getByLabel('List this vault publicly').click();
+  await sharing.getByText('Vault is visible in public discovery.').waitFor();
+  await sharing.getByLabel('Public vault join role').selectOption('editor');
   await sharing.getByLabel('Invite by username').fill(mateName);
   await sharing.getByLabel('Invite role').selectOption('editor');
   await sharing.getByRole('button', { name: 'Invite', exact: true }).click();
@@ -97,7 +100,7 @@ try {
   await page.getByText('Joined Mate workspace as editor.').waitFor();
   await page.getByRole('button', { name: /Vault switcher; current vault Mate workspace/ }).waitFor();
   if (errors.length) throw new Error(errors.join('\n'));
-  console.log('[account-ui] OK — account settings, vault member management, password change, and pasted vault invite join');
+  console.log('[account-ui] OK — account settings, public visibility, vault member management, password change, and pasted vault invite join');
 } finally {
   if (browser) await browser.close();
   preview.kill('SIGTERM'); server.kill('SIGTERM');
