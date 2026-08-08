@@ -24,7 +24,7 @@ import { usePopupMenu } from '../ui/popupMenu';
 import { CHAT_NOTE_MARKER } from './ChatView';
 import {
   Folder as FolderIcon, FolderOpen, FileText, Pin, Gem, Edit2, FolderPlus,
-  Search, ChevronRight, PanelLeftClose, LogOut, Trash2, FilePlus, FolderInput, Pencil, RefreshCw,
+  Search, ChevronRight, ChevronDown, Check, PanelLeftClose, LogOut, Trash2, FilePlus, FolderInput, Pencil, RefreshCw,
   Hash, Unlink, ShieldCheck, SkipBack, Play, Pause, SkipForward, Music2, Users, Plus,
 } from 'lucide-react';
 
@@ -658,9 +658,17 @@ export const Sidebar = memo(function Sidebar({
           aria-expanded={vaultMenuOpen}
         >
           <span className="vault-icon" aria-hidden="true"><Gem size={15} /></span>
-          <span className="vault-name-text">
-            {activeVault?.name || 'Cascade'}
+          <span className="vault-name-copy">
+            <span className="vault-name-text">{activeVault?.name || 'Cascade'}</span>
+            <span className="vault-name-meta">
+              {activeVault
+                ? isSharedVault(activeVault)
+                  ? `${activeVault.memberCount} members · ${activeVault.role || 'member'}`
+                  : 'Private · only you'
+                : 'Your workspace'}
+            </span>
           </span>
+          <ChevronDown className="vault-name-chevron" size={14} aria-hidden="true" />
         </button>
         {activeVault && isSharedVault(activeVault) && (
           <button
@@ -668,11 +676,11 @@ export const Sidebar = memo(function Sidebar({
             className="vault-shared-badge"
             id="vault-shared-badge"
             onClick={onOpenAccount}
-            title={`Shared vault — ${activeVault.memberCount} members. You are ${activeVault.role || 'a member'}. Manage members in Account.`}
-            aria-label={`Shared vault with ${activeVault.memberCount} members, your role ${activeVault.role || 'member'}. Manage members.`}
+            title="Manage vault members"
+            aria-label={`Manage ${activeVault.name} members`}
           >
             <Users size={12} aria-hidden="true" />
-            {activeVault.memberCount}
+            <span>{activeVault.memberCount}</span>
           </button>
         )}
         <div className="sidebar-actions sidebar-actions-desktop" role="toolbar" aria-label="Sidebar actions">{actionButtons('desktop')}</div>
@@ -681,6 +689,10 @@ export const Sidebar = memo(function Sidebar({
 
       {vaultMenuOpen && (
         <div className="vault-switcher-menu" role="menu" aria-label="Vaults">
+          <div className="vault-switcher-heading">
+            <span>Vaults</span>
+            <small>{vaults.length}</small>
+          </div>
           {vaults.map((vault) => (
             <button
               key={vault.id}
@@ -690,9 +702,16 @@ export const Sidebar = memo(function Sidebar({
               className={vault.id === activeVaultId ? 'is-active' : ''}
               onClick={() => { onSelectVault(vault.id); setVaultMenuOpen(false); }}
             >
-              <Gem size={13} aria-hidden="true" />
-              <span>{vault.name}</span>
-              {isSharedVault(vault) && <small>shared</small>}
+              <span className="vault-switcher-icon" aria-hidden="true"><Gem size={13} /></span>
+              <span className="vault-switcher-copy">
+                <strong>{vault.name}</strong>
+                <small>
+                  {isSharedVault(vault)
+                    ? `${vault.memberCount} members · ${vault.role || 'member'}`
+                    : 'Private · only you'}
+                </small>
+              </span>
+              {vault.id === activeVaultId && <Check className="vault-switcher-check" size={15} aria-hidden="true" />}
             </button>
           ))}
           <div className="vault-switcher-divider" role="separator" />
@@ -726,29 +745,6 @@ export const Sidebar = memo(function Sidebar({
       )}
 
       <div className="sidebar-actions sidebar-actions-mobile">{actionButtons('mobile')}</div>
-
-      {/* Vault selector */}
-      {vaults.length > 1 && (
-        <div className="sidebar-vault-select">
-          <select
-            id="vault-select"
-            aria-label="Active vault"
-            value={activeVaultId ?? ''}
-            onChange={(e) => onSelectVault(e.target.value)}
-          >
-            {vaults.map((v) => (
-              <option key={v.id} value={v.id}>{vaultOptionLabel(v)}</option>
-            ))}
-          </select>
-          {activeVault && (
-            <div className="sidebar-vault-meta">
-              {isSharedVault(activeVault)
-                ? <>Shared with {activeVault.memberCount! - 1} other{activeVault.memberCount === 2 ? '' : 's'} · you are {activeVault.role || 'a member'}</>
-                : <>Private vault · only you</>}
-            </div>
-          )}
-        </div>
-      )}
 
       {/* Folder tree. The "Notes" header doubles as the move-to-root drop target. */}
       <div
