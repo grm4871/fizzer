@@ -37,13 +37,17 @@ if (missing.length) {
   throw new Error(`Packaged runtime is incomplete:\n${missing.map((file) => `- ${file}`).join('\n')}`);
 }
 
-const asarEntries = listPackage(path.join(resources, 'app.asar'));
+// @electron/asar follows the host path separator when listing entries. Keep
+// archive assertions identical on Windows, macOS, and Linux.
+const asarEntries = new Set(
+  listPackage(path.join(resources, 'app.asar')).map((entry) => entry.replaceAll('\\', '/')),
+);
 const requiredAsarEntries = [
   '/agent-runner.cjs',
   '/desktop-runner-host.cjs',
   '/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs',
 ];
-const absentFromAsar = requiredAsarEntries.filter((entry) => !asarEntries.includes(entry));
+const absentFromAsar = requiredAsarEntries.filter((entry) => !asarEntries.has(entry));
 if (absentFromAsar.length) {
   throw new Error(`Packaged app.asar is incomplete:\n${absentFromAsar.map((entry) => `- ${entry}`).join('\n')}`);
 }
