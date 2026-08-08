@@ -13,11 +13,14 @@
  *   - `user_blocks` — either direction stops a conversation from opening.
  *
  * A DM channel is still a note in a real vault, so vault membership is what
- * ultimately gates it. Two rules keep that from leaking a conversation:
- * `findDirectMessageVaultId` only ever picks a private, single-member vault,
- * and `vaultHoldsDirectMessages` lets the visibility route refuse to publish a
- * vault that holds one. Deliberately inviting someone into your DM vault still
- * shares it — that is the owner's call, exactly as with any shared chat.
+ * ultimately gates it. Three rules keep that from leaking a conversation:
+ *   - every side of a DM lives in that account's *dedicated* DM vault
+ *     (`user_dm_vaults`), never in a general notebook that may later be
+ *     shared or published — see `ensureDirectMessageVaultId`;
+ *   - `vaultHoldsDirectMessages` lets the sharing and visibility routes refuse
+ *     to publish, invite into, or hand out an invite link for such a vault;
+ *   - `isDirectMessageChannel` lets the chat-sharing routes refuse to mirror a
+ *     DM channel into a third party's vault.
  */
 import type Database from 'better-sqlite3';
 import { CHAT_NOTE_MARKER, linkChatChannel } from './chat.js';
@@ -45,13 +48,28 @@ export type DirectMessageConversation = {
 export type OpenDirectMessageResult = DirectMessageConversation & { created: boolean };
 
 export type DirectMessageDeps = {
-  /** Vault that holds a user's own copy of a conversation; created on demand. */
-  homeVaultId: (userId: number) => string;
+  /**
+   * Creates a brand-new private vault owned by `userId` and returns its id.
+   * Only used when that account has no usable DM vault yet — callers cannot
+   * nominate an existing vault, which is what keeps DMs out of notebooks.
+   */
+  createVault: (userId: number, name: string) => string;
   /** Notified for each channel note created, so the owner's clients can refresh. */
   onChannelCreated?: (input: { vaultId: string; channelId: string; title: string; userId: number }) => void;
 };
 
 const USERNAME = /^[a-z0-9_]{3,32}$/;
+
+/** Name given to the per-account vault that holds every DM channel. */
+export const DIRECT_MESSAGE_VAULT_NAME = 'Direct Messages';
+
+/**
+ * The single refusal used whenever a username cannot be acted on: no such
+ * account, the account has DMs switched off, or it has blocked the caller.
+ * One message for all three keeps these routes from becoming a directory of
+ * which usernames are registered.
+ */
+export const UNREACHABLE_USER_MESSAGE = 'This user is not accepting direct messages';
 
 export function ensureDirectMessageSchema(db: Db): void {
   db.exec(`
@@ -83,31 +101,127 @@ export function ensureDirectMessageSchema(db: Db): void {
       CHECK (user_a_id < user_b_id)
     );
     CREATE INDEX IF NOT EXISTS idx_dm_channels_source ON direct_message_channels(source_channel_id);
+
+    -- The vault each account keeps its DM channels in. One vault per user and
+    -- one user per vault, so a DM vault can never double as a shared notebook.
+    CREATE TABLE IF NOT EXISTS user_dm_vaults (
+      user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_user_dm_vaults_vault ON user_dm_vaults(vault_id);
   `);
+
+  backfillDirectMessageVaults(db);
+}
+
+/** True when the column exists; `visibility` arrives with ensurePublicVaultSchema. */
+function hasVaultColumn(db: Db, column: string): boolean {
+  return (db.prepare('PRAGMA table_info(vaults)').all() as Array<{ name: string }>)
+    .some((row) => row.name === column);
 }
 
 /**
- * The vault a user's DM channels belong in: their oldest owned vault that is
- * both private and unshared. Anything else — a published vault, a vault with
- * invited members — would hand the conversation to third parties, so the
- * caller creates a dedicated vault instead of falling back to one of those.
+ * Adopt vaults that already serve as somebody's DM vault.
+ *
+ * Before dedicated DM vaults existed, a conversation landed in the oldest
+ * private solo vault the account owned — sometimes a purpose-made
+ * "Direct Messages" vault, sometimes their main notebook. Only the former is
+ * adopted here: a vault is claimed just when *every* note it holds is a DM
+ * channel. A mixed notebook is deliberately left unmapped, so the next DM
+ * moves to a fresh dedicated vault while the conversations already in it keep
+ * resolving through their own note and link rows.
  */
-export function findDirectMessageVaultId(db: Db, userId: number): string | null {
+function backfillDirectMessageVaults(db: Db): void {
+  const privateOnly = hasVaultColumn(db, 'visibility')
+    ? "AND COALESCE(v.visibility, 'private') = 'private'"
+    : '';
+  try {
+    db.prepare(`
+      INSERT OR IGNORE INTO user_dm_vaults (user_id, vault_id)
+      SELECT userId, vaultId FROM (
+        SELECT v.created_by AS userId, v.id AS vaultId, v.created_at AS createdAt
+        FROM vaults v
+        WHERE (SELECT COUNT(*) FROM vault_members m WHERE m.vault_id = v.id) <= 1
+          ${privateOnly}
+          AND EXISTS (SELECT 1 FROM notes n WHERE n.vault_id = v.id)
+          AND NOT EXISTS (
+            SELECT 1 FROM notes n
+            WHERE n.vault_id = v.id
+              AND n.id NOT IN (SELECT source_channel_id FROM direct_message_channels)
+              AND n.id NOT IN (
+                SELECT l.local_channel_id
+                FROM chat_channel_links l
+                JOIN direct_message_channels d ON d.source_channel_id = l.source_channel_id
+              )
+          )
+      )
+      ORDER BY createdAt ASC, vaultId ASC
+    `).run();
+  } catch {
+    // chat_channel_links may not exist yet on a partially migrated database;
+    // the mapping is rebuilt on the next boot once the chat schema is in place.
+  }
+}
+
+/** The vault currently recorded for this account's DMs, or null. */
+export function getDirectMessageVaultId(db: Db, userId: number): string | null {
+  const row = db.prepare('SELECT vault_id AS vaultId FROM user_dm_vaults WHERE user_id = ?')
+    .get(userId) as { vaultId: string } | undefined;
+  return row?.vaultId ?? null;
+}
+
+/** True when this vault is the registered DM vault of any account. */
+export function isDirectMessageVault(db: Db, vaultId: string): boolean {
+  return Boolean(db.prepare('SELECT 1 AS hit FROM user_dm_vaults WHERE vault_id = ?').get(vaultId));
+}
+
+/**
+ * A DM vault stays usable only while it is still the account's own, still
+ * private, and still has no second member. Anything else means the vault has
+ * been shared since — future conversations must not follow it there.
+ */
+function dmVaultIsUsable(db: Db, vaultId: string, userId: number): boolean {
+  const privateOnly = hasVaultColumn(db, 'visibility')
+    ? "AND COALESCE(v.visibility, 'private') = 'private'"
+    : '';
   const row = db.prepare(`
-    SELECT v.id AS id
+    SELECT 1 AS hit
     FROM vaults v
-    WHERE v.created_by = ?
-      AND COALESCE(v.visibility, 'private') = 'private'
+    WHERE v.id = ? AND v.created_by = ?
+      ${privateOnly}
       AND (SELECT COUNT(*) FROM vault_members m WHERE m.vault_id = v.id) <= 1
-    ORDER BY v.created_at ASC
-    LIMIT 1
-  `).get(userId) as { id: string } | undefined;
-  return row?.id ?? null;
+  `).get(vaultId, userId) as { hit: number } | undefined;
+  return Boolean(row);
+}
+
+/**
+ * The vault this account's DM channels belong in, created on first use.
+ *
+ * Never returns a vault the caller nominated and never reuses a general
+ * notebook: the mapping in `user_dm_vaults` is the only source, and a mapped
+ * vault that has since been shared is replaced rather than trusted.
+ */
+export function ensureDirectMessageVaultId(db: Db, userId: number, deps: DirectMessageDeps): string {
+  const mapped = getDirectMessageVaultId(db, userId);
+  if (mapped && dmVaultIsUsable(db, mapped, userId)) return mapped;
+
+  const vaultId = deps.createVault(userId, DIRECT_MESSAGE_VAULT_NAME);
+  if (!dmVaultIsUsable(db, vaultId, userId)) {
+    throw new Error('Could not create a private vault for direct messages');
+  }
+  db.prepare(`
+    INSERT INTO user_dm_vaults (user_id, vault_id) VALUES (?, ?)
+    ON CONFLICT(user_id) DO UPDATE SET vault_id = excluded.vault_id, created_at = datetime('now')
+  `).run(userId, vaultId);
+  return vaultId;
 }
 
 /**
  * True when this vault holds either side of a DM — the source channel or a
- * linked mirror. Publishing such a vault would expose the whole conversation.
+ * linked mirror — or is registered as somebody's DM vault. Publishing or
+ * sharing such a vault would expose the whole conversation, including the ones
+ * opened after the invite link was minted.
  */
 export function vaultHoldsDirectMessages(db: Db, vaultId: string): boolean {
   const row = db.prepare(`
@@ -117,9 +231,40 @@ export function vaultHoldsDirectMessages(db: Db, vaultId: string): boolean {
     FROM chat_channel_links l
     JOIN direct_message_channels d ON d.source_channel_id = l.source_channel_id
     WHERE l.local_vault_id = ?
+    UNION ALL
+    SELECT 1 AS hit FROM user_dm_vaults WHERE vault_id = ?
     LIMIT 1
-  `).get(vaultId, vaultId) as { hit: number } | undefined;
+  `).get(vaultId, vaultId, vaultId) as { hit: number } | undefined;
   return Boolean(row);
+}
+
+/**
+ * True when this note is either side of a DM: the initiator's source channel
+ * or a participant's mirror. Such a channel is only ever shared with the two
+ * accounts in the pair, so no sharing route may mirror it anywhere else.
+ */
+export function isDirectMessageChannel(db: Db, channelId: string): boolean {
+  const row = db.prepare(`
+    SELECT 1 AS hit FROM direct_message_channels WHERE source_channel_id = ?
+    UNION ALL
+    SELECT 1 AS hit
+    FROM chat_channel_links l
+    JOIN direct_message_channels d ON d.source_channel_id = l.source_channel_id
+    WHERE l.local_channel_id = ?
+    LIMIT 1
+  `).get(channelId, channelId) as { hit: number } | undefined;
+  return Boolean(row);
+}
+
+/**
+ * Guard for every route that copies a chat channel into another vault —
+ * by-username invites, invite links, and redemption of links minted before the
+ * channel became a DM.
+ */
+export function assertShareableChatChannel(db: Db, channelId: string): void {
+  if (isDirectMessageChannel(db, channelId)) {
+    throw new Error('Direct messages cannot be shared');
+  }
 }
 
 function toDirectMessageUser(row: {
@@ -217,9 +362,11 @@ export function unblockUser(db: Db, blockerUserId: number, blockedUserId: number
 export type DirectMessagePermission = { allowed: true } | { allowed: false; reason: string };
 
 /**
- * Being blocked and having DMs switched off return the *same* message on
- * purpose: otherwise the toggle becomes an oracle for "did they block me?".
- * The blocker's own side is told plainly, since they already know.
+ * Being blocked, having DMs switched off, and not existing at all return the
+ * *same* message on purpose (see `UNREACHABLE_USER_MESSAGE`): otherwise the
+ * toggle becomes an oracle for "did they block me?" and the endpoint becomes
+ * an oracle for "is this username taken?". The blocker's own side is told
+ * plainly, since they already know.
  */
 export function directMessagePermission(
   db: Db,
@@ -230,9 +377,24 @@ export function directMessagePermission(
     return { allowed: false, reason: `Unblock @${toUser.username} to start a direct message` };
   }
   if (isBlocked(db, toUser.id, fromUserId) || !allowsDirectMessages(db, toUser.id)) {
-    return { allowed: false, reason: 'This user is not accepting direct messages' };
+    return { allowed: false, reason: UNREACHABLE_USER_MESSAGE };
   }
   return { allowed: true };
+}
+
+/**
+ * Pushing a chat channel into someone's vault by username is a direct
+ * interaction, so a block in either direction stops it. Shared-room membership
+ * is untouched: a blocked user who already holds the channel keeps it, and
+ * either party may still redeem a public invite link for a shared chat.
+ *
+ * The refusal is the standard unreachable message so this route cannot be used
+ * to test whether a username exists.
+ */
+export function assertChannelPushAllowed(db: Db, actorUserId: number, targetUserId: number): void {
+  if (isBlocked(db, actorUserId, targetUserId) || isBlocked(db, targetUserId, actorUserId)) {
+    throw new Error(UNREACHABLE_USER_MESSAGE);
+  }
 }
 
 /** Refuse new messages in an existing DM when either participant has blocked the other. */
@@ -311,7 +473,7 @@ function createMirror(
   forUser: DirectMessageUser,
   counterpartUsername: string,
 ): { vaultId: string; channelId: string; title: string } {
-  const vaultId = deps.homeVaultId(forUser.id);
+  const vaultId = ensureDirectMessageVaultId(db, forUser.id, deps);
   const note = createNote(db, vaultId, forUser.id, {
     title: dmChannelTitle(counterpartUsername),
     content: `${CHAT_NOTE_MARKER}\nshared_from=${pair.sourceChannelId}\ndm_with=${counterpartUsername}`,
@@ -340,7 +502,14 @@ export function openDirectMessage(
   username: unknown,
   deps: DirectMessageDeps,
 ): OpenDirectMessageResult {
-  const target = resolveUserByUsername(db, username);
+  // An unknown username is refused exactly like an unreachable one, so this
+  // route cannot be walked to discover which accounts exist.
+  let target: DirectMessageUser;
+  try {
+    target = resolveUserByUsername(db, username);
+  } catch {
+    throw new Error(UNREACHABLE_USER_MESSAGE);
+  }
   if (target.id === actorUserId) throw new Error('You cannot direct message yourself');
 
   const permission = directMessagePermission(db, actorUserId, target);
@@ -370,7 +539,7 @@ export function openDirectMessage(
     return { user: target, ...mine, createdAt: existing.created_at, created: false };
   }
 
-  const sourceVaultId = deps.homeVaultId(actorUserId);
+  const sourceVaultId = ensureDirectMessageVaultId(db, actorUserId, deps);
   const source = createNote(db, sourceVaultId, actorUserId, {
     title: dmChannelTitle(target.username),
     content: `${CHAT_NOTE_MARKER}\ndm_with=${target.username}`,

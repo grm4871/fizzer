@@ -105,18 +105,43 @@ export function corsOrigin() {
   };
 }
 
+/** How many expired buckets to drop per request, so the map cannot grow forever. */
+const RATE_LIMIT_SWEEP = 64;
+
 /**
  * Minimal fixed-window in-memory rate limiter. Sufficient to blunt credential
  * stuffing on the auth routes of a small single-process instance; not a
  * distributed limiter.
+ *
+ * `key` selects the bucket. It defaults to the client IP; routes that are
+ * behind `requireAuth` should key on the account id instead, so one signed-in
+ * user cannot spread an abuse loop across addresses.
  */
-export function rateLimit(opts: { windowMs: number; max: number }) {
+export function rateLimit(opts: {
+  windowMs: number;
+  max: number;
+  key?: (req: Request) => string;
+  message?: string;
+}) {
   const hits = new Map<string, { count: number; resetAt: number }>();
+  const message = opts.message || 'Too many requests. Please try again shortly.';
+
+  // Fixed windows expire but their entries do not, so a stream of distinct
+  // keys would leak memory. Drop a bounded slice of dead buckets per call.
+  const sweep = (now: number) => {
+    let checked = 0;
+    for (const [key, entry] of hits) {
+      if (checked++ >= RATE_LIMIT_SWEEP) break;
+      if (now > entry.resetAt) hits.delete(key);
+    }
+  };
+
   return (req: Request, res: Response, next: NextFunction) => {
     const now = Date.now();
-    const key = req.ip || req.socket.remoteAddress || 'unknown';
+    const key = opts.key?.(req) || req.ip || req.socket.remoteAddress || 'unknown';
     const entry = hits.get(key);
     if (!entry || now > entry.resetAt) {
+      sweep(now);
       hits.set(key, { count: 1, resetAt: now + opts.windowMs });
       return next();
     }
@@ -124,7 +149,7 @@ export function rateLimit(opts: { windowMs: number; max: number }) {
     if (entry.count > opts.max) {
       const retryAfter = Math.ceil((entry.resetAt - now) / 1000);
       res.setHeader('Retry-After', String(retryAfter));
-      return res.status(429).json({ error: 'Too many requests. Please try again shortly.' });
+      return res.status(429).json({ error: message });
     }
     next();
   };

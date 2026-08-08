@@ -66,16 +66,19 @@ import {
 } from './server/publicVaults.js';
 import {
   allowsDirectMessages,
+  assertChannelPushAllowed,
   assertDirectMessageSendAllowed,
+  assertShareableChatChannel,
   blockUser,
   ensureDirectMessageSchema,
-  findDirectMessageVaultId,
+  isDirectMessageChannel,
   listBlockedUsers,
   listDirectMessages,
   openDirectMessage,
   resolveUserByUsername,
   setAllowDirectMessages,
   unblockUser,
+  UNREACHABLE_USER_MESSAGE,
   vaultHoldsDirectMessages,
 } from './server/directMessages.js';
 import {
@@ -1295,6 +1298,20 @@ app.get(['/api/deploy/status', '/api/admin/deploy/status'], requireDeployAuth, (
 
 const authRateLimit = rateLimit({ windowMs: 15 * 60 * 1000, max: 30 });
 
+/**
+ * Bound on the routes that take a bare username: opening a DM, blocking, and
+ * pushing a chat into someone's vault. Each one writes into another account's
+ * space or answers a question about it, so it is the natural probe for both
+ * spam and account discovery. Keyed on the caller's account rather than the
+ * address, which a signed-in prober can change at will.
+ */
+const usernameActionRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  key: (req) => String((req as AuthedRequest).user?.id ?? req.ip ?? 'unknown'),
+  message: 'Too many direct message attempts. Please try again shortly.',
+});
+
 app.post('/api/auth/register', authRateLimit, async (req, res) => {
   const username = String(req.body.username || '').trim().toLowerCase();
   const password = String(req.body.password || '');
@@ -1545,7 +1562,11 @@ app.get('/api/vault-invites/:token', (req, res) => {
     const invite = verifyVaultInvite(req.params.token);
     const vault = db.prepare('SELECT id, name, created_by FROM vaults WHERE id = ?')
       .get(invite.vaultId) as { id: string; name: string; created_by: number } | undefined;
-    if (!vault) return res.status(404).json({ error: 'Invite not found' });
+    // Re-checked on preview as well as accept: the vault may have started
+    // holding direct messages after this link was minted.
+    if (!vault || vaultHoldsDirectMessages(db, vault.id)) {
+      return res.status(404).json({ error: 'Invite not found' });
+    }
     const owner = db.prepare('SELECT username FROM users WHERE id = ?')
       .get(vault.created_by) as { username: string } | undefined;
     res.json({ invite: { vaultName: vault.name, role: invite.role, owner: owner?.username || 'unknown' } });
@@ -1560,6 +1581,11 @@ app.post('/api/vault-invites/:token/accept', requireAuth, (req: AuthedRequest, r
     const vault = db.prepare('SELECT id, name, created_by FROM vaults WHERE id = ?')
       .get(invite.vaultId) as { id: string; name: string; created_by: number } | undefined;
     if (!vault) return res.status(404).json({ error: 'Invite not found' });
+    // A seven-day token outlives the check made when it was created, so the
+    // DM restriction is enforced again here rather than trusted from then.
+    if (vaultHoldsDirectMessages(db, vault.id)) {
+      return res.status(404).json({ error: 'Invite not found' });
+    }
     const current = getVaultRole(db, vault.id, req.user!.id);
     // Redeeming twice, or as the owner, is a no-op rather than a demotion.
     if (current) return res.json({ vaultId: vault.id, name: vault.name, role: current, alreadyMember: true });
@@ -3783,8 +3809,19 @@ app.delete('/api/vaults/:vaultId/channels/:channelId/agents/:registrationId', re
   }
 });
 
+/**
+ * Landing vault for a chat someone shared with `userId`. Their DM vault is
+ * skipped: it is the one vault that must hold nothing but their private
+ * conversations, so a shared room never gets filed alongside them.
+ */
 function firstOwnedVault(userId: number) {
-  return db.prepare('SELECT * FROM vaults WHERE created_by = ? ORDER BY created_at ASC LIMIT 1').get(userId) as ReturnType<typeof createVault> | undefined;
+  return db.prepare(`
+    SELECT * FROM vaults
+    WHERE created_by = ?
+      AND id NOT IN (SELECT vault_id FROM user_dm_vaults)
+    ORDER BY created_at ASC
+    LIMIT 1
+  `).get(userId) as ReturnType<typeof createVault> | undefined;
 }
 
 function uniqueSharedChatTitle(vaultId: string, baseTitle: string): string {
@@ -3798,6 +3835,10 @@ function uniqueSharedChatTitle(vaultId: string, baseTitle: string): string {
 }
 
 function addLinkedChatToUserVault(sourceVault: { id: string }, sourceChannel: { id: string; title: string }, userId: number, createdBy: number) {
+  // Central guard for every path that mirrors a channel into another vault.
+  // A DM belongs to exactly two accounts and is never mirrored a third time.
+  assertShareableChatChannel(db, sourceChannel.id);
+
   let targetVault = firstOwnedVault(userId);
   if (!targetVault) targetVault = createVault(db, userId, { name: 'My Vault' });
 
@@ -3830,7 +3871,7 @@ function addLinkedChatToUserVault(sourceVault: { id: string }, sourceChannel: { 
   return { vaultId: targetVault.id, channelId: localChannel.id, title: localChannel.title, created: true };
 }
 
-app.post('/api/vaults/:vaultId/channels/:channelId/invites', requireAuth, (req: AuthedRequest, res) => {
+app.post('/api/vaults/:vaultId/channels/:channelId/invites', requireAuth, usernameActionRateLimit, (req: AuthedRequest, res) => {
   const vault = getVault(db, req.params.vaultId, req.user!.id);
   if (!vault) return res.status(404).json({ error: 'Vault not found' });
   const channel = getNote(db, req.params.channelId);
@@ -3840,6 +3881,9 @@ app.post('/api/vaults/:vaultId/channels/:channelId/invites', requireAuth, (req: 
   if (vault.created_by !== req.user!.id) {
     return res.status(403).json({ error: 'Only the chat owner can invite users' });
   }
+  if (isDirectMessageChannel(db, channel.id)) {
+    return res.status(400).json({ error: 'Direct messages cannot be shared' });
+  }
 
   try {
     const username = String(req.body?.username || '').trim().toLowerCase();
@@ -3847,8 +3891,13 @@ app.post('/api/vaults/:vaultId/channels/:channelId/invites', requireAuth, (req: 
       return res.status(400).json({ error: 'Username must be 3-32 lowercase letters, numbers, or underscores' });
     }
     const invitedUser = db.prepare('SELECT id, username FROM users WHERE username = ?').get(username) as { id: number; username: string } | undefined;
-    if (!invitedUser) return res.status(404).json({ error: 'User not found' });
+    // An unknown account and a blocked one refuse identically below, so this
+    // route cannot be used to discover which usernames are registered.
+    if (!invitedUser) return res.status(403).json({ error: UNREACHABLE_USER_MESSAGE });
     if (invitedUser.id === req.user!.id) return res.status(400).json({ error: 'You already have this chat' });
+    // Pushing a channel into someone's vault is a direct interaction; a block
+    // in either direction stops it. Existing membership is left alone.
+    assertChannelPushAllowed(db, req.user!.id, invitedUser.id);
 
     const linked = addLinkedChatToUserVault(vault, channel, invitedUser.id, req.user!.id);
 
@@ -3863,6 +3912,7 @@ app.post('/api/vaults/:vaultId/channels/:channelId/invites', requireAuth, (req: 
     res.status(201).json({ user: publicUser(invitedUser), vaultId: linked.vaultId, channelId: linked.channelId, title: linked.title, message });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    if (message === UNREACHABLE_USER_MESSAGE) return res.status(403).json({ error: message });
     res.status(400).json({ error: message });
   }
 });
@@ -3877,39 +3927,58 @@ app.post('/api/vaults/:vaultId/channels/:channelId/invite-link', requireAuth, (r
   if (vault.created_by !== req.user!.id) {
     return res.status(403).json({ error: 'Only the chat owner can create invite links' });
   }
+  if (isDirectMessageChannel(db, channel.id)) {
+    return res.status(400).json({ error: 'Direct messages cannot be shared' });
+  }
   const token = signChatInvite(vault.id, channel.id);
   res.json({ token, url: `${publicBaseUrl(req)}/invite/${encodeURIComponent(token)}` });
 });
 
-app.get('/api/chat-invites/:token', (req, res) => {
+/**
+ * The channel a chat invite token points at, or null when the token is no
+ * longer redeemable. Tokens live for seven days, so this is re-checked on
+ * every use rather than only when the link is minted: a channel that is now
+ * one side of a DM is refused even if the link predates it.
+ */
+function resolveChatInvite(token: string): { channel: NonNullable<ReturnType<typeof getNote>>; vaultId: string } | null {
+  let invite: ChatInviteToken;
   try {
-    const invite = verifyChatInvite(req.params.token);
-    const channel = getNote(db, invite.sourceChannelId);
-    const vault = db.prepare('SELECT id, name, created_by FROM vaults WHERE id = ?').get(invite.sourceVaultId) as { id: string; name: string; created_by: number } | undefined;
-    if (!channel || !vault || channel.vault_id !== vault.id || !channel.content.trim().startsWith(CHAT_NOTE_MARKER)) {
-      return res.status(404).json({ error: 'Invite not found' });
-    }
-    const owner = db.prepare('SELECT username FROM users WHERE id = ?').get(vault.created_by) as { username: string } | undefined;
-    res.json({
-      invite: {
-        title: channel.title,
-        vaultName: vault.name,
-        owner: owner?.username || 'unknown',
-      },
-    });
+    invite = verifyChatInvite(token);
   } catch {
-    res.status(404).json({ error: 'Invite not found' });
+    return null;
   }
+  const channel = getNote(db, invite.sourceChannelId);
+  if (!channel || channel.vault_id !== invite.sourceVaultId) return null;
+  if (!channel.content.trim().startsWith(CHAT_NOTE_MARKER)) return null;
+  if (isDirectMessageChannel(db, channel.id)) return null;
+  return { channel, vaultId: invite.sourceVaultId };
+}
+
+app.get('/api/chat-invites/:token', (req, res) => {
+  const resolved = resolveChatInvite(req.params.token);
+  const vault = resolved
+    ? db.prepare('SELECT id, name, created_by FROM vaults WHERE id = ?').get(resolved.vaultId) as { id: string; name: string; created_by: number } | undefined
+    : undefined;
+  if (!resolved || !vault) return res.status(404).json({ error: 'Invite not found' });
+
+  const owner = db.prepare('SELECT username FROM users WHERE id = ?').get(vault.created_by) as { username: string } | undefined;
+  res.json({
+    invite: {
+      title: resolved.channel.title,
+      vaultName: vault.name,
+      owner: owner?.username || 'unknown',
+    },
+  });
 });
 
 app.post('/api/chat-invites/:token/accept', requireAuth, (req: AuthedRequest, res) => {
   try {
-    const invite = verifyChatInvite(req.params.token);
-    const channel = getNote(db, invite.sourceChannelId);
-    const vault = db.prepare('SELECT * FROM vaults WHERE id = ?').get(invite.sourceVaultId) as ReturnType<typeof createVault> | undefined;
-    if (!channel || !vault || channel.vault_id !== vault.id || !channel.content.trim().startsWith(CHAT_NOTE_MARKER)) {
-      return res.status(404).json({ error: 'Invite not found' });
-    }
+    const resolved = resolveChatInvite(req.params.token);
+    const vault = resolved
+      ? db.prepare('SELECT * FROM vaults WHERE id = ?').get(resolved.vaultId) as ReturnType<typeof createVault> | undefined
+      : undefined;
+    if (!resolved || !vault) return res.status(404).json({ error: 'Invite not found' });
+    const channel = resolved.channel;
     if (vault.created_by === req.user!.id) {
       return res.json({ vaultId: vault.id, channelId: channel.id, title: channel.title, alreadyOwned: true });
     }
@@ -3925,11 +3994,10 @@ app.post('/api/chat-invites/:token/accept', requireAuth, (req: AuthedRequest, re
 // server/directMessages.ts for the reachability rules enforced here.
 
 const directMessageDeps = {
-  // Never the generic "first owned vault": that one may be public or shared,
-  // which would hand the conversation to everyone in it.
-  homeVaultId: (userId: number): string => (
-    findDirectMessageVaultId(db, userId) ?? createVault(db, userId, { name: 'Direct Messages' }).id
-  ),
+  // Only ever *creates* a vault. Which vault a DM lands in is decided by
+  // `user_dm_vaults` inside the module, so no route can steer a conversation
+  // into a notebook that is public, shared, or shareable later.
+  createVault: (userId: number, name: string): string => createVault(db, userId, { name }).id,
   onChannelCreated: (input: { vaultId: string; channelId: string; title: string }) => {
     emitVaultEvent(input.vaultId, 'vault:noteCreated', {
       noteId: input.channelId,
@@ -3955,41 +4023,44 @@ app.get('/api/me/blocks', requireAuth, (req: AuthedRequest, res) => {
   res.json({ blocks: listBlockedUsers(db, req.user!.id) });
 });
 
-app.post('/api/me/blocks', requireAuth, requireUserAccess, (req: AuthedRequest, res) => {
+app.post('/api/me/blocks', requireAuth, requireUserAccess, usernameActionRateLimit, (req: AuthedRequest, res) => {
   try {
     const target = resolveUserByUsername(db, req.body?.username);
     const block = blockUser(db, req.user!.id, target.id);
     res.status(201).json({ block });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Could not block user';
-    res.status(message === 'User not found' ? 404 : 400).json({ error: message });
+    // Never confirm whether the username exists; 'You cannot block yourself'
+    // is about the caller's own account, so it stays as written.
+    if (message === 'User not found') return res.status(403).json({ error: UNREACHABLE_USER_MESSAGE });
+    res.status(400).json({ error: message });
   }
 });
 
-app.delete('/api/me/blocks/:username', requireAuth, requireUserAccess, (req: AuthedRequest, res) => {
+app.delete('/api/me/blocks/:username', requireAuth, requireUserAccess, usernameActionRateLimit, (req: AuthedRequest, res) => {
   try {
     const target = resolveUserByUsername(db, req.params.username);
     unblockUser(db, req.user!.id, target.id);
-    res.json({ ok: true });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Could not unblock user';
-    res.status(message === 'User not found' ? 404 : 400).json({ error: message });
+  } catch {
+    // Unblocking someone who does not exist is already a no-op. Reporting it
+    // as one keeps the route from confirming which usernames are registered.
   }
+  res.json({ ok: true });
 });
 
 app.get('/api/me/direct-messages', requireAuth, (req: AuthedRequest, res) => {
   res.json({ conversations: listDirectMessages(db, req.user!.id) });
 });
 
-app.post('/api/direct-messages', requireAuth, requireUserAccess, (req: AuthedRequest, res) => {
+app.post('/api/direct-messages', requireAuth, requireUserAccess, usernameActionRateLimit, (req: AuthedRequest, res) => {
   try {
     const result = openDirectMessage(db, req.user!.id, req.body?.username, directMessageDeps);
     res.status(result.created ? 201 : 200).json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Could not open direct message';
-    if (message === 'User not found') return res.status(404).json({ error: message });
-    // Blocked or DMs switched off — a refusal, not a malformed request.
-    if (message.startsWith('Unblock @') || message === 'This user is not accepting direct messages') {
+    // Unknown account, blocked, or DMs switched off — one refusal for all
+    // three, so the status code cannot be used to enumerate usernames.
+    if (message.startsWith('Unblock @') || message === UNREACHABLE_USER_MESSAGE) {
       return res.status(403).json({ error: message });
     }
     res.status(400).json({ error: message });
@@ -4023,13 +4094,15 @@ function serveInviteOembed(req: Request, res: Response): boolean {
   if (!token) return false;
 
   try {
-    const invite = verifyChatInvite(token);
-    const channel = getNote(db, invite.sourceChannelId);
-    const vault = db.prepare('SELECT id, name, created_by FROM vaults WHERE id = ?').get(invite.sourceVaultId) as { id: string; name: string; created_by: number } | undefined;
-    if (!channel || !vault || channel.vault_id !== vault.id || !channel.content.trim().startsWith(CHAT_NOTE_MARKER)) {
+    const resolved = resolveChatInvite(token);
+    const vault = resolved
+      ? db.prepare('SELECT id, name, created_by FROM vaults WHERE id = ?').get(resolved.vaultId) as { id: string; name: string; created_by: number } | undefined
+      : undefined;
+    if (!resolved || !vault) {
       res.status(404).json({ error: 'Invite not found' });
       return true;
     }
+    const channel = resolved.channel;
     const owner = db.prepare('SELECT username FROM users WHERE id = ?').get(vault.created_by) as { username: string } | undefined;
     const inviteUrl = `${base}/invite/${encodeURIComponent(token)}`;
     const title = `Join #${channel.title} on Cascade`;

@@ -6,23 +6,30 @@ import path from 'node:path';
 import Database from 'better-sqlite3';
 import {
   allowsDirectMessages,
+  assertChannelPushAllowed,
   assertDirectMessageSendAllowed,
+  assertShareableChatChannel,
   blockUser,
   directMessagePermission,
+  DIRECT_MESSAGE_VAULT_NAME,
   ensureDirectMessageSchema,
-  findDirectMessageVaultId,
+  ensureDirectMessageVaultId,
+  getDirectMessageVaultId,
   isBlocked,
+  isDirectMessageChannel,
+  isDirectMessageVault,
   listBlockedUsers,
   listDirectMessages,
   openDirectMessage,
   resolveUserByUsername,
   setAllowDirectMessages,
   unblockUser,
+  UNREACHABLE_USER_MESSAGE,
   vaultHoldsDirectMessages,
 } from './directMessages.js';
 import { ensurePublicVaultSchema, setVaultVisibility } from './publicVaults.js';
-import { assertChatChannel, ensureChatSchema, isChatChannelNote } from './chat.js';
-import { deleteNote, getNote } from './vault.js';
+import { assertChatChannel, CHAT_NOTE_MARKER, ensureChatSchema, isChatChannelNote } from './chat.js';
+import { createNote, deleteNote, getNote } from './vault.js';
 import { ensureVaultMembersSchema } from './vaultMembers.js';
 
 const USERS = [
@@ -34,6 +41,16 @@ const USERS = [
 /** Pair rows are the "is this one conversation?" invariant under test. */
 function pairCount(db: Database.Database): number {
   return (db.prepare('SELECT COUNT(*) AS n FROM direct_message_channels').get() as { n: number }).n;
+}
+
+/** The message a refused call produced — the thing that must not vary. */
+function refusal(fn: () => unknown): string {
+  try {
+    fn();
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+  return assert.fail('expected the call to be refused');
 }
 
 function setup() {
@@ -97,18 +114,36 @@ function setup() {
   ensureDirectMessageSchema(db);
 
   const created: Array<{ vaultId: string; channelId: string; userId: number }> = [];
+  // Stands in for the real `createVault`: a brand-new vault owned solely by
+  // the caller. The module decides *which* vault a DM uses; deps only make one.
+  let vaultSeq = 0;
   const deps = {
-    homeVaultId: (userId: number) => {
-      const user = USERS.find((candidate) => candidate.id === userId);
-      if (!user) throw new Error(`no vault for user ${userId}`);
-      return `v-${user.username}`;
+    createVault: (userId: number, name: string) => {
+      const id = `v-new-${++vaultSeq}`;
+      const vaultRoot = path.join(root, id);
+      fs.mkdirSync(vaultRoot, { recursive: true });
+      insertVault.run(id, name, vaultRoot, userId);
+      db.prepare("INSERT INTO vault_members (vault_id, user_id, role) VALUES (?, ?, 'owner')").run(id, userId);
+      return id;
     },
     onChannelCreated: (input: { vaultId: string; channelId: string; title: string; userId: number }) => {
       created.push({ vaultId: input.vaultId, channelId: input.channelId, userId: input.userId });
     },
   };
 
-  return { db, deps, created, cleanup: () => { db.close(); fs.rmSync(root, { recursive: true, force: true }); } };
+  /** The DM vault the module picked for this account; fails loudly if none. */
+  const dmVault = (userId: number): string => {
+    const vaultId = getDirectMessageVaultId(db, userId);
+    assert.ok(vaultId, `expected a DM vault for user ${userId}`);
+    return vaultId;
+  };
+
+  return { db, deps, created, dmVault, cleanup: () => { db.close(); fs.rmSync(root, { recursive: true, force: true }); } };
+}
+
+/** The notebook vault each user starts with, which DMs must never land in. */
+function notebookVault(username: string): string {
+  return `v-${username}`;
 }
 
 test('usernames resolve case-insensitively and tolerate a leading @', () => {
@@ -126,12 +161,12 @@ test('usernames resolve case-insensitively and tolerate a leading @', () => {
 });
 
 test('opening a DM creates one chat channel per side, linked to the initiator source', () => {
-  const { db, deps, created, cleanup } = setup();
+  const { db, deps, created, dmVault, cleanup } = setup();
   try {
     const result = openDirectMessage(db, 1, '@bob', deps);
     assert.equal(result.created, true);
     assert.equal(result.user.username, 'bob');
-    assert.equal(result.vaultId, 'v-alice');
+    assert.equal(result.vaultId, dmVault(1));
     assert.equal(result.title, 'DM — @bob');
 
     // Both notes are real chat channels, so every chat feature applies unchanged.
@@ -139,13 +174,13 @@ test('opening a DM creates one chat channel per side, linked to the initiator so
     assert.equal(isChatChannelNote(source), true);
     assert.equal(created.length, 2);
     const mirror = created.find((entry) => entry.userId === 2)!;
-    assert.equal(mirror.vaultId, 'v-bob');
+    assert.equal(mirror.vaultId, dmVault(2));
     assert.equal(getNote(db, mirror.channelId)!.title, 'DM — @alice');
 
     // Bob reaches the same source channel through the existing link table.
     const route = assertChatChannel(db, mirror.channelId, 2).route;
     assert.equal(route.sourceChannelId, result.channelId);
-    assert.equal(route.sourceVaultId, 'v-alice');
+    assert.equal(route.sourceVaultId, dmVault(1));
 
     // Neither side can reach the other's private local note.
     assert.throws(() => assertChatChannel(db, result.channelId, 2), /not found/);
@@ -156,7 +191,7 @@ test('opening a DM creates one chat channel per side, linked to the initiator so
 });
 
 test('a DM pair is one conversation no matter which side asks again', () => {
-  const { db, deps, created, cleanup } = setup();
+  const { db, deps, created, dmVault, cleanup } = setup();
   try {
     const first = openDirectMessage(db, 1, 'bob', deps);
     created.length = 0;
@@ -168,7 +203,7 @@ test('a DM pair is one conversation no matter which side asks again', () => {
     // Bob asking for a DM with alice gets his mirror, not a second thread.
     const bobsView = openDirectMessage(db, 2, 'alice', deps);
     assert.equal(bobsView.created, false);
-    assert.equal(bobsView.vaultId, 'v-bob');
+    assert.equal(bobsView.vaultId, dmVault(2));
     assert.notEqual(bobsView.channelId, first.channelId);
     assert.equal(assertChatChannel(db, bobsView.channelId, 2).route.sourceChannelId, first.channelId);
     assert.deepEqual(created, []);
@@ -181,7 +216,7 @@ test('a DM pair is one conversation no matter which side asks again', () => {
 });
 
 test('deleting your own copy re-links you to the same conversation', () => {
-  const { db, deps, cleanup } = setup();
+  const { db, deps, dmVault, cleanup } = setup();
   try {
     const first = openDirectMessage(db, 1, 'bob', deps);
     const bobsView = openDirectMessage(db, 2, 'alice', deps);
@@ -191,7 +226,7 @@ test('deleting your own copy re-links you to the same conversation', () => {
 
     const rejoined = openDirectMessage(db, 2, 'alice', deps);
     assert.equal(rejoined.created, false);
-    assert.equal(rejoined.vaultId, 'v-bob');
+    assert.equal(rejoined.vaultId, dmVault(2));
     assert.equal(assertChatChannel(db, rejoined.channelId, 2).route.sourceChannelId, first.channelId);
     // Still one pair row, so no forked history.
     assert.equal(pairCount(db), 1);
@@ -301,59 +336,206 @@ test('directMessagePermission reports the same refusal for a block and a closed 
   }
 });
 
-test('DM channels never land in a public or shared vault', () => {
-  const { db, cleanup } = setup();
+test('DM channels land in a dedicated vault, never in an existing notebook', () => {
+  const { db, deps, dmVault, cleanup } = setup();
   try {
-    ensurePublicVaultSchema(db);
-    db.prepare("INSERT INTO vaults (id, name, root_path, created_by) VALUES ('v-alice-2', 'Second', '', 1)").run();
-    db.prepare("INSERT INTO vault_members (vault_id, user_id, role) VALUES ('v-alice-2', 1, 'owner')").run();
+    const opened = openDirectMessage(db, 1, 'bob', deps);
 
-    // Oldest private solo vault wins.
-    assert.equal(findDirectMessageVaultId(db, 1), 'v-alice');
+    // Both sides got a purpose-made vault, not the notebook they already own.
+    for (const userId of [1, 2]) {
+      const vaultId = dmVault(userId);
+      assert.notEqual(vaultId, notebookVault(USERS[userId - 1].username));
+      const vault = db.prepare('SELECT name, created_by FROM vaults WHERE id = ?')
+        .get(vaultId) as { name: string; created_by: number };
+      assert.equal(vault.name, DIRECT_MESSAGE_VAULT_NAME);
+      assert.equal(vault.created_by, userId);
+      assert.equal(isDirectMessageVault(db, vaultId), true);
+    }
+    assert.equal(opened.vaultId, dmVault(1));
+    assert.equal(isDirectMessageVault(db, notebookVault('alice')), false);
 
-    // Publishing it takes it out of the running.
-    setVaultVisibility(db, 'v-alice', 1, { visibility: 'public' });
-    assert.equal(findDirectMessageVaultId(db, 1), 'v-alice-2');
+    // The notebook stays free of DM notes.
+    const notebookNotes = db.prepare('SELECT COUNT(*) AS n FROM notes WHERE vault_id = ?')
+      .get(notebookVault('alice')) as { n: number };
+    assert.equal(notebookNotes.n, 0);
 
-    // So does inviting anyone into it.
-    db.prepare("INSERT INTO vault_members (vault_id, user_id, role) VALUES ('v-alice-2', 2, 'editor')").run();
-    assert.equal(findDirectMessageVaultId(db, 1), null);
-
-    // A vault someone else owns is never a candidate, whatever the role.
-    assert.equal(findDirectMessageVaultId(db, 3), 'v-carol');
+    // The mapping is durable: a second conversation reuses the same vault.
+    const withCarol = openDirectMessage(db, 1, 'carol', deps);
+    assert.equal(withCarol.vaultId, dmVault(1));
   } finally {
     cleanup();
   }
 });
 
-test('vaultHoldsDirectMessages sees both the source vault and the mirror vault', () => {
+test('a DM vault that has been shared or published is replaced, not reused', () => {
+  const { db, deps, dmVault, cleanup } = setup();
+  try {
+    ensurePublicVaultSchema(db);
+    openDirectMessage(db, 1, 'bob', deps);
+    const original = dmVault(1);
+
+    // Someone was let into the DM vault out of band: future DMs must not follow.
+    db.prepare("INSERT INTO vault_members (vault_id, user_id, role) VALUES (?, 3, 'editor')").run(original);
+    const afterShare = ensureDirectMessageVaultId(db, 1, deps);
+    assert.notEqual(afterShare, original);
+    assert.equal(getDirectMessageVaultId(db, 1), afterShare);
+
+    // Same for a vault that was made public behind the mapping's back.
+    db.prepare("UPDATE vaults SET visibility = 'public' WHERE id = ?").run(afterShare);
+    const afterPublish = ensureDirectMessageVaultId(db, 1, deps);
+    assert.notEqual(afterPublish, afterShare);
+
+    // The original conversation is untouched and still reachable.
+    const conversations = listDirectMessages(db, 1);
+    assert.equal(conversations.length, 1);
+    assert.equal(conversations[0].vaultId, original);
+  } finally {
+    cleanup();
+  }
+});
+
+test('an existing DM-only vault is adopted on migration, a mixed notebook is not', () => {
   const { db, deps, cleanup } = setup();
   try {
-    assert.equal(vaultHoldsDirectMessages(db, 'v-alice'), false);
+    // Simulate the pre-migration world: DMs living in the users' notebooks.
     openDirectMessage(db, 1, 'bob', deps);
-    assert.equal(vaultHoldsDirectMessages(db, 'v-alice'), true);
-    assert.equal(vaultHoldsDirectMessages(db, 'v-bob'), true);
-    assert.equal(vaultHoldsDirectMessages(db, 'v-carol'), false);
+    const aliceDm = getDirectMessageVaultId(db, 1)!;
+    const bobDm = getDirectMessageVaultId(db, 2)!;
+    db.prepare('UPDATE notes SET vault_id = ? WHERE vault_id = ?').run(notebookVault('alice'), aliceDm);
+    db.prepare('UPDATE notes SET vault_id = ? WHERE vault_id = ?').run(notebookVault('bob'), bobDm);
+    db.prepare('UPDATE direct_message_channels SET source_vault_id = ?').run(notebookVault('alice'));
+    db.prepare('UPDATE chat_channel_links SET local_vault_id = ? WHERE local_vault_id = ?')
+      .run(notebookVault('bob'), bobDm);
+    db.prepare('DELETE FROM user_dm_vaults').run();
+
+    // Alice's notebook also holds an ordinary note; bob's holds only the DM.
+    db.prepare(`
+      INSERT INTO notes (id, vault_id, title, content, created_by)
+      VALUES ('n-plan', ?, 'Plan', 'not a chat', 1)
+    `).run(notebookVault('alice'));
+
+    ensureDirectMessageSchema(db);
+
+    // Bob's DM-only vault is adopted; alice's mixed notebook is left alone.
+    assert.equal(getDirectMessageVaultId(db, 2), notebookVault('bob'));
+    assert.equal(getDirectMessageVaultId(db, 1), null);
+
+    // Both sides still see the conversation they already had.
+    assert.equal(listDirectMessages(db, 1)[0].vaultId, notebookVault('alice'));
+    assert.equal(listDirectMessages(db, 2)[0].vaultId, notebookVault('bob'));
+
+    // Alice's next DM moves to a dedicated vault; the old one stays put.
+    const withCarol = openDirectMessage(db, 1, 'carol', deps);
+    assert.notEqual(withCarol.vaultId, notebookVault('alice'));
+    assert.equal(listDirectMessages(db, 1).find((c) => c.user.username === 'bob')!.vaultId, notebookVault('alice'));
+  } finally {
+    cleanup();
+  }
+});
+
+test('vaultHoldsDirectMessages sees the source vault, the mirror vault, and an empty DM vault', () => {
+  const { db, deps, dmVault, cleanup } = setup();
+  try {
+    assert.equal(vaultHoldsDirectMessages(db, notebookVault('alice')), false);
+    openDirectMessage(db, 1, 'bob', deps);
+    assert.equal(vaultHoldsDirectMessages(db, dmVault(1)), true);
+    assert.equal(vaultHoldsDirectMessages(db, dmVault(2)), true);
+    assert.equal(vaultHoldsDirectMessages(db, notebookVault('alice')), false);
+    assert.equal(vaultHoldsDirectMessages(db, notebookVault('carol')), false);
+
+    // A registered DM vault is off limits even before it holds a channel.
+    const carolVault = ensureDirectMessageVaultId(db, 3, deps);
+    assert.equal(vaultHoldsDirectMessages(db, carolVault), true);
+  } finally {
+    cleanup();
+  }
+});
+
+test('DM channels are never shareable, on either side of the pair', () => {
+  const { db, deps, created, cleanup } = setup();
+  try {
+    const opened = openDirectMessage(db, 1, 'bob', deps);
+    const mirror = created.find((entry) => entry.userId === 2)!;
+
+    assert.equal(isDirectMessageChannel(db, opened.channelId), true);
+    assert.equal(isDirectMessageChannel(db, mirror.channelId), true);
+    assert.throws(() => assertShareableChatChannel(db, opened.channelId), /cannot be shared/);
+    // The mirror matters too: bob owns it, so he could otherwise mint a link.
+    assert.throws(() => assertShareableChatChannel(db, mirror.channelId), /cannot be shared/);
+
+    // An ordinary chat channel is unaffected.
+    const ordinary = createNote(db, notebookVault('alice'), 1, {
+      title: 'standup',
+      content: `${CHAT_NOTE_MARKER}\n`,
+    });
+    assert.equal(isDirectMessageChannel(db, ordinary.id), false);
+    assert.doesNotThrow(() => assertShareableChatChannel(db, ordinary.id));
+  } finally {
+    cleanup();
+  }
+});
+
+test('a block stops a channel being pushed into the other account by username', () => {
+  const { db, cleanup } = setup();
+  try {
+    assert.doesNotThrow(() => assertChannelPushAllowed(db, 1, 2));
+
+    // Either direction of the block stops the push, with the same refusal a
+    // nonexistent username gets, so the route cannot enumerate accounts.
+    blockUser(db, 2, 1);
+    assert.throws(() => assertChannelPushAllowed(db, 1, 2), new RegExp(UNREACHABLE_USER_MESSAGE));
+    assert.throws(() => assertChannelPushAllowed(db, 2, 1), new RegExp(UNREACHABLE_USER_MESSAGE));
+
+    unblockUser(db, 2, 1);
+    blockUser(db, 1, 2);
+    assert.throws(() => assertChannelPushAllowed(db, 1, 2), new RegExp(UNREACHABLE_USER_MESSAGE));
+
+    // A third party is untouched: blocks are not global visibility.
+    assert.doesNotThrow(() => assertChannelPushAllowed(db, 1, 3));
+    assert.doesNotThrow(() => assertChannelPushAllowed(db, 2, 3));
+  } finally {
+    cleanup();
+  }
+});
+
+test('an unknown username is refused exactly like an unreachable one', () => {
+  const { db, deps, cleanup } = setup();
+  try {
+    setAllowDirectMessages(db, 2, false);
+    // A closed inbox, an account that does not exist, and a malformed handle
+    // are indistinguishable to the caller.
+    assert.equal(refusal(() => openDirectMessage(db, 1, 'bob', deps)), UNREACHABLE_USER_MESSAGE);
+    assert.equal(refusal(() => openDirectMessage(db, 1, 'nobody', deps)), UNREACHABLE_USER_MESSAGE);
+    assert.equal(refusal(() => openDirectMessage(db, 1, '%', deps)), UNREACHABLE_USER_MESSAGE);
+
+    // A block by the target reads the same as all three.
+    setAllowDirectMessages(db, 2, true);
+    blockUser(db, 2, 1);
+    assert.equal(refusal(() => openDirectMessage(db, 1, 'bob', deps)), UNREACHABLE_USER_MESSAGE);
+
+    // Nothing was created for any of the refused attempts.
+    assert.equal(pairCount(db), 0);
+    assert.equal(getDirectMessageVaultId(db, 1), null);
   } finally {
     cleanup();
   }
 });
 
 test('the conversation list is per-user and shows each side its own channel', () => {
-  const { db, deps, cleanup } = setup();
+  const { db, deps, dmVault, cleanup } = setup();
   try {
     const withBob = openDirectMessage(db, 1, 'bob', deps);
     const withCarol = openDirectMessage(db, 1, 'carol', deps);
 
     const alices = listDirectMessages(db, 1);
     assert.deepEqual(alices.map((entry) => entry.user.username).sort(), ['bob', 'carol']);
-    assert.equal(alices.every((entry) => entry.vaultId === 'v-alice'), true);
+    assert.equal(alices.every((entry) => entry.vaultId === dmVault(1)), true);
     assert.equal(alices.find((entry) => entry.user.username === 'bob')!.channelId, withBob.channelId);
 
     const bobs = listDirectMessages(db, 2);
     assert.equal(bobs.length, 1);
     assert.equal(bobs[0].user.username, 'alice');
-    assert.equal(bobs[0].vaultId, 'v-bob');
+    assert.equal(bobs[0].vaultId, dmVault(2));
     assert.notEqual(bobs[0].channelId, withBob.channelId);
 
     assert.equal(listDirectMessages(db, 3)[0].user.username, 'alice');
