@@ -106,18 +106,14 @@ export function resolveChatAgentTargets(
   const explicitlyCallsSpecialist = registrations.some((registration) => (
     !registration.orchestrator && explicitlyMentioned.has(registration.id)
   ));
-  const sourceOwner = db.prepare('SELECT created_by FROM vaults WHERE id = ?')
-    .get(route.sourceVaultId) as { created_by: number } | undefined;
-  const requesterIsOwner = sourceOwner?.created_by === userId;
   const selected: ChatAgentRegistration[] = [];
   const seen = new Set<string>();
 
   for (const registration of registrations) {
     if (registration.id === message.registrationId) continue;
-    // A shared-channel guest cannot create an outbox item they are forbidden
-    // to launch. This avoids a permanently pending dispatch and a failed ghost
-    // bubble on every connected renderer.
-    if (!fromAgent && !requesterIsOwner && registration.ownerUserId !== userId && !registration.pingableByOthers) continue;
+    // No human gets implicit authority over another person's agent, including
+    // the channel owner. Cross-user runs require the agent owner's opt-in.
+    if (!fromAgent && registration.ownerUserId !== userId && !registration.pingableByOthers) continue;
     // Ordinary agent prose never overrides the target's opt-in. Coordinator
     // authority crosses this boundary only through the explicit mission API,
     // which prevents a synthesis that names @worker from launching it again.
@@ -256,9 +252,6 @@ export function listPendingChatAgentDispatches(
   channelId: string,
 ): ChatAgentDispatch[] {
   const { route } = assertChatChannel(db, channelId, userId);
-  const sourceOwner = db.prepare('SELECT created_by FROM vaults WHERE id = ?')
-    .get(route.sourceVaultId) as { created_by: number } | undefined;
-  const requesterIsOwner = sourceOwner?.created_by === userId;
   const rows = db.prepare(`
     SELECT * FROM chat_agent_dispatches
     WHERE channel_id = ? AND run_id IS NULL
@@ -268,8 +261,7 @@ export function listPendingChatAgentDispatches(
     .map((row) => hydrateDispatch(db, userId, channelId, row))
     .filter((item): item is ChatAgentDispatch => Boolean(
       item && (
-        requesterIsOwner
-        || item.registration.ownerUserId === userId
+        item.registration.ownerUserId === userId
         || item.registration.pingableByOthers
       ),
     ));

@@ -928,17 +928,13 @@ function emitChatMessageEvent(
       && message.body.trim() !== ''
       && message.body.trim() !== 'Thinking...');
   if (countable) emitCommunityChangedForChannel(sourceVaultId, sourceChannelId);
-  const sourceOwner = db.prepare('SELECT created_by FROM vaults WHERE id = ?')
-    .get(sourceVaultId) as { created_by: number } | undefined;
   for (const route of listChatChannelRoutes(db, sourceVaultId, sourceChannelId)) {
     const localOwner = db.prepare('SELECT created_by FROM vaults WHERE id = ?')
       .get(route.localVaultId) as { created_by: number } | undefined;
-    const routeDispatches = localOwner?.created_by === sourceOwner?.created_by
-      ? dispatches
-      : dispatches.filter((dispatch) => (
-        dispatch.registration.ownerUserId === localOwner?.created_by
-        || dispatch.registration.pingableByOthers
-      ));
+    const routeDispatches = dispatches.filter((dispatch) => (
+      dispatch.registration.ownerUserId === localOwner?.created_by
+      || dispatch.registration.pingableByOthers
+    ));
     emitVaultEvent(route.localVaultId, event, {
       vaultId: route.localVaultId,
       channelId: route.localChannelId,

@@ -625,6 +625,20 @@ test('shared-channel users can add their own coordinator without controlling ano
       listPendingChatAgentDispatches(db, 2, 'channel-2').map((item) => item.registration.id),
       [guestCoordinator.id],
     );
+
+    const ownerCrossPing = createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: 'owner-cross-ping', channelId: 'channel-1', author: 'owner', body: '@guest-sol answer this.',
+      createdAt: '2026-08-03T00:00:03.000Z',
+    });
+    assert.deepEqual(
+      resolveChatAgentTargets(db, 1, 'channel-1', ownerCrossPing).map((item) => item.id),
+      [coordinator.id],
+    );
+    db.prepare('UPDATE chat_agent_members SET pingable_by_others = 1 WHERE id = ?').run(guestCoordinator.id);
+    assert.deepEqual(
+      resolveChatAgentTargets(db, 1, 'channel-1', ownerCrossPing).map((item) => item.id).sort(),
+      [coordinator.id, guestCoordinator.id].sort(),
+    );
   } finally {
     db.close();
   }
