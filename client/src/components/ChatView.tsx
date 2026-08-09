@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { Bot, ChevronRight, ClipboardList, Copy, Flag, Forward, Hash, History, ImagePlus, Paperclip, Reply, Send, Trash2, X } from 'lucide-react';
+import { Bot, ChevronRight, ClipboardList, Copy, Flag, Forward, Hash, History, ImagePlus, Paperclip, Reply, Send, Smile, Trash2, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
@@ -30,6 +30,7 @@ import { useChannelMessages } from '../chat/messageStore';
 export const CHAT_NOTE_MARKER = 'cascade://chat-channel';
 export const CHAT_MEDIA_LIMIT = 8;
 export const CHAT_MEDIA_MAX_BYTES = 8 * 1024 * 1024;
+const CHAT_EMOJIS = ['😀', '😂', '😍', '🥳', '😎', '🤔', '👍', '👎', '❤️', '🔥', '🎉', '✅', '👀', '🙏', '💎', '🚀'];
 
 const CUSTOM_MODEL_VALUE = '__custom__';
 
