@@ -586,8 +586,8 @@ test('an explicit specialist call takes the zero-hop route instead of also runni
   }
 });
 
-test('explicit coordinator pings are distinguishable from ordinary turns', () => {
-  const { db, coordinator } = setup();
+test('explicit owned-agent pings are distinguishable and can root missions', () => {
+  const { db, coordinator, worker } = setup();
   try {
     const direct = createChatMessage(db, 1, 'vault-1', 'channel-1', {
       id: 'direct-coordinator', channelId: 'channel-1', author: 'owner', body: '@sol finish this',
@@ -599,6 +599,12 @@ test('explicit coordinator pings are distinguishable from ordinary turns', () =>
     });
     assert.equal(explicitlyMentionsChatAgent(direct, coordinator), true);
     assert.equal(explicitlyMentionsChatAgent(ordinary, coordinator), false);
+    const workerMission = createChatMission(db, 1, 'vault-1', 'channel-1', {
+      rootMessageId: direct.id,
+      coordinatorRegistrationId: worker.id,
+      title: 'Durable direct task',
+    });
+    assert.equal(workerMission.mission.coordinator, worker.displayName);
   } finally {
     db.close();
   }

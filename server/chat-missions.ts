@@ -536,9 +536,7 @@ function assertCoordinator(
   registrationId: string,
 ): ChatAgentRegistration {
   const registration = findRegistration(db, userId, channelId, registrationId);
-  if (!registration || !registration.orchestrator) {
-    throw new Error('This agent is not the channel coordinator');
-  }
+  if (!registration) throw new Error('Mission agent not found');
   const { route } = assertChatChannel(db, channelId, userId);
   const owner = db.prepare(`
     SELECT va.owner_user_id AS owner_user_id
@@ -547,7 +545,7 @@ function assertCoordinator(
     WHERE m.id = ? AND m.channel_id = ?
   `).get(registration.id, route.sourceChannelId) as { owner_user_id: number } | undefined;
   if (!owner || owner.owner_user_id !== userId) {
-    throw new Error('Only the coordinator owner can operate its mission');
+    throw new Error('Only the agent owner can operate its mission');
   }
   return registration;
 }

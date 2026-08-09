@@ -3545,8 +3545,7 @@ app.post('/api/vaults/:vaultId/channels/:channelId/messages', requireAuth, (req:
     // infer this authority over another user's coordinator in a shared room.
     if (!isAgentRequest(req)) {
       const coordinator = listChatAgentMembers(db, req.params.channelId, req.user!.id)
-        .find((agent) => agent.orchestrator
-          && agent.ownerUserId === req.user!.id
+        .find((agent) => agent.ownerUserId === req.user!.id
           && explicitlyMentionsChatAgent(message, agent));
       if (coordinator) {
         const title = message.body.trim().slice(0, 180) || `Task for ${coordinator.displayName}`;
