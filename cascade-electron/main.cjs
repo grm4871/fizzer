@@ -64,8 +64,8 @@ function isDevelopmentMode() {
 }
 
 /**
- * Application menu. No Debug menu — reload/devtools/zoom live on keyboard
- * shortcuts in configureWindow (Ctrl/Cmd+R, etc.).
+ * Application menu. No Debug menu — reload, DevTools, and zoom live on
+ * keyboard shortcuts in configureWindow (Ctrl/Cmd+R, Ctrl/Cmd+Shift+I, etc.).
  *
  * macOS still needs App/Edit/Window roles so Cmd+C/V/X/A work. Linux/Windows
  * get no menu bar (clipboard works on webContents without Edit roles).
@@ -313,6 +313,9 @@ function configureWindow(win) {
       event.preventDefault();
       app.relaunch();
       app.quit();
+    } else if ((modifier && input.shift && input.code === 'KeyI') || input.code === 'F12') {
+      event.preventDefault();
+      win.webContents.toggleDevTools();
     } else if (modifier && (input.code === 'Equal' || input.code === 'NumpadAdd')) {
       event.preventDefault();
       win.webContents.setZoomLevel(win.webContents.getZoomLevel() + 0.5);
