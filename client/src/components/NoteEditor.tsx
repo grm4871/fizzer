@@ -1424,65 +1424,41 @@ export function buildDecorations(
       inlineStart = listMatch[0].length;
     }
 
-    // Bold: **text**
-    let boldIdx = text.indexOf('**', inlineStart);
-    while (boldIdx !== -1) {
-      const endBold = text.indexOf('**', boldIdx + 2);
-      if (endBold !== -1 && endBold > boldIdx + 2) {
-        collectDeco(line.from + boldIdx, line.from + boldIdx + 2, hidden);
-        collectDeco(line.from + boldIdx + 2, line.from + endBold, boldDeco);
-        collectDeco(line.from + endBold, line.from + endBold + 2, hidden);
-        boldIdx = text.indexOf('**', endBold + 2);
-      } else {
-        break;
-      }
-    }
-
-    // Italic: *text* (but ignore bold **)
-    let italicIdx = text.indexOf('*', inlineStart);
-    while (italicIdx !== -1) {
-      if (text[italicIdx + 1] !== '*' && text[italicIdx - 1] !== '*') {
-        const endItalic = text.indexOf('*', italicIdx + 1);
-        if (endItalic !== -1 && endItalic > italicIdx + 1 && text[endItalic + 1] !== '*' && text[endItalic - 1] !== '*') {
-          collectDeco(line.from + italicIdx, line.from + italicIdx + 1, hidden);
-          collectDeco(line.from + italicIdx + 1, line.from + endItalic, italicDeco);
-          collectDeco(line.from + endItalic, line.from + endItalic + 1, hidden);
-          italicIdx = text.indexOf('*', endItalic + 1);
-          continue;
+    // Paired inline delimiters: hide the open/close markers and style the span
+    // between them. `strict` rejects empty spans; `breakOnFail` stops at the
+    // first unmatched opener; `okStart`/`okEnd` are per-delimiter guards.
+    const scanInline = (
+      open: string,
+      close: string,
+      deco: typeof hidden,
+      opts: { strict?: boolean; breakOnFail?: boolean; okStart?: (i: number) => boolean; okEnd?: (i: number) => boolean } = {},
+    ) => {
+      const { strict = true, breakOnFail = false, okStart, okEnd } = opts;
+      let idx = text.indexOf(open, inlineStart);
+      while (idx !== -1) {
+        if (!okStart || okStart(idx)) {
+          const end = text.indexOf(close, idx + open.length);
+          const longEnough = strict ? end > idx + open.length : end >= idx + open.length;
+          if (end !== -1 && longEnough && (!okEnd || okEnd(end))) {
+            collectDeco(line.from + idx, line.from + idx + open.length, hidden);
+            collectDeco(line.from + idx + open.length, line.from + end, deco);
+            collectDeco(line.from + end, line.from + end + close.length, hidden);
+            idx = text.indexOf(open, end + close.length);
+            continue;
+          }
         }
+        if (breakOnFail) break;
+        idx = text.indexOf(open, idx + open.length);
       }
-      italicIdx = text.indexOf('*', italicIdx + 1);
-    }
+    };
 
-    // Inline Code: `code`
-    let codeIdx = text.indexOf('`', inlineStart);
-    while (codeIdx !== -1) {
-      if (text[codeIdx + 1] !== '`') {
-        const endCode = text.indexOf('`', codeIdx + 1);
-        if (endCode !== -1 && endCode > codeIdx + 1) {
-          collectDeco(line.from + codeIdx, line.from + codeIdx + 1, hidden);
-          collectDeco(line.from + codeIdx + 1, line.from + endCode, codeDeco);
-          collectDeco(line.from + endCode, line.from + endCode + 1, hidden);
-          codeIdx = text.indexOf('`', endCode + 1);
-          continue;
-        }
-      }
-      codeIdx = text.indexOf('`', codeIdx + 1);
-    }
-
-    // Wikilinks: [[title]]
-    let wikiIdx = text.indexOf('[[', inlineStart);
-    while (wikiIdx !== -1) {
-      const endWiki = text.indexOf(']]', wikiIdx + 2);
-      if (endWiki !== -1) {
-        collectDeco(line.from + wikiIdx, line.from + wikiIdx + 2, hidden);
-        collectDeco(line.from + wikiIdx + 2, line.from + endWiki, wikilinkDeco);
-        collectDeco(line.from + endWiki, line.from + endWiki + 2, hidden);
-        wikiIdx = text.indexOf('[[', endWiki + 2);
-      } else {
-        break;
-      }
-    }
+    scanInline('**', '**', boldDeco, { breakOnFail: true }); // Bold
+    scanInline('*', '*', italicDeco, { // Italic (ignore bold **)
+      okStart: (i) => text[i + 1] !== '*' && text[i - 1] !== '*',
+      okEnd: (i) => text[i + 1] !== '*' && text[i - 1] !== '*',
+    });
+    scanInline('`', '`', codeDeco, { okStart: (i) => text[i + 1] !== '`' }); // Inline code
+    scanInline('[[', ']]', wikilinkDeco, { strict: false, breakOnFail: true }); // Wikilinks
 
     // External links: [text](https://...)
     let extIdx = text.indexOf('[', inlineStart);
@@ -1778,28 +1754,37 @@ export const NoteEditor = memo(function NoteEditor({ note, content, onContentCha
     });
   }, []);
 
-  const insertImageFromFile = useCallback(async (file: File, view?: EditorView, coords?: { x: number; y: number }) => {
+  const insertMediaFromFile = useCallback(async (
+    file: File,
+    config: {
+      accept: (file: File) => boolean;
+      maxBytes: number;
+      tooLargeLabel: string;
+      uploadingLabel: string;
+      mediaType: string;
+      buildMarkdown: (file: File, url: string) => string;
+      successLabel: string;
+      failLabel: string;
+    },
+    view?: EditorView,
+    coords?: { x: number; y: number },
+  ) => {
     const editorView = view ?? viewRef.current;
     if (!note?.id || !editorView) return false;
-    if (!file.type.startsWith('image/')) return false;
-    if (file.size > NOTE_IMAGE_MAX_BYTES) {
-      flashPublishNotice(`Image is too large (max ${NOTE_IMAGE_MAX_BYTES / (1024 * 1024)}MB)`);
+    if (!config.accept(file)) return false;
+    if (file.size > config.maxBytes) {
+      flashPublishNotice(`${config.tooLargeLabel} is too large (max ${config.maxBytes / (1024 * 1024)}MB)`);
       return false;
     }
 
-    flashPublishNotice('Uploading image...');
+    flashPublishNotice(`Uploading ${config.uploadingLabel}...`);
     try {
       const data = await readFileAsBase64(file);
       const result = await api<{ url: string }>(`/api/notes/${note.id}/assets`, {
         method: 'POST',
-        body: JSON.stringify({
-          media_type: file.type,
-          data,
-          filename: file.name,
-        }),
+        body: JSON.stringify({ media_type: config.mediaType, data, filename: file.name }),
       });
-      const alt = (file.name || 'image').replace(/\.[^.]+$/, '') || 'image';
-      const markdown = `![${alt}](${result.url})`;
+      const markdown = config.buildMarkdown(file, result.url);
       const pos = coords ? editorView.posAtCoords(coords) : null;
       const from = pos ?? editorView.state.selection.main.from;
       const to = pos ?? editorView.state.selection.main.to;
@@ -1812,85 +1797,52 @@ export const NoteEditor = memo(function NoteEditor({ note, content, onContentCha
         scrollIntoView: true,
       });
       editorView.focus();
-      flashPublishNotice('Image pasted');
+      flashPublishNotice(config.successLabel);
       return true;
     } catch (err) {
-      flashPublishNotice(err instanceof Error ? err.message : 'Image upload failed');
+      flashPublishNotice(err instanceof Error ? err.message : config.failLabel);
       return false;
     }
   }, [note, flashPublishNotice]);
 
-  const insertAudioFromFile = useCallback(async (file: File) => {
-    const editorView = viewRef.current;
-    if (!note?.id || !editorView) return false;
-    const isMp3 = file.type === 'audio/mpeg' || file.name.toLowerCase().endsWith('.mp3');
-    if (!isMp3) return false;
-    if (file.size > NOTE_AUDIO_MAX_BYTES) {
-      flashPublishNotice(`MP3 is too large (max ${NOTE_AUDIO_MAX_BYTES / (1024 * 1024)}MB)`);
-      return false;
-    }
-    flashPublishNotice('Uploading MP3...');
-    try {
-      const data = await readFileAsBase64(file);
-      const result = await api<{ url: string }>(`/api/notes/${note.id}/assets`, {
-        method: 'POST',
-        body: JSON.stringify({ media_type: 'audio/mpeg', data, filename: file.name }),
-      });
-      const label = file.name || 'audio.mp3';
-      const from = editorView.state.selection.main.from;
-      const to = editorView.state.selection.main.to;
-      const line = editorView.state.doc.lineAt(from);
-      const prefix = line.text.trim() ? '\n\n' : '';
-      const insert = `${prefix}[${label}](${result.url})\n`;
-      editorView.dispatch({
-        changes: { from, to, insert },
-        selection: { anchor: from + insert.length },
-        scrollIntoView: true,
-      });
-      editorView.focus();
-      flashPublishNotice('MP3 attached');
-      return true;
-    } catch (err) {
-      flashPublishNotice(err instanceof Error ? err.message : 'MP3 upload failed');
-      return false;
-    }
-  }, [note, flashPublishNotice]);
+  const insertImageFromFile = useCallback((file: File, view?: EditorView, coords?: { x: number; y: number }) =>
+    insertMediaFromFile(file, {
+      accept: (f) => f.type.startsWith('image/'),
+      maxBytes: NOTE_IMAGE_MAX_BYTES,
+      tooLargeLabel: 'Image',
+      uploadingLabel: 'image',
+      mediaType: file.type,
+      buildMarkdown: (f, url) => `![${(f.name || 'image').replace(/\.[^.]+$/, '') || 'image'}](${url})`,
+      successLabel: 'Image pasted',
+      failLabel: 'Image upload failed',
+    }, view, coords),
+  [insertMediaFromFile]);
 
-  const insertVideoFromFile = useCallback(async (file: File) => {
-    const editorView = viewRef.current;
-    if (!note?.id || !editorView) return false;
-    const isMp4 = file.type === 'video/mp4' || file.name.toLowerCase().endsWith('.mp4');
-    if (!isMp4) return false;
-    if (file.size > NOTE_AUDIO_MAX_BYTES) {
-      flashPublishNotice(`MP4 is too large (max ${NOTE_AUDIO_MAX_BYTES / (1024 * 1024)}MB)`);
-      return false;
-    }
-    flashPublishNotice('Uploading MP4...');
-    try {
-      const data = await readFileAsBase64(file);
-      const result = await api<{ url: string }>(`/api/notes/${note.id}/assets`, {
-        method: 'POST',
-        body: JSON.stringify({ media_type: 'video/mp4', data, filename: file.name }),
-      });
-      const label = file.name || 'video.mp4';
-      const from = editorView.state.selection.main.from;
-      const to = editorView.state.selection.main.to;
-      const line = editorView.state.doc.lineAt(from);
-      const prefix = line.text.trim() ? '\n\n' : '';
-      const insert = `${prefix}![${label}](${result.url})\n`;
-      editorView.dispatch({
-        changes: { from, to, insert },
-        selection: { anchor: from + insert.length },
-        scrollIntoView: true,
-      });
-      editorView.focus();
-      flashPublishNotice('MP4 embedded');
-      return true;
-    } catch (err) {
-      flashPublishNotice(err instanceof Error ? err.message : 'MP4 upload failed');
-      return false;
-    }
-  }, [note, flashPublishNotice]);
+  const insertAudioFromFile = useCallback((file: File) =>
+    insertMediaFromFile(file, {
+      accept: (f) => f.type === 'audio/mpeg' || f.name.toLowerCase().endsWith('.mp3'),
+      maxBytes: NOTE_AUDIO_MAX_BYTES,
+      tooLargeLabel: 'MP3',
+      uploadingLabel: 'MP3',
+      mediaType: 'audio/mpeg',
+      buildMarkdown: (f, url) => `[${f.name || 'audio.mp3'}](${url})`,
+      successLabel: 'MP3 attached',
+      failLabel: 'MP3 upload failed',
+    }),
+  [insertMediaFromFile]);
+
+  const insertVideoFromFile = useCallback((file: File) =>
+    insertMediaFromFile(file, {
+      accept: (f) => f.type === 'video/mp4' || f.name.toLowerCase().endsWith('.mp4'),
+      maxBytes: NOTE_AUDIO_MAX_BYTES,
+      tooLargeLabel: 'MP4',
+      uploadingLabel: 'MP4',
+      mediaType: 'video/mp4',
+      buildMarkdown: (f, url) => `![${f.name || 'video.mp4'}](${url})`,
+      successLabel: 'MP4 embedded',
+      failLabel: 'MP4 upload failed',
+    }),
+  [insertMediaFromFile]);
 
   insertImageFromFileRef.current = insertImageFromFile;
 

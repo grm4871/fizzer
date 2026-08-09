@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
 import { Flag, X } from 'lucide-react';
 import { api } from '../api';
 import { ModalShell } from './ModalShell';
@@ -26,12 +26,6 @@ export function ReportDialog({ vaultId, targetType, targetId, title, onClose }: 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [sent, setSent] = useState(false);
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [onClose]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();

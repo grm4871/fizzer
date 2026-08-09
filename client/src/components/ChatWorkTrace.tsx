@@ -6,7 +6,7 @@
  */
 
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ChevronRight, Forward, Reply } from 'lucide-react';
+import { ChevronRight, Reply } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
@@ -19,6 +19,7 @@ import {
 } from '../chat/workTrace';
 import { hasRunActivity } from '../chat/harnessActivity';
 import { CascadeRunPanel } from './CascadeRunPanel';
+import { ChatQuoteRefs } from './ChatQuoteRefs';
 import type { ChatMessage } from './ChatView';
 
 const MARKDOWN_PLUGINS = [remarkGfm, remarkBreaks];
@@ -117,23 +118,7 @@ const WorkTraceLine = memo(function WorkTraceLine({
       </button>
       {open && (
         <div className="chat-work-line-body">
-          {message.replyTo && (
-            <div className="chat-reply-quote">
-              <Reply size={12} />
-              <strong>{message.replyTo.author}</strong>
-              <span>{message.replyTo.preview}</span>
-            </div>
-          )}
-          {message.forwardedFrom && (
-            <div className="chat-forward-quote">
-              <Forward size={12} />
-              <span>
-                Forwarded from <strong>#{message.forwardedFrom.channelName}</strong>
-                {' · '}
-                {message.forwardedFrom.author}
-              </span>
-            </div>
-          )}
+          <ChatQuoteRefs message={message} />
           {message.body
             && !isSteeringContinuationMessage(message)
             && !(message.status === 'running' && /^Thinking(?:\.{3}|…)$/.test(message.body.trim()))

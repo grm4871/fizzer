@@ -1,4 +1,3 @@
-import { useEffect } from 'react';
 import { AtSign, CheckCheck, FileText, LoaderCircle, MessageCircle, Reply, X } from 'lucide-react';
 import { formatRelativeDate, type CommunityUpdateItem, type CommunityUpdates } from '../api';
 import { ModalShell } from './ModalShell';
@@ -42,15 +41,6 @@ export function UpdatesModal({
   onMarkAllRead,
   onOpenItem,
 }: UpdatesModalProps) {
-  useEffect(() => {
-    if (!open) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [onClose, open]);
-
   if (!open) return null;
   return (
     <ModalShell

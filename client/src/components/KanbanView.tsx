@@ -4,7 +4,6 @@ import {
   useState,
   type DragEvent,
   type FormEvent,
-  type KeyboardEvent,
 } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -22,6 +21,7 @@ import {
   X,
 } from 'lucide-react';
 import { ErrorBoundary } from './ErrorBoundary';
+import { KanbanInlineEditInput } from './KanbanInlineEditInput';
 
 export interface KanbanCard {
   id: string;
@@ -594,16 +594,12 @@ function KanbanViewInner({ content, onContentChange }: KanbanViewProps) {
                   <ChevronDown size={14} />
                 </button>
                 {editingColumn?.id === column.id ? (
-                  <input
+                  <KanbanInlineEditInput
                     className="kanban-column-title-input"
                     value={editingColumn.value}
-                    autoFocus
-                    onChange={(event) => setEditingColumn({ id: column.id, value: event.target.value })}
-                    onBlur={commitColumnEdit}
-                    onKeyDown={(event: KeyboardEvent<HTMLInputElement>) => {
-                      if (event.key === 'Enter') commitColumnEdit();
-                      if (event.key === 'Escape') setEditingColumn(null);
-                    }}
+                    onChange={(value) => setEditingColumn({ id: column.id, value })}
+                    onCommit={commitColumnEdit}
+                    onCancel={() => setEditingColumn(null)}
                   />
                 ) : (
                   <strong>{column.title}</strong>
@@ -709,16 +705,12 @@ function KanbanViewInner({ content, onContentChange }: KanbanViewProps) {
                           {card.checked && <Check size={12} />}
                         </button>
                         {editingCard?.id === card.id ? (
-                          <input
+                          <KanbanInlineEditInput
                             className="kanban-card-title-input"
                             value={editingCard.value}
-                            autoFocus
-                            onChange={(event) => setEditingCard({ id: card.id, value: event.target.value })}
-                            onBlur={commitCardEdit}
-                            onKeyDown={(event: KeyboardEvent<HTMLInputElement>) => {
-                              if (event.key === 'Enter') commitCardEdit();
-                              if (event.key === 'Escape') setEditingCard(null);
-                            }}
+                            onChange={(value) => setEditingCard({ id: card.id, value })}
+                            onCommit={commitCardEdit}
+                            onCancel={() => setEditingCard(null)}
                           />
                         ) : (
                           <div className="kanban-card-title"><CardMarkdown text={card.text} /></div>

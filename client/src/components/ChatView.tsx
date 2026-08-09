@@ -22,6 +22,8 @@ import { ChatSidebarButtons } from './ChatSidebarButtons';
 import { ChatWorkspacePanel } from './ChatWorkspacePanel';
 import { ChatTaskReview } from './ChatTaskReview';
 import { ChatWorkTrace } from './ChatWorkTrace';
+import { ChatAgentToggle } from './ChatAgentToggle';
+import { ChatQuoteRefs } from './ChatQuoteRefs';
 import { ReportDialog } from './ReportDialog';
 import { hasRunActivity } from '../chat/harnessActivity';
 import { isSteeringContinuationMessage, segmentTranscript } from '../chat/workTrace';
@@ -1915,23 +1917,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
                   }}
                   onContextMenu={(event) => onContextMenu(event, message)}
                 >
-                  {message.replyTo && (
-                    <div className="chat-reply-quote">
-                      <Reply size={12} />
-                      <strong>{message.replyTo.author}</strong>
-                      <span>{message.replyTo.preview}</span>
-                    </div>
-                  )}
-                  {message.forwardedFrom && (
-                    <div className="chat-forward-quote">
-                      <Forward size={12} />
-                      <span>
-                        Forwarded from <strong>#{message.forwardedFrom.channelName}</strong>
-                        {' · '}
-                        {message.forwardedFrom.author}
-                      </span>
-                    </div>
-                  )}
+                  <ChatQuoteRefs message={message} />
                   {steeringPromptLabels.has(message.id) && (
                     <div className="chat-steering-prompt">
                       ↳ Steering @{steeringPromptLabels.get(message.id)} into the active session
@@ -3308,6 +3294,46 @@ export const ChatView = memo(function ChatView({
             </div>
           ) : (
             transcriptSegments.flatMap((segment) => {
+              const renderGroupRow = (group: ChatMessageGroup) => {
+                const head = group.messages[0];
+                const groupSelected = selectedMessageId != null
+                  && group.messages.some((message) => message.id === selectedMessageId);
+                const runKey = head.registrationId || head.agentId || '';
+                const runState = runKey ? runningMessageState.get(runKey) : undefined;
+                return (
+                  <ChatGroupRow
+                    key={head.id}
+                    group={group}
+                    selectedMessageId={groupSelected ? selectedMessageId : null}
+                    avatarKind={getMessageAvatarKind(head)}
+                    avatarUrl={getMessageAvatarUrl(head)}
+                    authorLabel={getMessageAuthorLabel(head)}
+                    ownerLabel={getMessageOwnerLabel(head)}
+                    planUsage={getMessagePlanUsage(head)}
+                    latestRunningMessageId={runState?.latestId}
+                    runningSiblingCount={runState?.count || 0}
+                    steeringPromptLabels={steeringPromptLabels}
+                    mentionableAliases={mentionableAliases}
+                    notes={notes}
+                    onOpenNote={onOpenNote}
+                    onOpenSharedNote={openSharedNote}
+                    onCancelRun={onCancelRun}
+                    onToggleSelect={toggleMessageSelection}
+                    onContextMenu={openMessageContextMenu}
+                    onReply={startReply}
+                    onLightbox={openLightbox}
+                    onImageLoad={scrollToBottomIfSticky}
+                    onAgentAvatarClick={
+                      resolveMessageRegistration(head)
+                        ? (event) => openAgentSettingsFromMessage(head, event)
+                        : undefined
+                    }
+                    scrollRootRef={messagesRef}
+                    vaultId={vaultId}
+                    onHydrateMessage={onHydrateMessage}
+                  />
+                );
+              };
               if (segment.kind === 'work') {
                 // A trace is always nested in an agent row. System notices
                 // that start a run are attributed when persisted; older
@@ -3372,87 +3398,12 @@ export const ChatView = memo(function ChatView({
                   />,
                 ];
                 for (const group of segment.fullGroups) {
-                  const head = group.messages[0];
-                  const groupSelected = selectedMessageId != null
-                    && group.messages.some((message) => message.id === selectedMessageId);
-                  const runKey = head.registrationId || head.agentId || '';
-                  const runState = runKey ? runningMessageState.get(runKey) : undefined;
-                  nodes.push(
-                    <ChatGroupRow
-                      key={head.id}
-                      group={group}
-                      selectedMessageId={groupSelected ? selectedMessageId : null}
-                      avatarKind={getMessageAvatarKind(head)}
-                      avatarUrl={getMessageAvatarUrl(head)}
-                      authorLabel={getMessageAuthorLabel(head)}
-                      ownerLabel={getMessageOwnerLabel(head)}
-                      planUsage={getMessagePlanUsage(head)}
-                      latestRunningMessageId={runState?.latestId}
-                      runningSiblingCount={runState?.count || 0}
-                      steeringPromptLabels={steeringPromptLabels}
-                      mentionableAliases={mentionableAliases}
-                      notes={notes}
-                      onOpenNote={onOpenNote}
-                      onOpenSharedNote={openSharedNote}
-                      onCancelRun={onCancelRun}
-                      onToggleSelect={toggleMessageSelection}
-                      onContextMenu={openMessageContextMenu}
-                      onReply={startReply}
-                      onLightbox={openLightbox}
-                      onImageLoad={scrollToBottomIfSticky}
-                      onAgentAvatarClick={
-                        resolveMessageRegistration(head)
-                          ? (event) => openAgentSettingsFromMessage(head, event)
-                          : undefined
-                      }
-                      scrollRootRef={messagesRef}
-                      vaultId={vaultId}
-                      onHydrateMessage={onHydrateMessage}
-                    />,
-                  );
+                  nodes.push(renderGroupRow(group));
                 }
                 return nodes;
               }
 
-              const group = segment.group;
-              const head = group.messages[0];
-              const groupSelected = selectedMessageId != null
-                && group.messages.some((message) => message.id === selectedMessageId);
-              const runKey = head.registrationId || head.agentId || '';
-              const runState = runKey ? runningMessageState.get(runKey) : undefined;
-              return (
-                <ChatGroupRow
-                  key={head.id}
-                  group={group}
-                  selectedMessageId={groupSelected ? selectedMessageId : null}
-                  avatarKind={getMessageAvatarKind(head)}
-                  avatarUrl={getMessageAvatarUrl(head)}
-                  authorLabel={getMessageAuthorLabel(head)}
-                  ownerLabel={getMessageOwnerLabel(head)}
-                  planUsage={getMessagePlanUsage(head)}
-                  latestRunningMessageId={runState?.latestId}
-                  runningSiblingCount={runState?.count || 0}
-                  steeringPromptLabels={steeringPromptLabels}
-                  mentionableAliases={mentionableAliases}
-                  notes={notes}
-                  onOpenNote={onOpenNote}
-                  onOpenSharedNote={openSharedNote}
-                  onCancelRun={onCancelRun}
-                  onToggleSelect={toggleMessageSelection}
-                  onContextMenu={openMessageContextMenu}
-                  onReply={startReply}
-                  onLightbox={openLightbox}
-                  onImageLoad={scrollToBottomIfSticky}
-                  onAgentAvatarClick={
-                    resolveMessageRegistration(head)
-                      ? (event) => openAgentSettingsFromMessage(head, event)
-                      : undefined
-                  }
-                  scrollRootRef={messagesRef}
-                  vaultId={vaultId}
-                  onHydrateMessage={onHydrateMessage}
-                />
-              );
+              return renderGroupRow(segment.group);
             })
           )}
           <div ref={endRef} />
@@ -4159,62 +4110,41 @@ export const ChatView = memo(function ChatView({
               <>
             <div className="chat-agent-group">
               <div className="chat-agent-group-title">Replies</div>
-              <label className="chat-agent-toggle">
-                <input
-                  type="checkbox"
-                  checked={agentForm.orchestrator}
-                  onChange={(event) => setAgentForm((value) => ({
-                    ...value,
-                    orchestrator: event.target.checked,
-                    replyToEveryMessage: event.target.checked,
-                  }))}
-                />
-                <span className="chat-agent-toggle-copy">
-                  <span className="chat-agent-toggle-name">Coordinate this channel</span>
-                  <span className="chat-agent-toggle-hint">Reads every human message and can delegate durable work.</span>
-                </span>
-              </label>
-              <label className={`chat-agent-toggle${agentForm.orchestrator ? ' is-locked' : ''}`}>
-                <input
-                  type="checkbox"
-                  checked={agentForm.replyToEveryMessage}
-                  disabled={agentForm.orchestrator}
-                  onChange={(event) => setAgentForm((value) => ({ ...value, replyToEveryMessage: event.target.checked }))}
-                />
-                <span className="chat-agent-toggle-copy">
-                  <span className="chat-agent-toggle-name">Reply to every human message</span>
-                  <span className="chat-agent-toggle-hint">
-                    {agentForm.orchestrator
-                      ? 'Always on while coordinating.'
-                      : 'Otherwise it only answers when @mentioned.'}
-                  </span>
-                </span>
-              </label>
+              <ChatAgentToggle
+                checked={agentForm.orchestrator}
+                onChange={(event) => setAgentForm((value) => ({
+                  ...value,
+                  orchestrator: event.target.checked,
+                  replyToEveryMessage: event.target.checked,
+                }))}
+                name="Coordinate this channel"
+                hint="Reads every human message and can delegate durable work."
+              />
+              <ChatAgentToggle
+                stateClass={agentForm.orchestrator ? ' is-locked' : ''}
+                checked={agentForm.replyToEveryMessage}
+                disabled={agentForm.orchestrator}
+                onChange={(event) => setAgentForm((value) => ({ ...value, replyToEveryMessage: event.target.checked }))}
+                name="Reply to every human message"
+                hint={agentForm.orchestrator
+                  ? 'Always on while coordinating.'
+                  : 'Otherwise it only answers when @mentioned.'}
+              />
             </div>
             <div className="chat-agent-group">
               <div className="chat-agent-group-title">Mentions</div>
-              <label className="chat-agent-toggle">
-                <input
-                  type="checkbox"
-                  checked={agentForm.taggableByAgents}
-                  onChange={(event) => setAgentForm((value) => ({ ...value, taggableByAgents: event.target.checked }))}
-                />
-                <span className="chat-agent-toggle-copy">
-                  <span className="chat-agent-toggle-name">Other agents</span>
-                  <span className="chat-agent-toggle-hint">Agents in this channel may @mention it.</span>
-                </span>
-              </label>
-              <label className="chat-agent-toggle">
-                <input
-                  type="checkbox"
-                  checked={agentForm.pingableByOthers}
-                  onChange={(event) => setAgentForm((value) => ({ ...value, pingableByOthers: event.target.checked }))}
-                />
-                <span className="chat-agent-toggle-copy">
-                  <span className="chat-agent-toggle-name">Other people</span>
-                  <span className="chat-agent-toggle-hint">Anyone in the vault, not just you, may @mention it.</span>
-                </span>
-              </label>
+              <ChatAgentToggle
+                checked={agentForm.taggableByAgents}
+                onChange={(event) => setAgentForm((value) => ({ ...value, taggableByAgents: event.target.checked }))}
+                name="Other agents"
+                hint="Agents in this channel may @mention it."
+              />
+              <ChatAgentToggle
+                checked={agentForm.pingableByOthers}
+                onChange={(event) => setAgentForm((value) => ({ ...value, pingableByOthers: event.target.checked }))}
+                name="Other people"
+                hint="Anyone in the vault, not just you, may @mention it."
+              />
             </div>
             <div className="chat-agent-group">
               <div className="chat-agent-group-title">Execution</div>
@@ -4223,17 +4153,13 @@ export const ChatView = memo(function ChatView({
                 <span>Recommended</span>
               </div>
               <span className="chat-agent-field-hint">Uses the owner’s desktop CLI and stays inside its workspace. Provider usage follows that local account; private note blocks remain hidden.</span>
-              <label className={`chat-agent-toggle${agentForm.yolo ? ' is-hot' : ''}`}>
-                <input
-                  type="checkbox"
-                  checked={agentForm.yolo}
-                  onChange={(event) => setAgentForm((value) => ({ ...value, yolo: event.target.checked }))}
-                />
-                <span className="chat-agent-toggle-copy">
-                  <span className="chat-agent-toggle-name">Full host access</span>
-                  <span className="chat-agent-toggle-hint">Bypasses prompts and workspace boundaries.</span>
-                </span>
-              </label>
+              <ChatAgentToggle
+                stateClass={agentForm.yolo ? ' is-hot' : ''}
+                checked={agentForm.yolo}
+                onChange={(event) => setAgentForm((value) => ({ ...value, yolo: event.target.checked }))}
+                name="Full host access"
+                hint="Bypasses prompts and workspace boundaries."
+              />
             </div>
               </>
             )}

@@ -121,14 +121,6 @@ export function DiscoveryDmsModal({
     return () => window.clearTimeout(timer);
   }, [initialTab, loadDms, loadPublicVaults, searchQuery]);
 
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [onClose]);
-
   const openPublicVaultDetail = async (vault: PublicVault) => {
     setBusyAction(`detail:${vault.id}`);
     setStatus('');

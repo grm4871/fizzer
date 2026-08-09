@@ -580,6 +580,45 @@ export const Sidebar = memo(function Sidebar({
     return ` is-drop-${dropHint.placement}`;
   }
 
+  /** Inline rename field shared by folder and note tree rows. */
+  function renameInput(onCancel: () => void) {
+    return (
+      <input
+        className="tree-rename-input"
+        value={editingValue}
+        autoFocus
+        spellCheck={false}
+        onChange={(e) => setEditingValue(e.target.value)}
+        onBlur={commitRename}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') { e.preventDefault(); commitRename(); }
+          else if (e.key === 'Escape') { e.preventDefault(); onCancel(); }
+        }}
+      />
+    );
+  }
+
+  /**
+   * The inline rename field shared by folder and note rows. Only the Escape
+   * behavior differs (which editing state to clear), passed as `onCancel`.
+   */
+  function renameInput(onCancel: () => void) {
+    return (
+      <input
+        className="tree-rename-input"
+        value={editingValue}
+        autoFocus
+        spellCheck={false}
+        onChange={(e) => setEditingValue(e.target.value)}
+        onBlur={commitRename}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') { e.preventDefault(); commitRename(); }
+          else if (e.key === 'Escape') { e.preventDefault(); onCancel(); }
+        }}
+      />
+    );
+  }
+
   /** Recursively render a folder row with its children. */
   function renderFolder(folder: Folder, depth: number) {
     const isExpanded = expandedFolders.has(folder.id);
@@ -594,18 +633,7 @@ export const Sidebar = memo(function Sidebar({
           <div className="tree-item tree-editing" style={{ paddingLeft }}>
             <span className="tree-chevron"><ChevronRight size={14} /></span>
             <span className="tree-icon"><FolderIcon size={16} /></span>
-            <input
-              className="tree-rename-input"
-              value={editingValue}
-              autoFocus
-              spellCheck={false}
-              onChange={(e) => setEditingValue(e.target.value)}
-              onBlur={commitRename}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') { e.preventDefault(); commitRename(); }
-                else if (e.key === 'Escape') { e.preventDefault(); setEditingFolderId(null); }
-              }}
-            />
+            {renameInput(() => setEditingFolderId(null))}
           </div>
         ) : (
           <button
@@ -641,18 +669,7 @@ export const Sidebar = memo(function Sidebar({
       return (
         <div key={note.id} className="tree-item tree-editing" style={{ paddingLeft }}>
           <span className="tree-icon">{isChatChannel ? <Hash size={16} /> : <FileText size={16} />}</span>
-          <input
-            className="tree-rename-input"
-            value={editingValue}
-            autoFocus
-            spellCheck={false}
-            onChange={(e) => setEditingValue(e.target.value)}
-            onBlur={commitRename}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') { e.preventDefault(); commitRename(); }
-              else if (e.key === 'Escape') { e.preventDefault(); setEditingNoteId(null); }
-            }}
-          />
+          {renameInput(() => setEditingNoteId(null))}
         </div>
       );
     }

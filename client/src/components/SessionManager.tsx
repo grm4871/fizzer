@@ -358,17 +358,11 @@ export function SessionManager({
 
   useEffect(() => {
     if (!open) return;
+    // Escape-to-close lives in ModalShell; this effect only manages focus.
     const previous = document.activeElement as HTMLElement | null;
     window.setTimeout(() => closeButtonRef.current?.focus(), 0);
-    const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => {
-      window.removeEventListener('keydown', onKeyDown);
-      previous?.focus?.();
-    };
-  }, [open, onClose]);
+    return () => { previous?.focus?.(); };
+  }, [open]);
 
   const selected = useMemo(
     () => sessions.find((session) => session.id === selectedId) ?? null,

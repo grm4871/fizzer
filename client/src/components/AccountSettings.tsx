@@ -85,11 +85,19 @@ export function AccountSettings({ user, vaultId, vaultName, onClose, onUserChang
   const [vaultBans, setVaultBans] = useState<VaultBan[]>([]);
   const [vaultReports, setVaultReports] = useState<VaultReport[]>([]);
 
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [onClose]);
+  // Wrap a member-management mutation: flip memberBusy, clear status, and
+  // surface errors uniformly. Callers keep their own pre-checks/prompts.
+  const runMember = async (errMsg: string, fn: () => Promise<void>) => {
+    setMemberBusy(true);
+    setMemberState('');
+    try {
+      await fn();
+    } catch (error) {
+      setMemberState(error instanceof Error ? error.message : errMsg);
+    } finally {
+      setMemberBusy(false);
+    }
+  };
 
   const loadMembers = async () => {
     if (!vaultId) {
@@ -212,9 +220,7 @@ export function AccountSettings({ user, vaultId, vaultName, onClose, onUserChang
       setMemberState('Enter a username');
       return;
     }
-    setMemberBusy(true);
-    setMemberState('');
-    try {
+    await runMember('Could not add member', async () => {
       await api(`/api/vaults/${vaultId}/members`, {
         method: 'POST',
         body: JSON.stringify({ username, role: memberRole }),
@@ -223,11 +229,7 @@ export function AccountSettings({ user, vaultId, vaultName, onClose, onUserChang
       setMemberState(`Added @${username} as ${memberRole}`);
       await loadMembers();
       onMembershipChanged?.();
-    } catch (error) {
-      setMemberState(error instanceof Error ? error.message : 'Could not add member');
-    } finally {
-      setMemberBusy(false);
-    }
+    });
   };
 
   /**
@@ -236,9 +238,7 @@ export function AccountSettings({ user, vaultId, vaultName, onClose, onUserChang
    */
   const copyInviteLink = async () => {
     if (!vaultId) return;
-    setMemberBusy(true);
-    setMemberState('');
-    try {
+    await runMember('Could not create invite link', async () => {
       const { url } = await api<{ url: string }>(`/api/vaults/${vaultId}/invite-link`, {
         method: 'POST',
         body: JSON.stringify({ role: memberRole }),
@@ -252,11 +252,7 @@ export function AccountSettings({ user, vaultId, vaultName, onClose, onUserChang
         // Clipboard is blocked in some webviews; the link is useless unseen.
         setMemberState(url);
       }
-    } catch (error) {
-      setMemberState(error instanceof Error ? error.message : 'Could not create invite link');
-    } finally {
-      setMemberBusy(false);
-    }
+    });
   };
 
   const saveDiscoverySettings = async (overrides: Partial<PublicVaultSettings> = {}) => {
@@ -267,9 +263,7 @@ export function AccountSettings({ user, vaultId, vaultName, onClose, onUserChang
     const guidelines = overrides.guidelines ?? publicGuidelines;
     const homeNoteId = overrides.homeNoteId !== undefined ? overrides.homeNoteId : (publicHomeNoteId || null);
     const joinPolicy = overrides.joinPolicy ?? publicJoinPolicy;
-    setMemberBusy(true);
-    setMemberState('');
-    try {
+    await runMember('Could not update vault visibility', async () => {
       const body = overrides.visibility === 'private'
         ? { visibility: 'private' as const }
         : { visibility, summary, topics, guidelines, homeNoteId, joinPolicy };
@@ -285,18 +279,12 @@ export function AccountSettings({ user, vaultId, vaultName, onClose, onUserChang
       setPublicJoinPolicy(result.joinPolicy);
       setMemberState(result.visibility === 'public' ? 'Public discovery profile saved.' : 'Discovery profile saved; vault is private.');
       if (result.joinPolicy !== 'request') setPublicJoinRequests([]);
-    } catch (error) {
-      setMemberState(error instanceof Error ? error.message : 'Could not update vault visibility');
-    } finally {
-      setMemberBusy(false);
-    }
+    });
   };
 
   const reviewJoinRequest = async (request: PublicJoinRequest, action: 'approve' | 'reject') => {
     if (!vaultId || !canManageMembers) return;
-    setMemberBusy(true);
-    setMemberState('');
-    try {
+    await runMember('Could not review join request', async () => {
       await api(`/api/vaults/${vaultId}/join-requests/${request.id}`, {
         method: 'PATCH',
         body: JSON.stringify({ action }),
@@ -307,18 +295,12 @@ export function AccountSettings({ user, vaultId, vaultName, onClose, onUserChang
         await loadMembers();
         onMembershipChanged?.();
       }
-    } catch (error) {
-      setMemberState(error instanceof Error ? error.message : 'Could not review join request');
-    } finally {
-      setMemberBusy(false);
-    }
+    });
   };
 
   const changeMemberRole = async (target: VaultMember, role: AssignableRole) => {
     if (!vaultId || target.role === 'owner') return;
-    setMemberBusy(true);
-    setMemberState('');
-    try {
+    await runMember('Could not update role', async () => {
       await api(`/api/vaults/${vaultId}/members/${target.userId}`, {
         method: 'PATCH',
         body: JSON.stringify({ role }),
@@ -326,28 +308,18 @@ export function AccountSettings({ user, vaultId, vaultName, onClose, onUserChang
       setMemberState(`@${target.username} is now ${role}`);
       await loadMembers();
       onMembershipChanged?.();
-    } catch (error) {
-      setMemberState(error instanceof Error ? error.message : 'Could not update role');
-    } finally {
-      setMemberBusy(false);
-    }
+    });
   };
 
   const removeMember = async (target: VaultMember) => {
     if (!vaultId || target.role === 'owner') return;
     if (!window.confirm(`Remove @${target.username} from ${vaultName || 'this vault'}? They lose access to its notes and chats.`)) return;
-    setMemberBusy(true);
-    setMemberState('');
-    try {
+    await runMember('Could not remove member', async () => {
       await api(`/api/vaults/${vaultId}/members/${target.userId}`, { method: 'DELETE' });
       setMemberState(`Removed @${target.username}`);
       await loadMembers();
       onMembershipChanged?.();
-    } catch (error) {
-      setMemberState(error instanceof Error ? error.message : 'Could not remove member');
-    } finally {
-      setMemberBusy(false);
-    }
+    });
   };
 
   const banMember = async (target: VaultMember) => {
@@ -357,9 +329,7 @@ export function AccountSettings({ user, vaultId, vaultName, onClose, onUserChang
       '',
     );
     if (reason === null) return;
-    setMemberBusy(true);
-    setMemberState('');
-    try {
+    await runMember('Could not ban member', async () => {
       await api(`/api/vaults/${vaultId}/bans`, {
         method: 'POST',
         body: JSON.stringify({ userId: target.userId, reason }),
@@ -367,44 +337,28 @@ export function AccountSettings({ user, vaultId, vaultName, onClose, onUserChang
       setMemberState(`Removed and banned @${target.username}`);
       await loadMembers();
       onMembershipChanged?.();
-    } catch (error) {
-      setMemberState(error instanceof Error ? error.message : 'Could not ban member');
-    } finally {
-      setMemberBusy(false);
-    }
+    });
   };
 
   const unbanMember = async (target: VaultBan) => {
     if (!vaultId) return;
-    setMemberBusy(true);
-    setMemberState('');
-    try {
+    await runMember('Could not unban member', async () => {
       await api(`/api/vaults/${vaultId}/bans/${target.userId}`, { method: 'DELETE' });
       setVaultBans((current) => current.filter((ban) => ban.userId !== target.userId));
       setMemberState(`Unbanned @${target.username}; they may rejoin normally.`);
-    } catch (error) {
-      setMemberState(error instanceof Error ? error.message : 'Could not unban member');
-    } finally {
-      setMemberBusy(false);
-    }
+    });
   };
 
   const reviewReport = async (report: VaultReport, action: 'dismiss' | 'resolve') => {
     if (!vaultId) return;
-    setMemberBusy(true);
-    setMemberState('');
-    try {
+    await runMember('Could not review report', async () => {
       await api(`/api/vaults/${vaultId}/reports/${report.id}`, {
         method: 'PATCH',
         body: JSON.stringify({ action }),
       });
       setVaultReports((current) => current.filter((item) => item.id !== report.id));
       setMemberState(action === 'dismiss' ? 'Report dismissed.' : 'Report resolved.');
-    } catch (error) {
-      setMemberState(error instanceof Error ? error.message : 'Could not review report');
-    } finally {
-      setMemberBusy(false);
-    }
+    });
   };
 
   const reportTargetLabel = (report: VaultReport) => (
