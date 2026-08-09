@@ -1261,22 +1261,28 @@ button:focus-visible,
 .sidebar-audio-play {
   color: var(--accent);
 }
-.chat-youtube-embed {
+.chat-media-embed {
   display: block;
   margin: 8px 0;
   max-width: 640px;
 }
-.chat-youtube-embed > a {
+.chat-media-embed > a {
   display: inline-block;
   margin-bottom: 6px;
 }
-.chat-youtube-embed > iframe {
+.chat-media-embed > iframe {
   display: block;
   width: 100%;
-  aspect-ratio: 16 / 9;
   border: 0;
   border-radius: 8px;
   background: #000;
+}
+.chat-media-embed.is-video > iframe { aspect-ratio: 16 / 9; }
+.chat-media-embed.is-spotify > iframe { height: 152px; }
+.chat-media-embed.is-social > iframe {
+  height: 560px;
+  max-height: min(70vh, 680px);
+  background: transparent;
 }
 .sidebar-footer {
   display: flex;

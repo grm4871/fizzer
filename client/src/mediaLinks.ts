@@ -13,3 +13,76 @@ export function youtubeVideoId(href: string) {
     return null;
   }
 }
+
+export type ChatMediaLink =
+  | { provider: 'youtube'; embedUrl: string; title: string; aspect: 'video' }
+  | { provider: 'twitter'; embedUrl: string; title: string; aspect: 'social' }
+  | { provider: 'spotify'; embedUrl: string; title: string; aspect: 'spotify' }
+  | { provider: 'vimeo'; embedUrl: string; title: string; aspect: 'video' }
+  | { provider: 'tiktok'; embedUrl: string; title: string; aspect: 'social' };
+
+/** Convert an allow-listed public media URL into a sandboxable player URL. */
+export function chatMediaLink(href: string): ChatMediaLink | null {
+  const youtubeId = youtubeVideoId(href);
+  if (youtubeId) {
+    return {
+      provider: 'youtube',
+      embedUrl: `https://www.youtube.com/embed/${youtubeId}?playsinline=1&rel=0`,
+      title: 'YouTube video',
+      aspect: 'video',
+    };
+  }
+
+  try {
+    const url = new URL(href);
+    if (url.protocol !== 'https:') return null;
+    const host = url.hostname.toLowerCase().replace(/^www\./, '');
+
+    if (host === 'twitter.com' || host === 'x.com' || host === 'mobile.twitter.com') {
+      const id = url.pathname.match(/^\/(?:#!\/)?[^/]+\/status(?:es)?\/(\d+)/)?.[1];
+      if (!id) return null;
+      return {
+        provider: 'twitter',
+        embedUrl: `https://platform.twitter.com/embed/Tweet.html?id=${id}&dnt=true`,
+        title: 'X post',
+        aspect: 'social',
+      };
+    }
+
+    if (host === 'open.spotify.com') {
+      const match = url.pathname.match(/^\/(track|album|playlist|episode|show|artist)\/([A-Za-z0-9]+)\/?$/);
+      if (!match) return null;
+      return {
+        provider: 'spotify',
+        embedUrl: `https://open.spotify.com/embed/${match[1]}/${match[2]}?utm_source=generator&theme=0`,
+        title: 'Spotify player',
+        aspect: 'spotify',
+      };
+    }
+
+    if (host === 'vimeo.com' || host === 'player.vimeo.com') {
+      const id = url.pathname.match(/^\/(?:video\/)?(\d+)/)?.[1];
+      if (!id) return null;
+      return {
+        provider: 'vimeo',
+        embedUrl: `https://player.vimeo.com/video/${id}?dnt=1`,
+        title: 'Vimeo video',
+        aspect: 'video',
+      };
+    }
+
+    if (host === 'tiktok.com' || host === 'm.tiktok.com') {
+      const id = url.pathname.match(/^\/@[^/]+\/video\/(\d+)/)?.[1];
+      if (!id) return null;
+      return {
+        provider: 'tiktok',
+        embedUrl: `https://www.tiktok.com/player/v1/${id}?autoplay=0`,
+        title: 'TikTok video',
+        aspect: 'social',
+      };
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}

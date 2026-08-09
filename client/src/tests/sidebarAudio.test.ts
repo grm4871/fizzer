@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { isMp3Link } from '../components/Sidebar';
-import { ChatYouTubeEmbed } from '../components/ChatView';
-import { youtubeVideoId } from '../mediaLinks';
+import { ChatMediaEmbed } from '../components/ChatView';
+import { chatMediaLink, youtubeVideoId } from '../mediaLinks';
 
 describe('isMp3Link', () => {
   it('recognizes uploaded note assets by their visible filename', () => {
@@ -35,13 +35,42 @@ describe('youtubeVideoId', () => {
   });
 });
 
-describe('ChatYouTubeEmbed', () => {
+describe('chatMediaLink', () => {
+  it('recognizes allow-listed social, music, and video providers', () => {
+    expect(chatMediaLink('https://x.com/user/status/123456789')?.provider).toBe('twitter');
+    expect(chatMediaLink('https://twitter.com/user/status/123456789')?.embedUrl).toContain('dnt=true');
+    expect(chatMediaLink('https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC')?.provider).toBe('spotify');
+    expect(chatMediaLink('https://vimeo.com/12345678')?.provider).toBe('vimeo');
+    expect(chatMediaLink('https://www.tiktok.com/@creator/video/7401234567890123456')?.provider).toBe('tiktok');
+  });
+
+  it('rejects lookalike hosts, non-media paths, and insecure URLs', () => {
+    expect(chatMediaLink('https://x.com.example/user/status/123456789')).toBeNull();
+    expect(chatMediaLink('https://open.spotify.com/search/test')).toBeNull();
+    expect(chatMediaLink('http://vimeo.com/12345678')).toBeNull();
+  });
+});
+
+describe('ChatMediaEmbed', () => {
   it('renders YouTube chat links as playable inline embeds', () => {
     const markup = renderToStaticMarkup(
-      createElement(ChatYouTubeEmbed, { href: 'https://youtu.be/jK-tt-3XJ7c', label: 'Video' }),
+      createElement(ChatMediaEmbed, { href: 'https://youtu.be/jK-tt-3XJ7c', label: 'Video' }),
     );
-    expect(markup).toContain('class="chat-youtube-embed"');
+    expect(markup).toContain('class="chat-media-embed is-video"');
     expect(markup).toContain('youtube.com/embed/jK-tt-3XJ7c');
     expect(markup).toContain('allowFullScreen');
+  });
+
+  it('renders Spotify and X links in lazy sandboxed frames', () => {
+    const spotify = renderToStaticMarkup(
+      createElement(ChatMediaEmbed, { href: 'https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy', label: 'Album' }),
+    );
+    const twitter = renderToStaticMarkup(
+      createElement(ChatMediaEmbed, { href: 'https://x.com/user/status/123456789', label: 'Post' }),
+    );
+    expect(spotify).toContain('open.spotify.com/embed/album/');
+    expect(spotify).toContain('loading="lazy"');
+    expect(twitter).toContain('platform.twitter.com/embed/Tweet.html');
+    expect(twitter).toContain('sandbox=');
   });
 });
