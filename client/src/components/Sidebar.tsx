@@ -112,6 +112,29 @@ export function isMp3Link(label: string, href: string) {
     || normalizedHref.split(/[?#]/)[0].endsWith('.mp3');
 }
 
+export function youtubeVideoId(href: string) {
+  try {
+    const url = new URL(href, 'http://localhost');
+    const host = url.hostname.toLowerCase().replace(/^www\./, '');
+    let id = '';
+    if (host === 'youtu.be') id = url.pathname.split('/').filter(Boolean)[0] || '';
+    else if (host === 'youtube.com' || host === 'm.youtube.com' || host === 'music.youtube.com') {
+      if (url.pathname === '/watch') id = url.searchParams.get('v') || '';
+      else {
+        const match = url.pathname.match(/^\/(?:embed|shorts|live)\/([^/?#]+)/);
+        id = match?.[1] || '';
+      }
+    }
+    return /^[A-Za-z0-9_-]{6,15}$/.test(id) ? id : null;
+  } catch {
+    return null;
+  }
+}
+
+type MediaTrack =
+  | { kind: 'audio'; name: string; url: string }
+  | { kind: 'youtube'; name: string; url: string; videoId: string };
+
 export const Sidebar = memo(function Sidebar({
   user,
   vaults,
@@ -162,10 +185,11 @@ export const Sidebar = memo(function Sidebar({
   const [joiningVault, setJoiningVault] = useState(false);
   const [vaultInviteLink, setVaultInviteLink] = useState('');
   const [joiningVaultBusy, setJoiningVaultBusy] = useState(false);
-  const [audioTracks, setAudioTracks] = useState<Array<{ name: string; url: string }>>([]);
+  const [audioTracks, setAudioTracks] = useState<MediaTrack[]>([]);
   const [audioTrackIndex, setAudioTrackIndex] = useState(0);
   const [audioPlaying, setAudioPlaying] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
+  const youtubeRef = useRef<HTMLIFrameElement>(null);
   const autoplayAudioRef = useRef(false);
   // Drop target highlight: a folder id, or ROOT_DROP_ID for the root area.
   const [dragOverId, setDragOverId] = useState<string | null>(null);
@@ -244,21 +268,27 @@ export const Sidebar = memo(function Sidebar({
   }, []);
 
   useEffect(() => {
-    const isAudioAnchor = (anchor: HTMLAnchorElement) => isMp3Link(anchor.textContent || '', anchor.href);
+    const mediaTrackFor = (anchor: HTMLAnchorElement): MediaTrack | null => {
+      const videoId = youtubeVideoId(anchor.href);
+      const label = (anchor.textContent || '').trim();
+      if (videoId) return { kind: 'youtube', name: label || 'YouTube video', url: anchor.href, videoId };
+      if (isMp3Link(label, anchor.href)) {
+        return { kind: 'audio', name: (label || 'Audio').replace(/\.mp3$/i, ''), url: anchor.href };
+      }
+      return null;
+    };
     const onClick = (event: MouseEvent) => {
       const target = event.target instanceof Element ? event.target.closest('a') : null;
-      if (!(target instanceof HTMLAnchorElement) || !isAudioAnchor(target)) return;
+      if (!(target instanceof HTMLAnchorElement) || !mediaTrackFor(target)) return;
       event.preventDefault();
       event.stopPropagation();
-      const links = Array.from(document.querySelectorAll<HTMLAnchorElement>('a')).filter(isAudioAnchor);
+      const links = Array.from(document.querySelectorAll<HTMLAnchorElement>('a'));
       const seen = new Set<string>();
       const tracks = links.flatMap((anchor) => {
-        if (!anchor.href || seen.has(anchor.href)) return [];
+        const track = mediaTrackFor(anchor);
+        if (!track || !anchor.href || seen.has(anchor.href)) return [];
         seen.add(anchor.href);
-        return [{
-          name: (anchor.textContent || 'Audio').trim().replace(/\.mp3$/i, ''),
-          url: anchor.href,
-        }];
+        return [track];
       });
       const index = Math.max(0, tracks.findIndex((track) => track.url === target.href));
       audioRef.current?.pause();
@@ -271,13 +301,33 @@ export const Sidebar = memo(function Sidebar({
   }, []);
 
   useEffect(() => {
+    const track = audioTracks[audioTrackIndex];
+    if (!track) return;
+    if (track.kind === 'youtube') return;
     const audio = audioRef.current;
-    if (!audio || !audioTracks[audioTrackIndex]) return;
+    if (!audio) return;
     audio.load();
     if (autoplayAudioRef.current) {
       void audio.play().catch(() => setAudioPlaying(false));
     }
   }, [audioTrackIndex, audioTracks]);
+
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== 'https://www.youtube.com' || event.source !== youtubeRef.current?.contentWindow) return;
+      let payload: { event?: string; info?: number } = {};
+      try { payload = typeof event.data === 'string' ? JSON.parse(event.data) : event.data; } catch { return; }
+      if (payload.event === 'onReady' && autoplayAudioRef.current) {
+        youtubeRef.current?.contentWindow?.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: [] }), '*');
+      }
+      if (payload.event === 'onStateChange') {
+        setAudioPlaying(payload.info === 1);
+        if (payload.info === 0) changeAudioTrack(1, true);
+      }
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  });
 
   function changeAudioTrack(offset: number, autoplay = audioPlaying) {
     if (audioTracks.length === 0) return;
@@ -286,6 +336,12 @@ export const Sidebar = memo(function Sidebar({
   }
 
   function toggleAudioPlayback() {
+    const track = audioTracks[audioTrackIndex];
+    if (track?.kind === 'youtube') {
+      const func = audioPlaying ? 'pauseVideo' : 'playVideo';
+      youtubeRef.current?.contentWindow?.postMessage(JSON.stringify({ event: 'command', func, args: [] }), '*');
+      return;
+    }
     const audio = audioRef.current;
     if (!audio || audioTracks.length === 0) return;
     if (audio.paused) void audio.play().catch(() => setAudioPlaying(false));
@@ -846,16 +902,34 @@ export const Sidebar = memo(function Sidebar({
         )}
       </div>
 
-      {audioTracks.length > 0 && <div className="sidebar-audio-player">
+      {audioTracks.length > 0 && <div className={`sidebar-audio-player${audioTracks[audioTrackIndex]?.kind === 'youtube' ? ' has-youtube' : ''}`}>
         <audio
           ref={audioRef}
-          src={audioTracks[audioTrackIndex]?.url}
+          src={audioTracks[audioTrackIndex]?.kind === 'audio' ? audioTracks[audioTrackIndex].url : undefined}
           onPlay={() => setAudioPlaying(true)}
           onPause={() => setAudioPlaying(false)}
           onEnded={() => {
             changeAudioTrack(1, true);
           }}
         />
+        {audioTracks[audioTrackIndex]?.kind === 'youtube' && (
+          <iframe
+            ref={youtubeRef}
+            className="sidebar-youtube-player"
+            src={`https://www.youtube.com/embed/${audioTracks[audioTrackIndex].videoId}?enablejsapi=1&playsinline=1&rel=0`}
+            title={audioTracks[audioTrackIndex].name}
+            allow="autoplay; encrypted-media; picture-in-picture"
+            allowFullScreen
+            onLoad={() => {
+              const player = youtubeRef.current?.contentWindow;
+              player?.postMessage(JSON.stringify({ event: 'listening' }), '*');
+              player?.postMessage(JSON.stringify({ event: 'command', func: 'addEventListener', args: ['onStateChange'] }), '*');
+              if (autoplayAudioRef.current) {
+                player?.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: [] }), '*');
+              }
+            }}
+          />
+        )}
         <div className="sidebar-audio-track" title={audioTracks[audioTrackIndex]?.name}>
           <Music2 size={14} />
           <span>{audioTracks[audioTrackIndex]?.name}</span>

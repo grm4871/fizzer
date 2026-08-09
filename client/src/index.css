@@ -1351,6 +1351,16 @@ button:focus-visible,
   border-top: 1px solid var(--border);
   background: var(--bg-surface);
 }
+.sidebar-audio-player.has-youtube {
+  flex-wrap: wrap;
+}
+.sidebar-youtube-player {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border: 0;
+  border-radius: 6px;
+  background: #000;
+}
 .sidebar-audio-player audio {
   display: none;
 }
