@@ -6,6 +6,7 @@ import {
   DEFAULT_CHAT_SESSION_MAX_RUNS,
   ensureRunnerSchema,
   findConversationSession,
+  finishDelegatedRun,
   listRunEvents,
 } from './runner.js';
 
@@ -78,6 +79,24 @@ test('chat sessions resume below the bound and event reads can advance by sequen
     insertEvent.run(2);
     insertEvent.run(3);
     assert.deepEqual(listRunEvents(db, 1, 1).map((event) => event.seq), [2, 3]);
+  } finally {
+    db.close();
+  }
+});
+
+test('a missing Claude session invalidates the stale machine-local id', () => {
+  const db = createDb();
+  try {
+    insertRun(db, 1, 'foreign-session');
+    db.prepare("UPDATE runs SET status = 'running' WHERE id = 1").run();
+    finishDelegatedRun(db, 1, {
+      status: 'failed',
+      summary: 'No conversation found with session ID: foreign-session',
+    });
+    assert.equal(findConversationSession(db, {
+      vaultId: 'vault', noteId: null, agent: 'codex',
+      conversationId: 'conversation', boundedChat: true,
+    }), undefined);
   } finally {
     db.close();
   }

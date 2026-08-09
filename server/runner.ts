@@ -453,7 +453,6 @@ export function findConversationSession(
       AND ${noteCondition}
       AND agent = ?
       AND conversation_id = ?
-      AND session_id IS NOT NULL
     ORDER BY id DESC
     LIMIT 1
   `).get(...params) as { session_id: string; started_at: string } | undefined;
@@ -517,11 +516,14 @@ export function finishDelegatedRun(
   if (!run) return;
   if (isTerminalRunStatus(run.status)) return;
 
+  const missingClaudeSession = opts.status === 'failed'
+    && /no conversation found with session id/i.test(opts.summary);
   db.prepare(`
     UPDATE runs
-    SET status = ?, finished_at = datetime('now'), summary = ?, session_id = COALESCE(?, session_id)
+    SET status = ?, finished_at = datetime('now'), summary = ?,
+        session_id = CASE WHEN ? THEN NULL ELSE COALESCE(?, session_id) END
     WHERE id = ?
-  `).run(opts.status, opts.summary, opts.sessionId ?? null, runId);
+  `).run(opts.status, opts.summary, missingClaudeSession ? 1 : 0, opts.sessionId ?? null, runId);
   clearDelegatedRunRecord(db, runId);
 }
 
