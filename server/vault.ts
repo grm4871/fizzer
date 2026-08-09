@@ -350,13 +350,13 @@ export function getWritableVault(db: Db, vaultId: string, userId: number): Vault
   }
 }
 
-function prepopulateWalkthrough(vault: Vault): void {
-  const welcomeContent = `# 💎 Welcome to Cascade Notes\n\nCascade Notes is an intelligent, Obsidian-style personal wiki designed for writing, organizing, and thinking alongside AI.\n\n## Key Features\n\n1. **Local Markdown Files**: All notes are stored as standard \`.md\` files in your vault folder: \`${vault.root_path}\`.\n2. **Rich Live Preview**: A modern CodeMirror 6 editor renders headers, bold/italic, checkboxes, and wikilinks directly as you type.\n3. **Wikilinks & Backlinks**: Connect notes using wikilinks like [[Navigation & Search]]. Check the backlinks panel to explore note relationships.\n4. **Agent**: Open the agent panel and pick an agent (Claude Code, Codex, Grok, Antigravity, Copilot, or Hermes) to read, edit, and organize your notes directly on disk.\n\n## Get Started\n\n- Click the **🤖 Agent** button on the tab bar to open the agent panel, then choose your agent and tell it what to do.\n- Drop an inline directive anywhere in a note with the \`{{ai: your instruction}}\` syntax, then put your cursor on it and press \`Ctrl+Enter\` (\`Cmd+Enter\` on macOS) to run it in the agent panel. Try it: {{ai: write a one-line welcome message at the top of this note}}\n- Check the boxes below to try out interactive checklists:\n  - [ ] Edit this note and change this checkbox\n  - [ ] Click on the checkbox widget directly to toggle it!\n  - [x] Press \`Ctrl+P\` to open the command palette\n`;
-
-  const navContent = `# 🔍 Navigation & Search\n\nCascade Notes is built for speed and keyboard-driven navigation.\n\n## Keyboard Shortcuts\n\nHere are the key shortcuts to keep your hands on the keyboard:\n\n- \`Ctrl+P\` (or \`Cmd+P\`): Open the **Command Palette**. Search through note titles fuzzy-style, or press Enter on a non-existent name to create a new note instantly.\n- \`Ctrl+Shift+F\`: Open **Vault Search**. Perform ranked full-text search across all note contents using SQLite FTS5.\n- \`Ctrl+S\`: Save the current note.\n- \`Ctrl+N\`: Create a new note.\n- \`Ctrl+\\\`: Toggle the sidebar.\n\n## Organizing with Tags\n\nYou can add tags to notes (e.g., #tutorial, #reference) or add them via the tag manager in the sidebar. Tags help you filter notes in search and group them in the folder tree.\n`;
-
-  fs.writeFileSync(path.join(vault.root_path, 'Welcome to Cascade Notes.md'), welcomeContent, 'utf8');
-  fs.writeFileSync(path.join(vault.root_path, 'Navigation & Search.md'), navContent, 'utf8');
+/** New vaults begin as a clean conversation space, not a product tutorial. */
+function createDefaultChannel(db: Db, vault: Vault, userId: number): void {
+  createNote(db, vault.id, userId, {
+    title: 'General',
+    content: 'cascade://chat-channel',
+    is_listed: true,
+  });
 }
 
 /**
@@ -437,7 +437,7 @@ export function enforceVaultStorageIsolation(db: Db): { rehomed: number } {
       updateRoot.run(nextRoot, vault.id);
       const refreshed = db.prepare('SELECT * FROM vaults WHERE id = ?').get(vault.id) as Vault;
       try {
-        prepopulateWalkthrough(refreshed);
+        createDefaultChannel(db, refreshed, refreshed.created_by);
         rescanVault(db, refreshed.id, refreshed.created_by);
       } catch (err) {
         console.error('Failed to reseed rehomed vault', vault.id, err);
@@ -497,10 +497,10 @@ export function createVault(db: Db, userId: number, opts: { name: string; root_p
   const vault = db.prepare('SELECT * FROM vaults WHERE id = ?').get(id) as Vault;
 
   try {
-    // Only seed walkthrough into an empty directory — never rescrape a foreign tree.
+    // A fresh vault gets one empty channel and no instructional notes.
     const existing = fs.readdirSync(rootPath).filter((entry) => entry !== '.DS_Store');
     if (existing.length === 0) {
-      prepopulateWalkthrough(vault);
+      createDefaultChannel(db, vault, userId);
     }
     rescanVault(db, vault.id, userId);
   } catch (err) {

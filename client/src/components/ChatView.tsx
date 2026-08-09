@@ -2380,6 +2380,10 @@ export const ChatView = memo(function ChatView({
   };
   const getMessagePlanUsage = (message: ChatMessage) => {
     const registration = resolveMessageRegistration(message);
+    const identity = registration?.vaultAgentId ? vaultAgentById.get(registration.vaultAgentId) : undefined;
+    // Runner usage is private to the assistant owner's local account. Do not
+    // paint the viewer's limits onto another person's agent in a shared chat.
+    if (!identity || identity.ownerUsername !== currentUser) return null;
     const agentId = message.agentId || registration?.agentId || '';
     return runnerHealth?.planUsage?.[planUsageProviderId(agentId)] || null;
   };
@@ -3727,8 +3731,10 @@ export const ChatView = memo(function ChatView({
           {registeredAgentRows.map((agent) => {
           const selectedModel = agent.registration.model || agent.models[0]?.id || '';
           const isEditing = editingRegistrationId === agent.registration.id && agentMenuOpen;
-          const planUsage = runnerHealth?.planUsage?.[planUsageProviderId(agent.registration.agentId)] || null;
           const canManage = canManageRegistration(agent.registration);
+          const planUsage = canManage
+            ? runnerHealth?.planUsage?.[planUsageProviderId(agent.registration.agentId)] || null
+            : null;
           return (
             <div
               className={`chat-user chat-agent-user${agent.registration.orchestrator ? ' is-supervisor' : ''}${isEditing ? ' is-editing' : ''}`}

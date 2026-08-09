@@ -8,6 +8,7 @@ import {
   createFolder,
   createVault,
   enforceVaultStorageIsolation,
+  getNote,
   listNotes,
   rescanVault,
   VAULTS_BASE_DIR,
@@ -79,7 +80,8 @@ test('new accounts get isolated vault roots and do not inherit another user disk
 
     const bobNotes = listNotes(db, bob.id);
     assert.ok(bobNotes.every((n) => n.title !== 'SECRET from alice'));
-    assert.ok(bobNotes.some((n) => /Welcome/i.test(n.title)));
+    assert.deepEqual(bobNotes.map((n) => n.title), ['General']);
+    assert.equal(getNote(db, bobNotes[0]!.id)?.content, 'cascade://chat-channel');
   } finally {
     db.close();
     // Best-effort cleanup of test dirs under ~/.cascade/vaults/{1,2}
