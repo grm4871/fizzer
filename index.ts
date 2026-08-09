@@ -2993,14 +2993,14 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     } catch {
       return res.status(404).json({ error: 'Agent not found' });
     }
-    const { registration, sourceVault, route, ownerId } = resolved;
+    const { registration, agentVault, route, ownerChannelId, ownerId } = resolved;
     requesterIsOwner = req.user!.id === ownerId;
     if (!requesterIsOwner && !registration.pingableByOthers) {
       return res.status(403).json({ error: "This agent isn't accepting pings from other users." });
     }
     // Owner's registration is authoritative — the pinger's request body can't
     // override the agent, model, cwd, or yolo it runs with on the owner's box.
-    runVault = sourceVault;
+    runVault = agentVault;
     runnerUserId = ownerId;
     selectedAgent = pickAgent(registration.agentId);
     selectedModel = normalizeRunModel(registration.model);
@@ -3026,7 +3026,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     // Guests may invoke an explicitly pingable agent, but never with unattended
     // command approval. Only the owner can exercise the registration's yolo flag.
     yoloMode = requesterIsOwner && registration.yolo;
-    targetChannelId = route.sourceChannelId;
+    targetChannelId = ownerChannelId;
     chatAuthor = registration.displayName || registration.agentId;
     chatRegistrationId = registration.id;
     agentMemoryKey = selectedAgent === 'akron-grok'

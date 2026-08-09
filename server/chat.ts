@@ -530,6 +530,7 @@ type ChatAgentMemberRow = {
   yolo: number;
   conversation_id: string;
   owner_user_id?: number;
+  agent_vault_id?: string;
 };
 
 type VaultAgentRow = {
@@ -2667,9 +2668,11 @@ export function listChatAgentMembers(db: Db, channelId: string, userId: number):
 
 export type ResolvedChatAgentRun = {
   registration: ChatAgentRegistration;
-  /** The agent owner's vault (the machine that must execute the run). */
-  sourceVault: Vault;
+  /** The agent owner's local vault (the machine and workspace that execute the run). */
+  agentVault: Vault;
   route: ChatChannelRoute;
+  /** The agent owner's local projection of this shared channel. */
+  ownerChannelId: string;
   /** User id of the agent owner — the desktop runner the run delegates to. */
   ownerId: number;
 };
@@ -2688,20 +2691,31 @@ export function resolveChatAgentRun(
 ): ResolvedChatAgentRun {
   const { route } = assertChatChannel(db, channelId, userId);
   const row = db
-    .prepare('SELECT * FROM chat_agent_members WHERE id = ? AND channel_id = ?')
+    .prepare(`
+      SELECT m.*, va.owner_user_id, va.vault_id AS agent_vault_id
+      FROM chat_agent_members m
+      JOIN vault_agents va ON va.id = m.vault_agent_id
+      WHERE m.id = ? AND m.channel_id = ?
+    `)
     .get(registrationId, route.sourceChannelId) as ChatAgentMemberRow | undefined;
   if (!row) throw new Error('Agent not found');
 
-  const sourceVault = db
+  const agentVault = db
     .prepare('SELECT * FROM vaults WHERE id = ?')
-    .get(route.sourceVaultId) as Vault | undefined;
-  if (!sourceVault) throw new Error('Agent not found');
+    .get(row.agent_vault_id) as Vault | undefined;
+  if (!agentVault || !row.owner_user_id || agentVault.created_by !== row.owner_user_id) {
+    throw new Error('Agent not found');
+  }
+  const ownerRoute = listChatChannelRoutes(db, route.sourceVaultId, route.sourceChannelId)
+    .find((candidate) => candidate.localVaultId === agentVault.id);
+  if (!ownerRoute) throw new Error('Agent not found');
 
   return {
     registration: rowToAgentMember(row),
-    sourceVault,
+    agentVault,
     route,
-    ownerId: sourceVault.created_by,
+    ownerChannelId: ownerRoute.localChannelId,
+    ownerId: row.owner_user_id,
   };
 }
 
