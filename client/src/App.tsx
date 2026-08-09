@@ -2709,11 +2709,11 @@ export default function App() {
     return fn;
   }, [handleNoteChange]);
 
-  const noteSaveHandlers = useRef(new Map<string, () => void>());
+  const noteSaveHandlers = useRef(new Map<string, () => Promise<Note | undefined>>());
   const getNoteSaveHandler = useCallback((tabId: string) => {
     let fn = noteSaveHandlers.current.get(tabId);
     if (!fn) {
-      fn = () => { void saveNoteTab(tabId); };
+      fn = () => saveNoteTab(tabId);
       noteSaveHandlers.current.set(tabId, fn);
     }
     return fn;

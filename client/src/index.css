@@ -2971,6 +2971,117 @@ button:focus-visible,
   color: var(--accent);
 }
 
+.mobile-note-actions {
+  display: none;
+}
+.note-link-picker-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: rgba(5, 6, 9, 0.68);
+  backdrop-filter: blur(3px);
+}
+.note-link-picker {
+  width: min(100%, 540px);
+  max-height: min(74dvh, 620px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 16px max(16px, env(safe-area-inset-bottom));
+  border: 1px solid var(--border-strong);
+  border-bottom: 0;
+  border-radius: 18px 18px 0 0;
+  background: var(--bg-surface);
+  box-shadow: 0 -16px 48px rgba(0, 0, 0, 0.45);
+}
+.note-link-picker-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.note-link-picker-header > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.note-link-picker-header strong {
+  color: var(--text-primary);
+  font-family: var(--font-display);
+  font-size: 1rem;
+}
+.note-link-picker-header span {
+  color: var(--text-tertiary);
+  font-size: 0.75rem;
+}
+.note-link-picker-close {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: var(--bg-raised);
+  color: var(--text-secondary);
+}
+.note-link-picker-search {
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 13px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-deep);
+  color: var(--text-tertiary);
+}
+.note-link-picker-search:focus-within {
+  border-color: var(--accent);
+}
+.note-link-picker-search input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 1rem;
+}
+.note-link-picker-list {
+  min-height: 80px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.note-link-picker-list button {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+}
+.note-link-picker-list button:active,
+.note-link-picker-list button:hover {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+.note-link-picker-list p {
+  margin: 24px 0;
+  color: var(--text-tertiary);
+  text-align: center;
+}
+
 /* ═══════════════════════════════════════════════════════════
    CHAT
    ═══════════════════════════════════════════════════════════ */
@@ -7226,6 +7337,41 @@ button.chat-avatar.is-clickable:focus-visible {
 
   .editor-codemirror .cm-gutters {
     display: none;
+  }
+
+  .mobile-note-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    padding: 8px 12px;
+    border-top: 1px solid var(--border);
+    background: var(--bg-surface);
+    flex-shrink: 0;
+  }
+
+  .mobile-note-action {
+    min-height: 46px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    border: 1px solid var(--border-strong);
+    border-radius: 9px;
+    background: var(--bg-raised);
+    color: var(--text-primary);
+    font-family: var(--font-display);
+    font-size: 0.8125rem;
+    font-weight: 650;
+  }
+
+  .mobile-note-action:active {
+    border-color: var(--accent);
+    background: var(--accent-subtle);
+    color: var(--accent);
+  }
+
+  .mobile-note-action:disabled {
+    opacity: 0.65;
   }
 
   .editor-status-bar {

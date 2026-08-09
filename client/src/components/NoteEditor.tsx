@@ -11,7 +11,7 @@ import { closeBrackets } from '@codemirror/autocomplete';
 import { languages } from '@codemirror/language-data';
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
 import { tags } from '@lezer/highlight';
-import { FileText, Link2, Box, Columns3, Globe, ExternalLink, LockKeyhole } from 'lucide-react';
+import { FileText, Link2, Box, Columns3, Globe, ExternalLink, LockKeyhole, Save, Search, X } from 'lucide-react';
 import { hasObsidianKanbanMarker, KanbanView } from './KanbanView';
 import {
   acquireInteractionLock,
@@ -27,7 +27,7 @@ interface NoteEditorProps {
   note: Note | null;
   content: string;
   onContentChange: (content: string) => void;
-  onSave: () => void;
+  onSave: () => void | Promise<unknown>;
   onRename?: (title: string) => Promise<void>;
   onExecuteDirective?: (prompt: string) => void;
   onOpenWikilink?: (title: string) => void;
@@ -1613,11 +1613,22 @@ const checkboxClickHandler = EditorView.domEventHandlers({
 });
 
 /* ─── Component ──────────────────────────────────────────── */
+export function filterLinkableNotes(notes: NoteSummary[], currentNoteId: string | undefined, query: string) {
+  const needle = query.trim().toLocaleLowerCase();
+  return notes
+    .filter((candidate) => candidate.id !== currentNoteId && !candidate.is_archived)
+    .filter((candidate) => !needle || candidate.title.toLocaleLowerCase().includes(needle))
+    .sort((a, b) => a.title.localeCompare(b.title));
+}
+
 export const NoteEditor = memo(function NoteEditor({ note, content, onContentChange, onSave, onRename, onExecuteDirective, onOpenWikilink, notes = [], onOpenNote, isDraft = false }: NoteEditorProps) {
   const [publishInfo, setPublishInfo] = useState<NotePublishInfo>({ published: false });
   const [publishBusy, setPublishBusy] = useState(false);
   const [publishNotice, setPublishNotice] = useState('');
   const [viewMode, setViewMode] = useState<'editor' | 'kanban'>('editor');
+  const [noteLinkPickerOpen, setNoteLinkPickerOpen] = useState(false);
+  const [noteLinkQuery, setNoteLinkQuery] = useState('');
+  const [mobileSaveState, setMobileSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const contentRef = useRef(content);
@@ -1628,11 +1639,20 @@ export const NoteEditor = memo(function NoteEditor({ note, content, onContentCha
   const onOpenNoteRef = useRef(onOpenNote);
   const insertImageFromFileRef = useRef<(file: File, view?: EditorView, coords?: { x: number; y: number }) => Promise<boolean>>(async () => false);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  const saveFeedbackTimerRef = useRef<number | null>(null);
   // Keep notes off the extensions dependency graph — setNotes from vault soft
   // refresh was reconfigure-ing CodeMirror (full destroy/rebuild of plugins)
   // and freezing the UI for a second or two on every background return.
   const notesRef = useRef(notes);
   notesRef.current = notes;
+  const linkableNotes = useMemo(
+    () => filterLinkableNotes(notes, note?.id, noteLinkQuery),
+    [notes, note?.id, noteLinkQuery],
+  );
+
+  useEffect(() => () => {
+    if (saveFeedbackTimerRef.current !== null) window.clearTimeout(saveFeedbackTimerRef.current);
+  }, []);
 
   // Inline, editable note title (Obsidian-style). Synced from the note.
   const [titleDraft, setTitleDraft] = useState(note?.title ?? '');
@@ -2173,6 +2193,28 @@ export const NoteEditor = memo(function NoteEditor({ note, content, onContentCha
     }
   }, []);
 
+  const handleMobileSave = useCallback(async () => {
+    if (mobileSaveState === 'saving') return;
+    setMobileSaveState('saving');
+    if (saveFeedbackTimerRef.current !== null) window.clearTimeout(saveFeedbackTimerRef.current);
+    try {
+      await Promise.resolve(onSaveRef.current());
+      setMobileSaveState('saved');
+      saveFeedbackTimerRef.current = window.setTimeout(() => setMobileSaveState('idle'), 1800);
+    } catch {
+      setMobileSaveState('error');
+    }
+  }, [mobileSaveState]);
+
+  const insertNoteLink = useCallback((target: NoteSummary) => {
+    const view = viewRef.current;
+    if (!view) return;
+    insertAtCursor(view, `[[${target.title.replace(/\]\]/g, '')}]]`);
+    setNoteLinkPickerOpen(false);
+    setNoteLinkQuery('');
+    requestAnimationFrame(() => view.focus());
+  }, []);
+
   if (!note) {
     return (
       <div className="editor-container">
@@ -2304,6 +2346,44 @@ export const NoteEditor = memo(function NoteEditor({ note, content, onContentCha
       {/* Editor */}
       <div className={`editor-codemirror${viewMode === 'kanban' ? ' is-hidden' : ''}`} id="editor-codemirror" ref={editorRef} />
       {viewMode === 'kanban' && <KanbanView content={content} onContentChange={onContentChange} />}
+
+      <div className="mobile-note-actions" aria-label="Note actions">
+        <button type="button" className="mobile-note-action" onClick={() => { void handleMobileSave(); }} disabled={mobileSaveState === 'saving'}>
+          <Save size={18} />
+          <span>{mobileSaveState === 'saving' ? 'Saving…' : mobileSaveState === 'saved' ? 'Saved' : mobileSaveState === 'error' ? 'Retry save' : 'Save'}</span>
+        </button>
+        <button type="button" className="mobile-note-action" onClick={() => setNoteLinkPickerOpen(true)}>
+          <Link2 size={18} />
+          <span>Link note</span>
+        </button>
+      </div>
+
+      {noteLinkPickerOpen && (
+        <div className="note-link-picker-backdrop" onMouseDown={() => setNoteLinkPickerOpen(false)}>
+          <section className="note-link-picker" role="dialog" aria-modal="true" aria-label="Link a note" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="note-link-picker-header">
+              <div>
+                <strong>Link a note</strong>
+                <span>Insert a link at the cursor</span>
+              </div>
+              <button type="button" className="note-link-picker-close" aria-label="Close note picker" onClick={() => setNoteLinkPickerOpen(false)}><X size={20} /></button>
+            </div>
+            <label className="note-link-picker-search">
+              <Search size={17} />
+              <input autoFocus value={noteLinkQuery} onChange={(event) => setNoteLinkQuery(event.target.value)} placeholder="Search notes" />
+            </label>
+            <div className="note-link-picker-list">
+              {linkableNotes.map((candidate) => (
+                <button type="button" key={candidate.id} onClick={() => insertNoteLink(candidate)}>
+                  <FileText size={17} />
+                  <span>{candidate.title}</span>
+                </button>
+              ))}
+              {linkableNotes.length === 0 && <p>{noteLinkQuery ? 'No matching notes' : 'No other notes yet'}</p>}
+            </div>
+          </section>
+        </div>
+      )}
 
       {/* Status bar */}
       <div className="editor-status-bar" id="editor-status-bar">
