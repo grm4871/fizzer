@@ -31,6 +31,12 @@ export const CASCADE_AGENT_APP_CONTEXT =
   + 'Shipping to this repo: run `npm run build` before push to master; after push watch Deploy Production with `gh run watch` until green. '
   + 'Push is not ship. Do not ignore a red deploy.';
 
+export const CASCADE_MISSION_DISCRETION_CONTEXT =
+  'For substantive multi-step work that should survive interruption, start a durable mission with '
+  + '`cascade-chat mission start --title "..." --objective "..."`; keep driving it until its review wake, then finish it. '
+  + 'Use judgment: do not start a mission for simple questions, status checks, conversation, or a small one-step change. '
+  + 'A mission does not grant authority over other users agents; only delegate when the user explicitly asks and the ownership boundary is valid.';
+
 export type ChatReplyRef = {
   messageId: string;
   author: string;

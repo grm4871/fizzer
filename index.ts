@@ -177,6 +177,7 @@ import {
   buildAgentChannelWorkspaceContext,
   buildAgentChatContext,
   CASCADE_AGENT_APP_CONTEXT,
+  CASCADE_MISSION_DISCRETION_CONTEXT,
   CHAT_NOTE_MARKER,
   createAgentChatContentAccumulator,
   ensureAgentChatMessage,
@@ -219,7 +220,6 @@ import {
   attachRunToChatAgentDispatch,
   createChatAgentDispatchForRegistration,
   createChatAgentDispatches,
-  explicitlyMentionsChatAgent,
   ensureChatDispatchSchema,
   getChatAgentDispatch,
   listPendingChatAgentDispatches,
@@ -3179,6 +3179,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     // contract. Re-sending it on every turn wastes context and can make a
     // correctly resumed follow-up look like another cold system boot.
     const contextChunks: string[] = includeAppContract ? [CASCADE_AGENT_APP_CONTEXT] : [];
+    if (targetChannelId) contextChunks.push(CASCADE_MISSION_DISCRETION_CONTEXT);
     // A resumed session already has the prior workspace snapshot and can use
     // cascade-note when fresh live state matters. Re-sending up to 4k chars on
     // every steering turn was pure context multiplication.
@@ -3568,52 +3569,13 @@ app.post('/api/vaults/:vaultId/channels/:channelId/messages', requireAuth, (req:
     const { route } = assertChatChannel(db, req.params.channelId, req.user!.id);
     assertDirectMessageSendAllowed(db, route.sourceChannelId, req.user!.id);
     const input = isAgentRequest(req) ? req.body : { ...req.body, author: req.user!.username, agentId: undefined, registrationId: undefined };
-    let message = createChatMessage(db, req.user!.id, req.params.vaultId, req.params.channelId, input);
-    let rootMission: MissionProjectionUpdate | null = null;
-    let rootCoordinatorId = '';
-    // Direct pings to a user's own coordinator are durable mission roots. Never
-    // infer this authority over another user's coordinator in a shared room.
-    if (!isAgentRequest(req)) {
-      const coordinator = listChatAgentMembers(db, req.params.channelId, req.user!.id)
-        .find((agent) => agent.ownerUserId === req.user!.id
-          && explicitlyMentionsChatAgent(message, agent));
-      if (coordinator) {
-        const title = message.body.trim().slice(0, 180) || `Task for ${coordinator.displayName}`;
-        const missionUpdate = createChatMission(db, req.user!.id, req.params.vaultId, req.params.channelId, {
-          rootMessageId: message.id,
-          coordinatorRegistrationId: coordinator.id,
-          title,
-          objective: message.body,
-        });
-        rootMission = missionUpdate;
-        rootCoordinatorId = coordinator.id;
-        emitMissionProjection(missionUpdate);
-        message = getChatMessage(db, req.params.channelId, req.user!.id, message.id) || message;
-      }
-    }
+    const message = createChatMessage(db, req.user!.id, req.params.vaultId, req.params.channelId, input);
     const dispatches = createChatAgentDispatches(
       db,
       req.user!.id,
       req.params.channelId,
       message,
     );
-    // The root ping is real mission work, not just a card. Bind its existing
-    // dispatch so normal run start/finish reconciliation advances the mission.
-    if (rootMission && rootCoordinatorId) {
-      const rootDispatch = dispatches.find((dispatch) => dispatch.registration.id === rootCoordinatorId);
-      if (rootDispatch) {
-        const primary = addChatMissionTask(db, req.user!.id, req.params.channelId, rootMission.mission.id, {
-          coordinatorRegistrationId: rootCoordinatorId,
-          title: 'Primary task',
-          assignee: rootCoordinatorId,
-          prompt: rootMission.mission.objective,
-          primary: true,
-        });
-        const linked = linkMissionTaskDispatch(db, primary.task.id, rootDispatch.id);
-        emitMissionProjection(linked);
-        message = getChatMessage(db, req.params.channelId, req.user!.id, message.id) || message;
-      }
-    }
     const agents = listChatAgentMembers(db, req.params.channelId, req.user!.id);
     refreshChatNoteGrants(req.user!.id, req.params.vaultId, route.sourceChannelId, message);
     try {
@@ -3644,12 +3606,37 @@ app.get('/api/vaults/:vaultId/channels/:channelId/agent-dispatches/pending', req
 
 app.post('/api/vaults/:vaultId/channels/:channelId/missions', requireAuth, (req: AuthedRequest, res) => {
   try {
-    const update = createChatMission(db, req.user!.id, req.params.vaultId, req.params.channelId, {
+    let update = createChatMission(db, req.user!.id, req.params.vaultId, req.params.channelId, {
       rootMessageId: String(req.body?.rootMessageId || ''),
       coordinatorRegistrationId: String(req.body?.coordinatorRegistrationId || ''),
       title: String(req.body?.title || ''),
       objective: String(req.body?.objective || ''),
     });
+    // When an agent elects to open a mission from inside an active ping, bind
+    // that exact run as the primary task. This gives discretionary missions the
+    // same terminal reconciliation and review wake as orchestrator missions.
+    const runId = Number(req.headers['x-cascade-run-id']);
+    if (isAgentRequest(req) && Number.isFinite(runId) && runId > 0) {
+      const registrationId = String(req.body?.coordinatorRegistrationId || '');
+      const active = db.prepare(`
+        SELECT d.id AS dispatch_id
+        FROM runs r
+        JOIN chat_agent_dispatches d ON d.id = r.chat_dispatch_id
+        WHERE r.id = ? AND r.status IN ('queued', 'running')
+          AND d.registration_id = ? AND d.channel_id = ?
+      `).get(runId, registrationId, update.channelId) as { dispatch_id: string } | undefined;
+      if (active) {
+        const primary = addChatMissionTask(db, req.user!.id, req.params.channelId, update.mission.id, {
+          coordinatorRegistrationId: registrationId,
+          title: 'Primary task',
+          assignee: registrationId,
+          prompt: update.mission.objective,
+          primary: true,
+        });
+        update = linkMissionTaskDispatch(db, primary.task.id, active.dispatch_id);
+        update = attachRunToMissionTaskByDispatch(db, active.dispatch_id, runId) || update;
+      }
+    }
     emitMissionProjection(update);
     res.status(201).json({ mission: update.mission });
   } catch (error) {
