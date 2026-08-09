@@ -757,24 +757,8 @@ export function getNote(db: Db, noteId: string): Note | undefined {
   };
 }
 
-export function createNote(db: Db, vaultId: string, userId: number, opts: { id?: string; title?: string; content?: string; folder_id?: string; is_listed?: boolean }): Note {
-  // Accept a client-supplied id so the app can mint a note's real id up front,
-  // keep it local-only while empty, and persist under the same id on first
-  // save — no tab/layout remapping. Only honor a well-formed, unused UUID.
-  const wellFormedId = typeof opts.id === 'string'
-    && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(opts.id)
-    ? opts.id
-    : null;
-  const existing = wellFormedId
-    ? db.prepare('SELECT * FROM notes WHERE id = ?').get(wellFormedId) as Note | undefined
-    : undefined;
-  // A client that mints its own id and sends the create twice (a double-fired
-  // shortcut, a retry) must not get a *second* note under a fresh id — that
-  // leaves an orphan no tab points at. Same vault means it is the same create,
-  // so hand back the note that already exists instead of minting a duplicate.
-  if (existing && existing.vault_id === vaultId) return existing;
-  const providedId = existing ? null : wellFormedId;
-  const id = providedId ?? crypto.randomUUID();
+export function createNote(db: Db, vaultId: string, userId: number, opts: { title?: string; content?: string; folder_id?: string; is_listed?: boolean }): Note {
+  const id = crypto.randomUUID();
   const rawContent = String(opts.content || '');
   const content = rawContent.replace(/\\+`/g, '`');
   const folderId = opts.folder_id || null;

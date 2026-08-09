@@ -88,8 +88,18 @@ try {
   if (await visibleSidebarActions.count() !== 1) throw new Error('sidebar rendered duplicate visible action rows');
 
   await page.locator('#new-note-btn-desktop').click();
-  const draftTitle = `Blank saved note ${Date.now()}`;
-  await page.locator('#editor-title').fill(draftTitle);
+  const createdNote = await page.waitForFunction(async ({ apiBase: base, token: authToken, vaultId }) => {
+    const response = await fetch(`${base}/api/vaults/${vaultId}/notes?title=Untitled%20Note`, {
+      headers: { authorization: `Bearer ${authToken}` },
+    });
+    if (!response.ok) return false;
+    const payload = await response.json();
+    return payload.notes?.find((note) => note.title.startsWith('Untitled Note')) || false;
+  }, { apiBase, token, vaultId: vault.id });
+  if (!createdNote) throw new Error('new-note action did not persist a note immediately');
+
+  const savedTitle = `Blank saved note ${Date.now()}`;
+  await page.locator('#editor-title').fill(savedTitle);
   await page.locator('#editor-title').press('Enter');
   await page.keyboard.press('Control+s');
   await page.waitForFunction(async ({ apiBase: base, token: authToken, vaultId, title }) => {
@@ -99,7 +109,7 @@ try {
     if (!response.ok) return false;
     const payload = await response.json();
     return payload.notes?.some((note) => note.title === title);
-  }, { apiBase, token, vaultId: vault.id, title: draftTitle });
+  }, { apiBase, token, vaultId: vault.id, title: savedTitle });
 
   await page.getByText('embed-channel', { exact: false }).first().click();
   const embed = page.locator('.chat-doc-embed');
@@ -125,7 +135,7 @@ try {
   await page.locator('.cm-editor').waitFor({ timeout: 15000 });
   if (await page.locator('.cm-editor').count() !== 1) throw new Error('corrupted layout mounted the note editor more than once');
   if (errors.length) throw new Error(errors.join('\n'));
-  console.log('[notes-ui] OK — single action row, blank-note save, embed card, note editor, and duplicate-pane session recovery');
+  console.log('[notes-ui] OK — immediate note creation, blank-note save, single action row, embed card, and duplicate-pane recovery');
 } finally {
   await browser?.close();
   preview.kill('SIGTERM');

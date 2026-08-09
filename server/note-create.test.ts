@@ -70,23 +70,3 @@ test('two notes with the same title get separate files instead of clobbering one
     cleanup(db);
   }
 });
-
-test('re-sending a create with an id that already exists returns it, not an orphan copy', () => {
-  const db = setup();
-  try {
-    const vault = createVault(db, 9, { name: 'Idempotent' });
-    const id = '11111111-2222-4333-8444-555555555555';
-    const first = createNote(db, vault.id, 9, { id, title: 'Draft', content: 'body' });
-    // Ctrl+S reaching the save path twice used to land here a second time. The
-    // id was already taken, so the note was created again under a fresh random
-    // id — an orphan no tab pointed at.
-    const again = createNote(db, vault.id, 9, { id, title: 'Draft', content: 'body' });
-
-    assert.equal(again.id, first.id);
-    const count = db.prepare('SELECT COUNT(*) AS n FROM notes WHERE vault_id = ? AND title LIKE ?')
-      .get(vault.id, 'Draft%') as { n: number };
-    assert.equal(count.n, 1, 'the repeat create must not add a second note');
-  } finally {
-    cleanup(db);
-  }
-});
