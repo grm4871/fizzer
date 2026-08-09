@@ -616,7 +616,7 @@ export const Sidebar = memo(function Sidebar({
         id={`note-${note.id}`}
         className={`tree-item${isChatChannel ? ' is-channel' : ' is-note'}${note.id === activeNoteId ? ' active' : ''}${dropClass(note.id)}`}
         style={{ paddingLeft }}
-        onClick={() => onSelectNote(note.id)}
+        onClick={(e) => (e.metaKey || e.ctrlKey ? onOpenNoteInNewTab(note.id) : onSelectNote(note.id))}
         onContextMenu={(e) => openMenu(e, { x: 0, y: 0, kind: 'note', id: note.id })}
         {...noteDragProps(note.id)}
         {...noteDropProps(note, notesByFolder.get(note.folder_id) ?? [])}
