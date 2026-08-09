@@ -205,6 +205,7 @@ export default function App() {
   const [communityUpdates, setCommunityUpdates] = useState<CommunityUpdates>(EMPTY_COMMUNITY_UPDATES);
   const [communityUpdatesLoading, setCommunityUpdatesLoading] = useState(false);
   const [communityUpdatesError, setCommunityUpdatesError] = useState('');
+  const [showAgentMemory, setShowAgentMemory] = useState(() => localStorage.getItem('cascade_show_agent_memory') === '1');
 
   // Tabs + tiling layout
   const [openTabs, setOpenTabs] = useState<Tab[]>(persistedSessionRef.current.openTabs);
@@ -446,7 +447,7 @@ export default function App() {
     if (!localStorage.getItem('docs_token')) return;
     if (!quiet) setCommunityUpdatesLoading(true);
     try {
-      const data = await api<CommunityUpdates>('/api/community/updates?limit=80');
+      const data = await api<CommunityUpdates>(`/api/community/updates?limit=80${showAgentMemory ? '&includeAgentMemory=1' : ''}`);
       setCommunityUpdates(data);
       setCommunityUpdatesError('');
     } catch (error) {
@@ -454,6 +455,11 @@ export default function App() {
     } finally {
       if (!quiet) setCommunityUpdatesLoading(false);
     }
+  }, [showAgentMemory]);
+
+  const updateShowAgentMemory = useCallback((show: boolean) => {
+    setShowAgentMemory(show);
+    localStorage.setItem('cascade_show_agent_memory', show ? '1' : '0');
   }, []);
 
   const scheduleCommunityRefresh = useCallback((delay = 350) => {
@@ -3607,6 +3613,8 @@ export default function App() {
           notes={notes}
           activeNoteId={activeTabId}
           updateCounts={communityUpdates.counts}
+          showAgentMemory={showAgentMemory}
+          onShowAgentMemoryChange={updateShowAgentMemory}
           onSelectVault={setActiveVaultId}
           onCreateVault={handleCreateVault}
           onJoinVault={handleJoinVault}

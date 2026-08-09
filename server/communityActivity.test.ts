@@ -243,6 +243,22 @@ test('note changes start at membership time, are attributed, and disappear with 
   }
 });
 
+test('agent memory changes stay out of notifications unless explicitly included', () => {
+  const { db, close } = setup();
+  try {
+    db.prepare("INSERT INTO vault_members (vault_id, user_id, role, invited_by, created_at) VALUES ('source', 2, 'editor', 1, '2026-08-05T00:00:00.000Z')").run();
+    db.prepare("INSERT INTO folders (id, vault_id, parent_id, name) VALUES ('agent-root', 'source', NULL, '_agent'), ('agent-child', 'source', 'agent-root', 'sol')").run();
+    addNote(db, 'memory', 'source', 'POLICIES', 'internal agent context');
+    db.prepare("UPDATE notes SET folder_id = 'agent-child' WHERE id = 'memory'").run();
+    recordCommunityNoteChange(db, 'memory', 1, '2026-08-07T00:00:00.000Z');
+
+    assert.equal(listCommunityUpdates(db, { id: 2, username: 'bob' }).counts.total, 0);
+    assert.equal(listCommunityUpdates(db, { id: 2, username: 'bob' }, 40, true).counts.total, 1);
+  } finally {
+    close();
+  }
+});
+
 test('first upgrade seeds existing channel history as read', () => {
   const { db, close } = setup();
   try {

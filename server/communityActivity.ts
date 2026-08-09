@@ -232,7 +232,7 @@ function isDirectMessageRoute(route: ChannelRoute): boolean {
     .some((value) => /(?:^|\n)dm_with=/.test(value));
 }
 
-function latestExternalNoteActivities(db: Db, userId: number): NoteActivityRow[] {
+function latestExternalNoteActivities(db: Db, userId: number, includeAgentMemory = false): NoteActivityRow[] {
   return db.prepare(`
     SELECT
       n.id AS noteId,
@@ -254,6 +254,14 @@ function latestExternalNoteActivities(db: Db, userId: number): NoteActivityRow[]
     WHERE activity.actor_user_id != ?
       AND n.is_archived = 0
       AND n.is_listed = 1
+      AND (? = 1 OR n.folder_id NOT IN (
+        WITH RECURSIVE agent_folders(id) AS (
+          SELECT id FROM folders WHERE vault_id = n.vault_id AND parent_id IS NULL AND name = '_agent'
+          UNION ALL
+          SELECT child.id FROM folders child JOIN agent_folders parent ON child.parent_id = parent.id
+        )
+        SELECT id FROM agent_folders
+      ))
       AND (SELECT COUNT(*) FROM vault_members members WHERE members.vault_id = n.vault_id) > 1
       AND activity.id = (
         SELECT newer.id FROM community_note_activity newer
@@ -265,13 +273,14 @@ function latestExternalNoteActivities(db: Db, userId: number): NoteActivityRow[]
       AND n.content NOT LIKE 'cascade://chat-channel%'
     ORDER BY julianday(activity.changed_at) DESC, activity.id DESC
     LIMIT ?
-  `).all(userId, userId, userId, userId, COMMUNITY_UPDATES_MAX_LIMIT + 1) as NoteActivityRow[];
+  `).all(userId, userId, userId, includeAgentMemory ? 1 : 0, userId, COMMUNITY_UPDATES_MAX_LIMIT + 1) as NoteActivityRow[];
 }
 
 export function listCommunityUpdates(
   db: Db,
   user: { id: number; username: string },
   requestedLimit = COMMUNITY_UPDATES_DEFAULT_LIMIT,
+  includeAgentMemory = false,
 ): CommunityUpdates {
   const limit = Math.max(1, Math.min(
     COMMUNITY_UPDATES_MAX_LIMIT,
@@ -343,7 +352,7 @@ export function listCommunityUpdates(
     }
   }
 
-  for (const note of latestExternalNoteActivities(db, user.id)) {
+  for (const note of latestExternalNoteActivities(db, user.id, includeAgentMemory)) {
     counts.total = Math.min(COMMUNITY_TOTAL_COUNT_CAP, counts.total + 1);
     addBoundedCount(counts.byVault, note.vaultId, 1);
     counts.byTarget[note.noteId] = 1;

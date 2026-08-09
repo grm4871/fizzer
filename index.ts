@@ -170,6 +170,7 @@ import {
 } from './server/feeds.js';
 import { fetchWidgetData } from './server/widgetData.js';
 import { corsOrigin, rateLimit, resolveDeploySecret, resolveJwtSecret } from './server/security.js';
+import { ensureAndroidBatterySchema, listAndroidBatterySamples, parseAndroidBatterySample, recordAndroidBatterySample } from './server/androidBattery.js';
 import {
   assertChatChannel,
   agentChatContentFromAccumulator,
@@ -529,6 +530,7 @@ ensurePublicVaultSchema(db);
 ensureCommunityModerationSchema(db);
 ensureDirectMessageSchema(db);
 ensureCommunityActivitySchema(db);
+ensureAndroidBatterySchema(db);
 ensureManagedAgentSchema(db);
 // Hard boundary: rehome any vaults still sharing an on-disk root (legacy leak path).
 try {
@@ -1568,14 +1570,31 @@ app.get('/api/me', requireAuth, (req: AuthedRequest, res) => {
   res.json({ user: publicUser(user), owner: isOwner(req.user!.id) });
 });
 
+app.post('/api/diagnostics/android-battery', requireAuth, requireUserAccess, (req: AuthedRequest, res) => {
+  try {
+    recordAndroidBatterySample(db, req.user!.id, parseAndroidBatterySample(req.body || {}));
+    res.status(202).json({ ok: true });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Invalid battery sample' });
+  }
+});
+
+app.get('/api/diagnostics/android-battery', requireAuth, requireUserAccess, (req: AuthedRequest, res) => {
+  const allUsers = req.query.all === '1';
+  if (allUsers && !isOwner(req.user!.id)) return res.status(403).json({ error: 'Owner only' });
+  res.json({ samples: listAndroidBatterySamples(db, allUsers ? null : req.user!.id, Number(req.query.days)) });
+});
+
 // ── Community updates ─────────────────────────────────────────────
 
 app.get('/api/community/updates', requireAuth, requireUserAccess, (req: AuthedRequest, res) => {
   const requestedLimit = Number(req.query.limit);
+  const includeAgentMemory = req.query.includeAgentMemory === '1';
   res.json(listCommunityUpdates(
     db,
     req.user!,
     Number.isFinite(requestedLimit) ? requestedLimit : undefined,
+    includeAgentMemory,
   ));
 });
 

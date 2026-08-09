@@ -20,6 +20,7 @@ public class MainActivity extends BridgeActivity {
     // Required when the launch theme parents Theme.SplashScreen — without this
     // the splash window can stick forever on API 31+ (white Cascade banner).
     SplashScreen.installSplashScreen(this);
+    registerPlugin(BatteryMonitorPlugin.class);
     super.onCreate(savedInstanceState);
 
     // After content view exists: draw under system bars (no light letterbox).

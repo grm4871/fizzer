@@ -46,6 +46,8 @@ interface SidebarProps {
   notes: NoteSummary[];
   activeNoteId: string | null;
   updateCounts: CommunityUpdates['counts'];
+  showAgentMemory: boolean;
+  onShowAgentMemoryChange: (show: boolean) => void;
   onSelectVault: (id: string) => void;
   onCreateVault: (name: string) => Promise<boolean>;
   onJoinVault: (inviteLink: string) => Promise<boolean>;
@@ -125,6 +127,8 @@ export const Sidebar = memo(function Sidebar({
   notes,
   activeNoteId,
   updateCounts,
+  showAgentMemory,
+  onShowAgentMemoryChange,
   onSelectVault,
   onCreateVault,
   onJoinVault,
@@ -182,9 +186,25 @@ export const Sidebar = memo(function Sidebar({
     [vaults, activeVaultId],
   );
 
+  const visibleFolders = useMemo(() => {
+    if (showAgentMemory) return folders;
+    const hidden = new Set(folders.filter((folder) => folder.parent_id === null && folder.name === '_agent').map((folder) => folder.id));
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const folder of folders) {
+        if (folder.parent_id && hidden.has(folder.parent_id) && !hidden.has(folder.id)) {
+          hidden.add(folder.id);
+          changed = true;
+        }
+      }
+    }
+    return folders.filter((folder) => !hidden.has(folder.id));
+  }, [folders, showAgentMemory]);
+
   const rootFolders = useMemo(
-    () => folders.filter((f) => f.parent_id === null).sort((a, b) => a.position - b.position),
-    [folders],
+    () => visibleFolders.filter((f) => f.parent_id === null).sort((a, b) => a.position - b.position),
+    [visibleFolders],
   );
 
   const listedNotes = useMemo(() => notes.filter((note) => note.is_listed !== 0), [notes]);
@@ -202,14 +222,14 @@ export const Sidebar = memo(function Sidebar({
 
   const childFolders = useMemo(() => {
     const map = new Map<string | null, Folder[]>();
-    for (const f of folders) {
+    for (const f of visibleFolders) {
       const key = f.parent_id;
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(f);
     }
     for (const [, arr] of map) arr.sort((a, b) => a.position - b.position);
     return map;
-  }, [folders]);
+  }, [visibleFolders]);
 
   // Flattened folder list (with depth) for the "Move to…" picker.
   const flatFolders = useMemo(() => {
@@ -816,6 +836,15 @@ export const Sidebar = memo(function Sidebar({
               {vault.id === activeVaultId && <Check className="vault-switcher-check" size={15} aria-hidden="true" />}
             </button>
           ))}
+          <div className="vault-switcher-divider" role="separator" />
+          <label className="vault-switcher-toggle">
+            <input
+              type="checkbox"
+              checked={showAgentMemory}
+              onChange={(event) => onShowAgentMemoryChange(event.target.checked)}
+            />
+            <span>Show agent memory</span>
+          </label>
           <div className="vault-switcher-divider" role="separator" />
           <button type="button" role="menuitem" className="vault-switcher-discover" onClick={() => { setVaultMenuOpen(false); onOpenPublicVaults(); }}>
             <Compass size={14} aria-hidden="true" /> Browse public vaults
