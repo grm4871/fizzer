@@ -596,7 +596,7 @@ button:focus-visible,
   border: 0;
   border-radius: 7px;
   color: var(--accent-hover);
-  background: color-mix(in srgb, var(--accent-subtle) 72%, transparent);
+  background: transparent;
 }
 .vault-switcher-copy { min-width: 0; display: grid; gap: 2px; }
 .vault-switcher-copy strong { overflow: hidden; text-overflow: ellipsis; font-size: 0.8125rem; font-weight: 650; white-space: nowrap; }
@@ -688,7 +688,7 @@ button:focus-visible,
   place-items: center;
   border-radius: 8px;
   color: var(--accent-hover);
-  background: var(--accent-subtle);
+  background: transparent;
   border: 0;
   box-shadow: none;
 }
