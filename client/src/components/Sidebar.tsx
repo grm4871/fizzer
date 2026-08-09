@@ -31,7 +31,7 @@ import { CHAT_NOTE_MARKER } from './ChatView';
 import {
   Folder as FolderIcon, FolderOpen, FileText, Pin, Edit2, FolderPlus,
   Search, ChevronRight, ChevronDown, Check, PanelLeftClose, LogOut, Trash2, FilePlus, FolderInput, Pencil, RefreshCw,
-  Hash, Unlink, ShieldCheck, SkipBack, Play, Pause, SkipForward, Music2, Users, Plus, LogIn, Compass, Mail, X,
+  Hash, Unlink, ShieldCheck, SkipBack, Play, Pause, SkipForward, Music2, Plus, LogIn, Compass, Mail, X,
 } from 'lucide-react';
 import { FizzerMark } from './FizzerMark';
 
@@ -788,19 +788,6 @@ export const Sidebar = memo(function Sidebar({
           <span className="vault-update-badge" aria-label={`${countLabel(updateCounts.byVault[activeVault.id])} unread updates`}>
             {countLabel(updateCounts.byVault[activeVault.id])}
           </span>
-        )}
-        {activeVault && isSharedVault(activeVault) && (
-          <button
-            type="button"
-            className="vault-shared-badge"
-            id="vault-shared-badge"
-            onClick={onOpenAccount}
-            title="Manage vault members"
-            aria-label={`Manage ${activeVault.name} members`}
-          >
-            <Users size={12} aria-hidden="true" />
-            <span>{activeVault.memberCount}</span>
-          </button>
         )}
         <div className="sidebar-actions sidebar-actions-desktop" role="toolbar" aria-label="Sidebar actions">{actionButtons('desktop')}</div>
         <button className="btn-icon sidebar-mobile-collapse" onClick={onCollapse} title="Collapse sidebar"><PanelLeftClose size={16} /></button>

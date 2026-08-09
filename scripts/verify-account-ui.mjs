@@ -71,7 +71,7 @@ try {
   await page.locator('.sidebar-footer .user-info').click();
   const sharing = page.locator('.account-settings');
   await sharing.waitFor();
-  if (await page.locator('#vault-shared-badge').count()) throw new Error('a private vault should not show the shared badge');
+  if (!(await page.locator('.vault-name-meta').innerText()).includes('Private')) throw new Error('a private vault should read as private in the sidebar header');
   await sharing.getByLabel('Public summary').fill('A focused workspace for public product research.');
   await sharing.getByLabel('Topics').fill('Research, Product Design, research');
   await sharing.getByLabel('Community guidelines').fill('Bring evidence and keep critique constructive.');
@@ -113,9 +113,8 @@ try {
   await sharing.getByRole('button', { name: 'Invite', exact: true }).click();
   await sharing.getByText(`Added @${mateName} as editor`).waitFor();
   await sharing.locator(`.account-vault-members li:has-text("${mateName}")`).waitFor();
-  // The switcher badge proves the vault list refreshed after the membership change.
-  await page.locator('#vault-shared-badge').waitFor();
-  if ((await page.locator('#vault-shared-badge').innerText()).trim() !== '2') throw new Error('shared badge did not show 2 members');
+  // The sidebar header's member line proves the vault list refreshed after the membership change.
+  await page.waitForFunction(() => document.querySelector('.vault-name-meta')?.textContent?.includes('2 members'));
 
   await sharing.getByLabel(`Role for @${mateName}`).selectOption('viewer');
   await sharing.getByText(`@${mateName} is now viewer`).waitFor();
@@ -125,7 +124,7 @@ try {
   await sharing.getByText(`Removed and banned @${mateName}`).waitFor();
   await sharing.locator(`.account-vault-members li:has-text("${mateName}")`).waitFor({ state: 'detached' });
   await sharing.locator('.account-banned-users', { hasText: mateName }).waitFor();
-  await page.waitForFunction(() => !document.querySelector('#vault-shared-badge'));
+  await page.waitForFunction(() => document.querySelector('.vault-name-meta')?.textContent?.includes('Private'));
   const staleInvite = await fetch(`${apiBase}/api/vault-invites/${encodeURIComponent(profileInviteToken)}/accept`, {
     method: 'POST', headers: { 'content-type': 'application/json', ...mateAuth }, body: '{}',
   });

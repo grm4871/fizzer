@@ -668,25 +668,6 @@ button:focus-visible,
   transform: rotate(180deg);
   color: var(--accent-hover);
 }
-.sidebar-header .vault-shared-badge {
-  flex: none;
-  height: 25px;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 0 7px;
-  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--accent-subtle) 76%, transparent);
-  color: var(--accent-hover);
-  font: 650 0.625rem/1 var(--font-mono);
-  cursor: pointer;
-  transition: background var(--transition-fast), border-color var(--transition-fast);
-}
-.sidebar-header .vault-shared-badge:hover {
-  border-color: color-mix(in srgb, var(--accent) 62%, var(--border));
-  background: color-mix(in srgb, var(--accent-subtle) 100%, transparent);
-}
 .sidebar-header .vault-icon {
   flex-shrink: 0;
   width: 28px;
