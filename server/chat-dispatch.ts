@@ -80,6 +80,14 @@ function mentions(text: string, registration: ChatAgentRegistration): boolean {
   return new RegExp(`@\\s*${escaped}(?=$|[\\s.,:;!?\\])}])`, 'i').test(text);
 }
 
+export function explicitlyMentionsChatAgent(
+  message: ChatMessage,
+  registration: ChatAgentRegistration,
+): boolean {
+  const attachmentNames = (message.attachments ?? []).map((item) => item.name).join(' ');
+  return mentions([message.body, attachmentNames].filter(Boolean).join(' '), registration);
+}
+
 /** Resolve targets from canonical server membership, never renderer cache. */
 export function resolveChatAgentTargets(
   db: Db,

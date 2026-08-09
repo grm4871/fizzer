@@ -21,6 +21,7 @@ import {
   createChatAgentDispatches,
   attachRunToChatAgentDispatch,
   ensureChatDispatchSchema,
+  explicitlyMentionsChatAgent,
   listPendingChatAgentDispatches,
   resolveChatAgentTargets,
 } from './chat-dispatch.js';
@@ -579,6 +580,24 @@ test('an explicit specialist call takes the zero-hop route instead of also runni
       createdAt: '2026-08-03T00:00:02.000Z',
     });
     assert.deepEqual(resolveChatAgentTargets(db, 1, 'channel-1', both).map((item) => item.id), [coordinator.id, worker.id]);
+  } finally {
+    db.close();
+  }
+});
+
+test('explicit coordinator pings are distinguishable from ordinary turns', () => {
+  const { db, coordinator } = setup();
+  try {
+    const direct = createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: 'direct-coordinator', channelId: 'channel-1', author: 'owner', body: '@sol finish this',
+      createdAt: '2026-08-03T00:00:00.000Z',
+    });
+    const ordinary = createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: 'ordinary-coordinator', channelId: 'channel-1', author: 'owner', body: 'hello',
+      createdAt: '2026-08-03T00:00:01.000Z',
+    });
+    assert.equal(explicitlyMentionsChatAgent(direct, coordinator), true);
+    assert.equal(explicitlyMentionsChatAgent(ordinary, coordinator), false);
   } finally {
     db.close();
   }

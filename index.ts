@@ -219,6 +219,7 @@ import {
   attachRunToChatAgentDispatch,
   createChatAgentDispatchForRegistration,
   createChatAgentDispatches,
+  explicitlyMentionsChatAgent,
   ensureChatDispatchSchema,
   getChatAgentDispatch,
   listPendingChatAgentDispatches,
@@ -3539,7 +3540,26 @@ app.post('/api/vaults/:vaultId/channels/:channelId/messages', requireAuth, (req:
     const { route } = assertChatChannel(db, req.params.channelId, req.user!.id);
     assertDirectMessageSendAllowed(db, route.sourceChannelId, req.user!.id);
     const input = isAgentRequest(req) ? req.body : { ...req.body, author: req.user!.username, agentId: undefined, registrationId: undefined };
-    const message = createChatMessage(db, req.user!.id, req.params.vaultId, req.params.channelId, input);
+    let message = createChatMessage(db, req.user!.id, req.params.vaultId, req.params.channelId, input);
+    // Direct pings to a user's own coordinator are durable mission roots. Never
+    // infer this authority over another user's coordinator in a shared room.
+    if (!isAgentRequest(req)) {
+      const coordinator = listChatAgentMembers(db, req.params.channelId, req.user!.id)
+        .find((agent) => agent.orchestrator
+          && agent.ownerUserId === req.user!.id
+          && explicitlyMentionsChatAgent(message, agent));
+      if (coordinator) {
+        const title = message.body.trim().slice(0, 180) || `Task for ${coordinator.displayName}`;
+        const missionUpdate = createChatMission(db, req.user!.id, req.params.vaultId, req.params.channelId, {
+          rootMessageId: message.id,
+          coordinatorRegistrationId: coordinator.id,
+          title,
+          objective: message.body,
+        });
+        emitMissionProjection(missionUpdate);
+        message = getChatMessage(db, req.params.channelId, req.user!.id, message.id) || message;
+      }
+    }
     const dispatches = createChatAgentDispatches(
       db,
       req.user!.id,
