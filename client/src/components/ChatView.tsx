@@ -2223,6 +2223,7 @@ export const ChatView = memo(function ChatView({
   /** Delete is two-step in the context menu rather than a native confirm dialog. */
   const [deleteArmed, setDeleteArmed] = useState(false);
   const [pendingMedia, setPendingMedia] = useState<ChatMediaAttachment[]>([]);
+  const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
   const [mediaError, setMediaError] = useState('');
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const [sharedNote, setSharedNote] = useState<SharedChatNote | null>(null);
@@ -2264,6 +2265,7 @@ export const ChatView = memo(function ChatView({
   const programmaticClearRef = useRef<number | null>(null);
   const touchStartYRef = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const emojiPickerRef = useRef<HTMLDivElement | null>(null);
   const draftRef = useRef<HTMLTextAreaElement | null>(null);
   const mentionCycleRef = useRef<{ matches: string[]; index: number; start: number } | null>(null);
   const sortedMessages = useMemo(() => {
@@ -3043,6 +3045,31 @@ export const ChatView = memo(function ChatView({
     void addMediaFiles(files);
   }, [addMediaFiles]);
 
+  useEffect(() => {
+    if (!emojiPickerOpen) return undefined;
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (emojiPickerRef.current && !emojiPickerRef.current.contains(event.target as Node)) {
+        setEmojiPickerOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', closeOnOutsideClick);
+    return () => document.removeEventListener('mousedown', closeOnOutsideClick);
+  }, [emojiPickerOpen]);
+
+  const insertEmoji = useCallback((emoji: string) => {
+    const textarea = draftRef.current;
+    if (!textarea) return;
+    const start = textarea.selectionStart ?? draft.length;
+    const end = textarea.selectionEnd ?? start;
+    setDraft(`${draft.slice(0, start)}${emoji}${draft.slice(end)}`);
+    setEmojiPickerOpen(false);
+    requestAnimationFrame(() => {
+      textarea.focus();
+      const cursor = start + emoji.length;
+      textarea.setSelectionRange(cursor, cursor);
+    });
+  }, [draft]);
+
   const insertEmbedInDraft = useCallback((noteId: string, textarea: HTMLTextAreaElement) => {
     const embedded = notes.find((note) => note.id === noteId);
     if (!embedded) return false;
@@ -3374,6 +3401,27 @@ export const ChatView = memo(function ChatView({
             multiple
             onChange={handleUpload}
           />
+          <div className="chat-emoji-picker-wrap" ref={emojiPickerRef}>
+            <button
+              type="button"
+              className="btn-icon chat-emoji-btn"
+              aria-label="Choose emoji"
+              aria-expanded={emojiPickerOpen}
+              title="Choose emoji"
+              onClick={() => setEmojiPickerOpen((open) => !open)}
+            >
+              <Smile size={17} />
+            </button>
+            {emojiPickerOpen && (
+              <div className="chat-emoji-picker" role="dialog" aria-label="Emoji picker">
+                {CHAT_EMOJIS.map((emoji) => (
+                  <button key={emoji} type="button" className="chat-emoji-option" onClick={() => insertEmoji(emoji)}>
+                    {emoji}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           <button
             type="button"
             className="btn-icon chat-upload-btn"

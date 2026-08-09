@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { AtSign, CheckCheck, FileText, LoaderCircle, MessageCircle, Reply, X } from 'lucide-react';
 import { formatRelativeDate, type CommunityUpdateItem, type CommunityUpdates } from '../api';
+import { ModalShell } from './ModalShell';
 
 type UpdatesModalProps = {
   open: boolean;
@@ -52,10 +53,12 @@ export function UpdatesModal({
 
   if (!open) return null;
   return (
-    <div className="overlay-backdrop updates-backdrop" onMouseDown={(event) => {
-      if (event.target === event.currentTarget) onClose();
-    }}>
-      <section className="updates-modal" role="dialog" aria-modal="true" aria-labelledby="updates-title">
+    <ModalShell
+      backdropClassName="overlay-backdrop updates-backdrop"
+      dialogClassName="updates-modal"
+      ariaLabelledby="updates-title"
+      onClose={onClose}
+    >
         <header className="updates-header">
           <div>
             <h2 id="updates-title">Updates</h2>
@@ -114,7 +117,6 @@ export function UpdatesModal({
           ))}
           {updates.truncated && <div className="updates-truncated">Showing the newest updates. Open an item or mark all read to continue.</div>}
         </div>
-      </section>
-    </div>
+    </ModalShell>
   );
 }

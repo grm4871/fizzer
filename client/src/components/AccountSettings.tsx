@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Ban, Camera, Flag, Globe2, KeyRound, Link as LinkIcon, LogOut, Trash2, Users, X } from 'lucide-react';
 import { api, type User, type VaultMember, type VaultRole } from '../api';
+import { ModalShell } from './ModalShell';
 
 type AssignableRole = Exclude<VaultRole, 'owner'>;
 type PublicJoinPolicy = 'open' | 'request' | 'invite';
@@ -429,10 +430,12 @@ export function AccountSettings({ user, vaultId, vaultName, onClose, onUserChang
   };
 
   return (
-    <div className="overlay-backdrop account-settings-backdrop" onMouseDown={(event) => {
-      if (event.target === event.currentTarget) onClose();
-    }}>
-      <section className="account-settings" role="dialog" aria-modal="true" aria-labelledby="account-settings-title">
+    <ModalShell
+      backdropClassName="overlay-backdrop account-settings-backdrop"
+      dialogClassName="account-settings"
+      ariaLabelledby="account-settings-title"
+      onClose={onClose}
+    >
         <header>
           <div>
             <h2 id="account-settings-title">Account</h2>
@@ -649,7 +652,6 @@ export function AccountSettings({ user, vaultId, vaultName, onClose, onUserChang
             {memberState && <div className="account-settings-status" role="status">{memberState}</div>}
           </div>
         )}
-      </section>
-    </div>
+    </ModalShell>
   );
 }

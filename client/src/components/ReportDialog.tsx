@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Flag, X } from 'lucide-react';
 import { api } from '../api';
+import { ModalShell } from './ModalShell';
 
 export type ReportTargetType = 'vault' | 'note' | 'message' | 'member';
 export type ReportReason = 'spam' | 'harassment' | 'hate' | 'illegal' | 'other';
@@ -50,10 +51,14 @@ export function ReportDialog({ vaultId, targetType, targetId, title, onClose }: 
   }
 
   return (
-    <div className="overlay-backdrop report-dialog-backdrop" onMouseDown={(event) => {
-      if (event.target === event.currentTarget) onClose();
-    }}>
-      <form className="report-dialog" role="dialog" aria-modal="true" aria-labelledby="report-dialog-title" onSubmit={submit}>
+    <ModalShell
+      as="form"
+      backdropClassName="overlay-backdrop report-dialog-backdrop"
+      dialogClassName="report-dialog"
+      ariaLabelledby="report-dialog-title"
+      onSubmit={submit}
+      onClose={onClose}
+    >
         <header>
           <div><Flag size={15} aria-hidden="true" /><h2 id="report-dialog-title">Report {title}</h2></div>
           <button type="button" className="btn-icon" onClick={onClose} aria-label="Close report dialog"><X size={16} /></button>
@@ -84,7 +89,6 @@ export function ReportDialog({ vaultId, targetType, targetId, title, onClose }: 
             </div>
           </>
         )}
-      </form>
-    </div>
+    </ModalShell>
   );
 }

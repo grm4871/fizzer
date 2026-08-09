@@ -26,6 +26,7 @@ import {
 import { api, formatRelativeDate } from '../api';
 import { agentLabel } from '../chat/agents';
 import { normalizeChatRunBlocks } from '../chat/runBlocks';
+import { ModalShell } from './ModalShell';
 
 export type ActiveSession = {
   id: number;
@@ -428,18 +429,12 @@ export function SessionManager({
   };
 
   return (
-    <div
-      className="session-manager-backdrop"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
+    <ModalShell
+      backdropClassName="session-manager-backdrop"
+      dialogClassName="session-manager"
+      ariaLabelledby="session-manager-title"
+      onClose={onClose}
     >
-      <section
-        className="session-manager"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="session-manager-title"
-      >
         <header className="session-manager-header">
           <div className="session-manager-title">
             <div className="session-manager-mark" aria-hidden="true"><Activity size={17} /></div>
@@ -713,7 +708,6 @@ export function SessionManager({
             )}
           </main>
         </div>
-      </section>
-    </div>
+    </ModalShell>
   );
 }

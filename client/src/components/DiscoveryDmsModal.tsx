@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { ArrowLeft, Ban, BookOpen, ChevronDown, Clock3, Flag, Gem, LoaderCircle, Search, ShieldCheck, UserPlus, X } from 'lucide-react';
 import { api, formatRelativeDate, type CommunityUpdates } from '../api';
 import { ReportDialog } from './ReportDialog';
+import { ModalShell } from './ModalShell';
 
 export type DiscoveryTab = 'public' | 'dms';
 
@@ -260,10 +261,21 @@ export function DiscoveryDmsModal({
   };
 
   return (
-    <div className={`overlay-backdrop discovery-dms-backdrop ${initialTab === 'dms' ? 'is-messages' : ''}`} onMouseDown={(event) => {
-      if (event.target === event.currentTarget) onClose();
-    }}>
-      <section className={`discovery-dms-modal ${initialTab === 'dms' ? 'is-messages' : ''}`} role="dialog" aria-modal="true" aria-labelledby="discovery-dms-title">
+    <ModalShell
+      backdropClassName={`overlay-backdrop discovery-dms-backdrop ${initialTab === 'dms' ? 'is-messages' : ''}`}
+      dialogClassName={`discovery-dms-modal ${initialTab === 'dms' ? 'is-messages' : ''}`}
+      ariaLabelledby="discovery-dms-title"
+      onClose={onClose}
+      afterDialog={reportVault && (
+        <ReportDialog
+          vaultId={reportVault.id}
+          targetType="vault"
+          targetId={reportVault.id}
+          title={reportVault.name}
+          onClose={() => setReportVault(null)}
+        />
+      )}
+    >
         <header className="discovery-dms-header">
           <div>
             <h2 id="discovery-dms-title">{initialTab === 'public' ? 'Public vaults' : 'Messages'}</h2>
@@ -403,16 +415,6 @@ export function DiscoveryDmsModal({
           )}
         </div>
         {status && <div className="discovery-dms-status" role="status">{status}</div>}
-      </section>
-      {reportVault && (
-        <ReportDialog
-          vaultId={reportVault.id}
-          targetType="vault"
-          targetId={reportVault.id}
-          title={reportVault.name}
-          onClose={() => setReportVault(null)}
-        />
-      )}
-    </div>
+    </ModalShell>
   );
 }

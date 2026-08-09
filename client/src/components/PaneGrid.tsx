@@ -349,58 +349,35 @@ function PaneTabStrip({
           onPointerDown={(event) => event.stopPropagation()}
           onClick={(event) => event.stopPropagation()}
         >
-          {contextMenu.kind === 'new' && onCreateChat && (
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                closeMenu();
-                onCreateChat(pane.id);
-              }}
-            >
-              <Hash size={13} />
-              New channel
-            </button>
-          )}
-          {contextMenu.kind === 'new' && onOpenSuperkanban && (
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                closeMenu();
-                onOpenSuperkanban(pane.id);
-              }}
-            >
-              <LayoutDashboard size={13} />
-              Superkanban
-            </button>
-          )}
-          {contextMenu.kind === 'tab' && onPopOut && (
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                closeMenu();
-                onPopOut(contextMenu.tabId);
-              }}
-            >
-              <ExternalLink size={13} />
-              Pop out
-            </button>
-          )}
-          {contextMenu.kind === 'tab' && (
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                closeMenu();
-                onCloseTab(contextMenu.tabId);
-              }}
-            >
-              <X size={13} />
-              Close tab
-            </button>
-          )}
+          {([
+            contextMenu.kind === 'new' && onCreateChat
+              ? { icon: <Hash size={13} />, label: 'New channel', action: () => onCreateChat(pane.id) }
+              : null,
+            contextMenu.kind === 'new' && onOpenSuperkanban
+              ? { icon: <LayoutDashboard size={13} />, label: 'Superkanban', action: () => onOpenSuperkanban(pane.id) }
+              : null,
+            contextMenu.kind === 'tab' && onPopOut
+              ? { icon: <ExternalLink size={13} />, label: 'Pop out', action: () => onPopOut(contextMenu.tabId) }
+              : null,
+            contextMenu.kind === 'tab'
+              ? { icon: <X size={13} />, label: 'Close tab', action: () => onCloseTab(contextMenu.tabId) }
+              : null,
+          ] as ({ icon: ReactNode; label: string; action: () => void } | null)[])
+            .filter((item): item is { icon: ReactNode; label: string; action: () => void } => item !== null)
+            .map((item) => (
+              <button
+                key={item.label}
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  closeMenu();
+                  item.action();
+                }}
+              >
+                {item.icon}
+                {item.label}
+              </button>
+            ))}
         </div>,
         document.body,
       )}
