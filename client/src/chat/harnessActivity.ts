@@ -909,6 +909,9 @@ export function summarizeActivity(activity: HarnessActivity, isRunning: boolean)
     if (last?.kind === 'tool') parts.push(last.title);
     else if (last?.kind === 'thinking') parts.push('thinking');
     else parts.push('working');
+    // Match Codex's compact live row. Detailed usage, limits, model, and reset
+    // times remain available as chips / inside the expanded run panel.
+    return parts[0];
   } else if (activity.stats.toolCount > 0) {
     parts.push(`${activity.stats.toolCount} tool${activity.stats.toolCount === 1 ? '' : 's'}`);
   }

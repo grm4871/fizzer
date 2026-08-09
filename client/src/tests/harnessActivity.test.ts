@@ -98,6 +98,14 @@ describe('buildHarnessActivity', () => {
     expect(chips.some((c) => c.id === 'cost' && c.label.startsWith('$'))).toBe(true);
   });
 
+  it('keeps the live Claude summary as compact as Codex', () => {
+    const activity = buildHarnessActivity(msg({
+      blocks: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'npm test' } }],
+      harnessLog: '# cascade-stats {"model":"claude-opus-4-8","rateLimitType":"five_hour","rateLimitUtilization":1,"rateLimitResetsAt":"2026-08-09T07:50:00.000Z","rateLimitStatus":"allowed_warning","overageInUse":true}\n',
+    }));
+    expect(summarizeActivity(activity, true)).toBe('Bash');
+  });
+
   it('falls back to codex JSONL tools when blocks are empty', () => {
     const activity = buildHarnessActivity(msg({
       harnessLog: JSON.stringify({
