@@ -674,6 +674,22 @@ test('shared-channel users can add their own coordinator without controlling ano
       resolveChatAgentTargets(db, 1, 'channel-1', ownerCrossPing).map((item) => item.id).sort(),
       [coordinator.id, guestCoordinator.id].sort(),
     );
+
+    // Community/shared-vault members use the source note directly and may not
+    // have a private chat_channel_links projection.
+    db.exec(`
+      CREATE TABLE vault_members (
+        vault_id TEXT NOT NULL, user_id INTEGER NOT NULL, role TEXT NOT NULL,
+        PRIMARY KEY (vault_id, user_id)
+      );
+      INSERT INTO vault_members (vault_id, user_id, role) VALUES
+        ('vault-1', 1, 'owner'), ('vault-1', 2, 'editor'), ('vault-2', 2, 'owner');
+      DELETE FROM chat_channel_links WHERE local_channel_id = 'channel-2';
+    `);
+    const directSharedRun = resolveChatAgentRun(db, 1, 'channel-1', guestCoordinator.id);
+    assert.equal(directSharedRun.ownerId, 2);
+    assert.equal(directSharedRun.agentVault.id, 'vault-1');
+    assert.equal(directSharedRun.ownerChannelId, 'channel-1');
   } finally {
     db.close();
   }

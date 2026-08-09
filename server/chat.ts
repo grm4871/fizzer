@@ -2704,15 +2704,22 @@ export function resolveChatAgentRun(
   // A vault agent is owner-scoped and may have been created in a completely
   // different vault from this channel. Route through the owner's local channel
   // projection, not through vault_agents.vault_id (which is identity metadata).
-  const ownerRoute = listChatChannelRoutes(db, route.sourceVaultId, route.sourceChannelId)
+  let ownerRoute = listChatChannelRoutes(db, route.sourceVaultId, route.sourceChannelId)
     .find((candidate) => {
       const localVault = db.prepare('SELECT created_by FROM vaults WHERE id = ?')
         .get(candidate.localVaultId) as { created_by: number } | undefined;
       return localVault?.created_by === row.owner_user_id;
     });
+  // Public/shared-vault members may access the source note directly instead of
+  // receiving a private linked projection. That is still the owner's valid
+  // local route, even though another user originally created the vault.
+  if (!ownerRoute) {
+    try {
+      ownerRoute = assertChatChannel(db, route.sourceChannelId, row.owner_user_id).route;
+    } catch { /* no direct membership; the agent really is unreachable */ }
+  }
   if (!ownerRoute) throw new Error('Agent not found');
-  const agentVault = db.prepare('SELECT * FROM vaults WHERE id = ?')
-    .get(ownerRoute.localVaultId) as Vault | undefined;
+  const agentVault = getVault(db, ownerRoute.localVaultId, row.owner_user_id);
   if (!agentVault) throw new Error('Agent not found');
 
   return {
