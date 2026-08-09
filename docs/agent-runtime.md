@@ -69,7 +69,8 @@ Routine progress belongs in the run trace.
 A channel may designate one registered agent as its coordinator. This is a
 membership setting, not a separate project-management surface:
 
-- ordinary human messages route to the coordinator;
+- ordinary messages route to the coordinator owned by their author; other
+  users' agents require an explicit opted-in @mention;
 - an explicit `@specialist` mention takes the direct zero-hop path instead;
 - the coordinator answers tiny Q&A and one-liner fixes itself;
 - for almost any non-trivial request it creates a **mission** — durable,

@@ -141,6 +141,15 @@ async function main() {
     const guestSocket = await socketFor(guest.token, guestLink.vaultId);
     await sleep(150);
 
+    const guestIdentity = await must(`${API_BASE}/api/vaults/${guestLink.vaultId}/vault-agents`, {
+      method: 'PUT', headers: guest.auth,
+      body: JSON.stringify({ agentId: 'codex', displayName: 'Guest Sol', mention: `guest_sol_${stamp}`, model: 'gpt-5.6-sol' }),
+    });
+    const { registration: guestCoordinator } = await must(`${API_BASE}/api/vaults/${guestLink.vaultId}/channels/${guestLink.channelId}/agents/from-vault`, {
+      method: 'POST', headers: guest.auth,
+      body: JSON.stringify({ vaultAgentId: guestIdentity.agent.id, orchestrator: true }),
+    });
+
     const guestPost = await must(`${API_BASE}/api/vaults/${guestLink.vaultId}/channels/${guestLink.channelId}/messages`, {
       method: 'POST', headers: guest.auth,
       body: JSON.stringify({
@@ -148,7 +157,7 @@ async function main() {
         body: 'Coordinate this shared-channel request.', createdAt: new Date().toISOString(),
       }),
     });
-    check('an opted-in coordinator receives ordinary multiplayer turns', guestPost.dispatches?.[0]?.registration?.id === sol.id);
+    check('a shared user wakes only their own coordinator', guestPost.dispatches?.[0]?.registration?.id === guestCoordinator.id);
 
     const rootMessage = {
       id: `root-${stamp}`, channelId: channel.id, author: `owner_${stamp}`,

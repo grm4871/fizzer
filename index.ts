@@ -935,7 +935,10 @@ function emitChatMessageEvent(
       .get(route.localVaultId) as { created_by: number } | undefined;
     const routeDispatches = localOwner?.created_by === sourceOwner?.created_by
       ? dispatches
-      : dispatches.filter((dispatch) => dispatch.registration.pingableByOthers);
+      : dispatches.filter((dispatch) => (
+        dispatch.registration.ownerUserId === localOwner?.created_by
+        || dispatch.registration.pingableByOthers
+      ));
     emitVaultEvent(route.localVaultId, event, {
       vaultId: route.localVaultId,
       channelId: route.localChannelId,

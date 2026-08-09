@@ -117,7 +117,7 @@ export function resolveChatAgentTargets(
     // A shared-channel guest cannot create an outbox item they are forbidden
     // to launch. This avoids a permanently pending dispatch and a failed ghost
     // bubble on every connected renderer.
-    if (!fromAgent && !requesterIsOwner && !registration.pingableByOthers) continue;
+    if (!fromAgent && !requesterIsOwner && registration.ownerUserId !== userId && !registration.pingableByOthers) continue;
     // Ordinary agent prose never overrides the target's opt-in. Coordinator
     // authority crosses this boundary only through the explicit mission API,
     // which prevents a synthesis that names @worker from launching it again.
@@ -125,7 +125,11 @@ export function resolveChatAgentTargets(
     const explicit = explicitlyMentioned.has(registration.id);
     // An explicit specialist call is already the zero-hop route. Do not also
     // pay for the default coordinator unless the human named it too.
+    // Each person owns their coordinator. In a shared channel, ordinary
+    // conversation wakes only the coordinator from the author's own roster;
+    // other assistants still require an explicit opted-in @mention.
     const always = !fromAgent
+      && registration.ownerUserId === userId
       && registration.replyToEveryMessage
       && !(registration.orchestrator && explicitlyCallsSpecialist);
     if (!explicit && !always) continue;
@@ -263,7 +267,11 @@ export function listPendingChatAgentDispatches(
   return rows
     .map((row) => hydrateDispatch(db, userId, channelId, row))
     .filter((item): item is ChatAgentDispatch => Boolean(
-      item && (requesterIsOwner || item.registration.pingableByOthers),
+      item && (
+        requesterIsOwner
+        || item.registration.ownerUserId === userId
+        || item.registration.pingableByOthers
+      ),
     ));
 }
 

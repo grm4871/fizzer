@@ -229,6 +229,8 @@ export type ChatAgentRegistration = {
   /** Persistent vault-level agent this membership belongs to (vault_agents.id).
    * Empty only transiently for legacy rows before the backfill migration runs. */
   vaultAgentId: string;
+  /** The user whose personal assistant roster owns this member. */
+  ownerUserId: number;
   agentId: string;
   displayName: string;
   /** Optional http(s) image URL, shared with the agent's vault identity. */
@@ -241,7 +243,7 @@ export type ChatAgentRegistration = {
   contextPrompt: string;
   taggableByAgents: boolean;
   replyToEveryMessage: boolean;
-  /** Channel coordinator: receives every human turn and may dispatch members. */
+  /** Channel coordinator: receives turns from the owner of its roster and may dispatch members. */
   orchestrator: boolean;
   /** Allow users other than the agent owner to @mention/trigger it in a shared
    * (linked) channel. Opt-in; the run still executes on the owner's runner. */
@@ -527,6 +529,7 @@ type ChatAgentMemberRow = {
   pingable_by_others: number;
   yolo: number;
   conversation_id: string;
+  owner_user_id?: number;
 };
 
 type VaultAgentRow = {
@@ -567,6 +570,7 @@ function rowToAgentMember(row: ChatAgentMemberRow): ChatAgentRegistration {
   return {
     id: row.id,
     vaultAgentId: row.vault_agent_id || '',
+    ownerUserId: Number(row.owner_user_id || 0),
     agentId: row.agent_id,
     displayName: row.display_name,
     avatarUrl: row.avatar_url || '',
@@ -875,6 +879,7 @@ function normalizeAgentRegistration(input: Partial<ChatAgentRegistration>, fallb
   return {
     id,
     vaultAgentId: String(input.vaultAgentId || '').trim(),
+    ownerUserId: Number(input.ownerUserId || 0),
     agentId,
     displayName: String(input.displayName || '').trim() || agentId,
     avatarUrl: String(input.avatarUrl || '').trim(),
@@ -893,22 +898,16 @@ function normalizeAgentRegistration(input: Partial<ChatAgentRegistration>, fallb
   };
 }
 
-function assertCoordinatorSlot(db: Db, channelId: string, memberId: string, requested: boolean): void {
+function assertCoordinatorSlot(db: Db, channelId: string, memberId: string, ownerUserId: number, requested: boolean): void {
   if (!requested) return;
   const existing = db.prepare(`
-    SELECT display_name, mention FROM chat_agent_members
-    WHERE channel_id = ? AND orchestrator != 0 AND id != ? LIMIT 1
-  `).get(channelId, memberId) as { display_name: string; mention: string } | undefined;
+    SELECT m.display_name, m.mention FROM chat_agent_members m
+    JOIN vault_agents va ON va.id = m.vault_agent_id
+    WHERE m.channel_id = ? AND m.orchestrator != 0 AND m.id != ?
+      AND va.owner_user_id = ? LIMIT 1
+  `).get(channelId, memberId, ownerUserId) as { display_name: string; mention: string } | undefined;
   if (existing) {
     throw new Error(`${existing.display_name || `@${existing.mention}`} already coordinates this channel`);
-  }
-}
-
-function assertAgentManagementOwner(db: Db, userId: number, sourceVaultId: string): void {
-  const vault = db.prepare('SELECT created_by FROM vaults WHERE id = ?')
-    .get(sourceVaultId) as { created_by: number } | undefined;
-  if (!vault || vault.created_by !== userId) {
-    throw new Error('Only the channel owner can manage its agents');
   }
 }
 
@@ -1124,18 +1123,17 @@ export function addVaultAgentToChannel(
 ): ChatAgentRegistration {
   const { route } = assertChatChannel(db, channelId, userId);
   if (route.localVaultId !== vaultId) throw new Error('Chat channel not found');
-  assertAgentManagementOwner(db, userId, route.sourceVaultId);
   // One agent, many vaults: an agent you own can join a channel anywhere you
   // can manage agents, not only in the vault it happened to be created in.
   const va = db.prepare(
     'SELECT * FROM vault_agents WHERE id = ? AND (owner_user_id = ? OR vault_id = ?)',
-  ).get(vaultAgentId, userId, route.sourceVaultId) as VaultAgentRow | undefined;
+  ).get(vaultAgentId, userId, route.localVaultId) as VaultAgentRow | undefined;
   if (!va) throw new Error('Vault agent not found');
   // The handle has to stay unambiguous inside the vault it is joining.
   const handleClash = db.prepare(`
-    SELECT id FROM vault_agents
-    WHERE vault_id = ? AND mention = ? COLLATE NOCASE AND id != ?
-  `).get(route.sourceVaultId, va.mention, va.id) as { id: string } | undefined;
+    SELECT id FROM chat_agent_members
+    WHERE channel_id = ? AND mention = ? COLLATE NOCASE AND vault_agent_id != ?
+  `).get(route.sourceChannelId, va.mention, va.id) as { id: string } | undefined;
   if (handleClash) {
     throw new Error(`@${va.mention} is already used by another agent in this vault`);
   }
@@ -1162,7 +1160,7 @@ export function addVaultAgentToChannel(
     ? requestedEffort
     : '';
   const memberId = existing?.id || crypto.randomUUID();
-  assertCoordinatorSlot(db, route.sourceChannelId, memberId, orchestrator);
+  assertCoordinatorSlot(db, route.sourceChannelId, memberId, userId, orchestrator);
 
   if (existing) {
     db.prepare(`
@@ -1183,14 +1181,14 @@ export function addVaultAgentToChannel(
         model, reasoning_effort, cwd, context_prompt, taggable_by_agents, reply_to_every_message, orchestrator, pingable_by_others, yolo, conversation_id
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      memberId, route.sourceChannelId, route.sourceVaultId, va.id,
+      memberId, route.sourceChannelId, route.localVaultId, va.id,
       va.agent_id, va.display_name, va.avatar_url, va.mention, va.model, reasoningEffort, va.cwd, va.context_prompt,
       taggable ? 1 : 0, replyEvery ? 1 : 0, orchestrator ? 1 : 0, pingable ? 1 : 0, yolo ? 1 : 0, conversationId,
     );
   }
 
-  return rowToAgentMember(db.prepare('SELECT * FROM chat_agent_members WHERE id = ? AND channel_id = ?')
-    .get(memberId, route.sourceChannelId) as ChatAgentMemberRow);
+  return listChatAgentMembers(db, channelId, userId)
+    .find((item) => item.id === memberId) as ChatAgentRegistration;
 }
 
 function parseJson<T>(value: string | null): T | undefined {
@@ -2658,10 +2656,11 @@ export function ensureAgentChatMessage(
 export function listChatAgentMembers(db: Db, channelId: string, userId: number): ChatAgentRegistration[] {
   const { route } = assertChatChannel(db, channelId, userId);
   const rows = db.prepare(`
-    SELECT *
-    FROM chat_agent_members
-    WHERE channel_id = ?
-    ORDER BY created_at ASC, id ASC
+    SELECT m.*, va.owner_user_id
+    FROM chat_agent_members m
+    LEFT JOIN vault_agents va ON va.id = m.vault_agent_id
+    WHERE m.channel_id = ?
+    ORDER BY m.created_at ASC, m.id ASC
   `).all(route.sourceChannelId) as ChatAgentMemberRow[];
   return rows.map(rowToAgentMember);
 }
@@ -2919,7 +2918,6 @@ export function upsertChatAgentMember(
 ): ChatAgentRegistration {
   const { route } = assertChatChannel(db, channelId, userId);
   if (route.localVaultId !== vaultId) throw new Error('Chat channel not found');
-  assertAgentManagementOwner(db, userId, route.sourceVaultId);
 
   // Prefer linking an existing vault agent when vaultAgentId is provided.
   if (input.vaultAgentId && String(input.vaultAgentId).trim()) {
@@ -2936,20 +2934,28 @@ export function upsertChatAgentMember(
 
   const member = normalizeAgentRegistration(input);
   const existing = db.prepare('SELECT id, conversation_id, vault_agent_id FROM chat_agent_members WHERE id = ? AND channel_id = ?').get(member.id, route.sourceChannelId) as { id: string; conversation_id: string; vault_agent_id: string } | undefined;
+  if (existing?.vault_agent_id) {
+    const owner = db.prepare('SELECT owner_user_id FROM vault_agents WHERE id = ?')
+      .get(existing.vault_agent_id) as { owner_user_id: number | null } | undefined;
+    if (!owner || owner.owner_user_id !== userId) {
+      throw new Error('You can only manage assistants in your own roster');
+    }
+  }
 
   // The session id is sticky: an explicit value (e.g. a `/clear` rotation) wins,
   // otherwise keep the member's existing session, otherwise mint a fresh one.
   member.conversationId = member.conversationId || existing?.conversation_id || crypto.randomUUID();
   if (existing?.vault_agent_id) member.vaultAgentId = existing.vault_agent_id;
 
-  const vaultAgent = ensureVaultAgentForMember(db, route.sourceVaultId, member);
+  const vaultAgent = ensureVaultAgentForMember(db, route.localVaultId, member);
   db.prepare(`
     UPDATE vault_agents SET owner_user_id = COALESCE(
       owner_user_id,
       (SELECT created_by FROM vaults WHERE id = ?)
     ) WHERE id = ?
-  `).run(route.sourceVaultId, vaultAgent.id);
+  `).run(route.localVaultId, vaultAgent.id);
   member.vaultAgentId = vaultAgent.id;
+  member.ownerUserId = userId;
   // Identity is canonical on vault_agents
   member.agentId = vaultAgent.agentId;
   member.displayName = vaultAgent.displayName;
@@ -2958,7 +2964,7 @@ export function upsertChatAgentMember(
   member.model = vaultAgent.model;
   member.cwd = vaultAgent.cwd;
   member.contextPrompt = vaultAgent.contextPrompt;
-  assertCoordinatorSlot(db, route.sourceChannelId, member.id, member.orchestrator);
+  assertCoordinatorSlot(db, route.sourceChannelId, member.id, userId, member.orchestrator);
 
   if (existing) {
     db.prepare(`
@@ -3008,7 +3014,7 @@ export function upsertChatAgentMember(
     `).run(
       member.id,
       route.sourceChannelId,
-      route.sourceVaultId,
+      route.localVaultId,
       member.vaultAgentId,
       member.agentId,
       member.displayName,
@@ -3039,8 +3045,9 @@ export function removeChatAgentMember(
 ): boolean {
   const { route } = assertChatChannel(db, channelId, userId);
   if (route.localVaultId !== vaultId) throw new Error('Chat channel not found');
-  assertAgentManagementOwner(db, userId, route.sourceVaultId);
-
-  const result = db.prepare('DELETE FROM chat_agent_members WHERE id = ? AND channel_id = ?').run(registrationId, route.sourceChannelId);
+  const result = db.prepare(`
+    DELETE FROM chat_agent_members WHERE id = ? AND channel_id = ?
+      AND vault_agent_id IN (SELECT id FROM vault_agents WHERE owner_user_id = ?)
+  `).run(registrationId, route.sourceChannelId, userId);
   return result.changes > 0;
 }

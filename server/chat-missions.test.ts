@@ -10,6 +10,7 @@ import {
   getChatMessage,
   linkChatChannel,
   upsertChatAgentMember,
+  upsertVaultAgent,
 } from './chat.js';
 import { ensureWorkItemSchema, getWorkItem } from './workItems.js';
 import {
@@ -580,7 +581,7 @@ test('an explicit specialist call takes the zero-hop route instead of also runni
   }
 });
 
-test('a shared-channel user only dispatches agents that opted into multiplayer pings', () => {
+test('shared-channel users can add their own coordinator without controlling another user\'s agents', () => {
   const { db, coordinator } = setup();
   try {
     const closed = createChatMessage(db, 2, 'vault-2', 'channel-2', {
@@ -591,7 +592,7 @@ test('a shared-channel user only dispatches agents that opted into multiplayer p
 
     db.prepare('UPDATE chat_agent_members SET pingable_by_others = 1 WHERE id = ?').run(coordinator.id);
     const open = createChatMessage(db, 2, 'vault-2', 'channel-2', {
-      id: 'guest-open', channelId: 'channel-2', author: 'guest', body: 'Please coordinate this.',
+      id: 'guest-open', channelId: 'channel-2', author: 'guest', body: '@sol Please coordinate this.',
       createdAt: '2026-08-03T00:00:01.000Z',
     });
     assert.deepEqual(resolveChatAgentTargets(db, 2, 'channel-2', open).map((item) => item.id), [coordinator.id]);
@@ -599,7 +600,31 @@ test('a shared-channel user only dispatches agents that opted into multiplayer p
       ...coordinator,
       orchestrator: false,
       replyToEveryMessage: false,
-    }), /Only the channel owner/);
+    }), /Vault agent not found/);
+
+    const guestAgent = upsertVaultAgent(db, 2, 'vault-2', {
+      agentId: 'codex', displayName: 'Guest Sol', mention: 'guest-sol', model: 'gpt-5.6-sol',
+    });
+    const guestCoordinator = upsertChatAgentMember(db, 2, 'vault-2', 'channel-2', {
+      vaultAgentId: guestAgent.id,
+      agentId: 'codex',
+      displayName: 'Guest Sol',
+      mention: 'guest-sol',
+      model: 'gpt-5.6-sol',
+      orchestrator: true,
+    });
+    assert.equal(guestCoordinator.ownerUserId, 2);
+
+    const guestTurn = createChatMessage(db, 2, 'vault-2', 'channel-2', {
+      id: 'guest-own-coordinator', channelId: 'channel-2', author: 'guest', body: 'Please coordinate this.',
+      createdAt: '2026-08-03T00:00:02.000Z',
+    });
+    assert.deepEqual(resolveChatAgentTargets(db, 2, 'channel-2', guestTurn).map((item) => item.id), [guestCoordinator.id]);
+    createChatAgentDispatches(db, 2, 'channel-2', guestTurn);
+    assert.deepEqual(
+      listPendingChatAgentDispatches(db, 2, 'channel-2').map((item) => item.registration.id),
+      [guestCoordinator.id],
+    );
   } finally {
     db.close();
   }
@@ -617,8 +642,8 @@ test('a reply to a human does not become an accidental agent dispatch', () => {
       createdAt: '2026-08-03T00:00:01.000Z',
       replyTo: { messageId: 'human', author: 'terra', mention: 'terra', preview: 'human message' },
     });
-    // The coordinator still receives every human message; Terra must not be
-    // selected merely because the human happens to share its handle.
+    // The owner still reaches the coordinator; Terra must not be selected
+    // merely because the human happens to share its handle.
     assert.deepEqual(
       createChatAgentDispatches(db, 1, 'channel-1', reply).map((dispatch) => dispatch.registration.mention),
       ['sol'],
