@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
-import { ArrowLeft, Ban, BookOpen, ChevronDown, Clock3, Flag, Gem, LoaderCircle, Search, ShieldCheck, UserPlus, X } from 'lucide-react';
+import { ArrowLeft, Ban, BookOpen, ChevronDown, Clock3, Flag, LoaderCircle, Search, ShieldCheck, UserPlus, X } from 'lucide-react';
+import { FizzerMark } from './FizzerMark';
 import { api, formatRelativeDate, type CommunityUpdates } from '../api';
 import { ReportDialog } from './ReportDialog';
 import { ModalShell } from './ModalShell';
@@ -264,7 +265,7 @@ export function DiscoveryDmsModal({
                 <div className="public-vault-detail">
                   <button type="button" className="public-vault-back" onClick={() => setPublicVaultDetail(null)}><ArrowLeft size={14} /> Back to public vaults</button>
                   <div className="public-vault-detail-heading">
-                    <span className="discovery-avatar discovery-vault-avatar" aria-hidden="true"><Gem size={16} /></span>
+                    <span className="discovery-avatar discovery-vault-avatar" aria-hidden="true"><FizzerMark size={18} /></span>
                     <div><h3>{publicVaultDetail.name}</h3><span>by @{publicVaultDetail.ownerUsername}</span></div>
                   </div>
                   <p className="public-vault-purpose">{publicVaultDetail.summary || 'The owner has not added a public summary yet.'}</p>
@@ -298,7 +299,7 @@ export function DiscoveryDmsModal({
                     {loading && <div className="discovery-empty"><LoaderCircle className="spin" size={17} /> Loading public vaults…</div>}
                     {!loading && publicVaults.map((vault) => (
                       <article className="discovery-row public-vault-card" key={vault.id}>
-                        <span className="discovery-avatar discovery-vault-avatar" aria-hidden="true"><Gem size={15} /></span>
+                        <span className="discovery-avatar discovery-vault-avatar" aria-hidden="true"><FizzerMark size={17} /></span>
                         <button type="button" className="public-vault-card-copy" disabled={busyAction === `detail:${vault.id}`} onClick={() => void openPublicVaultDetail(vault)} aria-label={`View ${vault.name} details`}>
                           <strong>{vault.name}</strong>
                           <span className="public-vault-owner">by @{vault.ownerUsername}</span>

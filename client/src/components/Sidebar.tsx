@@ -29,10 +29,11 @@ import {
 } from '../mediaLinks';
 import { CHAT_NOTE_MARKER } from './ChatView';
 import {
-  Folder as FolderIcon, FolderOpen, FileText, Pin, Gem, Edit2, FolderPlus,
+  Folder as FolderIcon, FolderOpen, FileText, Pin, Edit2, FolderPlus,
   Search, ChevronRight, ChevronDown, Check, PanelLeftClose, LogOut, Trash2, FilePlus, FolderInput, Pencil, RefreshCw,
   Hash, Unlink, ShieldCheck, SkipBack, Play, Pause, SkipForward, Music2, Users, Plus, LogIn, Compass, Mail, X,
 } from 'lucide-react';
+import { FizzerMark } from './FizzerMark';
 
 /** Switcher label: "Team notes · shared · 3" so shared vaults are obvious. */
 export function vaultOptionLabel(vault: Vault): string {
@@ -745,7 +746,7 @@ export const Sidebar = memo(function Sidebar({
           aria-label={`Vault switcher; current vault ${activeVault?.name || 'Fizzer'}`}
           aria-expanded={vaultMenuOpen}
         >
-          <span className="vault-icon" aria-hidden="true"><Gem size={15} /></span>
+          <span className="vault-icon" aria-hidden="true"><FizzerMark size={17} /></span>
           <span className="vault-name-copy">
             <span className="vault-name-text">{activeVault?.name || 'Fizzer'}</span>
             <span className="vault-name-meta">
@@ -795,7 +796,7 @@ export const Sidebar = memo(function Sidebar({
               className={vault.id === activeVaultId ? 'is-active' : ''}
               onClick={() => { onSelectVault(vault.id); setVaultMenuOpen(false); }}
             >
-              <span className="vault-switcher-icon" aria-hidden="true"><Gem size={13} /></span>
+              <span className="vault-switcher-icon" aria-hidden="true"><FizzerMark size={15} /></span>
               <span className="vault-switcher-copy">
                 <strong>{vault.name}</strong>
                 <small>

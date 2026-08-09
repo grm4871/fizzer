@@ -87,7 +87,8 @@ import {
 } from './chat/session';
 import { chatMessageStore } from './chat/messageStore';
 import { consumePendingSessionSteer, enqueueSessionTurn, findProjectedActiveSessionRun, forceReleasePriorSessionTurns, queuesBehindActiveSession, requestSessionSteer, shouldSteerActiveSession } from './chat/sessionTurns';
-import { Activity, Bell, Download, Gem, PanelLeftOpen, Users } from 'lucide-react';
+import { Activity, Bell, Download, PanelLeftOpen, Users } from 'lucide-react';
+import { FizzerMark } from './components/FizzerMark';
 
 type ChatAgentDispatch = {
   id: string;
@@ -3393,7 +3394,7 @@ export default function App() {
       <main className="auth-shell">
         <form className="auth-panel" id="auth-panel" onSubmit={submitAuth}>
           <div className="auth-brand" aria-label="Fizzer">
-            <Gem size={24} aria-hidden="true" />
+            <FizzerMark size={28} />
             <h1>Fizzer</h1>
           </div>
           <div className="auth-decal" aria-hidden="true" />
