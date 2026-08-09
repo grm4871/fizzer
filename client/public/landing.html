@@ -4,14 +4,14 @@
   <meta charset="UTF-8" />
   <link rel="icon" type="image/svg+xml" href="/gem.svg" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <title>Fizzer</title>
-  <meta name="description" content="Fizzer is a shared workspace for people and their AI agents." />
-  <meta property="og:title" content="Fizzer" />
-  <meta property="og:description" content="People, notes, chat, and agents in one shared workspace." />
+  <title>Fizzer — a shared workspace for people and their AI agents</title>
+  <meta name="description" content="Fizzer is a shared workspace where you, your teammates, and your AI agents keep the same notes, chats, and projects. Download for Mac, Windows, and Linux, or use it in the browser." />
+  <meta property="og:title" content="Fizzer — a shared workspace for people and their AI agents" />
+  <meta property="og:description" content="Notes, chat, projects, and agents in one shared workspace. Mac, Windows, Linux, or browser." />
   <meta property="og:type" content="website" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;800&family=Shippori+Mincho:wght@700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;800&family=Shippori+Mincho:wght@700;800&display=swap" rel="stylesheet">
   <script>
     try { if (location.pathname === '/' && localStorage.getItem('docs_token')) location.replace('/app'); }
     catch (e) { /* private mode / storage blocked */ }
@@ -19,102 +19,240 @@
   <style>
     :root {
       --ink: hsl(22, 9%, 5%); --surface: hsl(22, 7%, 8%); --raised: hsl(22, 8%, 12%);
-      --line: hsl(25, 8%, 18%); --paper: hsl(35, 14%, 89%); --muted: hsl(30, 7%, 60%);
-      --amber: hsl(33, 68%, 52%); --amber-bright: hsl(33, 74%, 64%);
-      --opus: hsl(288, 30%, 68%); --luna: hsl(214, 46%, 66%); --hermes: hsl(146, 38%, 60%);
+      --line: hsl(25, 8%, 24%); --line-soft: hsl(25, 8%, 16%);
+      --paper: hsl(35, 14%, 92%); --muted: hsl(30, 8%, 70%);
+      --amber: hsl(33, 68%, 52%); --amber-bright: hsl(33, 78%, 68%);
+      --agent: hsl(288, 34%, 76%);
       --shadow: 0 24px 60px -24px rgba(0,0,0,.75);
     }
     * { box-sizing: border-box; }
     html { scroll-behavior: smooth; }
-    body { margin: 0; min-height: 100vh; overflow-x: hidden; color: var(--paper); background: var(--ink); font-family: 'Plus Jakarta Sans', sans-serif; }
-    body::before { content: ''; position: fixed; inset: 0; pointer-events: none; background: radial-gradient(circle at 15% 15%, hsla(33,68%,52%,.1), transparent 35%), radial-gradient(circle at 85% 20%, hsla(288,30%,68%,.08), transparent 32%), linear-gradient(rgba(255,255,255,.008) 1px, transparent 1px), linear-gradient(90deg,rgba(255,255,255,.008) 1px,transparent 1px); background-size: auto,auto,40px 40px,40px 40px; }
+    body { margin: 0; min-height: 100vh; overflow-x: hidden; color: var(--paper); background: var(--ink); font-family: 'Plus Jakarta Sans', system-ui, sans-serif; line-height: 1.6; -webkit-font-smoothing: antialiased; }
+    body::before { content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0; background: radial-gradient(circle at 15% 12%, hsla(33,68%,52%,.09), transparent 38%), radial-gradient(circle at 85% 18%, hsla(288,34%,76%,.05), transparent 34%), linear-gradient(rgba(255,255,255,.006) 1px, transparent 1px), linear-gradient(90deg,rgba(255,255,255,.006) 1px,transparent 1px); background-size: auto,auto,40px 40px,40px 40px; }
     a { color: inherit; }
     .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
-    .page { width: min(1180px, calc(100% - 48px)); margin: auto; position: relative; }
-    nav { height: 88px; display: flex; align-items: center; justify-content: space-between; }
+    .page { width: min(1180px, calc(100% - 48px)); margin: auto; position: relative; z-index: 1; }
+
+    nav { height: 88px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
     .brand { display: inline-flex; align-items: center; gap: 13px; text-decoration: none; font-family: 'Shippori Mincho', serif; font-size: 25px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }
     .brand img { width: 39px; height: 39px; }
-    .icon-button { width: 48px; height: 48px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.025); transition: .2s ease; }
-    .icon-button:hover { border-color: var(--amber); color: var(--amber-bright); transform: translateY(-2px); }
-    .icon-button svg { width: 21px; height: 21px; }
-    .hero { min-height: calc(100vh - 88px); display: grid; place-items: center; padding: 30px 0 72px; }
-    .deco-stage { width: min(100%, 940px); aspect-ratio: 16/10; min-height: 540px; position: relative; display: grid; place-items: center; overflow: hidden; border: 1px solid var(--line); border-radius: 28px; background: linear-gradient(145deg,rgba(255,255,255,.04),rgba(255,255,255,.012)); box-shadow: var(--shadow); isolation: isolate; }
-    .deco-stage::before,.deco-stage::after { content: ''; position: absolute; inset: 24px; border: 1px solid rgba(224,157,59,.36); clip-path: polygon(0 0,42% 0,50% 8%,58% 0,100% 0,100% 42%,92% 50%,100% 58%,100% 100%,58% 100%,50% 92%,42% 100%,0 100%,0 58%,8% 50%,0 42%); }
-    .deco-stage::after { inset: 38px; border-color: rgba(224,157,59,.15); }
-    .sunburst { position: absolute; width: 76%; aspect-ratio: 1; border-radius: 50%; opacity: .24; background: repeating-conic-gradient(from -5deg,var(--amber) 0deg 1deg,transparent 1deg 14deg); mask-image: radial-gradient(circle,transparent 0 26%,#000 27% 49%,transparent 50%); }
-    .constellation { width: 72%; height: 64%; position: relative; display: grid; grid-template-columns: 1fr 1.15fr 1fr; align-items: center; z-index: 2; }
-    .rail { height: 2px; background: linear-gradient(90deg,var(--amber),rgba(224,157,59,.15),var(--amber)); position: relative; }
+    .nav-link { display: inline-flex; align-items: center; gap: 9px; padding: 11px 20px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.03); text-decoration: none; font-size: 15px; font-weight: 600; transition: .2s ease; }
+    .nav-link:hover { border-color: var(--amber); color: var(--amber-bright); transform: translateY(-2px); }
+    .nav-link svg { width: 18px; height: 18px; }
+
+    .hero { padding: 26px 0 96px; display: grid; justify-items: center; gap: 40px; text-align: center; }
+    .eyebrow { font-size: 13px; font-weight: 600; letter-spacing: .3em; text-transform: uppercase; color: var(--amber-bright); }
+    h1 { margin: 0; max-width: 18ch; font-family: 'Shippori Mincho', serif; font-weight: 800; font-size: clamp(38px, 6vw, 68px); line-height: 1.08; letter-spacing: -.01em; }
+    h1 em { font-style: normal; color: var(--amber-bright); }
+    .lede { margin: 18px auto 0; max-width: 60ch; font-size: clamp(17px, 1.7vw, 20px); color: var(--muted); }
+    .hero-copy { display: grid; gap: 0; justify-items: center; }
+
+    .deco-stage { width: min(100%, 940px); position: relative; display: grid; place-items: center; padding: 74px 24px 78px; overflow: hidden; border: 1px solid var(--line); border-radius: 28px; background: linear-gradient(145deg,rgba(255,255,255,.045),rgba(255,255,255,.012)); box-shadow: var(--shadow); isolation: isolate; }
+    .deco-stage::before,.deco-stage::after { content: ''; position: absolute; inset: 22px; pointer-events: none; border: 1px solid rgba(224,157,59,.34); clip-path: polygon(0 0,42% 0,50% 8%,58% 0,100% 0,100% 42%,92% 50%,100% 58%,100% 100%,58% 100%,50% 92%,42% 100%,0 100%,0 58%,8% 50%,0 42%); }
+    .deco-stage::after { inset: 34px; border-color: rgba(224,157,59,.14); }
+    .sunburst { position: absolute; top: 50%; left: 50%; z-index: 0; pointer-events: none; transform: translate(-50%,-50%); width: min(48vw, 440px); aspect-ratio: 1; border-radius: 50%; opacity: .16; background: repeating-conic-gradient(from -5deg,var(--amber) 0deg 1deg,transparent 1deg 14deg); mask-image: radial-gradient(circle,transparent 0 28%,#000 29% 49%,transparent 50%); }
+
+    .constellation { width: 100%; max-width: 740px; position: relative; z-index: 2; display: grid; grid-template-columns: 1fr 48px 1.15fr 48px 1fr; grid-template-rows: auto auto auto; align-items: start; gap: 16px 8px; }
+    .node { display: contents; }
+    .node.human { --col: 1; } .node.hub { --col: 3; } .node.agent { --col: 5; }
+    .node > * { grid-column: var(--col); justify-self: center; text-align: center; }
+    .node-art { grid-row: 1; align-self: center; position: relative; display: grid; place-items: center; min-height: 250px; }
+    .node-label { grid-row: 2; align-self: start; margin: 0; font-family: 'Shippori Mincho', serif; font-size: 14px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; }
+    .node-note { grid-row: 3; align-self: start; margin: 0; max-width: 24ch; font-size: 14px; color: var(--muted); }
+    .rail { grid-row: 1; align-self: center; width: 100%; height: 2px; background: linear-gradient(90deg,var(--amber),rgba(224,157,59,.2),var(--amber)); position: relative; }
+    .rail.left { grid-column: 2; } .rail.right { grid-column: 4; }
     .rail::after { content:''; position:absolute; width:9px; height:9px; border:2px solid var(--amber); background:var(--surface); transform:rotate(45deg); left:calc(50% - 5px); top:-5px; animation:pulse 2.6s ease-in-out infinite; }
-    .figure { display: grid; place-items: center; gap: 18px; }
-    .figure-orbit { width: clamp(108px,15vw,164px); aspect-ratio:1; display:grid; place-items:center; position:relative; border:1px solid rgba(224,157,59,.4); border-radius:50%; }
-    .figure-orbit::before,.figure-orbit::after { content:''; position:absolute; inset:12%; border:1px solid rgba(224,157,59,.2); transform:rotate(45deg); }
+    .figure-orbit { width: clamp(104px,14vw,150px); aspect-ratio:1; display:grid; place-items:center; position:relative; border:1px solid rgba(224,157,59,.45); border-radius:50%; }
+    .figure-orbit::before,.figure-orbit::after { content:''; position:absolute; inset:12%; border:1px solid rgba(224,157,59,.22); transform:rotate(45deg); }
     .figure-orbit::after { inset:28%; background:var(--raised); border-color:var(--amber); }
     .person { width:52%; z-index:1; color:var(--paper); }
-    .agent .figure-orbit { border-color:rgba(180,139,190,.55); }
-    .agent .figure-orbit::after { border-color:var(--opus); border-radius:50%; }
-    .agent .person { color:var(--opus); }
-    .workspace { width: clamp(150px,20vw,220px); aspect-ratio: 1; display:grid; place-items:center; position:relative; transform:rotate(45deg); border:1px solid var(--amber); background:rgba(224,157,59,.04); }
-    .workspace::before,.workspace::after { content:''; position:absolute; inset:11%; border:1px solid rgba(224,157,59,.32); }
+    .agent .figure-orbit { border-color:rgba(206,168,215,.5); }
+    .agent .figure-orbit::before { border-color:rgba(206,168,215,.22); }
+    .agent .figure-orbit::after { border-color:var(--agent); border-radius:50%; }
+    .agent .person { color:var(--agent); }
+    .agent .node-label { color: var(--agent); }
+    .workspace { width: clamp(120px,16vw,168px); aspect-ratio: 1; display:grid; place-items:center; position:relative; z-index:1; transform:rotate(45deg); border:1px solid var(--amber); background:rgba(224,157,59,.05); }
+    .workspace::before,.workspace::after { content:''; position:absolute; inset:11%; border:1px solid rgba(224,157,59,.34); }
     .workspace::after { inset:25%; background:var(--surface); box-shadow:0 0 45px rgba(224,157,59,.16); }
     .workspace img { width:46%; transform:rotate(-45deg); z-index:2; }
-    .signals { position:absolute; inset:0; pointer-events:none; }
-    .signal { position:absolute; width:10px; height:10px; border-radius:50%; box-shadow:0 0 18px currentColor; animation:drift 4s ease-in-out infinite; }
-    .signal:nth-child(1){left:15%;top:24%;color:var(--luna)} .signal:nth-child(2){right:16%;top:25%;color:var(--opus);animation-delay:-1.3s}.signal:nth-child(3){left:23%;bottom:19%;color:var(--hermes);animation-delay:-2.2s}.signal:nth-child(4){right:24%;bottom:18%;color:var(--amber);animation-delay:-3s}
-    .actions { position:absolute; bottom:52px; display:flex; gap:14px; z-index:4; }
-    .action { width:58px;height:58px;display:grid;place-items:center;border-radius:16px;border:1px solid var(--line);background:rgba(9,8,7,.8);backdrop-filter:blur(14px);text-decoration:none;transition:.2s ease; }
-    .action:hover { border-color:var(--amber);color:var(--amber-bright);transform:translateY(-3px);box-shadow:0 10px 28px -12px rgba(224,157,59,.5); }
-    .action.primary { color:var(--ink); background:linear-gradient(135deg,var(--amber),var(--amber-bright));border-color:transparent; }
-    .action svg { width:23px;height:23px; }
-    .platform-strip { padding: 72px 0 110px; display:grid; grid-template-columns:repeat(4,1fr); gap:18px; }
-    .platform-strip .action { width:100%;height:104px;border-radius:18px; }
-    footer { border-top:1px solid var(--line); min-height:110px; display:flex;align-items:center;justify-content:space-between;color:var(--muted); }
-    .deco-rule { height:1px; flex:1; max-width:240px; background:linear-gradient(90deg,transparent,var(--amber)); }
-    footer .deco-rule:last-child { transform:scaleX(-1); }
+    .node.hub .node-label { color: var(--amber-bright); }
+
+    .cta-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 14px; }
+    .button { display: inline-flex; align-items: center; gap: 10px; padding: 15px 26px; border-radius: 14px; border: 1px solid var(--line); background: rgba(255,255,255,.03); text-decoration: none; font-size: 16px; font-weight: 600; transition: .2s ease; }
+    .button svg { width: 19px; height: 19px; flex: none; }
+    .button:hover { border-color: var(--amber); color: var(--amber-bright); transform: translateY(-2px); }
+    .button.primary { color: var(--ink); background: linear-gradient(135deg,var(--amber),var(--amber-bright)); border-color: transparent; }
+    .button.primary:hover { color: var(--ink); box-shadow: 0 12px 30px -12px rgba(224,157,59,.6); }
+
+    .section-head { text-align: center; display: grid; gap: 10px; justify-items: center; margin-bottom: 34px; }
+    h2 { margin: 0; font-family: 'Shippori Mincho', serif; font-size: clamp(26px, 3.2vw, 36px); font-weight: 800; letter-spacing: .01em; }
+    .section-head p { margin: 0; max-width: 56ch; color: var(--muted); }
+
+    .features { padding: 0 0 104px; }
+    .feature-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+    .feature { padding: 30px 26px; border: 1px solid var(--line-soft); border-radius: 20px; background: linear-gradient(160deg,rgba(255,255,255,.035),rgba(255,255,255,.008)); display: grid; gap: 14px; justify-items: start; }
+    .feature-icon { width: 54px; height: 54px; display: grid; place-items: center; border: 1px solid rgba(224,157,59,.4); border-radius: 14px; color: var(--amber-bright); background: rgba(224,157,59,.06); }
+    .feature-icon svg { width: 25px; height: 25px; }
+    .feature h3 { margin: 0; font-size: 19px; font-weight: 700; letter-spacing: .01em; }
+    .feature p { margin: 0; color: var(--muted); font-size: 15px; }
+
+    .download { padding: 0 0 110px; }
+    .platform-strip { display: grid; grid-template-columns: repeat(4,1fr); gap: 18px; }
+    .platform { display: grid; justify-items: center; align-content: center; gap: 12px; height: 138px; padding: 16px; border-radius: 18px; border: 1px solid var(--line); background: rgba(255,255,255,.03); text-decoration: none; font-size: 15px; font-weight: 600; transition: .2s ease; }
+    .platform:hover { border-color: var(--amber); color: var(--amber-bright); transform: translateY(-3px); box-shadow: 0 14px 34px -18px rgba(224,157,59,.55); }
+    .platform svg { width: 30px; height: 30px; }
+    .platform span { letter-spacing: .04em; }
+
+    footer { border-top: 1px solid var(--line-soft); min-height: 118px; display: flex; align-items: center; justify-content: space-between; gap: 20px; color: var(--muted); font-size: 14px; }
+    footer .brand { font-size: 19px; color: var(--paper); }
+    footer .brand img { width: 30px; height: 30px; }
+    .deco-rule { height: 1px; flex: 1; max-width: 220px; background: linear-gradient(90deg,transparent,rgba(224,157,59,.6)); }
+    footer .deco-rule:last-of-type { transform: scaleX(-1); }
+
     @keyframes pulse { 50%{transform:rotate(45deg) scale(1.5);box-shadow:0 0 15px var(--amber)} }
-    @keyframes drift { 50%{transform:translateY(-10px);opacity:.45} }
     @media (prefers-reduced-motion:reduce){*{animation:none!important;scroll-behavior:auto!important}}
-    @media(max-width:760px){.page{width:min(100% - 24px,1180px)}.brand{font-size:20px}.hero{padding-top:10px}.deco-stage{aspect-ratio:auto;min-height:600px}.constellation{width:70%;height:72%;grid-template-columns:1fr;grid-template-rows:1fr 40px 1fr 40px 1fr}.rail{transform:rotate(90deg)}.figure-orbit{width:104px}.workspace{width:125px}.actions{bottom:30px}.platform-strip{grid-template-columns:1fr 1fr;padding:48px 0 72px}.platform-strip .action{height:76px}}
+    @media(max-width:900px){
+      .feature-grid{grid-template-columns:1fr}
+      .constellation{grid-template-columns:1fr;grid-template-rows:none;gap:26px;justify-items:center}
+      .node{display:grid;justify-items:center;gap:14px}
+      .node > *{grid-column:auto}
+      .node-art{grid-row:auto;min-height:0}
+      .node-label,.node-note{grid-row:auto}
+      .sunburst{width:min(80vw,340px)}
+      .rail{grid-row:auto;grid-column:auto!important;width:2px;height:34px;justify-self:center;background:linear-gradient(180deg,var(--amber),rgba(224,157,59,.2),var(--amber))}
+      .deco-stage{padding:56px 20px 60px}
+    }
+    @media(max-width:760px){
+      .page{width:min(100% - 24px,1180px)}
+      .brand{font-size:20px}
+      .platform-strip{grid-template-columns:1fr 1fr}
+      .platform{height:118px}
+      footer{flex-direction:column;justify-content:center;text-align:center;padding:28px 0}
+      .deco-rule{display:none}
+    }
   </style>
 </head>
 <body>
   <div class="page">
     <nav>
       <a class="brand" href="/" aria-label="Fizzer home"><img src="/gem.svg" alt="">Fizzer</a>
-      <a class="icon-button" href="/app" aria-label="Open Fizzer in browser" title="Open in browser"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 5H5v14h14v-3M12 4h8v8M20 4l-9 9"/></svg></a>
+      <a class="nav-link" href="/app">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M8 5H5v14h14v-3M12 4h8v8M20 4l-9 9"/></svg>
+        Open in browser
+      </a>
     </nav>
+
     <main>
-      <h1 class="sr-only">Fizzer — a shared workspace for people and AI agents</h1>
-      <section class="hero" aria-label="People and agents working together in Fizzer">
+      <section class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">People + agents, one workspace</p>
+          <h1>Work in the same room as your <em>AI agents</em></h1>
+          <p class="lede">Fizzer is a shared workspace where your notes, chats, and projects live in one vault — and the AI agents you work with read and write in that same vault, alongside you and your teammates.</p>
+        </div>
+
         <div class="deco-stage">
-          <div class="sunburst"></div>
-          <div class="signals"><i class="signal"></i><i class="signal"></i><i class="signal"></i><i class="signal"></i></div>
-          <div class="constellation" aria-hidden="true">
-            <div class="figure human"><div class="figure-orbit"><svg class="person" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="2"><circle cx="32" cy="20" r="9"/><path d="M15 53c2-13 9-20 17-20s15 7 17 20M10 53h44"/></svg></div></div>
-            <div class="rail"></div>
-            <div class="workspace"><img src="/gem.svg" alt=""></div>
-            <div class="rail"></div>
-            <div class="figure agent"><div class="figure-orbit"><svg class="person" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 16h28l7 16-7 16H18l-7-16 7-16Z"/><circle cx="25" cy="31" r="2" fill="currentColor"/><circle cx="39" cy="31" r="2" fill="currentColor"/><path d="M25 39h14M32 9v7"/></svg></div></div>
-          </div>
-          <div class="actions">
-            <a class="action primary" id="primaryDownload" href="#download" aria-label="Download Fizzer" title="Download Fizzer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg></a>
-            <a class="action" href="/app" aria-label="Open Fizzer in browser" title="Open in browser"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M8 6.5h.01"/></svg></a>
+          <div class="constellation">
+            <div class="node human">
+              <div class="node-art"><div class="figure-orbit" aria-hidden="true"><svg class="person" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="2"><circle cx="32" cy="20" r="9"/><path d="M15 53c2-13 9-20 17-20s15 7 17 20M10 53h44"/></svg></div></div>
+              <p class="node-label">You &amp; your team</p>
+              <p class="node-note">Write notes, plan projects, talk it through.</p>
+            </div>
+            <div class="rail left" aria-hidden="true"></div>
+            <div class="node hub">
+              <div class="node-art">
+                <div class="sunburst" aria-hidden="true"></div>
+                <div class="workspace" aria-hidden="true"><img src="/gem.svg" alt=""></div>
+              </div>
+              <p class="node-label">One shared vault</p>
+              <p class="node-note">Notes, chats, and boards everyone can see.</p>
+            </div>
+            <div class="rail right" aria-hidden="true"></div>
+            <div class="node agent">
+              <div class="node-art"><div class="figure-orbit" aria-hidden="true"><svg class="person" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 16h28l7 16-7 16H18l-7-16 7-16Z"/><circle cx="25" cy="31" r="2" fill="currentColor"/><circle cx="39" cy="31" r="2" fill="currentColor"/><path d="M25 39h14M32 9v7"/></svg></div></div>
+              <p class="node-label">Your AI agents</p>
+              <p class="node-note">They read the same vault and do the work in it.</p>
+            </div>
           </div>
         </div>
+
+        <div class="cta-row">
+          <a class="button primary" id="primaryDownload" href="#download">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg>
+            <span id="primaryDownloadLabel">Download Fizzer</span>
+          </a>
+          <a class="button" href="/app">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M8 6.5h.01"/></svg>
+            Open in browser
+          </a>
+        </div>
       </section>
-      <section class="platform-strip" id="download" aria-label="Download Fizzer">
-        <a class="action dl" href="/download/mac" data-platform="mac" aria-label="Download for macOS" title="macOS"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M16.5 2c.1 1.1-.3 2.2-1 3-.7.8-1.8 1.4-2.9 1.3-.1-1 .4-2.1 1-2.8.7-.8 1.9-1.4 2.9-1.5zM20 17.4c-.5 1.2-.8 1.7-1.5 2.7-1 1.5-2.4 3.3-4.1 3.3-1.5 0-1.9-1-4-1-2 0-2.5 1-4 1-1.7 0-3-1.7-4-3.1-2.7-4-3-8.6-1.3-11.1 1.2-1.7 3-2.7 4.8-2.7 1.8 0 2.9 1 4.4 1 1.4 0 2.3-1 4.4-1 1.6 0 3.2.9 4.4 2.3-3.8 2.1-3.2 7.5.9 8.6z"/></svg></a>
-        <a class="action dl" href="/download/windows" data-platform="windows" aria-label="Download for Windows" title="Windows"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 5.7 10.4 4.7v7.1H3zM3 12.2h7.4v7.1L3 18.3zM11.3 4.6 21 3.3v8.5h-9.7zM11.3 12.2H21v8.5l-9.7-1.3z"/></svg></a>
-        <a class="action dl" href="/download/linux" data-platform="linux" aria-label="Download for Linux" title="Linux"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3c-3 0-4 3-4 6 0 2-3 5-3 8 0 2 2 4 7 4s7-2 7-4c0-3-3-6-3-8 0-3-1-6-4-6Z"/><circle cx="10" cy="9" r=".7" fill="currentColor"/><circle cx="14" cy="9" r=".7" fill="currentColor"/><path d="m9 14 3 2 3-2"/></svg></a>
-        <a class="action" href="/app" aria-label="Use Fizzer in browser" title="Browser"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 4 6 4 9s-1 6-4 9c-3-3-4-6-4-9s1-6 4-9Z"/></svg></a>
+
+      <section class="features" aria-labelledby="what-it-is">
+        <div class="section-head">
+          <h2 id="what-it-is">What's inside</h2>
+          <p>Everything a project needs, in one place your agents can reach.</p>
+        </div>
+        <div class="feature-grid">
+          <article class="feature">
+            <div class="feature-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 4h9l5 5v11a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Z"/><path d="M14 4v5h5M8 13h8M8 17h5"/></svg></div>
+            <h3>Notes &amp; vault</h3>
+            <p>Markdown notes in folders, linked together — an Obsidian-style vault that lives with the project.</p>
+          </article>
+          <article class="feature">
+            <div class="feature-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5h16v11H9l-5 4V5Z"/><path d="M8.5 10.5h.01M12 10.5h.01M15.5 10.5h.01"/></svg></div>
+            <h3>Channels &amp; chat</h3>
+            <p>Talk to people and agents in the same threads, so decisions stay next to the work.</p>
+          </article>
+          <article class="feature">
+            <div class="feature-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="5.5" height="16" rx="1"/><rect x="9.75" y="4" width="5.5" height="11" rx="1"/><rect x="16.5" y="4" width="4.5" height="8" rx="1"/></svg></div>
+            <h3>Projects &amp; boards</h3>
+            <p>Kanban boards and project docs your agents can pick up tasks from and update as they go.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="download" id="download" aria-labelledby="get-fizzer">
+        <div class="section-head">
+          <h2 id="get-fizzer">Get Fizzer</h2>
+          <p>Desktop apps for Mac, Windows, and Linux — or skip the install and open it in your browser.</p>
+        </div>
+        <div class="platform-strip">
+          <a class="platform" href="/download/mac" data-platform="mac">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.5 2c.1 1.1-.3 2.2-1 3-.7.8-1.8 1.4-2.9 1.3-.1-1 .4-2.1 1-2.8.7-.8 1.9-1.4 2.9-1.5zM20 17.4c-.5 1.2-.8 1.7-1.5 2.7-1 1.5-2.4 3.3-4.1 3.3-1.5 0-1.9-1-4-1-2 0-2.5 1-4 1-1.7 0-3-1.7-4-3.1-2.7-4-3-8.6-1.3-11.1 1.2-1.7 3-2.7 4.8-2.7 1.8 0 2.9 1 4.4 1 1.4 0 2.3-1 4.4-1 1.6 0 3.2.9 4.4 2.3-3.8 2.1-3.2 7.5.9 8.6z"/></svg>
+            <span>Download for macOS</span>
+          </a>
+          <a class="platform" href="/download/windows" data-platform="windows">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 5.7 10.4 4.7v7.1H3zM3 12.2h7.4v7.1L3 18.3zM11.3 4.6 21 3.3v8.5h-9.7zM11.3 12.2H21v8.5l-9.7-1.3z"/></svg>
+            <span>Download for Windows</span>
+          </a>
+          <a class="platform" href="/download/linux" data-platform="linux">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3c-3 0-4 3-4 6 0 2-3 5-3 8 0 2 2 4 7 4s7-2 7-4c0-3-3-6-3-8 0-3-1-6-4-6Z"/><circle cx="10" cy="9" r=".7" fill="currentColor"/><circle cx="14" cy="9" r=".7" fill="currentColor"/><path d="m9 14 3 2 3-2"/></svg>
+            <span>Download for Linux</span>
+          </a>
+          <a class="platform" href="/app">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 4 6 4 9s-1 6-4 9c-3-3-4-6-4-9s1-6 4-9Z"/></svg>
+            <span>Use in browser</span>
+          </a>
+        </div>
       </section>
     </main>
-    <footer aria-label="Fizzer"><div class="deco-rule"></div><a class="brand" href="/"><img src="/gem.svg" alt=""><span class="sr-only">Fizzer</span></a><div class="deco-rule"></div></footer>
+
+    <footer>
+      <div class="deco-rule" aria-hidden="true"></div>
+      <a class="brand" href="/"><img src="/gem.svg" alt="">Fizzer</a>
+      <div class="deco-rule" aria-hidden="true"></div>
+    </footer>
   </div>
   <script>
     (function(){
-      var ua=navigator.userAgent.toLowerCase(), platform=null;
-      if(ua.includes('mac')) platform='mac'; else if(ua.includes('win')) platform='windows'; else if(ua.includes('linux')) platform='linux';
-      var primary=document.getElementById('primaryDownload'); if(platform) primary.href='/download/'+platform;
+      var ua = navigator.userAgent.toLowerCase(), platform = null, label = null;
+      if (ua.includes('mac')) { platform = 'mac'; label = 'Download for macOS'; }
+      else if (ua.includes('win')) { platform = 'windows'; label = 'Download for Windows'; }
+      else if (ua.includes('linux')) { platform = 'linux'; label = 'Download for Linux'; }
+      if (platform) {
+        document.getElementById('primaryDownload').href = '/download/' + platform;
+        document.getElementById('primaryDownloadLabel').textContent = label;
+      }
     })();
   </script>
 </body>
