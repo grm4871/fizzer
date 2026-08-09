@@ -708,6 +708,9 @@ button:focus-visible,
   background: transparent;
   box-shadow: none;
 }
+.sidebar-actions-mobile {
+  display: none;
+}
 .sidebar-actions .btn-icon {
   width: 30px;
   min-width: 30px;

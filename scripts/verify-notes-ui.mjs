@@ -84,6 +84,23 @@ try {
   }, { token, session: initialSession });
   await page.reload({ waitUntil: 'networkidle' });
 
+  const visibleSidebarActions = page.locator('.sidebar-actions:visible');
+  if (await visibleSidebarActions.count() !== 1) throw new Error('sidebar rendered duplicate visible action rows');
+
+  await page.locator('#new-note-btn-desktop').click();
+  const draftTitle = `Blank saved note ${Date.now()}`;
+  await page.locator('#editor-title').fill(draftTitle);
+  await page.locator('#editor-title').press('Enter');
+  await page.keyboard.press('Control+s');
+  await page.waitForFunction(async ({ apiBase: base, token: authToken, vaultId, title }) => {
+    const response = await fetch(`${base}/api/vaults/${vaultId}/notes?title=${encodeURIComponent(title)}`, {
+      headers: { authorization: `Bearer ${authToken}` },
+    });
+    if (!response.ok) return false;
+    const payload = await response.json();
+    return payload.notes?.some((note) => note.title === title);
+  }, { apiBase, token, vaultId: vault.id, title: draftTitle });
+
   await page.getByText('embed-channel', { exact: false }).first().click();
   const embed = page.locator('.chat-doc-embed');
   await embed.waitFor({ timeout: 15000 });
@@ -108,7 +125,7 @@ try {
   await page.locator('.cm-editor').waitFor({ timeout: 15000 });
   if (await page.locator('.cm-editor').count() !== 1) throw new Error('corrupted layout mounted the note editor more than once');
   if (errors.length) throw new Error(errors.join('\n'));
-  console.log('[notes-ui] OK — embed card, note editor, and duplicate-pane session recovery');
+  console.log('[notes-ui] OK — single action row, blank-note save, embed card, note editor, and duplicate-pane session recovery');
 } finally {
   await browser?.close();
   preview.kill('SIGTERM');

@@ -258,9 +258,8 @@ export default function App() {
   const openTabsRef = useRef(openTabs); openTabsRef.current = openTabs;
   const noteContentsRef = useRef(noteContents); noteContentsRef.current = noteContents;
   const activeVaultIdRef = useRef(activeVaultId); activeVaultIdRef.current = activeVaultId;
-  // Ids of new notes that exist only in the client until the user writes
-  // something and saves — deferred so opening a blank tab doesn't litter the
-  // vault. The real (server) id is minted here up front, so no remap on save.
+  // Ids of new notes that exist only in the client until the user saves. The
+  // real (server) id is minted here up front, so no remap is needed on save.
   const unsavedNoteIdsRef = useRef<Set<string>>(new Set());
   // Saves in flight, keyed by tab id. Ctrl+S reaches saveNoteTab twice (the
   // CodeMirror `Mod-s` keymap and the window shortcut both fire), and the
@@ -2571,8 +2570,6 @@ export default function App() {
     // the tab/layout already uses — no remapping. Covers both a brand-new draft
     // and a tab whose note the server has since lost (see the PUT fallback).
     const createFromDraft = async (): Promise<Note | undefined> => {
-      // Only persist once there's real content, so blank tabs never hit the vault.
-      if (!entry.draft.trim()) return undefined;
       const vaultId = activeVaultIdRef.current;
       if (!vaultId) return undefined;
       // A never-renamed draft is still called "Untitled Note"; title it from its
