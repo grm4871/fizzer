@@ -245,6 +245,8 @@ export interface ChatAgentRegistration {
   id: string;
   /** Persistent vault-level agent id (shared across channels). */
   vaultAgentId?: string;
+  /** Server-authoritative owner of this personal assistant. */
+  ownerUserId?: number;
   agentId: string;
   displayName: string;
   avatarUrl: string;
@@ -2346,6 +2348,10 @@ export const ChatView = memo(function ChatView({
     for (const agent of vaultAgents) map.set(agent.id, agent);
     return map;
   }, [vaultAgents]);
+  const canManageRegistration = useCallback((registration: ChatAgentRegistration) => {
+    const identity = registration.vaultAgentId ? vaultAgentById.get(registration.vaultAgentId) : undefined;
+    return Boolean(identity && identity.ownerUsername === currentUser);
+  }, [currentUser, vaultAgentById]);
   const resolveMessageRegistration = (message: ChatMessage) =>
     message.registrationId
       ? registrationById.byId.get(message.registrationId)
@@ -2701,6 +2707,7 @@ export const ChatView = memo(function ChatView({
       : registrationById.byAgentOrName.get(message.agentId ?? '')
         ?? registrationById.byAgentOrName.get(message.author);
     if (!registration) return;
+    if (!canManageRegistration(registration)) return;
     setUsersCollapsed(false);
     setChannelSettingsOpen(false);
     setAgentFormError('');
@@ -2712,7 +2719,7 @@ export const ChatView = memo(function ChatView({
     setEditingRegistrationId(registration.id);
     setAgentPanelMode('edit-member');
     setAgentMenuOpen(true);
-  }, [availableAgents, registrationById, setUsersCollapsed]);
+  }, [availableAgents, canManageRegistration, registrationById, setUsersCollapsed]);
 
   function editVaultIdentity(event: React.MouseEvent, registration: ChatAgentRegistration) {
     event.stopPropagation();
@@ -3721,6 +3728,7 @@ export const ChatView = memo(function ChatView({
           const selectedModel = agent.registration.model || agent.models[0]?.id || '';
           const isEditing = editingRegistrationId === agent.registration.id && agentMenuOpen;
           const planUsage = runnerHealth?.planUsage?.[planUsageProviderId(agent.registration.agentId)] || null;
+          const canManage = canManageRegistration(agent.registration);
           return (
             <div
               className={`chat-user chat-agent-user${agent.registration.orchestrator ? ' is-supervisor' : ''}${isEditing ? ' is-editing' : ''}`}
@@ -3729,8 +3737,9 @@ export const ChatView = memo(function ChatView({
               <button
                 type="button"
                 className="chat-agent-edit-btn"
-                onClick={(event) => editRegisteredAgent(event, agent.registration)}
-                title="Channel settings for this agent"
+                disabled={!canManage}
+                onClick={canManage ? (event) => editRegisteredAgent(event, agent.registration) : undefined}
+                title={canManage ? 'Channel settings for this agent' : 'Only the agent owner can edit its settings'}
               >
                 <ChatAvatar name={agent.registration.displayName || agent.label} kind="agent" avatarUrl={agent.registration.avatarUrl} size="sm" />
                 {/* Supervisor reads as a hairline ring on the avatar (see .is-supervisor);
@@ -3745,7 +3754,7 @@ export const ChatView = memo(function ChatView({
                   <span className="chat-user-role">{selectedModel || 'no model'}</span>
                 </div>
               </button>
-              <button
+              {canManage && <button
                 type="button"
                 className="chat-remove-agent"
                 onClick={(event) => {
@@ -3755,7 +3764,7 @@ export const ChatView = memo(function ChatView({
                 title="Remove agent from channel"
               >
                 <X size={12} />
-              </button>
+              </button>}
             </div>
           );
           })}
@@ -3768,17 +3777,18 @@ export const ChatView = memo(function ChatView({
             ) : (
               vaultAgents.map((va) => {
                 const inChannel = channelVaultAgentIds.has(va.id);
+                const canManage = va.ownerUsername === currentUser;
                 const nCh = va.channelIds?.length ?? 0;
                 return (
                   <div key={va.id} className={`chat-vault-pick-row${inChannel ? ' is-in-channel' : ''}`}>
                     <button
                       type="button"
                       className="chat-vault-pick-btn"
-                      disabled={inChannel}
+                      disabled={inChannel || !canManage}
                       onClick={() => {
                         if (!inChannel) void addVaultAgentFromPicker(va.id);
                       }}
-                      title={inChannel ? 'Already in this channel' : 'Add to this channel'}
+                      title={inChannel ? 'Already in this channel' : canManage ? 'Add to this channel' : 'Only the agent owner can add it'}
                     >
                       <ChatAvatar name={va.displayName || va.mention} kind="agent" avatarUrl={va.avatarUrl} size="sm" />
                       <span className="chat-user-copy">
@@ -3790,7 +3800,7 @@ export const ChatView = memo(function ChatView({
                         </span>
                       </span>
                     </button>
-                    {onDeleteVaultAgent && (
+                    {onDeleteVaultAgent && canManage && (
                       <button
                         type="button"
                         className="chat-remove-agent"

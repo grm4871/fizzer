@@ -2889,9 +2889,7 @@ export function setChatAgentAvatar(
   avatarUrl: string,
 ): ChatAgentRegistration {
   const { route } = assertChatChannel(db, channelId, userId);
-  if (route.localVaultId !== vaultId || route.sourceVaultId !== vaultId) throw new Error('Chat channel not found');
-  const sourceVault = db.prepare('SELECT * FROM vaults WHERE id = ?').get(route.sourceVaultId) as Vault | undefined;
-  if (!sourceVault || sourceVault.created_by !== userId) throw new Error('Only the agent owner can update its profile picture');
+  if (route.localVaultId !== vaultId) throw new Error('Chat channel not found');
   const url = String(avatarUrl || '').trim();
   if (url && !/^https?:\/\//i.test(url)) throw new Error('Profile picture must be an http(s) URL');
   if (url.length > 2048) throw new Error('Profile picture URL is too long');
@@ -2900,13 +2898,17 @@ export function setChatAgentAvatar(
   if (!member) throw new Error('Agent not found');
   const vaultAgentId = member.vault_agent_id;
   if (!vaultAgentId) throw new Error('Agent identity is not ready yet');
-  db.prepare("UPDATE vault_agents SET avatar_url = ?, updated_at = datetime('now') WHERE id = ? AND vault_id = ?")
-    .run(url, vaultAgentId, route.sourceVaultId);
+  const identity = db.prepare('SELECT owner_user_id FROM vault_agents WHERE id = ?')
+    .get(vaultAgentId) as { owner_user_id: number | null } | undefined;
+  if (!identity || identity.owner_user_id !== userId) {
+    throw new Error('Only the agent owner can update its profile picture');
+  }
+  db.prepare("UPDATE vault_agents SET avatar_url = ?, updated_at = datetime('now') WHERE id = ?")
+    .run(url, vaultAgentId);
   db.prepare("UPDATE chat_agent_members SET avatar_url = ?, updated_at = datetime('now') WHERE vault_agent_id = ?")
     .run(url, vaultAgentId);
-  const updated = db.prepare('SELECT * FROM chat_agent_members WHERE id = ? AND channel_id = ?')
-    .get(registrationId, route.sourceChannelId) as ChatAgentMemberRow;
-  return rowToAgentMember(updated);
+  return listChatAgentMembers(db, channelId, userId)
+    .find((item) => item.id === registrationId) as ChatAgentRegistration;
 }
 
 export function upsertChatAgentMember(

@@ -9,6 +9,7 @@ import {
   ensureChatSchema,
   getChatMessage,
   linkChatChannel,
+  setChatAgentAvatar,
   upsertChatAgentMember,
   upsertVaultAgent,
 } from './chat.js';
@@ -614,6 +615,14 @@ test('shared-channel users can add their own coordinator without controlling ano
       orchestrator: true,
     });
     assert.equal(guestCoordinator.ownerUserId, 2);
+    assert.throws(
+      () => setChatAgentAvatar(db, 1, 'vault-1', 'channel-1', guestCoordinator.id, 'https://example.com/nope.png'),
+      /Only the agent owner/,
+    );
+    assert.equal(
+      setChatAgentAvatar(db, 2, 'vault-2', 'channel-2', guestCoordinator.id, 'https://example.com/guest.png').avatarUrl,
+      'https://example.com/guest.png',
+    );
 
     const guestTurn = createChatMessage(db, 2, 'vault-2', 'channel-2', {
       id: 'guest-own-coordinator', channelId: 'channel-2', author: 'guest', body: 'Please coordinate this.',
