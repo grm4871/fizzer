@@ -2692,7 +2692,7 @@ export function resolveChatAgentRun(
   const { route } = assertChatChannel(db, channelId, userId);
   const row = db
     .prepare(`
-      SELECT m.*, va.owner_user_id, va.vault_id AS agent_vault_id
+      SELECT m.*, va.owner_user_id
       FROM chat_agent_members m
       JOIN vault_agents va ON va.id = m.vault_agent_id
       WHERE m.id = ? AND m.channel_id = ?
@@ -2700,15 +2700,20 @@ export function resolveChatAgentRun(
     .get(registrationId, route.sourceChannelId) as ChatAgentMemberRow | undefined;
   if (!row) throw new Error('Agent not found');
 
-  const agentVault = db
-    .prepare('SELECT * FROM vaults WHERE id = ?')
-    .get(row.agent_vault_id) as Vault | undefined;
-  if (!agentVault || !row.owner_user_id || agentVault.created_by !== row.owner_user_id) {
-    throw new Error('Agent not found');
-  }
+  if (!row.owner_user_id) throw new Error('Agent not found');
+  // A vault agent is owner-scoped and may have been created in a completely
+  // different vault from this channel. Route through the owner's local channel
+  // projection, not through vault_agents.vault_id (which is identity metadata).
   const ownerRoute = listChatChannelRoutes(db, route.sourceVaultId, route.sourceChannelId)
-    .find((candidate) => candidate.localVaultId === agentVault.id);
+    .find((candidate) => {
+      const localVault = db.prepare('SELECT created_by FROM vaults WHERE id = ?')
+        .get(candidate.localVaultId) as { created_by: number } | undefined;
+      return localVault?.created_by === row.owner_user_id;
+    });
   if (!ownerRoute) throw new Error('Agent not found');
+  const agentVault = db.prepare('SELECT * FROM vaults WHERE id = ?')
+    .get(ownerRoute.localVaultId) as Vault | undefined;
+  if (!agentVault) throw new Error('Agent not found');
 
   return {
     registration: rowToAgentMember(row),
