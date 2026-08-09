@@ -3010,10 +3010,14 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
       ? chatDispatch?.reasoningEffort || registration.reasoningEffort || undefined
       : undefined;
     selectedCwd = normalizeRunCwd(registration.cwd);
-    // A channel-wide cwd (if set) overrides the agent's own cwd, so every agent
-    // in the channel runs from the same directory.
-    const channelCwd = getChannelCwd(db, route.sourceChannelId);
-    if (channelCwd) selectedCwd = normalizeRunCwd(channelCwd);
+    // A channel cwd is a path on the channel owner's machine. Never pass that
+    // path to somebody else's runner: shared agents keep their owner's own cwd.
+    const sourceVault = db.prepare('SELECT created_by FROM vaults WHERE id = ?')
+      .get(route.sourceVaultId) as { created_by: number } | undefined;
+    if (sourceVault?.created_by === ownerId) {
+      const channelCwd = getChannelCwd(db, route.sourceChannelId);
+      if (channelCwd) selectedCwd = normalizeRunCwd(channelCwd);
+    }
     // A mission task's bound workspace is authoritative for every launch and
     // resume. It must beat a broad channel cwd so parallel task branches never
     // silently execute in the shared checkout.

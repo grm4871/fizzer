@@ -10,6 +10,7 @@ import {
   getChatMessage,
   linkChatChannel,
   resolveChatAgentRun,
+  setChannelCwd,
   setChatAgentAvatar,
   upsertChatAgentMember,
   upsertVaultAgent,
@@ -624,6 +625,11 @@ test('shared-channel users can add their own coordinator without controlling ano
     assert.equal(ownerCallingGuest.ownerId, 2);
     assert.equal(ownerCallingGuest.agentVault.id, 'vault-2');
     assert.equal(ownerCallingGuest.ownerChannelId, 'channel-2');
+    assert.throws(
+      () => setChannelCwd(db, 'channel-2', 2, '/home/guest/project'),
+      /Only the channel owner/,
+    );
+    assert.equal(setChannelCwd(db, 'channel-1', 1, '/home/owner/project').cwd, '/home/owner/project');
     db.prepare("INSERT INTO vaults (id, name, created_by) VALUES ('vault-3', 'Guest agent home', 2)").run();
     const elsewhereAgent = upsertVaultAgent(db, 2, 'vault-3', {
       agentId: 'codex', displayName: 'Elsewhere', mention: 'elsewhere', model: 'gpt-5.6-sol',

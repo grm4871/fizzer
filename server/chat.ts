@@ -2889,6 +2889,11 @@ export function setChannelCwd(db: Db, channelId: string, userId: number, cwd: st
   kanbanNoteId: string;
 } {
   const { route } = assertChatChannel(db, channelId, userId);
+  const sourceVault = db.prepare('SELECT created_by FROM vaults WHERE id = ?')
+    .get(route.sourceVaultId) as { created_by: number } | undefined;
+  if (!sourceVault || sourceVault.created_by !== userId) {
+    throw new Error('Only the channel owner can change the shared working directory');
+  }
   const value = String(cwd ?? '').trim();
   db.prepare(`
     INSERT INTO chat_channel_settings (channel_id, cwd, updated_at)
