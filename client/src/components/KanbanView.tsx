@@ -212,13 +212,9 @@ export function initializeKanbanMarkdown(content: string): string {
   const board = [
     '## Backlog',
     '',
-    '## Ready',
-    '',
     '## In progress',
     '',
     '## Blocked',
-    '',
-    '## Review',
     '',
     '## Done',
     '',

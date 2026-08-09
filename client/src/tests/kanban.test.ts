@@ -152,7 +152,7 @@ describe('Markdown-backed Kanban helpers', () => {
     expect(next).toContain('%% kanban:settings\n```\n{"kanban-plugin":"board"}');
     expect(hasObsidianKanbanMarker(next)).toBe(true);
     expect(parseKanbanMarkdown(next).columns.map((column) => column.title)).toEqual([
-      'Backlog', 'Ready', 'In progress', 'Blocked', 'Review', 'Done',
+      'Backlog', 'In progress', 'Blocked', 'Done',
     ]);
   });
 
