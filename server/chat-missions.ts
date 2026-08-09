@@ -837,6 +837,8 @@ export function addChatMissionTask(
     priority?: number;
     reasoningEffort?: string;
     anonymous?: boolean;
+    /** Internal: bind the coordinator's already-dispatched root turn. */
+    primary?: boolean;
   },
 ): { update: MissionProjectionUpdate; task: ChatMissionTask; assignee: ChatAgentRegistration } {
   const update = getChatMission(db, userId, channelId, missionId, input.coordinatorRegistrationId);
@@ -849,7 +851,7 @@ export function addChatMissionTask(
   const assignee = findRegistration(db, userId, channelId, input.assignee);
   if (!assignee) throw new Error(`No channel agent matches ${input.assignee}`);
   const anonymous = Boolean(input.anonymous);
-  if (assignee.id === coordinator.id && !anonymous) {
+  if (assignee.id === coordinator.id && !anonymous && !input.primary) {
     throw new Error('Delegate this task to another channel agent, or pass anonymous for a self-subagent');
   }
   const title = cleanText(input.title, 240);

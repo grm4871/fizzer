@@ -3569,6 +3569,8 @@ app.post('/api/vaults/:vaultId/channels/:channelId/messages', requireAuth, (req:
     assertDirectMessageSendAllowed(db, route.sourceChannelId, req.user!.id);
     const input = isAgentRequest(req) ? req.body : { ...req.body, author: req.user!.username, agentId: undefined, registrationId: undefined };
     let message = createChatMessage(db, req.user!.id, req.params.vaultId, req.params.channelId, input);
+    let rootMission: MissionProjectionUpdate | null = null;
+    let rootCoordinatorId = '';
     // Direct pings to a user's own coordinator are durable mission roots. Never
     // infer this authority over another user's coordinator in a shared room.
     if (!isAgentRequest(req)) {
@@ -3583,6 +3585,8 @@ app.post('/api/vaults/:vaultId/channels/:channelId/messages', requireAuth, (req:
           title,
           objective: message.body,
         });
+        rootMission = missionUpdate;
+        rootCoordinatorId = coordinator.id;
         emitMissionProjection(missionUpdate);
         message = getChatMessage(db, req.params.channelId, req.user!.id, message.id) || message;
       }
@@ -3593,6 +3597,23 @@ app.post('/api/vaults/:vaultId/channels/:channelId/messages', requireAuth, (req:
       req.params.channelId,
       message,
     );
+    // The root ping is real mission work, not just a card. Bind its existing
+    // dispatch so normal run start/finish reconciliation advances the mission.
+    if (rootMission && rootCoordinatorId) {
+      const rootDispatch = dispatches.find((dispatch) => dispatch.registration.id === rootCoordinatorId);
+      if (rootDispatch) {
+        const primary = addChatMissionTask(db, req.user!.id, req.params.channelId, rootMission.mission.id, {
+          coordinatorRegistrationId: rootCoordinatorId,
+          title: 'Primary task',
+          assignee: rootCoordinatorId,
+          prompt: rootMission.mission.objective,
+          primary: true,
+        });
+        const linked = linkMissionTaskDispatch(db, primary.task.id, rootDispatch.id);
+        emitMissionProjection(linked);
+        message = getChatMessage(db, req.params.channelId, req.user!.id, message.id) || message;
+      }
+    }
     const agents = listChatAgentMembers(db, req.params.channelId, req.user!.id);
     refreshChatNoteGrants(req.user!.id, req.params.vaultId, route.sourceChannelId, message);
     try {
