@@ -54,6 +54,16 @@ describe('workTrace', () => {
     expect(partitionWorkRun([reply])).toEqual({ trace: [], full: [reply] });
   });
 
+  it('does not fold a later same-author turn into an earlier conversation burst', () => {
+    const first = msg({ id: 'h1', author: 'diego', body: 'It is duplicated.' });
+    const later = msg({
+      id: 'h2', author: 'diego', body: 'On the frontend.',
+      createdAt: '2026-08-03T00:02:00.000Z',
+    });
+    const segments = segmentTranscript([first, later]);
+    expect(segments).toHaveLength(2);
+  });
+
   it('hides a lone long delegated response behind the work dot', () => {
     const workerEssay = msg({
       id: 'worker-essay',

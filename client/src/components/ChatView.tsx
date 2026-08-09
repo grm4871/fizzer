@@ -893,12 +893,16 @@ const ChatMessageText = memo(function ChatMessageText({
   && prev.onOpenNote === next.onOpenNote
 );
 
+/** Keep a burst compact, but never fold a later conversational turn into it. */
+const CHAT_MESSAGE_GROUP_WINDOW_MS = 90_000;
+
 export function canGroupChatMessages(a: ChatMessage, b: ChatMessage) {
   if (a.author.trim() !== b.author.trim()) return false;
   const aKey = a.registrationId ?? a.agentId ?? null;
   const bKey = b.registrationId ?? b.agentId ?? null;
   if (aKey !== bKey) return false;
-  return true;
+  const elapsed = Date.parse(b.createdAt) - Date.parse(a.createdAt);
+  return Number.isFinite(elapsed) && elapsed >= 0 && elapsed <= CHAT_MESSAGE_GROUP_WINDOW_MS;
 }
 
 export function canMergeChatMessages(a: ChatMessage, b: ChatMessage) {

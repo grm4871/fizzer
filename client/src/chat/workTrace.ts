@@ -12,11 +12,15 @@ export interface ChatMessageGroup {
   messages: ChatMessage[];
 }
 
+const CHAT_MESSAGE_GROUP_WINDOW_MS = 90_000;
+
 function canGroup(a: ChatMessage, b: ChatMessage): boolean {
   if (a.author.trim() !== b.author.trim()) return false;
   const aKey = a.registrationId ?? a.agentId ?? null;
   const bKey = b.registrationId ?? b.agentId ?? null;
-  return aKey === bKey;
+  if (aKey !== bKey) return false;
+  const elapsed = Date.parse(b.createdAt) - Date.parse(a.createdAt);
+  return Number.isFinite(elapsed) && elapsed >= 0 && elapsed <= CHAT_MESSAGE_GROUP_WINDOW_MS;
 }
 
 export type TranscriptSegment =
