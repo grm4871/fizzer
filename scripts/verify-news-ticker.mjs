@@ -110,6 +110,16 @@ try {
     JSON.stringify(overflow),
   );
 
+  // Electron/window restore can mount the toolbar while it has zero width.
+  // The ticker must remain readable, then resume motion when layout returns.
+  await page.locator('.workspace-toolbar').evaluate((el) => { el.style.display = 'none'; });
+  await page.waitForFunction(() => document.querySelector('.news-ticker-track')?.classList.contains('is-static'));
+  check('ticker stays visible while its toolbar has no width', await track.isVisible() === false
+    && await track.evaluate((el) => el.classList.contains('is-static')));
+  await page.locator('.workspace-toolbar').evaluate((el) => { el.style.display = 'flex'; });
+  await page.waitForFunction(() => document.querySelector('.news-ticker-track')?.classList.contains('is-running'));
+  check('ticker resumes after toolbar layout returns', await track.evaluate((el) => el.classList.contains('is-running')));
+
   // Fast-forward the animation so the next headline is drawn without waiting
   // out a full pass.
   await track.evaluate((el) => { el.style.animationDuration = '0.4s'; });

@@ -144,11 +144,25 @@ export function NewsTicker() {
     const track = trackRef.current;
     const viewport = viewportRef.current;
     if (!track || !viewport) return;
-    const viewportWidth = viewport.offsetWidth;
-    const trackWidth = track.offsetWidth;
-    track.style.setProperty('--news-start', `${viewportWidth}px`);
-    track.style.setProperty('--news-end', `${-trackWidth}px`);
-    setDuration((viewportWidth + trackWidth) / SPEED_PX_PER_SEC);
+    const measure = () => {
+      const viewportWidth = viewport.offsetWidth;
+      const trackWidth = track.scrollWidth;
+      if (!viewportWidth || !trackWidth) {
+        setDuration(0);
+        return;
+      }
+      track.style.setProperty('--news-start', `${viewportWidth}px`);
+      track.style.setProperty('--news-end', `${-trackWidth}px`);
+      setDuration((viewportWidth + trackWidth) / SPEED_PX_PER_SEC);
+    };
+    const frame = window.requestAnimationFrame(measure);
+    const observer = new ResizeObserver(measure);
+    observer.observe(viewport);
+    void document.fonts?.ready.then(measure);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
   }, [headline, reduced]);
 
   useEffect(() => {
@@ -168,7 +182,7 @@ export function NewsTicker() {
         <span
           key={headline}
           ref={trackRef}
-          className={`news-ticker-track${reduced ? ' is-static' : duration ? ' is-running' : ''}`}
+          className={`news-ticker-track${reduced || !duration ? ' is-static' : ' is-running'}`}
           style={duration && !reduced ? { animationDuration: `${duration}s` } : undefined}
           onAnimationEnd={reduced ? undefined : handleEnd}
         >

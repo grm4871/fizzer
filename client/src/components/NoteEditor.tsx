@@ -1623,6 +1623,10 @@ export const NoteEditor = memo(function NoteEditor({ note, content, onContentCha
     () => filterLinkableNotes(notes, note?.id, noteLinkQuery),
     [notes, note?.id, noteLinkQuery],
   );
+  const kanbanBoardCount = useMemo(() => (
+    notes.filter((candidate) => candidate.id !== note?.id && hasObsidianKanbanMarker(candidate.content_preview)).length
+      + (hasObsidianKanbanMarker(content) ? 1 : 0)
+  ), [content, note?.id, notes]);
 
   useEffect(() => () => {
     if (saveFeedbackTimerRef.current !== null) window.clearTimeout(saveFeedbackTimerRef.current);
@@ -2295,7 +2299,9 @@ export const NoteEditor = memo(function NoteEditor({ note, content, onContentCha
 
       {/* Editor */}
       <div className={`editor-codemirror${viewMode === 'kanban' ? ' is-hidden' : ''}`} id="editor-codemirror" ref={editorRef} />
-      {viewMode === 'kanban' && <KanbanView content={content} onContentChange={onContentChange} />}
+      {viewMode === 'kanban' && (
+        <KanbanView content={content} onContentChange={onContentChange} showSuperkanbanToggle={kanbanBoardCount > 1} />
+      )}
 
       <div className="mobile-note-actions" aria-label="Note actions">
         <button type="button" className="mobile-note-action" onClick={() => { void handleMobileSave(); }} disabled={mobileSaveState === 'saving'}>

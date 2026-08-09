@@ -387,6 +387,7 @@ export function archiveKanbanColumnCards(content: string, columnId: string) {
 interface KanbanViewProps {
   content: string;
   onContentChange: (content: string) => void;
+  showSuperkanbanToggle?: boolean;
 }
 
 type EditingValue = { id: string; value: string } | null;
@@ -406,15 +407,15 @@ function CardMarkdown({ text }: { text: string }) {
   );
 }
 
-export function KanbanView({ content, onContentChange }: KanbanViewProps) {
+export function KanbanView({ content, onContentChange, showSuperkanbanToggle = false }: KanbanViewProps) {
   return (
     <ErrorBoundary label="Kanban">
-      <KanbanViewInner content={content} onContentChange={onContentChange} />
+      <KanbanViewInner content={content} onContentChange={onContentChange} showSuperkanbanToggle={showSuperkanbanToggle} />
     </ErrorBoundary>
   );
 }
 
-function KanbanViewInner({ content, onContentChange }: KanbanViewProps) {
+function KanbanViewInner({ content, onContentChange, showSuperkanbanToggle = false }: KanbanViewProps) {
   const board = useMemo(() => parseKanbanMarkdown(content), [content]);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [draggedCardId, setDraggedCardId] = useState<string | null>(null);
@@ -513,7 +514,7 @@ function KanbanViewInner({ content, onContentChange }: KanbanViewProps) {
     .flatMap((column) => column.cards)
     .filter((card) => card.checked).length;
   const normalizedSearch = search.trim().toLocaleLowerCase();
-  const inCommandCenter = hasSuperkanbanMarker(content);
+  const inSuperkanban = hasSuperkanbanMarker(content);
 
   return (
     <div className="kanban-view" aria-label="Kanban board">
@@ -535,16 +536,18 @@ function KanbanViewInner({ content, onContentChange }: KanbanViewProps) {
         <span className="kanban-portability">
           {board.hasObsidianMarker ? 'Obsidian board' : 'Markdown board'}
         </span>
-        <button
-          type="button"
-          className={`kanban-command-toggle${inCommandCenter ? ' is-active' : ''}`}
-          aria-pressed={inCommandCenter}
-          onClick={() => onContentChange(setSuperkanbanMarker(content, !inCommandCenter))}
-          title="Choose whether this board appears in the vault command center"
-        >
-          <LayoutDashboard size={14} />
-          {inCommandCenter ? 'In command center' : 'Add to command center'}
-        </button>
+        {showSuperkanbanToggle && (
+          <button
+            type="button"
+            className={`kanban-command-toggle${inSuperkanban ? ' is-active' : ''}`}
+            aria-pressed={inSuperkanban}
+            onClick={() => onContentChange(setSuperkanbanMarker(content, !inSuperkanban))}
+            title="Choose whether this board appears in Superkanban"
+          >
+            <LayoutDashboard size={14} />
+            {inSuperkanban ? 'In Superkanban' : 'Add to Superkanban'}
+          </button>
+        )}
         <button
           type="button"
           className="kanban-archive-complete"

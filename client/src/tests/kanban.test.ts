@@ -17,6 +17,7 @@ import {
   renameKanbanColumn,
   setSuperkanbanMarker,
   toggleKanbanCard,
+  KanbanView,
 } from '../components/KanbanView';
 import {
   mergeKanbanSources,
@@ -180,6 +181,23 @@ describe('Markdown-backed Kanban helpers', () => {
     const included = setSuperkanbanMarker(legacy, true);
     expect(hasSuperkanbanMarker(included)).toBe(true);
     expect(hasSuperkanbanMarker(setSuperkanbanMarker(included, false))).toBe(false);
+  });
+
+  it('shows the Superkanban control only when multiple boards exist', () => {
+    const hidden = renderToStaticMarkup(createElement(KanbanView, {
+      content: SAMPLE,
+      onContentChange: () => {},
+      showSuperkanbanToggle: false,
+    }));
+    expect(hidden).not.toContain('In Superkanban');
+
+    const visible = renderToStaticMarkup(createElement(KanbanView, {
+      content: SAMPLE,
+      onContentChange: () => {},
+      showSuperkanbanToggle: true,
+    }));
+    expect(visible).toContain('In Superkanban');
+    expect(visible).not.toContain('command center');
   });
 
   it('archives cards using the Obsidian thematic-break archive format', () => {
