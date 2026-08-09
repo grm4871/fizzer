@@ -16,11 +16,17 @@ const {
   chatTriggeringMessageId,
   cleanupRunHelperConfig,
   helperAllowedTools,
+  isMissingClaudeSession,
   normalizeClaudeEffort,
   resolveClaudePermission,
   requestClaudePermission,
   startLocalAgentRun,
 } = require('./agent-runner.cjs');
+
+test('recognizes a Claude session that belongs to another machine', () => {
+  assert.equal(isMissingClaudeSession(new Error('No conversation found with session ID: abc')), true);
+  assert.equal(isMissingClaudeSession(new Error('Claude rate limited')), false);
+});
 
 test('stale Claude permission responses are rejected', () => {
   assert.equal(resolveClaudePermission('missing-request', 'allow'), false);

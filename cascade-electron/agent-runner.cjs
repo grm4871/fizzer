@@ -525,6 +525,10 @@ function normalizeClaudeEffort(value, fallback = 'medium') {
   return ['low', 'medium', 'high', 'xhigh', 'max'].includes(effort) ? effort : fallback;
 }
 
+function isMissingClaudeSession(error) {
+  return /no conversation found with session id/i.test(error instanceof Error ? error.message : String(error || ''));
+}
+
 function resolveAgentCwd(inputCwd, vaultRoot) {
   const expanded = expandHome(inputCwd);
   if (expanded) {
@@ -975,6 +979,7 @@ async function startLocalAgentRun(opts, sendEvent) {
     let runPrompt = prompt;
     let attempt = 0;
     let startupRetries = 0;
+    let staleSessionRetried = false;
     canceledClaudeRuns.delete(runId);
     try {
       // eslint-disable-next-line no-constant-condition
@@ -991,6 +996,16 @@ async function startLocalAgentRun(opts, sendEvent) {
           if (error?.cascadeStartupTimeout && startupRetries < 1) {
             startupRetries += 1;
             emitHarness(emit, '\x1b[2m# Claude did not start — retrying once\x1b[0m\r\n');
+            continue;
+          }
+          // Session ids are local to the owner's Claude installation. If an
+          // agent was previously misrouted to another machine, discard that
+          // foreign id and start the requested turn fresh once.
+          if (resume && !staleSessionRetried && isMissingClaudeSession(error)) {
+            staleSessionRetried = true;
+            resume = undefined;
+            runPrompt = prompt;
+            emitHarness(emit, '\x1b[2m# Claude session is not present on this machine — starting fresh\x1b[0m\r\n');
             continue;
           }
           if (error && error.cascadeMaxTurns && error.cascadeSessionId && attempt < maxContinues) {
@@ -1100,6 +1115,7 @@ module.exports = {
   chatTriggeringMessageId,
   helperAllowedTools,
   normalizeClaudeEffort,
+  isMissingClaudeSession,
   resolveAgentCwd,
   setNoteApiConfig,
 };
