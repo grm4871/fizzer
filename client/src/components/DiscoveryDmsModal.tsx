@@ -59,6 +59,10 @@ function personInitial(displayName: string, username: string) {
   return (displayName || username).trim().charAt(0).toUpperCase() || '?';
 }
 
+function statusMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
+}
+
 export function DiscoveryDmsModal({
   initialTab,
   onClose,
@@ -79,6 +83,19 @@ export function DiscoveryDmsModal({
   const [busyAction, setBusyAction] = useState('');
   const [status, setStatus] = useState('');
 
+  const runAction = async (action: string, fallback: string, work: () => Promise<void>, onError?: () => void) => {
+    setBusyAction(action);
+    setStatus('');
+    try {
+      await work();
+    } catch (error) {
+      onError?.();
+      setStatus(statusMessage(error, fallback));
+    } finally {
+      setBusyAction('');
+    }
+  };
+
   const loadPublicVaults = useCallback(async (query = '') => {
     setLoading(true);
     setStatus('');
@@ -87,7 +104,7 @@ export function DiscoveryDmsModal({
       const data = await api<{ vaults: PublicVault[] }>(`/api/public-vaults${suffix}`);
       setPublicVaults(data.vaults);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : 'Could not load public vaults');
+      setStatus(statusMessage(error, 'Could not load public vaults'));
     } finally {
       setLoading(false);
     }
@@ -106,7 +123,7 @@ export function DiscoveryDmsModal({
       setAllowStrangerDms(privacyData.allowDirectMessages);
       setBlockedUsers(blocksData.blocks);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : 'Could not load direct messages');
+      setStatus(statusMessage(error, 'Could not load direct messages'));
     } finally {
       setLoading(false);
     }
@@ -122,16 +139,10 @@ export function DiscoveryDmsModal({
   }, [initialTab, loadDms, loadPublicVaults, searchQuery]);
 
   const openPublicVaultDetail = async (vault: PublicVault) => {
-    setBusyAction(`detail:${vault.id}`);
-    setStatus('');
-    try {
+    await runAction(`detail:${vault.id}`, `Could not open ${vault.name}`, async () => {
       const data = await api<{ vault: PublicVaultDetail }>(`/api/public-vaults/${encodeURIComponent(vault.id)}`);
       setPublicVaultDetail(data.vault);
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : `Could not open ${vault.name}`);
-    } finally {
-      setBusyAction('');
-    }
+    });
   };
 
   const joinVault = async (vault: PublicVault) => {
@@ -140,9 +151,7 @@ export function DiscoveryDmsModal({
       onClose();
       return;
     }
-    setBusyAction(`join:${vault.id}`);
-    setStatus('');
-    try {
+    await runAction(`join:${vault.id}`, `Could not join ${vault.name}`, async () => {
       const joined = await api<{ vaultId: string; name: string; role: string | null; requestStatus: 'pending' | null }>(
         `/api/public-vaults/${encodeURIComponent(vault.id)}/join`,
         { method: 'POST' },
@@ -156,11 +165,7 @@ export function DiscoveryDmsModal({
       await onVaultsChanged();
       await onOpenLocation(joined.vaultId);
       onClose();
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : `Could not join ${vault.name}`);
-    } finally {
-      setBusyAction('');
-    }
+    });
   };
 
   const publicActionLabel = (vault: PublicVault) => {
@@ -179,9 +184,7 @@ export function DiscoveryDmsModal({
     event.preventDefault();
     const username = dmUsername.trim().replace(/^@/, '');
     if (!username) return;
-    setBusyAction('create-dm');
-    setStatus('');
-    try {
+    await runAction('create-dm', `Could not message @${username}`, async () => {
       const created = await api<DirectMessage>('/api/direct-messages', {
         method: 'POST',
         body: JSON.stringify({ username }),
@@ -189,39 +192,26 @@ export function DiscoveryDmsModal({
       await onVaultsChanged();
       await onOpenLocation(created.vaultId, created.channelId, created.title);
       onClose();
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : `Could not message @${username}`);
-    } finally {
-      setBusyAction('');
-    }
+    });
   };
 
   const updatePrivacy = async () => {
     const next = !allowStrangerDms;
     setAllowStrangerDms(next);
-    setBusyAction('privacy');
-    setStatus('');
-    try {
+    await runAction('privacy', 'Could not update DM privacy', async () => {
       const data = await api<{ allowDirectMessages: boolean }>('/api/me/dm-settings', {
         method: 'PUT',
         body: JSON.stringify({ allowDirectMessages: next }),
       });
       setAllowStrangerDms(data.allowDirectMessages);
       setStatus(data.allowDirectMessages ? 'Anyone may start a DM with you.' : 'New direct messages are turned off.');
-    } catch (error) {
-      setAllowStrangerDms(!next);
-      setStatus(error instanceof Error ? error.message : 'Could not update DM privacy');
-    } finally {
-      setBusyAction('');
-    }
+    }, () => setAllowStrangerDms(!next));
   };
 
   const blockUser = async (usernameValue: string) => {
     const username = usernameValue.trim().replace(/^@/, '');
     if (!username) return;
-    setBusyAction(`block:${username}`);
-    setStatus('');
-    try {
+    await runAction(`block:${username}`, `Could not block @${username}`, async () => {
       const data = await api<{ block: BlockedUser }>('/api/me/blocks', {
         method: 'POST',
         body: JSON.stringify({ username }),
@@ -229,27 +219,17 @@ export function DiscoveryDmsModal({
       setBlockedUsers((current) => [data.block, ...current.filter((user) => user.username !== data.block.username)]);
       setBlockUsername('');
       setStatus(`Blocked @${data.block.username}.`);
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : `Could not block @${username}`);
-    } finally {
-      setBusyAction('');
-    }
+    });
   };
 
   const unblockUser = async (username: string) => {
-    setBusyAction(`unblock:${username}`);
-    setStatus('');
-    try {
+    await runAction(`unblock:${username}`, `Could not unblock @${username}`, async () => {
       await api(`/api/me/blocks/${encodeURIComponent(username)}`, {
         method: 'DELETE',
       });
       setBlockedUsers((current) => current.filter((user) => user.username !== username));
       setStatus(`Unblocked @${username}.`);
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : `Could not unblock @${username}`);
-    } finally {
-      setBusyAction('');
-    }
+    });
   };
 
   return (

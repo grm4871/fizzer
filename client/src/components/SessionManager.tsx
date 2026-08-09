@@ -6,6 +6,7 @@ import {
   useState,
   type FormEvent,
   type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
   type UIEvent,
 } from 'react';
 import {
@@ -240,6 +241,10 @@ function elapsedLabel(startedAt: string, now: number): string {
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
+function TraceEmpty({ icon, children }: { icon: ReactNode; children: ReactNode }) {
+  return <div className="session-manager-trace-empty">{icon}{children}</div>;
 }
 
 export function SessionManager({
@@ -635,13 +640,10 @@ export function SessionManager({
                   >
                     {traceError && <div className="session-manager-trace-error">{traceError}</div>}
                     {traceLoading && events.length === 0 && (
-                      <div className="session-manager-trace-empty"><Loader2 className="is-spinning" size={16} /> Loading trace…</div>
+                      <TraceEmpty icon={<Loader2 className="is-spinning" size={16} />}>Loading trace…</TraceEmpty>
                     )}
                     {!traceLoading && view === 'activity' && timeline.length === 0 && (
-                      <div className="session-manager-trace-empty">
-                        <Activity size={17} />
-                        Waiting for the first activity…
-                      </div>
+                      <TraceEmpty icon={<Activity size={17} />}>Waiting for the first activity…</TraceEmpty>
                     )}
                     {view === 'activity' && timeline.map((item) => (
                       <article className={`session-manager-event is-${item.kind}${item.error ? ' is-error' : ''}`} key={item.id}>
@@ -656,10 +658,7 @@ export function SessionManager({
                       </article>
                     ))}
                     {!traceLoading && view === 'console' && !consoleText && (
-                      <div className="session-manager-trace-empty">
-                        <Terminal size={17} />
-                        No console output yet.
-                      </div>
+                      <TraceEmpty icon={<Terminal size={17} />}>No console output yet.</TraceEmpty>
                     )}
                     {view === 'console' && consoleText && <pre className="session-manager-console">{consoleText}</pre>}
                   </div>
