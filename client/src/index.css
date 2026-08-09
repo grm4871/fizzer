@@ -624,8 +624,15 @@ button:focus-visible,
 .vault-switcher-menu .vault-switcher-join { color: var(--text-primary); font-weight: 650; }
 .vault-switcher-menu .vault-switcher-discover { color: var(--text-primary); font-weight: 650; }
 .vault-switcher-menu .vault-switcher-discover svg { color: var(--accent-hover); }
-.vault-switcher-toggle { display: flex; align-items: center; gap: 9px; min-height: 34px; padding: 5px 9px; color: var(--text-secondary); font-size: 0.75rem; cursor: pointer; }
-.vault-switcher-toggle input { accent-color: var(--accent); }
+.vault-switcher-row { display: flex; align-items: center; gap: 2px; }
+.vault-switcher-row > button:first-child { min-width: 0; flex: 1; }
+.vault-switcher-menu .vault-switcher-rename {
+  width: auto; flex: none; padding: 7px; border-radius: 7px; color: var(--text-tertiary); opacity: 0;
+}
+.vault-switcher-row:hover .vault-switcher-rename,
+.vault-switcher-menu .vault-switcher-rename:focus-visible { opacity: 1; }
+.vault-switcher-menu .vault-switcher-rename:hover { color: var(--accent-hover); }
+@media (hover: none) { .vault-switcher-menu .vault-switcher-rename { opacity: 1; } }
 .vault-switcher-create-form { display: flex; gap: 6px; padding: 6px; }
 .vault-switcher-create-form input { min-width: 0; flex: 1; padding: 6px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-base); }
 .vault-switcher-create-form button { flex: none; width: auto; padding-inline: 9px; color: var(--accent-hover); }
@@ -1530,6 +1537,8 @@ button:focus-visible,
   font-size: 0.7rem;
   color: var(--text-tertiary);
 }
+.account-settings-check { display: flex; grid-template-columns: none; align-items: center; gap: 8px; color: var(--text-secondary); cursor: pointer; }
+.account-settings-check input { width: auto; accent-color: var(--accent); }
 .account-vault-visibility { display: flex; align-items: center; gap: 8px; margin: 10px 0; color: var(--text-secondary); }
 .account-vault-visibility label { display: flex; grid-template-columns: none; flex: 1; align-items: center; gap: 7px; }
 .account-vault-visibility input { width: auto; }

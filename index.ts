@@ -24,6 +24,7 @@ import {
   createFolder,
   createNote,
   createVault,
+  renameVault,
   enforceVaultStorageIsolation,
   deleteFolder,
   deleteNote,
@@ -1665,6 +1666,22 @@ app.get('/api/vaults/:id', requireAuth, (req: AuthedRequest, res) => {
   const vault = getVault(db, req.params.id, req.user!.id);
   if (!vault) return res.status(404).json({ error: 'Vault not found' });
   res.json({ vault, role: getVaultRole(db, vault.id, req.user!.id) });
+});
+
+app.patch('/api/vaults/:id', requireAuth, (req: AuthedRequest, res) => {
+  const vault = getVault(db, req.params.id, req.user!.id);
+  if (!vault) return res.status(404).json({ error: 'Vault not found' });
+  if (getVaultRole(db, vault.id, req.user!.id) !== 'owner') {
+    return res.status(403).json({ error: 'Only the vault owner can rename this vault' });
+  }
+  try {
+    const renamed = renameVault(db, vault.id, String(req.body?.name ?? ''));
+    // Everyone in the vault sees the label, so push it rather than waiting for a reload.
+    emitVaultEvent(vault.id, 'vault:renamed', { vaultId: vault.id, name: renamed.name });
+    res.json({ vault: renamed });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not rename vault' });
+  }
 });
 
 app.get('/api/vaults/:id/members', requireAuth, (req: AuthedRequest, res) => {

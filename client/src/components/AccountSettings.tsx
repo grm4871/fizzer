@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Ban, Camera, Flag, Globe2, KeyRound, Link as LinkIcon, LogOut, Trash2, Users, X } from 'lucide-react';
+import { Ban, Camera, Flag, Globe2, KeyRound, Link as LinkIcon, LogOut, SlidersHorizontal, Trash2, Users, X } from 'lucide-react';
 import { api, type User, type VaultMember, type VaultRole } from '../api';
 import { ModalShell } from './ModalShell';
 
@@ -47,10 +47,13 @@ const ROLE_HELP: Record<VaultRole, string> = {
   viewer: 'Read-only access.',
 };
 
-export function AccountSettings({ user, vaultId, vaultName, onClose, onUserChanged, onSessionChanged, onMembershipChanged }: {
+export function AccountSettings({ user, vaultId, vaultName, showAgentMemory, onShowAgentMemoryChange, onClose, onUserChanged, onSessionChanged, onMembershipChanged }: {
   user: User;
   vaultId?: string | null;
   vaultName?: string;
+  /** Whether agent memory folders are shown in the sidebar and updates feed. */
+  showAgentMemory: boolean;
+  onShowAgentMemoryChange: (show: boolean) => void;
   onClose: () => void;
   onUserChanged: (user: User) => void;
   onSessionChanged: () => void;
@@ -419,6 +422,21 @@ export function AccountSettings({ user, vaultId, vaultName, onClose, onUserChang
           </label>
           {profileState && <div className="account-settings-status" role="status">{profileState}</div>}
           <div className="account-settings-actions"><button type="button" disabled={busy || !displayName.trim()} onClick={() => void saveProfile()}>Save profile</button></div>
+        </div>
+
+        <div className="account-settings-section">
+          <div className="account-section-title"><SlidersHorizontal size={15} /><strong>Preferences</strong></div>
+          <label className="account-settings-check">
+            <input
+              type="checkbox"
+              checked={showAgentMemory}
+              onChange={(event) => onShowAgentMemoryChange(event.target.checked)}
+            />
+            <span>Show agent memory</span>
+          </label>
+          <small className="account-settings-hint">
+            Reveals the folders agents keep their memory and scratchpad notes in, and includes them in the updates feed.
+          </small>
         </div>
 
         <div className="account-settings-section">

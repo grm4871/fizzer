@@ -18,7 +18,7 @@
  */
 
 import { memo, useState, useMemo, useEffect, useRef } from 'react';
-import { isSharedVault, type CommunityUpdates, type Vault, type Folder, type NoteSummary, type User } from '../api';
+import { canRenameVault, isSharedVault, type CommunityUpdates, type Vault, type Folder, type NoteSummary, type User } from '../api';
 import { NOTE_DND_TYPE, noteEmbedMarkdown } from '../docEmbeds';
 import { usePopupMenu } from '../ui/popupMenu';
 import {
@@ -53,9 +53,9 @@ interface SidebarProps {
   activeNoteId: string | null;
   updateCounts: CommunityUpdates['counts'];
   showAgentMemory: boolean;
-  onShowAgentMemoryChange: (show: boolean) => void;
   onSelectVault: (id: string) => void;
   onCreateVault: (name: string) => Promise<boolean>;
+  onRenameVault: (id: string, name: string) => Promise<boolean>;
   onJoinVault: (inviteLink: string) => Promise<boolean>;
   onOpenPublicVaults: () => void;
   onOpenDirectMessages: () => void;
@@ -134,9 +134,9 @@ export const Sidebar = memo(function Sidebar({
   activeNoteId,
   updateCounts,
   showAgentMemory,
-  onShowAgentMemoryChange,
   onSelectVault,
   onCreateVault,
+  onRenameVault,
   onJoinVault,
   onOpenPublicVaults,
   onOpenDirectMessages,
@@ -174,6 +174,9 @@ export const Sidebar = memo(function Sidebar({
   const [creatingVault, setCreatingVault] = useState(false);
   const [newVaultName, setNewVaultName] = useState('');
   const [creatingVaultBusy, setCreatingVaultBusy] = useState(false);
+  const [renamingVaultId, setRenamingVaultId] = useState<string | null>(null);
+  const [renameVaultName, setRenameVaultName] = useState('');
+  const [renameVaultBusy, setRenameVaultBusy] = useState(false);
   const [joiningVault, setJoiningVault] = useState(false);
   const [vaultInviteLink, setVaultInviteLink] = useState('');
   const [joiningVaultBusy, setJoiningVaultBusy] = useState(false);
@@ -722,6 +725,28 @@ export const Sidebar = memo(function Sidebar({
     setVaultMenuOpen(false);
   };
 
+  const startRenameVault = (vault: Vault) => {
+    setCreatingVault(false);
+    setJoiningVault(false);
+    setRenamingVaultId(vault.id);
+    setRenameVaultName(vault.name);
+  };
+
+  const cancelRenameVault = () => {
+    setRenamingVaultId(null);
+    setRenameVaultName('');
+  };
+
+  const submitRenameVault = async () => {
+    const name = renameVaultName.trim();
+    if (!renamingVaultId || !name || renameVaultBusy) return;
+    setRenameVaultBusy(true);
+    const renamed = await onRenameVault(renamingVaultId, name);
+    setRenameVaultBusy(false);
+    if (!renamed) return;
+    cancelRenameVault();
+  };
+
   const submitJoinVault = async () => {
     const inviteLink = vaultInviteLink.trim();
     if (!inviteLink || joiningVaultBusy) return;
@@ -788,40 +813,64 @@ export const Sidebar = memo(function Sidebar({
             <small>{vaults.length}</small>
           </div>
           {vaults.map((vault) => (
-            <button
-              key={vault.id}
-              type="button"
-              role="menuitemradio"
-              aria-checked={vault.id === activeVaultId}
-              className={vault.id === activeVaultId ? 'is-active' : ''}
-              onClick={() => { onSelectVault(vault.id); setVaultMenuOpen(false); }}
-            >
-              <span className="vault-switcher-icon" aria-hidden="true"><FizzerMark size={15} /></span>
-              <span className="vault-switcher-copy">
-                <strong>{vault.name}</strong>
-                <small>
-                  {isSharedVault(vault)
-                    ? `${vault.memberCount} members · ${vault.role || 'member'}`
-                    : 'Private · only you'}
-                </small>
-              </span>
-              {(updateCounts.byVault[vault.id] || 0) > 0 && (
-                <span className="vault-switcher-update-badge" aria-label={`${countLabel(updateCounts.byVault[vault.id])} unread updates`}>
-                  {countLabel(updateCounts.byVault[vault.id])}
-                </span>
-              )}
-              {vault.id === activeVaultId && <Check className="vault-switcher-check" size={15} aria-hidden="true" />}
-            </button>
+            renamingVaultId === vault.id ? (
+              <div className="vault-switcher-create-form" key={vault.id}>
+                <input
+                  autoFocus
+                  value={renameVaultName}
+                  placeholder="Vault name"
+                  aria-label={`Rename ${vault.name}`}
+                  maxLength={80}
+                  disabled={renameVaultBusy}
+                  onChange={(event) => setRenameVaultName(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') void submitRenameVault();
+                    if (event.key === 'Escape') cancelRenameVault();
+                  }}
+                />
+                <button type="button" disabled={!renameVaultName.trim() || renameVaultBusy} onClick={() => void submitRenameVault()}>
+                  {renameVaultBusy ? 'Saving' : 'Save'}
+                </button>
+              </div>
+            ) : (
+              <div className="vault-switcher-row" key={vault.id}>
+                <button
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={vault.id === activeVaultId}
+                  className={vault.id === activeVaultId ? 'is-active' : ''}
+                  onClick={() => { onSelectVault(vault.id); setVaultMenuOpen(false); }}
+                >
+                  <span className="vault-switcher-icon" aria-hidden="true"><FizzerMark size={15} /></span>
+                  <span className="vault-switcher-copy">
+                    <strong>{vault.name}</strong>
+                    <small>
+                      {isSharedVault(vault)
+                        ? `${vault.memberCount} members · ${vault.role || 'member'}`
+                        : 'Private · only you'}
+                    </small>
+                  </span>
+                  {(updateCounts.byVault[vault.id] || 0) > 0 && (
+                    <span className="vault-switcher-update-badge" aria-label={`${countLabel(updateCounts.byVault[vault.id])} unread updates`}>
+                      {countLabel(updateCounts.byVault[vault.id])}
+                    </span>
+                  )}
+                  {vault.id === activeVaultId && <Check className="vault-switcher-check" size={15} aria-hidden="true" />}
+                </button>
+                {canRenameVault(vault) && (
+                  <button
+                    type="button"
+                    className="vault-switcher-rename"
+                    title={`Rename ${vault.name}`}
+                    aria-label={`Rename ${vault.name}`}
+                    onClick={(event) => { event.stopPropagation(); startRenameVault(vault); }}
+                  >
+                    <Pencil size={13} aria-hidden="true" />
+                  </button>
+                )}
+              </div>
+            )
           ))}
-          <div className="vault-switcher-divider" role="separator" />
-          <label className="vault-switcher-toggle">
-            <input
-              type="checkbox"
-              checked={showAgentMemory}
-              onChange={(event) => onShowAgentMemoryChange(event.target.checked)}
-            />
-            <span>Show agent memory</span>
-          </label>
           <div className="vault-switcher-divider" role="separator" />
           <button type="button" role="menuitem" className="vault-switcher-discover" onClick={() => { setVaultMenuOpen(false); onOpenPublicVaults(); }}>
             <Compass size={14} aria-hidden="true" /> Browse public vaults

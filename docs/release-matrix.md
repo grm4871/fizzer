@@ -42,6 +42,7 @@ Where a row above has a command, run the command instead of reasoning about the 
 | Search, links, forwarding | `npm run test:chat-forward`, `npm run verify:chat-forward-ui` | Copy fidelity + provenance across channels, socket broadcast, survives reload, refusals; then the same via real right-click → picker → banner |
 | Tabs, panes, menus, Superkanban | `npm run verify:tab-menus` | Every `+`/tab menu item present (catches a prop that never reached the component), menu survives the opening right-click, menu unclipped, Superkanban routes to a populated board, Close tab works |
 | Agent start and run lifecycle | `npm run test:desktop-runner` | Run reclaim, replay, duplicate-process avoidance |
+| Vault switcher, vault settings | `npm run verify:vault-rename-ui` | Rename reaches `PATCH /api/vaults/:id` and updates the switcher, non-owners get neither the control nor the API, and the agent-memory preference lives in account settings |
 | API, persistence, migrations | `npm run test:server` | Fresh **and** upgraded databases: every column the writers use exists after migration, legacy rows survive, and writes still work against a migrated table |
 | Deployment/configuration | `gh run watch <id>`, then grep the served bundle | Actions completion plus the asset `cscd.online` really serves (see AGENTS.md) |
 

@@ -504,6 +504,24 @@ export default function App() {
     }
   }, []);
 
+  const handleRenameVault = useCallback(async (id: string, name: string): Promise<boolean> => {
+    const next = name.trim();
+    if (!next) return false;
+    try {
+      const data = await api<{ vault: Vault }>(`/api/vaults/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ name: next }),
+      });
+      setVaults((current) => current.map((vault) => (
+        vault.id === id ? { ...vault, name: data.vault.name } : vault
+      )));
+      return true;
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not rename vault');
+      return false;
+    }
+  }, []);
+
   useEffect(() => {
     const token = localStorage.getItem('docs_token');
     if (!token) return;
@@ -2878,7 +2896,16 @@ export default function App() {
 
     const handleCommunityChanged = () => scheduleCommunityRefresh();
 
+    // Another member renamed the vault we are in; update the label in place.
+    const handleVaultRenamed = (payload: { vaultId: string; name: string }) => {
+      if (!payload?.vaultId || !payload.name) return;
+      setVaults((current) => current.map((vault) => (
+        vault.id === payload.vaultId ? { ...vault, name: payload.name } : vault
+      )));
+    };
+
     socket.on('community:changed', handleCommunityChanged);
+    socket.on('vault:renamed', handleVaultRenamed);
     socket.on('vault:noteChanged', handleNoteChanged);
     socket.on('vault:noteCreated', handleNoteCreated);
     socket.on('vault:noteDeleted', handleNoteDeleted);
@@ -2905,6 +2932,7 @@ export default function App() {
       socket.emit('leaveVault', activeVaultId);
       vaultSocketRef.current = null;
       socket.off('community:changed', handleCommunityChanged);
+      socket.off('vault:renamed', handleVaultRenamed);
       socket.off('vault:noteChanged', handleNoteChanged);
       socket.off('vault:noteCreated', handleNoteCreated);
       socket.off('vault:noteDeleted', handleNoteDeleted);
@@ -3500,9 +3528,9 @@ export default function App() {
           activeNoteId={activeTabId}
           updateCounts={communityUpdates.counts}
           showAgentMemory={showAgentMemory}
-          onShowAgentMemoryChange={updateShowAgentMemory}
           onSelectVault={setActiveVaultId}
           onCreateVault={handleCreateVault}
+          onRenameVault={handleRenameVault}
           onJoinVault={handleJoinVault}
           onOpenPublicVaults={() => setDiscoveryDmsOpen('public')}
           onOpenDirectMessages={() => setDiscoveryDmsOpen('dms')}
@@ -3547,6 +3575,8 @@ export default function App() {
           user={user}
           vaultId={activeVaultId}
           vaultName={vaults.find((vault) => vault.id === activeVaultId)?.name}
+          showAgentMemory={showAgentMemory}
+          onShowAgentMemoryChange={updateShowAgentMemory}
           onClose={() => setAccountOpen(false)}
           onUserChanged={setUser}
           onSessionChanged={() => setAuthEpoch((value) => value + 1)}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isSharedVault, type Vault } from '../api';
+import { canRenameVault, isSharedVault, type Vault } from '../api';
 import { vaultOptionLabel } from '../components/Sidebar';
 
 const vault = (overrides: Partial<Vault> = {}): Vault => ({
@@ -25,5 +25,19 @@ describe('shared vault indicators', () => {
   it('labels shared vaults in the switcher with their member count', () => {
     expect(vaultOptionLabel(vault({ memberCount: 3, role: 'editor' }))).toBe('Team notes · shared · 3');
     expect(vaultOptionLabel(vault({ memberCount: 1, role: 'owner' }))).toBe('Team notes');
+  });
+});
+
+describe('vault rename affordance', () => {
+  it('offers rename to the owner only', () => {
+    expect(canRenameVault(vault({ role: 'owner' }))).toBe(true);
+    expect(canRenameVault(vault({ role: 'editor' }))).toBe(false);
+    expect(canRenameVault(vault({ role: 'viewer' }))).toBe(false);
+  });
+
+  it('treats a vault with no role row as the caller own private vault', () => {
+    // Vaults created before the members table carry no role.
+    expect(canRenameVault(vault())).toBe(true);
+    expect(canRenameVault(vault({ role: null }))).toBe(true);
   });
 });

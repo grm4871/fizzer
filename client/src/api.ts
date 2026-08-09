@@ -51,6 +51,15 @@ export function isSharedVault(vault: Pick<Vault, 'memberCount'>): boolean {
   return (vault.memberCount ?? 1) > 1;
 }
 
+/**
+ * True when the caller may rename a vault. Legacy private vaults predate the
+ * members table and carry no role, so treat a missing role as ownership; the
+ * server is the real gate either way.
+ */
+export function canRenameVault(vault: Pick<Vault, 'role'>): boolean {
+  return !vault.role || vault.role === 'owner';
+}
+
 /** A folder within a vault; supports nesting via `parent_id`. */
 export type Folder = {
   id: string;

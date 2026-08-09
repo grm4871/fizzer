@@ -510,6 +510,23 @@ export function createVault(db: Db, userId: number, opts: { name: string; root_p
   return vault;
 }
 
+/**
+ * Rename a vault. Only the stored label changes: `root_path` is derived from
+ * the name at creation time and every note path on disk hangs off it, so
+ * renaming must never touch it.
+ */
+export function renameVault(db: Db, vaultId: string, name: string): Vault {
+  const next = String(name || '').trim();
+  if (!next) throw new Error('Vault name is required');
+  if (next.length > 80) throw new Error('Vault name must be 80 characters or fewer');
+
+  const existing = db.prepare('SELECT * FROM vaults WHERE id = ?').get(vaultId) as Vault | undefined;
+  if (!existing) throw new Error('Vault not found');
+
+  db.prepare('UPDATE vaults SET name = ? WHERE id = ?').run(next, vaultId);
+  return db.prepare('SELECT * FROM vaults WHERE id = ?').get(vaultId) as Vault;
+}
+
 // ── Folders ────────────────────────────────────────────────────────
 
 export function listFolders(db: Db, vaultId: string): Folder[] {

@@ -24,6 +24,8 @@ const API_BASE = import.meta.env.VITE_API_URL || '';
 type ServerEvents = {
   /** A relevant terminal message, note mutation, deletion, or read-state change occurred. */
   'community:changed': (data: Record<string, never>) => void;
+  /** The vault's label changed; everyone in it should update the switcher. */
+  'vault:renamed': (data: { vaultId: string; name: string }) => void;
   'vault:noteChanged': (data: { noteId: string; vaultId: string; title?: string }) => void;
   'vault:noteCreated': (data: { noteId: string; vaultId: string; title?: string }) => void;
   'vault:noteDeleted': (data: { noteId: string; vaultId: string; title?: string }) => void;
