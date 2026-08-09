@@ -3097,6 +3097,7 @@ export const ChatView = memo(function ChatView({
       : undefined;
     onSendMessage(channelId, body, pendingMedia, reply);
     setDraft('');
+    resetHistory();
     setPendingMedia([]);
     setMediaError('');
     setReplyTarget(null);
@@ -3148,6 +3149,65 @@ export const ChatView = memo(function ChatView({
       && value.slice(cycle.start, cursor) === cycleToken;
   }
   const canSend = draft.trim().length > 0 || pendingMedia.length > 0;
+
+  // Undo/redo history for the composer. A controlled textarea loses the browser's
+  // native undo stack, so we keep our own snapshots and coalesce rapid typing into
+  // a single step (commit fires 350ms after the last keystroke).
+  const historyRef = useRef<{ stack: { v: string; s: number; e: number }[]; index: number }>({
+    stack: [{ v: '', s: 0, e: 0 }],
+    index: 0,
+  });
+  const historyTimerRef = useRef<number | null>(null);
+  const historySelRef = useRef<{ s: number; e: number } | null>(null);
+
+  const commitHistory = useCallback(() => {
+    const textarea = draftRef.current;
+    if (!textarea) return;
+    const history = historyRef.current;
+    const top = history.stack[history.index];
+    if (top && top.v === textarea.value) {
+      top.s = textarea.selectionStart;
+      top.e = textarea.selectionEnd;
+      return;
+    }
+    history.stack = history.stack.slice(0, history.index + 1);
+    history.stack.push({ v: textarea.value, s: textarea.selectionStart, e: textarea.selectionEnd });
+    history.index = history.stack.length - 1;
+  }, []);
+
+  const scheduleHistoryCommit = useCallback(() => {
+    if (historyTimerRef.current) window.clearTimeout(historyTimerRef.current);
+    historyTimerRef.current = window.setTimeout(() => {
+      historyTimerRef.current = null;
+      commitHistory();
+    }, 350);
+  }, [commitHistory]);
+
+  const resetHistory = useCallback(() => {
+    if (historyTimerRef.current) { window.clearTimeout(historyTimerRef.current); historyTimerRef.current = null; }
+    historyRef.current = { stack: [{ v: '', s: 0, e: 0 }], index: 0 };
+  }, []);
+
+  const stepHistory = useCallback((dir: -1 | 1) => {
+    if (historyTimerRef.current) { window.clearTimeout(historyTimerRef.current); historyTimerRef.current = null; }
+    commitHistory();
+    const history = historyRef.current;
+    const target = history.index + dir;
+    if (target < 0 || target >= history.stack.length) return;
+    history.index = target;
+    const entry = history.stack[target];
+    historySelRef.current = { s: entry.s, e: entry.e };
+    setDraft(entry.v);
+  }, [commitHistory]);
+
+  // Restore the caret after an undo/redo swap re-renders the textarea.
+  useLayoutEffect(() => {
+    const sel = historySelRef.current;
+    if (!sel) return;
+    historySelRef.current = null;
+    const textarea = draftRef.current;
+    if (textarea) { textarea.focus(); textarea.setSelectionRange(sel.s, sel.e); }
+  }, [draft]);
 
   useLayoutEffect(() => {
     const textarea = draftRef.current;
@@ -3499,6 +3559,7 @@ export const ChatView = memo(function ChatView({
               onChange={(e) => {
                 setDraft(e.target.value);
                 mentionCycleRef.current = null;
+                scheduleHistoryCommit();
               }}
               onPaste={handlePaste}
               onDragOver={(e) => {
@@ -3514,6 +3575,17 @@ export const ChatView = memo(function ChatView({
                 insertEmbedInDraft(noteId, e.currentTarget);
               }}
               onKeyDown={(e) => {
+                const mod = e.metaKey || e.ctrlKey;
+                if (mod && (e.key === 'z' || e.key === 'Z')) {
+                  e.preventDefault();
+                  stepHistory(e.shiftKey ? 1 : -1);
+                  return;
+                }
+                if (mod && !e.shiftKey && (e.key === 'y' || e.key === 'Y')) {
+                  e.preventDefault();
+                  stepHistory(1);
+                  return;
+                }
                 if (e.key === 'Tab' && !e.shiftKey && isCompletingMention(e.currentTarget)) {
                   e.preventDefault();
                   completeMention(e.currentTarget);
