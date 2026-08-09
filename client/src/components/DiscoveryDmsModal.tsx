@@ -238,6 +238,7 @@ export function DiscoveryDmsModal({
       dialogClassName={`discovery-dms-modal ${initialTab === 'dms' ? 'is-messages' : ''}`}
       ariaLabelledby="discovery-dms-title"
       onClose={onClose}
+      closeOnEscape={!reportVault}
       afterDialog={reportVault && (
         <ReportDialog
           vaultId={reportVault.id}

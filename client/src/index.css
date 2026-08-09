@@ -1,42 +1,20 @@
-/* ═══════════════════════════════════════════════════════════
-   Cascade Notes — Design System & Global Styles
-   ═══════════════════════════════════════════════════════════ */
-
-/* Fonts load async via <link> in app.html — CSS @import blocked first paint. */
-
-/* ─── Design Tokens ──────────────────────────────────────────
-   Facelift direction: 1980s performance-car marketing. Black
-   moulded plastic, amber instrument backlight, a chrome hairline
-   where a panel catches the light, and the decal stripe set —
-   amber / magenta / ice, widest band first — as the marker for
-   whatever is active. Cool graphite replaces the old warm brown
-   so the amber reads as a lit filament rather than as wood.
-   ──────────────────────────────────────────────────────────── */
 :root {
-  /* Dash black → console → moulded plastic */
-  --bg-base: hsl(225, 12%, 7%);
+    --bg-base: hsl(225, 12%, 7%);
   --bg-surface: hsl(226, 13%, 10%);
   --bg-raised: hsl(226, 14%, 14%);
   --bg-overlay: hsl(227, 14%, 19%);
   --bg-deep: hsl(225, 14%, 4%);
-
   --border: hsl(226, 11%, 20%);
   --border-active: hsl(38, 92%, 55%);
   --border-subtle: hsl(226, 12%, 14%);
-
-  /* Chrome, not cream */
-  --text-primary: hsl(222, 14%, 90%);
+    --text-primary: hsl(222, 14%, 90%);
   --text-secondary: hsl(222, 9%, 60%);
   --text-tertiary: hsl(224, 8%, 40%);
-
-  /* Turbo amber — instrument backlight */
-  --accent: hsl(38, 92%, 55%);
+    --accent: hsl(38, 92%, 55%);
   --accent-hover: hsl(40, 96%, 65%);
   --accent-subtle: hsla(38, 92%, 55%, 0.13);
   --accent-glow: hsla(38, 92%, 55%, 0.3);
-
-  /* The decal stripe set. Ordered: amber leads, magenta, ice trails. */
-  --decal-1: hsl(38, 92%, 55%);
+    --decal-1: hsl(38, 92%, 55%);
   --decal-2: hsl(338, 78%, 55%);
   --decal-3: hsl(192, 78%, 58%);
   --decal-stripe: linear-gradient(
@@ -51,54 +29,37 @@
     var(--decal-2) 45% 75%,
     var(--decal-3) 75% 100%
   );
-
-  /* Keyboard focus is intentionally cooler and quieter than the brand accent. */
-  --focus-ring: hsl(192, 78%, 62%);
+    --focus-ring: hsl(192, 78%, 62%);
   --focus-ring-subtle: hsla(192, 78%, 62%, 0.32);
-
   --success: hsl(152, 62%, 48%);
   --success-subtle: hsla(152, 62%, 48%, 0.13);
   --warning: hsl(48, 92%, 55%);
   --warning-subtle: hsla(48, 92%, 55%, 0.13);
   --danger: hsl(357, 82%, 62%);
   --danger-subtle: hsla(357, 82%, 62%, 0.13);
-
-  /* Chakra Petch for badge/label type (squared terminals, real obliques);
-     Saira for body copy; JetBrains Mono for readouts. */
-  --font-display: 'Chakra Petch', 'Saira', ui-sans-serif, system-ui, sans-serif;
+    --font-display: 'Chakra Petch', 'Saira', ui-sans-serif, system-ui, sans-serif;
   --font-sans: 'Saira', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Code', Consolas, monospace;
-
-  /* Wedge geometry: corners are cut, not rounded. */
-  --radius-sm: 0px;
+    --radius-sm: 0px;
   --radius-md: 2px;
   --radius-lg: 3px;
   --radius-xl: 4px;
   --chamfer: 7px;
   --chamfer-sm: 5px;
-
-  /* Snappy chrome: short ease keeps hover alive without lag. */
-  --transition-fast: 70ms ease-out;
+    --transition-fast: 70ms ease-out;
   --transition-normal: 120ms ease-out;
   --transition-slow: 180ms ease-out;
-
   --shadow-sm: 0 1px 3px hsla(0, 0%, 0%, 0.5);
   --shadow-md: 0 4px 14px hsla(0, 0%, 0%, 0.6);
   --shadow-lg: 0 10px 40px hsla(0, 0%, 0%, 0.7);
   --shadow-glow: 0 0 28px hsla(38, 92%, 45%, 0.14);
-
-  /* Chrome hairline along the top edge of a raised panel. */
-  --bevel: inset 0 1px 0 hsla(220, 30%, 82%, 0.09);
-
-  /* Aliases used by newer surfaces (mission cards, admin, media). */
-  --text-muted: var(--text-tertiary);
+    --bevel: inset 0 1px 0 hsla(220, 30%, 82%, 0.09);
+    --text-muted: var(--text-tertiary);
   --radius: 6px;
   --surface-2: hsla(222, 18%, 100%, 0.055);
   --surface-subtle: color-mix(in srgb, var(--bg-raised) 72%, var(--bg-base));
   --bg-editor: var(--bg-base);
-
-  /* Twin rails (left notes / right cast) — shared rhythm so they bookend the stage. */
-  --rail-width: 268px;
+    --rail-width: 268px;
   --rail-pad-x: 10px;
   --rail-pad-y: 10px;
   --rail-gap: 2px;
@@ -114,25 +75,19 @@
   --rail-toolbar-bg: color-mix(in srgb, var(--bg-base) 58%, var(--bg-raised));
   --rail-toolbar-radius: 9px;
 }
-
-/* ─── Global Reset ───────────────────────────────────────── */
 *, *::before, *::after {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
 }
-
 html {
   font-size: 16px;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
-  /* Edge-to-edge (Android 15+ / Pixel fold): regions behind transparent
-     status/navigation bars must match the app so they aren't letterboxed. */
-  background: var(--bg-base);
+    background: var(--bg-base);
   height: 100%;
 }
-
 body {
   font-family: var(--font-sans);
   background: var(--bg-base);
@@ -142,13 +97,11 @@ body {
   min-height: 100%;
   min-height: 100dvh;
 }
-
 #root {
   min-height: 100%;
   min-height: 100dvh;
   background: var(--bg-base);
 }
-
 button, input, textarea, select {
   font: inherit;
   color: inherit;
@@ -156,51 +109,39 @@ button, input, textarea, select {
   outline: none;
   background: none;
 }
-
 a {
   color: var(--accent);
   text-decoration: none;
 }
-
-/* ─── Scrollbar Styling ──────────────────────────────────── */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
-
 ::-webkit-scrollbar-track {
   background: transparent;
 }
-
 ::-webkit-scrollbar-thumb {
   background: color-mix(in srgb, var(--text-tertiary) 42%, transparent);
   border: 2px solid transparent;
   background-clip: padding-box;
   border-radius: 999px;
 }
-
 ::-webkit-scrollbar-thumb:hover {
   background: color-mix(in srgb, var(--text-secondary) 55%, transparent);
   border: 2px solid transparent;
   background-clip: padding-box;
 }
-
 ::-webkit-scrollbar-corner {
   background: transparent;
 }
-
 * {
   scrollbar-width: thin;
   scrollbar-color: color-mix(in srgb, var(--text-tertiary) 50%, transparent) transparent;
 }
-
-/* ─── Selection ──────────────────────────────────────────── */
 ::selection {
   background: hsla(38, 77%, 50%, 0.28);
   color: var(--text-primary);
 }
-
-/* ─── Focus Visible ──────────────────────────────────────── */
 :focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px var(--bg-base), 0 0 0 4px var(--focus-ring-subtle);
@@ -213,8 +154,6 @@ button:focus-visible,
 .tab-item:focus-visible {
   box-shadow: 0 0 0 2px var(--bg-surface), 0 0 0 4px var(--focus-ring-subtle);
 }
-
-/* ─── Utility Classes ────────────────────────────────────── */
 .flex { display: flex; }
 .flex-1 { flex: 1 1 0%; min-height: 0; }
 .flex-col { display: flex; flex-direction: column; }
@@ -236,12 +175,6 @@ button:focus-visible,
   white-space: nowrap;
   border: 0;
 }
-
-/* ═══════════════════════════════════════════════════════════
-   COMMON UI ELEMENTS
-   ═══════════════════════════════════════════════════════════ */
-
-/* ─── Buttons ────────────────────────────────────────────── */
 .btn {
   position: relative;
   display: inline-flex;
@@ -281,7 +214,6 @@ button:focus-visible,
   opacity: 0.4;
   cursor: not-allowed;
 }
-/* Primary carries the decal on its leading edge — the one lit control. */
 .btn-primary {
   background: var(--accent);
   border-color: var(--accent);
@@ -345,8 +277,6 @@ button:focus-visible,
 .btn-icon:active:not(:disabled) {
   transform: scale(0.96);
 }
-
-/* ─── Inputs ─────────────────────────────────────────────── */
 .input {
   width: 100%;
   padding: 9px 12px;
@@ -365,8 +295,6 @@ button:focus-visible,
 .input::placeholder {
   color: var(--text-tertiary);
 }
-
-/* ─── Labels ─────────────────────────────────────────────── */
 .label {
   display: flex;
   flex-direction: column;
@@ -375,11 +303,6 @@ button:focus-visible,
   font-weight: 500;
   color: var(--text-secondary);
 }
-
-/* ─── Error ──────────────────────────────────────────────── */
-/* ─── Badge / Tag ──────────────────────────────────────────
-   Chamfered like a homologation data plate. The cut corners are
-   the one place the wedge geometry is stated outright. */
 .badge {
   display: inline-flex;
   align-items: center;
@@ -408,21 +331,15 @@ button:focus-visible,
   background: var(--accent);
   flex-shrink: 0;
 }
-
-/* ═══════════════════════════════════════════════════════════
-   AUTH PANEL
-   ═══════════════════════════════════════════════════════════ */
 .auth-shell {
   min-height: 100vh;
   display: grid;
   place-items: center;
   padding: 24px;
-  /* Low amber wash off the bottom edge, like a car lit from below on a stand. */
-  background:
+    background:
     radial-gradient(ellipse 80% 45% at 50% 118%, hsla(38, 92%, 50%, 0.1) 0%, transparent 70%),
     var(--bg-base);
 }
-
 .auth-panel {
   width: min(340px, 100%);
   display: flex;
@@ -433,7 +350,6 @@ button:focus-visible,
   border: 0;
   box-shadow: none;
 }
-
 .auth-brand {
   display: flex;
   align-items: center;
@@ -450,10 +366,8 @@ button:focus-visible,
   text-transform: uppercase;
   letter-spacing: 0.16em;
   line-height: 1;
-  /* Optical: the tracking on the last glyph pushes the group off-centre. */
-  margin-right: -0.16em;
+    margin-right: -0.16em;
 }
-/* Decal under the wordmark. Widest band leads, as on a door stripe. */
 .auth-brand + .auth-decal {
   height: 3px;
   margin-bottom: 16px;
@@ -482,8 +396,6 @@ button:focus-visible,
   font-size: 0.875rem;
   transition: border-color var(--transition-fast);
 }
-/* These inputs are underlines, so the focus state thickens the underline
-   rather than boxing the field — a full ring fights the brochure ruling. */
 .auth-panel input:focus,
 .auth-panel input:focus-visible {
   border-bottom-width: 2px;
@@ -530,10 +442,6 @@ button:focus-visible,
   border-radius: var(--radius-md);
   border: 1px solid hsla(357, 62%, 58%, 0.2);
 }
-
-/* ═══════════════════════════════════════════════════════════
-   APP SHELL / LAYOUT
-   ═══════════════════════════════════════════════════════════ */
 .app-shell {
   height: 100vh;
   height: 100dvh;
@@ -545,17 +453,13 @@ button:focus-visible,
 .app-shell.sidebar-closed {
   grid-template-columns: 0px minmax(0, 1fr);
 }
-
 .workspace {
   grid-column: 2;
   min-width: 0;
 }
-
 .app-shell.sidebar-closed .workspace {
   grid-column: 1 / -1;
 }
-
-/* Draggable dividers for the side panels */
 .resize-handle {
   position: absolute;
   top: 0;
@@ -567,8 +471,7 @@ button:focus-visible,
   transition: background var(--transition-fast);
 }
 .resize-handle::after {
-  /* A thin visible seam that brightens on hover/drag. */
-  content: '';
+    content: '';
   position: absolute;
   top: 0;
   bottom: 0;
@@ -582,16 +485,14 @@ button:focus-visible,
   background: var(--accent);
   box-shadow: 0 0 8px var(--accent-glow);
 }
-
-/* ═══════════════════════════════════════════════════════════
-   SIDEBAR — left rail (archive / notes tree)
-   Paired with .chat-users (right rail). Same surface, pad, row geometry.
-   ═══════════════════════════════════════════════════════════ */
-/* Mobile drawer only; hidden on desktop so it never intercepts clicks. */
-.sidebar-backdrop {
-  display: none;
-}
-.mobile-sidebar-swipe-edge {
+.sidebar-backdrop,
+.mobile-sidebar-swipe-edge,
+.sidebar-actions-mobile,
+.sidebar-mobile-collapse,
+.mobile-note-actions,
+.chat-members-toolbar-btn,
+.session-manager-mobile-back,
+.chat-media-input {
   display: none;
 }
 .sidebar {
@@ -604,7 +505,6 @@ button:focus-visible,
   overflow: hidden;
   transition: opacity var(--transition-normal);
 }
-
 .sidebar-header {
   display: flex;
   align-items: center;
@@ -796,8 +696,6 @@ button:focus-visible,
   width: 15px;
   height: 15px;
 }
-
-/* Left rail: bare icon row (no chip shell — pattern lives once on the right). */
 .sidebar-actions {
   display: inline-flex;
   align-items: center;
@@ -827,8 +725,6 @@ button:focus-visible,
   background: color-mix(in srgb, var(--bg-overlay) 70%, transparent);
   color: var(--text-primary);
 }
-
-/* Right rail: full-width action panel (left header stays bare icons). */
 .chat-users > .csb,
 .csb {
   display: grid !important;
@@ -879,11 +775,6 @@ button:focus-visible,
   background: var(--accent-subtle);
   color: var(--accent-hover);
 }
-.sidebar-actions-mobile,
-.sidebar-mobile-collapse {
-  display: none;
-}
-
 .sidebar-section-label,
 .chat-users-title {
   display: flex;
@@ -899,7 +790,6 @@ button:focus-visible,
   color: color-mix(in srgb, var(--text-secondary) 62%, var(--text-tertiary));
   border-radius: 6px;
 }
-/* Left rail labels sit outside the scroll pad; right rail is already padded. */
 .sidebar-section-label {
   margin: var(--rail-section-gap) var(--rail-pad-x) 4px;
 }
@@ -909,7 +799,6 @@ button:focus-visible,
 .chat-users-title:first-of-type {
   margin-top: 8px;
 }
-/* Hairline runs out from the label — shared section rule on both rails. */
 .sidebar-section-label::after,
 .chat-users-title::after {
   content: '';
@@ -923,8 +812,6 @@ button:focus-visible,
   overflow-x: hidden;
   padding: 2px var(--rail-pad-x) 14px;
 }
-
-/* Tree items — pill rows; same geometry as .chat-user cast rows. */
 .tree-item {
   display: flex;
   align-items: center;
@@ -953,8 +840,6 @@ button:focus-visible,
   border-color: color-mix(in srgb, var(--border) 50%, transparent);
   color: var(--text-primary);
 }
-
-/* Active row: soft amber wash + leading decal (instrument active mark). */
 .tree-item.active {
   background: linear-gradient(90deg, hsla(38, 92%, 55%, 0.14) 0%, hsla(38, 92%, 55%, 0.04) 62%, transparent 100%);
   border-color: color-mix(in srgb, var(--accent) 22%, var(--border));
@@ -1052,7 +937,6 @@ button:focus-visible,
   background: color-mix(in srgb, var(--accent) 55%, var(--text-tertiary));
   opacity: 0.75;
 }
-
 .tree-children {
   overflow: hidden;
   transition: max-height var(--transition-normal);
@@ -1060,8 +944,6 @@ button:focus-visible,
   padding-left: 2px;
   border-left: 1px solid color-mix(in srgb, var(--border) 45%, transparent);
 }
-
-/* Per-folder child count — muted chip */
 .tree-item .tree-count {
   margin-left: auto;
   flex-shrink: 0;
@@ -1085,8 +967,6 @@ button:focus-visible,
 .tree-item .tree-count:empty {
   display: none;
 }
-
-/* Drop target highlight while dragging a note */
 .tree-item.drag-over {
   background: var(--accent-subtle);
   border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
@@ -1107,8 +987,6 @@ button:focus-visible,
   background: var(--accent-subtle);
   color: var(--accent-hover);
 }
-
-/* Inline folder rename field */
 .tree-item.tree-editing {
   cursor: default;
   background: color-mix(in srgb, var(--bg-raised) 60%, transparent);
@@ -1125,8 +1003,6 @@ button:focus-visible,
   padding: 3px 7px;
   box-shadow: 0 0 0 2px var(--accent-glow);
 }
-
-/* Inline smart widgets rendered from ```cascade-widget fences. */
 .cm-cascade-widget {
   display: block;
   position: relative;
@@ -1136,7 +1012,6 @@ button:focus-visible,
   border-radius: var(--radius-md);
   background: transparent;
 }
-
 .cm-cascade-widget-header {
   position: absolute;
   top: 6px;
@@ -1154,12 +1029,10 @@ button:focus-visible,
   opacity: 0.35;
   transition: opacity var(--transition-fast), border-color var(--transition-fast);
 }
-
 .cm-cascade-widget:hover .cm-cascade-widget-header,
 .cm-cascade-widget-header:focus-within {
   opacity: 1;
 }
-
 .cm-cascade-widget-title {
   max-width: 160px;
   overflow: hidden;
@@ -1170,19 +1043,16 @@ button:focus-visible,
   font-weight: 600;
   padding: 0 4px;
 }
-
 .cm-cascade-widget-runtime {
   flex-shrink: 0;
   color: var(--text-tertiary);
   font-family: var(--font-mono);
   font-size: 0.625rem;
 }
-
 .cm-cascade-widget.is-running .cm-cascade-widget-title,
 .cm-cascade-widget.is-running .cm-cascade-widget-runtime {
   display: none;
 }
-
 .cm-cascade-widget-action {
   flex-shrink: 0;
   border: 1px solid var(--border);
@@ -1193,21 +1063,17 @@ button:focus-visible,
   font-size: 0.6875rem;
   cursor: pointer;
 }
-
 .cm-cascade-widget-action[hidden],
 .cm-cascade-widget-placeholder[hidden] {
   display: none !important;
 }
-
 .cm-cascade-widget-action:hover {
   border-color: var(--accent);
   color: var(--accent);
 }
-
 .cm-cascade-widget-body {
   min-height: 0;
 }
-
 .cm-cascade-widget-placeholder {
   display: flex;
   align-items: center;
@@ -1220,11 +1086,9 @@ button:focus-visible,
   color: var(--text-tertiary);
   font-size: 0.8125rem;
 }
-
 .cm-cascade-widget-placeholder.is-error {
   color: var(--danger);
 }
-
 .cm-cascade-widget-frame {
   display: block;
   width: 100%;
@@ -1233,9 +1097,6 @@ button:focus-visible,
   border-radius: var(--radius-md);
   background: transparent;
 }
-
-/* ── Popup menus (sidebar / tab / chat) — one system ──────────
-   Linear/VS Code density: 36px rows, clear hierarchy, danger last. */
 .tree-context-menu,
 .tab-context-menu,
 .chat-context-menu {
@@ -1341,8 +1202,6 @@ button:focus-visible,
   margin: 4px 6px;
   background: color-mix(in srgb, var(--border) 85%, transparent);
 }
-
-/* Sidebar audio player + footer */
 .sidebar-audio-player {
   flex: 0 0 auto;
   display: flex;
@@ -1464,12 +1323,14 @@ button:focus-visible,
   flex-shrink: 0;
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--bg-surface) 90%, transparent);
 }
-.sidebar-footer .user-avatar img {
+.sidebar-footer .user-avatar img,
+.account-avatar-preview img,
+.discovery-avatar img {
   width: 100%;
   height: 100%;
-  border-radius: 50%;
   object-fit: cover;
 }
+.sidebar-footer .user-avatar img { border-radius: 50%; }
 .sidebar-dm-button { position: relative; }
 .sidebar-dm-dot {
   position: absolute;
@@ -1482,7 +1343,6 @@ button:focus-visible,
   background: var(--accent);
   box-shadow: 0 0 7px color-mix(in srgb, var(--accent) 60%, transparent);
 }
-
 .overlay-backdrop.account-settings-backdrop {
   z-index: 1200;
   display: grid;
@@ -1498,16 +1358,24 @@ button:focus-visible,
   background: var(--bg-surface);
   box-shadow: 0 24px 80px hsla(228, 30%, 2%, 0.55);
 }
-.account-settings > header {
+.account-settings > header,
+.updates-header,
+.discovery-dms-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
-  padding: 18px 20px;
   border-bottom: 1px solid var(--border);
 }
+.account-settings > header {
+  padding: 18px 20px;
+}
 .account-settings h2,
-.account-settings p { margin: 0; }
+.account-settings p,
+.updates-header h2,
+.updates-header p,
+.discovery-dms-header h2,
+.discovery-dms-header p { margin: 0; }
 .account-settings h2 { font-size: 1.05rem; }
 .account-settings p { margin-top: 4px; color: var(--text-tertiary); font-size: 0.75rem; }
 .account-settings-section {
@@ -1537,7 +1405,7 @@ button:focus-visible,
   font-weight: 700;
   flex-shrink: 0;
 }
-.account-avatar-preview img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
+.account-avatar-preview img { border-radius: 50%; }
 .account-avatar-actions { display: flex; align-content: center; flex-wrap: wrap; gap: 7px; }
 .account-avatar-actions button,
 .account-settings-actions button {
@@ -1732,14 +1600,14 @@ button:focus-visible,
   .overlay-backdrop.account-settings-backdrop { align-items: end; padding: 0; }
   .account-settings { max-height: 92vh; border-radius: 14px 14px 0 0; }
 }
-
 .discovery-dms-backdrop {
   z-index: 1210;
-  align-items: center;
-  padding: 20px;
 }
 .updates-backdrop {
   z-index: 1220;
+}
+.discovery-dms-backdrop,
+.updates-backdrop {
   align-items: center;
   padding: 20px;
 }
@@ -1756,17 +1624,12 @@ button:focus-visible,
   animation: slideDown var(--transition-normal) ease;
 }
 .updates-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
   padding: 16px 18px 13px;
-  border-bottom: 1px solid var(--border);
 }
 .updates-header h2,
-.updates-header p { margin: 0; }
-.updates-header h2 { font: italic 750 1rem/1.2 var(--font-display); letter-spacing: 0.04em; text-transform: uppercase; }
-.updates-header p { margin-top: 4px; color: var(--text-tertiary); font-size: 0.72rem; }
+.discovery-dms-header h2 { font: italic 750 1rem/1.2 var(--font-display); letter-spacing: 0.04em; text-transform: uppercase; }
+.updates-header p,
+.discovery-dms-header p { margin-top: 4px; color: var(--text-tertiary); font-size: 0.72rem; }
 .updates-header-actions { display: flex; align-items: center; gap: 7px; }
 .updates-mark-all {
   display: inline-flex;
@@ -1868,17 +1731,8 @@ button:focus-visible,
   overflow: auto;
 }
 .discovery-dms-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
   padding: 16px 18px 12px;
-  border-bottom: 1px solid var(--border);
 }
-.discovery-dms-header h2,
-.discovery-dms-header p { margin: 0; }
-.discovery-dms-header h2 { font: italic 750 1rem/1.2 var(--font-display); letter-spacing: 0.04em; text-transform: uppercase; }
-.discovery-dms-header p { margin-top: 4px; color: var(--text-tertiary); font-size: 0.72rem; }
 .discovery-dms-body { min-height: 0; overflow: auto; }
 .discovery-panel { display: grid; gap: 12px; padding: 14px 18px 18px; }
 .discovery-search {
@@ -1919,7 +1773,6 @@ button:focus-visible,
   font-size: 0.72rem;
   font-weight: 700;
 }
-.discovery-avatar img { width: 100%; height: 100%; object-fit: cover; }
 .discovery-vault-avatar { border-radius: 8px; }
 .public-vault-list { gap: 8px; }
 .public-vault-card { align-items: flex-start; padding: 10px; }
@@ -2043,7 +1896,10 @@ button:focus-visible,
   list-style: none;
   font-size: 0.72rem;
 }
-.dm-settings-details > summary::-webkit-details-marker { display: none; }
+.dm-settings-details > summary::-webkit-details-marker,
+.chat-project-tools > summary::-webkit-details-marker,
+.chat-mission-card > summary::-webkit-details-marker,
+.chat-task-review > summary::-webkit-details-marker { display: none; }
 .dm-settings-details > summary > span { color: var(--text-primary); font-weight: 650; }
 .dm-settings-details > summary > small { margin-left: auto; color: var(--text-tertiary); font-size: 0.64rem; }
 .dm-settings-details > summary > svg:last-child { transition: transform var(--transition-fast); }
@@ -2054,7 +1910,6 @@ button:focus-visible,
 .dm-block-form input { min-width: 0; flex: 1; padding: 5px 8px; border: 0; outline: 0; background: transparent; color: var(--text-primary); font-size: 0.72rem; }
 .dm-block-list { max-height: 150px; overflow: auto; }
 .discovery-dms-status { padding: 9px 18px; border-top: 1px solid var(--border); color: var(--text-secondary); background: var(--bg-base); font-size: 0.7rem; }
-
 @media (max-width: 520px) {
   .discovery-dms-backdrop { align-items: end; padding: 0; }
   .discovery-dms-modal { max-height: 92vh; border-radius: 14px 14px 0 0; }
@@ -2065,10 +1920,6 @@ button:focus-visible,
   .discovery-panel { padding-inline: 12px; }
   .discovery-row-copy span { white-space: normal; }
 }
-
-/* ═══════════════════════════════════════════════════════════
-   TAB BAR
-   ═══════════════════════════════════════════════════════════ */
 .tab-bar {
   display: flex;
   align-items: stretch;
@@ -2127,7 +1978,6 @@ button:focus-visible,
 .tab-item.is-drop-after {
   box-shadow: inset -2px 0 0 var(--accent);
 }
-/* The active tab wears the decal along its bottom edge. */
 .tab-item.active {
   color: var(--text-primary);
   font-weight: 600;
@@ -2199,9 +2049,6 @@ button:focus-visible,
   background: hsla(226, 12%, 14%, 0.5);
   color: var(--text-primary);
 }
-/* ═══════════════════════════════════════════════════════════
-   NOTE EDITOR
-   ═══════════════════════════════════════════════════════════ */
 .editor-container {
   flex: 1;
   display: flex;
@@ -2212,7 +2059,6 @@ button:focus-visible,
     radial-gradient(ellipse at 50% 22%, hsla(38, 60%, 26%, 0.055) 0%, transparent 62%),
     var(--bg-base);
 }
-
 .editor-toolbar {
   display: flex;
   align-items: center;
@@ -2264,9 +2110,6 @@ button:focus-visible,
   background: var(--bg-base);
 }
 .editor-view-toggle .toolbar-btn { height: 23px; min-width: 25px; padding: 3px 5px; }
-
-/* Note titles get the badge treatment: heavy squared italic, the way a model
-   name was set on a bootlid. Not uppercased — that's the user's text. */
 .editor-title {
   flex-shrink: 0;
   width: 100%;
@@ -2287,7 +2130,6 @@ button:focus-visible,
   font-weight: 600;
   font-style: italic;
 }
-
 .editor-codemirror {
   flex: 1;
   min-height: 0;
@@ -2301,9 +2143,6 @@ button:focus-visible,
   visibility: hidden;
   pointer-events: none;
 }
-/* Note body is a large contenteditable — the global :focus-visible ring
-   wraps the entire note and reads as a garish selection chrome. Caret +
-   active line already show focus. */
 .editor-codemirror .cm-editor,
 .editor-codemirror .cm-editor.cm-focused,
 .editor-codemirror .cm-content:focus,
@@ -2316,7 +2155,6 @@ button:focus-visible,
   outline: none;
   box-shadow: none;
 }
-/* Sidebar note rows already use the active decal; a second focus ring is noise. */
 .tree-item:focus,
 .tree-item:focus-visible {
   outline: none;
@@ -2327,7 +2165,6 @@ button:focus-visible,
   outline: none;
   box-shadow: none;
 }
-
 .kanban-view {
   flex: 1;
   min-height: 0;
@@ -2415,7 +2252,6 @@ button:focus-visible,
   min-width: min-content;
   height: calc(100% - 50px);
 }
-/* Columns are moulded panels: chrome hairline on top, decal under the header. */
 .kanban-column {
   width: 276px;
   flex: 0 0 276px;
@@ -2877,7 +2713,6 @@ button:focus-visible,
 .editor-codemirror .cm-scroller {
   overflow: auto;
 }
-
 .editor-empty {
   flex: 1;
   display: flex;
@@ -2913,9 +2748,6 @@ button:focus-visible,
   font-family: var(--font-mono);
   font-size: 0.75rem;
 }
-
-/* Instrument cluster: dead-black strip, amber numerals, items separated by
-   tick marks rather than whitespace so it reads as one gauge. */
 .editor-status-bar {
   display: flex;
   align-items: center;
@@ -2971,10 +2803,6 @@ button:focus-visible,
 }
 .editor-status-bar .status-notice {
   color: var(--accent);
-}
-
-.mobile-note-actions {
-  display: none;
 }
 .note-link-picker-backdrop {
   position: fixed;
@@ -3083,10 +2911,6 @@ button:focus-visible,
   color: var(--text-tertiary);
   text-align: center;
 }
-
-/* ═══════════════════════════════════════════════════════════
-   CHAT
-   ═══════════════════════════════════════════════════════════ */
 .chat-view {
   flex: 1;
   min-height: 0;
@@ -3146,16 +2970,10 @@ button:focus-visible,
   border-color: color-mix(in srgb, var(--accent) 38%, var(--border));
   color: var(--text-primary);
 }
-/* Members toolbar toggle is mobile-only (mirrors folder sidebar expand). */
-.chat-members-toolbar-btn {
-  display: none;
-}
 .workspace-toolbar {
   display: flex;
   min-height: 34px;
 }
-/* Toolbar news ticker. The moving text is an isolated compositor layer; avoid
-   masks and filters here because Chromium repaints those during animation. */
 .news-ticker {
   position: relative;
   flex: 1;
@@ -3214,7 +3032,6 @@ button:focus-visible,
   from { transform: translate3d(var(--news-start, 100%), 0, 0); }
   to { transform: translate3d(var(--news-end, -100%), 0, 0); }
 }
-
 .workspace-session-btn {
   position: relative;
 }
@@ -3256,7 +3073,8 @@ button:focus-visible,
   background: var(--accent-subtle);
   color: var(--accent-hover);
 }
-.workspace-session-badge {
+.workspace-session-badge,
+.csb-badge {
   position: absolute;
   top: -4px;
   right: -4px;
@@ -3654,9 +3472,6 @@ button:focus-visible,
 @keyframes session-pulse {
   50% { opacity: 0.35; }
 }
-.session-manager-mobile-back {
-  display: none;
-}
 .session-manager-actions {
   flex: none;
 }
@@ -4052,8 +3867,7 @@ button:focus-visible,
   display: flex;
   gap: 12px;
   padding: 10px 18px;
-  /* Paint isolation — no content-visibility (re-entry paint on scroll was janky). */
-  contain: layout style;
+    contain: layout style;
   position: relative;
   -webkit-tap-highlight-color: transparent;
 }
@@ -4067,8 +3881,6 @@ button:focus-visible,
   height: 100%;
   min-height: inherit;
 }
-/* Hover via pseudo so large harness children aren't forced to repaint.
-   Only real hover pointers — touch sticky-:hover was flashing the row. */
 .chat-message-group::before {
   content: '';
   position: absolute;
@@ -4096,7 +3908,6 @@ button:focus-visible,
   border-radius: var(--radius-sm);
   background: hsla(226, 12%, 14%, 0.35);
 }
-/* Swipe-left → reply (mobile/touch). Hint sits under the sliding content. */
 .chat-swipe-row {
   position: relative;
   touch-action: pan-y;
@@ -4132,8 +3943,7 @@ button:focus-visible,
   z-index: 1;
 }
 .chat-swipe-row.is-dragging .chat-swipe-content {
-  /* Layer only while dragging — permanent will-change was costly on long chats. */
-  will-change: transform;
+    will-change: transform;
   user-select: none;
 }
 .chat-message-chunk + .chat-message-chunk {
@@ -4156,8 +3966,7 @@ button:focus-visible,
   font-weight: 700;
   position: relative;
   box-shadow: inset 0 0 0 1px hsla(220, 30%, 82%, 0.08);
-  /* Do not overflow:hidden here — online status dot sits outside the circle. */
-}
+  }
 button.chat-avatar {
   border: none;
   padding: 0;
@@ -4437,7 +4246,6 @@ button.chat-avatar.is-clickable:focus-visible {
   font-weight: 600;
   letter-spacing: 0.01em;
 }
-/* Inline note citations: [[Title]] → clickable chip (not the ![[…]] card embed). */
 .chat-wikilink {
   display: inline;
   margin: 0 1px;
@@ -4482,12 +4290,14 @@ button.chat-avatar.is-clickable:focus-visible {
   flex: 0 0 auto;
   color: var(--accent);
 }
-.chat-reply-quote strong {
+.chat-reply-quote strong,
+.chat-forward-preview strong {
   flex: 0 0 auto;
   color: var(--text-secondary);
   font-size: 0.75rem;
 }
-.chat-reply-quote span {
+.chat-reply-quote span,
+.chat-forward-preview span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4561,8 +4371,6 @@ button.chat-avatar.is-clickable:focus-visible {
   background: var(--bg-overlay);
   color: var(--text-primary);
 }
-/* chat-context-menu: shared with .tree-context-menu / .tab-context-menu */
-/* ── Forwarded messages ──────────────────────────────────── */
 .chat-forward-quote {
   display: flex;
   align-items: center;
@@ -4625,17 +4433,6 @@ button.chat-avatar.is-clickable:focus-visible {
   font-size: 0.75rem;
   min-width: 0;
 }
-.chat-forward-preview strong {
-  flex: 0 0 auto;
-  color: var(--text-secondary);
-  font-size: 0.75rem;
-}
-.chat-forward-preview span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .chat-forward-search {
   width: 100%;
   padding: 6px 8px;
@@ -4690,8 +4487,6 @@ button.chat-avatar.is-clickable:focus-visible {
 .chat-forward-error {
   color: var(--danger);
 }
-
-/* ── Embedded agent activity: shared chat-native shell ─── */
 .cascade-run-panel {
   width: 100%;
   max-width: 100%;
@@ -4701,13 +4496,10 @@ button.chat-avatar.is-clickable:focus-visible {
   background: color-mix(in srgb, var(--surface-subtle) 88%, transparent);
   overflow: hidden;
   box-sizing: border-box;
-  /* layout/style only — paint+content-visibility made thinking folds flash
-     the entire panel on mobile (size jump re-skipped the subtree). */
-  contain: layout style;
+    contain: layout style;
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
 }
-/* Collapsed header-only state can still skip offscreen work. */
 .cascade-run-panel:not(.open) {
   width: fit-content;
   max-width: min(100%, 34rem);
@@ -4844,7 +4636,6 @@ button.chat-avatar.is-clickable:focus-visible {
   color: hsl(224, 8%, 42%);
   font-variant-numeric: tabular-nums;
 }
-/* Token / context / cost chips on the click-to-expand harness header */
 .crp-stat-chips {
   display: inline-flex;
   align-items: center;
@@ -4884,7 +4675,8 @@ button.chat-avatar.is-clickable:focus-visible {
     color: hsl(38, 44%, 78%);
   }
 }
-.crp-spinner {
+.crp-spinner,
+.chat-work-trace-spinner {
   width: 10px;
   height: 10px;
   border-width: 2px;
@@ -4922,8 +4714,6 @@ button.chat-avatar.is-clickable:focus-visible {
   background: hsla(357, 62%, 58%, 0.16);
   color: hsl(357, 88%, 76%);
 }
-/* Stop remains available on compact live harnesses: requiring expansion hid
-   the only cancel affordance exactly while chat was most crowded. */
 .cascade-run-panel.is-running:not(.open) .crp-stop {
   min-height: 24px;
   align-self: center;
@@ -4940,8 +4730,7 @@ button.chat-avatar.is-clickable:focus-visible {
   padding: 8px 10px 10px;
   scrollbar-width: thin;
   scrollbar-color: hsl(224, 8%, 28%) transparent;
-  /* Edge overscroll chains to parent chat without non-passive JS touch handlers. */
-  overscroll-behavior-y: auto;
+    overscroll-behavior-y: auto;
   -webkit-overflow-scrolling: touch;
 }
 @media (max-width: 640px) {
@@ -4997,7 +4786,6 @@ button.chat-avatar.is-clickable:focus-visible {
 .crp-term-fold:disabled {
   cursor: default;
 }
-/* Local fold feedback only — never restyle the whole harness panel. */
 .crp-term-fold:not(:disabled):active {
   background: hsla(226, 12%, 100%, 0.04);
 }
@@ -5050,8 +4838,7 @@ button.chat-avatar.is-clickable:focus-visible {
   overflow: auto;
   overscroll-behavior-y: auto;
   -webkit-overflow-scrolling: touch;
-  /* Avoid compositing every thinking fold all the time. */
-  contain: layout style;
+    contain: layout style;
   font: inherit;
   line-height: 1.45;
   white-space: pre-wrap;
@@ -5112,9 +4899,6 @@ button.chat-avatar.is-clickable:focus-visible {
   padding: 12px 16px 14px;
   border-top: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
   background: linear-gradient(180deg, color-mix(in srgb, var(--bg-raised) 30%, var(--bg-surface)), var(--bg-surface));
-}
-.chat-media-input {
-  display: none;
 }
 .chat-upload-btn {
   align-self: end;
@@ -5248,8 +5032,6 @@ button.chat-avatar.is-clickable:focus-visible {
 .chat-emoji-option:hover {
   background: var(--bg-overlay);
 }
-/* Send is the primary action — it lights up amber the moment there's something
-   to send, and stays a neutral console key when there isn't. */
 .chat-composer .chat-send-btn:not(:disabled) {
   border-color: color-mix(in srgb, var(--accent) 46%, var(--border));
   background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 22%, var(--bg-raised)), color-mix(in srgb, var(--accent) 12%, var(--bg-raised)));
@@ -5269,7 +5051,8 @@ button.chat-avatar.is-clickable:focus-visible {
   font-size: 0.6875rem;
   line-height: 1;
 }
-.chat-msg-images {
+.chat-msg-images,
+.chat-msg-attachments {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
@@ -5334,7 +5117,6 @@ button.chat-avatar.is-clickable:focus-visible {
   box-shadow: 0 12px 48px hsla(226, 12%, 2%, 0.6);
   cursor: default;
 }
-
 .chat-shared-note {
   width: min(760px, calc(100vw - 32px));
   max-height: min(82vh, 900px);
@@ -5396,12 +5178,6 @@ button.chat-avatar.is-clickable:focus-visible {
   }
   .chat-lightbox-image { max-height: calc(100% - 82px); }
 }
-.chat-msg-attachments {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 6px;
-}
 .chat-msg-attachment {
   display: inline-flex;
   align-items: center;
@@ -5443,7 +5219,6 @@ button.chat-avatar.is-clickable:focus-visible {
   border-radius: 6px;
   background: #000;
 }
-/* Right rail (cast) — mirrors left .sidebar surface and geometry. */
 .chat-users {
   width: var(--rail-width);
   flex: 0 0 var(--rail-width);
@@ -5459,7 +5234,6 @@ button.chat-avatar.is-clickable:focus-visible {
   overflow: visible;
   padding: var(--rail-pad-y) 6px;
 }
-
 .csb.is-collapsed {
   display: flex !important;
   flex-direction: column;
@@ -5481,22 +5255,6 @@ button.chat-avatar.is-clickable:focus-visible {
 .csb button.is-selected .csb-plus {
   color: var(--accent-hover);
 }
-.csb-badge {
-  position: absolute;
-  top: -4px;
-  right: -4px;
-  min-width: 14px;
-  height: 14px;
-  padding: 0 3px;
-  border-radius: 999px;
-  background: var(--accent);
-  color: var(--bg-base);
-  font-size: 0.5625rem;
-  font-weight: 700;
-  line-height: 14px;
-  text-align: center;
-}
-
 .chat-channel-settings-panel {
   display: flex;
   flex-direction: column;
@@ -5566,12 +5324,10 @@ button.chat-avatar.is-clickable:focus-visible {
   font-weight: 700;
   list-style: none;
 }
-.chat-project-tools > summary::-webkit-details-marker { display: none; }
 .chat-project-tools > summary::before { content: '›'; display: inline-block; margin-right: 6px; transition: transform var(--transition-fast); }
 .chat-project-tools[open] > summary::before { transform: rotate(90deg); }
 .chat-project-tools > summary span { margin-left: 5px; color: var(--text-tertiary); font-size: 0.625rem; font-weight: 400; }
 .chat-project-tools > label { padding: 3px 2px 0; color: var(--text-tertiary); font-size: 0.625rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
-
 .chat-agent-section {
   display: flex;
   flex-direction: column;
@@ -5604,7 +5360,6 @@ button.chat-avatar.is-clickable:focus-visible {
   font-size: 0.6875rem;
   color: var(--success);
 }
-/* Task workspaces (git worktrees) inside the channel settings panel. */
 .chat-workspaces {
   display: flex;
   flex-direction: column;
@@ -5662,7 +5417,6 @@ button.chat-avatar.is-clickable:focus-visible {
   padding: 0 0 10px;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
 }
-/* Work-item chrome is channel ops, not "your agent task" identity. */
 .chat-work-items .chat-workspaces-heading svg {
   color: var(--text-tertiary);
 }
@@ -5767,7 +5521,6 @@ button.chat-avatar.is-clickable:focus-visible {
   border-radius: var(--radius-md);
   background: var(--bg-base);
 }
-/* The decal stripe marks the workspace this channel's agents actually run in. */
 .chat-workspaces-list li.is-active {
   border-color: var(--border);
   border-left: 3px solid transparent;
@@ -5873,8 +5626,6 @@ button.chat-avatar.is-clickable:focus-visible {
 .chat-workspace-pr .is-failing {
   color: var(--danger);
 }
-
-/* Cast rows — same pill language as .tree-item; agents are not warmer cards. */
 .chat-user {
   position: relative;
   margin: var(--rail-gap) 0;
@@ -5918,7 +5669,6 @@ button.chat-avatar.is-clickable:focus-visible {
   gap: 8px;
   min-width: 0;
 }
-/* Presence dots are people-only — agents are not "online" in the human sense. */
 .chat-user.chat-human .chat-user-row .chat-avatar::after {
   content: '';
   position: absolute;
@@ -5953,8 +5703,6 @@ button.chat-avatar.is-clickable:focus-visible {
   min-width: 0;
   flex: 1;
 }
-/* Supervisor rank is a hairline amber rim on the avatar — no badge, no label,
-   no card tint. Quiet enough to scan past, distinct once you know it. */
 .chat-user.chat-agent-user.is-supervisor .chat-avatar {
   box-shadow:
     inset 0 0 0 1px hsla(220, 30%, 82%, 0.08),
@@ -5983,7 +5731,6 @@ button.chat-avatar.is-clickable:focus-visible {
   font-family: var(--font-mono);
   font-size: 0.625rem;
 }
-/* Right-rail plan usage: tiny right-aligned decals, no row growth. */
 .chat-user-copy .chat-plan-meters.is-decal {
   display: flex;
   flex-direction: column;
@@ -6108,8 +5855,6 @@ button.chat-avatar.is-clickable:focus-visible {
 .chat-vault-pick-btn:disabled {
   cursor: default;
 }
-/* Navigation to a different scope, not a destructive/primary action — so it
-   reads as a row you can walk into, not an amber warning. */
 .chat-agent-identity-link {
   display: flex;
   align-items: center;
@@ -6299,15 +6044,11 @@ button.chat-avatar.is-clickable:focus-visible {
   font-weight: 400;
   line-height: 1.35;
 }
-/* Grouped switch blocks: a rule + eyebrow separates unrelated concerns so the
-   panel reads as three short questions rather than one flat checkbox dump. */
 .chat-agent-group {
   margin: 0 0 10px;
   padding-top: 9px;
   border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
 }
-/* The group directly under the heading needs no separator; :first-of-type would
-   match the heading div instead, so key off adjacency. */
 .chat-agent-menu-heading + .chat-agent-group {
   border-top: none;
   padding-top: 0;
@@ -6340,8 +6081,6 @@ button.chat-avatar.is-clickable:focus-visible {
 .chat-agent-menu .chat-agent-group > label:last-child {
   margin-bottom: 0;
 }
-/* Checkbox in column 1, name + hint stacked in column 2, so a hint can never
-   float free and read as belonging to the next switch. */
 .chat-agent-menu .chat-agent-toggle {
   display: grid;
   grid-template-columns: auto 1fr;
@@ -6424,7 +6163,6 @@ button.chat-avatar.is-clickable:focus-visible {
 .chat-agent-toggle.is-locked .chat-agent-toggle-name {
   color: var(--text-tertiary);
 }
-/* Yolo reads as a live hazard once armed, not as one more grey checkbox. */
 .chat-agent-toggle.is-hot .chat-agent-toggle-name {
   color: var(--danger);
 }
@@ -6517,10 +6255,6 @@ button.chat-avatar.is-clickable:focus-visible {
     padding: 14px;
   }
 }
-
-/* ═══════════════════════════════════════════════════════════
-   COMMAND PALETTE
-   ═══════════════════════════════════════════════════════════ */
 .overlay-backdrop {
   position: fixed;
   inset: 0;
@@ -6534,17 +6268,14 @@ button.chat-avatar.is-clickable:focus-visible {
   padding-top: min(18vh, 140px);
   animation: fadeIn var(--transition-normal) ease;
 }
-
 @keyframes fadeIn {
   from { opacity: 0; }
   to { opacity: 1; }
 }
-
 @keyframes slideDown {
   from { opacity: 0; transform: translateY(-10px) scale(0.985); }
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
-
 .command-palette {
   position: relative;
   width: min(580px, 92vw);
@@ -6558,14 +6289,12 @@ button.chat-avatar.is-clickable:focus-visible {
   overflow: hidden;
   animation: slideDown var(--transition-normal) ease;
 }
-/* The decal caps the palette — the panel that's currently in command. */
 .command-palette::before {
   content: '';
   display: block;
   height: 3px;
   background: var(--decal-stripe-h);
 }
-
 .admin-panel {
   width: min(480px, 92vw);
   max-height: min(70vh, 620px);
@@ -6644,7 +6373,6 @@ button.chat-avatar.is-clickable:focus-visible {
 .admin-report-queue article > div:last-child { display: flex; justify-content: flex-end; gap: 6px; }
 .admin-report-queue article button { padding: 4px 7px; border: 1px solid var(--border); border-radius: 6px; color: var(--text-secondary); font-size: 0.66rem; }
 .admin-report-queue article button.is-danger { border-color: color-mix(in srgb, var(--danger) 38%, var(--border)); color: var(--danger); }
-
 .report-dialog-backdrop { z-index: 1400; }
 .report-dialog {
   width: min(440px, calc(100vw - 28px));
@@ -6688,7 +6416,6 @@ button.chat-avatar.is-clickable:focus-visible {
   font-size: 0.9375rem;
   caret-color: var(--accent);
 }
-/* The decal already says this panel has focus; a ring on top is noise. */
 .command-palette-input:focus-visible {
   box-shadow: none;
 }
@@ -6716,13 +6443,13 @@ button.chat-avatar.is-clickable:focus-visible {
   font-size: 0.8125rem;
   transition: background-color var(--transition-fast), color var(--transition-fast);
 }
-/* Same marker as an active sidebar row: decal edge, amber wash falling away. */
 .command-palette-item:hover,
 .command-palette-item.highlighted {
   background: linear-gradient(90deg, hsla(38, 92%, 55%, 0.15) 0%, hsla(38, 92%, 55%, 0.02) 60%, transparent 100%);
   color: var(--text-primary);
 }
-.command-palette-item.highlighted::before {
+.command-palette-item.highlighted::before,
+.search-result-item.highlighted::before {
   content: '';
   position: absolute;
   left: 0;
@@ -6795,10 +6522,6 @@ button.chat-avatar.is-clickable:focus-visible {
   font-size: 0.8125rem;
   line-height: 1.5;
 }
-
-/* ═══════════════════════════════════════════════════════════
-   SEARCH OVERLAY
-   ═══════════════════════════════════════════════════════════ */
 .search-overlay {
   width: min(640px, 90vw);
   max-height: 70vh;
@@ -6870,15 +6593,6 @@ button.chat-avatar.is-clickable:focus-visible {
 .search-result-item.highlighted {
   background: linear-gradient(90deg, hsla(38, 92%, 55%, 0.15) 0%, hsla(38, 92%, 55%, 0.02) 60%, transparent 100%);
 }
-.search-result-item.highlighted::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 3px;
-  bottom: 3px;
-  width: 3px;
-  background: var(--decal-stripe);
-}
 .search-result-item .result-title {
   font-family: var(--font-display);
   font-size: 0.875rem;
@@ -6915,10 +6629,6 @@ button.chat-avatar.is-clickable:focus-visible {
   font-size: 2rem;
   opacity: 0.3;
 }
-
-/* ═══════════════════════════════════════════════════════════
-   SHARED SPINNER / CHEVRON (chat run widgets)
-   ═══════════════════════════════════════════════════════════ */
 .ai-spinner {
   width: 12px;
   height: 12px;
@@ -6929,10 +6639,6 @@ button.chat-avatar.is-clickable:focus-visible {
   animation: ai-spin 0.7s linear infinite;
 }
 @keyframes ai-spin { to { transform: rotate(360deg); } }
-
-/* ═══════════════════════════════════════════════════════════
-   TOAST
-   ═══════════════════════════════════════════════════════════ */
 .agent-permission-card {
   position: fixed;
   right: 20px;
@@ -6958,7 +6664,6 @@ button.chat-avatar.is-clickable:focus-visible {
 .agent-permission-card code { display: block; margin-top: 8px; overflow: hidden; color: var(--text-secondary); font-size: 0.6875rem; text-overflow: ellipsis; white-space: nowrap; }
 .agent-permission-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 .agent-permission-queue { display: block; margin-top: 8px; color: var(--text-tertiary); font-size: 0.6875rem; text-align: right; }
-
 .toast {
   position: fixed;
   bottom: 20px;
@@ -6973,7 +6678,6 @@ button.chat-avatar.is-clickable:focus-visible {
   z-index: 200;
   animation: slideUp var(--transition-normal) ease, fadeOut 0.3s ease 2.5s forwards;
 }
-
 @keyframes slideUp {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
@@ -6982,35 +6686,26 @@ button.chat-avatar.is-clickable:focus-visible {
   from { opacity: 1; }
   to { opacity: 0; }
 }
-
-/* ═══════════════════════════════════════════════════════════
-   RESPONSIVE
-   ═══════════════════════════════════════════════════════════ */
 @media (max-width: 900px) {
   html {
     font-size: 15px;
   }
-
   body {
     overflow: hidden;
   }
-
   .app-shell,
   .app-shell.sidebar-open,
   .app-shell.sidebar-closed {
     grid-template-columns: minmax(0, 1fr);
   }
-
   .workspace,
   .app-shell.sidebar-closed .workspace {
     grid-column: 1;
     min-width: 0;
   }
-
   .resize-handle {
     display: none;
   }
-
   .sidebar-backdrop {
     display: block;
     position: absolute;
@@ -7027,22 +6722,14 @@ button.chat-avatar.is-clickable:focus-visible {
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
   }
-
-  /* Android's system back gesture owns the first few physical pixels. Start
-     just inside that zone, outside message rows, so drawer reveal never
-     competes with the chat's left-swipe-to-reply pointer handler. */
-  .mobile-sidebar-swipe-edge {
+    .mobile-sidebar-swipe-edge {
     display: block;
     position: absolute;
-    /* Leave the toolbar clear. Before this, the transparent 36px edge
-       recognizer was painted over the toolbar's sidebar button, so Android
-       could only hit the few pixels of the button outside the recognizer. */
-    inset: calc(54px + env(safe-area-inset-top, 0px)) auto 0 0;
+        inset: calc(54px + env(safe-area-inset-top, 0px)) auto 0 0;
     z-index: 65;
     width: 36px;
     touch-action: pan-y;
   }
-
   .sidebar {
     position: absolute;
     inset: 0 auto 0 0;
@@ -7051,60 +6738,47 @@ button.chat-avatar.is-clickable:focus-visible {
     max-width: 100vw;
     box-shadow: var(--shadow-lg);
   }
-
   .app-shell.sidebar-closed .sidebar {
     display: none;
   }
-
   .app-shell.sidebar-closed .sidebar-backdrop {
     display: none;
   }
-
   .sidebar-header {
     min-height: calc(46px + env(safe-area-inset-top, 0px));
     padding: calc(10px + env(safe-area-inset-top, 0px)) 12px 10px;
     justify-content: space-between;
   }
-
   .sidebar-actions-desktop {
     display: none;
   }
-
   .sidebar-mobile-collapse {
     display: inline-flex;
   }
-
   .sidebar-actions-mobile {
     display: flex;
     margin-left: 0;
     padding: 7px 8px;
     border-bottom: 1px solid var(--border);
   }
-
   .tab-sidebar-toggle {
     display: none;
   }
-
   .tree-item {
     min-height: 38px;
     padding-top: 8px;
     padding-bottom: 8px;
     font-size: 0.875rem;
   }
-
   .sidebar-footer {
     padding-bottom: max(10px, env(safe-area-inset-bottom));
   }
-
-  /* Same pattern as left folder sidebar: toolbar button opens a side panel. */
-  .chat-members-toolbar-btn {
+    .chat-members-toolbar-btn {
     display: inline-flex;
   }
-
   .chat-view {
     position: relative;
   }
-
   .chat-users,
   .chat-users.is-collapsed {
     position: absolute;
@@ -7123,16 +6797,10 @@ button.chat-avatar.is-clickable:focus-visible {
     padding: 10px 8px max(14px, env(safe-area-inset-bottom));
     overflow-y: auto;
   }
-
-  /* Fully hide when closed — no offscreen translate / dim overlay. */
-  .chat-users.is-collapsed {
+    .chat-users.is-collapsed {
     display: none;
   }
-
-  /* Keep safe-area padding — a bare `padding: … !important` was zeroing the
-     App.tsx top inset and letting status/nav bars show as empty bands on
-     Pixel (including fold outer/inner where insets change on posture). */
-  .workspace-toolbar {
+    .workspace-toolbar {
     display: flex;
     min-height: calc(44px + env(safe-area-inset-top, 0px));
     padding-top: calc(5px + env(safe-area-inset-top, 0px)) !important;
@@ -7141,21 +6809,17 @@ button.chat-avatar.is-clickable:focus-visible {
     padding-left: 8px !important;
     background: var(--bg-surface);
   }
-
   .workspace-desktop-action span {
     display: none;
   }
-
   .auth-shell {
     min-height: 100dvh;
     padding-top: max(24px, env(safe-area-inset-top, 0px));
     padding-bottom: max(24px, env(safe-area-inset-bottom, 0px));
   }
-
   .session-manager-backdrop {
     padding: 0;
   }
-
   .session-manager {
     width: 100vw;
     height: 100dvh;
@@ -7163,62 +6827,49 @@ button.chat-avatar.is-clickable:focus-visible {
     border: 0;
     border-radius: 0;
   }
-
   .session-manager-body {
     grid-template-columns: 1fr;
     grid-template-rows: 1fr;
   }
-
   .session-manager-list {
     border-right: 0;
   }
-
   .session-manager-body.has-selection .session-manager-list {
     display: none;
   }
-
   .session-manager-detail {
     display: none;
   }
-
   .session-manager-body.has-selection .session-manager-detail {
     display: flex;
   }
-
   .session-manager-header {
     min-height: calc(62px + env(safe-area-inset-top));
     padding: calc(9px + env(safe-area-inset-top)) 8px 8px 12px;
   }
-
   .session-manager-mark,
   .session-manager-count {
     display: none;
   }
-
   .session-manager-header-readouts {
     gap: 2px;
   }
-
   .session-manager-runner {
     padding: 3px 6px;
     font-size: 0.5625rem;
   }
-
   .session-manager-mobile-back {
     display: inline-flex;
     margin-left: -7px;
   }
-
   .session-manager-summary {
     min-height: 68px;
     gap: 8px;
     padding: 8px;
   }
-
   .session-manager-actions {
     gap: 4px;
   }
-
   .session-manager-actions .btn {
     width: 34px;
     min-width: 34px;
@@ -7228,119 +6879,79 @@ button.chat-avatar.is-clickable:focus-visible {
     font-size: 0;
     gap: 0;
   }
-
   .session-manager-actions .btn svg {
     color: var(--text-secondary);
   }
-
   .session-manager-actions .btn-danger svg {
     color: var(--danger);
   }
-
   .session-manager-readouts {
     grid-template-columns: 0.7fr 1.6fr 0.9fr 0.7fr;
   }
-
   .session-manager-readouts > div {
     padding: 6px 7px;
   }
-
   .session-manager-prompt {
     max-height: 118px;
     padding: 9px 10px 10px;
   }
-
   .session-manager-trace-shell {
     margin: 7px 7px 0;
   }
-
   .session-manager-interrogate {
     margin: 0 7px;
     padding-bottom: max(8px, env(safe-area-inset-bottom));
   }
-
   .session-manager-composer-copy span {
     display: none;
   }
-
   .session-manager-composer-row .btn {
     padding: 6px 10px;
   }
-
   .session-manager-event {
     padding-right: 8px;
   }
-
   .btn-icon,
   .tab-new-btn {
     width: 36px;
     height: 36px;
     min-width: 36px;
   }
-
-  /* Keep the drawer affordance comfortably above Android's 48dp touch-target
-     guidance. The edge recognizer starts below this toolbar, so the full
-     button remains both tappable and visible. */
-  #sidebar-expand-btn {
+    #sidebar-expand-btn {
     width: 48px;
     height: 48px;
     min-width: 48px;
     min-height: 48px;
   }
-
   .tab-bar {
     min-height: 40px;
   }
-
   .tab-item {
     flex: 0 0 auto;
     max-width: min(56vw, 220px);
     padding: 0 10px;
   }
-
   .tab-item .tab-title {
     max-width: min(38vw, 150px);
   }
-
   .tab-item .tab-close,
   .tab-item .tab-popout {
     opacity: 0.85;
   }
-
-  .pane-split {
-    flex-direction: column !important;
-  }
-
-  .pane-split-child {
-    flex-basis: auto !important;
-    min-height: 220px;
-  }
-
-  .pane-divider-vertical,
-  .pane-divider-horizontal {
-    width: 100%;
-    height: 6px;
-    cursor: row-resize;
-  }
-
   .editor-toolbar {
     overflow-x: auto;
     padding: 6px 8px;
   }
-
   .editor-title {
     font-size: 1.45rem;
     padding: 16px 16px 4px;
   }
-
   .editor-codemirror .cm-content {
     padding: 12px 16px 72px;
   }
-
   .editor-codemirror .cm-gutters {
     display: none;
   }
-
   .mobile-note-actions {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -7350,7 +6961,6 @@ button.chat-avatar.is-clickable:focus-visible {
     background: var(--bg-surface);
     flex-shrink: 0;
   }
-
   .mobile-note-action {
     min-height: 46px;
     display: flex;
@@ -7365,76 +6975,63 @@ button.chat-avatar.is-clickable:focus-visible {
     font-size: 0.8125rem;
     font-weight: 650;
   }
-
   .mobile-note-action:active {
     border-color: var(--accent);
     background: var(--accent-subtle);
     color: var(--accent);
   }
-
   .mobile-note-action:disabled {
     opacity: 0.65;
   }
-
   .editor-status-bar {
     gap: 10px;
     overflow-x: auto;
     padding: 5px 12px max(5px, env(safe-area-inset-bottom));
     white-space: nowrap;
   }
-
   .chat-header {
     min-height: 44px;
     padding: 8px 12px;
   }
-
   .chat-message-group {
     gap: 8px;
     padding: 8px 12px;
   }
-
   .chat-avatar {
     width: 28px;
     height: 28px;
     flex-basis: 28px;
     font-size: 0.75rem;
   }
-
   .chat-message-meta {
     flex-wrap: wrap;
     row-gap: 1px;
   }
-
   .chat-composer {
     grid-template-columns: 36px 36px minmax(0, 1fr) 36px;
     gap: 6px;
     padding: 8px 8px max(8px, env(safe-area-inset-bottom));
   }
-
   .chat-composer textarea {
     min-height: 42px;
     max-height: 180px;
     font-size: 1rem;
     resize: none;
   }
-
   .chat-msg-image {
     max-width: min(220px, 72vw);
     max-height: 220px;
   }
-
   .overlay-backdrop {
     align-items: flex-start;
     padding: 10vh 10px 10px;
   }
-
   .command-palette,
   .search-overlay {
     width: min(100%, 640px);
     max-height: 82vh;
     border-radius: var(--radius-md);
   }
-
   .toast {
     right: 10px;
     left: 10px;
@@ -7442,24 +7039,19 @@ button.chat-avatar.is-clickable:focus-visible {
     text-align: center;
   }
 }
-
 @media (max-width: 520px) {
   .sidebar {
     width: min(92vw, 320px);
   }
-
   .chat-header-copy span,
   .editor-status-bar .status-item:nth-child(n + 3) {
     display: none;
   }
-
   .chat-message-group {
     padding-left: 8px;
     padding-right: 8px;
   }
-
-  /* Keep profile pictures on narrow phones (was display:none for space). */
-  .chat-avatar {
+    .chat-avatar {
     display: flex;
     width: 26px;
     height: 26px;
@@ -7469,20 +7061,13 @@ button.chat-avatar.is-clickable:focus-visible {
   .chat-composer {
     grid-template-columns: 34px 34px minmax(0, 1fr) 34px;
   }
-
   .tab-item {
     max-width: 70vw;
   }
-
   .tab-item .tab-title {
     max-width: 48vw;
   }
-
 }
-
-/* ═══════════════════════════════════════════════════════════
-   SPLIT SCREEN
-   ═══════════════════════════════════════════════════════════ */
 .editor-pane {
   flex: 1;
   height: 100%;
@@ -7491,8 +7076,6 @@ button.chat-avatar.is-clickable:focus-visible {
   overflow: hidden;
   position: relative;
 }
-
-/* ─── Tiling pane grid ─────────────────────────────────────────── */
 .pane {
   position: relative;
 }
@@ -7517,8 +7100,6 @@ button.chat-avatar.is-clickable:focus-visible {
   text-transform: uppercase;
   letter-spacing: 0.13em;
 }
-
-/* Per-pane tab strip. Reuses .tab-bar/.tab-item; this only adds the focused cue. */
 .pane-tab-bar {
   min-height: 34px;
 }
@@ -7549,8 +7130,6 @@ button.chat-avatar.is-clickable:focus-visible {
   background: var(--accent-subtle);
   color: var(--accent);
 }
-
-/* Resizable split dividers */
 .pane-split-child {
   position: relative;
 }
@@ -7573,8 +7152,6 @@ button.chat-avatar.is-clickable:focus-visible {
   cursor: row-resize;
   width: 100%;
 }
-
-/* Pop-out window drag-handle header (merge tab back into the main window) */
 .popout-bar {
   display: flex;
   align-items: center;
@@ -7602,8 +7179,6 @@ button.chat-avatar.is-clickable:focus-visible {
   font-size: 0.6875rem;
   color: var(--text-tertiary);
 }
-
-/* Drag-tile drop zones (overlaid on the hovered pane's content) */
 .pane-dropzone {
   position: absolute;
   background: var(--accent-subtle);
@@ -7618,32 +7193,21 @@ button.chat-avatar.is-clickable:focus-visible {
 .pane-dropzone-right { top: 8px; bottom: 8px; right: 8px; width: calc(50% - 12px); }
 .pane-dropzone-top { left: 8px; right: 8px; top: 8px; height: calc(50% - 12px); }
 .pane-dropzone-bottom { left: 8px; right: 8px; bottom: 8px; height: calc(50% - 12px); }
-
-/* Context menu (portaled to body from PaneGrid; stay above pane chrome) */
-/* tab-context-menu: shared with .tree-context-menu */
-
-/* ── Floating "Link to note" action ─────────────────────────── */
-/* Final mobile overrides for rules declared after the main responsive section. */
 @media (max-width: 900px) {
   .pane-split {
     flex-direction: column !important;
   }
-
   .pane-split-child {
     flex-basis: auto !important;
     min-height: 220px;
   }
-
   .pane-divider-vertical,
   .pane-divider-horizontal {
     width: 100%;
     height: 6px;
     cursor: row-resize;
   }
-
 }
-
-/* JSON syntax highlighting */
 .json-token-key {
   color: hsl(38, 90%, 60%);
   font-weight: 600;
@@ -7667,10 +7231,6 @@ button.chat-avatar.is-clickable:focus-visible {
   font-weight: 500;
   letter-spacing: 0.01em;
 }
-
-/* ── Agent work trace: TUI-style collapsed multi-agent chatter ── */
-/* The trace now lives inside its agent carrier row, so it naturally shares the
-   message text axis (rather than needing a synthetic avatar indent). */
 .chat-work-trace {
   margin: 8px 0 10px;
   max-width: 720px;
@@ -7866,12 +7426,6 @@ button.chat-avatar.is-clickable:focus-visible {
 @keyframes chat-work-rise {
   50% { transform: translateY(-2px); opacity: 0.58; }
 }
-.chat-work-trace-spinner {
-  width: 10px;
-  height: 10px;
-  border-width: 2px;
-  flex-shrink: 0;
-}
 .chat-work-trace-chevron {
   flex-shrink: 0;
   margin-left: auto;
@@ -8005,9 +7559,6 @@ button.chat-avatar.is-clickable:focus-visible {
   line-height: 1;
   animation: chat-work-blink 1.05s steps(1) infinite;
 }
-
-/* Keep compact coordinator activity on the same x-axis as message copy. These
-   overrides live after the base trace rule so narrow layouts cannot lose. */
 @media (max-width: 900px) {
   .chat-work-trace { margin-right: 12px; }
 }
@@ -8050,8 +7601,6 @@ button.chat-avatar.is-clickable:focus-visible {
 .chat-work-trace .dim {
   color: hsl(224, 8%, 42%);
 }
-
-/* Mission cards are agent-orchestration chrome, not personal status on humans. */
 .chat-mission-card {
   margin-top: 10px;
   max-width: 680px;
@@ -8078,7 +7627,6 @@ button.chat-avatar.is-clickable:focus-visible {
   list-style: none;
   user-select: none;
 }
-.chat-mission-card > summary::-webkit-details-marker { display: none; }
 .chat-mission-kicker {
   flex: 0 0 auto;
   padding: 1px 6px;
@@ -8127,8 +7675,7 @@ button.chat-avatar.is-clickable:focus-visible {
   border-radius: 50%;
   background: var(--accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
-  /* Keep glow from shifting the flex box; center sits on the 8px disk. */
-  box-sizing: border-box;
+    box-sizing: border-box;
 }
 .chat-mission-card.is-attention .chat-mission-state { background: var(--warning); }
 .chat-mission-card.is-blocked .chat-mission-state { background: var(--danger); }
@@ -8218,7 +7765,6 @@ button.chat-avatar.is-clickable:focus-visible {
   color: color-mix(in srgb, var(--warning) 88%, var(--text-primary));
 }
 a.chat-mission-chip:hover { color: var(--text-primary); border-color: var(--accent); }
-
 .chat-mission-history {
   margin-top: 9px;
   padding-top: 7px;
@@ -8280,7 +7826,6 @@ a.chat-mission-chip:hover { color: var(--text-primary); border-color: var(--acce
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-
 .chat-mission-archive-overlay {
   position: fixed;
   inset: 0;
@@ -8343,7 +7888,6 @@ a.chat-mission-chip:hover { color: var(--text-primary); border-color: var(--acce
   font-size: 0.75rem;
 }
 .chat-mission-archive-empty.is-error { color: var(--danger); }
-
 .chat-task-review {
   min-width: 0;
   margin-top: 5px;
@@ -8361,7 +7905,6 @@ a.chat-mission-chip:hover { color: var(--text-primary); border-color: var(--acce
   cursor: pointer;
   list-style: none;
 }
-.chat-task-review > summary::-webkit-details-marker { display: none; }
 .chat-task-review > summary::after {
   content: '›';
   margin-left: auto;
@@ -8471,7 +8014,6 @@ a.chat-mission-chip:hover { color: var(--text-primary); border-color: var(--acce
 .chat-task-review-compose button.is-change-request { color: var(--warning); }
 .chat-task-review-compose button:disabled { opacity: 0.45; cursor: not-allowed; }
 .chat-task-review-compose small { color: var(--text-muted); font-size: 0.625rem; }
-
 .chat-clarification {
   margin-top: 10px;
   max-width: 680px;
@@ -8753,7 +8295,6 @@ a.chat-mission-chip:hover { color: var(--text-primary); border-color: var(--acce
   font-size: 12px;
   white-space: pre-wrap;
 }
-
 .chat-change-request {
   margin-top: 8px;
   padding: 10px;
@@ -8762,13 +8303,11 @@ a.chat-mission-chip:hover { color: var(--text-primary); border-color: var(--acce
   background: var(--surface-subtle);
   box-shadow: var(--bevel);
 }
-
 .chat-change-files, .chat-change-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
 }
-
 .chat-change-actions { margin-top: 7px; align-items: center; }
 .chat-change-chip {
   display: inline-flex;
@@ -8781,9 +8320,6 @@ a.chat-mission-chip:hover { color: var(--text-primary); border-color: var(--acce
 .chat-change-chip .is-add { color: var(--success); }
 .chat-change-chip .is-delete { color: var(--danger); }
 .chat-change-approved, .chat-change-merged { color: var(--success); font-size: 12px; }
-
-/* Placeholder while the lazily-loaded note editor chunk arrives. Sized to the
-   editor pane so opening a tab does not visibly collapse the layout. */
 .editor-loading {
   flex: 1;
   min-height: 0;

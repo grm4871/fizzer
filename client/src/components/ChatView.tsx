@@ -1349,29 +1349,33 @@ function ChatClarificationCard({
   const answeredCount = clarification.questions.filter((q) => String(answers[q.id] || '').trim()).length;
   const allAnswered = answeredCount === clarification.questions.length;
 
-  async function saveAnswers() {
-    if (!vaultId || !pending) return;
+  const runBusy = async (fallback: string, work: () => Promise<void>) => {
     setBusy(true);
     setError('');
     try {
+      await work();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : fallback);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  async function saveAnswers() {
+    if (!vaultId || !pending) return;
+    await runBusy('Could not save answers', async () => {
       await api(`/api/vaults/${vaultId}/channels/${message.channelId}/messages/${message.id}/clarification/answer`, {
         method: 'POST',
         body: JSON.stringify({
           answers: clarification.questions.map((q) => ({ id: q.id, answer: answers[q.id] || '' })),
         }),
       });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not save answers');
-    } finally {
-      setBusy(false);
-    }
+    });
   }
 
   async function acceptContract() {
     if (!vaultId || !pending) return;
-    setBusy(true);
-    setError('');
-    try {
+    await runBusy('Could not accept contract', async () => {
       await api(`/api/vaults/${vaultId}/channels/${message.channelId}/messages/${message.id}/clarification/answer`, {
         method: 'POST',
         body: JSON.stringify({
@@ -1384,28 +1388,18 @@ function ChatClarificationCard({
           tokenBudget: clarification.tokenBudget || 0,
         }),
       });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not accept contract');
-    } finally {
-      setBusy(false);
-    }
+    });
   }
 
   async function saveBudget(nextValue = budgetDraft) {
     if (!clarification.workItemId) return;
     const next = Math.max(0, Math.floor(Number(nextValue) || 0));
-    setBusy(true);
-    setError('');
-    try {
+    await runBusy('Could not update token budget', async () => {
       await patchWorkItem(clarification.workItemId, { tokenBudget: next });
       setTokenBudget(next);
       setBudgetDraft(next > 0 ? String(next) : '');
       setBudgetEditing(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not update token budget');
-    } finally {
-      setBusy(false);
-    }
+    });
   }
 
   return (

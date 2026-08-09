@@ -600,24 +600,6 @@ export const Sidebar = memo(function Sidebar({
     return ` is-drop-${dropHint.placement}`;
   }
 
-  /** Inline rename field shared by folder and note tree rows. */
-  function renameInput(onCancel: () => void) {
-    return (
-      <input
-        className="tree-rename-input"
-        value={editingValue}
-        autoFocus
-        spellCheck={false}
-        onChange={(e) => setEditingValue(e.target.value)}
-        onBlur={commitRename}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') { e.preventDefault(); commitRename(); }
-          else if (e.key === 'Escape') { e.preventDefault(); onCancel(); }
-        }}
-      />
-    );
-  }
-
   /**
    * The inline rename field shared by folder and note rows. Only the Escape
    * behavior differs (which editing state to clear), passed as `onCancel`.
