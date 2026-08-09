@@ -1,7 +1,7 @@
 {
-  "name": "Cascade Browser",
-  "author": "Cascade",
-  "description": "Cascade Browser",
+  "name": "Fizzer",
+  "author": "Fizzer",
+  "description": "Fizzer shared workspace",
   "main": "cascade-electron/main.cjs",
   "version": "0.2.0",
   "private": true,

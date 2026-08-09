@@ -5,7 +5,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
  * land without reinstalling the APK. Reinstall only when native shell changes
  * (splash, edge-to-edge, permissions, etc.).
  *
- * Launcher label is "Cascade Dev". Bundled `webDir` is only a cold-start
+ * Launcher label is "Fizzer Dev". Bundled `webDir` is only a cold-start
  * fallback if the device is offline at launch.
  */
 const LIVE_APP_URL =
@@ -13,7 +13,7 @@ const LIVE_APP_URL =
 
 const config: CapacitorConfig = {
   appId: 'com.cascade.browser',
-  appName: 'Cascade Dev',
+  appName: 'Fizzer Dev',
   webDir: 'client/dist',
   android: {
     allowMixedContent: true,

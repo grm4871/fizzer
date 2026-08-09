@@ -1,8 +1,8 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
     <!-- Sideload-only dev shell: loads live cscd.online (see capacitor.config.ts). -->
-    <string name="app_name">Cascade Dev</string>
-    <string name="title_activity_main">Cascade Dev</string>
+    <string name="app_name">Fizzer Dev</string>
+    <string name="title_activity_main">Fizzer Dev</string>
     <string name="package_name">com.cascade.browser</string>
     <string name="custom_url_scheme">com.cascade.browser</string>
 </resources>

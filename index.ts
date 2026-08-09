@@ -3108,7 +3108,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
   // spurious "no runner connected" mid-run.
   if (!(await waitForDesktopRunner(runnerUserId))) {
     const error = requesterIsOwner
-      ? 'No desktop agent runner is connected. Open Cascade on your computer (signed in to the same account) to run agents from chat.'
+      ? 'No desktop agent runner is connected. Open Fizzer on your computer (signed in to the same account) to run agents from chat.'
       : "This agent's owner is offline — their desktop runner isn't connected, so the agent can't run right now.";
     noteDesktopRunnerError(runnerUserId, error);
     return res.status(503).json({ error });
@@ -3385,7 +3385,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     }, db);
     if (!delegated) {
       chatRunTargets.delete(run.id);
-      const error = 'Desktop agent runner disconnected before the run could start. Open Cascade on your computer and try again.';
+      const error = 'Desktop agent runner disconnected before the run could start. Open Fizzer on your computer and try again.';
       noteDesktopRunnerError(runnerUserId, error);
       finishDelegatedRun(db, run.id, { status: 'failed', summary: error });
       publishRunEvent(db, run.id, 'status', { status: 'failed', summary: error });
@@ -4498,17 +4498,17 @@ function serveInviteOembed(req: Request, res: Response): boolean {
     const channel = resolved.channel;
     const owner = db.prepare('SELECT username FROM users WHERE id = ?').get(vault.created_by) as { username: string } | undefined;
     const inviteUrl = `${base}/invite/${encodeURIComponent(token)}`;
-    const title = `Join #${channel.title} on Cascade`;
+    const title = `Join #${channel.title} on Fizzer`;
     const description = `${owner?.username || 'Someone'} invited you to add this chat to your own vault.`;
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Cache-Control', 'public, max-age=300');
     res.json({
       version: '1.0',
       type: 'rich',
-      provider_name: 'Cascade',
+      provider_name: 'Fizzer',
       provider_url: base,
       title,
-      author_name: owner?.username || 'Cascade',
+      author_name: owner?.username || 'Fizzer',
       html: `<a href="${escapeOembedHtml(inviteUrl)}" target="_blank" rel="noopener noreferrer">${escapeOembedHtml(title)}</a>`,
       width: 420,
       height: 96,
@@ -4635,7 +4635,7 @@ app.use((_req, res) => {
 // ── Start server ───────────────────────────────────────────────────
 
 httpServer.listen(PORT, () => {
-  console.log(`Cascade Notes API running on http://localhost:${PORT}`);
+  console.log(`Fizzer API running on http://localhost:${PORT}`);
   console.log(`SQLite database: ${DB_PATH}`);
   startFeedPoller(db);
   // Tasks may have become ready immediately before a server restart. Rebuild

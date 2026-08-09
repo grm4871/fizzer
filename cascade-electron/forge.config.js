@@ -22,13 +22,13 @@ const makers = [new MakerZIP({}, ['darwin', 'linux', 'win32'])];
 
 // Native installers, only where the toolchain exists.
 if (process.platform === 'darwin') makers.push(new MakerDMG({}));
-if (process.platform === 'win32' || (has('wine') && has('mono'))) makers.push(new MakerSquirrel({ name: 'Cascade' }));
-if (has('dpkg') && has('fakeroot')) makers.push(new MakerDeb({ options: { name: 'cascade', productName: 'Cascade' } }));
-if (has('rpmbuild')) makers.push(new MakerRpm({ options: { name: 'cascade', productName: 'Cascade' } }));
+if (process.platform === 'win32' || (has('wine') && has('mono'))) makers.push(new MakerSquirrel({ name: 'Fizzer' }));
+if (has('dpkg') && has('fakeroot')) makers.push(new MakerDeb({ options: { name: 'fizzer', productName: 'Fizzer' } }));
+if (has('rpmbuild')) makers.push(new MakerRpm({ options: { name: 'fizzer', productName: 'Fizzer' } }));
 
 export default {
   packagerConfig: {
-    name: 'Cascade',
+    name: 'Fizzer',
     executableName: 'cascade',
     asar: true,
     // agent-runner.cjs loads the generated local-agent implementation from

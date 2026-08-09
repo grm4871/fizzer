@@ -15,7 +15,7 @@ if (!popout) startAndroidBatteryMonitoring();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <ErrorBoundary label="Cascade">
+    <ErrorBoundary label="Fizzer">
       {popout ? <PopoutApp descriptor={popout} /> : <App />}
     </ErrorBoundary>
   </StrictMode>,

@@ -1,9 +1,9 @@
 {
   "name": "cascade",
   "version": "0.1.0",
-  "productName": "Cascade",
-  "description": "Cascade Desktop App",
-  "author": "Cascade",
+  "productName": "Fizzer",
+  "description": "Fizzer Desktop App",
+  "author": "Fizzer",
   "license": "UNLICENSED",
   "main": "main.cjs",
   "type": "module",

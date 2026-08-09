@@ -742,12 +742,12 @@ export const Sidebar = memo(function Sidebar({
           className="vault-name"
           onClick={() => setVaultMenuOpen((open) => !open)}
           title="Switch or create a vault"
-          aria-label={`Vault switcher; current vault ${activeVault?.name || 'Cascade'}`}
+          aria-label={`Vault switcher; current vault ${activeVault?.name || 'Fizzer'}`}
           aria-expanded={vaultMenuOpen}
         >
           <span className="vault-icon" aria-hidden="true"><Gem size={15} /></span>
           <span className="vault-name-copy">
-            <span className="vault-name-text">{activeVault?.name || 'Cascade'}</span>
+            <span className="vault-name-text">{activeVault?.name || 'Fizzer'}</span>
             <span className="vault-name-meta">
               {activeVault
                 ? isSharedVault(activeVault)

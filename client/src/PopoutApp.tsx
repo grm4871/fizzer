@@ -36,7 +36,7 @@ export function PopoutApp({ descriptor }: { descriptor: Tab }) {
   const [error, setError] = useState<string | null>(null);
   const title = descriptor.title;
 
-  useEffect(() => { document.title = title || 'Cascade'; }, [title]);
+  useEffect(() => { document.title = title || 'Fizzer'; }, [title]);
 
   useEffect(() => {
     if (descriptor.type !== 'note') return;

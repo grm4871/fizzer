@@ -2709,7 +2709,7 @@ export default function App() {
       setNotice(`${data.feedTitle}: ${title}`);
       if (!('Notification' in window)) return;
       const show = () => {
-        const n = new Notification(data.feedTitle || 'Cascade feed update', { body: title });
+        const n = new Notification(data.feedTitle || 'Fizzer feed update', { body: title });
         n.onclick = () => { window.focus(); openNote(data.noteId); };
       };
       if (Notification.permission === 'granted') show();
@@ -3392,9 +3392,9 @@ export default function App() {
     return (
       <main className="auth-shell">
         <form className="auth-panel" id="auth-panel" onSubmit={submitAuth}>
-          <div className="auth-brand" aria-label="Cascade Notes">
+          <div className="auth-brand" aria-label="Fizzer">
             <Gem size={24} aria-hidden="true" />
-            <h1>Cascade</h1>
+            <h1>Fizzer</h1>
           </div>
           <div className="auth-decal" aria-hidden="true" />
           {authMode === 'reset' ? (
@@ -3424,8 +3424,8 @@ export default function App() {
           <p className="auth-desktop-note">
             {inDesktopApp
               ? 'This desktop app can run your local agents after you sign in.'
-              : 'Cascade agents run on your own desktop app. You can join this invite here, then open it in Cascade desktop to run agents.'}
-            {!inDesktopApp && <> <a href="/download">Get Cascade desktop</a></>}
+              : 'Fizzer agents run on your own desktop app. You can join this invite here, then open it in Fizzer desktop to run agents.'}
+            {!inDesktopApp && <> <a href="/download">Get Fizzer desktop</a></>}
           </p>
           {authNotice && <div className="auth-notice">{authNotice}</div>}
           {authError && <div className="error">{authError}</div>}
@@ -3589,7 +3589,7 @@ export default function App() {
               <a
                 className="workspace-desktop-action"
                 href="/download"
-                title="Run local agents with Cascade desktop"
+                title="Run local agents with Fizzer desktop"
                 aria-label="Get desktop"
               >
                 <Download size={13} aria-hidden="true" />
