@@ -5102,6 +5102,39 @@ button.chat-avatar.is-clickable:focus-visible {
   opacity: 0.45;
   cursor: not-allowed;
 }
+.chat-emoji-picker-wrap {
+  position: relative;
+  display: flex;
+}
+.chat-emoji-picker {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 40;
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 2px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-md);
+}
+.chat-emoji-option {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  cursor: pointer;
+  font-size: 1.125rem;
+  line-height: 1;
+}
+.chat-emoji-option:hover {
+  background: var(--bg-overlay);
+}
 /* Send is the primary action — it lights up amber the moment there's something
    to send, and stays a neutral console key when there isn't. */
 .chat-composer .chat-send-btn:not(:disabled) {
