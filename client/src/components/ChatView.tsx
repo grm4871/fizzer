@@ -28,7 +28,7 @@ import { ReportDialog } from './ReportDialog';
 import { hasRunActivity } from '../chat/harnessActivity';
 import { isSteeringContinuationMessage, segmentTranscript } from '../chat/workTrace';
 import { useChannelMessages } from '../chat/messageStore';
-import { chatMediaLink } from '../mediaLinks';
+import { chatMediaLink, youtubeVideoId, YOUTUBE_EMBED_PLAY_EVENT, type YouTubeEmbedPlayDetail } from '../mediaLinks';
 
 export const CHAT_NOTE_MARKER = 'cascade://chat-channel';
 export const CHAT_MEDIA_LIMIT = 8;
@@ -689,11 +689,43 @@ const STREAM_BODY_PAINT_MS = 120;
 
 export function ChatMediaEmbed({ href, label }: { href: string; label: ReactNode }) {
   const media = chatMediaLink(href);
+  const frameRef = useRef<HTMLIFrameElement>(null);
+  const youtubeInfoRef = useRef({ currentTime: 0, title: 'YouTube video' });
+  useEffect(() => {
+    if (media?.provider !== 'youtube') return;
+    const frameWindow = frameRef.current?.contentWindow;
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== 'https://www.youtube.com' || event.source !== frameWindow) return;
+      let payload: { event?: string; info?: number | { currentTime?: number; videoData?: { title?: string } } } = {};
+      try { payload = typeof event.data === 'string' ? JSON.parse(event.data) : event.data; } catch { return; }
+      if (payload.event === 'infoDelivery' && typeof payload.info === 'object') {
+        if (Number.isFinite(payload.info.currentTime)) youtubeInfoRef.current.currentTime = payload.info.currentTime || 0;
+        const title = payload.info.videoData?.title?.trim();
+        if (title) youtubeInfoRef.current.title = title;
+      }
+      if (payload.event === 'onStateChange' && payload.info === 1) {
+        frameWindow?.postMessage(JSON.stringify({ event: 'command', func: 'mute', args: [] }), '*');
+        const videoId = youtubeVideoId(href);
+        if (!videoId) return;
+        window.dispatchEvent(new CustomEvent<YouTubeEmbedPlayDetail>(YOUTUBE_EMBED_PLAY_EVENT, {
+          detail: {
+            videoId,
+            url: href,
+            title: youtubeInfoRef.current.title,
+            currentTime: youtubeInfoRef.current.currentTime,
+          },
+        }));
+      }
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [href, media?.provider]);
   if (!media) return <a href={href} target="_blank" rel="noopener noreferrer">{label}</a>;
   return (
     <span className={`chat-media-embed is-${media.aspect}`}>
       <a href={href} target="_blank" rel="noopener noreferrer">{label}</a>
       <iframe
+        ref={frameRef}
         src={media.embedUrl}
         title={media.title}
         loading="lazy"
@@ -701,6 +733,12 @@ export function ChatMediaEmbed({ href, label }: { href: string; label: ReactNode
         referrerPolicy="strict-origin-when-cross-origin"
         allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
         allowFullScreen
+        onLoad={() => {
+          if (media.provider !== 'youtube') return;
+          const player = frameRef.current?.contentWindow;
+          player?.postMessage(JSON.stringify({ event: 'listening' }), '*');
+          player?.postMessage(JSON.stringify({ event: 'command', func: 'addEventListener', args: ['onStateChange'] }), '*');
+        }}
       />
     </span>
   );

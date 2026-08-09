@@ -21,7 +21,7 @@ import { memo, useState, useMemo, useEffect, useRef } from 'react';
 import { isSharedVault, type CommunityUpdates, type Vault, type Folder, type NoteSummary, type User } from '../api';
 import { NOTE_DND_TYPE, noteEmbedMarkdown } from '../docEmbeds';
 import { usePopupMenu } from '../ui/popupMenu';
-import { youtubeVideoId } from '../mediaLinks';
+import { youtubeVideoId, YOUTUBE_EMBED_PLAY_EVENT, type YouTubeEmbedPlayDetail } from '../mediaLinks';
 import { CHAT_NOTE_MARKER } from './ChatView';
 import {
   Folder as FolderIcon, FolderOpen, FileText, Pin, Gem, Edit2, FolderPlus,
@@ -177,6 +177,7 @@ export const Sidebar = memo(function Sidebar({
   const audioRef = useRef<HTMLAudioElement>(null);
   const youtubeRef = useRef<HTMLIFrameElement>(null);
   const autoplayAudioRef = useRef(false);
+  const youtubeStartTimeRef = useRef(0);
   // Drop target highlight: a folder id, or ROOT_DROP_ID for the root area.
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const [dropHint, setDropHint] = useState<{ id: string; placement: DropPlacement } | null>(null);
@@ -313,6 +314,25 @@ export const Sidebar = memo(function Sidebar({
       void audio.play().catch(() => setAudioPlaying(false));
     }
   }, [audioTrackIndex, audioTracks]);
+
+  useEffect(() => {
+    const onEmbedPlay = (event: Event) => {
+      const detail = (event as CustomEvent<YouTubeEmbedPlayDetail>).detail;
+      if (!detail?.videoId) return;
+      audioRef.current?.pause();
+      autoplayAudioRef.current = true;
+      youtubeStartTimeRef.current = Math.max(0, detail.currentTime || 0);
+      setAudioTrackIndex(0);
+      setAudioTracks([{
+        kind: 'youtube',
+        name: detail.title || 'YouTube video',
+        url: detail.url,
+        videoId: detail.videoId,
+      }]);
+    };
+    window.addEventListener(YOUTUBE_EMBED_PLAY_EVENT, onEmbedPlay);
+    return () => window.removeEventListener(YOUTUBE_EMBED_PLAY_EVENT, onEmbedPlay);
+  }, []);
 
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
@@ -943,6 +963,9 @@ export const Sidebar = memo(function Sidebar({
               player?.postMessage(JSON.stringify({ event: 'listening' }), '*');
               player?.postMessage(JSON.stringify({ event: 'command', func: 'addEventListener', args: ['onStateChange'] }), '*');
               if (autoplayAudioRef.current) {
+                if (youtubeStartTimeRef.current > 0) {
+                  player?.postMessage(JSON.stringify({ event: 'command', func: 'seekTo', args: [youtubeStartTimeRef.current, true] }), '*');
+                }
                 player?.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: [] }), '*');
               }
             }}

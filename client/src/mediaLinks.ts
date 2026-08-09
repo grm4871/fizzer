@@ -14,6 +14,15 @@ export function youtubeVideoId(href: string) {
   }
 }
 
+export const YOUTUBE_EMBED_PLAY_EVENT = 'cascade:youtube-embed-play';
+
+export type YouTubeEmbedPlayDetail = {
+  videoId: string;
+  url: string;
+  title: string;
+  currentTime: number;
+};
+
 export type ChatMediaLink =
   | { provider: 'youtube'; embedUrl: string; title: string; aspect: 'video' }
   | { provider: 'twitter'; embedUrl: string; title: string; aspect: 'social' }
@@ -27,7 +36,7 @@ export function chatMediaLink(href: string): ChatMediaLink | null {
   if (youtubeId) {
     return {
       provider: 'youtube',
-      embedUrl: `https://www.youtube.com/embed/${youtubeId}?playsinline=1&rel=0`,
+      embedUrl: `https://www.youtube.com/embed/${youtubeId}?enablejsapi=1&playsinline=1&rel=0`,
       title: 'YouTube video',
       aspect: 'video',
     };

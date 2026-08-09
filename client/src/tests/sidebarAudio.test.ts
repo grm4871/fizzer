@@ -58,6 +58,7 @@ describe('ChatMediaEmbed', () => {
     );
     expect(markup).toContain('class="chat-media-embed is-video"');
     expect(markup).toContain('youtube.com/embed/jK-tt-3XJ7c');
+    expect(markup).toContain('enablejsapi=1');
     expect(markup).toContain('allowFullScreen');
   });
 
