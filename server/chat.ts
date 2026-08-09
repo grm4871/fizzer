@@ -1411,6 +1411,22 @@ export function listChatChannelParticipantUsernames(db: Db, sourceVaultId: strin
   `).get(sourceVaultId) as { username: string } | undefined;
   if (sourceOwner?.username) usernames.add(sourceOwner.username);
 
+  // Shared-vault membership is server-like: joining the vault makes the user
+  // a participant in every channel in it, even before they have posted there.
+  try {
+    const vaultMembers = db.prepare(`
+      SELECT DISTINCT u.username
+      FROM vault_members m
+      JOIN users u ON u.id = m.user_id
+      WHERE m.vault_id = ?
+    `).all(sourceVaultId) as Array<{ username: string }>;
+    for (const row of vaultMembers) {
+      if (row.username) usernames.add(row.username);
+    }
+  } catch {
+    // Legacy databases without vault_members still use owner/link membership.
+  }
+
   const linkedOwners = db.prepare(`
     SELECT DISTINCT u.username
     FROM chat_channel_links l

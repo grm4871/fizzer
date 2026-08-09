@@ -9,6 +9,7 @@ import {
   ensureChatSchema,
   getChatMessage,
   linkChatChannel,
+  listChatChannelParticipantUsernames,
   resolveChatAgentRun,
   setChannelCwd,
   setChatAgentAvatar,
@@ -705,6 +706,10 @@ test('shared-channel users can add their own coordinator without controlling ano
         ('vault-1', 1, 'owner'), ('vault-1', 2, 'editor'), ('vault-2', 2, 'owner');
       DELETE FROM chat_channel_links WHERE local_channel_id = 'channel-2';
     `);
+    assert.deepEqual(
+      listChatChannelParticipantUsernames(db, 'vault-1', 'channel-1'),
+      ['guest', 'owner'],
+    );
     const directSharedRun = resolveChatAgentRun(db, 1, 'channel-1', guestCoordinator.id);
     assert.equal(directSharedRun.ownerId, 2);
     assert.equal(directSharedRun.agentVault.id, 'vault-1');
