@@ -1239,7 +1239,15 @@ function rowToMessage(row: ChatMessageRow & { has_harness?: number }, opts?: { d
     ? row.has_harness !== 0
     : Boolean(row.harness_log && row.harness_log.length > 0);
   const blocks = parseJson<ChatBlock[]>(row.blocks_json);
-  const slimBlocks = detail === 'list' && blocks?.length ? slimBlocksForList(blocks) : blocks;
+  // A settled run with a persisted harness can recover its complete trace from
+  // the single-message endpoint when expanded. Shipping its tool blocks in the
+  // channel list duplicates that trace and dominates cold-load payloads.
+  const listCanHydrateTrace = detail === 'list' && status !== 'running' && hasHarnessCol;
+  const responseBlocks = listCanHydrateTrace
+    ? undefined
+    : detail === 'list' && blocks?.length
+      ? slimBlocksForList(blocks)
+      : blocks;
   return {
     id: row.id,
     channelId: row.channel_id,
@@ -1251,7 +1259,7 @@ function rowToMessage(row: ChatMessageRow & { has_harness?: number }, opts?: { d
     ...(row.agent_id ? { agentId: row.agent_id } : {}),
     ...(row.registration_id ? { registrationId: row.registration_id } : {}),
     ...(row.run_id != null ? { runId: row.run_id } : {}),
-    ...(slimBlocks?.length ? { blocks: slimBlocks } : {}),
+    ...(responseBlocks?.length ? { blocks: responseBlocks } : {}),
     // List: never ship multi-hundred-KB harness logs over the wire.
     ...(detail === 'full' && row.harness_log ? { harnessLog: row.harness_log } : {}),
     ...(hasHarnessCol ? { hasHarness: true } : {}),

@@ -6,9 +6,11 @@ import path from 'node:path';
 import Database from 'better-sqlite3';
 import {
   CHAT_NOTE_MARKER,
+  createChatMessage,
   ensureChannelOrchestrationKanban,
   ensureChatSchema,
   getChannelSettings,
+  listChatMessages,
   setChannelKanbanNoteId,
   upsertChatAgentMember,
 } from './chat.js';
@@ -122,6 +124,32 @@ test('optional internal board is unlisted and becomes the pointer', () => {
       ensureChannelOrchestrationKanban(db, 1, 'channel-1', { createInternal: true })?.kanbanNoteId,
       created!.kanbanNoteId,
     );
+  } finally {
+    db.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('channel lists omit settled run blocks that hydrate on expansion', () => {
+  const { db, root } = setup();
+  try {
+    const blocks = [
+      { type: 'thinking' as const, text: 'reasoning '.repeat(1_000) },
+      { type: 'tool_use' as const, id: 'tool-1', name: 'Bash', input: { command: 'x'.repeat(20_000) } },
+      { type: 'tool_result' as const, toolUseId: 'tool-1', content: 'output '.repeat(2_000) },
+    ];
+    createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: 'settled-run', channelId: 'channel-1', author: 'Sol', agentId: 'codex',
+      body: 'Done.', createdAt: new Date().toISOString(), blocks, harnessLog: 'full trace',
+    });
+
+    const [listed] = listChatMessages(db, 'channel-1', 1, { detail: 'list', limit: 10 });
+    assert.equal(listed.hasHarness, true);
+    assert.equal(listed.blocks, undefined);
+
+    const [full] = listChatMessages(db, 'channel-1', 1, { detail: 'full', limit: 10 });
+    assert.deepEqual(full.blocks, blocks);
+    assert.equal(full.harnessLog, 'full trace');
   } finally {
     db.close();
     fs.rmSync(root, { recursive: true, force: true });
