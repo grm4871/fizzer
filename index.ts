@@ -760,6 +760,9 @@ vaultNamespace.use(socketAuth);
 vaultNamespace.on('connection', (socket) => {
   const connectedUser = socket.data.user as { id: number };
   socket.join(`user:${connectedUser.id}`);
+  // Presence means the person has Cascade open, not that a particular chat
+  // tab happens to be visible. Refresh each channel they participate in.
+  void emitUserChatPresence(connectedUser.id);
   socket.on('joinVault', (vaultId: string) => {
     const user = socket.data.user as { id: number };
     const vault = getVault(db, vaultId, user.id);
@@ -778,8 +781,8 @@ vaultNamespace.on('connection', (socket) => {
       const tracked = socket.data.chatPresenceChannels as Map<string, string> | undefined
         ?? (socket.data.chatPresenceChannels = new Map<string, string>());
       tracked.set(route.sourceChannelId, route.sourceVaultId);
-      const online = await getOnlineUsernamesForChannel(route.sourceChannelId);
       const participants = listChatChannelParticipantUsernames(db, route.sourceVaultId, route.sourceChannelId);
+      const online = await getOnlineUsernamesForChannel(participants);
       const owner = db.prepare(`
         SELECT u.username FROM vaults v JOIN users u ON u.id = v.created_by WHERE v.id = ?
       `).get(route.sourceVaultId) as { username: string } | undefined;
@@ -813,11 +816,16 @@ vaultNamespace.on('connection', (socket) => {
 
   socket.on('disconnect', async () => {
     const tracked = socket.data.chatPresenceChannels as Map<string, string> | undefined;
-    if (!tracked?.size) return;
-    for (const [sourceChannelId, sourceVaultId] of tracked.entries()) {
-      await emitChatPresence(sourceVaultId, sourceChannelId);
+    if (tracked?.size) {
+      for (const [sourceChannelId, sourceVaultId] of tracked.entries()) {
+        await emitChatPresence(sourceVaultId, sourceChannelId);
+      }
+      tracked.clear();
     }
-    tracked.clear();
+    // A user may have several Cascade windows. Only publish offline after the
+    // final app socket is gone.
+    const remaining = await vaultNamespace.in(`user:${connectedUser.id}`).fetchSockets();
+    if (remaining.length === 0) await emitUserChatPresence(connectedUser.id);
   });
 });
 
@@ -1060,14 +1068,34 @@ function chatPresenceRoom(sourceChannelId: string) {
   return `chat:${sourceChannelId}`;
 }
 
-async function getOnlineUsernamesForChannel(sourceChannelId: string): Promise<string[]> {
-  const sockets = await vaultNamespace.in(chatPresenceRoom(sourceChannelId)).fetchSockets();
+async function getOnlineUsernamesForChannel(participants: string[]): Promise<string[]> {
+  const sockets = await vaultNamespace.fetchSockets();
+  const allowed = new Set(participants);
   const names = new Set<string>();
   for (const socket of sockets) {
     const user = socket.data.user as { username?: string } | undefined;
-    if (user?.username) names.add(user.username);
+    if (user?.username && allowed.has(user.username)) names.add(user.username);
   }
   return Array.from(names).sort((a, b) => a.localeCompare(b));
+}
+
+function listChatPresenceChannelsForUser(userId: number): Array<{ sourceVaultId: string; sourceChannelId: string }> {
+  const rows = db.prepare(`
+    SELECT n.vault_id AS sourceVaultId, n.id AS sourceChannelId
+    FROM notes n JOIN vaults v ON v.id = n.vault_id
+    WHERE v.created_by = ? AND n.content LIKE ?
+    UNION
+    SELECT l.source_vault_id AS sourceVaultId, l.source_channel_id AS sourceChannelId
+    FROM chat_channel_links l JOIN vaults v ON v.id = l.local_vault_id
+    WHERE v.created_by = ?
+  `).all(userId, `${CHAT_NOTE_MARKER}%`, userId) as Array<{ sourceVaultId: string; sourceChannelId: string }>;
+  return rows;
+}
+
+async function emitUserChatPresence(userId: number): Promise<void> {
+  for (const { sourceVaultId, sourceChannelId } of listChatPresenceChannelsForUser(userId)) {
+    await emitChatPresence(sourceVaultId, sourceChannelId);
+  }
 }
 
 function buildChatPresenceProfiles(participantUsernames: string[]) {
@@ -1079,8 +1107,8 @@ function buildChatPresenceProfiles(participantUsernames: string[]) {
 }
 
 async function emitChatPresence(sourceVaultId: string, sourceChannelId: string) {
-  const online = await getOnlineUsernamesForChannel(sourceChannelId);
   const participants = listChatChannelParticipantUsernames(db, sourceVaultId, sourceChannelId);
+  const online = await getOnlineUsernamesForChannel(participants);
   const owner = db.prepare(`
     SELECT u.username FROM vaults v JOIN users u ON u.id = v.created_by WHERE v.id = ?
   `).get(sourceVaultId) as { username: string } | undefined;
@@ -4048,7 +4076,7 @@ app.get('/api/vaults/:vaultId/channels/:channelId/presence', requireAuth, async 
   try {
     const { route } = assertChatChannel(db, req.params.channelId, req.user!.id);
     const participants = listChatChannelParticipants(db, req.params.channelId, req.user!.id);
-    const online = await getOnlineUsernamesForChannel(route.sourceChannelId);
+    const online = await getOnlineUsernamesForChannel(participants);
     const owner = db.prepare(`
       SELECT u.username FROM vaults v JOIN users u ON u.id = v.created_by WHERE v.id = ?
     `).get(route.sourceVaultId) as { username: string } | undefined;

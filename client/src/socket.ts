@@ -38,7 +38,7 @@ type ServerEvents = {
   'vault:chatAgentMemberUpserted': (data: { vaultId: string; channelId: string; registration: ChatAgentMemberPayload }) => void;
   /** A chat channel agent member was removed. */
   'vault:chatAgentMemberRemoved': (data: { vaultId: string; channelId: string; registrationId: string }) => void;
-  /** Online participants for a chat channel (who has the channel open). */
+  /** Online participants for a chat channel (who has Cascade open). */
   'vault:chatPresence': (data: { vaultId: string; channelId: string; participants: string[]; online: string[] }) => void;
 };
 
