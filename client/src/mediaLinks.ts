@@ -14,13 +14,20 @@ export function youtubeVideoId(href: string) {
   }
 }
 
-export const YOUTUBE_EMBED_PLAY_EVENT = 'cascade:youtube-embed-play';
+export const YOUTUBE_EMBED_STATE_EVENT = 'cascade:youtube-embed-state';
+export const YOUTUBE_EMBED_CONTROL_EVENT = 'cascade:youtube-embed-control';
 
-export type YouTubeEmbedPlayDetail = {
+export type YouTubeEmbedStateDetail = {
   videoId: string;
   url: string;
   title: string;
   currentTime: number;
+  state: number;
+};
+
+export type YouTubeEmbedControlDetail = {
+  videoId: string;
+  func: 'playVideo' | 'pauseVideo';
 };
 
 export type ChatMediaLink =

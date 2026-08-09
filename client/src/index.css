@@ -1215,13 +1215,6 @@ button:focus-visible,
   border-top: 1px solid var(--border);
   background: var(--bg-surface);
 }
-.sidebar-youtube-player {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  opacity: 0;
-  pointer-events: none;
-}
 .sidebar-audio-player audio {
   display: none;
 }

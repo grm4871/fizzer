@@ -28,7 +28,14 @@ import { ReportDialog } from './ReportDialog';
 import { hasRunActivity } from '../chat/harnessActivity';
 import { isSteeringContinuationMessage, segmentTranscript } from '../chat/workTrace';
 import { useChannelMessages } from '../chat/messageStore';
-import { chatMediaLink, youtubeVideoId, YOUTUBE_EMBED_PLAY_EVENT, type YouTubeEmbedPlayDetail } from '../mediaLinks';
+import {
+  chatMediaLink,
+  youtubeVideoId,
+  YOUTUBE_EMBED_CONTROL_EVENT,
+  YOUTUBE_EMBED_STATE_EVENT,
+  type YouTubeEmbedControlDetail,
+  type YouTubeEmbedStateDetail,
+} from '../mediaLinks';
 
 export const CHAT_NOTE_MARKER = 'cascade://chat-channel';
 export const CHAT_MEDIA_LIMIT = 8;
@@ -703,22 +710,32 @@ export function ChatMediaEmbed({ href, label }: { href: string; label: ReactNode
         const title = payload.info.videoData?.title?.trim();
         if (title) youtubeInfoRef.current.title = title;
       }
-      if (payload.event === 'onStateChange' && payload.info === 1) {
-        frameWindow?.postMessage(JSON.stringify({ event: 'command', func: 'mute', args: [] }), '*');
+      if (payload.event === 'onStateChange' && typeof payload.info === 'number') {
         const videoId = youtubeVideoId(href);
         if (!videoId) return;
-        window.dispatchEvent(new CustomEvent<YouTubeEmbedPlayDetail>(YOUTUBE_EMBED_PLAY_EVENT, {
+        window.dispatchEvent(new CustomEvent<YouTubeEmbedStateDetail>(YOUTUBE_EMBED_STATE_EVENT, {
           detail: {
             videoId,
             url: href,
             title: youtubeInfoRef.current.title,
             currentTime: youtubeInfoRef.current.currentTime,
+            state: payload.info,
           },
         }));
       }
     };
+    const onControl = (event: Event) => {
+      const detail = (event as CustomEvent<YouTubeEmbedControlDetail>).detail;
+      const videoId = youtubeVideoId(href);
+      if (!videoId || detail?.videoId !== videoId) return;
+      frameWindow?.postMessage(JSON.stringify({ event: 'command', func: detail.func, args: [] }), '*');
+    };
     window.addEventListener('message', onMessage);
-    return () => window.removeEventListener('message', onMessage);
+    window.addEventListener(YOUTUBE_EMBED_CONTROL_EVENT, onControl);
+    return () => {
+      window.removeEventListener('message', onMessage);
+      window.removeEventListener(YOUTUBE_EMBED_CONTROL_EVENT, onControl);
+    };
   }, [href, media?.provider]);
   if (!media) return <a href={href} target="_blank" rel="noopener noreferrer">{label}</a>;
   return (
