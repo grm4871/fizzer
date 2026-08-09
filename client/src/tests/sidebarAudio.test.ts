@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { isMp3Link, youtubeVideoId } from '../components/Sidebar';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { isMp3Link } from '../components/Sidebar';
+import { ChatYouTubeEmbed } from '../components/ChatView';
+import { youtubeVideoId } from '../mediaLinks';
 
 describe('isMp3Link', () => {
   it('recognizes uploaded note assets by their visible filename', () => {
@@ -28,5 +32,16 @@ describe('youtubeVideoId', () => {
   it('rejects lookalike hosts and malformed IDs', () => {
     expect(youtubeVideoId('https://youtube.example/watch?v=jK-tt-3XJ7c')).toBeNull();
     expect(youtubeVideoId('https://youtube.com/watch?v=no')).toBeNull();
+  });
+});
+
+describe('ChatYouTubeEmbed', () => {
+  it('renders YouTube chat links as playable inline embeds', () => {
+    const markup = renderToStaticMarkup(
+      createElement(ChatYouTubeEmbed, { href: 'https://youtu.be/jK-tt-3XJ7c', label: 'Video' }),
+    );
+    expect(markup).toContain('class="chat-youtube-embed"');
+    expect(markup).toContain('youtube.com/embed/jK-tt-3XJ7c');
+    expect(markup).toContain('allowFullScreen');
   });
 });

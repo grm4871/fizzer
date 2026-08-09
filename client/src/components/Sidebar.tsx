@@ -21,11 +21,12 @@ import { memo, useState, useMemo, useEffect, useRef } from 'react';
 import { isSharedVault, type CommunityUpdates, type Vault, type Folder, type NoteSummary, type User } from '../api';
 import { NOTE_DND_TYPE, noteEmbedMarkdown } from '../docEmbeds';
 import { usePopupMenu } from '../ui/popupMenu';
+import { youtubeVideoId } from '../mediaLinks';
 import { CHAT_NOTE_MARKER } from './ChatView';
 import {
   Folder as FolderIcon, FolderOpen, FileText, Pin, Gem, Edit2, FolderPlus,
   Search, ChevronRight, ChevronDown, Check, PanelLeftClose, LogOut, Trash2, FilePlus, FolderInput, Pencil, RefreshCw,
-  Hash, Unlink, ShieldCheck, SkipBack, Play, Pause, SkipForward, Music2, Users, Plus, LogIn, Compass, Mail,
+  Hash, Unlink, ShieldCheck, SkipBack, Play, Pause, SkipForward, Music2, Users, Plus, LogIn, Compass, Mail, X,
 } from 'lucide-react';
 
 /** Switcher label: "Team notes · shared · 3" so shared vaults are obvious. */
@@ -110,25 +111,6 @@ export function isMp3Link(label: string, href: string) {
   return normalizedLabel.endsWith('.mp3')
     || normalizedHref.includes('audio/mpeg')
     || normalizedHref.split(/[?#]/)[0].endsWith('.mp3');
-}
-
-export function youtubeVideoId(href: string) {
-  try {
-    const url = new URL(href, 'http://localhost');
-    const host = url.hostname.toLowerCase().replace(/^www\./, '');
-    let id = '';
-    if (host === 'youtu.be') id = url.pathname.split('/').filter(Boolean)[0] || '';
-    else if (host === 'youtube.com' || host === 'm.youtube.com' || host === 'music.youtube.com') {
-      if (url.pathname === '/watch') id = url.searchParams.get('v') || '';
-      else {
-        const match = url.pathname.match(/^\/(?:embed|shorts|live)\/([^/?#]+)/);
-        id = match?.[1] || '';
-      }
-    }
-    return /^[A-Za-z0-9_-]{6,15}$/.test(id) ? id : null;
-  } catch {
-    return null;
-  }
 }
 
 type MediaTrack =
@@ -271,7 +253,7 @@ export const Sidebar = memo(function Sidebar({
     const mediaTrackFor = (anchor: HTMLAnchorElement): MediaTrack | null => {
       const videoId = youtubeVideoId(anchor.href);
       const label = (anchor.textContent || '').trim();
-      if (videoId) return { kind: 'youtube', name: label || 'YouTube video', url: anchor.href, videoId };
+      if (videoId) return { kind: 'youtube', name: !label || label === anchor.href ? 'YouTube video' : label, url: anchor.href, videoId };
       if (isMp3Link(label, anchor.href)) {
         return { kind: 'audio', name: (label || 'Audio').replace(/\.mp3$/i, ''), url: anchor.href };
       }
@@ -315,7 +297,7 @@ export const Sidebar = memo(function Sidebar({
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
       if (event.origin !== 'https://www.youtube.com' || event.source !== youtubeRef.current?.contentWindow) return;
-      let payload: { event?: string; info?: number } = {};
+      let payload: { event?: string; info?: number | { videoData?: { title?: string } } } = {};
       try { payload = typeof event.data === 'string' ? JSON.parse(event.data) : event.data; } catch { return; }
       if (payload.event === 'onReady' && autoplayAudioRef.current) {
         youtubeRef.current?.contentWindow?.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: [] }), '*');
@@ -323,6 +305,14 @@ export const Sidebar = memo(function Sidebar({
       if (payload.event === 'onStateChange') {
         setAudioPlaying(payload.info === 1);
         if (payload.info === 0) changeAudioTrack(1, true);
+      }
+      if (payload.event === 'infoDelivery' && typeof payload.info === 'object') {
+        const title = payload.info.videoData?.title?.trim();
+        if (title) {
+          setAudioTracks((current) => current.map((track, index) => (
+            index === audioTrackIndex && track.kind === 'youtube' ? { ...track, name: title } : track
+          )));
+        }
       }
     };
     window.addEventListener('message', onMessage);
@@ -902,7 +892,7 @@ export const Sidebar = memo(function Sidebar({
         )}
       </div>
 
-      {audioTracks.length > 0 && <div className={`sidebar-audio-player${audioTracks[audioTrackIndex]?.kind === 'youtube' ? ' has-youtube' : ''}`}>
+      {audioTracks.length > 0 && <div className="sidebar-audio-player">
         <audio
           ref={audioRef}
           src={audioTracks[audioTrackIndex]?.kind === 'audio' ? audioTracks[audioTrackIndex].url : undefined}
@@ -943,6 +933,20 @@ export const Sidebar = memo(function Sidebar({
           </button>
           <button className="btn-icon" disabled={audioTracks.length === 0} onClick={() => changeAudioTrack(1)} title="Next track">
             <SkipForward size={15} fill="currentColor" />
+          </button>
+          <button
+            className="btn-icon"
+            onClick={() => {
+              audioRef.current?.pause();
+              youtubeRef.current?.contentWindow?.postMessage(JSON.stringify({ event: 'command', func: 'stopVideo', args: [] }), '*');
+              setAudioPlaying(false);
+              setAudioTracks([]);
+              setAudioTrackIndex(0);
+            }}
+            title="Close player"
+            aria-label="Close player"
+          >
+            <X size={15} />
           </button>
         </div>
       </div>}

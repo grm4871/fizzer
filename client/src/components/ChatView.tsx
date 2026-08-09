@@ -26,6 +26,7 @@ import { ReportDialog } from './ReportDialog';
 import { hasRunActivity } from '../chat/harnessActivity';
 import { isSteeringContinuationMessage, segmentTranscript } from '../chat/workTrace';
 import { useChannelMessages } from '../chat/messageStore';
+import { youtubeVideoId } from '../mediaLinks';
 
 export const CHAT_NOTE_MARKER = 'cascade://chat-channel';
 export const CHAT_MEDIA_LIMIT = 8;
@@ -684,6 +685,22 @@ function aliasesEqual(a: string[], b: string[]) {
 // second instead of per token; the final settle always flushes the exact body.
 const STREAM_BODY_PAINT_MS = 120;
 
+export function ChatYouTubeEmbed({ href, label }: { href: string; label: ReactNode }) {
+  const videoId = youtubeVideoId(href);
+  if (!videoId) return <a href={href} target="_blank" rel="noreferrer">{label}</a>;
+  return (
+    <span className="chat-youtube-embed">
+      <a href={href}>{label}</a>
+      <iframe
+        src={`https://www.youtube.com/embed/${videoId}?playsinline=1&rel=0`}
+        title="YouTube video"
+        allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture"
+        allowFullScreen
+      />
+    </span>
+  );
+}
+
 function useThrottledStreamBody(body: string, streaming: boolean): string {
   const [paintBody, setPaintBody] = useState(body);
   const lastPaintRef = useRef(0);
@@ -836,6 +853,9 @@ const ChatMessageText = memo(function ChatMessageText({
   }, [paintBody]);
 
   const components = useMemo(() => ({
+    a: ({ href = '', children }: { href?: string; children?: ReactNode }) => (
+      <ChatYouTubeEmbed href={href} label={children} />
+    ),
     p: ({ children }: { children?: ReactNode }) => <p>{withInlineMarkup(children)}</p>,
     li: ({ children }: { children?: ReactNode }) => <li>{withInlineMarkup(children)}</li>,
     td: ({ children }: { children?: ReactNode }) => <td>{withInlineMarkup(children)}</td>,

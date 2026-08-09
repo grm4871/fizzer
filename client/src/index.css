@@ -1351,15 +1351,12 @@ button:focus-visible,
   border-top: 1px solid var(--border);
   background: var(--bg-surface);
 }
-.sidebar-audio-player.has-youtube {
-  flex-wrap: wrap;
-}
 .sidebar-youtube-player {
-  width: 100%;
-  aspect-ratio: 16 / 9;
-  border: 0;
-  border-radius: 6px;
-  background: #000;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
 }
 .sidebar-audio-player audio {
   display: none;
@@ -1402,6 +1399,23 @@ button:focus-visible,
 }
 .sidebar-audio-play {
   color: var(--accent);
+}
+.chat-youtube-embed {
+  display: block;
+  margin: 8px 0;
+  max-width: 640px;
+}
+.chat-youtube-embed > a {
+  display: inline-block;
+  margin-bottom: 6px;
+}
+.chat-youtube-embed > iframe {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border: 0;
+  border-radius: 8px;
+  background: #000;
 }
 .sidebar-footer {
   display: flex;
