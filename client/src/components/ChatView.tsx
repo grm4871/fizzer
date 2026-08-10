@@ -1501,15 +1501,23 @@ function ChatMissionCard({
       className={`chat-mission-card is-${mission.status}${live ? ' is-live' : ''}${open ? ' is-open' : ''}`}
       data-open={open ? 'true' : 'false'}
       data-message-id={replyMessage?.id}
+      role="button"
+      tabIndex={0}
+      aria-expanded={open}
+      onClick={() => setOpen((value) => !value)}
+      onKeyDown={(event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        setOpen((value) => !value);
+      }}
       onContextMenu={openMissionContextMenu}
     >
       <div className="chat-mission-head">
         <button
           type="button"
           className="chat-mission-toggle"
-          onClick={() => setOpen((value) => !value)}
+          tabIndex={-1}
           onContextMenu={openMissionContextMenu}
-          aria-expanded={open}
         >
           {live
             ? <ThinkingSpinner className="chat-mission-whirl" title="Mission working" />
@@ -1523,7 +1531,11 @@ function ChatMissionCard({
           <button
             type="button"
             className="chat-mission-stop"
-            onClick={() => void stopMission()}
+            tabIndex={-1}
+            onClick={(event) => {
+              event.stopPropagation();
+              void stopMission();
+            }}
             onContextMenu={openMissionContextMenu}
             disabled={stopping}
             title="Stop mission"
@@ -1536,9 +1548,8 @@ function ChatMissionCard({
           <button
             type="button"
             className={`chat-mission-peek${peekLive ? ' is-live' : ''}`}
-            onClick={() => setOpen((value) => !value)}
+            tabIndex={-1}
             onContextMenu={openMissionContextMenu}
-            aria-expanded={false}
             aria-label={`Mission activity: ${peekAuthor ? `${peekAuthor} — ` : ''}${peekLabel}`}
           >
             {/* Empty gutter matches the status-dot column; header owns the spinner. */}
