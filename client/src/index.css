@@ -4371,20 +4371,6 @@ button.chat-avatar.is-clickable:focus-visible {
   color: var(--text-secondary);
   font-size: 0.75rem;
 }
-.chat-relationship-chip {
-  flex: 0 0 auto;
-  padding: 1px 5px;
-  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--border));
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-  color: var(--accent-hover, var(--accent));
-  font-size: 0.625rem;
-  font-style: normal;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  line-height: 1.35;
-  text-transform: uppercase;
-}
 .chat-reply-quote span,
 .chat-forward-preview span {
   min-width: 0;

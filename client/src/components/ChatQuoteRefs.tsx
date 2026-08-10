@@ -1,6 +1,5 @@
 import { Forward, Reply } from 'lucide-react';
 import type { ChatMessage } from './ChatView';
-import { CHAT_RELATIONSHIP_LABELS } from '../chat/relationships';
 
 /**
  * Renders the reply/forward provenance quotes for a chat message.
@@ -34,9 +33,6 @@ export function ChatQuoteRefs({ message, onJumpToMessage, canJumpToReply = false
             }}
           >
             <Reply size={12} />
-            {message.replyTo.relationship && (
-              <em className="chat-relationship-chip">{CHAT_RELATIONSHIP_LABELS[message.replyTo.relationship]}</em>
-            )}
             <strong>{message.replyTo.author}</strong>
             <span>{message.replyTo.preview}</span>
           </button>
@@ -46,9 +42,6 @@ export function ChatQuoteRefs({ message, onJumpToMessage, canJumpToReply = false
             title={replyId ? 'The quoted message is not loaded in this view' : undefined}
           >
             <Reply size={12} />
-            {message.replyTo.relationship && (
-              <em className="chat-relationship-chip">{CHAT_RELATIONSHIP_LABELS[message.replyTo.relationship]}</em>
-            )}
             <strong>{message.replyTo.author}</strong>
             <span>{message.replyTo.preview}</span>
           </div>
