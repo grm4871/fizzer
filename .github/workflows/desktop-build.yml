@@ -80,6 +80,10 @@ jobs:
     name: Publish technical-beta installers
     needs: build
     runs-on: ubuntu-latest
+    # This job consumes artifacts without checking out the repository, so gh
+    # cannot infer its target from a local Git remote.
+    env:
+      GH_REPO: ${{ github.repository }}
     permissions:
       contents: write
     steps:
