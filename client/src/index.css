@@ -2002,6 +2002,11 @@ button:focus-visible,
   background: var(--bg-raised);
   color: var(--text-primary);
 }
+/* The tab strip owns the desktop sidebar control.  Keep the toolbar control
+   for touch layouts, where the tab-strip control is intentionally hidden. */
+#sidebar-expand-btn {
+  display: none;
+}
 .tab-item {
   display: flex;
   align-items: center;
@@ -7077,6 +7082,7 @@ button.chat-avatar.is-clickable:focus-visible {
     min-width: 36px;
   }
     #sidebar-expand-btn {
+    display: inline-flex;
     width: 48px;
     height: 48px;
     min-width: 48px;
