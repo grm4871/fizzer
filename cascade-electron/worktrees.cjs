@@ -499,9 +499,15 @@ async function removeWorkspace({ dir, force } = {}) {
  * untouched for `maxAgeMs`, which keeps an idle-but-live task's checkout.
  * Registry rows whose directory has already vanished are simply forgotten.
  *
- * @param {{ maxAgeMs?: number, keepPaths?: string[], dryRun?: boolean }} [opts]
+ * `force` is the deliberate exception: it passes force through to
+ * `removeWorkspace`, so dirty and unpushed workspaces go too. Only ever pass it
+ * on an explicit human instruction — `git worktree remove` leaves the branch
+ * refs behind, so the commits survive in the primary repo, but uncommitted
+ * edits do not.
+ *
+ * @param {{ maxAgeMs?: number, keepPaths?: string[], dryRun?: boolean, force?: boolean }} [opts]
  */
-async function pruneWorkspaces({ maxAgeMs = WORKSPACE_MAX_IDLE_MS, keepPaths = [], dryRun = false } = {}) {
+async function pruneWorkspaces({ maxAgeMs = WORKSPACE_MAX_IDLE_MS, keepPaths = [], dryRun = false, force = false } = {}) {
   const keep = new Set((keepPaths || []).map((entry) => path.resolve(expandHome(String(entry || '')))).filter(Boolean));
   const cutoff = Date.now() - Math.max(0, Number(maxAgeMs) || 0);
   const removed = [];
@@ -535,16 +541,18 @@ async function pruneWorkspaces({ maxAgeMs = WORKSPACE_MAX_IDLE_MS, keepPaths = [
       const status = await workspaceStatus(target);
       const blocked = !status.ok
         ? status.error
-        : status.dirty
-          ? `${status.changedFiles.length} uncommitted change(s)`
-          : status.unpushed > 0
-            ? `${status.unpushed} unpushed commit(s)`
-            : '';
+        : force
+          ? ''
+          : status.dirty
+            ? `${status.changedFiles.length} uncommitted change(s)`
+            : status.unpushed > 0
+              ? `${status.unpushed} unpushed commit(s)`
+              : '';
       if (blocked) kept.push({ path: target, reason: blocked });
       else removed.push({ path: target, branch: status.branch });
       continue;
     }
-    const result = await removeWorkspace({ dir: target });
+    const result = await removeWorkspace({ dir: target, force });
     if (result.ok) removed.push({ path: result.path, branch: result.branch });
     else kept.push({ path: target, reason: result.error || 'refused' });
   }

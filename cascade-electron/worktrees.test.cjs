@@ -268,3 +268,33 @@ test('prune keeps a workspace that is currently in use and forgets vanished rows
   assert.equal(pruned.kept.find((entry) => entry.path === busy.path).reason, 'in use');
   assert.ok(pruned.forgotten.includes(gone.path));
 });
+
+test('prune with force clears dirty and unpushed workspaces but keeps their branches', async () => {
+  const repo = makeRepo('prune-force');
+  const dirty = await wt.createWorkspace({ dir: repo, slug: 'force-dirty' });
+  const unpushed = await wt.createWorkspace({ dir: repo, slug: 'force-unpushed' });
+
+  fs.writeFileSync(path.join(dirty.path, 'scratch.txt'), 'work in progress\n');
+  fs.writeFileSync(path.join(unpushed.path, 'README.md'), '# local only\n');
+  execFileSync('git', ['add', '.'], { cwd: unpushed.path });
+  execFileSync('git', ['commit', '-m', 'local only'], { cwd: unpushed.path });
+  const kept = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: unpushed.path }).toString().trim();
+
+  for (const dir of [dirty.path, unpushed.path]) ageWorkspace(dir, 30 * 24 * 60 * 60 * 1000);
+
+  // Without force both refuse.
+  const refused = await wt.pruneWorkspaces({ maxAgeMs: 24 * 60 * 60 * 1000, dryRun: true });
+  const refusedMine = refused.kept.filter((e) => [dirty.path, unpushed.path].includes(e.path));
+  assert.equal(refusedMine.length, 2);
+
+  const pruned = await wt.pruneWorkspaces({ maxAgeMs: 24 * 60 * 60 * 1000, force: true });
+  const removedPaths = pruned.removed.map((e) => e.path);
+  assert.ok(removedPaths.includes(dirty.path));
+  assert.ok(removedPaths.includes(unpushed.path));
+  assert.equal(fs.existsSync(dirty.path), false);
+  assert.equal(fs.existsSync(unpushed.path), false);
+
+  // The checkout is gone; the commit is still reachable in the primary repo.
+  const stillThere = execFileSync('git', ['rev-parse', 'cascade/force-unpushed'], { cwd: repo }).toString().trim();
+  assert.equal(stillThere, kept);
+});
