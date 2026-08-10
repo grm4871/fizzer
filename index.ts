@@ -15,6 +15,7 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
+import compression from 'compression';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import Database from 'better-sqlite3';
@@ -172,6 +173,7 @@ import {
 import { fetchWidgetData } from './server/widgetData.js';
 import { corsOrigin, rateLimit, resolveDeploySecret, resolveJwtSecret } from './server/security.js';
 import { ensureAndroidBatterySchema, listAndroidBatterySamples, parseAndroidBatterySample, recordAndroidBatterySample } from './server/androidBattery.js';
+import { clientAssetCacheControl } from './server/staticAssets.js';
 import {
   assertChatChannel,
   agentChatContentFromAccumulator,
@@ -206,6 +208,7 @@ import {
   deleteVaultAgent,
   getVaultAgent,
   addVaultAgentToChannel,
+  ensureVaultWideAgents,
   upsertChatAgentMember,
   setChatAgentAvatar,
   removeChatAgentMember,
@@ -575,6 +578,9 @@ rebuildSearchIndexes(db);
 
 const app = express();
 const corsOriginOption = corsOrigin();
+// The production nginx layer proxies application responses as-is. Compress at
+// this boundary so text bundles and JSON do not cross the network byte-for-byte.
+app.use(compression());
 app.use(cors({ origin: corsOriginOption, credentials: true }));
 // Media attachments are base64 in JSON; 8MB files expand to ~10.7MB.
 app.use(express.json({ limit: '12mb' }));
@@ -2791,19 +2797,8 @@ app.get('/api/vaults/:vaultId/vault-agents', requireAuth, (req: AuthedRequest, r
   }
 });
 
-function ensureVaultWideAgents(vaultId: string, channelId: string, userId: number) {
-  // listVaultAgents is the roster visible in this vault. An owned agent may
-  // have been created from another vault, so its historical vault_id is not a
-  // membership boundary. Project every visible roster entry into every chat.
-  const agents = listVaultAgents(db, userId, vaultId);
-  for (const agent of agents) {
-    try {
-      addVaultAgentToChannel(db, userId, vaultId, channelId, agent.id);
-    } catch (error) {
-      console.warn('vault-wide agent sync skipped:', error instanceof Error ? error.message : error);
-    }
-  }
-}
+// Re-exported implementation lives in server/chat.ts — keeps sibling-channel
+// projection and ownership fallbacks unit-testable without the Express layer.
 
 app.put('/api/vaults/:vaultId/vault-agents', requireAuth, (req: AuthedRequest, res) => {
   try {
@@ -2817,7 +2812,7 @@ app.put('/api/vaults/:vaultId/vault-agents', requireAuth, (req: AuthedRequest, r
     const channels = db.prepare(`
       SELECT id FROM notes WHERE vault_id = ? AND trim(content) LIKE ?
     `).all(req.params.vaultId, `${CHAT_NOTE_MARKER}%`) as Array<{ id: string }>;
-    for (const channel of channels) ensureVaultWideAgents(req.params.vaultId, channel.id, req.user!.id);
+    for (const channel of channels) ensureVaultWideAgents(db, req.params.vaultId, channel.id, req.user!.id);
     emitVaultEvent(req.params.vaultId, 'vault:vaultAgentUpserted', { agent });
     res.json({ agent });
   } catch (err) {
@@ -3633,7 +3628,7 @@ app.get('/api/vaults/:vaultId/channels/:channelId/messages/:messageId/embeds', r
 app.post('/api/vaults/:vaultId/channels/:channelId/messages', requireAuth, (req: AuthedRequest, res) => {
   try {
     const { route } = assertChatChannel(db, req.params.channelId, req.user!.id);
-    ensureVaultWideAgents(req.params.vaultId, req.params.channelId, req.user!.id);
+    ensureVaultWideAgents(db, req.params.vaultId, req.params.channelId, req.user!.id);
     assertDirectMessageSendAllowed(db, route.sourceChannelId, req.user!.id);
     const input = isAgentRequest(req) ? req.body : { ...req.body, author: req.user!.username, agentId: undefined, registrationId: undefined };
     const message = createChatMessage(db, req.user!.id, req.params.vaultId, req.params.channelId, input);
@@ -4090,7 +4085,7 @@ app.post('/api/vaults/:vaultId/channels/:channelId/messages/:messageId/clarifica
 
 app.get('/api/vaults/:vaultId/channels/:channelId/agents', requireAuth, (req: AuthedRequest, res) => {
   try {
-    ensureVaultWideAgents(req.params.vaultId, req.params.channelId, req.user!.id);
+    ensureVaultWideAgents(db, req.params.vaultId, req.params.channelId, req.user!.id);
     const agents = listChatAgentMembers(db, req.params.channelId, req.user!.id);
     res.json({ agents });
   } catch {
@@ -4677,7 +4672,13 @@ if (fs.existsSync(CLIENT_APP_HTML)) {
   });
   // index:false so the SPA's index.html isn't auto-served at '/', letting the
   // landing route above own the root.
-  app.use(express.static(CLIENT_DIST_DIR, { index: false }));
+  app.use(express.static(CLIENT_DIST_DIR, {
+    index: false,
+    setHeaders: (res, filePath) => {
+      const cacheControl = clientAssetCacheControl(filePath);
+      if (cacheControl) res.setHeader('Cache-Control', cacheControl);
+    },
+  }));
   app.get('*', (req, res, next) => {
     if (
       req.path.startsWith('/api/')

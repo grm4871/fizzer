@@ -14,35 +14,56 @@ import {
 const NoteEditor = lazy(() =>
   import('./components/NoteEditor').then((m) => ({ default: m.NoteEditor })),
 );
+const ChatView = lazy(() =>
+  import('./components/ChatView').then((m) => ({ default: m.ChatView })),
+);
+const SearchOverlay = lazy(() =>
+  import('./components/SearchOverlay').then((m) => ({ default: m.SearchOverlay })),
+);
+const CommandPalette = lazy(() =>
+  import('./components/CommandPalette').then((m) => ({ default: m.CommandPalette })),
+);
+const AdminPanel = lazy(() =>
+  import('./components/AdminPanel').then((m) => ({ default: m.AdminPanel })),
+);
+const SessionManager = lazy(() =>
+  import('./components/SessionManager').then((m) => ({ default: m.SessionManager })),
+);
+const SuperkanbanView = lazy(() =>
+  import('./components/SuperkanbanView').then((m) => ({ default: m.SuperkanbanView })),
+);
+const AccountSettings = lazy(() =>
+  import('./components/AccountSettings').then((m) => ({ default: m.AccountSettings })),
+);
+const DiscoveryDmsModal = lazy(() =>
+  import('./components/DiscoveryDmsModal').then((m) => ({ default: m.DiscoveryDmsModal })),
+);
+const UpdatesModal = lazy(() =>
+  import('./components/UpdatesModal').then((m) => ({ default: m.UpdatesModal })),
+);
+import type {
+  ChatAgentRegistration,
+  ChatBlock,
+  ChatChannelPresence,
+  ChatMediaAttachment,
+  ChatMessage,
+  ChatReplyRef,
+  DesktopRunnerHealth,
+  SharedChatNote,
+  VaultAgent,
+} from './components/ChatView';
 import {
   canMergeChatMessages,
   CHAT_NOTE_MARKER,
-  ChatView,
   createChatAgentRegistrationId,
   dataUrlsToRunImages,
   mediaToRunImages,
   mergeChatPresence,
-  type ChatAgentRegistration,
-  type ChatBlock,
-  type ChatChannelPresence,
-  type ChatMediaAttachment,
-  type ChatMessage,
-  type ChatReplyRef,
-  type DesktopRunnerHealth,
-  type SharedChatNote,
-  type VaultAgent,
-} from './components/ChatView';
-import { SearchOverlay } from './components/SearchOverlay';
-import { CommandPalette } from './components/CommandPalette';
-import { AdminPanel } from './components/AdminPanel';
-import { SessionManager } from './components/SessionManager';
+} from './chat/shared';
 import { NewsTicker } from './components/NewsTicker';
 import { PaneGrid, type TabDragPayload } from './components/PaneGrid';
-import { SuperkanbanView } from './components/SuperkanbanView';
 import type { WorkItem } from './chat/workItems';
-import { AccountSettings } from './components/AccountSettings';
-import { DiscoveryDmsModal, type DiscoveryTab } from './components/DiscoveryDmsModal';
-import { UpdatesModal } from './components/UpdatesModal';
+import type { DiscoveryTab } from './components/DiscoveryDmsModal';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import * as Layout from './layout/tree';
 import type { LayoutNode } from './layout/tree';
@@ -692,7 +713,17 @@ export default function App() {
     noteList: NoteSummary[],
     opts?: { channelIds?: string[] },
   ) => {
-    const finalIds = resolveChatChannelIds(noteList, opts?.channelIds);
+    // Always include every chat note in the vault — not just open tabs.
+    // Per-channel membership is the sticky source of "different agent counts";
+    // the server projects the vault-wide roster on each GET, so we must hit
+    // every channel or unopened rooms stay stale.
+    const allChatIds = noteList
+      .filter((note) => note.content_preview.trim().startsWith(CHAT_NOTE_MARKER))
+      .map((note) => note.id);
+    const finalIds = [...new Set([
+      ...resolveChatChannelIds(noteList, opts?.channelIds),
+      ...allChatIds,
+    ])];
     if (finalIds.length === 0) return;
 
     const legacyAgents = readLegacyLocalChatAgentMembers();
@@ -1481,9 +1512,11 @@ export default function App() {
           }));
         }
         void loadVaultAgents(vaultId);
+        // Re-project vault-wide so every room picks up the new member.
+        void loadChatAgentMembers(vaultId, notesRef.current);
       });
     }
-  }, [persistChatAgentMemberToServer, loadVaultAgents]);
+  }, [persistChatAgentMemberToServer, loadVaultAgents, loadChatAgentMembers]);
 
   const handleRemoveChatAgent = useCallback((channelId: string, registrationId: string) => {
     setChatState((prev) => ({
@@ -1534,8 +1567,11 @@ export default function App() {
       }
       return { ...prev, registeredAgentsByChannel: next };
     });
+    // PUT vault-agents projects into every channel server-side; refresh client
+    // maps so no room keeps a stale shorter roster.
+    void loadChatAgentMembers(vaultId, notesRef.current);
     return agent;
-  }, []);
+  }, [loadChatAgentMembers]);
 
   const handleDeleteVaultAgent = useCallback(async (vaultAgentId: string) => {
     const vaultId = activeVaultIdRef.current;
@@ -1573,7 +1609,10 @@ export default function App() {
       },
     }));
     void loadVaultAgents(vaultId);
-  }, [loadVaultAgents]);
+    // from-vault only seats the agent on one channel; reload all rooms so the
+    // vault-wide projection (server ensure) lands in client state everywhere.
+    void loadChatAgentMembers(vaultId, notesRef.current);
+  }, [loadVaultAgents, loadChatAgentMembers]);
 
   const handleInviteChatUser = useCallback(async (channelId: string, username: string) => {
     const vaultId = activeVaultIdRef.current;
@@ -3395,13 +3434,17 @@ export default function App() {
       );
     }
     if (tab.type === 'superkanban') {
-      return <SuperkanbanView
-        notes={superkanbanNotes}
-        loading={superkanbanLoading}
-        error={superkanbanError}
-        onOpenNote={openNote}
-        liveWorkItems={superkanbanLiveWork}
-      />;
+      return (
+        <Suspense fallback={<div className="pane-empty">Loading board…</div>}>
+          <SuperkanbanView
+            notes={superkanbanNotes}
+            loading={superkanbanLoading}
+            error={superkanbanError}
+            onOpenNote={openNote}
+            liveWorkItems={superkanbanLiveWork}
+          />
+        </Suspense>
+      );
     }
     if (tab.type === 'chat') {
       const channel = notes.find((note) => note.id === tab.id && note.content_preview.trim().startsWith(CHAT_NOTE_MARKER));
@@ -3420,40 +3463,42 @@ export default function App() {
         return <div className="pane-empty">Channel not found</div>;
       }
       return (
-        <ChatView
-          channelId={channel.id}
-          channelName={channel.title}
-          isLoadingMessages={loadingChatChannels[channel.id] === true}
-          currentUser={currentUsername}
-          presence={chatPresenceByChannel[channel.id] ?? EMPTY_CHAT_PRESENCE}
-          availableAgents={AVAILABLE_CHAT_AGENTS}
-          registeredAgents={chatState.registeredAgentsByChannel[channel.id] ?? EMPTY_CHAT_AGENTS}
-          vaultAgents={vaultAgents}
-          runnerHealth={runnerHealth}
-          onRegisterAgent={handleRegisterChatAgent}
-          onRemoveAgent={handleRemoveChatAgent}
-          onUpsertVaultAgent={handleUpsertVaultAgent}
-          onDeleteVaultAgent={handleDeleteVaultAgent}
-          onAddVaultAgentToChannel={handleAddVaultAgentToChannel}
-          onCreateInviteLink={handleCreateChatInviteLink}
-          onInviteUser={handleInviteChatUser}
-          onRemoveParticipant={handleRemoveChatParticipant}
-          onLeaveChannel={handleLeaveChatChannel}
-          onSendMessage={handleSendChatMessage}
-          onDeleteMessage={handleDeleteChatMessage}
-          onForwardMessage={handleForwardChatMessage}
-          onCancelRun={handleCancelChatRun}
-          notes={notes}
-          onOpenNote={openNote}
-          onOpenSharedNote={handleOpenSharedChatNote}
-          membersOpen={chatMembersOpen}
-          onMembersOpenChange={setChatMembersOpen}
-          vaultId={activeVaultId || undefined}
-          onHydrateMessage={handleHydrateChatMessage}
-          jumpToMessageId={chatJumpTarget?.channelId === channel.id ? chatJumpTarget.messageId : undefined}
-          onJumpHandled={handleChatJumpHandled}
-          sidebarMode="hidden"
-        />
+        <Suspense fallback={<div className="pane-empty chat-loading-empty"><strong>Loading chat…</strong></div>}>
+          <ChatView
+            channelId={channel.id}
+            channelName={channel.title}
+            isLoadingMessages={loadingChatChannels[channel.id] === true}
+            currentUser={currentUsername}
+            presence={chatPresenceByChannel[channel.id] ?? EMPTY_CHAT_PRESENCE}
+            availableAgents={AVAILABLE_CHAT_AGENTS}
+            registeredAgents={chatState.registeredAgentsByChannel[channel.id] ?? EMPTY_CHAT_AGENTS}
+            vaultAgents={vaultAgents}
+            runnerHealth={runnerHealth}
+            onRegisterAgent={handleRegisterChatAgent}
+            onRemoveAgent={handleRemoveChatAgent}
+            onUpsertVaultAgent={handleUpsertVaultAgent}
+            onDeleteVaultAgent={handleDeleteVaultAgent}
+            onAddVaultAgentToChannel={handleAddVaultAgentToChannel}
+            onCreateInviteLink={handleCreateChatInviteLink}
+            onInviteUser={handleInviteChatUser}
+            onRemoveParticipant={handleRemoveChatParticipant}
+            onLeaveChannel={handleLeaveChatChannel}
+            onSendMessage={handleSendChatMessage}
+            onDeleteMessage={handleDeleteChatMessage}
+            onForwardMessage={handleForwardChatMessage}
+            onCancelRun={handleCancelChatRun}
+            notes={notes}
+            onOpenNote={openNote}
+            onOpenSharedNote={handleOpenSharedChatNote}
+            membersOpen={chatMembersOpen}
+            onMembersOpenChange={setChatMembersOpen}
+            vaultId={activeVaultId || undefined}
+            onHydrateMessage={handleHydrateChatMessage}
+            jumpToMessageId={chatJumpTarget?.channelId === channel.id ? chatJumpTarget.messageId : undefined}
+            onJumpHandled={handleChatJumpHandled}
+            sidebarMode="hidden"
+          />
+        </Suspense>
       );
     }
     const entry = noteContents[tab.id];
@@ -3632,33 +3677,37 @@ export default function App() {
       )}
 
       {accountOpen && user && (
-        <AccountSettings
-          user={user}
-          vaultId={activeVaultId}
-          vaultName={vaults.find((vault) => vault.id === activeVaultId)?.name}
-          showAgentMemory={showAgentMemory}
-          onShowAgentMemoryChange={updateShowAgentMemory}
-          onClose={() => setAccountOpen(false)}
-          onUserChanged={setUser}
-          onSessionChanged={() => setAuthEpoch((value) => value + 1)}
-          onMembershipChanged={() => { void loadVaults(); }}
-        />
+        <Suspense fallback={null}>
+          <AccountSettings
+            user={user}
+            vaultId={activeVaultId}
+            vaultName={vaults.find((vault) => vault.id === activeVaultId)?.name}
+            showAgentMemory={showAgentMemory}
+            onShowAgentMemoryChange={updateShowAgentMemory}
+            onClose={() => setAccountOpen(false)}
+            onUserChanged={setUser}
+            onSessionChanged={() => setAuthEpoch((value) => value + 1)}
+            onMembershipChanged={() => { void loadVaults(); }}
+          />
+        </Suspense>
       )}
 
       {discoveryDmsOpen && (
-        <DiscoveryDmsModal
-          initialTab={discoveryDmsOpen}
-          updateCounts={communityUpdates.counts}
-          onClose={() => setDiscoveryDmsOpen(null)}
-          onVaultsChanged={loadVaults}
-          onOpenLocation={async (vaultId, channelId, title) => {
-            setActiveVaultId(vaultId);
-            if (channelId) {
-              await loadVaultData(vaultId);
-              openChatChannel(channelId, title || 'Direct message');
-            }
-          }}
-        />
+        <Suspense fallback={null}>
+          <DiscoveryDmsModal
+            initialTab={discoveryDmsOpen}
+            updateCounts={communityUpdates.counts}
+            onClose={() => setDiscoveryDmsOpen(null)}
+            onVaultsChanged={loadVaults}
+            onOpenLocation={async (vaultId, channelId, title) => {
+              setActiveVaultId(vaultId);
+              if (channelId) {
+                await loadVaultData(vaultId);
+                openChatChannel(channelId, title || 'Direct message');
+              }
+            }}
+          />
+        </Suspense>
       )}
 
       {/* Workspace */}
@@ -3762,70 +3811,92 @@ export default function App() {
             renderContent={renderTabContent}
           />
           {activeVaultId && vaultSidebarChannel && (
-            <ChatView
-              channelId={vaultSidebarChannel}
-              channelName={notes.find((note) => note.id === vaultSidebarChannel)?.title || 'Vault'}
-              currentUser={currentUsername}
-              presence={chatPresenceByChannel[vaultSidebarChannel] ?? EMPTY_CHAT_PRESENCE}
-              availableAgents={AVAILABLE_CHAT_AGENTS}
-              registeredAgents={chatState.registeredAgentsByChannel[vaultSidebarChannel] ?? EMPTY_CHAT_AGENTS}
-              vaultAgents={vaultAgents}
-              runnerHealth={runnerHealth}
-              onRegisterAgent={handleRegisterChatAgent}
-              onRemoveAgent={handleRemoveChatAgent}
-              onUpsertVaultAgent={handleUpsertVaultAgent}
-              onDeleteVaultAgent={handleDeleteVaultAgent}
-              onAddVaultAgentToChannel={handleAddVaultAgentToChannel}
-              onCreateInviteLink={handleCreateChatInviteLink}
-              onInviteUser={handleInviteChatUser}
-              onRemoveParticipant={handleRemoveChatParticipant}
-              onLeaveChannel={handleLeaveChatChannel}
-              onSendMessage={handleSendChatMessage}
-              onCancelRun={handleCancelChatRun}
-              notes={notes}
-              onOpenNote={openNote}
-              membersOpen={chatMembersOpen}
-              onMembersOpenChange={setChatMembersOpen}
-              vaultId={activeVaultId}
-              sidebarMode="only"
-            />
+            <Suspense fallback={null}>
+              <ChatView
+                channelId={vaultSidebarChannel}
+                channelName={notes.find((note) => note.id === vaultSidebarChannel)?.title || 'Vault'}
+                currentUser={currentUsername}
+                presence={chatPresenceByChannel[vaultSidebarChannel] ?? EMPTY_CHAT_PRESENCE}
+                availableAgents={AVAILABLE_CHAT_AGENTS}
+                registeredAgents={chatState.registeredAgentsByChannel[vaultSidebarChannel] ?? EMPTY_CHAT_AGENTS}
+                vaultAgents={vaultAgents}
+                runnerHealth={runnerHealth}
+                onRegisterAgent={handleRegisterChatAgent}
+                onRemoveAgent={handleRemoveChatAgent}
+                onUpsertVaultAgent={handleUpsertVaultAgent}
+                onDeleteVaultAgent={handleDeleteVaultAgent}
+                onAddVaultAgentToChannel={handleAddVaultAgentToChannel}
+                onCreateInviteLink={handleCreateChatInviteLink}
+                onInviteUser={handleInviteChatUser}
+                onRemoveParticipant={handleRemoveChatParticipant}
+                onLeaveChannel={handleLeaveChatChannel}
+                onSendMessage={handleSendChatMessage}
+                onCancelRun={handleCancelChatRun}
+                notes={notes}
+                onOpenNote={openNote}
+                membersOpen={chatMembersOpen}
+                onMembersOpenChange={setChatMembersOpen}
+                vaultId={activeVaultId}
+                sidebarMode="only"
+              />
+            </Suspense>
           )}
         </div>
       </div>
-      <SessionManager
-        open={sessionManagerOpen}
-        vaultId={activeVaultId}
-        runnerOnline={Boolean(runnerHealth?.online)}
-        onClose={() => setSessionManagerOpen(false)}
-        onOpenChat={(channelId) => {
-          openNote(channelId);
-          setSessionManagerOpen(false);
-        }}
-        onCancel={handleCancelChatRun}
-        onInterrogate={(channelId, message) => handleSendChatMessage(channelId, message)}
-      />
+      {sessionManagerOpen && (
+        <Suspense fallback={null}>
+          <SessionManager
+            open
+            vaultId={activeVaultId}
+            runnerOnline={Boolean(runnerHealth?.online)}
+            onClose={() => setSessionManagerOpen(false)}
+            onOpenChat={(channelId) => {
+              openNote(channelId);
+              setSessionManagerOpen(false);
+            }}
+            onCancel={handleCancelChatRun}
+            onInterrogate={(channelId, message) => handleSendChatMessage(channelId, message)}
+          />
+        </Suspense>
+      )}
 
-      <SearchOverlay
-        open={searchOpen}
-        onClose={() => setSearchOpen(false)}
-        vaultId={activeVaultId}
-        onSelectNote={(id, messageId) => {
-          openNote(id);
-          if (messageId) setChatJumpTarget({ channelId: id, messageId });
-        }}
-      />
-      <CommandPalette open={commandPaletteOpen} onClose={() => setCommandPaletteOpen(false)} notes={notes} onSelectNote={(id) => openNote(id)} onCreateNote={handleCreateNote} />
-      <UpdatesModal
-        open={updatesOpen}
-        loading={communityUpdatesLoading}
-        updates={communityUpdates}
-        error={communityUpdatesError}
-        onClose={() => setUpdatesOpen(false)}
-        onRefresh={() => void loadCommunityUpdates()}
-        onMarkAllRead={() => void markAllCommunityUpdatesRead()}
-        onOpenItem={(item) => void openCommunityUpdate(item)}
-      />
-      {adminOpen && <AdminPanel onClose={() => setAdminOpen(false)} />}
+      {searchOpen && (
+        <Suspense fallback={null}>
+          <SearchOverlay
+            open
+            onClose={() => setSearchOpen(false)}
+            vaultId={activeVaultId}
+            onSelectNote={(id, messageId) => {
+              openNote(id);
+              if (messageId) setChatJumpTarget({ channelId: id, messageId });
+            }}
+          />
+        </Suspense>
+      )}
+      {commandPaletteOpen && (
+        <Suspense fallback={null}>
+          <CommandPalette open onClose={() => setCommandPaletteOpen(false)} notes={notes} onSelectNote={(id) => openNote(id)} onCreateNote={handleCreateNote} />
+        </Suspense>
+      )}
+      {updatesOpen && (
+        <Suspense fallback={null}>
+          <UpdatesModal
+            open
+            loading={communityUpdatesLoading}
+            updates={communityUpdates}
+            error={communityUpdatesError}
+            onClose={() => setUpdatesOpen(false)}
+            onRefresh={() => void loadCommunityUpdates()}
+            onMarkAllRead={() => void markAllCommunityUpdatesRead()}
+            onOpenItem={(item) => void openCommunityUpdate(item)}
+          />
+        </Suspense>
+      )}
+      {adminOpen && (
+        <Suspense fallback={null}>
+          <AdminPanel onClose={() => setAdminOpen(false)} />
+        </Suspense>
+      )}
 
       {agentPermissions[0] && (
         <section className="agent-permission-card" role="dialog" aria-modal="false" aria-labelledby="agent-permission-title" onClick={(event) => event.stopPropagation()}>

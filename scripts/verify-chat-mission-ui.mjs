@@ -141,6 +141,16 @@ try {
       && secondChannelAgents.some((agent) => agent.vaultAgentId === terraIdentity.id)
       && secondChannelAgents.some((agent) => agent.vaultAgentId === crossVaultIdentity.id)
   ));
+  // Both channels must list the same vault-agent identities (order-independent).
+  const { agents: firstChannelAgents } = await must(
+    `${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/agents`,
+    { headers: auth },
+  );
+  const idsA = firstChannelAgents.map((a) => a.vaultAgentId).filter(Boolean).sort();
+  const idsB = secondChannelAgents.map((a) => a.vaultAgentId).filter(Boolean).sort();
+  check('channel agent rosters match by vaultAgentId', (
+    idsA.length === idsB.length && idsA.every((id, i) => id === idsB[i])
+  ), `a=${idsA.join(',')} b=${idsB.join(',')}`);
   const { registration: sol } = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/agents/from-vault`, {
     method: 'POST', headers: auth,
     body: JSON.stringify({ vaultAgentId: solIdentity.id, orchestrator: true }),

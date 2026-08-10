@@ -2696,6 +2696,149 @@ export function listChatAgentMembers(db: Db, channelId: string, userId: number):
   return rows.map(rowToAgentMember);
 }
 
+/**
+ * Project every vault agent that belongs in this vault onto a channel.
+ *
+ * Two sticky failure modes this closes:
+ * 1. Only the requesting user's listVaultAgents were projected — so another
+ *    owner's agent already on channel A never landed on channel B.
+ * 2. addVaultAgentToChannel refused agents the current user doesn't "own" /
+ *    whose vault_id is historical — so sibling memberships couldn't copy.
+ *
+ * Call on every channel-agents read so the UI never depends on which channel
+ * was opened first or which user last mutated the roster.
+ */
+export function ensureVaultWideAgents(db: Db, vaultId: string, channelId: string, userId: number): void {
+  const { route } = assertChatChannel(db, channelId, userId);
+  if (route.localVaultId !== vaultId) throw new Error('Chat channel not found');
+
+  const vaultAgentIds = new Set<string>();
+  for (const agent of listVaultAgents(db, userId, vaultId)) {
+    if (agent.id) vaultAgentIds.add(agent.id);
+  }
+
+  // Any vault agent already seated in a channel of this vault (including
+  // other owners) must appear on every channel in the vault.
+  const seated = db.prepare(`
+    SELECT DISTINCT m.vault_agent_id AS id
+    FROM chat_agent_members m
+    WHERE m.vault_agent_id IS NOT NULL
+      AND (
+        m.vault_id = ?
+        OR m.channel_id IN (
+          SELECT id FROM notes
+          WHERE vault_id = ? AND trim(content) LIKE ?
+        )
+      )
+  `).all(vaultId, vaultId, `${CHAT_NOTE_MARKER}%`) as Array<{ id: string }>;
+  for (const row of seated) {
+    if (row.id) vaultAgentIds.add(row.id);
+  }
+
+  for (const vaultAgentId of vaultAgentIds) {
+    try {
+      projectVaultAgentOntoChannel(db, userId, vaultId, channelId, vaultAgentId);
+    } catch (error) {
+      console.warn(
+        'vault-wide agent sync skipped:',
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }
+}
+
+/**
+ * Ensure a vault agent has a chat_agent_members row on this channel.
+ * Prefers the normal ownership path; falls back to copying an existing
+ * sibling membership when the agent is already in the vault but not
+ * visible to this user via listVaultAgents.
+ */
+function projectVaultAgentOntoChannel(
+  db: Db,
+  userId: number,
+  vaultId: string,
+  channelId: string,
+  vaultAgentId: string,
+): void {
+  try {
+    addVaultAgentToChannel(db, userId, vaultId, channelId, vaultAgentId);
+    return;
+  } catch {
+    // Fall through to sibling copy for agents already in the vault roster.
+  }
+
+  const { route } = assertChatChannel(db, channelId, userId);
+  if (route.localVaultId !== vaultId) throw new Error('Chat channel not found');
+
+  const already = db.prepare(`
+    SELECT id FROM chat_agent_members
+    WHERE vault_agent_id = ? AND channel_id = ?
+  `).get(vaultAgentId, route.sourceChannelId) as { id: string } | undefined;
+  if (already) return;
+
+  const va = db.prepare('SELECT * FROM vault_agents WHERE id = ?').get(vaultAgentId) as VaultAgentRow | undefined;
+  if (!va) throw new Error('Vault agent not found');
+
+  const template = db.prepare(`
+    SELECT * FROM chat_agent_members
+    WHERE vault_agent_id = ?
+      AND (
+        vault_id = ?
+        OR channel_id IN (
+          SELECT id FROM notes WHERE vault_id = ? AND trim(content) LIKE ?
+        )
+      )
+    ORDER BY created_at ASC
+    LIMIT 1
+  `).get(vaultAgentId, vaultId, vaultId, `${CHAT_NOTE_MARKER}%`) as ChatAgentMemberRow | undefined;
+  if (!template) throw new Error('Vault agent not found');
+
+  const handleClash = db.prepare(`
+    SELECT id FROM chat_agent_members
+    WHERE channel_id = ? AND mention = ? COLLATE NOCASE AND vault_agent_id != ?
+  `).get(route.sourceChannelId, va.mention, va.id) as { id: string } | undefined;
+  if (handleClash) {
+    throw new Error(`@${va.mention} is already used by another agent in this vault`);
+  }
+
+  const memberId = crypto.randomUUID();
+  let orchestrator = template.orchestrator !== 0;
+  try {
+    assertCoordinatorSlot(db, route.sourceChannelId, memberId, userId, orchestrator);
+  } catch {
+    orchestrator = false;
+  }
+  const replyEvery = orchestrator || template.reply_to_every_message !== 0;
+
+  db.prepare(`
+    INSERT INTO chat_agent_members (
+      id, channel_id, vault_id, vault_agent_id, agent_id, display_name, avatar_url, mention,
+      model, reasoning_effort, cwd, context_prompt, taggable_by_agents, reply_to_every_message,
+      orchestrator, pingable_by_others, yolo, conversation_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    memberId,
+    route.sourceChannelId,
+    route.localVaultId,
+    va.id,
+    va.agent_id,
+    va.display_name,
+    va.avatar_url,
+    va.mention,
+    va.model,
+    template.reasoning_effort || '',
+    va.cwd,
+    va.context_prompt,
+    template.taggable_by_agents !== 0 ? 1 : 0,
+    replyEvery ? 1 : 0,
+    orchestrator ? 1 : 0,
+    template.pingable_by_others !== 0 ? 1 : 0,
+    template.yolo !== 0 ? 1 : 0,
+    // Fresh conversation id per channel — don't share thread state across rooms.
+    crypto.randomUUID(),
+  );
+}
+
 export type ResolvedChatAgentRun = {
   registration: ChatAgentRegistration;
   /** The agent owner's local vault (the machine and workspace that execute the run). */

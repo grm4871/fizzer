@@ -8,7 +8,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import Database from 'better-sqlite3';
-import { ensureChatSchema, listVaultAgents, upsertVaultAgent, deleteVaultAgent } from './chat.js';
+import {
+  ensureChatSchema,
+  ensureVaultWideAgents,
+  listChatAgentMembers,
+  listVaultAgents,
+  upsertVaultAgent,
+  deleteVaultAgent,
+  addVaultAgentToChannel,
+} from './chat.js';
 import { addVaultMember, ensureVaultMembersSchema } from './vaultMembers.js';
 import { ensureCommunityModerationSchema } from './communityModeration.js';
 
@@ -32,6 +40,8 @@ function setup() {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+    CREATE TABLE tags (id TEXT PRIMARY KEY, vault_id TEXT, name TEXT);
+    CREATE TABLE note_tags (note_id TEXT, tag_id TEXT);
   `);
   db.prepare("INSERT INTO users (id, username) VALUES (1, 'owner'), (2, 'alice')").run();
   db.prepare("INSERT INTO vaults (id, name, created_by) VALUES ('v1', 'Owner vault', 1), ('v2', 'Alice vault', 2)").run();
@@ -126,6 +136,54 @@ test('the migration merges one person per-vault copies into a single agent', () 
 
     const sql = (db.prepare("SELECT sql FROM sqlite_master WHERE name = 'vault_agents'").get() as { sql: string }).sql;
     assert.match(sql, /UNIQUE\(owner_user_id, mention\)/);
+  } finally {
+    db.close();
+  }
+});
+
+test('agents already on one channel are projected onto sibling channels', () => {
+  const db = setup();
+  try {
+    db.prepare(`
+      INSERT INTO notes (id, vault_id, title, content, content_preview)
+      VALUES
+        ('room-a', 'v1', 'room-a', 'cascade://chat-channel', 'cascade://chat-channel'),
+        ('room-b', 'v1', 'room-b', 'cascade://chat-channel', 'cascade://chat-channel')
+    `).run();
+
+    const ownerAgent = upsertVaultAgent(db, 1, 'v1', {
+      agentId: 'codex', displayName: 'Sol', mention: 'sol',
+    });
+    // Seat only on room-a (simulates pre-unification / partial fan-out).
+    addVaultAgentToChannel(db, 1, 'v1', 'room-a', ownerAgent.id);
+
+    // Alice's agent lives in another vault but is already seated on room-a
+    // (as if she joined and added it there). vault_id on vault_agents is still v2.
+    const aliceAgent = upsertVaultAgent(db, 2, 'v2', {
+      agentId: 'claude-code', displayName: 'Claude', mention: 'claude',
+    });
+    addVaultMember(db, 'v1', 1, 2, 'editor');
+    // Direct membership insert: Alice owns the agent; seat it on room-a only.
+    db.prepare(`
+      INSERT INTO chat_agent_members (
+        id, channel_id, vault_id, vault_agent_id, agent_id, display_name, mention, conversation_id
+      ) VALUES ('m-alice', 'room-a', 'v1', ?, 'claude-code', 'Claude', 'claude', 'conv-alice')
+    `).run(aliceAgent.id);
+
+    // Owner opens room-b — must pull both agents (own + sibling Alice).
+    ensureVaultWideAgents(db, 'v1', 'room-b', 1);
+    const roomB = listChatAgentMembers(db, 'room-b', 1);
+    const ids = roomB.map((a) => a.vaultAgentId).sort();
+    assert.deepEqual(
+      ids,
+      [aliceAgent.id, ownerAgent.id].sort(),
+      `room-b should match the vault roster, got ${JSON.stringify(roomB.map((a) => a.mention))}`,
+    );
+
+    // Alice opens room-b too — same projected set.
+    ensureVaultWideAgents(db, 'v1', 'room-b', 2);
+    const roomBForAlice = listChatAgentMembers(db, 'room-b', 2);
+    assert.equal(roomBForAlice.length, 2);
   } finally {
     db.close();
   }
