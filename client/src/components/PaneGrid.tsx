@@ -491,9 +491,13 @@ function Pane({
               <div
                 key={tab.id}
                 className="pane-tab-keepalive"
-                hidden={!active}
+                aria-hidden={!active}
                 style={{
-                  display: active ? 'flex' : 'none',
+                  display: 'flex',
+                  position: active ? 'relative' : 'absolute',
+                  inset: active ? undefined : 0,
+                  visibility: active ? 'visible' : 'hidden',
+                  pointerEvents: active ? 'auto' : 'none',
                   flex: 1,
                   minHeight: 0,
                   minWidth: 0,
