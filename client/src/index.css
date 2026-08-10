@@ -849,7 +849,8 @@ button:focus-visible,
   bottom: 6px;
   width: 3px;
   border-radius: 0 2px 2px 0;
-  background: var(--accent);
+  background: var(--decal-stripe);
+  box-shadow: 0 0 8px var(--accent-glow);
 }
 .tree-item .tree-icon {
   flex-shrink: 0;
@@ -1986,8 +1987,8 @@ button:focus-visible,
   left: 0;
   right: 0;
   bottom: -3px;
-  height: 2px;
-  background: var(--accent);
+  height: 3px;
+  background: var(--decal-stripe-h);
 }
 .tab-item .tab-title {
   max-width: 160px;
