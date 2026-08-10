@@ -449,9 +449,11 @@ test('the same owned agent can run concurrently in separate channels and vaults'
     });
     const firstMessage = createChatMessage(db, 1, 'vault-1', 'channel-1', {
       id: 'parallel-first', channelId: 'channel-1', author: 'owner', body: 'Work here',
+      createdAt: '2026-08-03T00:00:00.000Z',
     });
     const otherMessage = createChatMessage(db, 1, 'vault-3', 'channel-3', {
       id: 'parallel-other', channelId: 'channel-3', author: 'owner', body: 'Work there too',
+      createdAt: '2026-08-03T00:00:01.000Z',
     });
     const first = createChatAgentDispatchForRegistration(db, 1, 'channel-1', firstMessage, coordinator.id);
     const other = createChatAgentDispatchForRegistration(db, 1, 'channel-3', otherMessage, otherRegistration.id);
