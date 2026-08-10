@@ -679,9 +679,10 @@ button:focus-visible,
   border: 0;
   box-shadow: none;
 }
+.sidebar-header .vault-icon img,
 .sidebar-header .vault-icon svg {
-  width: 15px;
-  height: 15px;
+  width: 24px;
+  height: 24px;
 }
 .sidebar-actions {
   display: inline-flex;

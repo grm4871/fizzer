@@ -771,7 +771,7 @@ export const Sidebar = memo(function Sidebar({
           aria-label={`Vault switcher; current vault ${activeVault?.name || 'Fizzer'}`}
           aria-expanded={vaultMenuOpen}
         >
-          <span className="vault-icon" aria-hidden="true"><FizzerMark size={17} /></span>
+          <span className="vault-icon" aria-hidden="true"><FizzerMark size={24} /></span>
           <span className="vault-name-copy">
             <span className="vault-name-text">{activeVault?.name || 'Fizzer'}</span>
             <span className="vault-name-meta">
