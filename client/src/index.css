@@ -81,7 +81,7 @@
   padding: 0;
 }
 html {
-  font-size: 16px;
+  font-size: 17px;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
@@ -1274,6 +1274,9 @@ button:focus-visible,
   justify-content: space-between;
   gap: 6px;
   padding: 8px var(--rail-pad-x) 10px;
+  /* Match the adjacent chat composer's resting rail so the two top rules
+     form one horizontal baseline instead of a visible step. */
+  min-height: 84px;
   border-top: 1px solid var(--rail-edge);
   background: color-mix(in srgb, var(--bg-raised) 22%, var(--bg-surface));
 }
