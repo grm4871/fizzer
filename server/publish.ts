@@ -91,10 +91,32 @@ function sanitizePublicHtml(html: string): string {
     .replace(/data:text\/html/gi, 'data:text/plain');
 }
 
+function safePublicUrl(raw: string, image: boolean): string {
+  const value = raw.trim();
+  if (!value || /[\u0000-\u001f\u007f]/.test(value)) return image ? '' : '#';
+  if (value.startsWith('#') || value.startsWith('./') || value.startsWith('../')) return value;
+  if (value.startsWith('/') && !value.startsWith('//') && !value.startsWith('/\\')) return value;
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol === 'https:' || parsed.protocol === 'http:') return value;
+    if (!image && parsed.protocol === 'mailto:') return value;
+  } catch {
+    // Bare and malformed schemes stay blocked below.
+  }
+  if (image && /^data:image\/(?:png|jpeg|gif|webp);base64,[a-z0-9+/=]+$/i.test(value)) return value;
+  return image ? '' : '#';
+}
+
 export function renderPublicMarkdown(content: string): string {
   // Prefer no raw HTML from the Markdown source — content is untrusted.
   const stripped = sanitizePublicContent(content).replace(/<[^>\n]+>/g, '');
-  const html = marked.parse(stripped, { async: false }) as string;
+  const html = marked.parse(stripped, {
+    async: false,
+    walkTokens: (token) => {
+      if (token.type === 'link') token.href = safePublicUrl(token.href, false);
+      if (token.type === 'image') token.href = safePublicUrl(token.href, true);
+    },
+  }) as string;
   return sanitizePublicHtml(html);
 }
 
@@ -173,12 +195,39 @@ export function unpublishNote(db: Db, noteId: string, userId: number): boolean {
   return result.changes > 0;
 }
 
-export function publicBaseUrl(req: Request): string {
-  const env = process.env.CASCADE_PUBLIC_URL?.replace(/\/$/, '');
-  if (env) return env;
-  const proto = req.get('x-forwarded-proto') || req.protocol || 'https';
-  const host = req.get('x-forwarded-host') || req.get('host') || 'localhost';
-  return `${proto}://${host}`;
+function httpOrigin(raw: string): string | null {
+  try {
+    const parsed = new URL(raw);
+    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) return null;
+    return parsed.origin;
+  } catch {
+    return null;
+  }
+}
+
+export function publicBaseUrl(req: Request, env: NodeJS.ProcessEnv = process.env): string {
+  const configured = String(env.CASCADE_PUBLIC_URL || '').trim();
+  if (configured) {
+    const origin = httpOrigin(configured);
+    if (!origin) throw new Error('CASCADE_PUBLIC_URL must be an absolute HTTP(S) origin');
+    return origin;
+  }
+
+  const forwardedProto = req.get('x-forwarded-proto')?.split(',')[0]?.trim();
+  const proto = forwardedProto === 'http' || forwardedProto === 'https'
+    ? forwardedProto
+    : req.protocol === 'http' || req.protocol === 'https'
+      ? req.protocol
+      : 'https';
+  // Do not trust X-Forwarded-Host from the request. The supported nginx config
+  // preserves the validated Host header and overwrites its forwarded copy.
+  const host = req.get('host') || 'localhost';
+  const requested = httpOrigin(`${proto}://${host}`) || 'https://localhost';
+  const allowed = String(env.CASCADE_ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((value) => httpOrigin(value.trim()))
+    .filter((value): value is string => Boolean(value));
+  return allowed.includes(requested) ? requested : allowed[0] || requested;
 }
 
 function escapeHtml(value: string): string {

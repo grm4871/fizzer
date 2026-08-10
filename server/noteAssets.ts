@@ -29,6 +29,55 @@ const ASSET_EXT: Record<string, string> = {
   'video/mp4': 'mp4',
 };
 
+function canonicalMediaType(mediaType: string): string {
+  if (mediaType === 'image/jpg') return 'image/jpeg';
+  if (mediaType === 'audio/mp3') return 'audio/mpeg';
+  return mediaType;
+}
+
+/** Decode base64 without accepting the ignored junk characters Buffer.from permits. */
+export function decodeAssetData(data: string): Buffer {
+  const compact = data.replace(/\s/g, '');
+  if (!compact || !/^[A-Za-z0-9+/]*={0,2}$/.test(compact) || compact.length % 4 === 1) {
+    throw new Error('Asset data is not valid base64');
+  }
+  const buffer = Buffer.from(compact, 'base64');
+  const canonicalInput = compact.replace(/=+$/, '');
+  const canonicalDecoded = buffer.toString('base64').replace(/=+$/, '');
+  if (!buffer.length || canonicalInput !== canonicalDecoded) {
+    throw new Error('Asset data is not valid base64');
+  }
+  return buffer;
+}
+
+/** Verify the declared media type against a small, fixed set of file signatures. */
+export function assetBytesMatchMediaType(mediaType: string, buffer: Buffer): boolean {
+  const type = canonicalMediaType(mediaType);
+  if (type === 'image/png') {
+    return buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  }
+  if (type === 'image/jpeg') {
+    return buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+  }
+  if (type === 'image/gif') {
+    const signature = buffer.subarray(0, 6).toString('ascii');
+    return signature === 'GIF87a' || signature === 'GIF89a';
+  }
+  if (type === 'image/webp') {
+    return buffer.length >= 12
+      && buffer.subarray(0, 4).toString('ascii') === 'RIFF'
+      && buffer.subarray(8, 12).toString('ascii') === 'WEBP';
+  }
+  if (type === 'audio/mpeg') {
+    return (buffer.length >= 3 && buffer.subarray(0, 3).toString('ascii') === 'ID3')
+      || (buffer.length >= 2 && buffer[0] === 0xff && (buffer[1] & 0xe0) === 0xe0);
+  }
+  if (type === 'video/mp4') {
+    return buffer.length >= 12 && buffer.subarray(4, 8).toString('ascii') === 'ftyp';
+  }
+  return false;
+}
+
 export function noteAssetsDir(db: Db, noteId: string): string | null {
   const note = getNote(db, noteId);
   if (!note) return null;
@@ -58,27 +107,25 @@ export function uploadNoteAsset(
   const vault = getWritableVault(db, note.vault_id, userId);
   if (!vault) throw new Error('Note not found');
 
-  const mediaType = String(input.media_type || '').trim().toLowerCase();
+  const declaredMediaType = String(input.media_type || '').trim().toLowerCase();
   // SVG is active content on the app origin — never accept as an inline asset.
-  if (mediaType === 'image/svg+xml' || mediaType === 'image/svg') {
+  if (declaredMediaType === 'image/svg+xml' || declaredMediaType === 'image/svg') {
     throw new Error('SVG uploads are not supported');
   }
-  if (
-    !mediaType.startsWith('image/')
-    && mediaType !== 'audio/mpeg'
-    && mediaType !== 'audio/mp3'
-    && mediaType !== 'video/mp4'
-  ) {
+  if (!(declaredMediaType in ASSET_EXT)) {
     throw new Error('Only image, MP3, and MP4 uploads are supported');
   }
+  const mediaType = canonicalMediaType(declaredMediaType);
 
   const data = String(input.data || '').trim();
   if (!data) throw new Error('Asset data is required');
 
-  const buffer = Buffer.from(data, 'base64');
-  if (!buffer.length) throw new Error('Asset data is required');
+  const buffer = decodeAssetData(data);
   if (buffer.length > NOTE_ASSET_MAX_BYTES) {
     throw new Error(`Asset is too large (max ${NOTE_ASSET_MAX_BYTES / (1024 * 1024)}MB)`);
+  }
+  if (!assetBytesMatchMediaType(mediaType, buffer)) {
+    throw new Error('Asset contents do not match the declared media type');
   }
 
   const assetId = crypto.randomBytes(12).toString('base64url');
@@ -86,9 +133,10 @@ export function uploadNoteAsset(
   const dir = noteAssetsDir(db, noteId);
   if (!dir) throw new Error('Note not found');
 
-  fs.mkdirSync(dir, { recursive: true });
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(dir, 0o700);
   const filename = `${assetId}.${ext}`;
-  fs.writeFileSync(path.join(dir, filename), buffer);
+  fs.writeFileSync(path.join(dir, filename), buffer, { mode: 0o600, flag: 'wx' });
 
   return {
     asset_id: assetId,
@@ -105,7 +153,14 @@ export function resolveNoteAssetPath(db: Db, noteId: string, assetId: string): s
   const files = fs.readdirSync(dir);
   const match = files.find((file) => file.startsWith(`${assetId}.`));
   if (!match) return null;
-  return path.join(dir, match);
+  const candidate = path.join(dir, match);
+  try {
+    const stat = fs.lstatSync(candidate);
+    if (!stat.isFile() || stat.isSymbolicLink()) return null;
+  } catch {
+    return null;
+  }
+  return candidate;
 }
 
 const MIME_BY_EXT: Record<string, string> = {
@@ -131,14 +186,15 @@ export function serveNoteAsset(db: Db) {
     if (!filePath || !fs.existsSync(filePath)) return res.status(404).json({ error: 'Not found' });
 
     const ext = path.extname(filePath).slice(1).toLowerCase();
-    // Legacy SVG on disk: force download + sandbox so it cannot execute as page content.
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+    // Legacy SVG on disk: force download so it cannot execute as page content.
     if (ext === 'svg') {
       res.setHeader('Content-Type', 'image/svg+xml');
-      res.setHeader('Content-Disposition', 'attachment');
-      res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
-      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Content-Disposition', `attachment; filename="${path.basename(filePath)}"`);
     } else {
       res.setHeader('Content-Type', MIME_BY_EXT[ext] || 'application/octet-stream');
+      res.setHeader('Content-Disposition', `inline; filename="${path.basename(filePath)}"`);
     }
     res.setHeader('Cache-Control', 'private, max-age=3600');
     res.sendFile(filePath);

@@ -163,7 +163,15 @@ import {
   scheduleOrphanReclaimAfterRestart,
   waitForDesktopRunner,
 } from './server/desktop-runner.js';
-import { corsOrigin, rateLimit, resolveDeploySecret, resolveJwtSecret } from './server/security.js';
+import {
+  corsOrigin,
+  passwordPolicyError,
+  rateLimit,
+  resolveDeploySecret,
+  resolveJwtSecret,
+  resolveTrustProxyHops,
+  securityHeaders,
+} from './server/security.js';
 import { ensureAndroidBatterySchema, listAndroidBatterySamples, parseAndroidBatterySample, recordAndroidBatterySample } from './server/androidBattery.js';
 import { clientAssetCacheControl } from './server/staticAssets.js';
 import {
@@ -370,6 +378,10 @@ type VaultInviteToken = {
   role: VaultRole;
 };
 
+// A fixed valid hash keeps unknown-account login work comparable to a real
+// password check without storing or accepting a usable credential.
+const LOGIN_DUMMY_HASH = '$2b$12$0xQSnejvHHJfgQrY0lUZHODbknE0RkbCdLGD3WCpFE4mctENcqNFW';
+
 // ── Database ───────────────────────────────────────────────────────
 
 const db = new Database(DB_PATH);
@@ -569,10 +581,20 @@ rebuildSearchIndexes(db);
 
 const app = express();
 const corsOriginOption = corsOrigin();
+const trustProxyHops = resolveTrustProxyHops();
+app.disable('x-powered-by');
+if (trustProxyHops > 0) app.set('trust proxy', trustProxyHops);
 // The production nginx layer proxies application responses as-is. Compress at
 // this boundary so text bundles and JSON do not cross the network byte-for-byte.
+app.use(securityHeaders());
 app.use(compression());
 app.use(cors({ origin: corsOriginOption, credentials: true }));
+app.use((error: unknown, _req: Request, res: Response, next: NextFunction) => {
+  if (error instanceof Error && error.message === 'Origin is not allowed by CORS') {
+    return res.status(403).json({ error: 'Origin not allowed' });
+  }
+  next(error);
+});
 // Media attachments are base64 in JSON; 8MB files expand to ~10.7MB.
 app.use(express.json({ limit: '12mb' }));
 const httpServer = http.createServer(app);
@@ -1454,9 +1476,8 @@ app.post('/api/auth/register', authRateLimit, async (req, res) => {
   if (!/^[a-z0-9_]{3,32}$/.test(username)) {
     return res.status(400).json({ error: 'Username must be 3-32 lowercase letters, numbers, or underscores' });
   }
-  if (password.length < 8) {
-    return res.status(400).json({ error: 'Password must be at least 8 characters' });
-  }
+  const passwordError = passwordPolicyError(password);
+  if (passwordError) return res.status(400).json({ error: passwordError });
 
   try {
     const passwordHash = await bcrypt.hash(password, 12);
@@ -1473,7 +1494,12 @@ app.post('/api/auth/login', authRateLimit, async (req, res) => {
   const password = String(req.body.password || '');
   const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username) as User | undefined;
 
-  if (!user || !(await bcrypt.compare(password, user.password_hash))) {
+  // Existing installations may contain a historical password over bcrypt's
+  // 72-byte boundary, so login remains compatible while rejecting absurd JSON
+  // inputs before any password work.
+  const passwordMatches = Buffer.byteLength(password, 'utf8') <= 4096
+    && await bcrypt.compare(password, user?.password_hash || LOGIN_DUMMY_HASH);
+  if (!user || !passwordMatches) {
     return res.status(401).json({ error: 'Invalid username or password' });
   }
 
@@ -1483,7 +1509,8 @@ app.post('/api/auth/login', authRateLimit, async (req, res) => {
 app.post('/api/auth/password', requireAuth, authRateLimit, async (req: AuthedRequest, res) => {
   const currentPassword = String(req.body.currentPassword || '');
   const newPassword = String(req.body.newPassword || '');
-  if (newPassword.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+  const passwordError = passwordPolicyError(newPassword);
+  if (passwordError) return res.status(400).json({ error: passwordError });
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user!.id) as User | undefined;
   if (!user || !(await bcrypt.compare(currentPassword, user.password_hash))) {
     return res.status(401).json({ error: 'Current password is incorrect' });
@@ -1540,7 +1567,8 @@ app.post('/api/auth/reset/issue', requireAuth, authRateLimit, (req: AuthedReques
 app.post('/api/auth/reset', authRateLimit, async (req, res) => {
   const token = String(req.body.token || '').trim();
   const newPassword = String(req.body.newPassword || '');
-  if (newPassword.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+  const passwordError = passwordPolicyError(newPassword);
+  if (passwordError) return res.status(400).json({ error: passwordError });
   const decoded = (() => {
     try { return jwt.decode(token) as { type?: string; userId?: number } | null; } catch { return null; }
   })();

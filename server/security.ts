@@ -19,6 +19,92 @@ const LEGACY_DEV_SECRET = 'cascade-dev-secret';
 /** True when the instance is meant to be reachable off-localhost. */
 export const NETWORK_MODE = /^(1|true|yes|on)$/i.test(process.env.CASCADE_NETWORK_MODE || '');
 
+const APP_CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "base-uri 'self'",
+  "object-src 'none'",
+  "frame-ancestors 'none'",
+  "form-action 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' data: https://fonts.gstatic.com",
+  "img-src 'self' data: blob: https:",
+  "media-src 'self' blob: https:",
+  "connect-src 'self' wss:",
+  "frame-src https://www.youtube.com https://platform.twitter.com https://open.spotify.com",
+  "worker-src 'self' blob:",
+  "manifest-src 'self'",
+].join('; ');
+
+const LANDING_CONTENT_SECURITY_POLICY = APP_CONTENT_SECURITY_POLICY.replace(
+  "script-src 'self'",
+  "script-src 'self' 'unsafe-inline'",
+);
+
+const PUBLIC_NOTE_CONTENT_SECURITY_POLICY = [
+  "default-src 'none'",
+  "base-uri 'none'",
+  "object-src 'none'",
+  "form-action 'none'",
+  "frame-ancestors *",
+  "img-src data: https:",
+  "style-src 'unsafe-inline'",
+].join('; ');
+
+/**
+ * Resolve how many reverse-proxy hops Express may trust when deriving req.ip.
+ * Invalid values fail closed instead of silently trusting an arbitrary chain.
+ */
+export function resolveTrustProxyHops(raw = process.env.CASCADE_TRUST_PROXY_HOPS): number {
+  if (raw == null || raw.trim() === '') return 0;
+  if (!/^\d+$/.test(raw.trim())) {
+    throw new Error('CASCADE_TRUST_PROXY_HOPS must be an integer from 0 through 5');
+  }
+  const hops = Number(raw);
+  if (!Number.isSafeInteger(hops) || hops < 0 || hops > 5) {
+    throw new Error('CASCADE_TRUST_PROXY_HOPS must be an integer from 0 through 5');
+  }
+  return hops;
+}
+
+/** Keep new bcrypt credentials inside its 72-byte input boundary. */
+export function passwordPolicyError(password: string): string | null {
+  if (password.length < 8) return 'Password must be at least 8 characters';
+  if (Buffer.byteLength(password, 'utf8') > 72) return 'Password must be at most 72 UTF-8 bytes';
+  return null;
+}
+
+/** Browser hardening shared by API, static assets, and Socket.IO handshakes. */
+export function securityHeaders(opts: { networkMode?: boolean } = {}) {
+  const networkMode = opts.networkMode ?? NETWORK_MODE;
+  return (req: Request, res: Response, next: NextFunction) => {
+    const isPublicNote = req.path.startsWith('/p/');
+    const isLandingPage = req.path === '/' || req.path === '/download';
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
+    res.setHeader(
+      'Content-Security-Policy',
+      isPublicNote
+        ? PUBLIC_NOTE_CONTENT_SECURITY_POLICY
+        : isLandingPage
+          ? LANDING_CONTENT_SECURITY_POLICY
+          : APP_CONTENT_SECURITY_POLICY,
+    );
+
+    // Public note pages intentionally support the sandboxed oEmbed iframe.
+    if (!isPublicNote) {
+      res.setHeader('X-Frame-Options', 'DENY');
+      res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+    }
+
+    if (networkMode && req.secure) {
+      res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    }
+    next();
+  };
+}
+
 function persistedSecretPath(): string {
   const dir = path.join(os.homedir(), '.cascade');
   fs.mkdirSync(dir, { recursive: true });
@@ -85,8 +171,8 @@ export function resolveDeploySecret(): string {
  * (native shells, curl, same-origin) are permitted. In local dev any origin is
  * reflected to preserve the existing convenience.
  */
-export function corsOrigin() {
-  if (!NETWORK_MODE) return true;
+export function corsOrigin(networkMode = NETWORK_MODE) {
+  if (!networkMode) return true;
   const allowed = new Set(
     (process.env.CASCADE_ALLOWED_ORIGINS || '')
       .split(',')
@@ -101,7 +187,7 @@ export function corsOrigin() {
   allowed.add('ionic://localhost');
   return (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
     if (!origin || allowed.has(origin)) return callback(null, true);
-    callback(new Error(`Origin ${origin} is not allowed by CORS`));
+    callback(new Error('Origin is not allowed by CORS'));
   };
 }
 

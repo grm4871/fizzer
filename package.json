@@ -100,6 +100,8 @@
   },
   "overrides": {
     "tar": ">=7.5.16",
-    "@inquirer/editor": ">=4.2.16"
+    "@inquirer/editor": ">=4.2.16",
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "@hono/node-server": "2.1.0"
   }
 }

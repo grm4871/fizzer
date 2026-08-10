@@ -16,5 +16,6 @@ services:
       DOCS_DB_PATH: /data/docs.db
       CASCADE_DATA_DIR: /data
       CASCADE_TRUST_PROXY_HOPS: "1"
+      CASCADE_PUBLIC_URL: ${CASCADE_PUBLIC_URL:-https://cscd.online}
     volumes:
       - /var/lib/cascade:/data
