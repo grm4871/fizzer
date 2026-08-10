@@ -12,7 +12,7 @@ Record pass, fail, or not applicable in the commit, run trace, or release notes.
 - [ ] Run `npm run build:vps` from the exact commit being shipped.
 - [ ] Run `npm test` (client unit) and `npm run test:server` (server unit, including schema migrations).
 - [ ] Run `npm run verify:client-runtime` and confirm no console errors, uncaught exceptions, or failed module loads.
-- [ ] Push, watch the **Deploy Production** Actions run to completion, and inspect failed logs rather than guessing.
+- [ ] Push, watch the host deploy to completion (`ssh root@66.135.24.172 journalctl -u cascade-autodeploy -f`), and read the failure rather than guessing.
 - [ ] Confirm production health and the expected commit.
 - [ ] For client changes, inspect the JavaScript asset actually served by `cscd.online` for the feature and its call site, then exercise the affected flow in production.
 
@@ -44,7 +44,7 @@ Where a row above has a command, run the command instead of reasoning about the 
 | Agent start and run lifecycle | `npm run test:desktop-runner` | Run reclaim, replay, duplicate-process avoidance |
 | Vault switcher, vault settings | `npm run verify:vault-rename-ui` | Rename reaches `PATCH /api/vaults/:id` and updates the switcher, non-owners get neither the control nor the API, and the agent-memory preference lives in account settings |
 | API, persistence, migrations | `npm run test:server` | Fresh **and** upgraded databases: every column the writers use exists after migration, legacy rows survive, and writes still work against a migrated table |
-| Deployment/configuration | `gh run watch <id>`, then grep the served bundle | Actions completion plus the asset `cscd.online` really serves (see AGENTS.md) |
+| Deployment/configuration | `journalctl -u cascade-autodeploy -f` on the host, then grep the served bundle | Deploy completion plus the asset `cscd.online` really serves (see AGENTS.md) |
 
 Still manual, by nature: Electron lifecycle (`Ctrl/Cmd+R` during an active run), Android/foldable layouts, background/resume and offline behavior, and any production exercise requiring a real account.
 

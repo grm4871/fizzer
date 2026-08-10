@@ -2,7 +2,14 @@
 
 ## Ship hard gate (never skip)
 
-Pushing to `master` is **not** shipping. Production only updates after **Deploy Production** is green.
+Pushing to `master` is **not** shipping. Production only updates after the host
+has rebuilt and the health check passes.
+
+**Deploys no longer run on GitHub Actions.** The Actions quota for this private
+repo ran out (macOS desktop-build legs bill at 10x), jobs stopped starting, and
+every push produced a red run. `Deploy Production`, `Android Beta APK` and
+`Desktop builds` are all **disabled**; re-enable with `gh workflow enable <name>`
+once billing is sorted.
 
 **Before every `git push` to master:**
 
@@ -11,11 +18,34 @@ Pushing to `master` is **not** shipping. Production only updates after **Deploy 
 
 **After every push that should go live:**
 
-3. `gh run list --limit 3` then **`gh run watch <deploy-id>`** until success (or fix and re-push).
-4. Do **not** claim ship, close the mission, or start unrelated work while Deploy is red or still running.
-5. If red: `gh run view <id> --log-failed` — fix that log, re-run `npm run build` (and client if needed), push again. Do not guess.
+3. Watch the host deploy: `ssh root@66.135.24.172 journalctl -u cascade-autodeploy -f`.
+4. Confirm production really moved — `curl -sf https://cscd.online/api/health` plus
+   `ssh root@66.135.24.172 'git -C /var/www/cascade-browser rev-parse --short HEAD'`
+   should match your commit.
+5. Do **not** claim ship, close the mission, or start unrelated work until that
+   commit matches and health is ok.
 
-Ignoring a red Deploy Production (or skipping local `tsc` and pushing “anyway”) is how multi-commit inbox spam happens. Treat a red deploy as a stop-the-line bug.
+Ignoring a failed deploy (or skipping local `tsc` and pushing “anyway”) is how multi-commit inbox spam happens. Treat it as a stop-the-line bug.
+
+## How production deploys now
+
+`grm4871/cascade-browser` push → GitHub webhook → the VPS deploys itself. No
+Actions minutes, no `DEPLOY_SSH_KEY`, and nothing that breaks when the laptop
+sleeps or billing lapses.
+
+| Piece | Where | What it does |
+| --- | --- | --- |
+| Repo webhook (id 663729978) | GitHub → `https://cscd.online/_gh/deploy` | Fires on every `push`. |
+| `cascade-webhook.service` | VPS, `/usr/local/bin/cascade-webhook.py`, loopback :9001 | Verifies `X-Hub-Signature-256` against `/etc/cascade-webhook.secret`, ignores non-`master` refs, then starts the deploy unit. nginx proxies the public route to it. |
+| `cascade-autodeploy.service` | VPS, `/usr/local/bin/cascade-autodeploy.sh` | `git fetch` + `reset --hard origin/master` + `deploy/remote-update.sh`, under the same `flock` the old workflow used, so concurrent deploys serialize. Exits immediately when `origin/master` has not moved. |
+| `cascade-autodeploy.timer` | VPS, every 10 min | Fallback only, for a webhook GitHub failed to deliver. |
+
+Operating it:
+
+- Watch a deploy: `ssh root@66.135.24.172 journalctl -u cascade-autodeploy -f`
+- Force one: `ssh root@66.135.24.172 systemctl start cascade-autodeploy.service`
+- Webhook deliveries and redelivery: `gh api repos/grm4871/cascade-browser/hooks/663729978/deliveries`
+- The listener rejects an unsigned request with 403, so the public route cannot trigger a deploy without the secret.
 
 ## Release matrix
 
@@ -46,16 +76,16 @@ So when a UI feature is "missing in prod but works locally", do not stop at "sta
 
 `gh` is installed and authenticated (account `grm4871`; scopes `repo`, `workflow`, `gist`, `read:org`). Use it instead of guessing at deploy state:
 
-- `gh run list --limit 5` — recent Deploy Production runs with status, commit subject, and duration.
+- `gh run list --limit 5` — recent runs. All deploy/build workflows are currently disabled (see above), so this is history only.
 - `gh run view <id> --log-failed` — the failing step's log.
-- `gh run watch <id>` — block until a deploy finishes.
+- `gh run watch <id>` — block until a run finishes. Not the deploy path any more; use `journalctl -u cascade-autodeploy -f` on the host.
 
 ## Deploying changes
 
 Production deploys use the same GitHub Actions → SSH pattern as Simcluster.
 
 1. **Commit and push** to `master`. That triggers `.github/workflows/deploy.yml`, which SSHs to the host, `git fetch`/`reset --hard origin/master`, and runs `deploy/remote-update.sh` (docker compose build + up + health check).
-2. **Wait for the Actions run** (do not assume push means live) — `gh run watch`, or on the host: `docker compose -f /var/www/cascade-browser/docker-compose.yml ps` and `curl -sf http://127.0.0.1:3000/api/health`. Confirm the expected commit (`git -C /var/www/cascade-browser rev-parse --short HEAD`) before claiming ship. A green deploy only proves the bundle built — for a UI change, also grep the served bundle (above).
+2. **Wait for the host deploy** (do not assume push means live) — `journalctl -u cascade-autodeploy -f`, or: `docker compose -f /var/www/cascade-browser/docker-compose.yml ps` and `curl -sf http://127.0.0.1:3000/api/health`. Confirm the expected commit (`git -C /var/www/cascade-browser rev-parse --short HEAD`) before claiming ship. A green deploy only proves the bundle built — for a UI change, also grep the served bundle (above).
 3. First-time host bootstrap (nginx, certbot, `.env`) remains `deploy/deploy.sh <domain>` — not used for routine releases. Required Actions secrets (same names as Simcluster): `DEPLOY_SSH_KEY`, `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_PORT`.
 
 ### When a deployment fails
