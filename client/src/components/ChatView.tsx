@@ -2407,8 +2407,10 @@ export const ChatView = memo(function ChatView({
   const [replyTarget, setReplyTarget] = useState<ChatReplyRef | null>(null);
   const [replyNotifiesAgent, setReplyNotifiesAgent] = useState(true);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; message: ChatMessage } | null>(null);
+  const [participantMenu, setParticipantMenu] = useState<{ x: number; y: number; username: string; action: 'remove' | 'leave' } | null>(null);
   const [reportMessage, setReportMessage] = useState<ChatMessage | null>(null);
   const contextMenuRef = usePopupMenu<HTMLDivElement>(contextMenu);
+  const participantMenuRef = usePopupMenu<HTMLDivElement>(participantMenu);
   /** Delete is two-step in the context menu rather than a native confirm dialog. */
   const [deleteArmed, setDeleteArmed] = useState(false);
   const [pendingMedia, setPendingMedia] = useState<ChatMediaAttachment[]>([]);
@@ -2821,6 +2823,7 @@ export const ChatView = memo(function ChatView({
     setReplyTarget(null);
     setReplyNotifiesAgent(true);
     setContextMenu(null);
+    setParticipantMenu(null);
   }, [channelId]);
 
   useEffect(() => {
@@ -2847,6 +2850,22 @@ export const ChatView = memo(function ChatView({
       window.removeEventListener('scroll', close, true);
     };
   }, [contextMenu]);
+
+  useEffect(() => {
+    if (!participantMenu) return;
+    const close = () => setParticipantMenu(null);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') close();
+    };
+    window.addEventListener('click', close);
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('scroll', close, true);
+    return () => {
+      window.removeEventListener('click', close);
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('scroll', close, true);
+    };
+  }, [participantMenu]);
 
   useEffect(() => {
     if (!agentMenuOpen) return;
@@ -2999,6 +3018,12 @@ export const ChatView = memo(function ChatView({
     event.stopPropagation();
     setDeleteArmed(false);
     setContextMenu({ x: event.clientX, y: event.clientY, message });
+  }, []);
+
+  const openParticipantContextMenu = useCallback((event: React.MouseEvent, username: string, action: 'remove' | 'leave') => {
+    event.preventDefault();
+    event.stopPropagation();
+    setParticipantMenu({ x: event.clientX, y: event.clientY, username, action });
   }, []);
 
   /** Message queued for forwarding; drives the channel picker overlay. */
@@ -3905,6 +3930,32 @@ export const ChatView = memo(function ChatView({
         </div>
       )}
 
+      {participantMenu && (
+        <div
+          ref={participantMenuRef}
+          className="chat-context-menu"
+          role="menu"
+          aria-label="Participant options"
+          style={{ top: participantMenu.y, left: participantMenu.x }}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            className="is-danger"
+            onClick={() => {
+              const { action, username } = participantMenu;
+              setParticipantMenu(null);
+              if (action === 'remove') void onRemoveParticipant?.(channelId, username);
+              else void onLeaveChannel?.(channelId);
+            }}
+          >
+            {participantMenu.action === 'remove' ? <Trash2 size={14} /> : <X size={14} />}
+            {participantMenu.action === 'remove' ? `Remove @${participantMenu.username} from vault` : 'Leave vault'}
+          </button>
+        </div>
+      )}
+
       {sidebarMode !== 'hidden' && <aside
         className={`chat-users${usersCollapsed ? ' is-collapsed' : ''}`}
         aria-label="Chat users"
@@ -4041,8 +4092,19 @@ export const ChatView = memo(function ChatView({
           const isOnline = isSelf || onlineUsers.has(name);
           const isOwner = name === presence.owner;
           const roleLabel = isOwner ? 'owner' : isSelf ? 'you' : isOnline ? 'online' : 'offline';
+          const participantAction = presence.owner === currentUser && !isSelf && onRemoveParticipant
+            ? 'remove'
+            : isSelf && !isOwner && onLeaveChannel
+              ? 'leave'
+              : null;
           return (
-          <div className={`chat-user chat-human${isOnline ? '' : ' is-offline'}${isSelf ? ' is-self' : ''}`} key={name}>
+          <div
+            className={`chat-user chat-human${isOnline ? '' : ' is-offline'}${isSelf ? ' is-self' : ''}`}
+            key={name}
+            onContextMenu={participantAction
+              ? (event) => openParticipantContextMenu(event, name, participantAction)
+              : undefined}
+          >
             <div className="chat-user-row">
               <ChatAvatar name={presence.profiles?.[name]?.displayName || name} kind="human" avatarUrl={presence.profiles?.[name]?.avatarUrl} size="sm" />
               <div className="chat-user-copy">
@@ -4051,16 +4113,6 @@ export const ChatView = memo(function ChatView({
                 <span className="chat-user-role">{roleLabel}</span>
               </div>
             </div>
-            {presence.owner === currentUser && !isSelf && onRemoveParticipant && (
-              <button type="button" className="chat-remove-agent" title={`Remove @${name} from vault`} onClick={() => void onRemoveParticipant(channelId, name)}>
-                <X size={12} />
-              </button>
-            )}
-            {isSelf && !isOwner && onLeaveChannel && (
-              <button type="button" className="chat-remove-agent" title="Leave vault" onClick={() => void onLeaveChannel(channelId)}>
-                <X size={12} />
-              </button>
-            )}
           </div>
           );
         })}
