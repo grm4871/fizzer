@@ -7845,13 +7845,12 @@ button.chat-avatar.is-clickable:focus-visible {
 .chat-mission-card {
   margin-top: 10px;
   max-width: 720px;
-  border: 1px solid color-mix(in srgb, var(--border) 80%, hsl(38, 40%, 30%));
+  /* No perimeter outline — status is the left rail + fill (shell design language). */
+  border: 0;
   border-radius: 10px;
-  background:
-    linear-gradient(90deg, color-mix(in srgb, hsl(38, 47%, 18%) 40%, transparent), transparent 48%),
-    color-mix(in srgb, var(--surface-subtle) 92%, transparent);
+  background: color-mix(in srgb, var(--surface-subtle) 92%, transparent);
   overflow: hidden;
-  box-shadow: var(--bevel);
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--accent) 32%, transparent);
 }
 /* Embedded work stream shares the mission surface — no nested card chrome. */
 .chat-mission-card .chat-work-trace.is-embedded,
@@ -7882,15 +7881,32 @@ button.chat-avatar.is-clickable:focus-visible {
   padding-top: 8px;
   border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
 }
-.chat-mission-card.is-active { border-color: color-mix(in srgb, var(--accent) 34%, var(--border)); }
-.chat-mission-card.is-attention { border-color: color-mix(in srgb, var(--warning) 48%, var(--border)); }
-.chat-mission-card.is-blocked { border-color: color-mix(in srgb, var(--danger) 54%, var(--border)); }
-.chat-mission-card.is-reviewing { border-color: color-mix(in srgb, var(--warning) 48%, var(--border)); }
-.chat-mission-card.is-completed { border-color: color-mix(in srgb, var(--success) 42%, var(--border)); }
+.chat-mission-card.is-active {
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface-subtle));
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--accent) 58%, transparent);
+}
+.chat-mission-card.is-attention {
+  background: color-mix(in srgb, var(--warning) 8%, var(--surface-subtle));
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--warning) 62%, transparent);
+}
+.chat-mission-card.is-blocked {
+  background: color-mix(in srgb, var(--danger) 8%, var(--surface-subtle));
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--danger) 62%, transparent);
+}
+.chat-mission-card.is-reviewing {
+  background: color-mix(in srgb, var(--warning) 8%, var(--surface-subtle));
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--warning) 62%, transparent);
+}
+.chat-mission-card.is-completed {
+  background: color-mix(in srgb, var(--success) 7%, var(--surface-subtle));
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--success) 52%, transparent);
+}
+.chat-mission-card.is-canceled {
+  background: color-mix(in srgb, var(--text-muted) 6%, var(--surface-subtle));
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--text-muted) 42%, transparent);
+}
 .chat-mission-card.is-live {
-  box-shadow:
-    var(--bevel),
-    inset 2px 0 0 color-mix(in srgb, var(--accent) 48%, transparent);
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--accent) 62%, transparent);
 }
 .chat-mission-head {
   display: grid;
@@ -7935,7 +7951,7 @@ button.chat-avatar.is-clickable:focus-visible {
 .chat-mission-kicker {
   flex: 0 0 auto;
   padding: 1px 6px;
-  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+  border: 0;
   border-radius: 999px;
   background: var(--accent-subtle);
   color: var(--accent-hover);
@@ -7958,7 +7974,7 @@ button.chat-avatar.is-clickable:focus-visible {
   flex: 0 0 auto;
   padding: 1px 7px;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border: 0;
   background: color-mix(in srgb, var(--bg-raised) 70%, transparent);
   color: var(--text-tertiary);
   font-size: 0.6875rem;
@@ -7974,7 +7990,6 @@ button.chat-avatar.is-clickable:focus-visible {
   transform: rotate(90deg);
 }
 .chat-mission-card.is-completed .chat-mission-status {
-  border-color: color-mix(in srgb, var(--success) 35%, var(--border));
   background: var(--success-subtle);
   color: var(--success);
 }
