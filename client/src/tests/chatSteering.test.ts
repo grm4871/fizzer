@@ -15,6 +15,7 @@ import {
   type ChatMessage,
 } from '../components/ChatView';
 import { chatMessageStore } from '../chat/messageStore';
+import { ChatWorkTrace } from '../components/ChatWorkTrace';
 
 const agent: ChatAgentRegistration = {
   id: 'reg-sol',
@@ -81,6 +82,42 @@ describe('agent steering presentation', () => {
       }),
     ];
     expect(getSteeringPromptLabels(messages, [agent]).get('2')).toBe('sol');
+  });
+
+  it('opens a standalone live continuation instead of showing only its route badge', () => {
+    const live = message('3', {
+      author: 'Sol', agentId: 'codex', registrationId: agent.id,
+      status: 'running', body: 'Applying the steering advice now.',
+    });
+    const markup = renderToStaticMarkup(createElement(ChatWorkTrace, {
+      trace: [live],
+      selectedMessageId: null,
+      onCancelRun: () => {},
+      onContextMenu: () => {},
+      onReply: () => {},
+      runningMessageState: new Map([[agent.id, { latestId: live.id, count: 1 }]]),
+    }));
+    expect(markup).toMatch(/chat-work-trace phase-\w+ is-open is-live/);
+    expect(markup).toContain('Applying the steering advice now.');
+  });
+
+  it('keeps live traces embedded in mission cards collapsed', () => {
+    const live = message('3', {
+      author: 'Sol', agentId: 'codex', registrationId: agent.id,
+      status: 'running', body: 'Working inside the mission.',
+    });
+    const markup = renderToStaticMarkup(createElement(ChatWorkTrace, {
+      trace: [live],
+      selectedMessageId: null,
+      onCancelRun: () => {},
+      onContextMenu: () => {},
+      onReply: () => {},
+      runningMessageState: new Map([[agent.id, { latestId: live.id, count: 1 }]]),
+      embedded: true,
+    }));
+    expect(markup).toContain('is-live is-embedded');
+    expect(markup).not.toContain('is-open');
+    expect(markup).not.toContain('Working inside the mission.');
   });
 });
 

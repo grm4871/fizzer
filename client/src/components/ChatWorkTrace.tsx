@@ -176,8 +176,10 @@ export const ChatWorkTrace = memo(function ChatWorkTrace({
 }) {
   const live = trace.some((m) => m.status === 'running' || m.status === 'sending');
   // Mission cards own the durable status surface. Their run stream stays behind
-  // explicit progressive disclosure, including while live.
-  const [open, setOpen] = useState(Boolean(forceOpen));
+  // explicit progressive disclosure, including while live. Standalone live
+  // flows open immediately so a steering continuation shows its actual work
+  // instead of collapsing to an ambiguous phase badge such as "route".
+  const [open, setOpen] = useState(Boolean(forceOpen || (live && !embedded)));
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const pinBottomRef = useRef(true);
@@ -189,6 +191,10 @@ export const ChatWorkTrace = memo(function ChatWorkTrace({
   useEffect(() => {
     if (forceOpen) setOpen(true);
   }, [forceOpen]);
+
+  useEffect(() => {
+    if (live && !embedded) setOpen(true);
+  }, [embedded, live]);
 
   useEffect(() => {
     if (!selectedMessageId) return;
