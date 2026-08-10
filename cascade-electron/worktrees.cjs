@@ -34,6 +34,8 @@ const GIT_TIMEOUT_MS = 20000;
 const GH_TIMEOUT_MS = 60000;
 const REGISTRY_FILE = 'workspaces.json';
 const MAX_REVIEW_TEXT_BYTES = 512 * 1024;
+/** How long a managed workspace may sit untouched before prune offers it up. */
+const WORKSPACE_MAX_IDLE_MS = 3 * 24 * 60 * 60 * 1000;
 
 /** Root for Cascade-managed worktrees. Overridable for tests. */
 function workspacesRoot() {
@@ -485,6 +487,72 @@ async function removeWorkspace({ dir, force } = {}) {
 }
 
 /**
+ * Remove managed workspaces that are finished with.
+ *
+ * Nothing ever called {@link removeWorkspace} except a human clicking Remove,
+ * so every worktree a mission ever created stayed on disk (each one is a full
+ * checkout with its own node_modules). This sweeps them.
+ *
+ * Safety comes from `removeWorkspace` itself: it is called *without* `force`,
+ * so a workspace with uncommitted changes or unpushed commits refuses to go and
+ * is reported as kept. A workspace is only offered up when it has also been
+ * untouched for `maxAgeMs`, which keeps an idle-but-live task's checkout.
+ * Registry rows whose directory has already vanished are simply forgotten.
+ *
+ * @param {{ maxAgeMs?: number, keepPaths?: string[], dryRun?: boolean }} [opts]
+ */
+async function pruneWorkspaces({ maxAgeMs = WORKSPACE_MAX_IDLE_MS, keepPaths = [], dryRun = false } = {}) {
+  const keep = new Set((keepPaths || []).map((entry) => path.resolve(expandHome(String(entry || '')))).filter(Boolean));
+  const cutoff = Date.now() - Math.max(0, Number(maxAgeMs) || 0);
+  const removed = [];
+  const kept = [];
+  const forgotten = [];
+
+  for (const entry of readRegistry()) {
+    const target = String(entry?.path || '');
+    if (!target) continue;
+    if (!fs.existsSync(target)) {
+      if (!dryRun) forgetWorkspace(target);
+      forgotten.push(target);
+      continue;
+    }
+    if (keep.has(path.resolve(target))) {
+      kept.push({ path: target, reason: 'in use' });
+      continue;
+    }
+    let touchedAt = 0;
+    try {
+      touchedAt = fs.statSync(target).mtimeMs;
+    } catch {
+      touchedAt = 0;
+    }
+    const createdAt = Date.parse(entry?.createdAt || '') || 0;
+    if (Math.max(touchedAt, createdAt) > cutoff) {
+      kept.push({ path: target, reason: 'recently active' });
+      continue;
+    }
+    if (dryRun) {
+      const status = await workspaceStatus(target);
+      const blocked = !status.ok
+        ? status.error
+        : status.dirty
+          ? `${status.changedFiles.length} uncommitted change(s)`
+          : status.unpushed > 0
+            ? `${status.unpushed} unpushed commit(s)`
+            : '';
+      if (blocked) kept.push({ path: target, reason: blocked });
+      else removed.push({ path: target, branch: status.branch });
+      continue;
+    }
+    const result = await removeWorkspace({ dir: target });
+    if (result.ok) removed.push({ path: result.path, branch: result.branch });
+    else kept.push({ path: target, reason: result.error || 'refused' });
+  }
+
+  return { ok: true, removed, kept, forgotten };
+}
+
+/**
  * Push the workspace branch and open a pull request through `gh`.
  * Explicit by construction: nothing else in this module pushes.
  */
@@ -558,6 +626,7 @@ module.exports = {
   createWorkspace,
   prepareWorkspace,
   removeWorkspace,
+  pruneWorkspaces,
   createPullRequest,
   pullRequestStatus,
 };

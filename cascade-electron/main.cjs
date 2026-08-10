@@ -606,6 +606,7 @@ ipcMain.handle('worktree:fileDiff', async (_event, opts = {}) => worktrees.works
 ipcMain.handle('worktree:create', async (_event, opts = {}) => worktrees.createWorkspace(opts));
 ipcMain.handle('worktree:prepare', async (_event, opts = {}) => worktrees.prepareWorkspace(opts));
 ipcMain.handle('worktree:remove', async (_event, opts = {}) => worktrees.removeWorkspace(opts));
+ipcMain.handle('worktree:prune', async (_event, opts = {}) => worktrees.pruneWorkspaces(opts));
 ipcMain.handle('worktree:createPullRequest', async (_event, opts = {}) => worktrees.createPullRequest(opts));
 ipcMain.handle('worktree:pullRequest', async (_event, { dir } = {}) => worktrees.pullRequestStatus(dir));
 
@@ -658,6 +659,23 @@ app.whenReady().then(async () => {
     await reapOrphanedLocalAgentRuns();
   } catch (error) {
     console.error('[Main] Failed to reap orphaned agent processes:', error);
+  }
+
+  // Task workspaces used to accumulate forever: nothing called removeWorkspace
+  // except a human clicking Remove, and each one is a full checkout. Sweep the
+  // finished ones on launch. Anything dirty, unpushed or recently touched is
+  // refused by removeWorkspace and simply reported.
+  try {
+    const pruned = await worktrees.pruneWorkspaces();
+    if (pruned.removed.length || pruned.forgotten.length) {
+      console.log(
+        `[Main] Pruned ${pruned.removed.length} finished task workspace(s)`
+        + `${pruned.forgotten.length ? `, forgot ${pruned.forgotten.length} missing row(s)` : ''}`
+        + `${pruned.kept.length ? `, kept ${pruned.kept.length}` : ''}`,
+      );
+    }
+  } catch (error) {
+    console.error('[Main] Failed to prune task workspaces:', error);
   }
 
   // Allow app-shell permissions needed by the hosted app.

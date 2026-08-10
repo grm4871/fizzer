@@ -205,3 +205,66 @@ test('a clean workspace with no commits cannot open a pull request', async () =>
 });
 
 test.after(() => fs.rmSync(scratch, { recursive: true, force: true }));
+
+// Age a workspace the way time does: both the directory mtime and the registry
+// row's createdAt. pruneWorkspaces treats the later of the two as last activity.
+function ageWorkspace(dir, ms) {
+  const when = new Date(Date.now() - ms);
+  fs.utimesSync(dir, when, when);
+  const file = path.join(wt.workspacesRoot(), 'workspaces.json');
+  const rows = JSON.parse(fs.readFileSync(file, 'utf8'));
+  for (const row of rows) if (row.path === dir) row.createdAt = when.toISOString();
+  fs.writeFileSync(file, `${JSON.stringify(rows, null, 2)}\n`);
+}
+
+test('prune removes finished workspaces and refuses to touch live work', async () => {
+  const repo = makeRepo('prune');
+  const stale = await wt.createWorkspace({ dir: repo, slug: 'stale' });
+  const dirty = await wt.createWorkspace({ dir: repo, slug: 'dirty' });
+  const unpushed = await wt.createWorkspace({ dir: repo, slug: 'unpushed' });
+  const fresh = await wt.createWorkspace({ dir: repo, slug: 'fresh' });
+
+  fs.writeFileSync(path.join(dirty.path, 'scratch.txt'), 'work in progress\n');
+
+  fs.writeFileSync(path.join(unpushed.path, 'README.md'), '# local only\n');
+  execFileSync('git', ['add', '.'], { cwd: unpushed.path });
+  execFileSync('git', ['commit', '-m', 'local only'], { cwd: unpushed.path });
+
+  // Age everything except `fresh` past the cutoff.
+  for (const dir of [stale.path, dirty.path, unpushed.path]) ageWorkspace(dir, 30 * 24 * 60 * 60 * 1000);
+
+  const preview = await wt.pruneWorkspaces({ maxAgeMs: 24 * 60 * 60 * 1000, dryRun: true });
+  assert.ok(preview.removed.some((entry) => entry.path === stale.path));
+  assert.equal(fs.existsSync(stale.path), true, 'dry run must not delete anything');
+
+  const pruned = await wt.pruneWorkspaces({ maxAgeMs: 24 * 60 * 60 * 1000 });
+  assert.ok(pruned.removed.some((entry) => entry.path === stale.path));
+  assert.equal(fs.existsSync(stale.path), false);
+
+  // Other tests share the registry, so only assert on this repo's workspaces.
+  const mine = new Set([stale.path, dirty.path, unpushed.path, fresh.path]);
+  const keptPaths = pruned.kept.map((entry) => entry.path).filter((p) => mine.has(p)).sort();
+  assert.deepEqual(keptPaths, [dirty.path, fresh.path, unpushed.path].sort());
+  assert.equal(fs.existsSync(dirty.path), true);
+  assert.equal(fs.existsSync(unpushed.path), true);
+  assert.equal(fs.existsSync(fresh.path), true);
+  assert.match(pruned.kept.find((e) => e.path === dirty.path).reason, /uncommitted/);
+  assert.match(pruned.kept.find((e) => e.path === unpushed.path).reason, /exist only here/);
+  assert.match(pruned.kept.find((e) => e.path === fresh.path).reason, /recently active/);
+});
+
+test('prune keeps a workspace that is currently in use and forgets vanished rows', async () => {
+  const repo = makeRepo('prune-inuse');
+  const busy = await wt.createWorkspace({ dir: repo, slug: 'busy' });
+  const gone = await wt.createWorkspace({ dir: repo, slug: 'gone' });
+
+  ageWorkspace(busy.path, 30 * 24 * 60 * 60 * 1000);
+
+  // Simulate a worktree deleted out from under the registry.
+  execFileSync('git', ['worktree', 'remove', '--force', gone.path], { cwd: repo });
+
+  const pruned = await wt.pruneWorkspaces({ maxAgeMs: 24 * 60 * 60 * 1000, keepPaths: [busy.path] });
+  assert.equal(fs.existsSync(busy.path), true);
+  assert.equal(pruned.kept.find((entry) => entry.path === busy.path).reason, 'in use');
+  assert.ok(pruned.forgotten.includes(gone.path));
+});
