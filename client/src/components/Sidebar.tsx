@@ -804,128 +804,157 @@ export const Sidebar = memo(function Sidebar({
 
       {vaultMenuOpen && (
         <div className="vault-switcher-menu" role="dialog" aria-modal="true" aria-label="Vault workspace">
-          <div className="vault-switcher-heading">
-            <div><span>Vault workspace</span><small>{vaults.length} vaults</small></div>
-            <button type="button" className="vault-switcher-close" onClick={() => setVaultMenuOpen(false)} aria-label="Close vault workspace"><X size={18} /></button>
-          </div>
-          <div className="vault-switcher-section-title">Your vaults</div>
-          {vaults.map((vault) => (
-            renamingVaultId === vault.id ? (
-              <div className="vault-switcher-create-form" key={vault.id}>
-                <input
-                  autoFocus
-                  value={renameVaultName}
-                  placeholder="Vault name"
-                  aria-label={`Rename ${vault.name}`}
-                  maxLength={80}
-                  disabled={renameVaultBusy}
-                  onChange={(event) => setRenameVaultName(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') void submitRenameVault();
-                    if (event.key === 'Escape') cancelRenameVault();
-                  }}
-                />
-                <button type="button" disabled={!renameVaultName.trim() || renameVaultBusy} onClick={() => void submitRenameVault()}>
-                  {renameVaultBusy ? 'Saving' : 'Save'}
-                </button>
+          <div className="vault-switcher-shell">
+            <div className="vault-switcher-heading">
+              <div><span>Vault workspace</span><small>{vaults.length} {vaults.length === 1 ? 'vault' : 'vaults'}</small></div>
+              <button type="button" className="vault-switcher-close" onClick={() => setVaultMenuOpen(false)} aria-label="Close vault workspace"><X size={18} /></button>
+            </div>
+
+            <section className="vault-switcher-section" aria-labelledby="vault-switcher-your-vaults">
+              <h2 className="vault-switcher-section-title" id="vault-switcher-your-vaults">Your vaults</h2>
+              <div className="vault-switcher-grid" role="menu" aria-label="Your vaults">
+                {vaults.map((vault) => (
+                  renamingVaultId === vault.id ? (
+                    <div className="vault-switcher-create-form vault-switcher-rename-form" key={vault.id}>
+                      <strong>Rename {vault.name}</strong>
+                      <input
+                        autoFocus
+                        value={renameVaultName}
+                        placeholder="Vault name"
+                        aria-label={`Rename ${vault.name}`}
+                        maxLength={80}
+                        disabled={renameVaultBusy}
+                        onChange={(event) => setRenameVaultName(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') void submitRenameVault();
+                          if (event.key === 'Escape') cancelRenameVault();
+                        }}
+                      />
+                      <div className="vault-switcher-form-actions">
+                        <button type="button" onClick={cancelRenameVault}>Cancel</button>
+                        <button type="button" disabled={!renameVaultName.trim() || renameVaultBusy} onClick={() => void submitRenameVault()}>
+                          {renameVaultBusy ? 'Saving' : 'Save'}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="vault-switcher-row" key={vault.id}>
+                      <button
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={vault.id === activeVaultId}
+                        className={vault.id === activeVaultId ? 'is-active' : ''}
+                        onClick={() => { onSelectVault(vault.id); setVaultMenuOpen(false); }}
+                      >
+                        <span className="vault-switcher-art" aria-hidden="true">
+                          <span className="vault-switcher-icon"><FizzerMark size={38} /></span>
+                        </span>
+                        <span className="vault-switcher-copy">
+                          <span className="vault-switcher-title-line">
+                            <strong>{vault.name}</strong>
+                            {(updateCounts.byVault[vault.id] || 0) > 0 && (
+                              <span className="vault-switcher-update-badge" aria-label={`${countLabel(updateCounts.byVault[vault.id])} unread updates`}>
+                                {countLabel(updateCounts.byVault[vault.id])}
+                              </span>
+                            )}
+                            {vault.id === activeVaultId && <Check className="vault-switcher-check" size={16} aria-hidden="true" />}
+                          </span>
+                          <small>
+                            {isSharedVault(vault)
+                              ? `${vault.memberCount} members · ${vault.role || 'member'}`
+                              : 'Private · only you'}
+                          </small>
+                        </span>
+                      </button>
+                      {canRenameVault(vault) && (
+                        <button
+                          type="button"
+                          className="vault-switcher-rename"
+                          title={`Rename ${vault.name}`}
+                          aria-label={`Rename ${vault.name}`}
+                          onClick={(event) => { event.stopPropagation(); startRenameVault(vault); }}
+                        >
+                          <Pencil size={14} aria-hidden="true" />
+                        </button>
+                      )}
+                    </div>
+                  )
+                ))}
               </div>
-            ) : (
-              <div className="vault-switcher-row" key={vault.id}>
-                <button
-                  type="button"
-                  role="menuitemradio"
-                  aria-checked={vault.id === activeVaultId}
-                  className={vault.id === activeVaultId ? 'is-active' : ''}
-                  onClick={() => { onSelectVault(vault.id); setVaultMenuOpen(false); }}
-                >
-                  <span className="vault-switcher-icon" aria-hidden="true"><FizzerMark size={15} /></span>
-                  <span className="vault-switcher-copy">
-                    <strong>{vault.name}</strong>
-                    <small>
-                      {isSharedVault(vault)
-                        ? `${vault.memberCount} members · ${vault.role || 'member'}`
-                        : 'Private · only you'}
-                    </small>
-                  </span>
-                  {(updateCounts.byVault[vault.id] || 0) > 0 && (
-                    <span className="vault-switcher-update-badge" aria-label={`${countLabel(updateCounts.byVault[vault.id])} unread updates`}>
-                      {countLabel(updateCounts.byVault[vault.id])}
-                    </span>
-                  )}
-                  {vault.id === activeVaultId && <Check className="vault-switcher-check" size={15} aria-hidden="true" />}
+            </section>
+
+            <section className="vault-switcher-section" aria-labelledby="vault-switcher-manage">
+              <h2 className="vault-switcher-section-title" id="vault-switcher-manage">Explore and manage vaults</h2>
+              <div className="vault-switcher-action-grid" role="menu" aria-label="Explore and manage vaults">
+                <button type="button" role="menuitem" className="vault-switcher-action vault-switcher-discover" onClick={() => { setVaultMenuOpen(false); onOpenPublicVaults(); }}>
+                  <span className="vault-switcher-action-icon" aria-hidden="true"><Compass size={28} /></span>
+                  <span className="vault-switcher-copy"><strong>Browse public vaults</strong><small>Find open communities</small></span>
                 </button>
-                {canRenameVault(vault) && (
-                  <button
-                    type="button"
-                    className="vault-switcher-rename"
-                    title={`Rename ${vault.name}`}
-                    aria-label={`Rename ${vault.name}`}
-                    onClick={(event) => { event.stopPropagation(); startRenameVault(vault); }}
-                  >
-                    <Pencil size={13} aria-hidden="true" />
+                {creatingVault ? (
+                  <div className="vault-switcher-create-form vault-switcher-action-form">
+                    <strong>New vault</strong>
+                    <input
+                      autoFocus
+                      value={newVaultName}
+                      placeholder="Vault name"
+                      aria-label="New vault name"
+                      disabled={creatingVaultBusy}
+                      onChange={(event) => setNewVaultName(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') void submitNewVault();
+                        if (event.key === 'Escape') {
+                          setCreatingVault(false);
+                          setNewVaultName('');
+                        }
+                      }}
+                    />
+                    <div className="vault-switcher-form-actions">
+                      <button type="button" onClick={() => { setCreatingVault(false); setNewVaultName(''); }}>Cancel</button>
+                      <button type="button" disabled={!newVaultName.trim() || creatingVaultBusy} onClick={() => void submitNewVault()}>
+                        {creatingVaultBusy ? 'Creating' : 'Create'}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button type="button" role="menuitem" className="vault-switcher-action vault-switcher-create" onClick={() => { setJoiningVault(false); setCreatingVault(true); }}>
+                    <span className="vault-switcher-action-icon" aria-hidden="true"><Plus size={28} /></span>
+                    <span className="vault-switcher-copy"><strong>New vault</strong><small>Start a private workspace</small></span>
+                  </button>
+                )}
+                {joiningVault ? (
+                  <div className="vault-switcher-create-form vault-switcher-action-form">
+                    <strong>Join vault</strong>
+                    <input
+                      autoFocus
+                      value={vaultInviteLink}
+                      placeholder="Paste vault invite link"
+                      aria-label="Vault invite link"
+                      disabled={joiningVaultBusy}
+                      onChange={(event) => setVaultInviteLink(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') void submitJoinVault();
+                        if (event.key === 'Escape') {
+                          setJoiningVault(false);
+                          setVaultInviteLink('');
+                        }
+                      }}
+                    />
+                    <div className="vault-switcher-form-actions">
+                      <button type="button" onClick={() => { setJoiningVault(false); setVaultInviteLink(''); }}>Cancel</button>
+                      <button type="button" disabled={!vaultInviteLink.trim() || joiningVaultBusy} onClick={() => void submitJoinVault()}>
+                        {joiningVaultBusy ? 'Joining' : 'Join'}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button type="button" role="menuitem" className="vault-switcher-action vault-switcher-join" onClick={() => { setCreatingVault(false); setJoiningVault(true); }}>
+                    <span className="vault-switcher-action-icon" aria-hidden="true"><LogIn size={28} /></span>
+                    <span className="vault-switcher-copy"><strong>Join vault</strong><small>Use an invite link</small></span>
                   </button>
                 )}
               </div>
-            )
-          ))}
-          <div className="vault-switcher-divider" role="separator" />
-          <button type="button" role="menuitem" className="vault-switcher-discover" onClick={() => { setVaultMenuOpen(false); onOpenPublicVaults(); }}>
-            <Compass size={14} aria-hidden="true" /> Browse public vaults
-          </button>
-          <div className="vault-switcher-divider" role="separator" />
-          <div className="vault-switcher-section-title">Manage vaults</div>
-          {creatingVault ? (
-            <div className="vault-switcher-create-form">
-              <input
-                autoFocus
-                value={newVaultName}
-                placeholder="Vault name"
-                aria-label="New vault name"
-                disabled={creatingVaultBusy}
-                onChange={(event) => setNewVaultName(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') void submitNewVault();
-                  if (event.key === 'Escape') {
-                    setCreatingVault(false);
-                    setNewVaultName('');
-                  }
-                }}
-              />
-              <button type="button" disabled={!newVaultName.trim() || creatingVaultBusy} onClick={() => void submitNewVault()}>
-                {creatingVaultBusy ? 'Creating' : 'Create'}
-              </button>
-            </div>
-          ) : (
-            <button type="button" role="menuitem" className="vault-switcher-create" onClick={() => { setJoiningVault(false); setCreatingVault(true); }}>
-              <Plus size={14} aria-hidden="true" /> New vault
-            </button>
-          )}
-          {joiningVault ? (
-            <div className="vault-switcher-create-form">
-              <input
-                autoFocus
-                value={vaultInviteLink}
-                placeholder="Paste vault invite link"
-                aria-label="Vault invite link"
-                disabled={joiningVaultBusy}
-                onChange={(event) => setVaultInviteLink(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') void submitJoinVault();
-                  if (event.key === 'Escape') {
-                    setJoiningVault(false);
-                    setVaultInviteLink('');
-                  }
-                }}
-              />
-              <button type="button" disabled={!vaultInviteLink.trim() || joiningVaultBusy} onClick={() => void submitJoinVault()}>
-                {joiningVaultBusy ? 'Joining' : 'Join'}
-              </button>
-            </div>
-          ) : (
-            <button type="button" role="menuitem" className="vault-switcher-join" onClick={() => { setCreatingVault(false); setJoiningVault(true); }}>
-              <LogIn size={14} aria-hidden="true" /> Join vault
-            </button>
-          )}
+            </section>
+          </div>
         </div>
       )}
 

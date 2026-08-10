@@ -238,10 +238,16 @@ try {
     }
   });
   await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
-  await page.evaluate((value) => {
-    localStorage.setItem('docs_token', value);
+  await page.evaluate(({ authToken, vaultId }) => {
+    localStorage.setItem('docs_token', authToken);
     localStorage.setItem('cascade_chat_users_collapsed', '0');
-  }, token);
+    localStorage.setItem('cascade_session', JSON.stringify({
+      activeVaultId: vaultId,
+      openTabs: [],
+      layout: { type: 'pane', id: 'root', tabIds: [], activeTabId: null },
+      focusedPaneId: 'root',
+    }));
+  }, { authToken: token, vaultId: vault.id });
   await page.goto(APP_URL, { waitUntil: 'networkidle' });
   const openChannel = async () => {
     const entry = page.locator(`#note-${channel.id}`);

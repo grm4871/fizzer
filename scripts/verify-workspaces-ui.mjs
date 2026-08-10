@@ -140,12 +140,52 @@ try {
     && vaultWorkspaceBox.y <= 1
     && vaultWorkspaceBox.width >= 1398
     && vaultWorkspaceBox.height >= 898);
+  const vaultWorkspaceSurface = await vaultWorkspace.evaluate((node) => {
+    const style = getComputedStyle(node);
+    return { backgroundImage: style.backgroundImage, backdropFilter: style.backdropFilter };
+  });
+  check('vault workspace uses a flat background with no ambient gradient',
+    vaultWorkspaceSurface.backgroundImage === 'none'
+      && (vaultWorkspaceSurface.backdropFilter === 'none' || vaultWorkspaceSurface.backdropFilter === ''));
   const vaultWorkspaceText = await vaultWorkspace.innerText();
   const vaultWorkspaceTextLower = vaultWorkspaceText.toLowerCase();
   check('vault workspace exposes personal, discovery, and management areas',
     vaultWorkspaceTextLower.includes('your vaults')
       && vaultWorkspaceTextLower.includes('browse public vaults')
       && vaultWorkspaceTextLower.includes('manage vaults'), JSON.stringify(vaultWorkspaceText));
+  const vaultGridDisplay = await vaultWorkspace.locator('.vault-switcher-grid').evaluate((node) => getComputedStyle(node).display);
+  const actionGridDisplay = await vaultWorkspace.locator('.vault-switcher-action-grid').evaluate((node) => getComputedStyle(node).display);
+  const actionTiles = vaultWorkspace.locator('.vault-switcher-action');
+  const actionTileBoxes = await actionTiles.evaluateAll((nodes) => nodes.map((node) => {
+    const box = node.getBoundingClientRect();
+    return { x: box.x, y: box.y, width: box.width, height: box.height };
+  }));
+  check('vault workspace presents navigation as substantial tile grids',
+    vaultGridDisplay === 'grid'
+      && actionGridDisplay === 'grid'
+      && actionTileBoxes.length === 3
+      && actionTileBoxes.every((box) => box.width >= 200 && box.height >= 120)
+      && Math.max(...actionTileBoxes.map((box) => box.y)) - Math.min(...actionTileBoxes.map((box) => box.y)) <= 2);
+  if (process.env.CASCADE_CAPTURE_VAULT_WORKSPACE) {
+    await vaultWorkspace.screenshot({ path: process.env.CASCADE_CAPTURE_VAULT_WORKSPACE });
+  }
+  await plain.setViewportSize({ width: 390, height: 844 });
+  const mobileWorkspaceBox = await vaultWorkspace.boundingBox();
+  const mobileActionTileBoxes = await actionTiles.evaluateAll((nodes) => nodes.map((node) => {
+    const box = node.getBoundingClientRect();
+    return { x: box.x, y: box.y, width: box.width };
+  }));
+  check('vault tile menu remains full-screen and single-column on a phone',
+    Boolean(mobileWorkspaceBox)
+      && mobileWorkspaceBox.x <= 1
+      && mobileWorkspaceBox.y <= 1
+      && mobileWorkspaceBox.width >= 388
+      && mobileWorkspaceBox.height >= 842
+      && mobileActionTileBoxes.every((box) => box.width >= 350)
+      && Math.max(...mobileActionTileBoxes.map((box) => box.x)) - Math.min(...mobileActionTileBoxes.map((box) => box.x)) <= 2
+      && mobileActionTileBoxes[0].y < mobileActionTileBoxes[1].y
+      && mobileActionTileBoxes[1].y < mobileActionTileBoxes[2].y);
+  await plain.setViewportSize({ width: 1400, height: 900 });
   await vaultWorkspace.getByRole('menuitem', { name: 'Browse public vaults' }).click();
   const publicVaultsDialog = plain.getByRole('dialog', { name: /Public vaults/ });
   await publicVaultsDialog.waitFor({ timeout: 10_000 });
