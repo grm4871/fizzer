@@ -10,7 +10,7 @@
 import jwt from 'jsonwebtoken';
 import type { Server, Socket } from 'socket.io';
 import type Database from 'better-sqlite3';
-import { resolveJwtSecret } from './security.js';
+import { resolveJwtSecret, sessionIssuedAtIsCurrent, sessionTokenFromCookie } from './security.js';
 import {
   clearDelegatedRunRecord,
   countActiveDelegatedRuns,
@@ -65,7 +65,7 @@ export type PreparedDesktopWorkspace = {
   resumed: boolean;
 };
 
-type RunnerUser = { id: number; username: string };
+type RunnerUser = { id: number; username: string; authVersion?: number; iat?: number };
 
 type RunnerSocket = Socket & { data: { user?: RunnerUser } };
 
@@ -214,16 +214,28 @@ function scheduleDisconnectFail(db: Db, hooks: RunnerHooks, userId: number): voi
 export function initDesktopRunners(io: Server, db: Db, hooks: RunnerHooks): void {
   const runnersNamespace = io.of('/runners');
   runnersNamespace.use((socket, next) => {
-    const token = typeof socket.handshake.auth.token === 'string' ? socket.handshake.auth.token : null;
-    if (!token) return next(new Error('Authentication required'));
-    try {
-      const decoded = jwt.verify(token, JWT_SECRET) as RunnerUser & { access?: 'user' | 'agent' };
-      if (decoded.access === 'agent') return next(new Error('This operation requires user access'));
-      socket.data.user = { id: decoded.id, username: decoded.username };
-      next();
-    } catch {
-      next(new Error('Invalid or expired token'));
+    const authToken = typeof socket.handshake.auth.token === 'string' ? socket.handshake.auth.token : null;
+    const cookieToken = sessionTokenFromCookie(socket.handshake.headers.cookie);
+    if (!authToken && !cookieToken) return next(new Error('Authentication required'));
+    for (const token of [authToken, cookieToken].filter((value, index, all): value is string => (
+      Boolean(value) && all.indexOf(value) === index
+    ))) {
+      try {
+        const decoded = jwt.verify(token, JWT_SECRET) as RunnerUser & { access?: 'user' | 'agent' };
+        if (decoded.access === 'agent' || !sessionIssuedAtIsCurrent(decoded.iat)) continue;
+        const current = db.prepare('SELECT username, auth_version FROM users WHERE id = ?').get(decoded.id) as {
+          username: string;
+          auth_version: number;
+        } | undefined;
+        if (!current || current.username !== decoded.username || current.auth_version !== (decoded.authVersion ?? 0)) continue;
+        socket.data.user = { id: decoded.id, username: decoded.username };
+        next();
+        return;
+      } catch {
+        // Try the cookie after a stale legacy bearer during migration.
+      }
     }
+    next(new Error('Invalid or expired token'));
   });
 
   runnersNamespace.on('connection', (socket) => {

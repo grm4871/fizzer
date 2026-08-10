@@ -76,7 +76,7 @@ fi
 # Routine updates only rebuild/swap the app container. First-time nginx/TLS
 # bootstrap remains deploy/deploy.sh (run by hand on a new host).
 echo "==> Running remote-update.sh"
-if ./deploy/remote-update.sh; then
+if CASCADE_DEPLOY_DOMAIN="$DOMAIN" ./deploy/remote-update.sh; then
   write_result ok "deployed"
   echo "==> Deploy complete: $(git rev-parse --short HEAD)"
 else

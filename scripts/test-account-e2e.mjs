@@ -2,6 +2,7 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import Database from 'better-sqlite3';
+import { io } from 'socket.io-client';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pickPort } from './lib/test-ports.mjs';
 
@@ -16,7 +17,12 @@ async function request(path, options = {}) {
     ...options,
     headers: { 'content-type': 'application/json', ...(options.headers || {}) },
   });
-  return { status: response.status, ok: response.ok, data: await response.json().catch(() => ({})) };
+  return {
+    status: response.status,
+    ok: response.ok,
+    data: await response.json().catch(() => ({})),
+    headers: response.headers,
+  };
 }
 async function must(path, options = {}) {
   const result = await request(path, options);
@@ -48,7 +54,14 @@ try { fs.unlinkSync(dbPath); } catch {}
 }
 const server = spawn('node', ['dist/index.js'], {
   cwd: root,
-  env: { ...process.env, API_PORT: String(port), API_HOST: '127.0.0.1', DOCS_DB_PATH: dbPath, JWT_SECRET: 'account-test-secret' },
+  env: {
+    ...process.env,
+    API_PORT: String(port),
+    API_HOST: '127.0.0.1',
+    DOCS_DB_PATH: dbPath,
+    JWT_SECRET: 'account-test-secret',
+    CASCADE_REQUIRE_INVITE_REGISTRATION: 'true',
+  },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 server.stderr.on('data', (chunk) => process.stderr.write(`[server] ${chunk}`));
@@ -67,8 +80,11 @@ try {
   const ownerName = `owner_${stamp}`;
   const guestName = `guest_${stamp}`;
   const owner = await register(ownerName);
-  const uninvited = await register(`uninvited_${stamp}`);
-  check('registration remains open after the bootstrap account', uninvited.user.username === `uninvited_${stamp}`);
+  const uninvited = await request('/api/auth/register', {
+    method: 'POST',
+    body: JSON.stringify({ username: `uninvited_${stamp}`, password: 'testpass12345' }),
+  });
+  check('registration closes after the bootstrap account', uninvited.status === 403);
 
   const avatarUrl = 'data:image/png;base64,iVBORw0KGgo=';
   const profile = await must('/api/me/profile', {
@@ -97,8 +113,12 @@ try {
   const embeds = await must(`/api/vaults/${vault.id}/channels/${channel.id}/messages/${ownerMessage.message.id}/embeds`, { headers: owner.auth });
   check('chat embeds snapshot aliased note targets', embeds.notes?.length === 1 && embeds.notes[0].title === 'Release plan' && embeds.notes[0].content.includes('shared vault'));
   const { token: invite } = await must(`/api/vaults/${vault.id}/channels/${channel.id}/invite-link`, { method: 'POST', headers: owner.auth });
-  const guest = await register(guestName);
-  check('a new friend can register before accepting an invite', guest.user.username === guestName);
+  const guest = await register(guestName, invite);
+  check('a new friend can register with the invitation', guest.user.username === guestName);
+  check('a registration invitation is single-use', (await request('/api/auth/register', {
+    method: 'POST',
+    body: JSON.stringify({ username: `reused_${stamp}`, password: 'testpass12345', inviteToken: invite }),
+  })).status === 403);
   check('another account cannot rename a private folder', (await request(`/api/folders/${folder.id}`, { method: 'PATCH', headers: guest.auth, body: JSON.stringify({ name: 'stolen' }) })).status === 404);
   check('another account cannot delete a private folder', (await request(`/api/folders/${folder.id}`, { method: 'DELETE', headers: guest.auth })).status === 404);
   const linked = await must(`/api/chat-invites/${encodeURIComponent(invite)}/accept`, { method: 'POST', headers: guest.auth });
@@ -145,6 +165,40 @@ try {
 
   const { token: agentToken } = await must('/api/auth/agent-token', { method: 'POST', headers: owner.auth });
   check('restricted agent token cannot mutate profile', (await request('/api/me/profile', { method: 'PUT', headers: { authorization: `Bearer ${agentToken}` }, body: JSON.stringify({ displayName: 'Nope', avatarUrl: '' }) })).status === 403);
+
+  const browserLogin = await request('/api/auth/login', {
+    method: 'POST',
+    headers: { 'x-cascade-browser': '1' },
+    body: JSON.stringify({ username: ownerName, password: 'changedpass12345' }),
+  });
+  const sessionCookie = browserLogin.headers.get('set-cookie')?.split(';', 1)[0] || '';
+  check('browser login returns an HttpOnly cookie without a readable bearer',
+    browserLogin.ok && !('token' in browserLogin.data) && /cascade_session=/.test(sessionCookie)
+      && /HttpOnly/i.test(browserLogin.headers.get('set-cookie') || ''));
+  check('cookie session authenticates reads', (await request('/api/me', {
+    headers: { cookie: sessionCookie },
+  })).data.user?.username === ownerName);
+  check('a stale migration bearer falls back to the valid cookie', (await request('/api/me', {
+    headers: { cookie: sessionCookie, authorization: 'Bearer stale.legacy.token' },
+  })).data.user?.username === ownerName);
+  check('cookie mutations reject requests without the browser CSRF header', (await request('/api/auth/agent-token', {
+    method: 'POST', headers: { cookie: sessionCookie }, body: '{}',
+  })).status === 403);
+  check('cookie mutations accept the protected browser request', (await request('/api/auth/agent-token', {
+    method: 'POST', headers: { cookie: sessionCookie, 'x-cascade-browser': '1' }, body: '{}',
+  })).ok);
+  const cookieSocket = io(`${base}/vault`, {
+    transports: ['websocket'],
+    reconnection: false,
+    extraHeaders: { cookie: sessionCookie },
+  });
+  const socketConnected = await new Promise((resolve) => {
+    const timeout = setTimeout(() => resolve(false), 3_000);
+    cookieSocket.once('connect', () => { clearTimeout(timeout); resolve(true); });
+    cookieSocket.once('connect_error', () => { clearTimeout(timeout); resolve(false); });
+  });
+  check('Socket.IO accepts the HttpOnly cookie session', socketConnected);
+  cookieSocket.close();
 
   if (failures) throw new Error(`${failures} account checks failed`);
   console.log('[account-e2e] All account and multiplayer permission checks passed');

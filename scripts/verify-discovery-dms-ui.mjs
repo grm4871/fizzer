@@ -73,7 +73,7 @@ try {
     requests.push({ method, path, search: url.search, body: request.postDataJSON?.() });
 
     const json = (body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
-    if (path === '/api/me') return json({ user: { id: 1, username: 'ui_tester', displayName: 'UI Tester', avatarUrl: '' }, owner: false });
+    if (path === '/api/session') return json({ authenticated: true, user: { id: 1, username: 'ui_tester', displayName: 'UI Tester', avatarUrl: '' }, owner: false });
     if (path === '/api/me/desktop-runner') return json({ online: true, runners: [] });
     if (path === '/api/community/updates' && method === 'GET') return json({
       groups: [], counts: { total: 2, directMessages: 2, byVault: { 'v-home': 2 }, byTarget: { 'dm-alice': 2 } }, truncated: false,

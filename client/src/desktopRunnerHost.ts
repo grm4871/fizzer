@@ -394,7 +394,7 @@ function connectDesktopRunnerSocket(token: string, nextApiBase: string): void {
   detachSocket();
 
   socket = io(`${apiBase}/runners`, {
-    auth: { token: authToken },
+    withCredentials: true,
     // Polling first: Chromium HTTPS works here even when WS upgrade or Node
     // TLS is middleboxed. engine.io upgrades to websocket when available.
     transports: ['polling', 'websocket'],
@@ -421,8 +421,10 @@ export function startDesktopRunnerHost(opts?: { clearOnStop?: boolean }): () => 
   const api = runnerElectronAPI();
   if (!api?.setRunnerToken && !api?.startAgentRun) return () => {};
 
-  const token = localStorage.getItem('docs_token');
-  if (!token) return () => {};
+  // The runner socket uses the HttpOnly browser session. The only readable
+  // credential minted here is the short-lived, server-restricted helper token
+  // passed across IPC to Electron main.
+  const token = 'cookie-session';
 
   const resolvedBase = resolveApiBase();
 
@@ -435,7 +437,8 @@ export function startDesktopRunnerHost(opts?: { clearOnStop?: boolean }): () => 
     void runnerCredentialSetup.ensure(setupKey, async (isCurrent) => {
       const response = await fetch(`${resolvedBase}/api/auth/agent-token`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
+        credentials: 'include',
+        headers: { 'X-Cascade-Browser': '1' },
       });
       const body = await response.json().catch(() => ({})) as { token?: string; error?: string };
       if (!response.ok || !body.token) {
@@ -461,8 +464,8 @@ export function startDesktopRunnerHost(opts?: { clearOnStop?: boolean }): () => 
     connectDesktopRunnerSocket(token, resolvedBase);
   }
 
-  // Child agents receive a short-lived, server-restricted credential. Keep the
-  // user's full session token in the renderer for the runner socket only.
+  // Child agents receive a short-lived, server-restricted credential; the
+  // user's full session never becomes renderer-readable.
   const clearOnStop = opts?.clearOnStop !== false;
   let stopped = false;
   return () => {

@@ -13,8 +13,15 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;800&family=Shippori+Mincho:wght@700;800&display=swap" rel="stylesheet">
   <script>
-    try { if (location.pathname === '/' && localStorage.getItem('docs_token')) location.replace('/app'); }
-    catch (e) { /* private mode / storage blocked */ }
+    try {
+      if (location.pathname === '/') {
+        if (localStorage.getItem('docs_token')) location.replace('/app');
+        else fetch('/api/session', { credentials: 'include' })
+          .then(function (response) { return response.json(); })
+          .then(function (session) { if (session.authenticated) location.replace('/app'); })
+          .catch(function () {});
+      }
+    } catch (e) { /* private mode / storage blocked */ }
   </script>
   <style>
     :root {

@@ -21,29 +21,23 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
 
-      - name: Add server to known_hosts
+      - name: Install pinned server host key
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
         run: |
+          set -euo pipefail
+          test -n "${DEPLOY_KNOWN_HOSTS:-}" || { echo "DEPLOY_KNOWN_HOSTS is required" >&2; exit 1; }
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
           PORT="${DEPLOY_PORT:-22}"
-          # Transient network blips: retry keyscan a few times before failing.
-          ok=0
-          for i in 1 2 3 4 5; do
-            if ssh-keyscan -T 10 -H -p "$PORT" "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/tmp/keyscan.err; then
-              ok=1
-              break
-            fi
-            echo "ssh-keyscan attempt $i failed:" >&2
-            cat /tmp/keyscan.err >&2 || true
-            sleep $((i * 3))
-          done
-          if [[ "$ok" != "1" ]]; then
-            echo "ssh-keyscan failed after retries" >&2
-            exit 1
-          fi
+          LOOKUP="$DEPLOY_HOST"
+          [[ "$PORT" == "22" ]] || LOOKUP="[$DEPLOY_HOST]:$PORT"
+          ssh-keygen -F "$LOOKUP" -f ~/.ssh/known_hosts >/dev/null \
+            || { echo "Pinned known_hosts has no entry for $LOOKUP" >&2; exit 1; }
 
       # Cascade Dev sideload APK lives on the host data volume (mounted at /data),
       # not in the Docker image. Keep deploys slim; phones hit /download/android

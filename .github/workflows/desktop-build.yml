@@ -139,18 +139,24 @@ jobs:
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
         run: |
           set -euo pipefail
           test -n "${DEPLOY_HOST:-}"
           test -n "${DEPLOY_USER:-}"
           test -n "${DEPLOY_SSH_KEY:-}"
+          test -n "${DEPLOY_KNOWN_HOSTS:-}"
           PORT="${DEPLOY_PORT:-22}"
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
           printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -T 10 -H -p "$PORT" "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
-          ssh -i ~/.ssh/deploy_key -p "$PORT" -o StrictHostKeyChecking=accept-new \
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          LOOKUP="$DEPLOY_HOST"
+          [[ "$PORT" == "22" ]] || LOOKUP="[$DEPLOY_HOST]:$PORT"
+          ssh-keygen -F "$LOOKUP" -f ~/.ssh/known_hosts >/dev/null
+          ssh -i ~/.ssh/deploy_key -p "$PORT" \
             "${DEPLOY_USER}@${DEPLOY_HOST}" 'mkdir -p /var/lib/cascade/downloads'
           scp -i ~/.ssh/deploy_key -P "$PORT" release/* \
             "${DEPLOY_USER}@${DEPLOY_HOST}:/var/lib/cascade/downloads/"

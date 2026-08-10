@@ -9,8 +9,8 @@
  * 2. **Runs socket** (`/runs` namespace) — streams AI agent run events
  *    (status updates, text/tool output, follow-ups) for a joined run room.
  *
- * Both sockets authenticate via the JWT token stored in `localStorage` and
- * prefer WebSocket transport with a polling fallback.
+ * Both sockets authenticate with the HttpOnly session cookie and prefer
+ * WebSocket transport with a polling fallback.
  *
  * @module
  */
@@ -71,7 +71,7 @@ type ClientEvents = {
  */
 export function connectVaultSocket(): Socket<ServerEvents, ClientEvents> {
   return io(`${API_BASE}/vault`, {
-    auth: { token: localStorage.getItem('docs_token') },
+    withCredentials: true,
     // Polling first: some networks/middleboxes break the websocket upgrade
     // while HTTPS long-poll still works. engine.io upgrades to WS when able.
     transports: ['polling', 'websocket'],
@@ -88,7 +88,7 @@ export function connectVaultSocket(): Socket<ServerEvents, ClientEvents> {
  */
 export function connectRunsSocket(): Socket {
   return io(`${API_BASE}/runs`, {
-    auth: { token: localStorage.getItem('docs_token') },
+    withCredentials: true,
     transports: ['polling', 'websocket'],
     reconnection: true,
     reconnectionAttempts: Infinity,

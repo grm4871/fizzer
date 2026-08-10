@@ -16,6 +16,39 @@ COMPOSE_ARGS=(-f docker-compose.yml)
 HEALTH_URL="http://127.0.0.1:3000/api/health"
 CONTAINER_NAME="cascade"
 
+sync_nginx_security() {
+  local domain="${CASCADE_DEPLOY_DOMAIN:-}"
+  local site="/etc/nginx/sites-available/cscd"
+  if [[ "$EUID" -ne 0 || -z "$domain" || ! -f "$site" ]]; then
+    echo "==> Nginx security sync skipped (requires root, CASCADE_DEPLOY_DOMAIN, and $site)"
+    return 0
+  fi
+  if [[ ! "$domain" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)+$ ]]; then
+    echo "Error: invalid CASCADE_DEPLOY_DOMAIN '$domain'" >&2
+    return 1
+  fi
+
+  local rendered backup
+  rendered="$(mktemp)"
+  backup="$(mktemp)"
+  cp "$site" "$backup"
+  sed "s/DOMAIN/$domain/g" deploy/nginx.conf.template > "$rendered"
+  if ! grep -q "www\.$domain" "$site"; then
+    sed -i "s/ www\.$domain//g" "$rendered"
+  fi
+  install -m 0644 "$rendered" "$site"
+  if ! nginx -t; then
+    install -m 0644 "$backup" "$site"
+    nginx -t
+    rm -f "$rendered" "$backup"
+    echo "Error: restored previous nginx site after validation failed" >&2
+    return 1
+  fi
+  systemctl reload nginx
+  rm -f "$rendered" "$backup"
+  echo "==> Nginx request and connection limits are active"
+}
+
 wait_for_app() {
   local max_attempts="${1:-90}"
 
@@ -81,6 +114,7 @@ echo "==> Swapping to new container"
 docker compose "${COMPOSE_ARGS[@]}" up -d
 
 wait_for_app 90
+sync_nginx_security
 docker compose "${COMPOSE_ARGS[@]}" ps
 echo "==> Deployed $(git rev-parse --short HEAD 2>/dev/null || echo unknown) (${CONTAINER_NAME})"
 

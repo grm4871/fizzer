@@ -5,6 +5,7 @@
 import crypto from 'node:crypto';
 import type { Request, Response } from 'express';
 import { marked } from 'marked';
+import sanitizeHtml from 'sanitize-html';
 import type Database from 'better-sqlite3';
 import { getNote, getWritableVault } from './vault.js';
 import { redactPrivateBlocksForPublic } from './privacy.js';
@@ -78,45 +79,77 @@ export function sanitizePublicContent(content: string): string {
   return out;
 }
 
-/** Strip active content after Markdown→HTML so public pages cannot host XSS. */
-function sanitizePublicHtml(html: string): string {
-  return html
-    .replace(/<script\b[\s\S]*?<\/script>/gi, '')
-    .replace(/<style\b[\s\S]*?<\/style>/gi, '')
-    .replace(/<iframe\b[\s\S]*?<\/iframe>/gi, '')
-    .replace(/<object\b[\s\S]*?<\/object>/gi, '')
-    .replace(/<embed\b[^>]*>/gi, '')
-    .replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
-    .replace(/javascript:/gi, '')
-    .replace(/data:text\/html/gi, 'data:text/plain');
+const PUBLIC_MARKDOWN_TAGS = [
+  'p', 'br', 'hr', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+  'blockquote', 'pre', 'code', 'strong', 'em', 'del',
+  'ul', 'ol', 'li', 'a', 'img', 'table', 'thead', 'tbody', 'tr', 'th', 'td',
+];
+
+function safePublicUrl(raw: string | undefined, kind: 'link' | 'image'): string | undefined {
+  if (!raw) return undefined;
+  let decoded = raw.trim();
+  if (!decoded || decoded.startsWith('//') || /[\u0000-\u001f\u007f]/.test(decoded)) return undefined;
+  // URL parsers disagree about encoded scheme bytes. Decode a small bounded
+  // number of times and reject the attribute if it reveals an unsafe scheme.
+  for (let pass = 0; pass < 2 && decoded.includes('%'); pass += 1) {
+    try {
+      const next = decodeURIComponent(decoded);
+      if (next === decoded) break;
+      decoded = next;
+    } catch {
+      return undefined;
+    }
+  }
+  const scheme = decoded.match(/^([a-z][a-z0-9+.-]*):/i)?.[1]?.toLowerCase();
+  if (!scheme) return raw;
+  if (kind === 'link' && ['http', 'https', 'mailto'].includes(scheme)) return raw;
+  if (kind === 'image' && ['http', 'https'].includes(scheme)) return raw;
+  if (kind === 'image' && /^data:image\/(?:png|jpeg|gif|webp|avif);base64,/i.test(decoded)) return raw;
+  return undefined;
 }
 
-function safePublicUrl(raw: string, image: boolean): string {
-  const value = raw.trim();
-  if (!value || /[\u0000-\u001f\u007f]/.test(value)) return image ? '' : '#';
-  if (value.startsWith('#') || value.startsWith('./') || value.startsWith('../')) return value;
-  if (value.startsWith('/') && !value.startsWith('//') && !value.startsWith('/\\')) return value;
-  try {
-    const parsed = new URL(value);
-    if (parsed.protocol === 'https:' || parsed.protocol === 'http:') return value;
-    if (!image && parsed.protocol === 'mailto:') return value;
-  } catch {
-    // Bare and malformed schemes stay blocked below.
-  }
-  if (image && /^data:image\/(?:png|jpeg|gif|webp);base64,[a-z0-9+/=]+$/i.test(value)) return value;
-  return image ? '' : '#';
+/** Parser-backed allowlist applied after Markdown rendering. */
+function sanitizePublicHtml(html: string): string {
+  return sanitizeHtml(html, {
+    allowedTags: PUBLIC_MARKDOWN_TAGS,
+    allowedAttributes: {
+      a: ['href', 'title', 'rel'],
+      img: ['src', 'alt', 'title', 'width', 'height'],
+      th: ['align'],
+      td: ['align'],
+    },
+    allowedSchemes: ['http', 'https', 'mailto'],
+    allowedSchemesByTag: {
+      img: ['http', 'https', 'data'],
+    },
+    allowedSchemesAppliedToAttributes: ['href', 'src'],
+    allowProtocolRelative: false,
+    transformTags: {
+      a: (_tagName, attribs) => {
+        const href = safePublicUrl(attribs.href, 'link');
+        const nextAttribs: Record<string, string> = { ...attribs, rel: 'noopener noreferrer' };
+        if (href) nextAttribs.href = href;
+        else delete nextAttribs.href;
+        return {
+          tagName: 'a',
+          attribs: nextAttribs,
+        };
+      },
+      img: (_tagName, attribs) => {
+        const src = safePublicUrl(attribs.src, 'image');
+        const nextAttribs: Record<string, string> = { ...attribs };
+        if (src) nextAttribs.src = src;
+        else delete nextAttribs.src;
+        return { tagName: 'img', attribs: nextAttribs };
+      },
+    },
+  });
 }
 
 export function renderPublicMarkdown(content: string): string {
   // Prefer no raw HTML from the Markdown source — content is untrusted.
   const stripped = sanitizePublicContent(content).replace(/<[^>\n]+>/g, '');
-  const html = marked.parse(stripped, {
-    async: false,
-    walkTokens: (token) => {
-      if (token.type === 'link') token.href = safePublicUrl(token.href, false);
-      if (token.type === 'image') token.href = safePublicUrl(token.href, true);
-    },
-  }) as string;
+  const html = marked.parse(stripped, { async: false }) as string;
   return sanitizePublicHtml(html);
 }
 

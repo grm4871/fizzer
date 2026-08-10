@@ -43,6 +43,18 @@ try {
   const page = await browser.newPage();
   const errors = [];
 
+  // A static Vite preview has no API process. Cookie sessions cannot be
+  // detected from JavaScript, so the app intentionally probes /api/session;
+  // model the anonymous server response instead of treating proxy failure as
+  // a renderer failure. Production --no-preview checks still hit the real API.
+  if (preview) {
+    await page.route('**/api/session', (route) => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ authenticated: false }),
+    }));
+  }
+
   page.on('pageerror', (error) => {
     errors.push(`pageerror: ${error.message}`);
   });

@@ -433,7 +433,6 @@ export default function App() {
   }, [activeVaultId]);
 
   const loadCommunityUpdates = useCallback(async (quiet = false) => {
-    if (!localStorage.getItem('docs_token')) return;
     if (!quiet) setCommunityUpdatesLoading(true);
     try {
       const data = await api<CommunityUpdates>(`/api/community/updates?limit=80${showAgentMemory ? '&includeAgentMemory=1' : ''}`);
@@ -540,29 +539,32 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const token = localStorage.getItem('docs_token');
-    if (!token) return;
     let cancelled = false;
     let succeeded = false;
+    let unauthorized = false;
     let attempt = 0;
     let timer: number | null = null;
     const tryAuth = () => {
-      api<{ user: User; owner?: boolean }>('/api/me')
+      api<{ authenticated: boolean; user?: User; owner?: boolean }>('/api/session')
         .then((data) => {
           if (cancelled) return;
+          if (!data.authenticated || !data.user) {
+            unauthorized = true;
+            return;
+          }
           succeeded = true;
           setUser(data.user);
           setIsOwner(Boolean(data.owner));
           void loadVaults();
         })
-        .catch(() => {
+        .catch((error) => {
           if (cancelled) return;
-          // A real 401 means the token is invalid/expired — api() already cleared
-          // it, so stop and show the login screen. But a *transient* failure
-          // (offline, mobile cold-start before the network is up, server mid-
-          // deploy) leaves the token in place: keep the session and retry with
-          // backoff instead of logging the user out on a blip.
-          if (!localStorage.getItem('docs_token')) return;
+          // A real 401 means no session. Transient network/deploy failures keep
+          // retrying so an HttpOnly cookie is not mistaken for a logout.
+          if (error instanceof ApiError && error.status === 401) {
+            unauthorized = true;
+            return;
+          }
           attempt += 1;
           if (attempt > 6) return;
           timer = window.setTimeout(tryAuth, Math.min(1000 * 2 ** (attempt - 1), 15000));
@@ -571,7 +573,7 @@ export default function App() {
     // If connectivity returns after the retries gave up, try again — a valid
     // token shouldn't strand the user on the login screen.
     const onReconnect = () => {
-      if (cancelled || succeeded || !localStorage.getItem('docs_token')) return;
+      if (cancelled || succeeded || unauthorized) return;
       attempt = 0;
       if (timer != null) window.clearTimeout(timer);
       tryAuth();
@@ -3307,7 +3309,7 @@ export default function App() {
     try {
       if (authMode === 'reset') {
         // Redeem an owner-issued reset token; the server logs us straight in.
-        const data = await api<{ user: User; token: string; owner?: boolean }>('/api/auth/reset', {
+        const data = await api<{ user: User; owner?: boolean }>('/api/auth/reset', {
           method: 'POST',
           body: JSON.stringify({ token: resetToken.trim(), newPassword: password }),
         });
@@ -3317,7 +3319,7 @@ export default function App() {
         setOpenTabs([]);
         setNotes([]);
         setFolders([]);
-        localStorage.setItem('docs_token', data.token);
+        localStorage.removeItem('docs_token');
         setUser(data.user);
         setIsOwner(Boolean(data.owner));
         setPassword('');
@@ -3325,9 +3327,9 @@ export default function App() {
         await loadVaults();
         return;
       }
-      const inviteMatch = window.location.pathname.match(/^\/invite\/([^/]+)$/);
+      const inviteMatch = window.location.pathname.match(/^\/(?:invite|vault-invite)\/([^/]+)$/);
       const inviteToken = inviteMatch ? decodeURIComponent(inviteMatch[1]) : '';
-      const data = await api<{ user: User; token: string; owner?: boolean }>(`/api/auth/${authMode}`, {
+      const data = await api<{ user: User; owner?: boolean }>(`/api/auth/${authMode}`, {
         method: 'POST',
         body: JSON.stringify({ username, password, ...(authMode === 'register' && inviteToken ? { inviteToken } : {}) }),
       });
@@ -3338,7 +3340,7 @@ export default function App() {
       setNotes([]);
       setFolders([]);
       setNoteContents({});
-      localStorage.setItem('docs_token', data.token);
+      localStorage.removeItem('docs_token');
       setUser(data.user);
       setIsOwner(Boolean(data.owner));
       setPassword('');
@@ -3352,6 +3354,7 @@ export default function App() {
     const pane = Layout.createPane();
     runSocketsRef.current.forEach((socket) => socket.disconnect());
     runSocketsRef.current.clear();
+    void api('/api/auth/logout', { method: 'POST' }).catch(() => {});
     localStorage.removeItem('docs_token');
     localStorage.removeItem(SESSION_STORAGE_KEY);
     setUser(null);

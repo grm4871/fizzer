@@ -16,9 +16,9 @@ Survey of Cascade multi-tenant, auth, and performance design gaps. **Prefer rede
 
 | ID | Surface | Problem | Architectural direction | Status |
 | --- | --- | --- | --- | --- |
-| H4 | Chat invite = open registration | Multi-use 7d JWT registers accounts + joins channel | Split account invites (single-use, stored) from channel joins | open |
+| H4 | Chat invite = open registration | Multi-use 7d JWT registers accounts + joins channel | Network registration is invite-gated and atomically consumes a stored token hash once for account creation | **shipped** |
 | H5 | Incomplete vault RBAC | Tags / agent-memory / publish used read membership for writes | Single `requireVaultRole` primitive; editor+ for mutates | **shipped** (tags, memory, publish) |
-| H6 | Public publish HTML | marked → raw HTML; client snapshot accepted | Server note only; HTML allowlist/sanitize | **shipped** (server body + HTML strip) |
+| H6 | Public publish HTML | marked → raw HTML; client snapshot accepted | Server note only; parser-backed HTML/URL allowlist | **shipped** (`sanitize-html` + strict raster data URLs) |
 | H7 | Note assets SVG | Served as `image/svg+xml` on app origin | Separate origin / sandbox / disallow active SVG | **shipped** (reject upload; legacy serve sandbox+attachment) |
 | H8 | Channel links | Second tenancy model without channel membership roles | First-class channel members + scopes | open |
 | H9 | Deploy token RCE | Long-lived secret → host git reset | CI OIDC only; pin refs | open |
@@ -29,7 +29,7 @@ Survey of Cascade multi-tenant, auth, and performance design gaps. **Prefer rede
 | --- | --- | --- | --- | --- |
 | H10 | Dual note storage + `file_path` API | Host paths leak; dual SoT | Metadata index + no host paths to clients | **partial** (file_path stripped from API) |
 | H11 | NETWORK_MODE optional | Prod can start open CORS | Fail closed in Docker image | **shipped** (`CASCADE_NETWORK_MODE=1` in image) |
-| H12 | Profile broadcast / 30d JWT | Vault-wide / global fanout | Scope presence; shorter tokens | open |
+| H12 | Profile broadcast / 30d JWT | Vault-wide / global fanout | Scope presence; shorter tokens | **partial** (7d HttpOnly browser sessions; agent tokens stay route-restricted) |
 
 ## Efficiency (architecture, not micro-opts)
 

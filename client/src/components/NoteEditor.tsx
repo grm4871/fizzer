@@ -588,9 +588,8 @@ class VideoWidget extends WidgetType {
     if (/^https?:\/\//i.test(resolved) && !resolved.includes('/api/notes/')) {
       finish(resolved);
     } else {
-      const token = localStorage.getItem('docs_token');
       fetch(resolved, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        credentials: 'include',
       })
         .then((res) => {
           if (!res.ok) throw new Error('load failed');
@@ -710,9 +709,8 @@ class ImageWidget extends WidgetType {
       return wrap;
     }
 
-    const token = localStorage.getItem('docs_token');
     fetch(resolved, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      credentials: 'include',
     })
       .then((res) => {
         if (!res.ok) throw new Error('load failed');

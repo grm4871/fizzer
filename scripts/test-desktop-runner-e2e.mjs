@@ -89,6 +89,26 @@ async function main() {
 
     const auth = { Authorization: `Bearer ${token}` };
 
+    const browserLogin = await fetch(`${API_BASE}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Cascade-Browser': '1' },
+      body: JSON.stringify({ username, password: 'testpass12345' }),
+    });
+    const sessionCookie = browserLogin.headers.get('set-cookie')?.split(';', 1)[0] || '';
+    if (!browserLogin.ok || !sessionCookie) throw new Error('Expected browser login cookie');
+    const cookieRunner = io(`${API_BASE}/runners`, {
+      transports: ['websocket'],
+      extraHeaders: { cookie: sessionCookie },
+      reconnection: false,
+    });
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('Cookie runner socket connect timeout')), 10000);
+      cookieRunner.once('connect', () => { clearTimeout(timer); resolve(); });
+      cookieRunner.once('connect_error', (error) => { clearTimeout(timer); reject(error); });
+    });
+    cookieRunner.close();
+    console.log('[e2e] OK runner socket accepts HttpOnly cookie session');
+
     const offline = await fetchJson(`${API_BASE}/api/me/desktop-runner`, { headers: auth });
     if (offline.online) throw new Error('Expected desktop runner offline before connect');
     console.log('[e2e] OK runner offline before connect');

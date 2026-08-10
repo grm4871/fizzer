@@ -27,7 +27,7 @@ const SESSION_ID = typeof crypto.randomUUID === 'function'
   : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 export async function recordAndroidBatterySnapshot(reason: 'launch' | 'interval' | 'background' | 'resume') {
-  if (Capacitor.getPlatform() !== 'android' || !localStorage.getItem('docs_token')) return;
+  if (Capacitor.getPlatform() !== 'android') return;
   try {
     const snapshot = await BatteryMonitor.getSnapshot();
     await api('/api/diagnostics/android-battery', {

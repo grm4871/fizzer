@@ -26,7 +26,9 @@ That script:
 4. builds the new image;
 5. swaps the Compose service;
 6. waits for `http://127.0.0.1:3000/api/health`;
-7. reports the deployed Git commit.
+7. when invoked by the root watcher, validates and reloads the repository's
+   bounded nginx request/connection limits with automatic rollback;
+8. reports the deployed Git commit.
 
 Always wait for the workflow and verify the expected commit. A successful push
 is not proof that production changed.
@@ -39,8 +41,32 @@ is not proof that production changed.
 | `DEPLOY_HOST` | Hostname or IP |
 | `DEPLOY_USER` | SSH user |
 | `DEPLOY_PORT` | Optional SSH port; defaults to 22 |
+| `DEPLOY_KNOWN_HOSTS` | Pinned host-key line(s) authenticated out of band |
 
 Never place secret values in this repository.
+
+Authenticate the server's Ed25519 fingerprint through the VPS console (for
+example, `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`), compare it with a
+separately collected public-key line, and store that line in
+`DEPLOY_KNOWN_HOSTS`. Workflows fail closed when the pin is absent or does not
+name `DEPLOY_HOST`; they never learn a key from the connection they are about
+to trust.
+
+## Infrastructure security boundary
+
+The checked-in nginx policy applies bounded per-address authentication, API,
+web, and connection limits before Node allocates request bodies. It protects
+the application process from ordinary abuse; it cannot absorb traffic that
+saturates the VPS link. Volumetric DDoS protection requires a provider or
+CDN/WAF in front of the host and therefore a DNS/account change outside a code
+deployment.
+
+`/var/lib/cascade` contains SQLite, Markdown, and note assets. Back it with an
+encrypted provider volume or an OS-managed encrypted filesystem. Migrating the
+live directory is deliberately not automated by a release: it requires an
+authenticated infrastructure console, a verified backup, a maintenance window,
+and post-copy ownership/data reconciliation. Application-level encryption with
+a key stored beside the data would not protect a stolen volume.
 
 ## Verification
 

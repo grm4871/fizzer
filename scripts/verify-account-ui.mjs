@@ -55,6 +55,10 @@ try {
   await page.goto(appUrl, { waitUntil: 'domcontentloaded' });
   await page.evaluate((value) => localStorage.setItem('docs_token', value), token);
   await page.reload({ waitUntil: 'networkidle' });
+  if (await page.evaluate(() => localStorage.getItem('docs_token')) !== null) throw new Error('legacy browser token was not removed after cookie migration');
+  if (!(await page.context().cookies(apiBase)).some((cookie) => cookie.name === 'cascade_session' && cookie.httpOnly)) {
+    throw new Error('browser session did not migrate into an HttpOnly cookie');
+  }
   await page.locator('.sidebar-footer .user-info').click();
   const modal = page.locator('.account-settings');
   await modal.waitFor();
@@ -161,8 +165,11 @@ try {
   await globalReport.getByText(`Reported by @${mateName}`).waitFor();
   await globalReport.getByRole('button', { name: 'Unlist vault' }).click();
   await globalReport.waitFor({ state: 'detached' });
-  const refreshedToken = await page.evaluate(() => localStorage.getItem('docs_token'));
-  const unlisted = await json(`/api/vaults/${profileVault.id}/visibility`, { headers: { authorization: `Bearer ${refreshedToken}` } });
+  if (await page.evaluate(() => localStorage.getItem('docs_token')) !== null) throw new Error('password change restored a readable browser token');
+  const unlisted = await page.evaluate(async ({ apiBase, vaultId }) => {
+    const response = await fetch(`${apiBase}/api/vaults/${vaultId}/visibility`, { credentials: 'include' });
+    return response.json();
+  }, { apiBase, vaultId: profileVault.id });
   if (unlisted.visibility !== 'private') throw new Error('global report unlist action did not make the vault private');
   if (errors.length) throw new Error(errors.join('\n'));
   console.log('[account-ui] OK — anonymous owner reports, ban/unban and stale-invite enforcement, accountable global unlist, account settings, and vault sharing');

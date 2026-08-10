@@ -183,11 +183,11 @@ export function AccountSettings({ user, vaultId, vaultName, showAgentMemory, onS
     }
     setBusy(true);
     try {
-      const result = await api<{ token: string }>('/api/auth/password', {
+      await api('/api/auth/password', {
         method: 'POST',
         body: JSON.stringify({ currentPassword, newPassword }),
       });
-      localStorage.setItem('docs_token', result.token);
+      localStorage.removeItem('docs_token');
       onSessionChanged();
       setCurrentPassword('');
       setNewPassword('');

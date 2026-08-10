@@ -267,10 +267,9 @@ try {
   await sharedVaultRail.waitFor({ timeout: 10_000 });
   check('channel uses the vault-shell people and agents rail', await sharedVaultRail.isVisible());
   const browserSeed = await page.evaluate(async ({ vaultId, channelId }) => {
-    const headers = { authorization: `Bearer ${localStorage.getItem('docs_token') || ''}` };
     const [messages, agents] = await Promise.all([
-      fetch(`/api/vaults/${vaultId}/channels/${channelId}/messages`, { headers }).then((response) => response.json()),
-      fetch(`/api/vaults/${vaultId}/channels/${channelId}/agents`, { headers }).then((response) => response.json()),
+      fetch(`/api/vaults/${vaultId}/channels/${channelId}/messages`, { credentials: 'include' }).then((response) => response.json()),
+      fetch(`/api/vaults/${vaultId}/channels/${channelId}/agents`, { credentials: 'include' }).then((response) => response.json()),
     ]);
     return { messages, agents };
   }, { vaultId: vault.id, channelId: channel.id });

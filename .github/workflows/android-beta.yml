@@ -70,9 +70,10 @@ jobs:
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
         run: |
           set -euo pipefail
-          if [[ -z "${DEPLOY_HOST:-}" || -z "${DEPLOY_USER:-}" || -z "${DEPLOY_SSH_KEY:-}" ]]; then
+          if [[ -z "${DEPLOY_HOST:-}" || -z "${DEPLOY_USER:-}" || -z "${DEPLOY_SSH_KEY:-}" || -z "${DEPLOY_KNOWN_HOSTS:-}" ]]; then
             echo "Deploy SSH secrets missing — release asset published; host place skipped."
             exit 0
           fi
@@ -81,8 +82,12 @@ jobs:
           chmod 700 ~/.ssh
           printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -T 10 -H -p "$PORT" "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
-          ssh -i ~/.ssh/deploy_key -p "$PORT" -o StrictHostKeyChecking=accept-new \
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          LOOKUP="$DEPLOY_HOST"
+          [[ "$PORT" == "22" ]] || LOOKUP="[$DEPLOY_HOST]:$PORT"
+          ssh-keygen -F "$LOOKUP" -f ~/.ssh/known_hosts >/dev/null
+          ssh -i ~/.ssh/deploy_key -p "$PORT" \
             "${DEPLOY_USER}@${DEPLOY_HOST}" 'mkdir -p /var/lib/cascade'
           scp -i ~/.ssh/deploy_key -P "$PORT" \
             client/public/cascade-android.apk \

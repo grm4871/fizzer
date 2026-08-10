@@ -2,10 +2,10 @@
  * @file api.ts — Typed fetch wrapper and shared domain types
  *
  * Provides a generic `api<T>()` function that wraps `fetch` with:
- * - Automatic JWT Bearer token injection from `localStorage('docs_token')`
+ * - HttpOnly session-cookie authentication (with one-release bearer migration)
  * - JSON Content-Type headers
  * - Error extraction from server JSON responses
- * - Auto-logout on 401 (clears stored token)
+ * - Legacy-token cleanup after a successful cookie migration
  *
  * Also exports all shared domain types (User, Vault, Folder, Note, etc.)
  * and date formatting utilities used across the client.
@@ -165,9 +165,8 @@ export class ApiError extends Error {
 /**
  * Generic typed fetch wrapper for the Cascade API.
  *
- * Automatically attaches the JWT token from localStorage and parses the
- * JSON response. Throws an `Error` with the server's error message on
- * non-2xx responses and clears the stored token on 401.
+ * Sends HttpOnly cookies and temporarily attaches a legacy localStorage token
+ * so existing signed-in installations can migrate without logging out.
  *
  * @template T - Expected shape of the JSON response body
  * @param path - API path (e.g. `/api/vaults`)
@@ -178,12 +177,22 @@ export async function api<T>(path: string, options: RequestInit = {}) {
   const token = localStorage.getItem('docs_token');
   const headers = {
     'Content-Type': 'application/json',
+    'X-Cascade-Browser': '1',
     ...options.headers,
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(token ? { 'X-Cascade-Session-Migrate': '1' } : {}),
   };
-  const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  const res = await fetch(`${API_BASE}${path}`, { ...options, headers, credentials: 'include' });
   const data = await res.json().catch(() => ({}));
-  if (res.status === 401) localStorage.removeItem('docs_token');
+  // Only clear the exact legacy credential this request sent. An anonymous
+  // bootstrap request from a document being replaced must not race and delete
+  // a token another page just stored for one-release migration.
+  if (res.status === 401 && token && localStorage.getItem('docs_token') === token) {
+    localStorage.removeItem('docs_token');
+  }
+  if (res.ok && token && path === '/api/session' && localStorage.getItem('docs_token') === token) {
+    localStorage.removeItem('docs_token');
+  }
   if (!res.ok) {
     const body = data && typeof data === 'object' ? data as Record<string, unknown> : {};
     throw new ApiError(

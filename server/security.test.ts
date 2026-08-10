@@ -1,7 +1,17 @@
 import assert from 'node:assert/strict';
 import test, { mock } from 'node:test';
 import type { NextFunction, Request, Response } from 'express';
-import { corsOrigin, passwordPolicyError, rateLimit, resolveTrustProxyHops, securityHeaders } from './security.js';
+import {
+  clearUserSessionCookies,
+  corsOrigin,
+  passwordPolicyError,
+  rateLimit,
+  resolveTrustProxyHops,
+  securityHeaders,
+  sessionIssuedAtIsCurrent,
+  sessionTokenFromCookie,
+  userSessionCookie,
+} from './security.js';
 
 type Call = { status: number | null; body: unknown; headers: Record<string, string>; passed: boolean };
 
@@ -68,6 +78,32 @@ test('without a key function the limiter still falls back to the client address'
   assert.equal(hit(middleware, { ip: '10.0.0.1' }).passed, true);
   assert.equal(hit(middleware, { ip: '10.0.0.1' }).passed, false);
   assert.equal(hit(middleware, { ip: '10.0.0.2' }).passed, true);
+});
+
+test('the limiter bounds hostile distinct-key growth behind an overflow bucket', () => {
+  const middleware = rateLimit({ windowMs: 60_000, max: 1, maxKeys: 128 });
+  for (let i = 0; i < 128; i += 1) {
+    assert.equal(hit(middleware, { ip: `198.51.100.${i}` }).passed, true);
+  }
+  assert.equal(hit(middleware, { ip: '203.0.113.1' }).passed, true);
+  assert.equal(hit(middleware, { ip: '203.0.113.2' }).passed, false);
+});
+
+test('user sessions use unreadable host cookies in network mode', () => {
+  const cookie = userSessionCookie('signed.jwt.value', true);
+  assert.match(cookie, /^__Host-cascade_session=/);
+  assert.match(cookie, /; HttpOnly/);
+  assert.match(cookie, /; Secure/);
+  assert.match(cookie, /; SameSite=None/);
+  assert.doesNotMatch(cookie, /Domain=/);
+  assert.equal(sessionTokenFromCookie('other=1; __Host-cascade_session=signed.jwt.value'), 'signed.jwt.value');
+  assert.equal(sessionTokenFromCookie('cascade_session=local.jwt'), 'local.jwt');
+  assert.equal(sessionTokenFromCookie('__Host-cascade_session=%ZZ'), null);
+  assert.equal(clearUserSessionCookies().length, 2);
+  const now = 2_000_000_000;
+  assert.equal(sessionIssuedAtIsCurrent(now - (7 * 24 * 60 * 60), now), true);
+  assert.equal(sessionIssuedAtIsCurrent(now - (7 * 24 * 60 * 60) - 1, now), false);
+  assert.equal(sessionIssuedAtIsCurrent(undefined, now), false);
 });
 
 test('trusted proxy hops are bounded and invalid configuration fails closed', () => {

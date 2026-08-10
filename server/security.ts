@@ -18,6 +18,60 @@ const LEGACY_DEV_SECRET = 'cascade-dev-secret';
 
 /** True when the instance is meant to be reachable off-localhost. */
 export const NETWORK_MODE = /^(1|true|yes|on)$/i.test(process.env.CASCADE_NETWORK_MODE || '');
+export const USER_SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
+const SECURE_SESSION_COOKIE = '__Host-cascade_session';
+const LOCAL_SESSION_COOKIE = 'cascade_session';
+
+function cookieValue(cookieHeader: string | undefined, name: string): string | null {
+  if (!cookieHeader) return null;
+  for (const part of cookieHeader.split(';')) {
+    const separator = part.indexOf('=');
+    if (separator < 0 || part.slice(0, separator).trim() !== name) continue;
+    try {
+      return decodeURIComponent(part.slice(separator + 1).trim());
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+/** Read either the production __Host cookie or the local-development cookie. */
+export function sessionTokenFromCookie(cookieHeader: string | undefined): string | null {
+  return cookieValue(cookieHeader, SECURE_SESSION_COOKIE)
+    || cookieValue(cookieHeader, LOCAL_SESSION_COOKIE);
+}
+
+export function userSessionCookie(token: string, networkMode = NETWORK_MODE): string {
+  const name = networkMode ? SECURE_SESSION_COOKIE : LOCAL_SESSION_COOKIE;
+  return [
+    `${name}=${encodeURIComponent(token)}`,
+    'Path=/',
+    'HttpOnly',
+    networkMode ? 'Secure' : '',
+    networkMode ? 'SameSite=None' : 'SameSite=Lax',
+    `Max-Age=${USER_SESSION_MAX_AGE_SECONDS}`,
+    'Priority=High',
+  ].filter(Boolean).join('; ');
+}
+
+export function clearUserSessionCookies(): string[] {
+  return [
+    `${SECURE_SESSION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=None; Max-Age=0`,
+    `${LOCAL_SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`,
+  ];
+}
+
+/** Reject legacy 30-day JWTs once their issue time exceeds the new lifetime. */
+export function sessionIssuedAtIsCurrent(
+  issuedAt: unknown,
+  nowSeconds = Math.floor(Date.now() / 1000),
+): boolean {
+  return typeof issuedAt === 'number'
+    && Number.isInteger(issuedAt)
+    && issuedAt <= nowSeconds + 60
+    && nowSeconds - issuedAt <= USER_SESSION_MAX_AGE_SECONDS;
+}
 
 const APP_CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
@@ -208,9 +262,11 @@ export function rateLimit(opts: {
   max: number;
   key?: (req: Request) => string;
   message?: string;
+  maxKeys?: number;
 }) {
   const hits = new Map<string, { count: number; resetAt: number }>();
   const message = opts.message || 'Too many requests. Please try again shortly.';
+  const maxKeys = Math.max(128, opts.maxKeys ?? 10_000);
 
   // Fixed windows expire but their entries do not, so a stream of distinct
   // keys would leak memory. Drop a bounded slice of dead buckets per call.
@@ -224,7 +280,14 @@ export function rateLimit(opts: {
 
   return (req: Request, res: Response, next: NextFunction) => {
     const now = Date.now();
-    const key = opts.key?.(req) || req.ip || req.socket.remoteAddress || 'unknown';
+    let key = opts.key?.(req) || req.ip || req.socket.remoteAddress || 'unknown';
+    if (!hits.has(key) && hits.size >= maxKeys) {
+      sweep(now);
+      // A spray of distinct addresses cannot grow the process forever. Once
+      // the bounded keyspace is full, newcomers share a deliberately strict
+      // overflow bucket until old windows expire.
+      if (hits.size >= maxKeys) key = '__overflow__';
+    }
     const entry = hits.get(key);
     if (!entry || now > entry.resetAt) {
       sweep(now);

@@ -164,13 +164,19 @@ import {
   waitForDesktopRunner,
 } from './server/desktop-runner.js';
 import {
+  clearUserSessionCookies,
   corsOrigin,
+  NETWORK_MODE,
   passwordPolicyError,
   rateLimit,
   resolveDeploySecret,
   resolveJwtSecret,
   resolveTrustProxyHops,
   securityHeaders,
+  sessionIssuedAtIsCurrent,
+  sessionTokenFromCookie,
+  USER_SESSION_MAX_AGE_SECONDS,
+  userSessionCookie,
 } from './server/security.js';
 import { ensureAndroidBatterySchema, listAndroidBatterySamples, parseAndroidBatterySample, recordAndroidBatterySample } from './server/androidBattery.js';
 import { clientAssetCacheControl } from './server/staticAssets.js';
@@ -365,7 +371,10 @@ function desktopChooser(title: string, options: Array<{ label: string; href: str
 
 type User = { id: number; username: string; display_name: string; avatar_url: string; auth_version: number; password_hash: string; created_at: string };
 type AuthAccess = 'user' | 'agent';
-type AuthedRequest = Request & { user?: { id: number; username: string; access: AuthAccess } };
+type AuthedRequest = Request & {
+  user?: { id: number; username: string; access: AuthAccess };
+  authSource?: 'bearer' | 'cookie';
+};
 type ChatInviteToken = {
   type: 'chat-invite';
   sourceVaultId: string;
@@ -397,6 +406,12 @@ db.exec(`
     avatar_url TEXT NOT NULL DEFAULT '',
     auth_version INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS registration_invites_used (
+    token_hash TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    used_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
   CREATE TABLE IF NOT EXISTS vaults (
@@ -595,6 +610,23 @@ app.use((error: unknown, _req: Request, res: Response, next: NextFunction) => {
   }
   next(error);
 });
+// Bound hostile request streams before JSON parsing allocates their bodies.
+app.use('/api/auth', rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  message: 'Too many authentication attempts. Please try again later.',
+}));
+app.use('/api', rateLimit({ windowMs: 60 * 1000, max: 1200 }));
+// A SameSite=None cookie is required by the Capacitor app's https://localhost
+// origin. Require a non-simple browser header on authenticated mutations so a
+// third-party form cannot ride that cookie; CORS then gates the preflight.
+app.use('/api', (req, res, next) => {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
+  if (!sessionTokenFromCookie(req.headers.cookie)) return next();
+  if (req.headers.authorization?.startsWith('Bearer ')) return next();
+  if (req.headers['x-cascade-browser'] === '1') return next();
+  return res.status(403).json({ error: 'Authenticated browser request was missing CSRF protection' });
+});
 // Media attachments are base64 in JSON; 8MB files expand to ~10.7MB.
 app.use(express.json({ limit: '12mb' }));
 const httpServer = http.createServer(app);
@@ -626,7 +658,11 @@ function tokenIdentity(user: { id: number; username: string; auth_version?: numb
 }
 
 function signToken(user: { id: number; username: string; auth_version?: number }) {
-  return jwt.sign({ ...tokenIdentity(user), access: 'user' satisfies AuthAccess }, JWT_SECRET, { expiresIn: '30d' });
+  return jwt.sign(
+    { ...tokenIdentity(user), access: 'user' satisfies AuthAccess },
+    JWT_SECRET,
+    { expiresIn: USER_SESSION_MAX_AGE_SECONDS },
+  );
 }
 
 function signAgentToken(user: { id: number; username: string; auth_version?: number }) {
@@ -635,6 +671,42 @@ function signAgentToken(user: { id: number; username: string; auth_version?: num
     JWT_SECRET,
     { expiresIn: '12h' },
   );
+}
+
+type SessionClaims = {
+  id: number;
+  username: string;
+  authVersion?: number;
+  access?: AuthAccess;
+  iat?: number;
+};
+
+function verifiedSessionClaims(token: string): SessionClaims | null {
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET) as SessionClaims;
+    if (!sessionIssuedAtIsCurrent(decoded.iat)) return null;
+    const current = db.prepare('SELECT username, auth_version FROM users WHERE id = ?').get(decoded.id) as {
+      username: string;
+      auth_version: number;
+    } | undefined;
+    if (!current || current.username !== decoded.username || current.auth_version !== (decoded.authVersion ?? 0)) return null;
+    return decoded;
+  } catch {
+    return null;
+  }
+}
+
+function verifiedRequestSession(req: Request) {
+  const header = req.headers.authorization;
+  const bearerToken = header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : null;
+  const cookieToken = sessionTokenFromCookie(req.headers.cookie);
+  const candidates = [
+    ...(bearerToken ? [{ source: 'bearer' as const, token: bearerToken }] : []),
+    ...(cookieToken && cookieToken !== bearerToken ? [{ source: 'cookie' as const, token: cookieToken }] : []),
+  ];
+  return candidates
+    .map((candidate) => ({ ...candidate, decoded: verifiedSessionClaims(candidate.token) }))
+    .find((candidate) => candidate.decoded !== null) ?? null;
 }
 
 function publicUser(user: { id: number; username: string; display_name?: string; avatar_url?: string }) {
@@ -694,26 +766,71 @@ function verifyVaultInvite(token: string): VaultInviteToken {
   return { type: 'vault-invite', vaultId: decoded.vaultId, role: decoded.role };
 }
 
+function validRegistrationInviteHash(rawToken: unknown): string | null {
+  const token = typeof rawToken === 'string' ? rawToken.trim() : '';
+  if (!token) return null;
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+  if (db.prepare('SELECT 1 FROM registration_invites_used WHERE token_hash = ?').get(tokenHash)) return null;
+  try {
+    const invite = verifyChatInvite(token);
+    const source = db.prepare(`
+      SELECT note.id
+      FROM notes note JOIN vaults vault ON vault.id = note.vault_id
+      WHERE note.id = ? AND vault.id = ?
+    `).get(invite.sourceChannelId, invite.sourceVaultId);
+    if (source) return tokenHash;
+  } catch {
+    // It may be a vault invite instead.
+  }
+  try {
+    const invite = verifyVaultInvite(token);
+    return db.prepare('SELECT id FROM vaults WHERE id = ?').get(invite.vaultId) ? tokenHash : null;
+  } catch {
+    return null;
+  }
+}
+
+function setUserSession(res: Response, user: { id: number; username: string; auth_version?: number }): string {
+  const token = signToken(user);
+  res.append('Set-Cookie', userSessionCookie(token));
+  return token;
+}
+
+/** Browser callers receive only an HttpOnly cookie; CLI callers retain bearer compatibility. */
+function authResponse(req: Request, res: Response, user: User | { id: number; username: string }) {
+  const token = setUserSession(res, user);
+  return {
+    user: publicUser(user),
+    ...(req.headers['x-cascade-browser'] === '1' ? {} : { token }),
+    owner: isOwner(user.id),
+  };
+}
+
 function agentRouteAllowed(method: string, pathname: string): boolean {
   return isAgentApiRequestAllowed(method, pathname);
 }
 
 function requireAuth(req: AuthedRequest, res: Response, next: NextFunction) {
-  const header = req.headers.authorization;
-  const token = header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : null;
-  if (!token) return res.status(401).json({ error: 'Authentication required' });
+  const verified = verifiedRequestSession(req);
+  if (!verified?.decoded) return res.status(401).json({ error: 'Invalid or expired token' });
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as { id: number; username: string; authVersion?: number; access?: AuthAccess };
-    const current = db.prepare('SELECT username, auth_version FROM users WHERE id = ?').get(decoded.id) as { username: string; auth_version: number } | undefined;
-    if (!current || current.username !== decoded.username || current.auth_version !== (decoded.authVersion ?? 0)) {
-      return res.status(401).json({ error: 'Session expired; please sign in again' });
-    }
+    const { decoded } = verified;
     req.user = {
       id: decoded.id,
       username: decoded.username,
       access: decoded.access === 'agent' ? 'agent' : 'user',
     };
+    req.authSource = verified.source;
+    // One-release migration: a valid legacy browser bearer can trade itself
+    // for an HttpOnly cookie, after which the renderer deletes localStorage.
+    if (
+      req.authSource === 'bearer'
+      && req.user.access === 'user'
+      && req.headers['x-cascade-session-migrate'] === '1'
+    ) {
+      res.append('Set-Cookie', userSessionCookie(verified.token));
+    }
     if (req.user.access === 'agent' && !agentRouteAllowed(req.method, req.path)) {
       return res.status(403).json({ error: 'This operation requires user access' });
     }
@@ -767,15 +884,16 @@ function requireUserAccess(req: AuthedRequest, res: Response, next: NextFunction
 // ── Socket.io auth & namespaces ────────────────────────────────────
 
 function socketAuth(socket: { handshake: { auth: { token?: unknown } }; data: Record<string, unknown> }, next: (err?: Error) => void) {
-  const token = typeof socket.handshake.auth.token === 'string' ? socket.handshake.auth.token : null;
-  if (!token) return next(new Error('Authentication required'));
+  const handshake = socket.handshake as typeof socket.handshake & { headers?: { cookie?: string } };
+  const authToken = typeof socket.handshake.auth.token === 'string' ? socket.handshake.auth.token : null;
+  const cookieToken = sessionTokenFromCookie(handshake.headers?.cookie);
+  const decoded = [authToken, cookieToken]
+    .filter((token, index, all): token is string => Boolean(token) && all.indexOf(token) === index)
+    .map(verifiedSessionClaims)
+    .find((claims) => claims !== null);
+  if (!decoded) return next(new Error(authToken || cookieToken ? 'Invalid or expired token' : 'Authentication required'));
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as { id: number; username: string; authVersion?: number; access?: AuthAccess };
     if (decoded.access === 'agent') return next(new Error('This operation requires user access'));
-    const current = db.prepare('SELECT username, auth_version FROM users WHERE id = ?').get(decoded.id) as { username: string; auth_version: number } | undefined;
-    if (!current || current.username !== decoded.username || current.auth_version !== (decoded.authVersion ?? 0)) {
-      return next(new Error('Session expired; please sign in again'));
-    }
     socket.data.user = { id: decoded.id, username: decoded.username };
     next();
   } catch {
@@ -1454,6 +1572,9 @@ app.get(['/api/deploy/status', '/api/admin/deploy/status'], requireDeployAuth, (
 // ── Auth routes ────────────────────────────────────────────────────
 
 const authRateLimit = rateLimit({ windowMs: 15 * 60 * 1000, max: 30 });
+const REQUIRE_INVITE_REGISTRATION = process.env.CASCADE_REQUIRE_INVITE_REGISTRATION == null
+  ? NETWORK_MODE
+  : /^(1|true|yes|on)$/i.test(process.env.CASCADE_REQUIRE_INVITE_REGISTRATION);
 
 /**
  * Bound on the routes that take a bare username: opening a DM, blocking, and
@@ -1478,13 +1599,29 @@ app.post('/api/auth/register', authRateLimit, async (req, res) => {
   }
   const passwordError = passwordPolicyError(password);
   if (passwordError) return res.status(400).json({ error: passwordError });
-
+  const passwordHash = await bcrypt.hash(password, 12);
   try {
-    const passwordHash = await bcrypt.hash(password, 12);
-    const result = db.prepare('INSERT INTO users (username, password_hash) VALUES (?, ?)').run(username, passwordHash);
-    const user = { id: Number(result.lastInsertRowid), username };
-    res.status(201).json({ user: publicUser(user), token: signToken(user), owner: isOwner(user.id) });
-  } catch {
+    const user = db.transaction(() => {
+      const accountCount = (db.prepare('SELECT COUNT(*) AS count FROM users').get() as { count: number }).count;
+      const inviteHash = REQUIRE_INVITE_REGISTRATION && accountCount > 0
+        ? validRegistrationInviteHash(req.body?.inviteToken)
+        : null;
+      if (REQUIRE_INVITE_REGISTRATION && accountCount > 0 && !inviteHash) {
+        throw new Error('REGISTRATION_INVITE_REQUIRED');
+      }
+      const result = db.prepare('INSERT INTO users (username, password_hash) VALUES (?, ?)').run(username, passwordHash);
+      const created = { id: Number(result.lastInsertRowid), username };
+      if (inviteHash) {
+        db.prepare('INSERT INTO registration_invites_used (token_hash, user_id) VALUES (?, ?)')
+          .run(inviteHash, created.id);
+      }
+      return created;
+    })();
+    res.status(201).json(authResponse(req, res, user));
+  } catch (error) {
+    if (error instanceof Error && error.message === 'REGISTRATION_INVITE_REQUIRED') {
+      return res.status(403).json({ error: 'A valid unused invitation is required to create an account' });
+    }
     res.status(409).json({ error: 'Username is already taken' });
   }
 });
@@ -1503,7 +1640,7 @@ app.post('/api/auth/login', authRateLimit, async (req, res) => {
     return res.status(401).json({ error: 'Invalid username or password' });
   }
 
-  res.json({ user: publicUser(user), token: signToken(user), owner: isOwner(user.id) });
+  res.json(authResponse(req, res, user));
 });
 
 app.post('/api/auth/password', requireAuth, authRateLimit, async (req: AuthedRequest, res) => {
@@ -1520,8 +1657,8 @@ app.post('/api/auth/password', requireAuth, authRateLimit, async (req: AuthedReq
     .run(passwordHash, user.id, user.password_hash);
   if (changed.changes !== 1) return res.status(409).json({ error: 'Password changed in another session; please try again' });
   const updated = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id) as User;
-  const token = signToken(updated);
-  res.json({ ok: true, token });
+  const token = setUserSession(res, updated);
+  res.json({ ok: true, ...(req.headers['x-cascade-browser'] === '1' ? {} : { token }) });
   disconnectUserSockets(user.id);
 });
 
@@ -1587,14 +1724,36 @@ app.post('/api/auth/reset', authRateLimit, async (req, res) => {
     .run(passwordHash, user.id, user.password_hash);
   if (changed.changes !== 1) return res.status(400).json({ error: 'This reset link has already been used' });
   const updated = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id) as User;
-  const replacementToken = signToken(updated);
-  res.json({ ok: true, user: publicUser(updated), token: replacementToken, owner: isOwner(updated.id) });
+  const replacementToken = setUserSession(res, updated);
+  res.json({
+    ok: true,
+    user: publicUser(updated),
+    ...(req.headers['x-cascade-browser'] === '1' ? {} : { token: replacementToken }),
+    owner: isOwner(updated.id),
+  });
   disconnectUserSockets(user.id);
 });
 
 app.get('/api/me', requireAuth, (req: AuthedRequest, res) => {
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user!.id) as User;
   res.json({ user: publicUser(user), owner: isOwner(req.user!.id) });
+});
+
+app.get('/api/session', (req, res) => {
+  const verified = verifiedRequestSession(req);
+  if (!verified?.decoded || verified.decoded.access === 'agent') {
+    return res.json({ authenticated: false });
+  }
+  if (verified.source === 'bearer' && req.headers['x-cascade-session-migrate'] === '1') {
+    res.append('Set-Cookie', userSessionCookie(verified.token));
+  }
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(verified.decoded.id) as User;
+  res.json({ authenticated: true, user: publicUser(user), owner: isOwner(user.id) });
+});
+
+app.post('/api/auth/logout', (_req, res) => {
+  res.append('Set-Cookie', clearUserSessionCookies());
+  res.json({ ok: true });
 });
 
 app.post('/api/diagnostics/android-battery', requireAuth, requireUserAccess, (req: AuthedRequest, res) => {

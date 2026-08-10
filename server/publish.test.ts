@@ -13,11 +13,18 @@ test('published markdown allowlists link and image URL schemes', () => {
     '[x](javascript:alert(1))',
     '[x](java&#x73;cript:alert(1))',
     '[x](jav%61script:alert(1))',
+    '[x](java%2561script:alert(1))',
     '[x](data:text/html,boom)',
     '[x](//evil.example/path)',
   ]) {
-    assert.doesNotMatch(renderPublicMarkdown(markdown), /javascript:|&#x73;|%61|data:text\/html|evil\.example/i);
+    assert.doesNotMatch(renderPublicMarkdown(markdown), /javascript:|&#x73;|%61|%2561|data:text\/html|evil\.example/i);
   }
+});
+
+test('published image data is limited to passive raster formats', () => {
+  assert.match(renderPublicMarkdown('![png](data:image/png;base64,iVBORw0KGgo=)'), /src="data:image\/png;base64,iVBORw0KGgo="/);
+  assert.doesNotMatch(renderPublicMarkdown('![svg](data:image/svg+xml;base64,PHN2Zz4=)'), /src=/);
+  assert.doesNotMatch(renderPublicMarkdown('![html](data:text/html;base64,PGgxPng8L2gxPg==)'), /src=/);
 });
 
 test('published markdown strips raw active HTML', () => {
