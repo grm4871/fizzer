@@ -182,6 +182,25 @@ describe('workTrace', () => {
     }
   });
 
+  it('nests a coordinator mission root in the live run that created it', () => {
+    const acknowledgement = msg({
+      id: 'a1', author: 'Sol', body: 'I am fixing it.', status: 'running',
+      agentId: 'codex', registrationId: 'sol-reg',
+    });
+    const mission = msg({
+      id: 'sys-mission-root-1', author: 'Sol', body: 'Fix it durably.',
+      agentId: 'codex', registrationId: 'sol-reg',
+      mission: { id: 'mission-1', title: 'Fix it', status: 'active', coordinator: 'sol', tasks: [] },
+    });
+    const segments = segmentTranscript([acknowledgement, mission]);
+    expect(segments).toHaveLength(1);
+    expect(segments[0]).toMatchObject({
+      kind: 'work',
+      trace: [acknowledgement],
+      fullGroups: [{ messages: [mission] }],
+    });
+  });
+
   it('never flattens a coordinator response under a later worker', () => {
     const coordinator = msg({
       id: 'a1', author: 'Sol', body: 'Here is the answer.', agentId: 'codex', registrationId: 'sol-reg',

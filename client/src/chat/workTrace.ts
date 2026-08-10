@@ -533,7 +533,15 @@ export function segmentTranscript(
       const carrierWake = work.length === 1
         && isWorkTraceCarrier(work[0])
         && isSystemCascadeMessage(message);
-      if (isDurableWorkArtifact(message)
+      // A coordinator-created mission root is persisted as a durable chat
+      // artifact with that coordinator's identity. Keep it in the live run
+      // that created it; otherwise the transcript shows a second agent row
+      // for what was only one dispatch. Unowned/cross-agent artifacts still
+      // retain their own chronological row.
+      const sameAgentMission = Boolean(message.mission)
+        && messageIsAgent
+        && messageKey === identityKey;
+      if ((isDurableWorkArtifact(message) && !sameAgentMission)
         || ((!messageIsAgent || messageKey !== identityKey) && !carrierWake)) break;
       work.push(messages[index]);
       index += 1;
