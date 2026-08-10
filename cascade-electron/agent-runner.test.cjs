@@ -17,6 +17,7 @@ const {
   cleanupRunHelperConfig,
   helperAllowedTools,
   isMissingClaudeSession,
+  formatToolHarnessPreview,
   normalizeClaudeEffort,
   resolveClaudePermission,
   requestClaudePermission,
@@ -94,15 +95,20 @@ test('Claude chat uses adaptive effort with no fixed thinking budget', () => {
   assert.doesNotMatch(source, /budgetTokens: thinkingTokens/);
 });
 
-test('Claude exposes assistant text while redacting provider reasoning and protocol fragments', () => {
+test('Claude keeps reasoning structured and tool JSON out of the harness trace', () => {
   const source = fs.readFileSync(path.join(__dirname, 'agent-runner.cjs'), 'utf8');
   const thinkingBranch = source.match(/if \(delta\?\.type === 'thinking_delta'[\s\S]*?else if \(delta\?\.type === 'text_delta'/)?.[0] || '';
   const inputBranch = source.match(/else if \(delta\?\.type === 'input_json_delta'[\s\S]*?\n\s*}/)?.[0] || '';
-  assert.match(source, /type: 'redacted_thinking'/);
-  assert.doesNotMatch(thinkingBranch, /type: 'thinking'/);
-  assert.doesNotMatch(thinkingBranch, /emitHarness/);
+  assert.match(thinkingBranch, /type: 'thinking'/);
+  assert.match(thinkingBranch, /emitHarness/);
   assert.doesNotMatch(inputBranch, /emitHarness/);
+  assert.match(source, /formatToolHarnessPreview\(input\)/);
   assert.match(source, /text_delta[\s\S]*emit\('text', \{ chatVisible: true/);
+});
+
+test('Claude tool previews are readable one-line progress instead of JSON/control payloads', () => {
+  assert.equal(formatToolHarnessPreview({ command: "python3 - <<'PY'\nprint('ok')\nPY" }), "python3 - <<'PY' print('ok') PY");
+  assert.equal(formatToolHarnessPreview({ file_path: '/tmp/example.ts', old_string: 'x' }), '/tmp/example.ts');
 });
 
 test('Akron reaches the Electron event bridge with launch, reasoning, and terminal events', async (t) => {

@@ -88,43 +88,6 @@ function stripAnsi(text: string): string {
   return text.replace(ANSI_RE, '');
 }
 
-/** Existing Claude rows may contain token-level reasoning in their raw log. */
-function redactClaudeHarness(raw: string): string {
-  const lines = stripAnsi(raw || '')
-    .replace(/\r\n/g, '\n')
-    .replace(/\r/g, '\n')
-    .split('\n');
-  const visible: string[] = [];
-  let inReasoning = false;
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (/^#\s*thinking\b/i.test(trimmed)) {
-      visible.push('# thinking', '[reasoning hidden]');
-      inReasoning = true;
-      continue;
-    }
-    if (inReasoning) {
-      if (/^(?:[▶>]\s+|[✓✗xX]\s*tool_result\b|#\s+)/i.test(trimmed)) {
-        inReasoning = false;
-      } else {
-        continue;
-      }
-    }
-    // Claude's SDK streams incomplete tool-input JSON separately. The
-    // structured tool card is the authoritative, readable representation.
-    if (trimmed.startsWith('{')) {
-      try {
-        const parsed = JSON.parse(trimmed) as Record<string, unknown>;
-        if (!parsed.type && !parsed.event) continue;
-      } catch {
-        continue;
-      }
-    }
-    visible.push(line);
-  }
-  return visible.join('\n');
-}
-
 function truncate(text: string, max = 4000): string {
   if (text.length <= max) return text;
   return `${text.slice(0, max - 1)}…`;
@@ -190,7 +153,7 @@ function toolIdFrom(block: ChatBlock, index: number): string {
 }
 
 /** Build timeline items from structured blocks (primary source). */
-function itemsFromBlocks(blocks: ChatBlock[] | undefined, hideThinkingDetails = false): {
+function itemsFromBlocks(blocks: ChatBlock[] | undefined): {
   items: ActivityItem[];
   thinkingText: string;
   tools: Map<string, ActivityTool>;
@@ -202,9 +165,8 @@ function itemsFromBlocks(blocks: ChatBlock[] | undefined, hideThinkingDetails = 
 
   for (const block of blocks || []) {
     if (block.type === 'thinking') {
-      const chunk = hideThinkingDetails || block.redacted ? '[reasoning hidden]' : (block.text || '');
+      const chunk = block.redacted ? '[redacted]' : (block.text || '');
       if (!chunk) continue;
-      if (hideThinkingDetails && thinkingText) continue;
       thinkingText += chunk;
       const last = items[items.length - 1];
       if (last?.kind === 'thinking') {
@@ -667,7 +629,6 @@ function activityFingerprint(message: ChatMessage): string {
   const lastText = lastBlock?.text?.length ?? 0;
   const lastContent = typeof lastBlock?.content === 'string' ? lastBlock.content.length : 0;
   return [
-    message.agentId || '',
     message.status || '',
     message.body?.length ?? 0,
     blocks?.length ?? 0,
@@ -687,11 +648,8 @@ export function buildHarnessActivity(message: ChatMessage): HarnessActivity {
     if (hit && hit.fp === fp) return hit.activity;
   }
 
-  const hideThinkingDetails = message.agentId === 'claude-code';
-  const rawLog = hideThinkingDetails
-    ? redactClaudeHarness(message.harnessLog || '')
-    : (message.harnessLog || '');
-  const fromBlocks = itemsFromBlocks(message.blocks, hideThinkingDetails);
+  const rawLog = message.harnessLog || '';
+  const fromBlocks = itemsFromBlocks(message.blocks);
   const hasStructuredTools = fromBlocks.tools.size > 0;
   const hasStructuredThinking = fromBlocks.thinkingText.trim().length > 0;
   // When structured blocks already carry thinking+tools (Claude stream path),

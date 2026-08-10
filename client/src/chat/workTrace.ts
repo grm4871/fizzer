@@ -146,7 +146,7 @@ export function humanizeActivityLine(line: string): string {
     if (type === 'thread.started' || type === 'session.created') return 'session started';
     if (type === 'thread.completed' || type === 'session.completed') return 'session finished';
     if (type === 'thought' || type === 'reasoning') {
-      return 'thinking…';
+      return previewText(ev.data ?? ev.text ?? ev.content, 90) || 'thinking…';
     }
     if (type === 'message' || type === 'agent_message' || type === 'assistant') {
       return previewText(ev.text ?? ev.content ?? ev.message ?? data?.text, 90) || 'replying…';
@@ -155,7 +155,7 @@ export function humanizeActivityLine(line: string): string {
       const itemType = String(item?.type || '');
       const done = type === 'item.completed';
       if (itemType === 'reasoning') {
-        return done ? 'thought' : 'thinking…';
+        return previewText(item?.text, 90) || (done ? 'thought' : 'thinking…');
       }
       if (itemType === 'agent_message') {
         return previewText(item?.text, 90) || (done ? 'replied' : 'replying…');
@@ -205,9 +205,9 @@ export function humanizeActivityLine(line: string): string {
 }
 
 /**
- * Mission peeks are user-facing, not a terminal. Only surface explicit
- * lifecycle/tool frames from harness output; suppress provider reasoning,
- * streamed JSON fragments, and tool-result bodies.
+ * Mission peeks are user-facing, not terminals. Preserve useful reasoning and
+ * tool progress while translating ANSI/control bytes and streamed tool JSON
+ * into ordinary one-line prose.
  */
 export function workTraceHarnessPreview(harness: string, max = 110): string {
   const lines = stripTerminalNoise(harness)
@@ -217,13 +217,15 @@ export function workTraceHarnessPreview(harness: string, max = 110): string {
     .map((part) => part.trim())
     .filter(Boolean);
   const candidates: string[] = [];
-  let hiddenReasoning = false;
+  let inReasoning = false;
+  let inToolInput = false;
   let toolResultBody = false;
   let lastTool = '';
 
   for (const line of lines) {
     if (/^#\s*thinking\b/i.test(line)) {
-      hiddenReasoning = true;
+      inReasoning = true;
+      inToolInput = false;
       toolResultBody = false;
       candidates.push('thinking…');
       continue;
@@ -231,7 +233,8 @@ export function workTraceHarnessPreview(harness: string, max = 110): string {
 
     const toolStart = line.match(/^[▶>]\s+(\S+)(?:\s+(.*))?$/);
     if (toolStart) {
-      hiddenReasoning = false;
+      inReasoning = false;
+      inToolInput = true;
       toolResultBody = false;
       lastTool = toolStart[1];
       const detail = previewStructuredDetail(toolStart[2], 70);
@@ -241,14 +244,16 @@ export function workTraceHarnessPreview(harness: string, max = 110): string {
 
     const toolEnd = line.match(/^([✓✗xX])\s*tool_result\b/i);
     if (toolEnd) {
-      hiddenReasoning = false;
+      inReasoning = false;
+      inToolInput = false;
       toolResultBody = true;
       candidates.push(`${lastTool || 'tool'} ${/^[✗xX]$/.test(toolEnd[1]) ? 'failed' : 'done'}`);
       continue;
     }
 
     if (line.startsWith('# ')) {
-      hiddenReasoning = false;
+      inReasoning = false;
+      inToolInput = false;
       toolResultBody = false;
       const human = humanizeActivityLine(line);
       if (human && !/^session (started|finished)$/i.test(human)) candidates.push(human);
@@ -257,14 +262,35 @@ export function workTraceHarnessPreview(harness: string, max = 110): string {
 
     const namedTool = line.match(/^(Bash|Edit|Read|Write|Search|Glob|Grep|WebFetch|WebSearch)\b(?:\s+(.*))?$/);
     if (namedTool) {
-      hiddenReasoning = false;
+      inReasoning = false;
+      inToolInput = false;
       toolResultBody = false;
       lastTool = namedTool[1];
       const detail = previewStructuredDetail(namedTool[2], 70);
       candidates.push(detail ? `${lastTool} ${detail}` : lastTool);
       continue;
     }
-    if (hiddenReasoning || toolResultBody) continue;
+    if (toolResultBody) continue;
+
+    if (inReasoning) {
+      const human = humanizeActivityLine(line);
+      if (human) candidates.push(human);
+      continue;
+    }
+
+    if (inToolInput) {
+      if (line.startsWith('{')) {
+        try {
+          const parsed = JSON.parse(line) as Record<string, unknown>;
+          const detail = previewStructuredDetail(parsed, 70);
+          if (detail) candidates.push(`${lastTool || 'Tool'} ${detail}`);
+        } catch {
+          // A live SDK chunk can end mid-JSON. Keep the tool name until the
+          // completed structured input arrives; never paint the fragment.
+        }
+      }
+      continue;
+    }
 
     // Structured provider events are safe only after humanization. Arbitrary
     // terminal prose is intentionally ignored and falls back to the chat body.
@@ -281,7 +307,7 @@ export function workTraceHarnessPreview(harness: string, max = 110): string {
 
 /** Prefer the latest human-readable activity line (harness tails grow live). */
 export function workTracePreview(body: string, max = 110): string {
-  const lines = String(body || '')
+  const lines = stripTerminalNoise(body)
     .replace(/\r\n/g, '\n')
     .replace(/\r/g, '\n')
     .split('\n')

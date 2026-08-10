@@ -429,6 +429,27 @@ function formatToolInput(input) {
   }
 }
 
+/** One-line tool detail for the ordinary run trace (never raw SDK JSON). */
+function formatToolHarnessPreview(input) {
+  if (input == null) return '';
+  let detail = '';
+  if (typeof input === 'string') {
+    detail = input;
+  } else if (typeof input === 'object') {
+    for (const key of ['command', 'file_path', 'path', 'pattern', 'query', 'url', 'description']) {
+      if (typeof input[key] === 'string' && input[key].trim()) {
+        detail = input[key];
+        break;
+      }
+    }
+    if (!detail && !('_raw' in input)) detail = formatToolInput(input);
+  } else {
+    detail = String(input);
+  }
+  const oneLine = detail.replace(/\s+/g, ' ').trim();
+  return oneLine.length > 200 ? `${oneLine.slice(0, 199)}…` : oneLine;
+}
+
 /**
  * Emit a machine-readable `# cascade-stats …` harness line for the chat UI.
  * Merges whatever fields we have (usage, context, rate limits) — the client
@@ -720,9 +741,10 @@ async function runClaudeLocally(opts, emit) {
 
       // Partial streaming: translate token-level deltas into the same
       // { message: { content: [...] } } shape the chat accumulators expect,
-      // Keep provider reasoning private while still reporting that thinking is
-      // happening; text_delta remains assistant-visible prose. The assembled
-      // `assistant` message is skipped below so its content is not duplicated.
+      // routing thinking_delta → a thinking block and text_delta → a text
+      // block. The assembled `assistant` message is skipped below so its
+      // content isn't appended a second time on top of these deltas.
+      // Also tee a human-readable transcript into the harness terminal pane.
       if (message.type === 'stream_event') {
         const ev = message.event;
         if (ev?.type === 'message_start') {
@@ -737,9 +759,11 @@ async function runClaudeLocally(opts, emit) {
               emitHarness(emit, '\x1b[2m# thinking\x1b[0m\r\n');
               harnessInThinking = true;
             }
-            emit('text', { message: { content: [{ type: 'redacted_thinking' }] } });
-            emitHarness(emit, '\x1b[2m[reasoning hidden]\x1b[0m\r\n');
-            lastBlockWasText = false;
+            if (blockType === 'redacted_thinking') {
+              emit('text', { message: { content: [{ type: 'redacted_thinking' }] } });
+              emitHarness(emit, '\x1b[2m[redacted]\x1b[0m');
+              lastBlockWasText = false;
+            }
           } else if (blockType === 'tool_use') {
             harnessInThinking = false;
             const name = block?.name || 'tool';
@@ -769,12 +793,12 @@ async function runClaudeLocally(opts, emit) {
         } else if (ev?.type === 'content_block_delta') {
           const delta = ev.delta;
           if (delta?.type === 'thinking_delta' && delta.thinking) {
-            // Intentionally do not persist or render token-level chain of
-            // thought. The content-block start emitted a redacted activity row.
+            emit('text', { message: { content: [{ type: 'thinking', thinking: delta.thinking }] } });
+            emitHarness(emit, `\x1b[2m${delta.thinking}\x1b[0m`);
             lastBlockWasText = false;
           } else if (delta?.type === 'text_delta' && delta.text) {
-            // Thinking is represented by the redacted activity row above;
-            // text deltas are assistant-visible prose and can stream into chat.
+            // Thinking uses the distinct structured block above; text deltas
+            // are assistant-visible prose and can stream into chat.
             emit('text', { chatVisible: true, message: { content: [{ type: 'text', text: delta.text }] } });
             emitHarness(emit, delta.text);
             streamedText += delta.text;
@@ -798,6 +822,10 @@ async function runClaudeLocally(opts, emit) {
               } catch {
                 input = { _raw: pendingTool.json };
               }
+            }
+            const inputPreview = formatToolHarnessPreview(input);
+            if (inputPreview) {
+              emitHarness(emit, `\r\n\x1b[36m▶ ${pendingTool.name}\x1b[0m ${inputPreview}\r\n`);
             }
             emit('text', {
               message: {
@@ -1113,6 +1141,7 @@ module.exports = {
   chatTriggeringMessageId,
   helperAllowedTools,
   normalizeClaudeEffort,
+  formatToolHarnessPreview,
   isMissingClaudeSession,
   resolveAgentCwd,
   setNoteApiConfig,

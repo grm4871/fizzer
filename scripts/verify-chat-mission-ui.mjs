@@ -201,14 +201,14 @@ try {
       missionTaskId: task.id,
       status: 'running',
       blocks: [
-        { type: 'thinking', text: 'private chain of thought must never render' },
-        { type: 'tool_use', id: 'claude-tool-1', name: 'Bash', input: { command: 'python -c hidden' } },
+        { type: 'thinking', text: 'checking the deployment configuration' },
+        { type: 'tool_use', id: 'claude-tool-1', name: 'Bash', input: { command: 'python -c verify' } },
       ],
       harnessLog: [
         '\x1b[2m# thinking\x1b[0m',
-        '\x1b[2mprivate chain of thought must never render\x1b[0m',
+        '\x1b[2mchecking the deployment configuration\x1b[0m',
         '\x1b[36m▶ Bash\x1b[0m',
-        '\x1b[36m{"command":"python -c hidden"}\x1b[0m',
+        '\x1b[36m{"command":"python -c verify"}\x1b[0m',
       ].join('\r\n'),
     },
     {
@@ -315,7 +315,7 @@ try {
     missionPeekText.trim().length > 0
       && !missionPeekText.includes('[36m')
       && !missionPeekText.includes('{"command"')
-      && !missionPeekText.includes('private chain of thought')
+      && missionPeekText.includes('Bash python -c verify')
   ), missionPeekText);
   check('collapsed peek has no second solid status ball', (
     await card.locator('.chat-mission-peek-dot').count()
@@ -459,9 +459,9 @@ try {
     await workerLine.innerText()
   ).includes('Inspected multiplayer persistence'));
   const claudeTraceText = await workerLine.innerText();
-  check('expanded Claude trace redacts provider reasoning and protocol fragments', (
-    claudeTraceText.includes('[reasoning hidden]')
-      && !claudeTraceText.includes('private chain of thought')
+  check('expanded Claude trace keeps readable reasoning without protocol fragments', (
+    claudeTraceText.includes('checking the deployment configuration')
+      && claudeTraceText.includes('python -c verify')
       && !claudeTraceText.includes('{"command"')
       && !claudeTraceText.includes('[36m')
   ), claudeTraceText.slice(0, 1000));

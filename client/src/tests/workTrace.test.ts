@@ -238,18 +238,22 @@ describe('workTrace', () => {
       .toBe('thinking…');
   });
 
-  it('keeps Claude reasoning, ANSI bytes, and partial tool JSON out of mission peeks', () => {
+  it('normalizes Claude reasoning, ANSI bytes, and streamed tool JSON in mission peeks', () => {
     const harness = [
       '\x1b[2m# thinking\x1b[0m',
-      '\x1b[2mprivate reasoning that must not render\x1b[0m',
+      '\x1b[2mchecking the deploy configuration\x1b[0m',
       '\x1b[36m▶ Bash\x1b[0m',
-      '\x1b[36m{"command":"python -c secret"}\x1b[0m',
+      '\x1b[36m{"command":"python -c verify"}\x1b[0m',
     ].join('\r\n');
-    expect(workTraceHarnessPreview(harness)).toBe('Bash');
-    expect(workTraceHarnessPreview(`${harness}\r\n\x1b[32m✓ tool_result\x1b[0m\r\nsecret output`))
+    expect(workTraceHarnessPreview(harness)).toBe('Bash python -c verify');
+    expect(workTraceHarnessPreview(`${harness}\r\n\x1b[32m✓ tool_result\x1b[0m\r\nraw output`))
       .toBe('Bash done');
-    expect(humanizeActivityLine('\x1b[36m{"type":"item.started","item":{"type":"reasoning","text":"private"}}\x1b[0m'))
-      .toBe('thinking…');
+    expect(workTraceHarnessPreview('\x1b[2m# thinking\x1b[0m\r\n\x1b[2mchecking the deployment path\x1b[0m'))
+      .toBe('checking the deployment path');
+    expect(humanizeActivityLine('\x1b[36m{"type":"item.started","item":{"type":"reasoning","text":"checking"}}\x1b[0m'))
+      .toBe('checking');
+    expect(workTraceHarnessPreview('\x1b[36m▶ Bash\x1b[0m\r\n\x1b[36m{"command":"unterminated'))
+      .toBe('Bash');
   });
 
   it('builds a collapsed mission peek from the live step', () => {
