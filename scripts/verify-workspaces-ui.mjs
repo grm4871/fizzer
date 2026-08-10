@@ -131,6 +131,26 @@ try {
   await plain.goto(APP_URL, { waitUntil: 'domcontentloaded' });
   await plain.evaluate((t) => localStorage.setItem('docs_token', t), token);
   await plain.goto(APP_URL, { waitUntil: 'networkidle' });
+  await plain.getByRole('button', { name: /Vault switcher; current vault/ }).click();
+  const vaultWorkspace = plain.getByRole('dialog', { name: 'Vault workspace' });
+  await vaultWorkspace.waitFor({ timeout: 10_000 });
+  const vaultWorkspaceBox = await vaultWorkspace.boundingBox();
+  check('vault button opens a full-screen vault workspace', Boolean(vaultWorkspaceBox)
+    && vaultWorkspaceBox.x <= 1
+    && vaultWorkspaceBox.y <= 1
+    && vaultWorkspaceBox.width >= 1398
+    && vaultWorkspaceBox.height >= 898);
+  const vaultWorkspaceText = await vaultWorkspace.innerText();
+  const vaultWorkspaceTextLower = vaultWorkspaceText.toLowerCase();
+  check('vault workspace exposes personal, discovery, and management areas',
+    vaultWorkspaceTextLower.includes('your vaults')
+      && vaultWorkspaceTextLower.includes('browse public vaults')
+      && vaultWorkspaceTextLower.includes('manage vaults'), JSON.stringify(vaultWorkspaceText));
+  await vaultWorkspace.getByRole('menuitem', { name: 'Browse public vaults' }).click();
+  const publicVaultsDialog = plain.getByRole('dialog', { name: /Public vaults/ });
+  await publicVaultsDialog.waitFor({ timeout: 10_000 });
+  check('public vault browsing is reachable from the vault workspace', await publicVaultsDialog.isVisible());
+  await publicVaultsDialog.getByRole('button', { name: 'Close public vaults' }).click();
   await plain.getByText('ws-chan', { exact: false }).first().click();
   await plain.getByRole('button', { name: 'Project setup' }).first().click();
   await plain.locator('.chat-channel-settings-panel').waitFor({ timeout: 15000 });

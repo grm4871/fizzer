@@ -435,6 +435,37 @@ test('one registration cannot lease two open provider runs across dispatches', (
   }
 });
 
+test('the same owned agent can run concurrently in separate channels and vaults', () => {
+  const { db, coordinator } = setup();
+  try {
+    db.prepare("INSERT INTO vaults (id, name, root_path, created_by) VALUES ('vault-3', 'Other', '/tmp/other', 1)").run();
+    db.prepare(`
+      INSERT INTO notes (id, vault_id, title, content, content_preview)
+      VALUES ('channel-3', 'vault-3', 'other-dev', ?, ?)
+    `).run(CHAT_NOTE_MARKER, CHAT_NOTE_MARKER);
+    const otherRegistration = upsertChatAgentMember(db, 1, 'vault-3', 'channel-3', {
+      id: 'reg-sol-other-vault', vaultAgentId: coordinator.vaultAgentId,
+      agentId: 'codex', displayName: 'Sol', mention: 'sol', model: 'gpt-5.6-sol',
+    });
+    const firstMessage = createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: 'parallel-first', channelId: 'channel-1', author: 'owner', body: 'Work here',
+    });
+    const otherMessage = createChatMessage(db, 1, 'vault-3', 'channel-3', {
+      id: 'parallel-other', channelId: 'channel-3', author: 'owner', body: 'Work there too',
+    });
+    const first = createChatAgentDispatchForRegistration(db, 1, 'channel-1', firstMessage, coordinator.id);
+    const other = createChatAgentDispatchForRegistration(db, 1, 'channel-3', otherMessage, otherRegistration.id);
+    db.prepare(`
+      INSERT INTO runs (vault_id, prompt, agent, conversation_id, status, chat_dispatch_id)
+      VALUES ('vault-1', 'first', 'codex', 'session-one', 'running', ?)
+    `).run(first.id);
+
+    assert.equal(findOpenRunForChatRegistration(db, otherRegistration.id, other.id), undefined);
+  } finally {
+    db.close();
+  }
+});
+
 test('schema repair marks historical worker replies as internal mission evidence', () => {
   const { db, coordinator, worker } = setup();
   try {

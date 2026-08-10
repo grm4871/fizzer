@@ -1436,7 +1436,7 @@ export default function App() {
     }
   }, [scheduleChatMessagePatch]);
 
-  const handleRegisterChatAgent = useCallback((channelId: string, registration: ChatAgentRegistration) => {
+  const handleRegisterChatAgent = useCallback((channelId: string, registration: ChatAgentRegistration, sourceVaultId?: string) => {
     const normalized = {
       ...registration,
       id: registration.id || createChatAgentRegistrationId(),
@@ -1458,7 +1458,10 @@ export default function App() {
         ],
       },
     }));
-    const vaultId = activeVaultIdRef.current;
+    // A run may finish after the user has switched vaults. Persist session
+    // adoption back to the vault that launched it, never whichever vault is
+    // currently visible.
+    const vaultId = sourceVaultId || activeVaultIdRef.current;
     if (vaultId) {
       void persistChatAgentMemberToServer(vaultId, channelId, normalized).then((saved) => {
         if (saved) {
@@ -2075,7 +2078,7 @@ export default function App() {
       // Legacy members predate per-member sessions: adopt the conversation the
       // server just minted and persist it so later turns resume the same session.
       if (conversation.adoptConversation && res.run.conversation_id) {
-        handleRegisterChatAgent(channelId, { ...registration, conversationId: res.run.conversation_id });
+        handleRegisterChatAgent(channelId, { ...registration, conversationId: res.run.conversation_id }, vaultId);
       }
 
       queueMessageUpdate((message) => ({

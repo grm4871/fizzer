@@ -47,6 +47,14 @@ describe('agent conversation isolation', () => {
     expect(next.watermarkKey).not.toBe(first.watermarkKey);
     expect(first.adoptConversation).toBe(false);
   });
+
+  it('isolates simultaneous calls to the same agent across channels and vaults', () => {
+    const first = chatAgentConversation('vault-a:channel-one:sol', 'session-a', undefined);
+    const second = chatAgentConversation('vault-b:channel-two:sol', 'session-b', undefined);
+    expect(first.watermarkKey).not.toBe(second.watermarkKey);
+    expect(first.conversationId).toBe('session-a');
+    expect(second.conversationId).toBe('session-b');
+  });
 });
 
 describe('selective Cascade context', () => {

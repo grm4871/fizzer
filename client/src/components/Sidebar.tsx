@@ -189,6 +189,15 @@ export const Sidebar = memo(function Sidebar({
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const [dropHint, setDropHint] = useState<{ id: string; placement: DropPlacement } | null>(null);
 
+  useEffect(() => {
+    if (!vaultMenuOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setVaultMenuOpen(false);
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [vaultMenuOpen]);
+
   const activeVault = useMemo(
     () => vaults.find((v) => v.id === activeVaultId),
     [vaults, activeVaultId],
@@ -767,7 +776,7 @@ export const Sidebar = memo(function Sidebar({
           type="button"
           className="vault-name"
           onClick={() => setVaultMenuOpen((open) => !open)}
-          title="Switch or create a vault"
+          title="Open vault workspace"
           aria-label={`Vault switcher; current vault ${activeVault?.name || 'Fizzer'}`}
           aria-expanded={vaultMenuOpen}
         >
@@ -794,11 +803,12 @@ export const Sidebar = memo(function Sidebar({
       </div>
 
       {vaultMenuOpen && (
-        <div className="vault-switcher-menu" role="menu" aria-label="Vaults">
+        <div className="vault-switcher-menu" role="dialog" aria-modal="true" aria-label="Vault workspace">
           <div className="vault-switcher-heading">
-            <span>Vaults</span>
-            <small>{vaults.length}</small>
+            <div><span>Vault workspace</span><small>{vaults.length} vaults</small></div>
+            <button type="button" className="vault-switcher-close" onClick={() => setVaultMenuOpen(false)} aria-label="Close vault workspace"><X size={18} /></button>
           </div>
+          <div className="vault-switcher-section-title">Your vaults</div>
           {vaults.map((vault) => (
             renamingVaultId === vault.id ? (
               <div className="vault-switcher-create-form" key={vault.id}>
@@ -863,6 +873,7 @@ export const Sidebar = memo(function Sidebar({
             <Compass size={14} aria-hidden="true" /> Browse public vaults
           </button>
           <div className="vault-switcher-divider" role="separator" />
+          <div className="vault-switcher-section-title">Manage vaults</div>
           {creatingVault ? (
             <div className="vault-switcher-create-form">
               <input
