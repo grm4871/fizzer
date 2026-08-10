@@ -156,7 +156,7 @@ try {
 
   await page.getByRole('button', { name: /Vault switcher/ }).click();
   await page.getByRole('menuitem', { name: 'Browse public vaults' }).click();
-  const dialog = page.getByRole('dialog', { name: 'Public vaults' });
+  const dialog = page.getByRole('dialog', { name: 'Connect' });
   await dialog.getByText('Community Lab').waitFor();
   await dialog.getByLabel('Search public vaults').fill('design');
   await dialog.getByText('Community Lab').waitFor({ state: 'detached' });
@@ -195,11 +195,11 @@ try {
   if ((await messagesButton.getAttribute('aria-label')) !== '2 unread direct messages') throw new Error('mailbox did not announce unread DMs');
   await messagesButton.locator('.sidebar-dm-dot').waitFor();
   await messagesButton.click();
-  const messagesDialog = page.getByRole('dialog', { name: 'Messages' });
+  const messagesDialog = page.getByRole('dialog', { name: 'Connect' });
   await messagesDialog.getByText('Alice Example').waitFor();
   const messagesBox = await messagesDialog.boundingBox();
-  if (!messagesBox || messagesBox.x !== 0 || messagesBox.y !== 0 || messagesBox.width !== 1180 || messagesBox.height !== 760) {
-    throw new Error(`messages menu is not fullscreen: ${JSON.stringify(messagesBox)}`);
+  if (!messagesBox || messagesBox.x < 24 || messagesBox.y < 16 || messagesBox.width > 920 || messagesBox.height > 730) {
+    throw new Error(`messages menu is not a centered, bounded surface: ${JSON.stringify(messagesBox)}`);
   }
   await messagesDialog.getByLabel('2 unread messages').waitFor();
   await messagesDialog.getByText('Privacy & blocking').click();
@@ -236,7 +236,7 @@ try {
   if (!requests.some((request) => request.method === 'GET' && request.path === '/api/public-vaults' && request.search === '?q=design')) {
     throw new Error('public directory search was not sent to the server');
   }
-  console.log('[discovery-dms-ui] OK — public discovery plus fullscreen mailbox, unread state, DM privacy, blocks, and conversation navigation');
+  console.log('[discovery-dms-ui] OK — unified discovery and messages surface, unread state, DM privacy, blocks, and conversation navigation');
 } finally {
   if (browser) await browser.close();
   preview.kill('SIGTERM');

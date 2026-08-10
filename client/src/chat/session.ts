@@ -11,16 +11,21 @@ import { agentLabel, normalizeChatCwd, type AgentId } from './agents';
 export const SESSION_STORAGE_KEY = 'cascade_session';
 export const CHAT_STORAGE_KEY = 'cascade_chat_state';
 
-/**
- * Session persisted to localStorage so a reload restores the workspace: the open
- * tabs, the pane layout tree, and which pane was focused. Note bodies are
- * re-fetched on restore.
- */
-export interface PersistedSession {
-  activeVaultId: string | null;
+/** One vault's independently-restored workspace. Note bodies are re-fetched. */
+export interface PersistedWorkspace {
   openTabs: Tab[];
   layout: LayoutNode;
   focusedPaneId: string;
+}
+
+/**
+ * Session persisted to localStorage. The top-level workspace mirrors the active
+ * vault for backwards compatibility; `workspacesByVault` is authoritative once
+ * present and keeps tabs from leaking between vaults.
+ */
+export interface PersistedSession extends PersistedWorkspace {
+  activeVaultId: string | null;
+  workspacesByVault: Record<string, PersistedWorkspace>;
 }
 
 export interface ChatState {
@@ -56,35 +61,98 @@ function sanitizeRestoredTabs(value: unknown): Tab[] {
     .filter((tab): tab is Tab => Boolean(tab));
 }
 
-export function emptySession(): PersistedSession {
+export function emptyWorkspace(): PersistedWorkspace {
   const pane = Layout.createPane();
-  return { activeVaultId: null, openTabs: [], layout: pane, focusedPaneId: pane.id };
+  return { openTabs: [], layout: pane, focusedPaneId: pane.id };
+}
+
+export function emptySession(): PersistedSession {
+  return { activeVaultId: null, workspacesByVault: {}, ...emptyWorkspace() };
+}
+
+type PersistedWorkspaceInput = Partial<PersistedWorkspace> & {
+  activeTabId?: string;
+  splitTabId?: string;
+};
+
+function isLayoutNode(value: unknown): value is LayoutNode {
+  if (!value || typeof value !== 'object') return false;
+  const node = value as Partial<LayoutNode>;
+  if (node.type === 'pane') {
+    return typeof node.id === 'string'
+      && Array.isArray(node.tabIds)
+      && node.tabIds.every((id) => typeof id === 'string')
+      && (node.activeTabId === null || typeof node.activeTabId === 'string');
+  }
+  if (node.type === 'split') {
+    return typeof node.id === 'string'
+      && (node.direction === 'row' || node.direction === 'column')
+      && Array.isArray(node.children)
+      && node.children.length > 0
+      && node.children.every(isLayoutNode)
+      && Array.isArray(node.sizes)
+      && node.sizes.every((size) => typeof size === 'number' && Number.isFinite(size));
+  }
+  return false;
+}
+
+function restoreWorkspace(value: unknown): PersistedWorkspace {
+  const parsed = value && typeof value === 'object' ? value as PersistedWorkspaceInput : {};
+  const openTabs = sanitizeRestoredTabs(parsed.openTabs);
+  const validIds = new Set(openTabs.map((tab) => tab.id));
+
+  let layout: LayoutNode;
+  if (isLayoutNode(parsed.layout)) {
+    layout = Layout.ensureValid(parsed.layout, validIds);
+  } else {
+    // Migrate the pre-grid single/split-pane session into a layout tree.
+    const activeTabId = typeof parsed.activeTabId === 'string' ? parsed.activeTabId : null;
+    const splitTabId = typeof parsed.splitTabId === 'string' ? parsed.splitTabId : null;
+    layout = Layout.migrateFromLegacy(openTabs.map((tab) => tab.id), activeTabId, splitTabId);
+  }
+
+  const focusedPaneId =
+    typeof parsed.focusedPaneId === 'string' && Layout.findPane(layout, parsed.focusedPaneId)
+      ? parsed.focusedPaneId
+      : Layout.getFirstPane(layout).id;
+
+  return { openTabs, layout, focusedPaneId };
+}
+
+/** Restore and migrate an already-parsed localStorage value. */
+export function restorePersistedSession(value: unknown): PersistedSession {
+  if (!value || typeof value !== 'object') return emptySession();
+  const parsed = value as PersistedWorkspaceInput & {
+    activeVaultId?: unknown;
+    workspacesByVault?: unknown;
+  };
+  const activeVaultId = typeof parsed.activeVaultId === 'string' ? parsed.activeVaultId : null;
+  const workspacesByVault: Record<string, PersistedWorkspace> = {};
+
+  if (parsed.workspacesByVault && typeof parsed.workspacesByVault === 'object' && !Array.isArray(parsed.workspacesByVault)) {
+    for (const [vaultId, workspace] of Object.entries(parsed.workspacesByVault)) {
+      if (!vaultId) continue;
+      workspacesByVault[vaultId] = restoreWorkspace(workspace);
+    }
+  }
+
+  // One-release migration: the old schema stored only the active workspace at
+  // the top level. Adopt it for that vault the first time the new schema loads.
+  if (activeVaultId && !workspacesByVault[activeVaultId]) {
+    workspacesByVault[activeVaultId] = restoreWorkspace(parsed);
+  }
+
+  const activeWorkspace = activeVaultId
+    ? workspacesByVault[activeVaultId] ?? emptyWorkspace()
+    : emptyWorkspace();
+  return { activeVaultId, workspacesByVault, ...activeWorkspace };
 }
 
 export function loadPersistedSession(): PersistedSession {
   try {
     const raw = localStorage.getItem(SESSION_STORAGE_KEY);
     if (!raw) return emptySession();
-    const parsed = JSON.parse(raw) as Partial<PersistedSession> & { activeTabId?: string; splitTabId?: string };
-    const openTabs = sanitizeRestoredTabs(parsed.openTabs);
-    const validIds = new Set(openTabs.map((t) => t.id));
-
-    let layout: LayoutNode;
-    if (parsed.layout) {
-      layout = Layout.ensureValid(parsed.layout, validIds);
-    } else {
-      // Migrate the pre-grid single/split-pane session into a layout tree.
-      const activeTabId = typeof parsed.activeTabId === 'string' ? parsed.activeTabId : null;
-      const splitTabId = typeof parsed.splitTabId === 'string' ? parsed.splitTabId : null;
-      layout = Layout.migrateFromLegacy(openTabs.map((t) => t.id), activeTabId, splitTabId);
-    }
-
-    const focusedPaneId =
-      parsed.focusedPaneId && Layout.findPane(layout, parsed.focusedPaneId)
-        ? parsed.focusedPaneId
-        : Layout.getFirstPane(layout).id;
-
-    return { activeVaultId: parsed.activeVaultId ?? null, openTabs, layout, focusedPaneId };
+    return restorePersistedSession(JSON.parse(raw));
   } catch {
     return emptySession();
   }

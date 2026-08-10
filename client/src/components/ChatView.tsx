@@ -1504,8 +1504,8 @@ function ChatMissionCard({
       role="button"
       tabIndex={0}
       aria-expanded={open}
-      onClick={() => setOpen((value) => !value)}
       onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return;
         if (event.key !== 'Enter' && event.key !== ' ') return;
         event.preventDefault();
         setOpen((value) => !value);
@@ -1517,6 +1517,7 @@ function ChatMissionCard({
           type="button"
           className="chat-mission-toggle"
           tabIndex={-1}
+          onClick={() => setOpen((value) => !value)}
           onContextMenu={openMissionContextMenu}
         >
           {live
@@ -1549,6 +1550,7 @@ function ChatMissionCard({
             type="button"
             className={`chat-mission-peek${peekLive ? ' is-live' : ''}`}
             tabIndex={-1}
+            onClick={() => setOpen((value) => !value)}
             onContextMenu={openMissionContextMenu}
             aria-label={`Mission activity: ${peekAuthor ? `${peekAuthor} — ` : ''}${peekLabel}`}
           >

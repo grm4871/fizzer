@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
-import { ArrowLeft, Ban, BookOpen, ChevronDown, Clock3, Flag, LoaderCircle, Search, ShieldCheck, UserPlus, X } from 'lucide-react';
+import { ArrowLeft, Ban, BookOpen, ChevronDown, Clock3, Compass, Flag, LoaderCircle, MessageCircle, Search, ShieldCheck, UserPlus, X } from 'lucide-react';
 import { FizzerMark } from './FizzerMark';
 import { api, formatRelativeDate, type CommunityUpdates } from '../api';
 import { ReportDialog } from './ReportDialog';
@@ -71,6 +71,7 @@ export function DiscoveryDmsModal({
   onVaultsChanged,
   updateCounts,
 }: DiscoveryDmsModalProps) {
+  const [activeTab, setActiveTab] = useState<DiscoveryTab>(initialTab);
   const [publicVaults, setPublicVaults] = useState<PublicVault[]>([]);
   const [publicVaultDetail, setPublicVaultDetail] = useState<PublicVaultDetail | null>(null);
   const [reportVault, setReportVault] = useState<PublicVaultDetail | null>(null);
@@ -131,13 +132,19 @@ export function DiscoveryDmsModal({
   }, []);
 
   useEffect(() => {
-    if (initialTab !== 'public') {
+    if (activeTab !== 'public') {
       void loadDms();
       return;
     }
     const timer = window.setTimeout(() => void loadPublicVaults(searchQuery), 180);
     return () => window.clearTimeout(timer);
-  }, [initialTab, loadDms, loadPublicVaults, searchQuery]);
+  }, [activeTab, loadDms, loadPublicVaults, searchQuery]);
+
+  const switchTab = (tab: DiscoveryTab) => {
+    setActiveTab(tab);
+    setPublicVaultDetail(null);
+    setStatus('');
+  };
 
   const openPublicVaultDetail = async (vault: PublicVault) => {
     await runAction(`detail:${vault.id}`, `Could not open ${vault.name}`, async () => {
@@ -235,8 +242,8 @@ export function DiscoveryDmsModal({
 
   return (
     <ModalShell
-      backdropClassName={`overlay-backdrop discovery-dms-backdrop ${initialTab === 'dms' ? 'is-messages' : ''}`}
-      dialogClassName={`discovery-dms-modal ${initialTab === 'dms' ? 'is-messages' : ''}`}
+      backdropClassName={`overlay-backdrop discovery-dms-backdrop ${activeTab === 'dms' ? 'is-messages' : ''}`}
+      dialogClassName={`discovery-dms-modal ${activeTab === 'dms' ? 'is-messages' : ''}`}
       ariaLabelledby="discovery-dms-title"
       onClose={onClose}
       closeOnEscape={!reportVault}
@@ -252,14 +259,25 @@ export function DiscoveryDmsModal({
     >
         <header className="discovery-dms-header">
           <div>
-            <h2 id="discovery-dms-title">{initialTab === 'public' ? 'Public vaults' : 'Messages'}</h2>
-            <p>{initialTab === 'public' ? 'Find a shared workspace built around an idea.' : 'Your private conversations, separate from notebook vaults.'}</p>
+            <span className="surface-kicker">Community</span>
+            <h2 id="discovery-dms-title">Connect</h2>
+            <p>{activeTab === 'public' ? 'Find a workspace built around an idea.' : 'Private conversations, kept separate from notebook vaults.'}</p>
           </div>
-          <button type="button" className="btn-icon" onClick={onClose} aria-label={`Close ${initialTab === 'public' ? 'public vaults' : 'messages'}`}><X size={17} /></button>
+          <button type="button" className="btn-icon" onClick={onClose} aria-label="Close connect"><X size={17} /></button>
         </header>
 
+        <div className="discovery-dms-tabs" role="tablist" aria-label="Connect views">
+          <button type="button" role="tab" aria-selected={activeTab === 'public'} className={activeTab === 'public' ? 'is-active' : ''} onClick={() => switchTab('public')}>
+            <Compass size={15} /><span>Explore vaults</span>
+          </button>
+          <button type="button" role="tab" aria-selected={activeTab === 'dms'} className={activeTab === 'dms' ? 'is-active' : ''} onClick={() => switchTab('dms')}>
+            <MessageCircle size={15} /><span>Messages</span>
+            {updateCounts.directMessages > 0 && <em>{updateCounts.directMessages >= 99 ? '99+' : updateCounts.directMessages}</em>}
+          </button>
+        </div>
+
         <div className="discovery-dms-body">
-          {initialTab === 'public' ? (
+          {activeTab === 'public' ? (
             <div className="discovery-panel" role="tabpanel">
               {publicVaultDetail ? (
                 <div className="public-vault-detail">

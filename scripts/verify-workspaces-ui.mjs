@@ -144,8 +144,8 @@ try {
     const style = getComputedStyle(node);
     return { backgroundImage: style.backgroundImage, backdropFilter: style.backdropFilter };
   });
-  check('vault workspace uses a flat background with no ambient gradient',
-    vaultWorkspaceSurface.backgroundImage === 'none'
+  check('vault workspace uses a restrained ambient gradient without backdrop blur',
+    vaultWorkspaceSurface.backgroundImage.includes('radial-gradient')
       && (vaultWorkspaceSurface.backdropFilter === 'none' || vaultWorkspaceSurface.backdropFilter === ''));
   const vaultWorkspaceText = await vaultWorkspace.innerText();
   const vaultWorkspaceTextLower = vaultWorkspaceText.toLowerCase();
@@ -164,7 +164,7 @@ try {
     vaultGridDisplay === 'grid'
       && actionGridDisplay === 'grid'
       && actionTileBoxes.length === 3
-      && actionTileBoxes.every((box) => box.width >= 200 && box.height >= 120)
+      && actionTileBoxes.every((box) => box.width >= 200 && box.height >= 110)
       && Math.max(...actionTileBoxes.map((box) => box.y)) - Math.min(...actionTileBoxes.map((box) => box.y)) <= 2);
   if (process.env.CASCADE_CAPTURE_VAULT_WORKSPACE) {
     await vaultWorkspace.screenshot({ path: process.env.CASCADE_CAPTURE_VAULT_WORKSPACE });
@@ -187,10 +187,10 @@ try {
       && mobileActionTileBoxes[1].y < mobileActionTileBoxes[2].y);
   await plain.setViewportSize({ width: 1400, height: 900 });
   await vaultWorkspace.getByRole('menuitem', { name: 'Browse public vaults' }).click();
-  const publicVaultsDialog = plain.getByRole('dialog', { name: /Public vaults/ });
+  const publicVaultsDialog = plain.getByRole('dialog', { name: 'Connect' });
   await publicVaultsDialog.waitFor({ timeout: 10_000 });
   check('public vault browsing is reachable from the vault workspace', await publicVaultsDialog.isVisible());
-  await publicVaultsDialog.getByRole('button', { name: 'Close public vaults' }).click();
+  await publicVaultsDialog.getByRole('button', { name: 'Close connect' }).click();
   await plain.getByText('ws-chan', { exact: false }).first().click();
   await plain.getByRole('button', { name: 'Project setup' }).first().click();
   await plain.locator('.chat-channel-settings-panel').waitFor({ timeout: 15000 });

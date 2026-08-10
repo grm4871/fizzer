@@ -111,7 +111,7 @@ export function CommandPalette({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="command-palette" id="command-palette">
+      <section className="command-palette" id="command-palette" role="dialog" aria-modal="true" aria-label="Open anything">
         <div className="command-palette-input-wrap">
           <span className="search-icon"><Search size={16} /></span>
           <input
@@ -186,7 +186,7 @@ export function CommandPalette({
           </span>
           <span>{filtered.length} notes</span>
         </div>
-      </div>
+      </section>
     </div>
   );
 }

@@ -141,7 +141,7 @@ export function SearchOverlay({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="search-overlay" id="search-overlay">
+      <section className="search-overlay" id="search-overlay" role="dialog" aria-modal="true" aria-label="Search workspace">
         <div className="search-input-wrap">
           <span className="search-icon"><Search size={16} /></span>
           <input
@@ -196,7 +196,11 @@ export function SearchOverlay({
             </div>
           )}
         </div>
-      </div>
+        <footer className="search-footer">
+          <span><kbd>↑↓</kbd> navigate <kbd>↵</kbd> open <kbd>esc</kbd> close</span>
+          <span>Notes + chats</span>
+        </footer>
+      </section>
     </div>
   );
 }

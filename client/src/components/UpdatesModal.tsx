@@ -51,8 +51,9 @@ export function UpdatesModal({
     >
         <header className="updates-header">
           <div>
+            <span className="surface-kicker">Activity center</span>
             <h2 id="updates-title">Updates</h2>
-            <p>New activity in the vaults and channels you can access.</p>
+            <p>Everything new across your vaults and conversations.</p>
           </div>
           <div className="updates-header-actions">
             {updates.counts.total > 0 && (

@@ -297,9 +297,39 @@ try {
     throw error;
   }
   check('mission artifact renders inline', await card.isVisible());
+  const missionChrome = await card.evaluate((node) => {
+    const style = getComputedStyle(node);
+    return {
+      borderWidth: style.borderTopWidth,
+      borderStyle: style.borderTopStyle,
+      backgroundImage: style.backgroundImage,
+      tabIndex: node.tabIndex,
+      nestedTabStops: Array.from(node.querySelectorAll('button, a, input, select, textarea'))
+        .filter((item) => item.tabIndex >= 0).length,
+    };
+  });
+  check('mission keeps its original warm bordered treatment',
+    missionChrome.borderWidth === '1px'
+      && missionChrome.borderStyle === 'solid'
+      && missionChrome.backgroundImage.includes('linear-gradient'),
+    JSON.stringify(missionChrome));
+  check('mission is one keyboard tab stop', missionChrome.tabIndex === 0 && missionChrome.nestedTabStops === 0,
+    JSON.stringify(missionChrome));
+  // Put Chromium in keyboard modality before focusing programmatically so
+  // :focus-visible is evaluated the same way as a real Tab traversal.
+  await page.keyboard.press('Tab');
+  await card.focus();
+  check('keyboard focus outlines the whole mission card', await card.evaluate((node) => (
+    document.activeElement === node && getComputedStyle(node).outlineWidth === '2px'
+  )));
   check('active mission starts compact', !(await card.evaluate((node) => (
     node.classList.contains('is-open') || node.getAttribute('data-open') === 'true'
   ))));
+  await card.press('Enter');
+  check('focused mission toggles from the keyboard', await card.evaluate((node) => (
+    node.classList.contains('is-open') || node.getAttribute('data-open') === 'true'
+  )));
+  await card.press('Enter');
   check('live mission shows thinking whirl on the card', (
     await card.locator('.chat-mission-toggle .thinking-spinner.chat-mission-whirl').count()
   ) === 1);
@@ -490,7 +520,7 @@ try {
   check('reload retains task status and evidence', (await reloadedCard.innerText()).includes('Reload and multiplayer projection passed.'));
 
   await page.locator('.sidebar-footer .user-info').click();
-  const accountDialog = page.getByRole('dialog', { name: 'Account' });
+  const accountDialog = page.getByRole('dialog', { name: 'Settings' });
   await accountDialog.waitFor({ timeout: 5_000 });
   await accountDialog.getByLabel('Display name').fill('Mission Operator');
   await accountDialog.locator('input[type="file"]').setInputFiles({

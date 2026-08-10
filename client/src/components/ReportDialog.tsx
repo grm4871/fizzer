@@ -54,7 +54,7 @@ export function ReportDialog({ vaultId, targetType, targetId, title, onClose }: 
       onClose={onClose}
     >
         <header>
-          <div><Flag size={15} aria-hidden="true" /><h2 id="report-dialog-title">Report {title}</h2></div>
+          <div><Flag size={16} aria-hidden="true" /><span><span className="surface-kicker">Trust &amp; safety</span><h2 id="report-dialog-title">Report {title}</h2></span></div>
           <button type="button" className="btn-icon" onClick={onClose} aria-label="Close report dialog"><X size={16} /></button>
         </header>
         {sent ? (

@@ -8,6 +8,7 @@
 import { useEffect, useState } from 'react';
 import { Copy, Flag, KeyRound, X } from 'lucide-react';
 import { api } from '../api';
+import { ModalShell } from './ModalShell';
 
 interface AdminUser {
   id: number;
@@ -111,10 +112,12 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
   const ownerId = users[0]?.id;
 
   return (
-    <div className="overlay-backdrop" onClick={onClose}>
-      <div className="admin-panel" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Admin">
+    <ModalShell backdropClassName="overlay-backdrop admin-backdrop" dialogClassName="admin-panel" onClose={onClose} ariaLabel="Admin">
         <div className="admin-panel-header">
-          <h2><KeyRound size={16} aria-hidden="true" /> Admin</h2>
+          <div>
+            <span className="surface-kicker">Workspace operations</span>
+            <h2><KeyRound size={17} aria-hidden="true" /> Administration</h2>
+          </div>
           <button className="btn-icon" onClick={onClose} aria-label="Close"><X size={16} /></button>
         </div>
         <p className="admin-panel-hint">
@@ -150,7 +153,9 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
           ))}
           {!loading && reports.length === 0 && <p className="admin-panel-hint">No open reports.</p>}
         </section>
-        <div className="admin-user-list">
+        <section className="admin-accounts" aria-labelledby="admin-accounts-title">
+          <div className="admin-report-title"><h3 id="admin-accounts-title">Accounts</h3><span>{users.length} total</span></div>
+          <div className="admin-user-list">
           {loading ? (
             <div className="admin-panel-hint">Loading accounts…</div>
           ) : users.length === 0 ? (
@@ -163,8 +168,8 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
               </button>
             </div>
           ))}
-        </div>
-      </div>
-    </div>
+          </div>
+        </section>
+    </ModalShell>
   );
 }

@@ -147,7 +147,7 @@ try {
   await plus.waitFor({ timeout: 10000 });
   const beforeNewTabNotes = (await must(`${API_BASE}/api/vaults/${vault.id}/notes`, { headers: auth })).notes.length;
   await plus.click();
-  await page.getByText('Drag a note from the sidebar here', { exact: false }).waitFor({ timeout: 5000 });
+  await page.getByText('Choose a note from the sidebar', { exact: false }).waitFor({ timeout: 5000 });
   const afterNewTabNotes = (await must(`${API_BASE}/api/vaults/${vault.id}/notes`, { headers: auth })).notes.length;
   check('+ opens a blank new-tab page', await page.locator('.tab-item', { hasText: 'New tab' }).count() === 1);
   check('+ does not create a note', afterNewTabNotes === beforeNewTabNotes, `${beforeNewTabNotes} -> ${afterNewTabNotes}`);

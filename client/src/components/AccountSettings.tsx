@@ -395,13 +395,34 @@ export function AccountSettings({ user, vaultId, vaultName, showAgentMemory, onS
     >
         <header>
           <div>
-            <h2 id="account-settings-title">Account</h2>
-            <p>Profile changes appear anywhere you share a chat.</p>
+            <span className="surface-kicker">Personal workspace</span>
+            <h2 id="account-settings-title">Settings</h2>
+            <p>Manage your identity, preferences, security, and current vault.</p>
           </div>
           <button type="button" className="btn-icon" onClick={onClose} aria-label="Close account settings"><X size={17} /></button>
         </header>
 
-        <div className="account-settings-section account-profile-section">
+        <nav className="account-settings-nav" aria-label="Settings sections">
+          <button type="button" onClick={() => document.getElementById('account-profile')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
+            <Camera size={15} /><span><strong>Profile</strong><small>Name and picture</small></span>
+          </button>
+          <button type="button" onClick={() => document.getElementById('account-preferences')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
+            <SlidersHorizontal size={15} /><span><strong>Preferences</strong><small>Workspace behavior</small></span>
+          </button>
+          <button type="button" onClick={() => document.getElementById('account-security')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
+            <KeyRound size={15} /><span><strong>Security</strong><small>Password</small></span>
+          </button>
+          {vaultId && <button type="button" onClick={() => document.getElementById('account-vault')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
+            <Users size={15} /><span><strong>Current vault</strong><small>{vaultName || 'Sharing'}</small></span>
+          </button>}
+        </nav>
+
+        <div className="account-settings-section account-profile-section" id="account-profile">
+          <div className="account-section-heading">
+            <span className="surface-kicker">Your identity</span>
+            <h3>Profile</h3>
+            <p>Shown to people anywhere you collaborate.</p>
+          </div>
           <div className="account-avatar-preview">
             {avatarUrl ? <img src={avatarUrl} alt="" /> : <span>{(displayName || user.username).charAt(0).toUpperCase()}</span>}
           </div>
@@ -424,7 +445,7 @@ export function AccountSettings({ user, vaultId, vaultName, showAgentMemory, onS
           <div className="account-settings-actions"><button type="button" disabled={busy || !displayName.trim()} onClick={() => void saveProfile()}>Save profile</button></div>
         </div>
 
-        <div className="account-settings-section">
+        <div className="account-settings-section" id="account-preferences">
           <div className="account-section-title"><SlidersHorizontal size={15} /><strong>Preferences</strong></div>
           <label className="account-settings-check">
             <input
@@ -439,7 +460,7 @@ export function AccountSettings({ user, vaultId, vaultName, showAgentMemory, onS
           </small>
         </div>
 
-        <div className="account-settings-section">
+        <div className="account-settings-section" id="account-security">
           <div className="account-section-title"><KeyRound size={15} /><strong>Change password</strong></div>
           <label>Current password<input type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} autoComplete="current-password" /></label>
           <label>New password<input type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} autoComplete="new-password" minLength={8} /></label>
@@ -449,7 +470,7 @@ export function AccountSettings({ user, vaultId, vaultName, showAgentMemory, onS
         </div>
 
         {vaultId && (
-          <div className="account-settings-section">
+          <div className="account-settings-section" id="account-vault">
             <div className="account-section-title"><Users size={15} /><strong>Vault sharing</strong></div>
             <p className="account-settings-lede">
               <strong>{vaultName || 'This vault'}</strong> ·{' '}

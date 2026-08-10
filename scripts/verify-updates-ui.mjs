@@ -93,8 +93,7 @@ try {
   const errors = [];
   page.on('pageerror', (error) => errors.push(`pageerror: ${error.message}`));
   page.on('console', (message) => { if (message.type() === 'error') errors.push(`console.error: ${message.text()}`); });
-  await page.goto(appUrl, { waitUntil: 'domcontentloaded' });
-  await page.evaluate(({ token, vaultId }) => {
+  await page.addInitScript(({ token, vaultId }) => {
     localStorage.setItem('docs_token', token);
     localStorage.setItem('cascade_session', JSON.stringify({
       activeVaultId: vaultId,
@@ -103,7 +102,7 @@ try {
       focusedPaneId: 'root',
     }));
   }, { token: bob.token, vaultId: vault.id });
-  await page.reload({ waitUntil: 'networkidle' });
+  await page.goto(appUrl, { waitUntil: 'networkidle' });
 
   const updatesButton = page.locator('#community-updates-btn');
   await updatesButton.waitFor({ timeout: 15000 });
