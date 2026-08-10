@@ -2356,18 +2356,23 @@ export default function App() {
     const attachmentNames = (triggeringMessage.attachments ?? []).map((item) => item.name).join(' ');
     const typedSource = [triggeringMessage.body.trim(), attachmentNames].filter(Boolean).join(' ');
     const directPrompt = stripRegisteredAgentMentions(typedSource, registrations);
-    const quotedPrompt = triggeringMessage.replyTo
-      ? buildQuotedReplyPrompt(triggeringMessage.replyTo, contextMessages)
-      : '';
-    const batchPrompt = directPrompt || quotedPrompt
+    const hasQuotedContext = Boolean(triggeringMessage.replyTo);
+    const batchPrompt = directPrompt || hasQuotedContext
       ? ''
       : precedingMessageBatchText(contextMessages, triggeringMessage);
     const taskGuidance = triggeringMessage.missionTaskId
       ? `Cascade mission task id: ${triggeringMessage.missionTaskId}. The mission card updates automatically when this run ends. If you are blocked rather than finished, run \`cascade-chat mission update --task ${triggeringMessage.missionTaskId} --status blocked --summary "<what is needed>"\` before replying.`
       : '';
-    const prompt = [quotedPrompt, directPrompt || batchPrompt, taskGuidance].filter(Boolean).join('\n\n')
-      || typedSource
-      || 'Please review the attached media.';
+    // Built per recipient: the reply chain can carry asks aimed at other agents,
+    // and only a recipient-specific prompt can say which ones are not theirs.
+    const promptFor = (selfMention: string) => {
+      const quotedPrompt = triggeringMessage.replyTo
+        ? buildQuotedReplyPrompt(triggeringMessage.replyTo, contextMessages, 1_200, 4, selfMention)
+        : '';
+      return [quotedPrompt, directPrompt || batchPrompt, taskGuidance].filter(Boolean).join('\n\n')
+        || typedSource
+        || 'Please review the attached media.';
+    };
 
     const ownImages = ownMedia.length > 0
       ? mediaToRunImages(ownMedia)
@@ -2403,6 +2408,7 @@ export default function App() {
       startingChatDispatchesRef.current.add(dispatch.id);
       try {
         const blind = agentsWithoutImages.has(dispatch.registration.agentId as AgentId);
+        const prompt = promptFor(dispatch.registration.mention || '');
         const promptForRun = blind && runImages.length > 0
           ? `${prompt}\n\n(This message carries ${runImages.length} image(s) you cannot receive — say so instead of guessing.)`
           : prompt;

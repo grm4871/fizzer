@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildQuotedReplyPrompt, hasRegistrationForMention, precedingMessageBatch, precedingMessageBatchText, replyQuoteTargetsAgent, resolveAgentMessageRegistration } from '../chat/mentions';
+import { addressedMentions, buildQuotedReplyPrompt, hasRegistrationForMention, precedingMessageBatch, precedingMessageBatchText, replyQuoteTargetsAgent, resolveAgentMessageRegistration } from '../chat/mentions';
 import { prepareReplyForSend } from '../components/ChatView';
 
 const registrations = [
@@ -177,5 +177,40 @@ describe('precedingMessageBatch', () => {
     }));
     const batch = precedingMessageBatch(messages, { author: 'asdfasdf', body: '@sol' }, 3);
     expect(batch.map((message) => message.id)).toEqual(['m9', 'm10', 'm11']);
+  });
+});
+
+describe('reply ancestors addressed to another agent', () => {
+  // The bug: one prompt was built for every recipient, so a chain carrying
+  // "@claude do X" reached @sol under a header that read like a live ask, and
+  // @sol answered it.
+  const chain = [
+    { id: 'm1', body: '@claude these QUESTION headers are obnoxious. can you remove?' },
+    { id: 'm2', body: '@sol my active agents list seems shared across vaults', replyTo: { messageId: 'm1', author: 'asdfasdf', mention: 'asdfasdf', preview: '' } },
+  ];
+  const replyTo = { messageId: 'm2', author: 'asdfasdf', mention: 'asdfasdf', preview: '' };
+
+  it('flags an ancestor aimed at someone else as context only', () => {
+    const prompt = buildQuotedReplyPrompt(replyTo, chain, 1_200, 4, 'sol');
+    expect(prompt).toContain('addressed to @claude, not you — context only');
+  });
+
+  it('judges each ancestor independently, leaving the recipient own ask unflagged', () => {
+    const prompt = buildQuotedReplyPrompt(replyTo, chain, 1_200, 4, 'claude');
+    const claudeLine = prompt.split('\n').find((line) => line.startsWith('…which was itself replying'));
+    // @claude's own ask carries no aside...
+    expect(claudeLine).toBe('…which was itself replying to asdfasdf:');
+    // ...while the @sol hop in the same chain still does.
+    expect(prompt).toContain('addressed to @sol, not you — context only');
+  });
+
+  it('says nothing when the recipient is unknown, preserving old behaviour', () => {
+    expect(buildQuotedReplyPrompt(replyTo, chain)).not.toContain('context only');
+  });
+
+  it('reads the handles a message is addressed to', () => {
+    expect(addressedMentions('@sol and @claude2 please look')).toEqual(['sol', 'claude2']);
+    expect(addressedMentions('no mentions here')).toEqual([]);
+    expect(addressedMentions('email a@b.com is not a mention')).toEqual([]);
   });
 });

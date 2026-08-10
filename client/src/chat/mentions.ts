@@ -132,11 +132,24 @@ type QuotableMessage = {
  * quoted message is itself an answer, and the thing actually at issue is one
  * link further up. So walk the reply parents too — the agent needs the thread,
  * not just the last hop. */
+/** Handles a message is addressed to, in the order they appear. */
+export function addressedMentions(body: string): string[] {
+  const found = new Set<string>();
+  for (const match of String(body || '').matchAll(/(^|[\s(])@([A-Za-z0-9_-]{1,40})/g)) {
+    const handle = normalizeMention(match[2]);
+    if (handle) found.add(handle);
+  }
+  return [...found];
+}
+
 export function buildQuotedReplyPrompt(
   replyTo: QuotableReplyRef,
   messages: QuotableMessage[],
   maxChars = 1_200,
   maxAncestors = 4,
+  /** Who this prompt is being built for, so an ancestor aimed at another agent
+   * can be labelled as background instead of reading like a live instruction. */
+  selfMention = '',
 ) {
   const byId = new Map(messages.map((message) => [message.id, message]));
   const quote = (text: string, limit: number) => {
@@ -154,7 +167,16 @@ export function buildQuotedReplyPrompt(
     const text = (message?.body.trim() || ref.preview?.trim() || '').trim();
     if (text) {
       const who = (ref.author || ref.mention || message?.author || '').trim() || 'a message';
-      const header = `${relationshipPromptLabel(ref.relationship, depth > 0)} ${who}:`;
+      // An ancestor addressed to a different agent is thread context, not this
+      // agent's ask. Without this, whoever is prompted answers everyone's
+      // questions in the chain.
+      const addressed = addressedMentions(text);
+      const me = normalizeMention(selfMention);
+      const notMine = Boolean(me) && addressed.length > 0 && !addressed.includes(me);
+      const aside = notMine
+        ? ` (addressed to ${addressed.map((handle) => `@${handle}`).join(', ')}, not you — context only)`
+        : '';
+      const header = `${relationshipPromptLabel(ref.relationship, depth > 0)} ${who}${aside}:`;
       sections.push(`${header}\n${quote(text, depth === 0 ? maxChars : Math.ceil(maxChars / 3))}`);
     }
     ref = message?.replyTo;
