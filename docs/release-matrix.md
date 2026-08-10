@@ -39,7 +39,7 @@ Where a row above has a command, run the command instead of reasoning about the 
 | Row | Command | What it actually asserts |
 | --- | --- | --- |
 | Chat rendering, composer, replies | `npm test`, `npm run test:chat-mission`, `npm run verify:chat-mission-ui` | Grouping/merge rules, reply refs, mention parsing, run blocks, steering; durable mission state across linked clients/reload; inline artifact and coordinator setting in the built client |
-| Search, links, forwarding | `npm run test:chat-forward`, `npm run verify:chat-forward-ui` | Copy fidelity + provenance across channels, socket broadcast, survives reload, refusals; then the same via real right-click → picker → banner |
+| Search, links, forwarding | `npm run test:chat-forward`, `npm run verify:chat-forward-ui`, `npm run verify:reply-jump-ui` | Copy fidelity + provenance across channels, socket broadcast, survives reload, refusals; then the same via real right-click → picker → banner; reply quotes scroll to and highlight the quoted message |
 | Tabs, panes, menus, Superkanban | `npm run verify:tab-menus` | Every `+`/tab menu item present (catches a prop that never reached the component), menu survives the opening right-click, menu unclipped, Superkanban routes to a populated board, Close tab works |
 | Agent start and run lifecycle | `npm run test:desktop-runner` | Run reclaim, replay, duplicate-process avoidance |
 | Vault switcher, vault settings | `npm run verify:vault-rename-ui` | Rename reaches `PATCH /api/vaults/:id` and updates the switcher, non-owners get neither the control nor the API, and the agent-memory preference lives in account settings |

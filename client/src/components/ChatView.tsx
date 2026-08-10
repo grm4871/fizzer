@@ -1938,6 +1938,8 @@ const ChatGroupRow = memo(function ChatGroupRow({
   onToggleSelect,
   onContextMenu,
   onReply,
+  onJumpToMessage,
+  loadedMessageIds,
   onLightbox,
   onImageLoad,
   onAgentAvatarClick,
@@ -1966,6 +1968,10 @@ const ChatGroupRow = memo(function ChatGroupRow({
   onToggleSelect: (id: string) => void;
   onContextMenu: (event: React.MouseEvent, message: ChatMessage) => void;
   onReply: (message: ChatMessage) => void;
+  /** Scrolls to and selects a message in this channel (reply-quote click). */
+  onJumpToMessage: (messageId: string) => void;
+  /** Ids currently rendered, so a quote only offers a jump it can honour. */
+  loadedMessageIds: ReadonlySet<string>;
   onLightbox: (src: string) => void;
   onImageLoad: () => void;
   /** Open channel membership settings for this agent (message avatar click). */
@@ -2083,7 +2089,13 @@ const ChatGroupRow = memo(function ChatGroupRow({
                   }}
                   onContextMenu={(event) => onContextMenu(event, message)}
                 >
-                  <ChatQuoteRefs message={message} />
+                  <ChatQuoteRefs
+                    message={message}
+                    onJumpToMessage={onJumpToMessage}
+                    canJumpToReply={Boolean(
+                      message.replyTo && loadedMessageIds.has(message.replyTo.messageId),
+                    )}
+                  />
                   {steeringPromptLabels.has(message.id) && (
                     <div className="chat-steering-prompt">
                       ↳ Steering @{steeringPromptLabels.get(message.id)} into the active session
@@ -2235,6 +2247,8 @@ const ChatGroupRow = memo(function ChatGroupRow({
   // Same trick as ChatMessageText: note churn only invalidates groups that
   // actually render an embed.
   && (prev.notes === next.notes || !groupHasDocEmbed(next.group))
+  && prev.onJumpToMessage === next.onJumpToMessage
+  && prev.loadedMessageIds === next.loadedMessageIds
   && prev.onOpenNote === next.onOpenNote
   && prev.onOpenSharedNote === next.onOpenSharedNote
   && prev.onCancelRun === next.onCancelRun
@@ -2682,15 +2696,15 @@ export const ChatView = memo(function ChatView({
   // the selection state, then scrolls it to center. Auto-pin-to-bottom is
   // suppressed so the freshly-opened channel doesn't yank us back down.
   const jumpHandledRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!jumpToMessageId) { jumpHandledRef.current = null; return; }
-    if (jumpHandledRef.current === jumpToMessageId) return;
-    if (!sortedMessages.some((message) => message.id === jumpToMessageId)) return;
-    jumpHandledRef.current = jumpToMessageId;
-    setSelectedMessageId(jumpToMessageId);
+  const jumpTimersRef = useRef<{ raf: number; timer: number }>({ raf: 0, timer: 0 });
+
+  // Select (which force-mounts the group out of its offscreen placeholder),
+  // then centre it. Auto-pin-to-bottom is suppressed so a freshly opened
+  // channel does not yank us back down.
+  const runJumpToMessage = useCallback((targetId: string) => {
+    setSelectedMessageId(targetId);
     wasAtBottomRef.current = false;
     userScrollQuietUntilRef.current = performance.now() + 1200;
-    const targetId = jumpToMessageId;
     const scrollToTarget = () => {
       const scroller = messagesRef.current;
       if (!scroller) return false;
@@ -2703,16 +2717,37 @@ export const ChatView = memo(function ChatView({
     // The group may still be mounting from its offscreen placeholder; retry a
     // few frames so scrollIntoView runs against the settled layout.
     let tries = 0;
-    let timer = 0;
     const tick = () => {
       const done = scrollToTarget();
       tries += 1;
-      if (!done || tries < 4) timer = window.setTimeout(tick, 90);
+      if (!done || tries < 4) jumpTimersRef.current.timer = window.setTimeout(tick, 90);
     };
-    const raf = requestAnimationFrame(tick);
+    cancelAnimationFrame(jumpTimersRef.current.raf);
+    if (jumpTimersRef.current.timer) clearTimeout(jumpTimersRef.current.timer);
+    jumpTimersRef.current.raf = requestAnimationFrame(tick);
+  }, []);
+
+  useEffect(() => () => {
+    cancelAnimationFrame(jumpTimersRef.current.raf);
+    if (jumpTimersRef.current.timer) clearTimeout(jumpTimersRef.current.timer);
+  }, []);
+
+  // Jump to a specific message opened from elsewhere (e.g. clicked from
+  // search). Waits until the target is in this channel's list.
+  useEffect(() => {
+    if (!jumpToMessageId) { jumpHandledRef.current = null; return; }
+    if (jumpHandledRef.current === jumpToMessageId) return;
+    if (!sortedMessages.some((message) => message.id === jumpToMessageId)) return;
+    jumpHandledRef.current = jumpToMessageId;
+    runJumpToMessage(jumpToMessageId);
     onJumpHandled?.();
-    return () => { cancelAnimationFrame(raf); if (timer) clearTimeout(timer); };
-  }, [jumpToMessageId, sortedMessages, onJumpHandled]);
+  }, [jumpToMessageId, sortedMessages, onJumpHandled, runJumpToMessage]);
+
+  // Which reply quotes can actually scroll somewhere.
+  const loadedMessageIds = useMemo(
+    () => new Set(sortedMessages.map((message) => message.id)),
+    [sortedMessages],
+  );
 
   // Keep a bottom-following chat pinned when either its content grows or the
   // viewport shrinks (for example, when the reply banner mounts above the
@@ -3475,6 +3510,8 @@ export const ChatView = memo(function ChatView({
                     onToggleSelect={toggleMessageSelection}
                     onContextMenu={openMessageContextMenu}
                     onReply={startReply}
+                    onJumpToMessage={runJumpToMessage}
+                    loadedMessageIds={loadedMessageIds}
                     onLightbox={openLightbox}
                     onImageLoad={scrollToBottomIfSticky}
                     onAgentAvatarClick={
@@ -3584,6 +3621,8 @@ export const ChatView = memo(function ChatView({
                     onToggleSelect={toggleMessageSelection}
                     onContextMenu={openMessageContextMenu}
                     onReply={startReply}
+                    onJumpToMessage={runJumpToMessage}
+                    loadedMessageIds={loadedMessageIds}
                     onLightbox={openLightbox}
                     onImageLoad={scrollToBottomIfSticky}
                     onAgentAvatarClick={
