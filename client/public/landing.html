@@ -40,9 +40,6 @@
     nav { height: 88px; display: flex; align-items: center; justify-content: space-between; }
     .brand { display: inline-flex; align-items: center; gap: 13px; text-decoration: none; font-family: 'Shippori Mincho', serif; font-size: 25px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }
     .brand img { width: 39px; height: 39px; }
-    .icon-button { width: 48px; height: 48px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.03); transition: .2s ease; }
-    .icon-button:hover { border-color: var(--accent); color: var(--accent-hover); transform: translateY(-2px); }
-    .icon-button svg { width: 22px; height: 22px; }
 
     .hero { min-height: calc(100vh - 88px); display: grid; place-items: center; padding: 26px 0 64px; }
     .deco-stage { width: min(100%, 940px); position: relative; display: grid; place-items: center; padding: 118px 26px 176px; overflow: hidden; border: 1px solid var(--line); border-radius: 28px; background: radial-gradient(130% 110% at 50% -10%, rgba(255,255,255,.055), rgba(255,255,255,.018) 52%, rgba(255,255,255,.006) 100%); box-shadow: var(--shadow), var(--bevel); isolation: isolate; }
@@ -86,7 +83,7 @@
     .action svg { width:25px;height:25px; }
 
     /* Download strip: platform mark + a download badge, so the tiles read as "get it here". */
-    .platform-strip { padding: 76px 0 110px; display:grid; grid-template-columns:repeat(4,1fr); gap:18px; }
+    .platform-strip { padding: 76px 0 110px; display:grid; grid-template-columns:repeat(3,1fr); gap:18px; }
     .tile { position:relative; height:118px; display:grid; place-items:center; border-radius:18px; border:1px solid var(--line); background:rgba(255,255,255,.03); text-decoration:none; transition:.2s ease; }
     .tile:hover { border-color:var(--accent); color:var(--accent-hover); transform:translateY(-3px); box-shadow:0 14px 34px -18px rgba(246,168,35,.55); }
     .tile > svg { width:40px; height:40px; }
@@ -111,7 +108,7 @@
     @media(max-width:760px){
       .page{width:min(100% - 24px,1180px)}
       .brand{font-size:20px}
-      .platform-strip{grid-template-columns:1fr 1fr;padding:52px 0 76px}
+      .platform-strip{grid-template-columns:1fr;padding:52px 0 76px}
       .actions{bottom:34px}
     }
   </style>
@@ -120,7 +117,6 @@
   <div class="page">
     <nav>
       <a class="brand" href="/" aria-label="Fizzer home"><img src="/gem.svg" alt="">Fizzer</a>
-      <a class="icon-button" href="/app" aria-label="Open Fizzer in browser" title="Open in browser"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M8 5H5v14h14v-3M12 4h8v8M20 4l-9 9"/></svg></a>
     </nav>
     <main>
       <h1 class="sr-only">Fizzer — a shared workspace for people and AI agents</h1>
@@ -188,10 +184,6 @@
         <a class="tile" href="/download/linux" data-platform="linux" aria-label="Download for Linux" title="Download for Linux">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c-3 0-4 3-4 6 0 2-3 5-3 8 0 2 2 4 7 4s7-2 7-4c0-3-3-6-3-8 0-3-1-6-4-6Z"/><circle cx="10" cy="9" r=".8" fill="currentColor" stroke="none"/><circle cx="14" cy="9" r=".8" fill="currentColor" stroke="none"/><path d="m9.5 13.5 2.5 1.8 2.5-1.8"/></svg>
           <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v10m0 0 4-4m-4 4-4-4M5 19h14"/></svg></span>
-        </a>
-        <a class="tile" href="/app" aria-label="Use Fizzer in browser" title="Use in browser">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 4.4 6 4.4 9s-1.4 6-4.4 9c-3-3-4.4-6-4.4-9S9 6 12 3Z"/></svg>
-          <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7M9 7h8v8"/></svg></span>
         </a>
       </section>
     </main>
