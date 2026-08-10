@@ -201,6 +201,9 @@ export function isAgentApiRequestAllowed(methodRaw: string, path: string): boole
     [['GET'], /^\/api\/vaults\/[^/]+$/],
     [['GET'], /^\/api\/vaults\/[^/]+\/(?:folders|notes|search|tags)$/],
     [['POST'], /^\/api\/vaults\/[^/]+\/folders$/],
+    // Scoped folder mutation for the current agent's writable vault. The
+    // handler still enforces vault membership and rejects viewer roles.
+    [['PATCH'], /^\/api\/folders\/[^/]+$/],
     [['POST'], /^\/api\/vaults\/[^/]+\/notes$/],
     [['GET', 'PUT'], /^\/api\/vaults\/[^/]+\/agent-memory$/],
     [['GET', 'POST'], /^\/api\/vaults\/[^/]+\/scratchpad(?:\/[^/]+)*(?:\/close)?$/],

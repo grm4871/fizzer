@@ -61,6 +61,7 @@ Usage:
   cascade-note move <id|title> --folder <id|name>  list and move a note into a folder
   cascade-note folder list                         list vault folders
   cascade-note folder create <name> [--parent <id|name>]
+  cascade-note folder reorder <id|name> --position <n> [--parent <id|name>]
   cascade-note delete <id|title>         permanently delete a note
   cascade-note backlinks <id|title>      note + chat backlinks for a note
   cascade-note memory show               what agent memory would inject
@@ -482,8 +483,21 @@ async function main() {
           ...(parent ? { parent_id: parent.id } : {}),
         });
         out(args, `created folder ${folder.id}  ${folder.name}`, folder);
+      } else if (sub === 'reorder') {
+        const ref = args._.slice(2).join(' ').trim();
+        if (!ref) fail('folder reorder needs a folder id or unique name.');
+        if (args.position === undefined || !/^\d+$/.test(String(args.position))) {
+          fail('folder reorder needs --position <non-negative integer>.');
+        }
+        const folder = await resolveFolder(url, token, vaultId, ref);
+        const parent = args.parent ? await resolveFolder(url, token, vaultId, String(args.parent)) : undefined;
+        const { folder: updated } = await api(url, token, 'PATCH', `/api/folders/${folder.id}`, {
+          position: Number(args.position),
+          ...(parent ? { parent_id: parent.id } : {}),
+        });
+        out(args, `reordered ${updated.id}  ${updated.name}  → position ${updated.position}`, updated);
       } else {
-        fail(`unknown folder subcommand "${sub}". Use list|create.`);
+        fail(`unknown folder subcommand "${sub}". Use list|create|reorder.`);
       }
       break;
     }
