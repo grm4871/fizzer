@@ -304,8 +304,8 @@ try {
       && style.borderTopWidth === '0px'
       && (style.boxShadow === 'none' || style.boxShadow === '');
   }));
-  // Reply lives on the shared message context menu (right-click the mission
-  // head so we hit the card's replyMessage, not a nested work-trace line).
+  // Mission chrome is a normal message surface: right-click Reply anywhere on
+  // the card header (collapsed or expanded) targets the originating message.
   await card.locator('.chat-mission-toggle').click({ button: 'right' });
   const replyMenu = page.getByRole('menuitem', { name: /Reply/i });
   await replyMenu.waitFor({ timeout: 5_000 });
@@ -315,9 +315,25 @@ try {
     await page.locator('.chat-reply-bar-preview').innerText()
   ).includes('Implement the chat-first orchestration slice'));
   await page.locator('.chat-reply-bar-close').click();
+  // Also when collapsed — user often right-clicks the compact card.
+  if (await card.evaluate((node) => node.classList.contains('is-open') || node.getAttribute('data-open') === 'true')) {
+    await card.locator('.chat-mission-toggle').click();
+  }
+  await card.locator('.chat-mission-toggle').click({ button: 'right' });
+  await replyMenu.waitFor({ timeout: 5_000 });
+  await replyMenu.click();
+  await page.locator('.chat-reply-bar').waitFor({ timeout: 5_000 });
+  check('collapsed mission right-click still replies to the origin', (
+    await page.locator('.chat-reply-bar-preview').innerText()
+  ).includes('Implement the chat-first orchestration slice'));
+  await page.locator('.chat-reply-bar-close').click();
   check('mission has no dedicated Reply button', (
     await card.getByRole('button', { name: 'Reply', exact: true }).count()
   ) === 0);
+  // Re-expand for the remaining expanded assertions.
+  if (!(await card.evaluate((node) => node.classList.contains('is-open') || node.getAttribute('data-open') === 'true'))) {
+    await card.locator('.chat-mission-toggle').click();
+  }
   check('mission task renders durable change-state chips', await card.locator('.chat-mission-chips .chat-mission-chip').count() >= 1);
   check('mission exposes worker model and adaptive effort', (
     (await card.innerText()).includes('gpt-5.6-terra') && (await card.innerText()).includes('high effort')

@@ -1760,20 +1760,25 @@ function ChatMissionCard({
       setStopping(false);
     }
   }
+  // Treat the mission chrome like a normal message: right-click opens the same
+  // context menu (Reply/Forward/…) targeting the originating chat message.
+  // Wire it on buttons too — some browsers only fire contextmenu on the target.
+  const openMissionContextMenu = replyMessage && onContextMenu
+    ? (event: React.MouseEvent) => onContextMenu(event, replyMessage)
+    : undefined;
   return (
     <div
       className={`chat-mission-card is-${mission.status}${live ? ' is-live' : ''}${open ? ' is-open' : ''}`}
       data-open={open ? 'true' : 'false'}
       data-message-id={replyMessage?.id}
-      onContextMenu={replyMessage && onContextMenu
-        ? (event) => onContextMenu(event, replyMessage)
-        : undefined}
+      onContextMenu={openMissionContextMenu}
     >
       <div className="chat-mission-head">
         <button
           type="button"
           className="chat-mission-toggle"
           onClick={() => setOpen((value) => !value)}
+          onContextMenu={openMissionContextMenu}
           aria-expanded={open}
         >
           {live
@@ -1789,6 +1794,7 @@ function ChatMissionCard({
             type="button"
             className="chat-mission-stop"
             onClick={() => void stopMission()}
+            onContextMenu={openMissionContextMenu}
             disabled={stopping}
             title="Stop mission"
           >
@@ -1801,6 +1807,7 @@ function ChatMissionCard({
             type="button"
             className={`chat-mission-peek${peekLive ? ' is-live' : ''}`}
             onClick={() => setOpen((value) => !value)}
+            onContextMenu={openMissionContextMenu}
             aria-expanded={false}
             aria-label={`Mission activity: ${peekAuthor ? `${peekAuthor} — ` : ''}${peekLabel}`}
           >
@@ -1812,7 +1819,7 @@ function ChatMissionCard({
         )}
       </div>
       {open && (
-        <div className="chat-mission-content">
+        <div className="chat-mission-content" onContextMenu={openMissionContextMenu}>
           <div className="chat-mission-stream">
             {traceContent && (
               <div className="chat-mission-trace">{traceContent}</div>
@@ -2164,7 +2171,13 @@ const ChatGroupRow = memo(function ChatGroupRow({
                     && !(message.status === 'running' && /^Thinking(?:\.{3}|…)$/.test(message.body.trim()))
                     && <ChatMessageText messageId={message.id} body={message.body} streaming={message.status === 'running'} mentionableAliases={mentionableAliases} notes={notes} onOpenNote={onOpenNote} onOpenSharedNote={onOpenSharedNote} />}
                   {message.mission && (
-                    <ChatMissionCard mission={message.mission} vaultId={vaultId} channelId={message.channelId} />
+                    <ChatMissionCard
+                      mission={message.mission}
+                      vaultId={vaultId}
+                      channelId={message.channelId}
+                      replyMessage={message}
+                      onContextMenu={onContextMenu}
+                    />
                   )}
                   {message.clarification && (
                     <ChatClarificationCard message={message} vaultId={vaultId} />
