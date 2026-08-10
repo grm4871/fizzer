@@ -4678,10 +4678,12 @@ button.chat-avatar.is-clickable:focus-visible {
 }
 .crp-spinner.thinking-spinner,
 .chat-work-trace-spinner.thinking-spinner {
-  width: auto;
-  height: auto;
+  width: 10px;
+  min-width: 10px;
+  height: 10px;
   border: 0;
   flex-shrink: 0;
+  align-self: center;
 }
 .crp-chevron {
   flex-shrink: 0;
@@ -6658,57 +6660,80 @@ button.chat-avatar.is-clickable:focus-visible {
   animation: ai-spin 0.7s linear infinite;
 }
 @keyframes ai-spin { to { transform: rotate(360deg); } }
-/* Claude Code–style braille whirl for live thinking / missions */
+/* Claude Code–style braille whirl for live thinking / missions.
+   Fixed square box + flex centering so glyph metrics match neighboring dots/marks. */
 .thinking-spinner {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
+  align-self: center;
+  box-sizing: border-box;
+  width: 1em;
   min-width: 1em;
+  height: 1em;
+  margin: 0;
+  padding: 0;
   color: var(--accent-hover, hsl(38, 68%, 62%));
   font-family: var(--font-mono);
-  font-size: 0.8125rem;
+  font-size: 0.75rem;
   font-weight: 700;
   line-height: 1;
   letter-spacing: 0;
+  vertical-align: middle;
   user-select: none;
   font-variant-numeric: tabular-nums;
+  /* Braille sits optically high in most mono metrics — slight drop to mid-line. */
+  transform: translateY(0.06em);
 }
 .thinking-spinner-live,
 .crp-term-mark.thinking-spinner {
   color: color-mix(in srgb, var(--accent-hover, hsl(38, 68%, 62%)) 88%, white);
+  width: 0.9em;
   min-width: 0.9em;
+  height: 1em;
+  font-size: inherit;
+  transform: translateY(0.04em);
 }
 .crp-term-pre.is-thinking-live {
   color: color-mix(in srgb, var(--text-secondary) 78%, var(--accent-hover, hsl(38, 55%, 58%)));
 }
+/* Same geometry as .chat-mission-state so live/idle swap does not shift the row. */
 .chat-mission-whirl {
-  width: 12px;
-  min-width: 12px;
-  height: 12px;
-  flex: 0 0 12px;
-  font-size: 0.75rem;
+  width: 8px;
+  min-width: 8px;
+  height: 8px;
+  flex: 0 0 8px;
+  font-size: 11px;
+  overflow: visible;
   color: var(--accent-hover, hsl(38, 68%, 62%));
   text-shadow: 0 0 8px color-mix(in srgb, var(--accent) 45%, transparent);
+  transform: none; /* flex parent already centers */
 }
 .chat-mission-card.is-live .chat-mission-kicker {
   border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 12%, transparent);
 }
-.chat-mission-card.is-live > summary strong {
+.chat-mission-card.is-live .chat-mission-toggle strong {
   color: color-mix(in srgb, var(--text-primary) 92%, var(--accent-hover));
 }
-.chat-work-trace-spinner.thinking-spinner {
-  font-size: 0.75rem;
-  color: hsl(38, 68%, 62%);
-}
+.chat-work-trace-spinner.thinking-spinner,
 .crp-spinner.thinking-spinner {
+  width: 10px;
+  min-width: 10px;
+  height: 10px;
   font-size: 0.75rem;
   color: hsl(38, 68%, 62%);
+  transform: none;
 }
 .chat-work-mark.thinking-spinner {
+  width: 0.9em;
   min-width: 0.9em;
+  height: 1em;
   font-size: inherit;
+  /* Work lines use baseline grid; keep spinner centered in its column. */
+  align-self: center;
+  transform: translateY(0.05em);
 }
 .agent-permission-card {
   position: fixed;
@@ -7802,6 +7827,7 @@ button.chat-avatar.is-clickable:focus-visible {
   width: 8px;
   height: 8px;
   flex: 0 0 8px;
+  align-self: center;
   margin: 0;
   padding: 0;
   border-radius: 50%;
@@ -7913,10 +7939,15 @@ button.chat-avatar.is-clickable:focus-visible {
   color: var(--text-muted);
   font-size: 0.625rem;
 }
+/* Match .chat-mission-peek-dot / decal marks (8px) for mid-line alignment. */
 .chat-mission-peek-spinner {
-  flex: 0 0 auto;
-  font-size: 0.7rem;
+  width: 8px;
+  min-width: 8px;
+  height: 8px;
+  flex: 0 0 8px;
+  font-size: 11px;
   color: hsl(38, 68%, 62%);
+  transform: none;
 }
 .chat-mission-card.is-open .chat-mission-peek {
   padding-bottom: 6px;
@@ -7942,11 +7973,15 @@ button.chat-avatar.is-clickable:focus-visible {
 }
 .chat-mission-tasks { display: grid; gap: 6px; margin-top: 6px; }
 .chat-mission-task-whirl {
-  font-size: 0.7rem;
+  width: 100%;
+  height: 100%;
+  font-size: 0.75rem;
   color: var(--accent-hover);
+  transform: none;
 }
 .chat-mission-task {
   display: flex;
+  align-items: flex-start;
   gap: 7px;
   min-width: 0;
 }
@@ -7955,7 +7990,9 @@ button.chat-avatar.is-clickable:focus-visible {
   align-items: center;
   justify-content: center;
   width: 15px;
+  height: 1.1em;
   flex: 0 0 15px;
+  margin-top: 0.05em; /* optical align with task title cap-height */
   color: var(--text-muted);
   text-align: center;
   line-height: 1;
