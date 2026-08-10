@@ -1639,12 +1639,16 @@ function ChatMissionCard({
   mission,
   vaultId,
   channelId,
-  embedded = false,
+  traceContent,
+  replyMessage,
+  onReply,
 }: {
   mission: ChatMission;
   vaultId?: string;
   channelId?: string;
-  embedded?: boolean;
+  traceContent?: ReactNode;
+  replyMessage?: ChatMessage;
+  onReply?: (message: ChatMessage) => void;
 }) {
   const needsAttention = mission.status === 'attention' || mission.status === 'blocked';
   const [open, setOpen] = useState(needsAttention);
@@ -1662,7 +1666,7 @@ function ChatMissionCard({
     setHistoryError('');
   }, [mission.id]);
   useEffect(() => {
-    if ((!open && !embedded) || !bridge) return;
+    if (!open || !bridge) return;
     const paths = [...new Set(mission.tasks
       .map((task) => task.worktreePath)
       .filter((path): path is string => Boolean(path)))];
@@ -1683,7 +1687,7 @@ function ChatMissionCard({
       });
     }).catch(() => {});
     return () => { cancelled = true; };
-  }, [bridge, mission.tasks, open, embedded]);
+  }, [bridge, mission.tasks, open]);
   const done = mission.tasks.filter((task) => task.status === 'completed' || task.status === 'canceled').length;
   const total = mission.tasks.length;
   const statusLabel = mission.status === 'active'
@@ -1707,16 +1711,17 @@ function ChatMissionCard({
   return (
     <details
       className={`chat-mission-card is-${mission.status}`}
-      open={embedded || open}
-      onToggle={(event) => { if (!embedded) setOpen(event.currentTarget.open); }}
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
     >
-      <summary onClick={embedded ? (event) => event.preventDefault() : undefined}>
+      <summary>
         <span className="chat-mission-state" aria-hidden="true" />
         <span className="chat-mission-kicker">Mission</span>
         <strong>{mission.title}</strong>
         <span className="chat-mission-status">{statusLabel}</span>
       </summary>
       <div className="chat-mission-content">
+        {traceContent && <div className="chat-mission-trace">{traceContent}</div>}
         {lead && (
           <p className="chat-mission-lead">
             Led by <strong>@{lead}</strong>
@@ -1771,8 +1776,15 @@ function ChatMissionCard({
           <span className="chat-mission-empty">@{lead || mission.coordinator} is deciding how to handle this.</span>
         )}
         {mission.summary && <div className="chat-mission-summary">{mission.summary}</div>}
-        {vaultId && channelId && (
+        {((onReply && replyMessage) || (vaultId && channelId)) && (
           <div className="chat-mission-history">
+            {onReply && replyMessage && (
+              <button type="button" onClick={() => onReply(replyMessage)}>
+                <Reply size={12} />
+                Reply
+              </button>
+            )}
+            {vaultId && channelId && <>
             <button type="button" onClick={() => void toggleTimeline()}>
               <History size={12} />
               {timelineOpen ? 'Hide timeline' : 'Timeline'}
@@ -1796,6 +1808,7 @@ function ChatMissionCard({
                 ))}
               </div>
             )}
+            </>}
           </div>
         )}
       </div>
@@ -3335,7 +3348,7 @@ export const ChatView = memo(function ChatView({
               <span className="chat-empty-hint">No messages yet — say hello or @mention an agent to start.</span>
             </div>
           ) : (
-            transcriptSegments.flatMap((segment) => {
+            transcriptSegments.flatMap((segment, segmentIndex) => {
               const renderGroupRow = (group: ChatMessageGroup) => {
                 const head = group.messages[0];
                 const groupSelected = selectedMessageId != null
@@ -3394,13 +3407,42 @@ export const ChatView = memo(function ChatView({
                 };
                 const traceSelected = selectedMessageId != null
                   && segment.trace.some((message) => message.id === selectedMessageId);
+                const previousSegment = transcriptSegments[segmentIndex - 1];
                 const missionArtifacts = [
+                  ...(previousSegment?.kind === 'group'
+                    ? previousSegment.group.messages.filter((message) => Boolean(message.mission))
+                    : []),
                   ...(carrier.mission ? [carrier] : []),
                   ...segment.fullGroups
                   .flatMap((group) => group.messages)
                   .filter((message) => Boolean(message.mission)),
                 ];
                 const displayCarrier = carrier.mission ? { ...carrier, mission: undefined } : carrier;
+                const workTrace = (
+                  <ChatWorkTrace
+                    trace={segment.trace}
+                    selectedMessageId={traceSelected ? selectedMessageId : null}
+                    onCancelRun={onCancelRun}
+                    onContextMenu={openMessageContextMenu}
+                    onReply={startReply}
+                    vaultId={vaultId}
+                    onHydrateMessage={onHydrateMessage}
+                    runningMessageState={runningMessageState}
+                  />
+                );
+                const unifiedMission = missionArtifacts.length > 0
+                  ? missionArtifacts.map((message) => (
+                    <ChatMissionCard
+                      key={message.id}
+                      mission={message.mission!}
+                      vaultId={vaultId}
+                      channelId={message.channelId}
+                      traceContent={workTrace}
+                      replyMessage={message}
+                      onReply={startReply}
+                    />
+                  ))
+                  : workTrace;
                 const nodes: ReactNode[] = [
                   <ChatGroupRow
                     key={`work-${segment.id}`}
@@ -3432,27 +3474,7 @@ export const ChatView = memo(function ChatView({
                     scrollRootRef={messagesRef}
                     vaultId={vaultId}
                     onHydrateMessage={onHydrateMessage}
-                    traceContent={(
-                      <ChatWorkTrace
-                        trace={segment.trace}
-                        selectedMessageId={traceSelected ? selectedMessageId : null}
-                        onCancelRun={onCancelRun}
-                        onContextMenu={openMessageContextMenu}
-                        onReply={startReply}
-                        vaultId={vaultId}
-                        onHydrateMessage={onHydrateMessage}
-                        runningMessageState={runningMessageState}
-                        artifactContent={missionArtifacts.map((message) => (
-                          <ChatMissionCard
-                            key={message.id}
-                            mission={message.mission!}
-                            vaultId={vaultId}
-                            channelId={message.channelId}
-                            embedded
-                          />
-                        ))}
-                      />
-                    )}
+                    traceContent={unifiedMission}
                   />,
                 ];
                 for (const group of segment.fullGroups) {
@@ -3462,6 +3484,14 @@ export const ChatView = memo(function ChatView({
                 return nodes;
               }
 
+              const nextSegment = transcriptSegments[segmentIndex + 1];
+              if (nextSegment?.kind === 'work' && segment.group.messages.some((message) => message.mission)) {
+                return renderGroupRow({
+                  messages: segment.group.messages.map((message) => (
+                    message.mission ? { ...message, mission: undefined } : message
+                  )),
+                });
+              }
               return renderGroupRow(segment.group);
             })
           )}

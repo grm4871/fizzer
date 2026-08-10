@@ -100,7 +100,8 @@ try {
   const rootMessage = {
     id: `mission-root-${stamp}`,
     channelId: channel.id,
-    author: username,
+    author: 'Sol',
+    agentId: 'codex',
     body: 'Implement the chat-first orchestration slice.',
     createdAt: new Date(Date.now() - 10_000).toISOString(),
   };
@@ -265,6 +266,15 @@ try {
   check('active mission starts compact', !(await card.evaluate((node) => node.open)));
   await card.locator('summary').click();
   check('mission expands to its worker task', (await card.innerText()).includes('Verify multiplayer persistence'));
+  check('thinking trace is nested inside the mission card', (
+    await card.locator('.chat-mission-trace .chat-work-trace').count()
+  ) === 1);
+  await card.getByRole('button', { name: 'Reply', exact: true }).click();
+  await page.locator('.chat-reply-bar').waitFor({ timeout: 5_000 });
+  check('mission reply targets its originating message', (
+    await page.locator('.chat-reply-bar-preview').innerText()
+  ).includes('Implement the chat-first orchestration slice'));
+  await page.locator('.chat-reply-bar-close').click();
   check('mission task renders durable change-state chips', await card.locator('.chat-mission-chips .chat-mission-chip').count() >= 1);
   check('mission exposes worker model and adaptive effort', (
     (await card.innerText()).includes('gpt-5.6-terra') && (await card.innerText()).includes('high effort')
@@ -317,10 +327,12 @@ try {
       && inlineActivityStyle.labelWeight >= 500
   ), JSON.stringify(inlineActivityStyle));
   const activityDotBox = await workTrace.locator('.chat-work-decal.is-current .chat-work-decal-mark').boundingBox();
-  const finalBodyBox = await page.locator(`[data-message-id="${rootMessage.id}"]`).locator('xpath=ancestor::*[contains(@class,"chat-message-body")]').boundingBox();
-  check('workflow dot shares the transcript text axis', (
-    activityDotBox != null && finalBodyBox != null && Math.abs(activityDotBox.x - finalBodyBox.x) <= 1
-  ), `dot=${JSON.stringify(activityDotBox)}, text=${JSON.stringify(finalBodyBox)}`);
+  const missionTraceBox = await card.locator('.chat-mission-trace').boundingBox();
+  check('workflow dot stays on the mission content axis', (
+    activityDotBox != null && missionTraceBox != null
+      && activityDotBox.x >= missionTraceBox.x
+      && activityDotBox.x <= missionTraceBox.x + missionTraceBox.width
+  ), `dot=${JSON.stringify(activityDotBox)}, mission=${JSON.stringify(missionTraceBox)}`);
   check('coordinator prose flattens when later work is still active', (
     !finalVisible && !traceText.includes('user-facing answer remains')
   ), `finalVisible=${finalVisible}, trace=${JSON.stringify(traceText)}`);
