@@ -4,13 +4,18 @@ name: Desktop builds
 # on each target OS. Native installer formats still require their target OS,
 # which is why this runs a matrix on native runners.
 #
-# Trigger by pushing a tag (v*) to cut a release, or run manually from the
-# Actions tab to produce downloadable artifacts without publishing.
+# Each master build refreshes the technical-beta installers. They are published
+# to both the rolling GitHub release and the production download volume.
 
 on:
   push:
+    branches: [master]
     tags: ['v*']
   workflow_dispatch:
+
+concurrency:
+  group: desktop-beta-build
+  cancel-in-progress: true
 
 permissions:
   contents: write
@@ -29,6 +34,9 @@ jobs:
           - os: macos-latest
             platform: darwin
             arch: arm64
+          - os: macos-latest
+            platform: darwin
+            arch: x64
           - os: windows-latest
             platform: win32
             arch: x64
@@ -68,10 +76,79 @@ jobs:
           path: cascade-electron/out/make/**/*
           if-no-files-found: error
 
-      # On a tag, attach the installers/zips to the GitHub Release.
-      - name: Publish to release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+  publish:
+    name: Publish technical-beta installers
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download native packages
+        uses: actions/download-artifact@v4
         with:
-          files: cascade-electron/out/make/**/*
-          fail_on_unmatched_files: true
+          pattern: cascade-*
+          path: artifacts
+
+      - name: Normalize release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          copy_asset() {
+            local source_dir="$1" pattern="$2" destination="$3"
+            local source
+            source="$(find "$source_dir" -type f -name "$pattern" -print -quit)"
+            test -n "$source"
+            cp "$source" "release/$destination"
+          }
+          copy_asset artifacts/cascade-darwin-arm64 '*.dmg' Fizzer-mac-arm64.dmg
+          copy_asset artifacts/cascade-darwin-x64 '*.dmg' Fizzer-mac-x64.dmg
+          copy_asset artifacts/cascade-win32-x64 '*Setup*.exe' Fizzer-Setup.exe
+          copy_asset artifacts/cascade-linux-x64 '*.deb' Fizzer-linux-x64.deb
+          copy_asset artifacts/cascade-linux-x64 '*.rpm' Fizzer-linux-x64.rpm
+          ls -lh release
+
+      - name: Publish rolling GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if ! gh release view desktop-beta >/dev/null 2>&1; then
+            gh release create desktop-beta --title "Fizzer Desktop Beta" --notes "Current unsigned technical-beta installers for macOS, Windows, and Linux."
+          fi
+          gh release upload desktop-beta release/* --clobber
+
+      - name: Attach installers to a versioned release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release create "${GITHUB_REF_NAME}" --generate-notes
+          fi
+          gh release upload "${GITHUB_REF_NAME}" release/* --clobber
+
+      - name: Place installers on production host
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "${DEPLOY_HOST:-}"
+          test -n "${DEPLOY_USER:-}"
+          test -n "${DEPLOY_SSH_KEY:-}"
+          PORT="${DEPLOY_PORT:-22}"
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -T 10 -H -p "$PORT" "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+          ssh -i ~/.ssh/deploy_key -p "$PORT" -o StrictHostKeyChecking=accept-new \
+            "${DEPLOY_USER}@${DEPLOY_HOST}" 'mkdir -p /var/lib/cascade/downloads'
+          scp -i ~/.ssh/deploy_key -P "$PORT" release/* \
+            "${DEPLOY_USER}@${DEPLOY_HOST}:/var/lib/cascade/downloads/"
+          ssh -i ~/.ssh/deploy_key -p "$PORT" "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            'test -s /var/lib/cascade/downloads/Fizzer-mac-arm64.dmg && test -s /var/lib/cascade/downloads/Fizzer-mac-x64.dmg && test -s /var/lib/cascade/downloads/Fizzer-Setup.exe && test -s /var/lib/cascade/downloads/Fizzer-linux-x64.deb && test -s /var/lib/cascade/downloads/Fizzer-linux-x64.rpm'

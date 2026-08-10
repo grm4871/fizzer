@@ -343,15 +343,22 @@ function resolveAndroidApkPath(): string | null {
   }
   return null;
 }
-// Desktop installers, when built, are dropped here (overridable for a CDN/mirror
-// host). Filenames map by platform; missing files just 404 so the landing page
-// can fall back to the browser app.
-const DOWNLOADS_DIR = process.env.CASCADE_DOWNLOADS_DIR || path.join(CLIENT_DIST_DIR, 'downloads');
+// Desktop installers live in the persistent data volume, not client/dist: a
+// routine web deploy must not discard a working beta installer. The desktop
+// release workflow copies its verified native packages here.
+const DOWNLOADS_DIR = process.env.CASCADE_DOWNLOADS_DIR || path.join(DATA_DIR, 'downloads');
 const DESKTOP_BUILDS: Record<string, string> = {
-  mac: 'Cascade.dmg',
-  windows: 'Cascade-Setup.exe',
-  linux: 'Cascade.AppImage',
+  'mac-arm64': 'Fizzer-mac-arm64.dmg',
+  'mac-x64': 'Fizzer-mac-x64.dmg',
+  windows: 'Fizzer-Setup.exe',
+  'linux-deb': 'Fizzer-linux-x64.deb',
+  'linux-rpm': 'Fizzer-linux-x64.rpm',
 };
+
+function desktopChooser(title: string, options: Array<{ label: string; href: string; detail: string }>) {
+  const choices = options.map(({ label, href, detail }) => `<a href="${href}"><strong>${label}</strong><span>${detail}</span></a>`).join('');
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title} — Fizzer</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#12100e;color:#f1ede7;font:16px system-ui,sans-serif}.box{width:min(460px,calc(100% - 40px));padding:28px;border:1px solid #3c3328;border-radius:14px;background:#1a1714}h1{margin:0 0 8px;font-size:24px}p{margin:0 0 20px;color:#bcb4aa;line-height:1.45}a{display:block;margin:10px 0;padding:14px;border:1px solid #514432;border-radius:9px;color:inherit;text-decoration:none}a:hover{border-color:#d99a3e;background:#241d15}a span{display:block;margin-top:4px;color:#bcb4aa;font-size:13px}</style></head><body><main class="box"><h1>${title}</h1><p>Choose the package for this computer.</p>${choices}</main></body></html>`;
+}
 
 type User = { id: number; username: string; display_name: string; avatar_url: string; auth_version: number; password_hash: string; created_at: string };
 type AuthAccess = 'user' | 'agent';
@@ -4634,8 +4641,22 @@ if (fs.existsSync(CLIENT_APP_HTML)) {
     }
     return res.download(apkPath, 'cascade-android.apk');
   });
-  // Desktop installers (mac / windows / linux). Served when present; a missing
-  // build 404s so the landing page can offer the browser app instead.
+  // Architecture/distribution choices cannot be reliably inferred from every
+  // browser user-agent, so macOS and Linux first land on a small chooser.
+  app.get('/download/mac', (_req, res) => {
+    res.type('html').send(desktopChooser('Download Fizzer for macOS', [
+      { label: 'Apple silicon', href: '/download/mac-arm64', detail: 'M1, M2, M3, M4, and later Macs' },
+      { label: 'Intel Mac', href: '/download/mac-x64', detail: 'Intel-based Macs' },
+    ]));
+  });
+  app.get('/download/linux', (_req, res) => {
+    res.type('html').send(desktopChooser('Download Fizzer for Linux', [
+      { label: 'Debian / Ubuntu', href: '/download/linux-deb', detail: 'Install the .deb package' },
+      { label: 'Fedora / RHEL / openSUSE', href: '/download/linux-rpm', detail: 'Install the .rpm package' },
+    ]));
+  });
+  // Native desktop installers. A missing release artifact returns a clear 404
+  // instead of an empty response or an unrelated browser download.
   app.get('/download/:platform', (req, res) => {
     const file = DESKTOP_BUILDS[req.params.platform];
     if (!file) return res.status(404).json({ error: 'Unknown platform' });
