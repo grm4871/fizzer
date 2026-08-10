@@ -550,6 +550,21 @@ export function workTraceAuthorKey(message: Pick<ChatMessage, 'author'>): string
   return String(message.author || 'agent').trim() || 'agent';
 }
 
+/** Header attribution for a trace that may contain work from several agents. */
+export function workTraceAttribution(trace: ChatMessage[]): {
+  multiAgent: boolean;
+  label?: string;
+} {
+  const agents = new Set(
+    trace
+      .filter((message) => !isSystemCascadeMessage(message))
+      .map((message) => String(message.registrationId || workTraceAuthorKey(message)).toLowerCase()),
+  );
+  return agents.size > 1
+    ? { multiAgent: true, label: `${agents.size}-agent flow` }
+    : { multiAgent: false };
+}
+
 export function workTraceSummary(trace: ChatMessage[]): string {
   if (trace.length === 0) return 'work';
   const authors: string[] = [];

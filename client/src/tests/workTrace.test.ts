@@ -8,6 +8,7 @@ import {
   segmentTranscript,
   humanizeActivityLine,
   workTraceHarnessPreview,
+  workTraceAttribution,
   workTracePreview,
   workTraceDecals,
   workTracePhase,
@@ -275,5 +276,19 @@ describe('workTrace', () => {
     });
     expect(peek?.summary).toContain('live');
     expect(peek?.decals.at(-1)?.label).toBe('work');
+  });
+
+  it('labels a mixed-agent trace as a group instead of its carrier', () => {
+    expect(workTraceAttribution([
+      msg({ author: 'Terra', registrationId: 'terra' }),
+      msg({ author: 'Claude', registrationId: 'claude' }),
+      msg({ author: 'Cascade', id: 'sys-mission-1' }),
+      msg({ author: 'ssol', registrationId: 'ssol' }),
+    ])).toEqual({ multiAgent: true, label: '3-agent flow' });
+
+    expect(workTraceAttribution([
+      msg({ author: 'Terra', registrationId: 'terra' }),
+      msg({ author: 'Terra', registrationId: 'terra' }),
+    ])).toEqual({ multiAgent: false });
   });
 });

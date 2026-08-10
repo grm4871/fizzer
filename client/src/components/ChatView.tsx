@@ -34,7 +34,7 @@ import {
 import { ThinkingSpinner } from './ThinkingSpinner';
 import { ReportDialog } from './ReportDialog';
 import { hasRunActivity } from '../chat/harnessActivity';
-import { isSteeringContinuationMessage, segmentTranscript, workTracePeek } from '../chat/workTrace';
+import { isSteeringContinuationMessage, segmentTranscript, workTraceAttribution, workTracePeek } from '../chat/workTrace';
 import { useChannelMessages } from '../chat/messageStore';
 import {
   canGroupChatMessages,
@@ -3475,6 +3475,7 @@ export const ChatView = memo(function ChatView({
                   />
                 );
                 const peek = workTracePeek(segment.trace);
+                const attribution = workTraceAttribution(segment.trace);
                 const unifiedMission = missionArtifacts.length > 0
                   ? missionArtifacts.map((message) => (
                     <ChatMissionCard
@@ -3497,10 +3498,10 @@ export const ChatView = memo(function ChatView({
                     selectedMessageId={traceSelected ? selectedMessageId : null}
                     jumpHighlightMessageId={traceJumpHighlighted ? jumpHighlightMessageId : null}
                     avatarKind="agent"
-                    avatarUrl={getMessageAvatarUrl(displayCarrier)}
-                    authorLabel={getMessageAuthorLabel(displayCarrier)}
-                    ownerLabel={getMessageOwnerLabel(displayCarrier)}
-                    planUsage={getMessagePlanUsage(displayCarrier)}
+                    avatarUrl={attribution.multiAgent ? undefined : getMessageAvatarUrl(displayCarrier)}
+                    authorLabel={attribution.label || getMessageAuthorLabel(displayCarrier)}
+                    ownerLabel={attribution.multiAgent ? undefined : getMessageOwnerLabel(displayCarrier)}
+                    planUsage={attribution.multiAgent ? undefined : getMessagePlanUsage(displayCarrier)}
                     latestRunningMessageId={undefined}
                     runningSiblingCount={0}
                     steeringPromptLabels={steeringPromptLabels}
@@ -3517,7 +3518,7 @@ export const ChatView = memo(function ChatView({
                     onLightbox={openLightbox}
                     onImageLoad={scrollToBottomIfSticky}
                     onAgentAvatarClick={
-                      resolveMessageRegistration(displayCarrier)
+                      !attribution.multiAgent && resolveMessageRegistration(displayCarrier)
                         ? (event) => openAgentSettingsFromMessage(displayCarrier, event)
                         : undefined
                     }
