@@ -68,13 +68,16 @@ jobs:
       - name: Verify packaged runtime
         run: node ../scripts/verify-desktop-package.mjs --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
 
-      # Keep every run's output downloadable from the run page, tag or not.
+      # These artifacts only hand the installers to the publish job; the
+      # durable copies live on the rolling release and the production host.
+      # ~2GB per run against a 500MB account quota, so expire them fast.
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: cascade-${{ matrix.platform }}-${{ matrix.arch }}
           path: cascade-electron/out/make/**/*
           if-no-files-found: error
+          retention-days: 1
 
   publish:
     name: Publish technical-beta installers
