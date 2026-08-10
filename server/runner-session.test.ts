@@ -4,9 +4,11 @@ import Database from 'better-sqlite3';
 import {
   DEFAULT_CHAT_SESSION_MAX_AGE_HOURS,
   DEFAULT_CHAT_SESSION_MAX_RUNS,
+  cancelRun,
   ensureRunnerSchema,
   findConversationSession,
   finishDelegatedRun,
+  getRun,
   listRunEvents,
 } from './runner.js';
 
@@ -97,6 +99,33 @@ test('a missing Claude session invalidates the stale machine-local id', () => {
       vaultId: 'vault', noteId: null, agent: 'codex',
       conversationId: 'conversation', boundedChat: true,
     }), undefined);
+  } finally {
+    db.close();
+  }
+});
+
+test('automatic cancellation records its real reason and suppression intent', async () => {
+  const db = createDb();
+  try {
+    insertRun(db, 1, 'mission-review');
+    db.prepare("UPDATE runs SET status = 'running', finished_at = NULL, summary = NULL WHERE id = 1").run();
+
+    assert.equal(await cancelRun(db, 1, {
+      force: true,
+      summary: 'Mission review wake closed automatically.',
+      suppressChatBody: true,
+    }), true);
+
+    assert.equal(getRun(db, 1)?.status, 'canceled');
+    assert.equal(getRun(db, 1)?.summary, 'Mission review wake closed automatically.');
+    const event = listRunEvents(db, 1).at(-1);
+    assert.equal(event?.type, 'status');
+    assert.deepEqual(JSON.parse(event?.payload_json || '{}'), {
+      status: 'canceled',
+      summary: 'Mission review wake closed automatically.',
+      steering: false,
+      suppressChatBody: true,
+    });
   } finally {
     db.close();
   }

@@ -1225,13 +1225,9 @@ function syncRunToChatMessage(runId: number) {
   chatRunContent.set(runId, { lastSeq, state });
   const content = agentChatContentFromAccumulator(state);
   if (target) try {
-    // Dual-post suppress: agent already posted via cascade-chat send. Drop the
-    // Thinking placeholder instead of leaving an empty "(message)" shell that
-    // sticks in the live UI until refresh.
-    const dropShell = content.done
-      && content.status !== 'failed'
-      && content.status !== 'canceled'
-      && !String(content.body || '').trim();
+    // Suppressed terminal lifecycle events (dual-post completion or automatic
+    // cleanup) drop the Thinking placeholder instead of leaving a ghost row.
+    const dropShell = content.done && !String(content.body || '').trim();
     if (dropShell) {
       // Broadcast empty first so clients that only listen for updates can prune,
       // then hard-delete so reloads don't keep a ghost row either.
@@ -3811,7 +3807,11 @@ app.post('/api/vaults/:vaultId/channels/:channelId/missions/:missionId/finish', 
     for (const messageId of update.removedWakeMessageIds || []) {
       emitChatMessageDeleted(update.vaultId, update.channelId, messageId);
     }
-    await Promise.all((update.canceledWakeRunIds || []).map((runId) => cancelRun(db, runId, { force: true })));
+    await Promise.all((update.canceledWakeRunIds || []).map((runId) => cancelRun(db, runId, {
+      force: true,
+      summary: 'Mission review wake closed automatically.',
+      suppressChatBody: true,
+    })));
     res.json({ mission: update.mission });
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : 'Could not finish mission' });

@@ -1961,10 +1961,9 @@ export default function App() {
                 { suppressChatBody },
               );
               const nextStatus = terminal === 'completed' ? undefined : terminal;
-              // Dual-post suppress: drop the Thinking placeholder entirely so the
-              // live UI never leaves an empty "(message)" shell after cascade-chat
-              // send. (Server list already filters empty terminal agent rows.)
-              if (terminal === 'completed' && suppressChatBody) {
+              // Suppressed terminal lifecycle events (dual-post completion or
+              // automatic cleanup) drop the Thinking placeholder entirely.
+              if (suppressChatBody) {
                 chatMessageStore.update(channelId, (existing) => {
                   const next = existing.filter((message) => message.id !== agentMessageId);
                   return next.length === existing.length ? existing : next;

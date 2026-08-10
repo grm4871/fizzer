@@ -49,6 +49,15 @@ describe('honestAgentChatBody', () => {
       suppressChatBody: true,
     })).toBe('');
   });
+
+  it('suppresses automatic cancellation instead of blaming the user', () => {
+    expect(honestAgentChatBody(
+      'Redundant review started.',
+      'Mission review wake closed automatically.',
+      'canceled',
+      { suppressChatBody: true },
+    )).toBe('');
+  });
 });
 
 describe('mergeRemoteChatMessage media hydration', () => {

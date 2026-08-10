@@ -976,18 +976,38 @@ test('finishing review removes a queued synthetic coordinator wake', () => {
     assert.ok(settleMissionTaskForRun(db, 301, 'completed', 'Evidence ready.')?.wake);
 
     const wakeId = `sys-mission-${mission.mission.id}-queued`;
+    const wakeCarrierId = wakeId.replace(/^sys-mission-/, 'agent-trace-');
+    createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: wakeCarrierId, channelId: 'channel-1', author: '', body: '',
+      createdAt: '2026-08-03T00:00:01.500Z', registrationId: coordinator.id,
+    });
     const wakeMessage = createChatMessage(db, 1, 'vault-1', 'channel-1', {
       id: wakeId, channelId: 'channel-1', author: 'Cascade', body: '@sol review',
       createdAt: '2026-08-03T00:00:02.000Z',
     });
     createChatAgentDispatchForRegistration(db, 1, 'channel-1', wakeMessage, coordinator.id);
     const activeWakeId = `sys-mission-${mission.mission.id}-active`;
+    const activeCarrierId = activeWakeId.replace(/^sys-mission-/, 'agent-trace-');
+    createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: activeCarrierId, channelId: 'channel-1', author: '', body: '',
+      createdAt: '2026-08-03T00:00:02.500Z', registrationId: coordinator.id,
+    });
     const activeWake = createChatMessage(db, 1, 'vault-1', 'channel-1', {
       id: activeWakeId, channelId: 'channel-1', author: 'Cascade', body: '@sol review duplicate',
       createdAt: '2026-08-03T00:00:03.000Z',
     });
     const activeDispatch = createChatAgentDispatchForRegistration(db, 1, 'channel-1', activeWake, coordinator.id);
     attachRunToChatAgentDispatch(db, activeDispatch.id, 401);
+    db.prepare(`
+      INSERT INTO runs (id, vault_id, prompt, agent, conversation_id, status, chat_dispatch_id)
+      VALUES (401, 'vault-1', 'review duplicate', 'codex', 'mission-review', 'running', ?)
+    `).run(activeDispatch.id);
+    const activeRunShellId = `agent-dispatch-${activeDispatch.id}`;
+    createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: activeRunShellId, channelId: 'channel-1', author: '', body: 'Thinking...',
+      createdAt: '2026-08-03T00:00:03.500Z', registrationId: coordinator.id,
+      runId: 401, status: 'running',
+    });
     const currentWakeId = `sys-mission-${mission.mission.id}-current`;
     const currentWake = createChatMessage(db, 1, 'vault-1', 'channel-1', {
       id: currentWakeId, channelId: 'channel-1', author: 'Cascade', body: '@sol legitimate review',
@@ -999,10 +1019,15 @@ test('finishing review removes a queued synthetic coordinator wake', () => {
     const finished = finishChatMission(db, 1, 'channel-1', mission.mission.id, {
       coordinatorRegistrationId: coordinator.id, status: 'completed', summary: 'Already reviewed.', currentRunId: 999,
     });
-    assert.deepEqual(finished.removedWakeMessageIds, [wakeId, activeWakeId]);
+    assert.deepEqual(finished.removedWakeMessageIds, [
+      wakeId, wakeCarrierId, activeWakeId, activeCarrierId, activeRunShellId,
+    ]);
     assert.deepEqual(finished.canceledWakeRunIds, [401]);
     assert.equal(getChatMessage(db, 'channel-1', 1, wakeId), undefined);
+    assert.equal(getChatMessage(db, 'channel-1', 1, wakeCarrierId), undefined);
     assert.equal(getChatMessage(db, 'channel-1', 1, activeWakeId), undefined);
+    assert.equal(getChatMessage(db, 'channel-1', 1, activeCarrierId), undefined);
+    assert.equal(getChatMessage(db, 'channel-1', 1, activeRunShellId), undefined);
     assert.equal(getChatMessage(db, 'channel-1', 1, currentWakeId)?.id, currentWakeId);
     assert.deepEqual(listPendingChatAgentDispatches(db, 1, 'channel-1'), []);
   } finally {

@@ -103,7 +103,7 @@ export type MissionProjectionUpdate = {
   channelId: string;
   rootMessageId: string;
   createdBy: number;
-  /** Obsolete synthetic coordinator prompts removed when review finishes first. */
+  /** Obsolete coordinator prompts, trace carriers, and run shells removed when review finishes first. */
   removedWakeMessageIds?: string[];
   /** Already-launched stale review runs that should be canceled by the route. */
   canceledWakeRunIds?: number[];
@@ -1243,16 +1243,39 @@ export function finishChatMission(
   const obsoleteWakeRows = staleWakeRows.filter((item) => (
     item.run_id == null || item.run_id !== input.currentRunId
   ));
+  const removedWakeMessageIds = new Set<string>();
+  const removeWakeMessage = db.prepare('DELETE FROM chat_messages WHERE id = ? AND channel_id = ?');
+  const runShellRows = db.prepare(`
+    SELECT id FROM chat_messages
+    WHERE channel_id = ? AND run_id = ? AND registration_id = ?
+  `);
   for (const wakeMessage of obsoleteWakeRows) {
-    db.prepare('DELETE FROM chat_messages WHERE id = ? AND channel_id = ?')
-      .run(wakeMessage.id, row.channel_id);
+    if (removeWakeMessage.run(wakeMessage.id, row.channel_id).changes > 0) {
+      removedWakeMessageIds.add(wakeMessage.id);
+    }
     // Wakes have a paired empty coordinator shell (`agent-trace-*`) so their
     // compact status never hangs under the preceding human message. If a
     // manual finish removes the unlaunched wake, remove that otherwise-empty
     // shell in the same transition.
     const carrierId = wakeMessage.id.replace(/^sys-mission-/, 'agent-trace-');
-    db.prepare('DELETE FROM chat_messages WHERE id = ? AND channel_id = ?')
-      .run(carrierId, row.channel_id);
+    if (removeWakeMessage.run(carrierId, row.channel_id).changes > 0) {
+      removedWakeMessageIds.add(carrierId);
+    }
+    // If the redundant wake was already claimed, its visible agent-dispatch
+    // shell has a third id. Remove every shell linked to that coordinator run;
+    // canceling the run below is automatic cleanup, not a user-authored event.
+    if (wakeMessage.run_id != null) {
+      const shells = runShellRows.all(
+        row.channel_id,
+        wakeMessage.run_id,
+        row.coordinator_registration_id,
+      ) as Array<{ id: string }>;
+      for (const shell of shells) {
+        if (removeWakeMessage.run(shell.id, row.channel_id).changes > 0) {
+          removedWakeMessageIds.add(shell.id);
+        }
+      }
+    }
   }
   const canceledWakeRunIds = obsoleteWakeRows.flatMap((item) => item.run_id == null ? [] : [item.run_id]);
   for (const task of taskRows(db, row.id)) {
@@ -1260,7 +1283,7 @@ export function finishChatMission(
   }
   return {
     ...refreshMissionProjection(db, row.id),
-    ...(obsoleteWakeRows.length ? { removedWakeMessageIds: obsoleteWakeRows.map((item) => item.id) } : {}),
+    ...(removedWakeMessageIds.size ? { removedWakeMessageIds: [...removedWakeMessageIds] } : {}),
     ...(canceledWakeRunIds.length ? { canceledWakeRunIds } : {}),
   };
 }

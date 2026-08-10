@@ -131,6 +131,29 @@ test('a terminal summary still replaces streamed progress', () => {
   assert.equal(content.done, true);
 });
 
+test('an automatically canceled run suppresses its chat shell', () => {
+  const content = buildAgentChatContentFromRunEvents([
+    {
+      type: 'text',
+      payload_json: JSON.stringify({
+        chatVisible: true,
+        message: { content: [{ type: 'text', text: 'Redundant review started.' }] },
+      }),
+    },
+    {
+      type: 'status',
+      payload_json: JSON.stringify({
+        status: 'canceled',
+        summary: 'Mission review wake closed automatically.',
+        suppressChatBody: true,
+      }),
+    },
+  ]);
+  assert.equal(content.body, '');
+  assert.equal(content.status, 'canceled');
+  assert.equal(content.done, true);
+});
+
 test('incremental run projection matches a one-shot fold', () => {
   const events = [
     {

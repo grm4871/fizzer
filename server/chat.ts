@@ -2589,12 +2589,12 @@ export function agentChatContentFromAccumulator(
   let body: string;
   if (!done) {
     body = hasVisibleText && trimmed ? trimmed : 'Thinking...';
+  } else if (suppressChatBody) {
+    body = '';
   } else if (status === 'failed' || status === 'canceled') {
     const reason = terminalSummary.trim()
       || (status === 'canceled' ? 'Run canceled by user.' : 'Agent failed.');
     body = trimmed ? `${trimmed}\n\n> ⚠️ ${reason}` : reason;
-  } else if (suppressChatBody) {
-    body = '';
   } else if (terminalSummary.trim() && !isGenericRunSummary(terminalSummary)) {
     body = terminalSummary.trim();
   } else if (trimmed) {

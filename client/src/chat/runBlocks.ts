@@ -180,6 +180,9 @@ export function honestAgentChatBody(
   const summaryText = typeof summary === 'string' ? summary.trim() : '';
   const isGeneric = /^(done\.?|completed note operations successfully\.?|agent failed\.?)$/i.test(summaryText);
 
+  // Automatic lifecycle cleanup (for example an obsolete mission review wake)
+  // is terminal but is not a user-visible agent reply.
+  if (opts?.suppressChatBody) return '';
   if (terminal === 'failed' || terminal === 'canceled') {
     const reason = summaryText
       || (terminal === 'canceled' ? 'Run canceled by user.' : 'Agent failed.');
@@ -187,8 +190,6 @@ export function honestAgentChatBody(
     if (trimmed && trimmed.length <= 800) return `${trimmed}\n\n> ⚠️ ${reason}`;
     return reason;
   }
-  // Agent already posted via cascade-chat send — leave the run bubble empty.
-  if (opts?.suppressChatBody) return '';
   if (summaryText && !isGeneric) return summaryText;
   if (trimmed) return trimmed;
   return summaryText || 'Done.';

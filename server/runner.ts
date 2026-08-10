@@ -266,7 +266,14 @@ export function listRunEvents(db: Db, runId: number, afterSeq = 0) {
 export async function cancelRun(
   db: Db,
   runId: number,
-  opts: { steering?: boolean; force?: boolean } = {},
+  opts: {
+    steering?: boolean;
+    force?: boolean;
+    /** Override the user-facing reason for an automatic/system cancellation. */
+    summary?: string;
+    /** Remove the linked chat shell instead of presenting a terminal reply. */
+    suppressChatBody?: boolean;
+  } = {},
 ): Promise<boolean> {
   const run = getRun(db, runId);
   if (!run) return false;
@@ -294,27 +301,39 @@ export async function cancelRun(
     }
     clearDelegatedRun(runId);
     clearDelegatedRunRecord(db, runId);
-    const summary = opts.steering ? 'Steered into the continuation below.' : 'Run canceled by user.';
+    const summary = opts.summary?.trim()
+      || (opts.steering ? 'Steered into the continuation below.' : 'Run canceled by user.');
     db.prepare(`
       UPDATE runs
       SET status = 'canceled', finished_at = datetime('now'), summary = ?
       WHERE id = ?
     `).run(summary, runId);
-    publishRunEvent(db, runId, 'status', { status: 'canceled', summary, steering: opts.steering === true });
+    publishRunEvent(db, runId, 'status', {
+      status: 'canceled',
+      summary,
+      steering: opts.steering === true,
+      suppressChatBody: opts.suppressChatBody === true,
+    });
     return true;
   }
 
   // No live owner (e.g. server restarted, never reclaimed): mark canceled so
   // stale UI can clear itself.
   if (run.status === 'running' || run.status === 'queued') {
-    const summary = opts.steering ? 'Steered into the continuation below.' : 'Run canceled by user.';
+    const summary = opts.summary?.trim()
+      || (opts.steering ? 'Steered into the continuation below.' : 'Run canceled by user.');
     clearDelegatedRunRecord(db, runId);
     db.prepare(`
       UPDATE runs
       SET status = 'canceled', finished_at = datetime('now'), summary = ?
       WHERE id = ?
     `).run(summary, runId);
-    publishRunEvent(db, runId, 'status', { status: 'canceled', summary, steering: opts.steering === true });
+    publishRunEvent(db, runId, 'status', {
+      status: 'canceled',
+      summary,
+      steering: opts.steering === true,
+      suppressChatBody: opts.suppressChatBody === true,
+    });
     return true;
   }
 
