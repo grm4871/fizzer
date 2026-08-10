@@ -7703,6 +7703,9 @@ button.chat-avatar.is-clickable:focus-visible {
 .chat-work-line {
   margin: 1px 0;
 }
+.chat-work-line-swipe + .chat-work-line-swipe {
+  margin-top: 0;
+}
 .chat-work-line-fold {
   width: 100%;
   display: grid;

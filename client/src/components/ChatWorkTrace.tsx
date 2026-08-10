@@ -21,6 +21,7 @@ import { hasRunActivity } from '../chat/harnessActivity';
 import { CascadeRunPanel } from './CascadeRunPanel';
 import { ChatQuoteRefs } from './ChatQuoteRefs';
 import { ThinkingSpinner } from './ThinkingSpinner';
+import { SwipeToReply } from './SwipeToReply';
 import type { ChatMessage } from './ChatView';
 
 const MARKDOWN_PLUGINS = [remarkGfm, remarkBreaks];
@@ -70,6 +71,7 @@ const WorkTraceLine = memo(function WorkTraceLine({
   onToggle,
   onCancelRun,
   onContextMenu,
+  onReply,
   selected,
   vaultId,
   onHydrateMessage,
@@ -80,6 +82,7 @@ const WorkTraceLine = memo(function WorkTraceLine({
   onToggle: () => void;
   onCancelRun: (runId: number) => void;
   onContextMenu: (event: React.MouseEvent, message: ChatMessage) => void;
+  onReply: (message: ChatMessage) => void;
   selected: boolean;
   vaultId?: string;
   onHydrateMessage?: (message: ChatMessage) => void;
@@ -93,50 +96,56 @@ const WorkTraceLine = memo(function WorkTraceLine({
     && (message.status === 'running' || hasRunActivity(message) || open || selected);
 
   return (
-    <div
-      className={`chat-work-line ${open ? 'is-open' : ''} ${selected ? 'is-selected' : ''} status-${message.status || 'done'}`}
-      data-message-id={message.id}
-      onContextMenu={(event) => onContextMenu(event, message)}
+    <SwipeToReply
+      className="chat-work-line-swipe"
+      onReply={() => onReply(message)}
+      allowSwipeFrom=".chat-work-line-fold"
     >
-      <button
-        type="button"
-        className="chat-work-line-fold"
-        onClick={(event) => {
-          event.stopPropagation();
-          onToggle();
-        }}
+      <div
+        className={`chat-work-line ${open ? 'is-open' : ''} ${selected ? 'is-selected' : ''} status-${message.status || 'done'}`}
+        data-message-id={message.id}
         onContextMenu={(event) => onContextMenu(event, message)}
-        title={preview}
-        aria-expanded={open}
-        aria-label={`${open ? 'Collapse' : 'Expand'} ${author} work step: ${preview}`}
       >
-        {lineLive
-          ? <ThinkingSpinner className={`chat-work-mark ${className}`} title={preview} />
-          : <span className={`chat-work-mark ${className}`} aria-hidden="true">{mark}</span>}
-        <span className="chat-work-author">{author}</span>
-        <span className="chat-work-preview">{preview}</span>
-        <time dateTime={message.createdAt}>{formatTime(message.createdAt)}</time>
-        <ChevronRight size={12} className={`chat-work-chevron${open ? ' open' : ''}`} />
-      </button>
-      {open && (
-        <div className="chat-work-line-body">
-          <ChatQuoteRefs message={message} />
-          {message.body
-            && !isSteeringContinuationMessage(message)
-            && !(message.status === 'running' && /^Thinking(?:\.{3}|…)$/.test(message.body.trim()))
-            && <WorkTraceBody body={message.body} />}
-          {showHarness && (
-            <CascadeRunPanel
-              message={message}
-              onCancelRun={onCancelRun}
-              forceOpen={selected || message.status === 'running'}
-              vaultId={vaultId}
-              onHydrateMessage={onHydrateMessage}
-            />
-          )}
-        </div>
-      )}
-    </div>
+        <button
+          type="button"
+          className="chat-work-line-fold"
+          onClick={(event) => {
+            event.stopPropagation();
+            onToggle();
+          }}
+          onContextMenu={(event) => onContextMenu(event, message)}
+          title={preview}
+          aria-expanded={open}
+          aria-label={`${open ? 'Collapse' : 'Expand'} ${author} work step: ${preview}`}
+        >
+          {lineLive
+            ? <ThinkingSpinner className={`chat-work-mark ${className}`} title={preview} />
+            : <span className={`chat-work-mark ${className}`} aria-hidden="true">{mark}</span>}
+          <span className="chat-work-author">{author}</span>
+          <span className="chat-work-preview">{preview}</span>
+          <time dateTime={message.createdAt}>{formatTime(message.createdAt)}</time>
+          <ChevronRight size={12} className={`chat-work-chevron${open ? ' open' : ''}`} />
+        </button>
+        {open && (
+          <div className="chat-work-line-body">
+            <ChatQuoteRefs message={message} />
+            {message.body
+              && !isSteeringContinuationMessage(message)
+              && !(message.status === 'running' && /^Thinking(?:\.{3}|…)$/.test(message.body.trim()))
+              && <WorkTraceBody body={message.body} />}
+            {showHarness && (
+              <CascadeRunPanel
+                message={message}
+                onCancelRun={onCancelRun}
+                forceOpen={selected || message.status === 'running'}
+                vaultId={vaultId}
+                onHydrateMessage={onHydrateMessage}
+              />
+            )}
+          </div>
+        )}
+      </div>
+    </SwipeToReply>
   );
 });
 
@@ -145,6 +154,7 @@ export const ChatWorkTrace = memo(function ChatWorkTrace({
   selectedMessageId,
   onCancelRun,
   onContextMenu,
+  onReply,
   vaultId,
   onHydrateMessage,
   runningMessageState,
@@ -157,6 +167,7 @@ export const ChatWorkTrace = memo(function ChatWorkTrace({
   selectedMessageId: string | null;
   onCancelRun: (runId: number) => void;
   onContextMenu: (event: React.MouseEvent, message: ChatMessage) => void;
+  onReply: (message: ChatMessage) => void;
   vaultId?: string;
   onHydrateMessage?: (message: ChatMessage) => void;
   runningMessageState: ReadonlyMap<string, { latestId: string; count: number }>;
@@ -210,82 +221,90 @@ export const ChatWorkTrace = memo(function ChatWorkTrace({
   };
 
   if (trace.length === 0) return null;
+  const replyTarget = trace[trace.length - 1];
 
   return (
-    <div
-      className={[
-        'chat-work-trace',
-        `phase-${currentPhase}`,
-        streamOpen ? 'is-open' : '',
-        live ? 'is-live' : '',
-        embedded ? 'is-embedded' : '',
-        forceOpen ? 'is-forced-open' : '',
-      ].filter(Boolean).join(' ')}
+    <SwipeToReply
+      className="chat-work-trace-swipe"
+      onReply={() => onReply(replyTarget)}
+      allowSwipeFrom=".chat-work-trace-toggle"
     >
-      {!forceOpen && (
-        <button
-          type="button"
-          className="chat-work-trace-toggle"
-          onClick={() => setOpen((value) => !value)}
-          aria-expanded={streamOpen}
-        >
-          {!embedded && <span className="chat-work-trace-kicker">flow</span>}
-          <span className="chat-work-decals" aria-label={`Workflow: ${decals.map((decal) => decal.label).join(', ')}`}>
-            {decals.map((decal, index) => {
-              const current = index === decals.length - 1;
+      <div
+        className={[
+          'chat-work-trace',
+          `phase-${currentPhase}`,
+          streamOpen ? 'is-open' : '',
+          live ? 'is-live' : '',
+          embedded ? 'is-embedded' : '',
+          forceOpen ? 'is-forced-open' : '',
+        ].filter(Boolean).join(' ')}
+      >
+        {!forceOpen && (
+          <button
+            type="button"
+            className="chat-work-trace-toggle"
+            onClick={() => setOpen((value) => !value)}
+            aria-expanded={streamOpen}
+          >
+            {!embedded && <span className="chat-work-trace-kicker">flow</span>}
+            <span className="chat-work-decals" aria-label={`Workflow: ${decals.map((decal) => decal.label).join(', ')}`}>
+              {decals.map((decal, index) => {
+                const current = index === decals.length - 1;
+                return (
+                  <span
+                    key={`${decal.phase}-${index}`}
+                    className={`chat-work-decal phase-${decal.phase}${current ? ' is-current' : ''}${current && live ? ' is-live' : ''}`}
+                    title={decal.label}
+                  >
+                    <span className="chat-work-decal-mark" aria-hidden="true">{decal.mark}</span>
+                    <span className="chat-work-decal-label">{decal.label}</span>
+                  </span>
+                );
+              })}
+            </span>
+            <span className="chat-work-trace-summary">{summary}</span>
+            {live && <ThinkingSpinner className="chat-work-trace-spinner" title="Thinking" />}
+            <ChevronRight size={13} className={`chat-work-trace-chevron${streamOpen ? ' open' : ''}`} />
+          </button>
+        )}
+        {streamOpen && (
+          <div
+            ref={bodyRef}
+            className="chat-work-trace-body"
+            role="log"
+            aria-label="Agent work trace"
+            onScroll={(event) => {
+              const el = event.currentTarget;
+              pinBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight <= 48;
+            }}
+          >
+            {trace.map((message) => {
+              const runKey = message.registrationId || message.agentId || '';
+              const runState = runKey ? runningMessageState.get(runKey) : undefined;
               return (
-                <span
-                  key={`${decal.phase}-${index}`}
-                  className={`chat-work-decal phase-${decal.phase}${current ? ' is-current' : ''}${current && live ? ' is-live' : ''}`}
-                  title={decal.label}
-                >
-                  <span className="chat-work-decal-mark" aria-hidden="true">{decal.mark}</span>
-                  <span className="chat-work-decal-label">{decal.label}</span>
-                </span>
+                <WorkTraceLine
+                  key={message.id}
+                  message={message}
+                  open={expandedIds.has(message.id) || message.status === 'running'}
+                  onToggle={() => toggleLine(message.id)}
+                  onCancelRun={onCancelRun}
+                  onContextMenu={onContextMenu}
+                  onReply={onReply}
+                  selected={selectedMessageId === message.id}
+                  vaultId={vaultId}
+                  onHydrateMessage={onHydrateMessage}
+                  latestRunningMessageId={runState?.latestId}
+                />
               );
             })}
-          </span>
-          <span className="chat-work-trace-summary">{summary}</span>
-          {live && <ThinkingSpinner className="chat-work-trace-spinner" title="Thinking" />}
-          <ChevronRight size={13} className={`chat-work-trace-chevron${streamOpen ? ' open' : ''}`} />
-        </button>
-      )}
-      {streamOpen && (
-        <div
-          ref={bodyRef}
-          className="chat-work-trace-body"
-          role="log"
-          aria-label="Agent work trace"
-          onScroll={(event) => {
-            const el = event.currentTarget;
-            pinBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight <= 48;
-          }}
-        >
-          {trace.map((message) => {
-            const runKey = message.registrationId || message.agentId || '';
-            const runState = runKey ? runningMessageState.get(runKey) : undefined;
-            return (
-              <WorkTraceLine
-                key={message.id}
-                message={message}
-                open={expandedIds.has(message.id) || message.status === 'running'}
-                onToggle={() => toggleLine(message.id)}
-                onCancelRun={onCancelRun}
-                onContextMenu={onContextMenu}
-                selected={selectedMessageId === message.id}
-                vaultId={vaultId}
-                onHydrateMessage={onHydrateMessage}
-                latestRunningMessageId={runState?.latestId}
-              />
-            );
-          })}
-          {live && (
-            <div className="chat-work-cursor" aria-hidden="true">
-              <span>█</span>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
+            {live && (
+              <div className="chat-work-cursor" aria-hidden="true">
+                <span>█</span>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </SwipeToReply>
   );
 });

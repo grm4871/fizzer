@@ -22,6 +22,7 @@ import { ChatSidebarButtons } from './ChatSidebarButtons';
 import { ChatWorkspacePanel } from './ChatWorkspacePanel';
 import { ChatTaskReview } from './ChatTaskReview';
 import { ChatWorkTrace } from './ChatWorkTrace';
+import { SwipeToReply, swipeGestureActive } from './SwipeToReply';
 import { ChatAgentToggle } from './ChatAgentToggle';
 import { ChatQuoteRefs } from './ChatQuoteRefs';
 import {
@@ -1114,245 +1115,6 @@ function groupHasDocEmbed(group: ChatMessageGroup): boolean {
   return group.messages.some((message) => message.body && bodyHasNoteRefs(message.body));
 }
 
-/** Swipe-left → reply (mobile/touch). Touch/pen only so desktop drag-select stays clean. */
-const SWIPE_REPLY_MAX = 72;
-const SWIPE_REPLY_THRESHOLD = 52;
-const SWIPE_AXIS_SLOP = 12;
-
-/** Active horizontal swipe count — virtualization must not unmount mid-capture. */
-let activeSwipeGestures = 0;
-function beginSwipeGesture(): void {
-  activeSwipeGestures += 1;
-}
-function endSwipeGesture(): void {
-  activeSwipeGestures = Math.max(0, activeSwipeGestures - 1);
-}
-function swipeGestureActive(): boolean {
-  return activeSwipeGestures > 0;
-}
-
-/**
- * DOM-driven swipe: no React setState during vertical pan or per-frame drag.
- * Previous version set dragging=true on every pointerdown and setOffset on every
- * move — that re-rendered the whole message row and stuttered list scroll.
- *
- * Horizontal capture must always release: unmount mid-swipe (list virtualization)
- * or a lost pointerup left the app unclickable until restart.
- */
-function SwipeToReply({
-  onReply,
-  children,
-  className = '',
-  messageId,
-  onClick,
-  onContextMenu,
-}: {
-  onReply: () => void;
-  children: ReactNode;
-  className?: string;
-  messageId?: string;
-  onClick?: () => void;
-  onContextMenu?: (event: React.MouseEvent) => void;
-}) {
-  const rootRef = useRef<HTMLDivElement | null>(null);
-  const contentRef = useRef<HTMLDivElement | null>(null);
-  const hintRef = useRef<HTMLDivElement | null>(null);
-  const startRef = useRef<{ x: number; y: number; pointerId: number } | null>(null);
-  const axisRef = useRef<'h' | 'v' | null>(null);
-  const offsetRef = useRef(0);
-  const armedRef = useRef(false);
-  const capturingRef = useRef(false);
-  const finishedRef = useRef(false);
-  const windowEndRef = useRef<(() => void) | null>(null);
-
-  const paint = useCallback((offset: number, dragging: boolean) => {
-    const content = contentRef.current;
-    const hint = hintRef.current;
-    const root = rootRef.current;
-    if (content) {
-      content.style.transition = dragging ? 'none' : 'transform 160ms ease-out';
-      content.style.transform = offset ? `translate3d(${-offset}px, 0, 0)` : '';
-    }
-    if (hint) {
-      const progress = Math.min(1, offset / SWIPE_REPLY_THRESHOLD);
-      hint.style.opacity = String(progress);
-      hint.style.transform = `scale(${0.75 + progress * 0.25})`;
-    }
-    if (root) {
-      root.classList.toggle('is-dragging', dragging);
-      const armed = offset >= SWIPE_REPLY_THRESHOLD;
-      if (armed !== armedRef.current) {
-        armedRef.current = armed;
-        root.classList.toggle('is-armed', armed);
-      }
-    }
-  }, []);
-
-  const releaseCapture = useCallback((pointerId?: number) => {
-    const root = rootRef.current;
-    if (!root || pointerId == null) return;
-    try {
-      if (root.hasPointerCapture?.(pointerId)) {
-        root.releasePointerCapture(pointerId);
-      }
-    } catch { /* ignore */ }
-  }, []);
-
-  const detachWindowEnd = useCallback(() => {
-    windowEndRef.current?.();
-    windowEndRef.current = null;
-  }, []);
-
-  const completeGesture = useCallback((committed: boolean, animate: boolean) => {
-    if (finishedRef.current) return;
-    finishedRef.current = true;
-    const pointerId = startRef.current?.pointerId;
-    releaseCapture(pointerId);
-    if (capturingRef.current) {
-      capturingRef.current = false;
-      endSwipeGesture();
-    }
-    detachWindowEnd();
-    startRef.current = null;
-    axisRef.current = null;
-    offsetRef.current = 0;
-    if (!animate) {
-      paint(0, false);
-    } else {
-      paint(0, true);
-      requestAnimationFrame(() => paint(0, false));
-    }
-    if (committed) {
-      try { navigator.vibrate?.(12); } catch { /* ignore */ }
-      onReply();
-    }
-  }, [detachWindowEnd, onReply, paint, releaseCapture]);
-
-  // If virtualization unmounts this row mid-swipe, release capture + gesture flag.
-  useEffect(() => () => {
-    // Do not let the release below turn into a late lostpointercapture reply
-    // while React is removing this virtualized row.
-    finishedRef.current = true;
-    const start = startRef.current;
-    releaseCapture(start?.pointerId);
-    if (capturingRef.current) {
-      capturingRef.current = false;
-      endSwipeGesture();
-    }
-    detachWindowEnd();
-  }, [detachWindowEnd, releaseCapture]);
-
-  const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (event.pointerType === 'mouse' || event.button !== 0) return;
-    const target = event.target as HTMLElement | null;
-    if (target?.closest('a, button, input, textarea, select, .cascade-run-panel, pre, code')) return;
-    // Track only — no setState (vertical list scroll must stay free).
-    finishedRef.current = false;
-    startRef.current = { x: event.clientX, y: event.clientY, pointerId: event.pointerId };
-    axisRef.current = null;
-    offsetRef.current = 0;
-  };
-
-  const onPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
-    const start = startRef.current;
-    if (!start || event.pointerId !== start.pointerId || finishedRef.current) return;
-    const dx = event.clientX - start.x;
-    const dy = event.clientY - start.y;
-    if (!axisRef.current) {
-      if (Math.abs(dx) < SWIPE_AXIS_SLOP && Math.abs(dy) < SWIPE_AXIS_SLOP) return;
-      if (Math.abs(dy) >= Math.abs(dx)) {
-        axisRef.current = 'v';
-        startRef.current = null;
-        return;
-      }
-      axisRef.current = 'h';
-      if (!capturingRef.current) {
-        capturingRef.current = true;
-        beginSwipeGesture();
-      }
-      try {
-        event.currentTarget.setPointerCapture(event.pointerId);
-      } catch {
-        // ignore
-      }
-      // Window-level end: survives if the row unmounts under the finger.
-      detachWindowEnd();
-      const pointerId = event.pointerId;
-      const onWinEnd = (ev: Event) => {
-        const pe = ev as PointerEvent;
-        if ('pointerId' in pe && pe.pointerId !== pointerId) return;
-        // `pointercancel` and `blur` are interruption paths, never a reply.
-        // Some Android webviews cancel a pointer when a scroll/context gesture
-        // takes over, often after it has crossed the horizontal threshold.
-        const committed = ev.type === 'pointerup'
-          && axisRef.current === 'h'
-          && offsetRef.current >= SWIPE_REPLY_THRESHOLD;
-        completeGesture(committed, true);
-      };
-      window.addEventListener('pointerup', onWinEnd, true);
-      window.addEventListener('pointercancel', onWinEnd, true);
-      window.addEventListener('blur', onWinEnd);
-      windowEndRef.current = () => {
-        window.removeEventListener('pointerup', onWinEnd, true);
-        window.removeEventListener('pointercancel', onWinEnd, true);
-        window.removeEventListener('blur', onWinEnd);
-      };
-    }
-    if (axisRef.current !== 'h') return;
-    const next = Math.max(0, Math.min(SWIPE_REPLY_MAX, -dx));
-    offsetRef.current = next;
-    paint(next, true);
-    event.preventDefault();
-  };
-
-  const finish = (event: React.PointerEvent<HTMLDivElement>) => {
-    const start = startRef.current;
-    if (!start || event.pointerId !== start.pointerId) {
-      // Vertical pan may have cleared start — still release capture if any.
-      releaseCapture(event.pointerId);
-      return;
-    }
-    const committed = axisRef.current === 'h' && offsetRef.current >= SWIPE_REPLY_THRESHOLD;
-    completeGesture(committed, true);
-  };
-
-  const cancel = (event: React.PointerEvent<HTMLDivElement>) => {
-    const start = startRef.current;
-    if (start && event.pointerId === start.pointerId) completeGesture(false, true);
-    else releaseCapture(event.pointerId);
-  };
-
-  return (
-    <div
-      ref={rootRef}
-      className={`chat-swipe-row ${className}`}
-      data-message-id={messageId}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={finish}
-      onPointerCancel={cancel}
-      onLostPointerCapture={() => {
-        // Chromium Android may drop pointer capture immediately after the
-        // first horizontal move, before the swipe has crossed the reply
-        // threshold. Keep the window-level end listener alive in that case;
-        // ending here makes every longer swipe stop at its first move.
-        if (!windowEndRef.current && !finishedRef.current && (capturingRef.current || startRef.current)) {
-          completeGesture(false, false);
-        }
-      }}
-      onClick={onClick}
-      onContextMenu={onContextMenu}
-    >
-      <div ref={hintRef} className="chat-swipe-reply-hint" aria-hidden="true">
-        <Reply size={16} />
-      </div>
-      <div ref={contentRef} className="chat-swipe-content">
-        {children}
-      </div>
-    </div>
-  );
-}
-
 function ChatClarificationCard({
   message,
   vaultId,
@@ -1608,6 +1370,7 @@ function ChatMissionCard({
   traceContent,
   tracePeek,
   replyMessage,
+  onReply,
   onContextMenu,
 }: {
   mission: ChatMission;
@@ -1626,6 +1389,7 @@ function ChatMissionCard({
   } | null;
   /** Originating message for right-click reply (same as any other chat row). */
   replyMessage?: ChatMessage;
+  onReply?: (message: ChatMessage) => void;
   onContextMenu?: (event: React.MouseEvent, message: ChatMessage) => void;
 }) {
   const needsAttention = mission.status === 'attention' || mission.status === 'blocked';
@@ -1732,7 +1496,7 @@ function ChatMissionCard({
   const openMissionContextMenu = replyMessage && onContextMenu
     ? (event: React.MouseEvent) => onContextMenu(event, replyMessage)
     : undefined;
-  return (
+  const card = (
     <div
       className={`chat-mission-card is-${mission.status}${live ? ' is-live' : ''}${open ? ' is-open' : ''}`}
       data-open={open ? 'true' : 'false'}
@@ -1881,6 +1645,16 @@ function ChatMissionCard({
         </div>
       )}
     </div>
+  );
+  if (!replyMessage || !onReply) return card;
+  return (
+    <SwipeToReply
+      className="chat-mission-swipe"
+      onReply={() => onReply(replyMessage)}
+      allowSwipeFrom=".chat-mission-toggle, .chat-mission-peek"
+    >
+      {card}
+    </SwipeToReply>
   );
 }
 
@@ -2152,6 +1926,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
                       vaultId={vaultId}
                       channelId={message.channelId}
                       replyMessage={message}
+                      onReply={onReply}
                       onContextMenu={onContextMenu}
                     />
                   )}
@@ -3679,6 +3454,7 @@ export const ChatView = memo(function ChatView({
                     selectedMessageId={traceSelected || clumpedSelected ? selectedMessageId : null}
                     onCancelRun={onCancelRun}
                     onContextMenu={openMessageContextMenu}
+                    onReply={startReply}
                     vaultId={vaultId}
                     onHydrateMessage={onHydrateMessage}
                     runningMessageState={runningMessageState}
@@ -3696,6 +3472,7 @@ export const ChatView = memo(function ChatView({
                       traceContent={workTrace}
                       tracePeek={peek}
                       replyMessage={message}
+                      onReply={startReply}
                       onContextMenu={openMessageContextMenu}
                     />
                   ))

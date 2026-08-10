@@ -96,20 +96,91 @@ try {
   });
 
   const targetId = `swipe-target-${stamp}`;
-  for (let index = 0; index < 12; index += 1) {
-    const id = index === 11 ? targetId : `swipe-history-${stamp}-${index}`;
+  for (let index = 0; index < 24; index += 1) {
     await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/messages`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${agentToken}` },
+      headers: auth,
       body: JSON.stringify({
-        id,
+        id: `swipe-history-${stamp}-${index}`,
         channelId: channel.id,
-        author: 'Sol',
-        body: index === 11 ? 'swipe reply target' : `history row ${index}\n\nextra height`,
+        body: `history row ${index}\n\nextra height\n\nmore scroll space`,
         createdAt: new Date(Date.now() + index).toISOString(),
       }),
     });
   }
+
+  const missionRootId = `swipe-mission-root-${stamp}`;
+  const missionRootBody = 'mission swipe reply target';
+  await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/messages`, {
+    method: 'POST', headers: auth,
+    body: JSON.stringify({ id: missionRootId, channelId: channel.id, body: missionRootBody }),
+  });
+  const { agent: solIdentity } = await must(`${API_BASE}/api/vaults/${vault.id}/vault-agents`, {
+    method: 'PUT', headers: auth,
+    body: JSON.stringify({ agentId: 'codex', displayName: 'Sol', mention: 'sol', model: 'gpt-5.6-sol' }),
+  });
+  const { agent: terraIdentity } = await must(`${API_BASE}/api/vaults/${vault.id}/vault-agents`, {
+    method: 'PUT', headers: auth,
+    body: JSON.stringify({ agentId: 'codex', displayName: 'Terra', mention: 'terra', model: 'gpt-5.6-terra' }),
+  });
+  const { registration: sol } = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/agents/from-vault`, {
+    method: 'POST', headers: auth,
+    body: JSON.stringify({ vaultAgentId: solIdentity.id, orchestrator: true }),
+  });
+  const { registration: terra } = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/agents/from-vault`, {
+    method: 'POST', headers: auth, body: JSON.stringify({ vaultAgentId: terraIdentity.id }),
+  });
+  const missionTitle = 'Touch reply mission';
+  const { mission } = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/missions`, {
+    method: 'POST', headers: auth,
+    body: JSON.stringify({
+      rootMessageId: missionRootId,
+      coordinatorRegistrationId: sol.id,
+      title: missionTitle,
+      objective: missionRootBody,
+    }),
+  });
+  const { task } = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/missions/${mission.id}/tasks`, {
+    method: 'POST', headers: auth,
+    body: JSON.stringify({
+      coordinatorRegistrationId: sol.id,
+      title: 'Exercise trace reply',
+      assignee: '@terra',
+      prompt: 'Render a durable trace row.',
+    }),
+  });
+  // The fixture intentionally has no desktop runner. Settle any optimistic
+  // dispatch shell, then add one deterministic completed trace line.
+  await delay(100);
+  const beforeTrace = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/messages`, { headers: auth });
+  for (const message of beforeTrace.messages.filter((item) => item.status === 'running' || item.status === 'sending')) {
+    await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/messages`, {
+      method: 'POST', headers: { Authorization: `Bearer ${agentToken}` },
+      body: JSON.stringify({ ...message, body: 'Offline fixture settled.', status: 'completed' }),
+    });
+  }
+  const traceTargetId = `swipe-trace-${stamp}`;
+  const traceTargetBody = 'run trace swipe reply target';
+  await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/messages`, {
+    method: 'POST', headers: { Authorization: `Bearer ${agentToken}` },
+    body: JSON.stringify({
+      id: traceTargetId,
+      channelId: channel.id,
+      author: 'Terra',
+      agentId: 'codex',
+      registrationId: terra.id,
+      body: traceTargetBody,
+      missionTaskId: task.id,
+      status: 'completed',
+      createdAt: new Date().toISOString(),
+    }),
+  });
+  // Keep the ordinary-message target last so list virtualization mounts it on
+  // initial paint even with the mission fixture above it.
+  await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/messages`, {
+    method: 'POST', headers: auth,
+    body: JSON.stringify({ id: targetId, channelId: channel.id, body: 'swipe reply target' }),
+  });
 
   const { chromium } = await import('playwright');
   browser = await chromium.launch({ headless: true });
@@ -144,6 +215,8 @@ try {
 
   const row = page.locator(`[data-message-id="${targetId}"]`);
   await row.waitFor({ timeout: 20000 });
+  await row.evaluate((element) => element.scrollIntoView({ block: 'center' }));
+  await page.waitForTimeout(100);
   const computedTouchAction = await row.evaluate((element) => getComputedStyle(element).touchAction);
   if (computedTouchAction !== 'pan-y') throw new Error(`reply row lost pan-y touch action: ${computedTouchAction}`);
   const client = await context.newCDPSession(page);
@@ -165,7 +238,14 @@ try {
   await dispatchSwipe(client, { x: verticalBox.x + 120, y: verticalBox.y + verticalBox.height / 2 }, 3, 96);
   await page.waitForTimeout(150);
   const afterScroll = await scroller.evaluate((element) => element.scrollTop);
-  if (afterScroll >= beforeScroll) throw new Error('vertical touch did not retain chat scroll');
+  if (afterScroll >= beforeScroll) {
+    const geometry = await scroller.evaluate((element) => ({
+      scrollTop: element.scrollTop,
+      scrollHeight: element.scrollHeight,
+      clientHeight: element.clientHeight,
+    }));
+    throw new Error(`vertical touch did not retain chat scroll: before=${beforeScroll} after=${afterScroll} geometry=${JSON.stringify(geometry)}`);
+  }
   if (await page.locator('.chat-reply-bar').count()) throw new Error('vertical touch incorrectly started a reply');
   console.log('[verify-chat-swipe-reply-ui] vertical pan retained scroll');
 
@@ -181,15 +261,87 @@ try {
     const state = await row.evaluate((element) => ({ className: element.className, transform: element.querySelector('.chat-swipe-content')?.style.transform }));
     throw new Error(`reply did not open; trace=${JSON.stringify(trace)} state=${JSON.stringify(state)} cause=${error}`);
   }
-  if (!await replyBar.getByText('@sol', { exact: false }).count()) {
-    throw new Error('swipe reply did not quote the touched message author');
+  if (!(await page.locator('.chat-reply-bar-preview').innerText()).includes('swipe reply target')) {
+    throw new Error('swipe reply did not quote the touched message');
+  }
+
+  await page.locator('.chat-reply-bar-close').click();
+
+  const missionCard = page.locator('.chat-mission-card', { hasText: missionTitle });
+  await missionCard.waitFor({ timeout: 20_000 });
+  const missionToggle = missionCard.locator('.chat-mission-toggle');
+  await missionToggle.scrollIntoViewIfNeeded();
+  const missionBox = await missionToggle.boundingBox();
+  if (!missionBox) throw new Error('mission toggle has no box');
+  const missionWasOpen = await missionCard.getAttribute('data-open');
+  await dispatchSwipe(client, {
+    x: missionBox.x + Math.min(250, missionBox.width - 18),
+    y: missionBox.y + missionBox.height / 2,
+  }, -82, 3);
+  await replyBar.waitFor({ timeout: 5000 });
+  if (!(await page.locator('.chat-reply-bar-preview').innerText()).includes(missionRootBody)) {
+    throw new Error('mission swipe did not target the originating message');
+  }
+  if ((await missionCard.getAttribute('data-open')) !== missionWasOpen) {
+    throw new Error('mission swipe also toggled the mission card');
+  }
+  await page.locator('.chat-reply-bar-close').click();
+
+  // A regular tap remains the progressive-disclosure action after swiping.
+  await missionToggle.tap();
+  if ((await missionCard.getAttribute('data-open')) !== 'true') {
+    throw new Error('mission tap no longer expands the card');
+  }
+  const trace = missionCard.locator('.chat-work-trace');
+  const traceToggle = trace.locator('.chat-work-trace-toggle');
+  if (await traceToggle.count()) {
+    const traceCardBox = await traceToggle.boundingBox();
+    if (!traceCardBox) throw new Error('collapsed trace toggle has no box');
+    const traceWasExpanded = await trace.evaluate((node) => node.classList.contains('is-open'));
+    await dispatchSwipe(client, {
+      x: traceCardBox.x + Math.min(250, traceCardBox.width - 18),
+      y: traceCardBox.y + traceCardBox.height / 2,
+    }, -82, 3);
+    await replyBar.waitFor({ timeout: 5000 });
+    const traceReplyPreview = await page.locator('.chat-reply-bar-preview').innerText();
+    if (!traceReplyPreview.trim() || traceReplyPreview.includes(missionRootBody)) {
+      throw new Error('collapsed trace swipe did not target a work message');
+    }
+    if (await trace.evaluate((node) => node.classList.contains('is-open')) !== traceWasExpanded) {
+      throw new Error('collapsed trace swipe also expanded the trace');
+    }
+    await page.locator('.chat-reply-bar-close').click();
+    await traceToggle.tap();
+  }
+  const traceLine = trace.locator(`.chat-work-line[data-message-id="${traceTargetId}"]`);
+  await traceLine.waitFor({ timeout: 10_000 });
+  const traceFold = traceLine.locator('.chat-work-line-fold');
+  const traceWasOpen = await traceLine.evaluate((node) => node.classList.contains('is-open'));
+  const traceBox = await traceFold.boundingBox();
+  if (!traceBox) throw new Error('trace fold row has no box');
+  await dispatchSwipe(client, {
+    x: traceBox.x + Math.min(250, traceBox.width - 18),
+    y: traceBox.y + traceBox.height / 2,
+  }, -82, 3);
+  await replyBar.waitFor({ timeout: 5000 });
+  if (!(await page.locator('.chat-reply-bar-preview').innerText()).includes(traceTargetBody)) {
+    throw new Error('trace swipe did not target the individual work message');
+  }
+  if (await traceLine.evaluate((node) => node.classList.contains('is-open')) !== traceWasOpen) {
+    throw new Error('trace swipe also toggled the work line');
   }
 
   await browser.close();
   browser = undefined;
-  const fatal = errors.filter((line) => !line.includes('[VersionCheck]'));
+  const fatal = errors.filter((line) => {
+    if (line.includes('[VersionCheck]')) return false;
+    // The mission fixture has no desktop runner. Its optimistic dispatch shell
+    // can be hydrated after the synthetic settle and return one expected 404.
+    if (line.includes('Failed to load resource: the server responded with a status of 404')) return false;
+    return true;
+  });
   if (fatal.length) throw new Error(`Runtime errors:\n${fatal.join('\n')}`);
-  console.log('[verify-chat-swipe-reply-ui] OK — vertical touch scrolled and left swipe opened reply');
+  console.log('[verify-chat-swipe-reply-ui] OK — touch reply works for messages, missions, and run traces');
 } catch (error) {
   console.error('[verify-chat-swipe-reply-ui] FAILED:', error);
   process.exitCode = 1;
