@@ -206,7 +206,19 @@ try {
   check('tab menu stays open after the opening right-click', await tabMenu.isVisible());
   const tabLabels = (await tabMenu.locator('button').allInnerTexts()).map((t) => t.trim().toLowerCase());
   check('tab menu offers Close tab', tabLabels.some((t) => t.includes('close tab')), JSON.stringify(tabLabels));
+  check('tab menu offers Close others', tabLabels.some((t) => t.includes('close others')), JSON.stringify(tabLabels));
 
+  await tabMenu.locator('button', { hasText: 'Close others' }).click();
+  await page.waitForFunction(
+    () => !Array.from(document.querySelectorAll('.tab-bar .tab-item')).some((el) => el.textContent?.includes('menus-chan')),
+    undefined,
+    { timeout: 10000 },
+  );
+  check('Close others preserves the selected tab', await page.locator('.tab-bar .tab-item', { hasText: 'Superkanban' }).count() > 0);
+  check('Close others removes sibling tabs', true);
+
+  await skTab.click({ button: 'right' });
+  await tabMenu.waitFor({ timeout: 5000 });
   await tabMenu.locator('button', { hasText: 'Close tab' }).click();
   await page.waitForFunction(
     () => !Array.from(document.querySelectorAll('.tab-bar .tab-item')).some((el) => el.textContent?.includes('Superkanban')),
@@ -214,7 +226,6 @@ try {
     { timeout: 10000 },
   );
   check('Close tab removes the tab', true);
-  check('the chat tab survived closing the other tab', await page.locator('.tab-bar .tab-item', { hasText: 'menus-chan' }).count() > 0);
 
   // The mobile swipe target must not participate in the desktop CSS grid. If
   // it does, closing the sidebar creates an implicit first row and pushes the

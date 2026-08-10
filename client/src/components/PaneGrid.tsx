@@ -42,6 +42,7 @@ interface PaneGridProps {
   onFocusPane: (paneId: string) => void;
   onSelectTab: (paneId: string, tabId: string) => void;
   onCloseTab: (tabId: string) => void;
+  onCloseOtherTabs: (tabIds: string[], keepTabId: string) => void;
   /** A tab was dropped onto a pane; `index` only applies to `center` drops. */
   onDropTab: (payload: TabDragPayload, targetPaneId: string, side: DropSide, index?: number) => void;
   onResize: (splitId: string, sizes: number[]) => void;
@@ -117,6 +118,7 @@ function PaneTabStrip({
   isFocused,
   onSelectTab,
   onCloseTab,
+  onCloseOtherTabs,
   onDropTab,
   onCreateNote,
   onCreateChat,
@@ -132,6 +134,7 @@ function PaneTabStrip({
   isFocused: boolean;
   onSelectTab: (paneId: string, tabId: string) => void;
   onCloseTab: (tabId: string) => void;
+  onCloseOtherTabs: (tabIds: string[], keepTabId: string) => void;
   onDropTab: PaneGridProps['onDropTab'];
   onCreateNote?: (paneId: string) => void;
   onCreateChat?: (paneId: string) => void;
@@ -362,13 +365,17 @@ function PaneTabStrip({
             contextMenu.kind === 'tab'
               ? { icon: <X size={13} />, label: 'Close tab', action: () => onCloseTab(contextMenu.tabId) }
               : null,
-          ] as ({ icon: ReactNode; label: string; action: () => void } | null)[])
-            .filter((item): item is { icon: ReactNode; label: string; action: () => void } => item !== null)
+            contextMenu.kind === 'tab'
+              ? { icon: <X size={13} />, label: 'Close others', action: () => onCloseOtherTabs(pane.tabIds, contextMenu.tabId), disabled: pane.tabIds.length <= 1 }
+              : null,
+          ] as ({ icon: ReactNode; label: string; action: () => void; disabled?: boolean } | null)[])
+            .filter((item): item is { icon: ReactNode; label: string; action: () => void; disabled?: boolean } => item !== null)
             .map((item) => (
               <button
                 key={item.label}
                 type="button"
                 role="menuitem"
+                disabled={item.disabled}
                 onClick={() => {
                   closeMenu();
                   item.action();
@@ -393,6 +400,7 @@ function Pane({
   onFocusPane,
   onSelectTab,
   onCloseTab,
+  onCloseOtherTabs,
   onDropTab,
   onCreateNote,
   onCreateChat,
@@ -462,6 +470,7 @@ function Pane({
         isFocused={pane.id === focusedPaneId}
         onSelectTab={onSelectTab}
         onCloseTab={onCloseTab}
+        onCloseOtherTabs={onCloseOtherTabs}
         onDropTab={onDropTab}
         onCreateNote={onCreateNote}
         onCreateChat={onCreateChat}

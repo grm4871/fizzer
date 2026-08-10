@@ -2406,6 +2406,21 @@ export default function App() {
     setLayout(Layout.simplify(Layout.removeTab(layoutRef.current, tabId)));
   }, []);
 
+  /** Keep the chosen tab and close every sibling in its current pane. */
+  const closeOtherTabs = useCallback((tabIds: string[], keepTabId: string) => {
+    const closingIds = new Set(tabIds.filter((id) => id !== keepTabId));
+    if (closingIds.size === 0) return;
+    setOpenTabs((prev) => prev.filter((tab) => !closingIds.has(tab.id)));
+    setNoteContents((prev) => {
+      const next = { ...prev };
+      closingIds.forEach((id) => delete next[id]);
+      return next;
+    });
+    setLayout((prev) => Layout.simplify(
+      [...closingIds].reduce((next, id) => Layout.removeTab(next, id), prev),
+    ));
+  }, []);
+
   // Stable handle so socket/delete callbacks can close tabs without re-subscribing.
   const closeTabRef = useRef(closeTab); closeTabRef.current = closeTab;
 
@@ -3681,6 +3696,7 @@ export default function App() {
             onFocusPane={setFocusedPaneId}
             onSelectTab={selectTabInPane}
             onCloseTab={closeTab}
+            onCloseOtherTabs={closeOtherTabs}
             onDropTab={handleDropTab}
             onResize={handleResizeSplit}
             onCreateNote={handleCreateNoteInPane}
