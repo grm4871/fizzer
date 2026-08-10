@@ -272,6 +272,10 @@ try {
   }
   check('mission artifact renders inline', await card.isVisible());
   check('active mission starts compact', !(await card.evaluate((node) => node.open)));
+  check('live mission shows thinking whirl on the card', (
+    await card.locator('summary .thinking-spinner.chat-mission-whirl').count()
+  ) === 1);
+  check('live mission marks the card as live', await card.evaluate((node) => node.classList.contains('is-live')));
   await card.locator('summary').click();
   check('mission expands to its worker task', (await card.innerText()).includes('Verify multiplayer persistence'));
   check('thinking trace is nested inside the mission card', (

@@ -4667,11 +4667,18 @@ button.chat-avatar.is-clickable:focus-visible {
     color: hsl(38, 44%, 78%);
   }
 }
-.crp-spinner,
-.chat-work-trace-spinner {
+.crp-spinner.ai-spinner,
+.chat-work-trace-spinner.ai-spinner {
   width: 10px;
   height: 10px;
   border-width: 2px;
+  flex-shrink: 0;
+}
+.crp-spinner.thinking-spinner,
+.chat-work-trace-spinner.thinking-spinner {
+  width: auto;
+  height: auto;
+  border: 0;
   flex-shrink: 0;
 }
 .crp-chevron {
@@ -6649,6 +6656,58 @@ button.chat-avatar.is-clickable:focus-visible {
   animation: ai-spin 0.7s linear infinite;
 }
 @keyframes ai-spin { to { transform: rotate(360deg); } }
+/* Claude Code–style braille whirl for live thinking / missions */
+.thinking-spinner {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  min-width: 1em;
+  color: var(--accent-hover, hsl(38, 68%, 62%));
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0;
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+}
+.thinking-spinner-live,
+.crp-term-mark.thinking-spinner {
+  color: color-mix(in srgb, var(--accent-hover, hsl(38, 68%, 62%)) 88%, white);
+  min-width: 0.9em;
+}
+.crp-term-pre.is-thinking-live {
+  color: color-mix(in srgb, var(--text-secondary) 78%, var(--accent-hover, hsl(38, 55%, 58%)));
+}
+.chat-mission-whirl {
+  width: 12px;
+  min-width: 12px;
+  height: 12px;
+  flex: 0 0 12px;
+  font-size: 0.75rem;
+  color: var(--accent-hover, hsl(38, 68%, 62%));
+  text-shadow: 0 0 8px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.chat-mission-card.is-live .chat-mission-kicker {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.chat-mission-card.is-live > summary strong {
+  color: color-mix(in srgb, var(--text-primary) 92%, var(--accent-hover));
+}
+.chat-work-trace-spinner.thinking-spinner {
+  font-size: 0.75rem;
+  color: hsl(38, 68%, 62%);
+}
+.crp-spinner.thinking-spinner {
+  font-size: 0.75rem;
+  color: hsl(38, 68%, 62%);
+}
+.chat-work-mark.thinking-spinner {
+  min-width: 0.9em;
+  font-size: inherit;
+}
 .agent-permission-card {
   position: fixed;
   right: 20px;
@@ -7611,6 +7670,10 @@ button.chat-avatar.is-clickable:focus-visible {
   .crp-term-cursor,
   .chat-msg-media-loading::before,
   .ai-spinner {
+    animation: none;
+  }
+  .thinking-spinner {
+    /* Component freezes frames when reduced-motion is set; keep static glyph. */
     animation: none;
   }
   .chat-work-cursor {

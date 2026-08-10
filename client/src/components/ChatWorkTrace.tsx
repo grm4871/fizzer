@@ -20,6 +20,7 @@ import {
 import { hasRunActivity } from '../chat/harnessActivity';
 import { CascadeRunPanel } from './CascadeRunPanel';
 import { ChatQuoteRefs } from './ChatQuoteRefs';
+import { ThinkingSpinner } from './ThinkingSpinner';
 import type { ChatMessage } from './ChatView';
 
 const MARKDOWN_PLUGINS = [remarkGfm, remarkBreaks];
@@ -32,11 +33,11 @@ function formatTime(value: string) {
   }
 }
 
-function statusMark(message: ChatMessage): { mark: string; className: string } {
+function statusMark(message: ChatMessage): { mark: string; className: string; live?: boolean } {
   if (message.status === 'failed') return { mark: '✗', className: 'err' };
   if (isSteeringContinuationMessage(message)) return { mark: '↪', className: 'steer' };
   if (message.status === 'canceled') return { mark: '✗', className: 'err' };
-  if (message.status === 'running' || message.status === 'sending') return { mark: '…', className: 'run' };
+  if (message.status === 'running' || message.status === 'sending') return { mark: '…', className: 'run', live: true };
   if (message.missionTaskId) return { mark: '›', className: 'task' };
   if (String(message.id || '').startsWith('sys-mission-') || message.author === 'Cascade') {
     return { mark: '#', className: 'sys' };
@@ -86,7 +87,7 @@ const WorkTraceLine = memo(function WorkTraceLine({
   onHydrateMessage?: (message: ChatMessage) => void;
   latestRunningMessageId?: string;
 }) {
-  const { mark, className } = statusMark(message);
+  const { mark, className, live: lineLive } = statusMark(message);
   const author = workTraceAuthorKey(message);
   const preview = workTraceStatusLabel(message);
   const isLatestRunning = message.status !== 'running' || latestRunningMessageId === message.id;
@@ -110,7 +111,9 @@ const WorkTraceLine = memo(function WorkTraceLine({
         aria-expanded={open}
         aria-label={`${open ? 'Collapse' : 'Expand'} ${author} work step: ${preview}`}
       >
-        <span className={`chat-work-mark ${className}`} aria-hidden="true">{mark}</span>
+        {lineLive
+          ? <ThinkingSpinner className={`chat-work-mark ${className}`} title={preview} />
+          : <span className={`chat-work-mark ${className}`} aria-hidden="true">{mark}</span>}
         <span className="chat-work-author">{author}</span>
         <span className="chat-work-preview">{preview}</span>
         <time dateTime={message.createdAt}>{formatTime(message.createdAt)}</time>
@@ -235,7 +238,7 @@ export const ChatWorkTrace = memo(function ChatWorkTrace({
           })}
         </span>
         <span className="chat-work-trace-summary">{summary}</span>
-        {live && <span className="ai-spinner chat-work-trace-spinner" aria-hidden="true" />}
+        {live && <ThinkingSpinner className="chat-work-trace-spinner" title="Thinking" />}
         <ChevronRight size={13} className={`chat-work-trace-chevron${open ? ' open' : ''}`} />
       </button>
       {open && (

@@ -32,6 +32,7 @@ const HarnessTerminal = lazy(() =>
   import('./HarnessTerminal').then((m) => ({ default: m.HarnessTerminal })),
 );
 import type { ChatMessage } from './ChatView';
+import { ThinkingSpinner } from './ThinkingSpinner';
 import { api } from '../api';
 
 const SCROLL_PIN_PX = 48;
@@ -207,10 +208,12 @@ function ThinkingBlock({
         }}
         onPointerDown={(event) => event.stopPropagation()}
       >
-        <span className="crp-term-mark dim">·</span>
+        {live
+          ? <ThinkingSpinner className="crp-term-mark thinking-spinner-live" title="Thinking" />
+          : <span className="crp-term-mark dim">·</span>}
         {!open && (
           <span className="crp-term-fold-preview dim">
-            {collapsedPreview}
+            {live && !collapsedPreview ? 'Thinking…' : collapsedPreview}
             {more}
           </span>
         )}
@@ -220,7 +223,7 @@ function ThinkingBlock({
       {open && (
         <pre
           ref={preRef}
-          className="crp-term-pre dim"
+          className={`crp-term-pre dim${live ? ' is-thinking-live' : ''}`}
           onScroll={(event) => {
             pinRef.current = isPinnedToBottom(event.currentTarget);
           }}
@@ -609,7 +612,7 @@ export const CascadeRunPanel = memo(function CascadeRunPanel({
               ))}
             </span>
           )}
-          {isRunning && <span className="ai-spinner crp-spinner" />}
+          {isRunning && <ThinkingSpinner className="crp-spinner" title="Harness running" />}
           {canExpand && <ChevronRight size={13} className="crp-chevron" />}
         </button>
         {isRunning && message.runId != null && (

@@ -24,6 +24,7 @@ import { ChatTaskReview } from './ChatTaskReview';
 import { ChatWorkTrace } from './ChatWorkTrace';
 import { ChatAgentToggle } from './ChatAgentToggle';
 import { ChatQuoteRefs } from './ChatQuoteRefs';
+import { ThinkingSpinner } from './ThinkingSpinner';
 import { ReportDialog } from './ReportDialog';
 import { hasRunActivity } from '../chat/harnessActivity';
 import { isSteeringContinuationMessage, segmentTranscript } from '../chat/workTrace';
@@ -1690,6 +1691,9 @@ function ChatMissionCard({
   }, [bridge, mission.tasks, open]);
   const done = mission.tasks.filter((task) => task.status === 'completed' || task.status === 'canceled').length;
   const total = mission.tasks.length;
+  const live = mission.status === 'active'
+    || mission.status === 'reviewing'
+    || mission.tasks.some((task) => task.status === 'running' || task.status === 'pending');
   const statusLabel = mission.status === 'active'
     ? (total ? `${done}/${total} tasks` : 'planning')
     : needsAttention ? 'needs review' : mission.status;
@@ -1710,12 +1714,14 @@ function ChatMissionCard({
   }
   return (
     <details
-      className={`chat-mission-card is-${mission.status}`}
+      className={`chat-mission-card is-${mission.status}${live ? ' is-live' : ''}`}
       open={open}
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
       <summary>
-        <span className="chat-mission-state" aria-hidden="true" />
+        {live
+          ? <ThinkingSpinner className="chat-mission-whirl" title="Mission working" />
+          : <span className="chat-mission-state" aria-hidden="true" />}
         <span className="chat-mission-kicker">Mission</span>
         <strong>{mission.title}</strong>
         <span className="chat-mission-status">{statusLabel}</span>
