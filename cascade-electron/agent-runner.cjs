@@ -36,6 +36,7 @@ const CLAUDE_AGENT_CONTEXT = 'You are a local workspace assistant. This checkout
 // chat collapses step narration into a trace disclosure, so the actual message
 // should be short. Detailed reasoning belongs in thinking, not the reply.
 const CHAT_BREVITY_CONTEXT = 'You are a chat participant, not a coding CLI. Reply like a person in a chat channel: a few short sentences of plain prose, lead with the outcome. Do NOT format the reply as a report — no headings, no bold/italic emphasis, no bullet lists, no em-dash asides, and no restating the question. Keep it to one short paragraph where possible; use a blank line only to separate genuinely distinct points, never after every sentence. Put reasoning, step narration, and detail in thinking or the run trace, not the message. Do not confuse a mentioned @handle with the message author.';
+const CHAT_CONTEXT_TOOL_CONTEXT = 'Your channel transcript is append-only. A continued turn contains only new room activity and an exact message cursor. Use the pre-authorized `cascade-chat history --around-message-id <id> --include-reply-context` or `cascade-chat search <query>` tool when that delta is insufficient; never require a repeated sliding-window transcript.';
 
 // Live Cascade API config for helper wrappers, populated by the
 // desktop runner host once it knows the server URL + the user's auth token.
@@ -694,7 +695,7 @@ async function runClaudeLocally(opts, emit) {
       systemPrompt: {
         type: 'preset',
         preset: 'claude_code',
-        append: chatRun ? CHAT_BREVITY_CONTEXT : `${CLAUDE_AGENT_CONTEXT} ${noteCapabilityContext(opts)}`,
+        append: chatRun ? `${CHAT_BREVITY_CONTEXT} ${CHAT_CONTEXT_TOOL_CONTEXT}` : `${CLAUDE_AGENT_CONTEXT} ${noteCapabilityContext(opts)}`,
       },
     },
   });

@@ -448,6 +448,29 @@ export type ConversationSessionQuery = {
   nowMs?: number;
 };
 
+/** Number of already-recorded top-level turns in one provider session. */
+export function countConversationSessionRuns(
+  db: Db,
+  query: Omit<ConversationSessionQuery, 'boundedChat' | 'nowMs'>,
+  sessionId: string,
+): number {
+  if (!query.conversationId || !sessionId) return 0;
+  const noteCondition = query.noteId ? 'note_id = ?' : 'note_id IS NULL';
+  const params = query.noteId
+    ? [query.vaultId, query.noteId, query.agent, query.conversationId, sessionId]
+    : [query.vaultId, query.agent, query.conversationId, sessionId];
+  const row = db.prepare(`
+    SELECT COUNT(*) AS run_count
+    FROM runs
+    WHERE vault_id = ?
+      AND ${noteCondition}
+      AND agent = ?
+      AND conversation_id = ?
+      AND session_id = ?
+  `).get(...params) as { run_count: number };
+  return Math.max(0, Number(row.run_count) || 0);
+}
+
 /**
  * Find the live CLI session behind a conversation.
  *

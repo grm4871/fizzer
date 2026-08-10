@@ -187,3 +187,52 @@ test('room snapshots preserve state and only the interleaved changes since the t
   assert.match(context, /cascade-chat history --around-message-id <id> --include-reply-context/);
   assert.ok(context.length <= 2_800);
 });
+
+test('continued sessions append only new room activity plus an exact cursor', () => {
+  const sol = registration('reg-sol', 'Sol', 'sol', true);
+  const terra = registration('reg-terra', 'Terra', 'terra');
+  const messages = [
+    message('m1', 'asdfasdf', 'Old context already stored in the provider transcript.'),
+    message('m2', 'Terra', 'An old disagreement must not be repeated.', {
+      registrationId: terra.id,
+      agentId: 'codex',
+      replyTo: { messageId: 'm1', author: 'asdfasdf', mention: 'asdfasdf', preview: 'old', relationship: 'contradiction' },
+    }),
+    message('m3', 'Sol', 'Prior assistant response now cached.', { registrationId: sol.id, agentId: 'codex' }),
+    message('m4', 'asdfasdf', 'New room fact since Sol replied.'),
+    message('m5', 'Terra', 'New review evidence.', {
+      registrationId: terra.id,
+      agentId: 'codex',
+      replyTo: { messageId: 'm4', author: 'asdfasdf', mention: 'asdfasdf', preview: 'new', relationship: 'review_request' },
+    }),
+    message('trigger-6', 'asdfasdf', '@sol continue'),
+  ];
+  const context = buildAgentRoomContext({
+    messages,
+    registrations: [sol, terra],
+    targetRegistrationId: sol.id,
+    excludeMessageIds: ['trigger-6'],
+    continuation: true,
+    sessionTurn: 7,
+    cursorMessageId: 'trigger-6',
+    maxChars: 1_200,
+  });
+  const coldContext = buildAgentRoomContext({
+    messages,
+    registrations: [sol, terra],
+    targetRegistrationId: sol.id,
+    excludeMessageIds: ['trigger-6'],
+    cursorMessageId: 'trigger-6',
+    maxChars: 2_800,
+  });
+
+  assert.match(context, /^Shared room delta \(append-only cursor message trigger-6 · provider turn 7 · 2 new room messages\):/);
+  assert.match(context, /New room fact since Sol replied/);
+  assert.match(context, /New review evidence/);
+  assert.doesNotMatch(context, /Old context already stored/);
+  assert.doesNotMatch(context, /old disagreement/i);
+  assert.doesNotMatch(context, /Participants:/);
+  assert.match(context, /cascade-chat history --around-message-id trigger-6 --include-reply-context/);
+  assert.ok(context.length < coldContext.length, `${context.length} should be smaller than ${coldContext.length}`);
+  assert.ok(context.length <= 1_200);
+});

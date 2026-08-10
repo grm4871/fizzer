@@ -145,6 +145,7 @@ import {
   listRunEvents,
   startRun,
   cancelRun,
+  countConversationSessionRuns,
   findConversationSession,
   publishRunEvent,
   finishDelegatedRun,
@@ -3374,6 +3375,14 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
         })
       : undefined;
     const willResume = Boolean(resumeSessionId);
+    const providerSessionTurn = resumeSessionId && preliminaryConversationId
+      ? countConversationSessionRuns(db, {
+          vaultId: runVault.id,
+          noteId: note_id || null,
+          agent: selectedAgent,
+          conversationId: preliminaryConversationId,
+        }, resumeSessionId) + 1
+      : 1;
     // Hermes already loads the cwd rules, native memory/profile, skills, and
     // tool schemas. Re-injecting Cascade's general context on top made the same
     // task materially larger than `hermes -z`. Keep the default path near CLI
@@ -3390,7 +3399,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     // contract. Re-sending it on every turn wastes context and can make a
     // correctly resumed follow-up look like another cold system boot.
     const contextChunks: string[] = includeAppContract ? [CASCADE_AGENT_APP_CONTEXT] : [];
-    if (targetChannelId) contextChunks.push(CASCADE_MISSION_DISCRETION_CONTEXT);
+    if (targetChannelId && !willResume) contextChunks.push(CASCADE_MISSION_DISCRETION_CONTEXT);
     // Provider sessions remember their own prior turns, but not chat posted by
     // other room participants between invocations. Rejoin every chat run with
     // a bounded, current server snapshot; cold rotations also get the agent's
@@ -3405,7 +3414,10 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
           targetRegistrationId: chatRegistrationId,
           excludeMessageIds: [chatMessageId, triggeringMessageId],
           includeOwnPrior: !willResume,
-          maxChars: 2_800,
+          continuation: willResume,
+          sessionTurn: providerSessionTurn,
+          cursorMessageId: triggeringMessageId,
+          maxChars: willResume ? 1_200 : 2_800,
         });
         if (room) contextChunks.push(room);
       } catch { /* best-effort continuity; the focused request still runs */ }

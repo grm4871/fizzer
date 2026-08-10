@@ -162,6 +162,12 @@ export type AgentRoomContextOptions = {
   targetRegistrationId?: string;
   excludeMessageIds?: string[];
   includeOwnPrior?: boolean;
+  /** A resumed provider already owns the cold snapshot; send only new room activity. */
+  continuation?: boolean;
+  /** One-based top-level turn number within the current provider session. */
+  sessionTurn?: number;
+  /** Exact triggering message used by cascade-chat for lossless history lookup. */
+  cursorMessageId?: string;
   maxChars?: number;
 };
 
@@ -178,7 +184,10 @@ export function buildAgentRoomContext(options: AgentRoomContextOptions): string 
     targetRegistrationId = '',
     excludeMessageIds = [],
     includeOwnPrior = false,
-  maxChars = 2_800,
+    continuation = false,
+    sessionTurn,
+    cursorMessageId = '',
+    maxChars = 2_800,
   } = options;
   const excluded = new Set(excludeMessageIds.filter(Boolean));
   const roomMessages = messages.filter((message) => !excluded.has(message.id));
@@ -202,22 +211,6 @@ export function buildAgentRoomContext(options: AgentRoomContextOptions): string 
   const activeMissions = missions
     .filter((mission) => ['active', 'reviewing', 'attention', 'blocked'].includes(mission.status))
     .slice(0, 3);
-  const activeAgents = roomMessages
-    .filter((message) => message.status === 'running' && message.registrationId)
-    .slice(-4)
-    .map((message) => {
-      const registration = registrations.find((item) => item.id === message.registrationId);
-      return `- @${registration?.mention || normalizeMention(message.author)} is running [${message.id}]`;
-    });
-
-  const typed = visibleMessages.filter((message) => Boolean(message.replyTo?.relationship));
-  const childMessageIds = new Set(visibleMessages.map((message) => message.replyTo?.messageId).filter(Boolean));
-  const decisions = typed.filter((message) => message.replyTo?.relationship === 'decision').slice(-3);
-  const disagreements = typed.filter((message) => message.replyTo?.relationship === 'contradiction').slice(-3);
-  const openQuestions = typed.filter((message) => (
-    (message.replyTo?.relationship === 'question' || message.replyTo?.relationship === 'review_request')
-    && !childMessageIds.has(message.id)
-  )).slice(-3);
 
   let lastOwnIndex = -1;
   if (targetRegistrationId) {
@@ -228,31 +221,60 @@ export function buildAgentRoomContext(options: AgentRoomContextOptions): string 
       }
     }
   }
-  const roomChanges = (lastOwnIndex >= 0
-    ? visibleMessages.slice(lastOwnIndex + 1)
-    : visibleMessages.slice(-8))
-    .filter((message) => message.registrationId !== targetRegistrationId)
-    .slice(-10);
+  const deltaMessages = (lastOwnIndex >= 0 ? visibleMessages.slice(lastOwnIndex + 1) : visibleMessages.slice(-8))
+    .filter((message) => message.registrationId !== targetRegistrationId);
+  const lastOwnMessage = lastOwnIndex >= 0 ? visibleMessages[lastOwnIndex] : undefined;
+  const lastOwnAt = lastOwnMessage ? Date.parse(lastOwnMessage.createdAt) : Number.NaN;
+  const activeAgents = roomMessages
+    .filter((message) => message.status === 'running' && message.registrationId)
+    .filter((message) => !continuation || !Number.isFinite(lastOwnAt) || Date.parse(message.createdAt) > lastOwnAt)
+    .slice(-4)
+    .map((message) => {
+      const registration = registrations.find((item) => item.id === message.registrationId);
+      return `- @${registration?.mention || normalizeMention(message.author)} is running [${message.id}]`;
+    });
+  const changedMissions = continuation && Number.isFinite(lastOwnAt)
+    ? activeMissions.filter((mission) => Date.parse(mission.updatedAt) > lastOwnAt)
+    : [];
+  const typed = (continuation ? deltaMessages : visibleMessages)
+    .filter((message) => Boolean(message.replyTo?.relationship));
+  const childMessageIds = new Set(visibleMessages.map((message) => message.replyTo?.messageId).filter(Boolean));
+  const decisions = typed.filter((message) => message.replyTo?.relationship === 'decision').slice(-3);
+  const disagreements = typed.filter((message) => message.replyTo?.relationship === 'contradiction').slice(-3);
+  const openQuestions = typed.filter((message) => (
+    (message.replyTo?.relationship === 'question' || message.replyTo?.relationship === 'review_request')
+    && !childMessageIds.has(message.id)
+  )).slice(-3);
+
+  const roomChanges = deltaMessages.slice(-10);
   const ownPrior = includeOwnPrior && targetRegistrationId
     ? visibleMessages.filter((message) => message.registrationId === targetRegistrationId).slice(-2)
     : [];
 
   const sections: string[] = [];
-  if (participantLabels.length) sections.push(`Participants: ${compactText(participantLabels.join('; '), 720)}`);
-  if (activeMissions.length) sections.push(`Active goals:\n${activeMissions.map(missionLine).join('\n')}`);
+  if (!continuation && participantLabels.length) sections.push(`Participants: ${compactText(participantLabels.join('; '), 720)}`);
+  if (!continuation && activeMissions.length) sections.push(`Active goals:\n${activeMissions.map(missionLine).join('\n')}`);
+  if (changedMissions.length) sections.push(`Goal changes:\n${changedMissions.map(missionLine).join('\n')}`);
   if (activeAgents.length) sections.push(`Active work:\n${activeAgents.join('\n')}`);
-  if (decisions.length) sections.push(`Recent decisions:\n${decisions.map(roomMessageLine).join('\n')}`);
-  if (disagreements.length) sections.push(`Recent disagreements:\n${disagreements.map(roomMessageLine).join('\n')}`);
-  if (openQuestions.length) sections.push(`Open questions and reviews:\n${openQuestions.map(roomMessageLine).join('\n')}`);
+  if (!continuation && decisions.length) sections.push(`Recent decisions:\n${decisions.map(roomMessageLine).join('\n')}`);
+  if (!continuation && disagreements.length) sections.push(`Recent disagreements:\n${disagreements.map(roomMessageLine).join('\n')}`);
+  if (!continuation && openQuestions.length) sections.push(`Open questions and reviews:\n${openQuestions.map(roomMessageLine).join('\n')}`);
   if (roomChanges.length) {
     sections.push(`${lastOwnIndex >= 0 && target ? `Since @${target.mention || target.agentId} last spoke` : 'Recent room conversation'}:\n${roomChanges.map(roomMessageLine).join('\n')}`);
   }
-  if (ownPrior.length) sections.push(`Your recent contributions:\n${ownPrior.map(roomMessageLine).join('\n')}`);
+  if (!continuation && ownPrior.length) sections.push(`Your recent contributions:\n${ownPrior.map(roomMessageLine).join('\n')}`);
 
-  const footer = 'The focused request and quoted evidence in this turn take priority over this snapshot. '
-    + 'For older raw chat, use `cascade-chat history --around-message-id <id> --include-reply-context`; '
-    + 'use `cascade-chat search <query>` when you only know the topic.';
-  const header = 'Shared room state (bounded current snapshot):';
+  const cursor = cursorMessageId ? ` message ${cursorMessageId}` : '';
+  const turn = Number.isFinite(sessionTurn) && Number(sessionTurn) > 0 ? ` · provider turn ${Math.floor(Number(sessionTurn))}` : '';
+  const deltaCount = continuation ? ` · ${roomChanges.length} new room message${roomChanges.length === 1 ? '' : 's'}` : '';
+  const footer = continuation
+    ? `The focused request is authoritative. For lossless context around the cursor, use \`cascade-chat history --around-message-id ${cursorMessageId || '<id>'} --include-reply-context\`; use \`cascade-chat search <query>\` for older topics.`
+    : 'The focused request and quoted evidence in this turn take priority over this snapshot. '
+      + `For older raw chat, use \`cascade-chat history --around-message-id ${cursorMessageId || '<id>'} --include-reply-context\`; `
+      + 'use `cascade-chat search <query>` when you only know the topic.';
+  const header = continuation
+    ? `Shared room delta (append-only cursor${cursor}${turn}${deltaCount}):`
+    : `Shared room state (cold-start snapshot${cursor}${turn}):`;
   const budget = Math.max(1_200, maxChars) - footer.length - header.length - 4;
   let body = '';
   for (const section of sections) {

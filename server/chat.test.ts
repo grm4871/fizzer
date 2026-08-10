@@ -20,6 +20,8 @@ test('the app contract identifies Cascade and the live note helper unambiguously
   assert.match(CASCADE_AGENT_APP_CONTEXT, /Do not replace the helper with an absolute path/);
   assert.match(CASCADE_AGENT_APP_CONTEXT, /absent from the local filesystem or named tool list/);
   assert.match(CASCADE_AGENT_APP_CONTEXT, /Never claim you cannot see\/receive an attachment/);
+  assert.match(CASCADE_AGENT_APP_CONTEXT, /provider sessions are append-only/);
+  assert.match(CASCADE_AGENT_APP_CONTEXT, /cascade-chat history --around-message-id/);
   assert.match(CASCADE_AGENT_APP_CONTEXT, /Push is not ship/);
   assert.match(CASCADE_AGENT_APP_CONTEXT, /Do not ignore a red deploy/);
 });

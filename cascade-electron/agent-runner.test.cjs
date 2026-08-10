@@ -95,6 +95,13 @@ test('Claude chat uses adaptive effort with no fixed thinking budget', () => {
   assert.doesNotMatch(source, /budgetTokens: thinkingTokens/);
 });
 
+test('Claude keeps the append-only chat cursor tool in its stable system prompt', () => {
+  const source = fs.readFileSync(path.join(__dirname, 'agent-runner.cjs'), 'utf8');
+  assert.match(source, /const CHAT_CONTEXT_TOOL_CONTEXT = 'Your channel transcript is append-only\./);
+  assert.match(source, /append: chatRun \? `\$\{CHAT_BREVITY_CONTEXT\} \$\{CHAT_CONTEXT_TOOL_CONTEXT\}`/);
+  assert.match(source, /cascade-chat history --around-message-id <id> --include-reply-context/);
+});
+
 test('Claude keeps reasoning structured and tool JSON out of the harness trace', () => {
   const source = fs.readFileSync(path.join(__dirname, 'agent-runner.cjs'), 'utf8');
   const thinkingBranch = source.match(/if \(delta\?\.type === 'thinking_delta'[\s\S]*?else if \(delta\?\.type === 'text_delta'/)?.[0] || '';

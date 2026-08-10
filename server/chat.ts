@@ -31,6 +31,8 @@ export const CASCADE_AGENT_APP_CONTEXT =
   + 'To hand one chat result to another opted-in agent, use `cascade-chat send --to @handle --reply-to <message-id> '
   + '--relation <builds_on|review_request|question|contradiction|decision> --message "<instruction>"`; '
   + 'this creates a durable linked request instead of copying the whole channel. '
+  + 'Chat provider sessions are append-only: continued turns carry only new room activity plus an exact message cursor. '
+  + 'Use `cascade-chat history --around-message-id <id> --include-reply-context` or `cascade-chat search <query>` when the cursor delta is not enough; do not ask for the whole room to be repeated in every prompt. '
   + 'Shipping to this repo: run `npm run build` before push to master; after push watch Deploy Production with `gh run watch` until green. '
   + 'Push is not ship. Do not ignore a red deploy.';
 

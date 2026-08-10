@@ -5,6 +5,7 @@ import {
   DEFAULT_CHAT_SESSION_MAX_AGE_HOURS,
   DEFAULT_CHAT_SESSION_MAX_RUNS,
   cancelRun,
+  countConversationSessionRuns,
   ensureRunnerSchema,
   findConversationSession,
   finishDelegatedRun,
@@ -72,6 +73,9 @@ test('chat sessions resume below the bound and event reads can advance by sequen
       boundedChat: true,
       nowMs: Date.parse('2026-08-07T12:30:00Z'),
     }), 'session-short');
+    assert.equal(countConversationSessionRuns(db, {
+      vaultId: 'vault', noteId: null, agent: 'codex', conversationId: 'conversation',
+    }, 'session-short'), 1);
 
     const insertEvent = db.prepare(`
       INSERT INTO run_events (run_id, seq, type, payload_json)
@@ -81,6 +85,23 @@ test('chat sessions resume below the bound and event reads can advance by sequen
     insertEvent.run(2);
     insertEvent.run(3);
     assert.deepEqual(listRunEvents(db, 1, 1).map((event) => event.seq), [2, 3]);
+  } finally {
+    db.close();
+  }
+});
+
+test('provider turn count stays scoped to the exact append-only conversation session', () => {
+  const db = createDb();
+  try {
+    insertRun(db, 1, 'session-current');
+    insertRun(db, 2, 'session-current');
+    insertRun(db, 3, 'session-old');
+    assert.equal(countConversationSessionRuns(db, {
+      vaultId: 'vault', noteId: null, agent: 'codex', conversationId: 'conversation',
+    }, 'session-current'), 2);
+    assert.equal(countConversationSessionRuns(db, {
+      vaultId: 'vault', noteId: null, agent: 'codex', conversationId: 'other-conversation',
+    }, 'session-current'), 0);
   } finally {
     db.close();
   }
