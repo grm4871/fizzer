@@ -706,11 +706,11 @@ button:focus-visible,
 .vault-switcher-update-badge { margin-left: auto; }
 .vault-switcher-update-badge + .vault-switcher-check { margin-left: 0; }
 .vault-update-badge { min-width: 19px; height: 19px; }
-.vault-switcher-menu .vault-switcher-rename {
+.vault-switcher-menu .vault-switcher-rename,
+.vault-switcher-menu .vault-switcher-manage {
   position: absolute;
   z-index: 2;
   top: 8px;
-  right: 8px;
   width: 32px;
   height: 32px;
   display: grid;
@@ -723,10 +723,18 @@ button:focus-visible,
   cursor: pointer;
   opacity: 0;
 }
+.vault-switcher-menu .vault-switcher-manage { right: 8px; opacity: 1; }
+.vault-switcher-menu .vault-switcher-rename { right: 48px; }
 .vault-switcher-row:hover .vault-switcher-rename,
-.vault-switcher-menu .vault-switcher-rename:focus-visible { opacity: 1; }
-.vault-switcher-menu .vault-switcher-rename:hover { background: var(--bg-overlay); color: var(--accent-hover); }
-@media (hover: none) { .vault-switcher-menu .vault-switcher-rename { opacity: 1; } }
+.vault-switcher-row:hover .vault-switcher-manage,
+.vault-switcher-menu .vault-switcher-rename:focus-visible,
+.vault-switcher-menu .vault-switcher-manage:focus-visible { opacity: 1; }
+.vault-switcher-menu .vault-switcher-rename:hover,
+.vault-switcher-menu .vault-switcher-manage:hover { background: var(--bg-overlay); color: var(--accent-hover); }
+@media (hover: none) {
+  .vault-switcher-menu .vault-switcher-rename,
+  .vault-switcher-menu .vault-switcher-manage { opacity: 1; }
+}
 .vault-switcher-action {
   min-height: 132px;
   display: flex;

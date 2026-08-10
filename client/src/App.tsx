@@ -3865,6 +3865,10 @@ export default function App() {
           onSelectVault={switchVaultWorkspace}
           onCreateVault={handleCreateVault}
           onRenameVault={handleRenameVault}
+          onManageVault={(vaultId) => {
+            switchVaultWorkspace(vaultId);
+            setAccountOpen(true);
+          }}
           onJoinVault={handleJoinVault}
           onOpenPublicVaults={() => setDiscoveryDmsOpen('public')}
           onOpenDirectMessages={() => setDiscoveryDmsOpen('dms')}

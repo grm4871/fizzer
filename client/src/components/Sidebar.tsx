@@ -31,7 +31,7 @@ import { CHAT_NOTE_MARKER } from '../chat/shared';
 import {
   Folder as FolderIcon, FolderOpen, FileText, Pin, Edit2, FolderPlus,
   Search, ChevronRight, ChevronDown, Check, PanelLeftClose, LogOut, Trash2, FilePlus, FolderInput, Pencil, RefreshCw,
-  Hash, Unlink, ShieldCheck, SkipBack, Play, Pause, SkipForward, Music2, Plus, LogIn, Compass, Mail, X,
+  Hash, Unlink, ShieldCheck, SkipBack, Play, Pause, SkipForward, Music2, Plus, LogIn, Compass, Mail, Settings, X,
 } from 'lucide-react';
 import { FizzerMark } from './FizzerMark';
 
@@ -56,6 +56,7 @@ interface SidebarProps {
   onSelectVault: (id: string) => void;
   onCreateVault: (name: string) => Promise<boolean>;
   onRenameVault: (id: string, name: string) => Promise<boolean>;
+  onManageVault: (id: string) => void;
   onJoinVault: (inviteLink: string) => Promise<boolean>;
   onOpenPublicVaults: () => void;
   onOpenDirectMessages: () => void;
@@ -137,6 +138,7 @@ export const Sidebar = memo(function Sidebar({
   onSelectVault,
   onCreateVault,
   onRenameVault,
+  onManageVault,
   onJoinVault,
   onOpenPublicVaults,
   onOpenDirectMessages,
@@ -877,6 +879,19 @@ export const Sidebar = memo(function Sidebar({
                           <Pencil size={14} aria-hidden="true" />
                         </button>
                       )}
+                      <button
+                        type="button"
+                        className="vault-switcher-manage"
+                        title={`Manage ${vault.name}`}
+                        aria-label={`Manage ${vault.name}`}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setVaultMenuOpen(false);
+                          onManageVault(vault.id);
+                        }}
+                      >
+                        <Settings size={14} aria-hidden="true" />
+                      </button>
                     </div>
                   )
                 ))}
