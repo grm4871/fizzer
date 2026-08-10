@@ -164,7 +164,9 @@ export const ChatWorkTrace = memo(function ChatWorkTrace({
   forceOpen?: boolean;
 }) {
   const live = trace.some((m) => m.status === 'running' || m.status === 'sending');
-  const [open, setOpen] = useState(Boolean(forceOpen || (embedded && live)));
+  // Mission cards own the durable status surface. Their run stream stays behind
+  // explicit progressive disclosure, including while live.
+  const [open, setOpen] = useState(Boolean(forceOpen));
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const pinBottomRef = useRef(true);

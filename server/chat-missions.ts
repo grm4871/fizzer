@@ -1191,7 +1191,37 @@ export function finishChatMission(
     if (row.status !== input.status) throw new Error('Mission is already closed');
     return refreshMissionProjection(db, row.id);
   }
-  const tasks = taskRows(db, row.id);
+  let tasks = taskRows(db, row.id);
+  // The coordinator's implicit primary task represents this very run. Finishing
+  // the mission is the natural terminal action, so do not require agents to
+  // first issue a redundant task-update command. Never settle delegated work.
+  if (input.status === 'completed' && input.currentRunId != null) {
+    const primary = tasks.find((task) => (
+      task.status === 'running'
+      && task.run_id === input.currentRunId
+      && task.assignee_registration_id === row.coordinator_registration_id
+    ));
+    if (primary) {
+      const summary = cleanText(input.summary, 4000);
+      db.prepare(`
+        UPDATE chat_mission_tasks
+        SET status = 'completed', summary = ?, updated_at = datetime('now')
+        WHERE id = ?
+      `).run(summary, primary.id);
+      recordMissionEvent(db, row.id, {
+        taskId: primary.id,
+        kind: 'task_status_changed',
+        title: primary.title,
+        fromStatus: primary.status,
+        toStatus: 'completed',
+        summary,
+        runId: primary.run_id,
+        attempt: primary.attempt || 0,
+      });
+      syncWorkItemForMissionTask(db, row.created_by, row, { ...primary, status: 'completed', summary }, { release: true });
+      tasks = taskRows(db, row.id);
+    }
+  }
   if (input.status === 'completed' && tasks.some((task) => task.status === 'pending' || task.status === 'running')) {
     throw new Error('Mission still has active workers');
   }

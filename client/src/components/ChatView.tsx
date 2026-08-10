@@ -1668,13 +1668,14 @@ function ChatMissionCard({
   const peekAuthor = tracePeek?.author
     || (runningTask ? (runningTask.assigneeMention || runningTask.assignee) : '')
     || '';
-  const peekLabel = tracePeek?.label
+  const peekLabel = (terminal ? mission.summary : '')
+    || tracePeek?.label
     || (runningTask ? runningTask.title : '')
     || (mission.status === 'active' && total === 0 ? 'deciding approach…' : '')
     || (mission.status === 'active' ? `${done}/${total} tasks in flight` : '');
   // Peek is collapsed-only activity exposure. When open, the stream/tasks are the UI.
   // Settled missions without useful activity text skip the second rail entirely.
-  const showPeek = !open && (peekLive || Boolean(peekLabel && (tracePeek || runningTask)));
+  const showPeek = !open && Boolean(peekLabel) && (terminal || peekLive || Boolean(tracePeek || runningTask));
   async function toggleTimeline() {
     const next = !timelineOpen;
     setTimelineOpen(next);
@@ -3576,7 +3577,6 @@ export const ChatView = memo(function ChatView({
                     onHydrateMessage={onHydrateMessage}
                     runningMessageState={runningMessageState}
                     embedded={missionHasTrace}
-                    forceOpen={missionHasTrace}
                   />
                 );
                 const peek = workTracePeek(segment.trace);

@@ -1078,3 +1078,39 @@ test('a mission cannot complete over active work and cancel removes pending disp
     db.close();
   }
 });
+
+test('coordinator finish settles its own primary run without a redundant task update', () => {
+  const { db, coordinator } = setup();
+  try {
+    const root = createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: 'root-primary-finish', channelId: 'channel-1', author: 'owner', body: 'Handle this',
+      createdAt: '2026-08-03T00:00:00.000Z',
+    });
+    const mission = createChatMission(db, 1, 'vault-1', 'channel-1', {
+      rootMessageId: root.id, coordinatorRegistrationId: coordinator.id, title: 'Direct mission',
+    });
+    const added = addChatMissionTask(db, 1, 'channel-1', mission.mission.id, {
+      coordinatorRegistrationId: coordinator.id, title: 'Primary task', assignee: coordinator.id, primary: true,
+    });
+    const shell = createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: 'primary-finish-shell', channelId: 'channel-1', author: '', body: 'Thinking...',
+      createdAt: '2026-08-03T00:00:01.000Z', registrationId: coordinator.id,
+    });
+    const dispatch = createChatAgentDispatchForRegistration(db, 1, 'channel-1', shell, coordinator.id);
+    linkMissionTaskDispatch(db, added.task.id, dispatch.id);
+    attachRunToMissionTaskByDispatch(db, dispatch.id, 777);
+
+    const finished = finishChatMission(db, 1, 'channel-1', mission.mission.id, {
+      coordinatorRegistrationId: coordinator.id,
+      status: 'completed',
+      summary: 'Shipped.',
+      currentRunId: 777,
+    });
+
+    assert.equal(finished.mission.status, 'completed');
+    assert.equal(finished.mission.tasks[0]?.status, 'completed');
+    assert.equal(finished.mission.tasks[0]?.summary, 'Shipped.');
+  } finally {
+    db.close();
+  }
+});

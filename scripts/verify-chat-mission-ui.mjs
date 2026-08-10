@@ -423,14 +423,16 @@ try {
   // Re-open for the remaining expanded-stream assertions.
   await card.locator('.chat-mission-toggle').click();
   await workTrace.waitFor({ timeout: 5_000 });
+  check('embedded mission stream starts collapsed', await workTrace.evaluate((node) => !node.classList.contains('is-open')));
+  await workTrace.locator('.chat-work-trace-toggle').click();
   // Coordinator follow-ups that stay in the work run render as compact lines
-  // inside the mission stream (not a second full bubble above the mission).
+  // inside the progressively disclosed mission stream (not a second full bubble).
   const finalAsWorkLine = await workTrace.locator(`.chat-work-line[data-message-id="${traceMessages[2].id}"]`).count();
   const finalAsFullBubble = await page.locator(`.chat-message-chunk[data-message-id="${traceMessages[2].id}"]`).count();
   check('coordinator prose stays in the mission stream when work continues', (
     finalAsWorkLine === 1 && finalAsFullBubble === 0
   ), `workLine=${finalAsWorkLine}, fullBubble=${finalAsFullBubble}`);
-  check('embedded mission stream starts expanded', await workTrace.evaluate((node) => node.classList.contains('is-open') && node.classList.contains('is-forced-open')));
+  check('embedded mission stream expands independently', await workTrace.evaluate((node) => node.classList.contains('is-open') && !node.classList.contains('is-forced-open')));
   const traceLines = workTrace.locator('.chat-work-line');
   const traceLineCount = await traceLines.count();
   check('expanded trace exposes its worker steps', traceLineCount >= 1, `count=${traceLineCount}`);
