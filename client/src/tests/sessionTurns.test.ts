@@ -104,6 +104,16 @@ describe('chat session turn serialization', () => {
     expect(pending.size).toBe(0);
   });
 
+  it('does not mark pending when there is no local active run (avoids suicide cancel)', () => {
+    const active = new Map<string, number>();
+    const interrupted = new Map<string, number>();
+    const pending = new Set<string>();
+
+    expect(requestSessionSteer(active, interrupted, pending, 'supagrok:conversation-1')).toBeUndefined();
+    expect(pending.size).toBe(0);
+    expect(consumePendingSessionSteer(interrupted, pending, 'supagrok:conversation-1', 99)).toBe(false);
+  });
+
   it('force-releases prior turns so a steer is not stuck behind a hung predecessor', async () => {
     const tails = new Map<string, Promise<void>>();
     const first = enqueueSessionTurn(tails, 'supagrok:conversation-1');

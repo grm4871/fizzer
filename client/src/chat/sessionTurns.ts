@@ -106,6 +106,13 @@ export function resetSessionTurnHandlesForTests(): void {
  *
  * Repeated messages aimed at a run already being stopped are carried forward
  * to the next serialized turn instead of firing duplicate cancel requests.
+ *
+ * Important: when there is no local active run, do **not** mark pending.
+ * Pending means "kill the next run as soon as it starts" so a *later* steer
+ * can replace a continuation that has not begun yet. Marking pending on a
+ * cold/missing local map (reload, projected-only lease, race before
+ * createRun registers) suicides the run this turn is about to start — the
+ * shell ends as "Steered into the continuation below" with no continuation.
  */
 export function requestSessionSteer(
   activeRuns: Map<string, number>,
@@ -114,7 +121,10 @@ export function requestSessionSteer(
   key: string,
 ): number | undefined {
   const activeRun = activeRuns.get(key);
-  if (activeRun == null || interruptedRuns.get(key) === activeRun) {
+  if (activeRun == null) {
+    return undefined;
+  }
+  if (interruptedRuns.get(key) === activeRun) {
     pendingSteers.add(key);
     return undefined;
   }
