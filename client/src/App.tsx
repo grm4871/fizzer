@@ -84,6 +84,7 @@ import {
   type AgentId,
 } from './chat/agents';
 import { buildQuotedReplyPrompt, getMentionedRegistrations, normalizeMention, precedingMessageBatch, precedingMessageBatchText, replyQuoteTargetsAgent, stripRegisteredAgentMentions } from './chat/mentions';
+import type { ChatRelationship } from './chat/relationships';
 import {
   appendChatRunBlocks,
   appendHarnessLog,
@@ -1698,6 +1699,15 @@ export default function App() {
     const agentMessageId = dispatchId
       ? `agent-dispatch-${dispatchId}`
       : `agent-${agentId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const collaborationReplyTo: ChatReplyRef | undefined = triggeringMessage.replyTo?.relationship
+      ? {
+        messageId: triggeringMessage.id,
+        author: triggeringMessage.author,
+        mention: '',
+        preview: triggeringMessage.body.trim().slice(0, 120) || '(collaboration request)',
+        relationship: 'builds_on',
+      }
+      : undefined;
 
     const cancelSteeringRun = async (runId: number) => {
       try {
@@ -1815,6 +1825,7 @@ export default function App() {
       ...(triggeringMessage.missionTaskId
         ? { missionTaskId: triggeringMessage.missionTaskId }
         : {}),
+      ...(collaborationReplyTo ? { replyTo: collaborationReplyTo } : {}),
     }, { persist: false });
 
     try {
@@ -2061,6 +2072,7 @@ export default function App() {
           // Cascade-specific context when the request genuinely depends on it.
           contextNeeded: needsRecentChatContext(prompt),
           workspaceNeeded: needsCascadeWorkspaceContext(prompt),
+          ...(collaborationReplyTo ? { replyTo: collaborationReplyTo } : {}),
         },
       });
       const createRun = () => api<{ run: { id: number; status: string; conversation_id: string }; reused?: boolean }>(
@@ -2203,6 +2215,31 @@ export default function App() {
     if (pendingDispatches.length === 0) return;
     const vaultId = activeVaultIdRef.current;
     const contextMessages = history.filter((message) => message.id !== triggeringMessage.id);
+    // A typed handoff can point far outside the renderer's recent window. Fetch
+    // only its linked evidence chain (bounded by the server hop limit), never
+    // the whole channel, so a recovered dispatch still receives the real source.
+    if (triggeringMessage.replyTo && vaultId) {
+      const known = new Map(contextMessages.map((message) => [message.id, message]));
+      let ref: ChatReplyRef | undefined = triggeringMessage.replyTo;
+      for (let depth = 0; ref && depth < 5; depth += 1) {
+        let linked = known.get(ref.messageId);
+        if (!linked) {
+          try {
+            const data = await api<{ message: ChatMessage }>(
+              `/api/vaults/${vaultId}/channels/${channelId}/messages/${encodeURIComponent(ref.messageId)}`,
+            );
+            linked = data.message;
+            if (linked) {
+              known.set(linked.id, linked);
+              contextMessages.push(linked);
+            }
+          } catch {
+            break;
+          }
+        }
+        ref = linked?.replyTo;
+      }
+    }
     const attachmentNames = (triggeringMessage.attachments ?? []).map((item) => item.name).join(' ');
     const typedSource = [triggeringMessage.body.trim(), attachmentNames].filter(Boolean).join(' ');
     const directPrompt = stripRegisteredAgentMentions(typedSource, registrations);
@@ -2342,6 +2379,52 @@ export default function App() {
       return false;
     }
   }, []);
+
+  const handleCollaborateChatMessage = useCallback(async (
+    channelId: string,
+    sourceMessageId: string,
+    targetRegistrationId: string,
+    relationship: ChatRelationship,
+    instruction: string,
+  ): Promise<void> => {
+    const vaultId = activeVaultIdRef.current;
+    if (!vaultId) throw new Error('No active vault');
+    const history = chatMessageStore.getChannel(channelId);
+    const data = await api<{
+      message: ChatMessage;
+      agents: ChatAgentRegistration[];
+      dispatches: ChatAgentDispatch[];
+    }>(`/api/vaults/${vaultId}/channels/${channelId}/messages/${encodeURIComponent(sourceMessageId)}/collaborate`, {
+      method: 'POST',
+      body: JSON.stringify({
+        target: targetRegistrationId,
+        relationship,
+        instruction,
+        requestId: `collab-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      }),
+    });
+    chatMessageStore.update(channelId, (messages) => {
+      const index = messages.findIndex((message) => message.id === data.message.id);
+      if (index === -1) return [...messages, data.message];
+      const next = [...messages];
+      next[index] = mergeRemoteChatMessage(messages[index], data.message);
+      return next;
+    });
+    setChatState((prev) => ({
+      ...prev,
+      registeredAgentsByChannel: {
+        ...prev.registeredAgentsByChannel,
+        [channelId]: data.agents,
+      },
+    }));
+    await dispatchChatAgentIntents(
+      channelId,
+      data.message,
+      data.agents,
+      data.dispatches,
+      history,
+    );
+  }, [dispatchChatAgentIntents]);
 
   const handleSendChatMessage = useCallback((
     channelId: string,
@@ -3472,6 +3555,7 @@ export default function App() {
             onRemoveParticipant={handleRemoveChatParticipant}
             onLeaveChannel={handleLeaveChatChannel}
             onSendMessage={handleSendChatMessage}
+            onCollaborateMessage={handleCollaborateChatMessage}
             onDeleteMessage={handleDeleteChatMessage}
             onForwardMessage={handleForwardChatMessage}
             onCancelRun={handleCancelChatRun}
@@ -3507,7 +3591,7 @@ export default function App() {
         </Suspense>
       </ErrorBoundary>
     );
-  }, [chatState.registeredAgentsByChannel, chatPresenceByChannel, currentUsername, loadingChatChannels, runnerHealth, vaultAgents, handleCancelChatRun, handleCreateChatInviteLink, handleInviteChatUser, handleRemoveChatParticipant, handleLeaveChatChannel, handleRegisterChatAgent, handleRemoveChatAgent, handleUpsertVaultAgent, handleDeleteVaultAgent, handleAddVaultAgentToChannel, handleSendChatMessage, handleForwardChatMessage, noteContents, notes, getNoteChangeHandler, getNoteSaveHandler, getNoteRenameHandler, handleExecuteDirective, handleOpenWikilink, openNote, chatMembersOpen, activeVaultId, handleHydrateChatMessage, handleOpenSharedChatNote, superkanbanNotes, superkanbanLiveWork, superkanbanLoading, superkanbanError, chatJumpTarget, handleChatJumpHandled]);
+  }, [chatState.registeredAgentsByChannel, chatPresenceByChannel, currentUsername, loadingChatChannels, runnerHealth, vaultAgents, handleCancelChatRun, handleCreateChatInviteLink, handleInviteChatUser, handleRemoveChatParticipant, handleLeaveChatChannel, handleRegisterChatAgent, handleRemoveChatAgent, handleUpsertVaultAgent, handleDeleteVaultAgent, handleAddVaultAgentToChannel, handleSendChatMessage, handleCollaborateChatMessage, handleForwardChatMessage, noteContents, notes, getNoteChangeHandler, getNoteSaveHandler, getNoteRenameHandler, handleExecuteDirective, handleOpenWikilink, openNote, chatMembersOpen, activeVaultId, handleHydrateChatMessage, handleOpenSharedChatNote, superkanbanNotes, superkanbanLiveWork, superkanbanLoading, superkanbanError, chatJumpTarget, handleChatJumpHandled]);
 
   if (!user) {
     const hasInvite = /^\/invite\/[^/]+$/.test(window.location.pathname);
@@ -3819,6 +3903,7 @@ export default function App() {
                 onRemoveParticipant={handleRemoveChatParticipant}
                 onLeaveChannel={handleLeaveChatChannel}
                 onSendMessage={handleSendChatMessage}
+                onCollaborateMessage={handleCollaborateChatMessage}
                 onCancelRun={handleCancelChatRun}
                 notes={notes}
                 onOpenNote={openNote}

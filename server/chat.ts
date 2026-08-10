@@ -28,6 +28,9 @@ export const CASCADE_AGENT_APP_CONTEXT =
   + 'Chat messages can carry images and files; the text transcript only marks them. '
   + 'When a message has media, open it with `cascade-chat attachment --message-id <id>` (writes the file and prints its path) '
   + 'before answering about the image. Never claim you cannot see/receive an attachment, and never invent its contents. '
+  + 'To hand one chat result to another opted-in agent, use `cascade-chat send --to @handle --reply-to <message-id> '
+  + '--relation <builds_on|review_request|question|contradiction|decision> --message "<instruction>"`; '
+  + 'this creates a durable linked request instead of copying the whole channel. '
   + 'Shipping to this repo: run `npm run build` before push to master; after push watch Deploy Production with `gh run watch` until green. '
   + 'Push is not ship. Do not ignore a red deploy.';
 
@@ -37,11 +40,23 @@ export const CASCADE_MISSION_DISCRETION_CONTEXT =
   + 'Use judgment: do not start a mission for simple questions, status checks, conversation, or a small one-step change. '
   + 'A mission does not grant authority over other users agents; only delegate when the user explicitly asks and the ownership boundary is valid.';
 
+export const CHAT_RELATIONSHIPS = [
+  'builds_on',
+  'review_request',
+  'question',
+  'contradiction',
+  'decision',
+] as const;
+
+export type ChatRelationship = typeof CHAT_RELATIONSHIPS[number];
+
 export type ChatReplyRef = {
   messageId: string;
   author: string;
   mention: string;
   preview: string;
+  /** Typed edge from this message to the quoted parent. Omitted for an ordinary reply. */
+  relationship?: ChatRelationship;
 };
 
 /** Provenance stamped on a message copied into another channel ("forward"). */
@@ -1961,6 +1976,10 @@ export function createChatMessage(
     }
   }
   if (!author) throw new Error('Author is required');
+  if (
+    input.replyTo?.relationship
+    && !CHAT_RELATIONSHIPS.includes(input.replyTo.relationship)
+  ) throw new Error('Invalid chat relationship');
 
   const message: ChatMessage = {
     ...input,
@@ -2652,6 +2671,7 @@ export function ensureAgentChatMessage(
     missionTaskId?: string;
     runId: number;
     body?: string;
+    replyTo?: ChatReplyRef;
     /** Optional; when omitted, stamp strictly after the channel's latest message
      * so agent shells never share a millisecond (and lower rowid) with the prompt. */
     createdAt?: string;
@@ -2691,6 +2711,7 @@ export function ensureAgentChatMessage(
     registrationId: input.registrationId,
     missionTaskId: input.missionTaskId,
     runId: input.runId,
+    replyTo: input.replyTo,
   });
   return { message, created: true };
 }

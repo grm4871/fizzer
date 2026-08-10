@@ -86,6 +86,7 @@ test('agent API capabilities allow helpers but deny user and publishing routes',
   assert.equal(isAgentApiRequestAllowed('POST', '/api/vaults/v1/channels/c1/messages'), true);
   assert.equal(isAgentApiRequestAllowed('POST', '/api/vaults/v1/scratchpad/journal'), true);
   assert.equal(isAgentApiRequestAllowed('PATCH', '/api/vaults/v1/channels/c1/messages/m1'), true);
+  assert.equal(isAgentApiRequestAllowed('POST', '/api/vaults/v1/channels/c1/messages/m1/collaborate'), true);
   assert.equal(isAgentApiRequestAllowed('POST', '/api/vaults/v1/folders'), true);
   assert.equal(isAgentApiRequestAllowed('GET', '/api/vaults/v1/channels/c1/agents'), true);
   assert.equal(isAgentApiRequestAllowed('POST', '/api/vaults/v1/channels/c1/missions'), true);

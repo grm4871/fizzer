@@ -188,3 +188,41 @@ test('mission start always posts a coordinator shell as the mission root', async
   assert.equal(requests[0].body?.author, 'Sol');
   assert.equal(requests[1].body?.rootMessageId, 'sys-mission-root-new');
 });
+
+test('send creates a typed single-agent handoff without suppressing the caller reply', async (t) => {
+  const requests: Array<{ path: string; body: Record<string, unknown> }> = [];
+  const server = http.createServer(async (req, res) => {
+    let raw = '';
+    for await (const chunk of req) raw += chunk;
+    requests.push({ path: req.url || '', body: raw ? JSON.parse(raw) : {} });
+    res.setHeader('content-type', 'application/json');
+    res.statusCode = 201;
+    res.end(JSON.stringify({ message: { id: 'collab-1' } }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const address = server.address();
+  assert(address && typeof address === 'object');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-chat-handoff-'));
+  const config = path.join(dir, 'helper.json');
+  fs.writeFileSync(config, JSON.stringify({ registrationId: 'reg-sol', agentId: 'codex' }));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  const result = await execFileAsync(process.execPath, [
+    cli, 'send', '--to', '@terra', '--reply-to', 'source/message', '--relation', 'review_request',
+    '--message', 'Check this result.', '--url', `http://127.0.0.1:${address.port}`,
+    '--token', 'token', '--vault', 'vault-1', '--channel', 'channel-1',
+  ], { env: { ...process.env, CASCADE_HELPER_CONFIG: config, CASCADE_RUN_ID: '88' } });
+
+  assert.match(result.stdout, /asked @terra via review_request \(collab-1\)/);
+  assert.equal(requests[0]?.path, '/api/vaults/vault-1/channels/channel-1/messages/source%2Fmessage/collaborate');
+  assert.deepEqual(requests[0]?.body, {
+    target: '@terra',
+    relationship: 'review_request',
+    instruction: 'Check this result.',
+    requestId: requests[0]?.body.requestId,
+    registrationId: 'reg-sol',
+  });
+  assert.match(String(requests[0]?.body.requestId), /^collab-codex-/);
+  assert.equal(JSON.parse(fs.readFileSync(config, 'utf8')).usedChatSend, undefined);
+});

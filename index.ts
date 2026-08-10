@@ -226,7 +226,9 @@ import {
   setChannelCwd,
   type AgentChatContentAccumulator,
   type ChatMessage,
+  type ChatReplyRef,
 } from './server/chat.js';
+import { createChatCollaboration } from './server/chat-collaboration.js';
 import {
   attachRunToChatAgentDispatch,
   createChatAgentDispatchForRegistration,
@@ -3168,6 +3170,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     || req.body?.chat?.workspaceNeeded === 1
     || req.body?.chat?.workspaceNeeded === '1'
     || req.body?.chat?.workspaceNeeded === 'true';
+  const chatReplyTo = req.body?.chat?.replyTo as ChatReplyRef | undefined;
   let registrationId = typeof req.body?.registrationId === 'string' ? req.body.registrationId.trim() : '';
   const chatDispatchId = typeof req.body?.chatDispatchId === 'string' ? req.body.chatDispatchId.trim() : '';
   let chatDispatch: ChatAgentDispatch | null = null;
@@ -3529,6 +3532,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
             missionTaskId: chatMissionTaskId || undefined,
             runId: run.id,
             body: 'Thinking...',
+            replyTo: chatReplyTo,
           },
         );
         const { route } = assertChatChannel(db, targetChannelId, runnerUserId);
@@ -3785,6 +3789,52 @@ app.post('/api/vaults/:vaultId/channels/:channelId/messages', requireAuth, (req:
     }
     emitChatMessageEvent(route.sourceVaultId, route.sourceChannelId, 'vault:chatMessageCreated', message, dispatches);
     res.status(201).json({ message, agents, dispatches });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+app.post('/api/vaults/:vaultId/channels/:channelId/messages/:messageId/collaborate', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const { route } = assertChatChannel(db, req.params.channelId, req.user!.id);
+    ensureVaultWideAgents(db, req.params.vaultId, req.params.channelId, req.user!.id);
+    assertDirectMessageSendAllowed(db, route.sourceChannelId, req.user!.id);
+    const result = createChatCollaboration(
+      db,
+      req.user!.id,
+      req.params.vaultId,
+      req.params.channelId,
+      {
+        sourceMessageId: req.params.messageId,
+        target: String(req.body?.target || ''),
+        relationship: req.body?.relationship,
+        instruction: String(req.body?.instruction || ''),
+        requestId: String(req.body?.requestId || ''),
+        callerRegistrationId: isAgentRequest(req) ? String(req.body?.registrationId || '') : '',
+        author: req.user!.username,
+      },
+      isAgentRequest(req),
+    );
+    const agents = listChatAgentMembers(db, req.params.channelId, req.user!.id);
+    refreshChatNoteGrants(req.user!.id, req.params.vaultId, route.sourceChannelId, result.message);
+    try {
+      indexChatMessageBacklinks(db, route.sourceVaultId, route.sourceChannelId, {
+        id: result.message.id,
+        author: result.message.author,
+        body: result.message.body,
+        createdAt: result.message.createdAt,
+      });
+    } catch (error) {
+      console.warn('chat backlink index skipped:', error instanceof Error ? error.message : error);
+    }
+    emitChatMessageEvent(
+      route.sourceVaultId,
+      route.sourceChannelId,
+      'vault:chatMessageCreated',
+      result.message,
+      [result.dispatch],
+    );
+    res.status(201).json({ message: result.message, agents, dispatches: [result.dispatch] });
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
   }

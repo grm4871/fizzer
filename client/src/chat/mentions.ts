@@ -1,6 +1,7 @@
 /**
  * Shared @mention parsing helpers used by chat send logic and the ChatView UI.
  */
+import { relationshipPromptLabel, type ChatRelationship } from './relationships';
 
 export function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -113,6 +114,7 @@ type QuotableReplyRef = {
   author?: string;
   mention?: string;
   preview?: string;
+  relationship?: ChatRelationship;
 };
 
 type QuotableMessage = {
@@ -134,7 +136,7 @@ export function buildQuotedReplyPrompt(
   replyTo: QuotableReplyRef,
   messages: QuotableMessage[],
   maxChars = 1_200,
-  maxAncestors = 2,
+  maxAncestors = 4,
 ) {
   const byId = new Map(messages.map((message) => [message.id, message]));
   const quote = (text: string, limit: number) => {
@@ -152,7 +154,7 @@ export function buildQuotedReplyPrompt(
     const text = (message?.body.trim() || ref.preview?.trim() || '').trim();
     if (text) {
       const who = (ref.author || ref.mention || message?.author || '').trim() || 'a message';
-      const header = depth === 0 ? `Replying to ${who}:` : `…which was itself replying to ${who}:`;
+      const header = `${relationshipPromptLabel(ref.relationship, depth > 0)} ${who}:`;
       sections.push(`${header}\n${quote(text, depth === 0 ? maxChars : Math.ceil(maxChars / 3))}`);
     }
     ref = message?.replyTo;

@@ -22,6 +22,8 @@ Usage:
   cascade-chat attachment              write a message's images/files to disk
                         (--message-id <id>; default: newest message with media)
   cascade-chat send --message <text>    send a standalone message to the channel
+  cascade-chat send --to @agent --reply-to <message-id> --relation <type> --message <instruction>
+                                        create a typed single-agent handoff
   cascade-chat members                  list people-callable agent teammates
   cascade-chat mission start --title T [--objective O]
   cascade-chat mission list
@@ -42,7 +44,9 @@ Options:
   --message <text>          message body for send (default: stdin)
   --mission <id|current>    mission id for mission commands
   --task <id|title>         task id (update) or title (delegate)
-  --to <@handle>            worker agent for mission delegate
+  --to <@handle>            target agent for send handoff or mission delegate
+  --reply-to <message-id>   source message for a typed send handoff
+  --relation <type>         builds_on|review_request|question|contradiction|decision
   --status <status>         pending|running|completed|failed|blocked|canceled
   --summary <text>          concise task/mission outcome
   --objective <text>        mission objective (defaults to triggering message)
@@ -760,6 +764,36 @@ async function main() {
     if (!body) fail('missing message. Pass --message <text> or pipe text on stdin.');
     const registrationId = configString(config, 'registrationId');
     const agentId = configString(config, 'agentId');
+    const collaborationTarget = optionString(args, 'to');
+    const collaborationSource = optionString(args, 'reply-to');
+    const collaborationRelation = optionString(args, 'relation');
+    const collaborationRequested = Boolean(collaborationTarget || collaborationSource || collaborationRelation);
+    if (collaborationRequested) {
+      if (!collaborationTarget || !collaborationSource || !collaborationRelation) {
+        fail('typed handoff requires --to, --reply-to, and --relation.');
+      }
+      const allowed = new Set(['builds_on', 'review_request', 'question', 'contradiction', 'decision']);
+      if (!allowed.has(collaborationRelation)) fail(`invalid --relation: ${collaborationRelation}`);
+      if (!registrationId) fail('typed handoff requires an active registered-agent context.');
+      if (typeof args['changes-file'] === 'string') fail('--changes-file cannot be combined with a typed handoff.');
+      const requestId = `collab-${agentId || 'agent'}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const result = await api(
+        url,
+        token,
+        'POST',
+        `/api/vaults/${vaultId}/channels/${channelId}/messages/${encodeURIComponent(collaborationSource)}/collaborate`,
+        {
+          target: collaborationTarget,
+          relationship: collaborationRelation,
+          instruction: body,
+          requestId,
+          registrationId,
+        },
+      );
+      const sent = result.message || { id: requestId };
+      process.stdout.write(`asked ${collaborationTarget} via ${collaborationRelation} (${sent.id})\n`);
+      return;
+    }
     const inferredAuthor = inferAuthor(args, config);
     const author = optionString(args, 'author', 'CASCADE_CHAT_AUTHOR', config, 'chatAuthor')
       || inferredAuthor

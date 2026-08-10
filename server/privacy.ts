@@ -208,6 +208,7 @@ export function isAgentApiRequestAllowed(methodRaw: string, path: string): boole
     [['GET', 'PUT'], /^\/api\/vaults\/[^/]+\/agent-memory$/],
     [['GET', 'POST'], /^\/api\/vaults\/[^/]+\/scratchpad(?:\/[^/]+)*(?:\/close)?$/],
     [['GET', 'POST', 'PATCH'], /^\/api\/vaults\/[^/]+\/channels\/[^/]+\/messages(?:\/[^/]+)?$/],
+    [['POST'], /^\/api\/vaults\/[^/]+\/channels\/[^/]+\/messages\/[^/]+\/collaborate$/],
     [['GET'], /^\/api\/vaults\/[^/]+\/channels\/[^/]+\/agents$/],
     [['POST'], /^\/api\/vaults\/[^/]+\/channels\/[^/]+\/missions$/],
     [['GET'], /^\/api\/vaults\/[^/]+\/channels\/[^/]+\/missions$/],

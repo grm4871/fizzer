@@ -110,6 +110,11 @@ describe('buildQuotedReplyPrompt', () => {
     expect(buildQuotedReplyPrompt(replyTo, [])).toBe('Replying to alice:\n> clipped questio…');
   });
 
+  it('carries the typed relationship into the agent prompt', () => {
+    expect(buildQuotedReplyPrompt({ ...replyTo, relationship: 'review_request' }, []))
+      .toBe('Review requested for alice:\n> clipped questio…');
+  });
+
   it('quotes every line so a multi-line ask stays readable', () => {
     expect(buildQuotedReplyPrompt(replyTo, [{ id: 'msg-1', body: 'first\nsecond' }]))
       .toBe('Replying to alice:\n> first\n> second');
@@ -143,7 +148,7 @@ describe('buildQuotedReplyPrompt', () => {
       link('msg-2', 'msg-3'),
       link('msg-1', 'msg-2'),
     ];
-    const prompt = buildQuotedReplyPrompt(replyTo, messages);
+    const prompt = buildQuotedReplyPrompt(replyTo, messages, 1_200, 2);
     expect(prompt.match(/replying to/gi)).toHaveLength(3);
     expect(prompt).not.toContain('msg-4');
   });

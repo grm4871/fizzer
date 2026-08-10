@@ -17,6 +17,7 @@ import {
   upsertVaultAgent,
 } from './chat.js';
 import { ensureWorkItemSchema, getWorkItem } from './workItems.js';
+import { createChatCollaboration, MAX_CHAT_COLLABORATION_HOPS } from './chat-collaboration.js';
 import {
   createChatAgentDispatchForRegistration,
   createChatAgentDispatches,
@@ -408,6 +409,101 @@ function setup() {
   });
   return { db, coordinator, worker };
 }
+
+test('typed collaboration creates one durable linked dispatch and replays idempotently', () => {
+  const { db, coordinator, worker } = setup();
+  try {
+    const source = createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: 'collab-source', channelId: 'channel-1', author: '', body: 'I found the routing boundary.',
+      createdAt: '2026-08-03T00:00:00.000Z', registrationId: worker.id,
+    });
+    const input = {
+      sourceMessageId: source.id,
+      target: coordinator.id,
+      relationship: 'review_request' as const,
+      instruction: 'Review the evidence and challenge weak claims.',
+      requestId: 'collab-request-1',
+      author: 'owner',
+    };
+    const first = createChatCollaboration(db, 1, 'vault-1', 'channel-1', input, false);
+    const replay = createChatCollaboration(db, 1, 'vault-1', 'channel-1', input, false);
+
+    assert.equal(first.message.body, '@sol Review the evidence and challenge weak claims.');
+    assert.deepEqual(first.message.replyTo, {
+      messageId: source.id,
+      author: 'Terra',
+      mention: 'terra',
+      preview: 'I found the routing boundary.',
+      relationship: 'review_request',
+    });
+    assert.equal(first.dispatch.registration.id, coordinator.id);
+    assert.equal(replay.message.id, first.message.id);
+    assert.equal(replay.dispatch.id, first.dispatch.id);
+    const rows = db.prepare('SELECT registration_id FROM chat_agent_dispatches WHERE message_id = ?').all(first.message.id);
+    assert.deepEqual(rows, [{ registration_id: coordinator.id }]);
+    assert.throws(
+      () => createChatMessage(db, 1, 'vault-1', 'channel-1', {
+        id: 'invalid-link', channelId: 'channel-1', author: 'owner', body: 'bad edge',
+        createdAt: '2026-08-03T00:00:02.000Z',
+        replyTo: { ...first.message.replyTo!, relationship: 'fan_out' as never },
+      }),
+      /Invalid chat relationship/,
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test('agent handoffs respect opt-in, self-target, and hop limits', () => {
+  const { db, coordinator, worker } = setup();
+  try {
+    const source = createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: 'agent-collab-source', channelId: 'channel-1', author: '', body: 'Draft result.',
+      createdAt: '2026-08-03T00:00:00.000Z', registrationId: coordinator.id,
+    });
+    const handoff = {
+      sourceMessageId: source.id,
+      target: worker.id,
+      relationship: 'builds_on' as const,
+      instruction: 'Extend this result.',
+      callerRegistrationId: coordinator.id,
+    };
+    assert.throws(
+      () => createChatCollaboration(db, 1, 'vault-1', 'channel-1', handoff, true),
+      /not accepting agent handoffs/,
+    );
+    db.prepare('UPDATE chat_agent_members SET taggable_by_agents = 1 WHERE id = ?').run(worker.id);
+    const allowed = createChatCollaboration(db, 1, 'vault-1', 'channel-1', handoff, true);
+    assert.equal(allowed.message.registrationId, coordinator.id);
+    assert.equal(allowed.dispatch.registration.id, worker.id);
+    assert.throws(
+      () => createChatCollaboration(db, 1, 'vault-1', 'channel-1', {
+        ...handoff, target: coordinator.id, requestId: 'self-handoff',
+      }, true),
+      /cannot hand work to itself/,
+    );
+
+    let parent = source;
+    for (let index = 0; index < MAX_CHAT_COLLABORATION_HOPS; index += 1) {
+      parent = createChatMessage(db, 1, 'vault-1', 'channel-1', {
+        id: `hop-${index}`, channelId: 'channel-1', author: 'owner', body: `Hop ${index}`,
+        createdAt: `2026-08-03T00:00:0${index + 1}.000Z`,
+        replyTo: {
+          messageId: parent.id, author: parent.author, mention: '', preview: parent.body,
+          relationship: 'builds_on',
+        },
+      });
+    }
+    assert.throws(
+      () => createChatCollaboration(db, 1, 'vault-1', 'channel-1', {
+        ...handoff, sourceMessageId: parent.id, requestId: 'too-deep',
+      }, true),
+      /hop limit/,
+    );
+  } finally {
+    db.close();
+  }
+});
 
 test('one registration cannot lease two open provider runs across dispatches', () => {
   const { db, coordinator } = setup();
