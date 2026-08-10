@@ -720,10 +720,9 @@ async function runClaudeLocally(opts, emit) {
 
       // Partial streaming: translate token-level deltas into the same
       // { message: { content: [...] } } shape the chat accumulators expect,
-      // routing thinking_delta → a thinking block and text_delta → a text
-      // block. The assembled `assistant` message is skipped below so its
-      // content isn't appended a second time on top of these deltas.
-      // Also tee a human-readable transcript into the harness terminal pane.
+      // Keep provider reasoning private while still reporting that thinking is
+      // happening; text_delta remains assistant-visible prose. The assembled
+      // `assistant` message is skipped below so its content is not duplicated.
       if (message.type === 'stream_event') {
         const ev = message.event;
         if (ev?.type === 'message_start') {
@@ -738,11 +737,9 @@ async function runClaudeLocally(opts, emit) {
               emitHarness(emit, '\x1b[2m# thinking\x1b[0m\r\n');
               harnessInThinking = true;
             }
-            if (blockType === 'redacted_thinking') {
-              emit('text', { message: { content: [{ type: 'redacted_thinking' }] } });
-              emitHarness(emit, '\x1b[2m[redacted]\x1b[0m');
-              lastBlockWasText = false;
-            }
+            emit('text', { message: { content: [{ type: 'redacted_thinking' }] } });
+            emitHarness(emit, '\x1b[2m[reasoning hidden]\x1b[0m\r\n');
+            lastBlockWasText = false;
           } else if (blockType === 'tool_use') {
             harnessInThinking = false;
             const name = block?.name || 'tool';
@@ -772,11 +769,11 @@ async function runClaudeLocally(opts, emit) {
         } else if (ev?.type === 'content_block_delta') {
           const delta = ev.delta;
           if (delta?.type === 'thinking_delta' && delta.thinking) {
-            emit('text', { message: { content: [{ type: 'thinking', thinking: delta.thinking }] } });
-            emitHarness(emit, `\x1b[2m${delta.thinking}\x1b[0m`);
+            // Intentionally do not persist or render token-level chain of
+            // thought. The content-block start emitted a redacted activity row.
             lastBlockWasText = false;
           } else if (delta?.type === 'text_delta' && delta.text) {
-            // Claude SDK thinking deltas use the distinct thinking block above;
+            // Thinking is represented by the redacted activity row above;
             // text deltas are assistant-visible prose and can stream into chat.
             emit('text', { chatVisible: true, message: { content: [{ type: 'text', text: delta.text }] } });
             emitHarness(emit, delta.text);
@@ -785,7 +782,8 @@ async function runClaudeLocally(opts, emit) {
             lastBlockWasText = true;
           } else if (delta?.type === 'input_json_delta' && delta.partial_json) {
             if (pendingTool) pendingTool.json += delta.partial_json;
-            emitHarness(emit, `\x1b[36m${delta.partial_json}\x1b[0m`);
+            // Partial JSON is protocol framing, not a readable progress line.
+            // The completed structured tool_use below owns the parsed input.
           }
         } else if (ev?.type === 'content_block_stop') {
           if (harnessInThinking) {

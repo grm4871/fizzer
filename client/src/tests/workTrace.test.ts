@@ -7,6 +7,7 @@ import {
   partitionWorkRun,
   segmentTranscript,
   humanizeActivityLine,
+  workTraceHarnessPreview,
   workTracePreview,
   workTraceDecals,
   workTracePhase,
@@ -234,6 +235,20 @@ describe('workTrace', () => {
     }))).toBe('edited src/App.tsx');
     // Never surface the full JSON blob.
     expect(workTracePreview('{"type":"thread.started","thread_id":"abc"}\n{"type":"item.started","item":{"type":"reasoning"}}'))
+      .toBe('thinking…');
+  });
+
+  it('keeps Claude reasoning, ANSI bytes, and partial tool JSON out of mission peeks', () => {
+    const harness = [
+      '\x1b[2m# thinking\x1b[0m',
+      '\x1b[2mprivate reasoning that must not render\x1b[0m',
+      '\x1b[36m▶ Bash\x1b[0m',
+      '\x1b[36m{"command":"python -c secret"}\x1b[0m',
+    ].join('\r\n');
+    expect(workTraceHarnessPreview(harness)).toBe('Bash');
+    expect(workTraceHarnessPreview(`${harness}\r\n\x1b[32m✓ tool_result\x1b[0m\r\nsecret output`))
+      .toBe('Bash done');
+    expect(humanizeActivityLine('\x1b[36m{"type":"item.started","item":{"type":"reasoning","text":"private"}}\x1b[0m'))
       .toBe('thinking…');
   });
 

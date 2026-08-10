@@ -94,9 +94,14 @@ test('Claude chat uses adaptive effort with no fixed thinking budget', () => {
   assert.doesNotMatch(source, /budgetTokens: thinkingTokens/);
 });
 
-test('Claude exposes assistant text for live chat while keeping reasoning separate', () => {
+test('Claude exposes assistant text while redacting provider reasoning and protocol fragments', () => {
   const source = fs.readFileSync(path.join(__dirname, 'agent-runner.cjs'), 'utf8');
-  assert.match(source, /thinking_delta[\s\S]*emit\('text', \{ message: \{ content: \[\{ type: 'thinking'/);
+  const thinkingBranch = source.match(/if \(delta\?\.type === 'thinking_delta'[\s\S]*?else if \(delta\?\.type === 'text_delta'/)?.[0] || '';
+  const inputBranch = source.match(/else if \(delta\?\.type === 'input_json_delta'[\s\S]*?\n\s*}/)?.[0] || '';
+  assert.match(source, /type: 'redacted_thinking'/);
+  assert.doesNotMatch(thinkingBranch, /type: 'thinking'/);
+  assert.doesNotMatch(thinkingBranch, /emitHarness/);
+  assert.doesNotMatch(inputBranch, /emitHarness/);
   assert.match(source, /text_delta[\s\S]*emit\('text', \{ chatVisible: true/);
 });
 

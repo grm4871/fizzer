@@ -196,9 +196,20 @@ try {
       body: 'Sol: worker evidence is ready for review.',
     },
     {
-      id: `trace-worker-${stamp}`, channelId: channel.id, author: 'Terra', agentId: 'codex',
+      id: `trace-worker-${stamp}`, channelId: channel.id, author: 'Claude', agentId: 'claude-code',
       body: 'Inspected multiplayer persistence and collected the runtime evidence.',
       missionTaskId: task.id,
+      status: 'running',
+      blocks: [
+        { type: 'thinking', text: 'private chain of thought must never render' },
+        { type: 'tool_use', id: 'claude-tool-1', name: 'Bash', input: { command: 'python -c hidden' } },
+      ],
+      harnessLog: [
+        '\x1b[2m# thinking\x1b[0m',
+        '\x1b[2mprivate chain of thought must never render\x1b[0m',
+        '\x1b[36m▶ Bash\x1b[0m',
+        '\x1b[36m{"command":"python -c hidden"}\x1b[0m',
+      ].join('\r\n'),
     },
     {
       id: `trace-final-${stamp}`, channelId: channel.id, author: 'Sol', registrationId: sol.id,
@@ -299,9 +310,13 @@ try {
   check('collapsed mission exposes thinking activity strip', (
     await card.locator('.chat-mission-peek').count()
   ) === 1 && (await card.locator('.chat-mission-peek').isVisible()));
-  check('collapsed mission peek shows live work summary', (
-    (await card.locator('.chat-mission-peek').innerText()).length > 0
-  ));
+  const missionPeekText = await card.locator('.chat-mission-peek').innerText();
+  check('collapsed mission peek shows normalized live work summary', (
+    missionPeekText.trim().length > 0
+      && !missionPeekText.includes('[36m')
+      && !missionPeekText.includes('{"command"')
+      && !missionPeekText.includes('private chain of thought')
+  ), missionPeekText);
   check('collapsed peek has no second solid status ball', (
     await card.locator('.chat-mission-peek-dot').count()
   ) === 0);
@@ -437,10 +452,19 @@ try {
   check('expanded trace exposes its worker steps', traceLineCount >= 1, `count=${traceLineCount}`);
   check('expanded stream retains coordinator evidence', finalAsWorkLine === 1);
   const workerLine = workTrace.locator(`[data-message-id="${traceMessages[1].id}"]`);
-  await workerLine.locator('.chat-work-line-fold').click();
+  if (!(await workerLine.evaluate((node) => node.classList.contains('is-open')))) {
+    await workerLine.locator('.chat-work-line-fold').click();
+  }
   check('an individual step restores its full evidence', (
     await workerLine.innerText()
   ).includes('Inspected multiplayer persistence'));
+  const claudeTraceText = await workerLine.innerText();
+  check('expanded Claude trace redacts provider reasoning and protocol fragments', (
+    claudeTraceText.includes('[reasoning hidden]')
+      && !claudeTraceText.includes('private chain of thought')
+      && !claudeTraceText.includes('{"command"')
+      && !claudeTraceText.includes('[36m')
+  ), claudeTraceText.slice(0, 1000));
 
   await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/missions/tasks/${task.id}`, {
     method: 'PATCH', headers: auth,

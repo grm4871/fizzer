@@ -90,13 +90,39 @@ function previewText(value: unknown, max = 90): string {
   return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
 }
 
+const TERMINAL_SEQUENCE_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?/g;
+
+/** Remove terminal protocol bytes before any text reaches ordinary DOM copy. */
+function stripTerminalNoise(value: unknown): string {
+  return String(value ?? '')
+    .replace(TERMINAL_SEQUENCE_RE, '')
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '');
+}
+
+function previewStructuredDetail(value: unknown, max = 60): string {
+  if (typeof value === 'string' && value.trim().startsWith('{')) {
+    try {
+      return previewStructuredDetail(JSON.parse(value), max);
+    } catch {
+      return '';
+    }
+  }
+  if (!value || typeof value !== 'object') return previewText(value, max);
+  const record = value as Record<string, unknown>;
+  return previewText(
+    record.command ?? record.file_path ?? record.path ?? record.pattern
+      ?? record.query ?? record.url ?? record.description,
+    max,
+  );
+}
+
 /**
  * Turn a single harness/body line into operator-facing prose.
  * Protocol JSONL (Codex/Claude/Grok) becomes short status phrases instead of
  * raw `{"type":...}` dumps in peeks and work-trace previews.
  */
 export function humanizeActivityLine(line: string): string {
-  const trimmed = String(line || '').trim();
+  const trimmed = stripTerminalNoise(line).trim();
   if (!trimmed) return '';
   // Skip our own meta comments unless they already read as status.
   if (trimmed.startsWith('# ')) {
@@ -120,7 +146,7 @@ export function humanizeActivityLine(line: string): string {
     if (type === 'thread.started' || type === 'session.created') return 'session started';
     if (type === 'thread.completed' || type === 'session.completed') return 'session finished';
     if (type === 'thought' || type === 'reasoning') {
-      return previewText(ev.data ?? ev.text ?? ev.content, 90) || 'thinking…';
+      return 'thinking…';
     }
     if (type === 'message' || type === 'agent_message' || type === 'assistant') {
       return previewText(ev.text ?? ev.content ?? ev.message ?? data?.text, 90) || 'replying…';
@@ -129,7 +155,7 @@ export function humanizeActivityLine(line: string): string {
       const itemType = String(item?.type || '');
       const done = type === 'item.completed';
       if (itemType === 'reasoning') {
-        return previewText(item?.text, 90) || (done ? 'thought' : 'thinking…');
+        return done ? 'thought' : 'thinking…';
       }
       if (itemType === 'agent_message') {
         return previewText(item?.text, 90) || (done ? 'replied' : 'replying…');
@@ -158,7 +184,7 @@ export function humanizeActivityLine(line: string): string {
     }
     if (type === 'tool.execution_start' || type === 'tool_use') {
       const name = String(data?.toolName ?? ev.name ?? 'tool');
-      const detail = previewText(data?.arguments ?? ev.input ?? data?.command, 60);
+      const detail = previewStructuredDetail(data?.arguments ?? ev.input ?? data?.command, 60);
       return detail ? `${name} ${detail}` : `${name}…`;
     }
     if (type === 'tool.execution_complete' || type === 'tool_result') {
@@ -176,6 +202,81 @@ export function humanizeActivityLine(line: string): string {
     // Not JSON after all.
     return trimmed;
   }
+}
+
+/**
+ * Mission peeks are user-facing, not a terminal. Only surface explicit
+ * lifecycle/tool frames from harness output; suppress provider reasoning,
+ * streamed JSON fragments, and tool-result bodies.
+ */
+export function workTraceHarnessPreview(harness: string, max = 110): string {
+  const lines = stripTerminalNoise(harness)
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .split('\n')
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const candidates: string[] = [];
+  let hiddenReasoning = false;
+  let toolResultBody = false;
+  let lastTool = '';
+
+  for (const line of lines) {
+    if (/^#\s*thinking\b/i.test(line)) {
+      hiddenReasoning = true;
+      toolResultBody = false;
+      candidates.push('thinking…');
+      continue;
+    }
+
+    const toolStart = line.match(/^[▶>]\s+(\S+)(?:\s+(.*))?$/);
+    if (toolStart) {
+      hiddenReasoning = false;
+      toolResultBody = false;
+      lastTool = toolStart[1];
+      const detail = previewStructuredDetail(toolStart[2], 70);
+      candidates.push(detail ? `${lastTool} ${detail}` : lastTool);
+      continue;
+    }
+
+    const toolEnd = line.match(/^([✓✗xX])\s*tool_result\b/i);
+    if (toolEnd) {
+      hiddenReasoning = false;
+      toolResultBody = true;
+      candidates.push(`${lastTool || 'tool'} ${/^[✗xX]$/.test(toolEnd[1]) ? 'failed' : 'done'}`);
+      continue;
+    }
+
+    if (line.startsWith('# ')) {
+      hiddenReasoning = false;
+      toolResultBody = false;
+      const human = humanizeActivityLine(line);
+      if (human && !/^session (started|finished)$/i.test(human)) candidates.push(human);
+      continue;
+    }
+
+    const namedTool = line.match(/^(Bash|Edit|Read|Write|Search|Glob|Grep|WebFetch|WebSearch)\b(?:\s+(.*))?$/);
+    if (namedTool) {
+      hiddenReasoning = false;
+      toolResultBody = false;
+      lastTool = namedTool[1];
+      const detail = previewStructuredDetail(namedTool[2], 70);
+      candidates.push(detail ? `${lastTool} ${detail}` : lastTool);
+      continue;
+    }
+    if (hiddenReasoning || toolResultBody) continue;
+
+    // Structured provider events are safe only after humanization. Arbitrary
+    // terminal prose is intentionally ignored and falls back to the chat body.
+    if (line.startsWith('{') || line.startsWith('$ ')) {
+      const human = humanizeActivityLine(line);
+      if (!human || /^session (started|finished)$/i.test(human)) continue;
+      if (human === 'working…' && candidates.length > 0) continue;
+      candidates.push(human);
+    }
+  }
+
+  return truncateActivity(candidates[candidates.length - 1] || '', max);
 }
 
 /** Prefer the latest human-readable activity line (harness tails grow live). */
@@ -203,7 +304,9 @@ export function workTracePreview(body: string, max = 110): string {
 
 export function workTraceStatusLabel(message: Pick<ChatMessage, 'status' | 'body' | 'harnessLog'>): string {
   if (message.status === 'running') {
-    const live = workTracePreview(message.harnessLog || message.body || '', 90);
+    const live = message.harnessLog
+      ? workTraceHarnessPreview(message.harnessLog, 90)
+      : workTracePreview(message.body || '', 90);
     if (live && !/^Thinking(?:\.{3}|…)$/i.test(live)) return live;
     return 'working…';
   }
@@ -463,7 +566,7 @@ export function workTracePeek(trace: ChatMessage[]): WorkTracePeek | null {
   const message = liveMessage || trace[trace.length - 1];
   const live = Boolean(liveMessage);
   // Prefer harness tail (live tools/thinking), then body — both humanized.
-  const harnessLine = workTracePreview(message.harnessLog || '', 90);
+  const harnessLine = workTraceHarnessPreview(message.harnessLog || '', 90);
   const bodyLine = workTracePreview(message.body || '', 90);
   const label = live
     ? (harnessLine || (bodyLine && !/^Thinking(?:\.{3}|…)$/i.test(bodyLine) ? bodyLine : '') || 'working…')

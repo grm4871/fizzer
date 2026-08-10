@@ -62,6 +62,27 @@ describe('buildHarnessActivity', () => {
     expect(tool?.result).toBe('[]');
   });
 
+  it('redacts Claude reasoning from structured and raw activity views', () => {
+    const activity = buildHarnessActivity(msg({
+      agentId: 'claude-code',
+      blocks: [
+        { type: 'thinking', text: 'private chain of thought' },
+        { type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'npm test' } },
+      ],
+      harnessLog: [
+        '\x1b[2m# thinking\x1b[0m',
+        '\x1b[2mprivate chain of thought\x1b[0m',
+        '\x1b[36m▶ Bash\x1b[0m',
+        '\x1b[36m{"command":"npm test"}\x1b[0m',
+      ].join('\r\n'),
+    }));
+    expect(activity.thinkingText).toBe('[reasoning hidden]');
+    expect(activity.rawLog).toContain('[reasoning hidden]');
+    expect(activity.rawLog).not.toContain('private chain of thought');
+    expect(activity.rawLog).not.toContain('{"command"');
+    expect(activity.items.find((item) => item.kind === 'thinking')?.text).toBe('[reasoning hidden]');
+  });
+
   it('parses cascade-stats and meta from harness log', () => {
     const activity = buildHarnessActivity(msg({
       harnessLog: [
