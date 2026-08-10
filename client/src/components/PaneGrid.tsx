@@ -12,7 +12,7 @@
 
 import { Fragment, useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { FileText, ExternalLink, X, Hash, LayoutDashboard, PanelLeftClose, PanelLeftOpen, Plus } from 'lucide-react';
+import { FileText, ExternalLink, X, Hash, LayoutDashboard, PanelLeftClose, PanelLeftOpen, Plus, Sparkles } from 'lucide-react';
 import type { Tab } from './TabBar';
 import { NOTE_DND_TYPE } from '../docEmbeds';
 import { usePopupMenu } from '../ui/popupMenu';
@@ -45,8 +45,10 @@ interface PaneGridProps {
   onCloseOtherTabs: (tabIds: string[], keepTabId: string) => void;
   /** A tab was dropped onto a pane; `index` only applies to `center` drops. */
   onDropTab: (payload: TabDragPayload, targetPaneId: string, side: DropSide, index?: number) => void;
+  onDropNote: (noteId: string, targetPaneId: string, side: DropSide, index?: number) => void;
   onResize: (splitId: string, sizes: number[]) => void;
   onCreateNote?: (paneId: string) => void;
+  onCreateTab?: (paneId: string) => void;
   onCreateChat?: (paneId: string) => void;
   onOpenSuperkanban?: (paneId: string) => void;
   sidebarOpen: boolean;
@@ -108,6 +110,7 @@ function sideFromPosition(rect: DOMRect, clientX: number, clientY: number): Drop
 function TabIcon({ type }: { type: Tab['type'] }) {
   if (type === 'chat') return <Hash size={13} className="text-secondary" style={{ marginRight: 6 }} />;
   if (type === 'superkanban') return <LayoutDashboard size={13} className="text-tertiary" style={{ marginRight: 6 }} />;
+  if (type === 'new') return <Sparkles size={13} className="text-tertiary" style={{ marginRight: 6 }} />;
   return <FileText size={13} className="text-tertiary" style={{ marginRight: 6 }} />;
 }
 
@@ -120,6 +123,8 @@ function PaneTabStrip({
   onCloseTab,
   onCloseOtherTabs,
   onDropTab,
+  onDropNote,
+  onCreateTab,
   onCreateNote,
   onCreateChat,
   onOpenSuperkanban,
@@ -136,6 +141,8 @@ function PaneTabStrip({
   onCloseTab: (tabId: string) => void;
   onCloseOtherTabs: (tabIds: string[], keepTabId: string) => void;
   onDropTab: PaneGridProps['onDropTab'];
+  onDropNote: PaneGridProps['onDropNote'];
+  onCreateTab?: (paneId: string) => void;
   onCreateNote?: (paneId: string) => void;
   onCreateChat?: (paneId: string) => void;
   onOpenSuperkanban?: (paneId: string) => void;
@@ -200,22 +207,24 @@ function PaneTabStrip({
 
   const handleStripDrop = (event: DragEvent, index?: number) => {
     const payload = readPayload(event);
-    if (!payload) return;
+    const noteId = event.dataTransfer.getData(NOTE_DND_TYPE);
+    if (!payload && !noteId) return;
     event.preventDefault();
     event.stopPropagation();
     setTabDropHint(null);
-    onDropTab(payload, pane.id, 'center', index);
+    if (payload) onDropTab(payload, pane.id, 'center', index);
+    else onDropNote(noteId, pane.id, 'center', index);
   };
 
   const allowDrop = (event: DragEvent) => {
-    if (event.dataTransfer.types.includes(DRAG_MIME)) {
+    if (event.dataTransfer.types.includes(DRAG_MIME) || event.dataTransfer.types.includes(NOTE_DND_TYPE)) {
       event.preventDefault();
       event.dataTransfer.dropEffect = 'move';
     }
   };
 
   const handleTabDragOver = (event: DragEvent, tabId: string) => {
-    if (!event.dataTransfer.types.includes(DRAG_MIME)) return;
+    if (!event.dataTransfer.types.includes(DRAG_MIME) && !event.dataTransfer.types.includes(NOTE_DND_TYPE)) return;
     event.preventDefault();
     event.stopPropagation();
     event.dataTransfer.dropEffect = 'move';
@@ -228,15 +237,18 @@ function PaneTabStrip({
 
   const handleTabDrop = (event: DragEvent, targetTabId: string) => {
     const payload = readPayload(event);
-    if (!payload) return;
+    const noteId = event.dataTransfer.getData(NOTE_DND_TYPE);
+    if (!payload && !noteId) return;
     event.preventDefault();
     event.stopPropagation();
     const rect = event.currentTarget.getBoundingClientRect();
     const placement = event.clientX < rect.left + rect.width / 2 ? 'before' : 'after';
     setTabDropHint(null);
-    if (payload.tabId === targetTabId) return;
-    const index = tabInsertionIndex(pane.tabIds, payload.tabId, targetTabId, placement);
-    onDropTab(payload, pane.id, 'center', index);
+    const movingId = payload?.tabId ?? noteId;
+    if (movingId === targetTabId) return;
+    const index = tabInsertionIndex(pane.tabIds, movingId, targetTabId, placement);
+    if (payload) onDropTab(payload, pane.id, 'center', index);
+    else onDropNote(noteId, pane.id, 'center', index);
   };
 
   return (
@@ -322,18 +334,18 @@ function PaneTabStrip({
         </button>
         );
       })}
-      {onCreateNote && (
+      {onCreateTab && (
         <button
           type="button"
           className="tab-new-btn"
-          onClick={() => onCreateNote(pane.id)}
+          onClick={() => onCreateTab(pane.id)}
           onContextMenu={(event) => {
             event.preventDefault();
             event.stopPropagation();
             setContextMenu({ kind: 'new', x: event.clientX, y: event.clientY });
           }}
-          title="New note (right-click for options)"
-          aria-label="New note"
+          title="New tab (right-click for options)"
+          aria-label="New tab"
         >
           <Plus size={14} />
         </button>
@@ -355,6 +367,9 @@ function PaneTabStrip({
           {([
             contextMenu.kind === 'new' && onCreateChat
               ? { icon: <Hash size={13} />, label: 'New channel', action: () => onCreateChat(pane.id) }
+              : null,
+            contextMenu.kind === 'new' && onCreateNote
+              ? { icon: <FileText size={13} />, label: 'New note', action: () => onCreateNote(pane.id) }
               : null,
             contextMenu.kind === 'new' && onOpenSuperkanban
               ? { icon: <LayoutDashboard size={13} />, label: 'Superkanban', action: () => onOpenSuperkanban(pane.id) }
@@ -402,6 +417,8 @@ function Pane({
   onCloseTab,
   onCloseOtherTabs,
   onDropTab,
+  onDropNote,
+  onCreateTab,
   onCreateNote,
   onCreateChat,
   onOpenSuperkanban,
@@ -435,7 +452,7 @@ function Pane({
   }, [pane.tabIds]);
 
   const handleDragOver = (event: DragEvent) => {
-    if (!event.dataTransfer.types.includes(DRAG_MIME)) return;
+    if (!event.dataTransfer.types.includes(DRAG_MIME) && !event.dataTransfer.types.includes(NOTE_DND_TYPE)) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = 'move';
     const el = contentRef.current;
@@ -444,14 +461,16 @@ function Pane({
 
   const handleDrop = (event: DragEvent) => {
     const payload = readPayload(event);
+    const noteId = event.dataTransfer.getData(NOTE_DND_TYPE);
     setDropSide(null);
-    if (!payload) return;
+    if (!payload && !noteId) return;
     event.preventDefault();
     const el = contentRef.current;
     const side = el
       ? sideFromPosition(el.getBoundingClientRect(), event.clientX, event.clientY)
       : 'center';
-    onDropTab(payload, pane.id, side);
+    if (payload) onDropTab(payload, pane.id, side);
+    else onDropNote(noteId, pane.id, side);
   };
 
   const mountedTabs = mountedTabIds
@@ -472,6 +491,8 @@ function Pane({
         onCloseTab={onCloseTab}
         onCloseOtherTabs={onCloseOtherTabs}
         onDropTab={onDropTab}
+        onDropNote={onDropNote}
+        onCreateTab={onCreateTab}
         onCreateNote={onCreateNote}
         onCreateChat={onCreateChat}
         onOpenSuperkanban={onOpenSuperkanban}

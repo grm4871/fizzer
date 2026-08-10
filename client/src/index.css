@@ -7092,6 +7092,19 @@ button.chat-avatar.is-clickable:focus-visible {
   text-transform: uppercase;
   letter-spacing: 0.13em;
 }
+.new-tab-page {
+  flex: 1;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 10px;
+  padding: 32px;
+  color: var(--text-tertiary);
+  text-align: center;
+}
+.new-tab-page svg { color: var(--accent); }
+.new-tab-page strong { color: var(--text-secondary); font: 650 0.875rem/1.2 var(--font-display); }
+.new-tab-page span { max-width: 30rem; font-size: 0.75rem; line-height: 1.6; }
 .pane-tab-bar {
   min-height: 34px;
 }

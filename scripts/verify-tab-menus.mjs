@@ -145,6 +145,13 @@ try {
   // ── The new-tab (+) menu: every item its props should produce.
   const plus = page.locator('.tab-new-btn').first();
   await plus.waitFor({ timeout: 10000 });
+  const beforeNewTabNotes = (await must(`${API_BASE}/api/vaults/${vault.id}/notes`, { headers: auth })).notes.length;
+  await plus.click();
+  await page.getByText('Drag a note from the sidebar here', { exact: false }).waitFor({ timeout: 5000 });
+  const afterNewTabNotes = (await must(`${API_BASE}/api/vaults/${vault.id}/notes`, { headers: auth })).notes.length;
+  check('+ opens a blank new-tab page', await page.locator('.tab-item', { hasText: 'New tab' }).count() === 1);
+  check('+ does not create a note', afterNewTabNotes === beforeNewTabNotes, `${beforeNewTabNotes} -> ${afterNewTabNotes}`);
+
   await plus.click({ button: 'right' });
 
   const menu = page.locator('.tab-context-menu');
@@ -156,6 +163,7 @@ try {
 
   const labels = (await menu.locator('button').allInnerTexts()).map((t) => t.trim().toLowerCase());
   check('+ menu offers New channel/chat', labels.some((t) => t.includes('new channel') || t.includes('new chat')), JSON.stringify(labels));
+  check('+ menu keeps explicit New note creation', labels.some((t) => t.includes('new note')), JSON.stringify(labels));
   check('+ menu offers Superkanban', labels.some((t) => t.includes('superkanban')), JSON.stringify(labels));
 
   // Clipped-menu regression: an overflow ancestor used to cut the menu off.
@@ -195,6 +203,21 @@ try {
       await page.screenshot({ path: process.env.CAPTURE_UI, fullPage: true });
     }
   }
+
+  // Sidebar notes use the same drop contract as internal tabs: strip = dock,
+  // pane edge = split. Exercise both real drag paths.
+  const boardSource = page.locator('.tree-item.is-note', { hasText: 'menus-board' }).first();
+  await boardSource.dragTo(page.locator('.pane-tab-bar').first());
+  await page.locator('.tab-item', { hasText: 'menus-board' }).waitFor({ timeout: 10000 });
+  check('sidebar note docks when dropped on the tab bar', true);
+
+  const splitSource = page.locator('.tree-item.is-note', { hasText: 'Kanban Feature Test' }).first();
+  const paneContent = page.locator('.pane-content').first();
+  const paneBox = await paneContent.boundingBox();
+  if (!paneBox) throw new Error('pane content has no bounding box');
+  await splitSource.dragTo(paneContent, { targetPosition: { x: paneBox.width - 4, y: paneBox.height / 2 } });
+  await page.waitForFunction(() => document.querySelectorAll('.editor-pane').length === 2, undefined, { timeout: 10000 });
+  check('sidebar note splits the workspace when dropped on a pane edge', true);
 
   // ── The per-tab menu on the tab we just opened.
   const skTab = page.locator('.tab-bar .tab-item', { hasText: 'Superkanban' }).first();

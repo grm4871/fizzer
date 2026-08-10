@@ -87,7 +87,7 @@ import {
 } from './chat/session';
 import { chatMessageStore } from './chat/messageStore';
 import { consumePendingSessionSteer, enqueueSessionTurn, findProjectedActiveSessionRun, forceReleasePriorSessionTurns, queuesBehindActiveSession, requestSessionSteer, shouldSteerActiveSession } from './chat/sessionTurns';
-import { Activity, Bell, Download, PanelLeftOpen, Users } from 'lucide-react';
+import { Activity, Bell, Download, PanelLeftOpen, Sparkles, Users } from 'lucide-react';
 import { FizzerMark } from './components/FizzerMark';
 
 type ChatAgentDispatch = {
@@ -3020,6 +3020,14 @@ export default function App() {
 
   const handleCreateNoteInPane = useCallback((paneId: string) => { void createAndOpenNote(paneId, null); }, [createAndOpenNote]);
 
+  const handleCreateTabInPane = useCallback((paneId: string) => {
+    const id = `new:${crypto.randomUUID()}`;
+    const tab: Tab = { id, title: 'New tab', type: 'new', dirty: false };
+    setOpenTabs((prev) => [...prev, tab]);
+    setLayout(Layout.simplify(Layout.addTabToPane(layoutRef.current, paneId, id)));
+    setFocusedPaneId(paneId);
+  }, []);
+
   const handleCreateChatInPane = useCallback(async (paneId: string) => {
     const vaultId = activeVaultIdRef.current;
     if (!vaultId) return;
@@ -3170,6 +3178,26 @@ export default function App() {
     const landed = Layout.findPaneByTab(next, payload.tabId);
     setFocusedPaneId(landed?.id ?? targetPaneId);
   }, []);
+
+  /** Turn a sidebar note drag into a real tab, then dock or split it. */
+  const handleDropNote = useCallback((noteId: string, targetPaneId: string, side: Layout.DropSide, index?: number) => {
+    const summary = notesRef.current.find((note) => note.id === noteId);
+    if (!summary) return;
+    const isChat = summary.content_preview.trim().startsWith(CHAT_NOTE_MARKER);
+    const tab: Tab = { id: noteId, title: summary.title || (isChat ? 'Channel' : 'Untitled Note'), type: isChat ? 'chat' : 'note', dirty: false };
+    setOpenTabs((prev) => prev.some((item) => item.id === noteId)
+      ? prev.map((item) => item.id === noteId ? { ...item, ...tab } : item)
+      : [...prev, tab]);
+    const prev = layoutRef.current;
+    const next = side === 'center'
+      ? Layout.addTabToPane(Layout.removeTab(prev, noteId), targetPaneId, noteId, index)
+      : Layout.splitPaneWithTab(prev, targetPaneId, side, noteId);
+    setLayout(Layout.simplify(next));
+    const landed = Layout.findPaneByTab(next, noteId);
+    setFocusedPaneId(landed?.id ?? targetPaneId);
+    if (isChat) ensureChatChannelLoaded(noteId);
+    else void loadNoteContent(noteId);
+  }, [ensureChatChannelLoaded, loadNoteContent]);
 
   const handleResizeSplit = useCallback((splitId: string, sizes: number[]) => {
     setLayout(Layout.setSplitSizes(layoutRef.current, splitId, sizes));
@@ -3349,6 +3377,15 @@ export default function App() {
 
   /** Render the content of a tab inside its pane. */
   const renderTabContent = useCallback((tab: Tab): ReactNode => {
+    if (tab.type === 'new') {
+      return (
+        <div className="new-tab-page">
+          <Sparkles size={24} aria-hidden="true" />
+          <strong>New tab</strong>
+          <span>Drag a note from the sidebar here, or onto an edge to split the workspace.</span>
+        </div>
+      );
+    }
     if (tab.type === 'superkanban') {
       return <SuperkanbanView
         notes={superkanbanNotes}
@@ -3698,8 +3735,10 @@ export default function App() {
             onCloseTab={closeTab}
             onCloseOtherTabs={closeOtherTabs}
             onDropTab={handleDropTab}
+            onDropNote={handleDropNote}
             onResize={handleResizeSplit}
             onCreateNote={handleCreateNoteInPane}
+            onCreateTab={handleCreateTabInPane}
             onCreateChat={handleCreateChatInPane}
             onOpenSuperkanban={openSuperkanban}
             onDetachTab={handleDetachTab}

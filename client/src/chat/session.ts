@@ -48,6 +48,9 @@ function sanitizeRestoredTabs(value: unknown): Tab[] {
       if (tab.type === 'superkanban') {
         return { id: tab.id, title: tab.title || 'Superkanban', type: 'superkanban', dirty: false };
       }
+      if (tab.type === 'new') {
+        return { id: tab.id, title: 'New tab', type: 'new', dirty: false };
+      }
       return null;
     })
     .filter((tab): tab is Tab => Boolean(tab));
