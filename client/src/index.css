@@ -477,7 +477,7 @@ button:focus-visible,
   bottom: 0;
   left: 2px;
   width: 1px;
-  background: var(--border);
+  background: var(--border-subtle);
   transition: background var(--transition-fast);
 }
 .resize-handle:hover::after,
@@ -498,7 +498,6 @@ button:focus-visible,
 .sidebar {
   position: relative;
   background: var(--rail-surface);
-  border-right: 1px solid var(--rail-edge);
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -510,7 +509,7 @@ button:focus-visible,
   align-items: center;
   gap: 6px;
   padding: 7px var(--rail-pad-x);
-  border-bottom: 1px solid var(--rail-edge);
+  border-bottom: 1px solid var(--border-subtle);
   min-height: 58px;
   background: transparent;
 }
@@ -728,7 +727,6 @@ button:focus-visible,
   box-sizing: border-box;
   margin: 0 0 6px;
   padding: 4px;
-  border: 1px solid var(--rail-edge);
   border-radius: 10px;
   background: var(--rail-toolbar-bg);
   box-shadow: var(--bevel);
@@ -762,7 +760,6 @@ button:focus-visible,
   color: var(--text-primary);
 }
 .csb button.is-selected {
-  border-color: color-mix(in srgb, var(--accent) 36%, var(--border));
   background: var(--accent-subtle);
   color: var(--accent-hover);
 }
@@ -789,13 +786,6 @@ button:focus-visible,
 }
 .chat-users-title:first-of-type {
   margin-top: 8px;
-}
-.sidebar-section-label::after,
-.chat-users-title::after {
-  content: '';
-  flex: 1;
-  height: 1px;
-  background: linear-gradient(90deg, var(--border), transparent 92%);
 }
 .folder-tree {
   flex: 1;
@@ -828,14 +818,11 @@ button:focus-visible,
 }
 .tree-item:hover {
   background: color-mix(in srgb, var(--bg-raised) 72%, transparent);
-  border-color: color-mix(in srgb, var(--border) 50%, transparent);
   color: var(--text-primary);
 }
 .tree-item.active {
-  background: linear-gradient(90deg, hsla(38, 92%, 55%, 0.14) 0%, hsla(38, 92%, 55%, 0.04) 62%, transparent 100%);
-  border-color: color-mix(in srgb, var(--accent) 22%, var(--border));
+  background: color-mix(in srgb, var(--accent) 13%, var(--bg-raised));
   color: var(--text-primary);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 8%, transparent);
 }
 .tree-item.active::before {
   content: '';
@@ -845,8 +832,7 @@ button:focus-visible,
   bottom: 6px;
   width: 3px;
   border-radius: 0 2px 2px 0;
-  background: var(--decal-stripe);
-  box-shadow: 0 0 8px var(--accent-glow);
+  background: var(--accent);
 }
 .tree-item .tree-icon {
   flex-shrink: 0;
@@ -1918,8 +1904,7 @@ button:focus-visible,
   display: flex;
   align-items: stretch;
   background: var(--bg-surface);
-  border-bottom: 1px solid var(--border);
-  box-shadow: var(--bevel);
+  border-bottom: 1px solid var(--border-subtle);
   min-height: 38px;
   overflow-x: auto;
   overflow-y: hidden;
@@ -1934,7 +1919,7 @@ button:focus-visible,
   display: grid;
   place-items: center;
   border: 0;
-  border-right: 1px solid var(--border);
+  border-right: 1px solid var(--border-subtle);
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
@@ -1984,8 +1969,8 @@ button:focus-visible,
   left: 0;
   right: 0;
   bottom: -3px;
-  height: 3px;
-  background: var(--decal-stripe-h);
+  height: 2px;
+  background: var(--accent);
 }
 .tab-item .tab-title {
   max-width: 160px;
@@ -2926,8 +2911,7 @@ button:focus-visible,
   align-items: center;
   gap: 11px;
   padding: 10px 16px;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--bg-raised) 40%, transparent), transparent);
+  border-bottom: 1px solid var(--border-subtle);
 }
 .chat-header svg {
   color: color-mix(in srgb, var(--text-secondary) 70%, var(--text-tertiary));
@@ -2953,15 +2937,14 @@ button:focus-visible,
   align-items: center;
   gap: 6px;
   padding: 5px 9px;
-  border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
   border-radius: 7px;
-  background: color-mix(in srgb, var(--bg-raised) 70%, transparent);
+  background: transparent;
   color: var(--text-tertiary);
   font-size: 0.6875rem;
   cursor: pointer;
 }
 .chat-mission-archive-button:hover {
-  border-color: color-mix(in srgb, var(--accent) 38%, var(--border));
+  background: color-mix(in srgb, var(--bg-raised) 80%, transparent);
   color: var(--text-primary);
 }
 .workspace-toolbar {
@@ -3050,9 +3033,8 @@ button:focus-visible,
   align-items: center;
   gap: 5px;
   padding: 0 7px;
-  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border));
   border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--accent) 5%, transparent);
+  background: transparent;
   color: var(--text-tertiary);
   font-size: 0.625rem;
   font-weight: 600;
@@ -3063,7 +3045,6 @@ button:focus-visible,
 }
 .workspace-desktop-action:hover,
 .workspace-desktop-action:focus-visible {
-  border-color: color-mix(in srgb, var(--accent) 52%, var(--border));
   background: var(--accent-subtle);
   color: var(--accent-hover);
 }
@@ -4899,13 +4880,10 @@ button.chat-avatar.is-clickable:focus-visible {
   gap: 9px;
   align-items: end;
   padding: 12px 16px 14px;
-  border-top: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--bg-raised) 30%, var(--bg-surface)), var(--bg-surface));
+  background: var(--bg-base);
 }
 .chat-upload-btn {
   align-self: end;
-  border: 1px solid var(--border);
-  background: var(--bg-raised);
 }
 .chat-composer-main {
   min-width: 0;
@@ -4977,9 +4955,9 @@ button.chat-avatar.is-clickable:focus-visible {
   min-height: 38px;
   max-height: 200px;
   resize: none;
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
   border-radius: 6px;
-  background: var(--bg-base);
+  background: var(--bg-raised);
   color: var(--text-primary);
   padding: 9px 12px;
   font-size: 0.875rem;
@@ -4987,15 +4965,14 @@ button.chat-avatar.is-clickable:focus-visible {
   transition: border-color var(--transition-normal), box-shadow var(--transition-normal);
 }
 .chat-composer textarea:focus {
-  border-color: color-mix(in srgb, var(--focus-ring) 55%, var(--border));
-  box-shadow: 0 0 0 3px var(--focus-ring-subtle);
+  border-color: var(--border);
+  box-shadow: none;
 }
 .chat-composer textarea:focus-visible {
   outline: none;
 }
 .chat-composer .btn-icon {
-  border: 1px solid var(--border);
-  background: var(--bg-raised);
+  background: transparent;
 }
 .chat-composer .btn-icon:disabled {
   opacity: 0.45;
@@ -5226,7 +5203,6 @@ button.chat-avatar.is-clickable:focus-visible {
   flex: 0 0 var(--rail-width);
   min-height: 0;
   overflow-y: auto;
-  border-left: 1px solid var(--rail-edge);
   background: var(--rail-surface);
   padding: var(--rail-pad-y) var(--rail-pad-x) 16px;
 }
@@ -5662,7 +5638,6 @@ button.chat-avatar.is-clickable:focus-visible {
     color var(--transition-fast);
 }
 .chat-user:hover {
-  border-color: color-mix(in srgb, var(--border) 50%, transparent);
   background: color-mix(in srgb, var(--bg-raised) 72%, transparent);
   color: var(--text-primary);
 }
@@ -5670,18 +5645,15 @@ button.chat-avatar.is-clickable:focus-visible {
   background: color-mix(in srgb, var(--bg-raised) 40%, transparent);
 }
 .chat-user.chat-agent-user {
-  border-color: color-mix(in srgb, hsl(38, 40%, 32%) 45%, var(--border));
-  background: color-mix(in srgb, hsl(38, 42%, 16%) 72%, var(--bg-raised));
-  box-shadow: var(--bevel);
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-raised));
 }
 .chat-user.chat-agent-user:hover,
 .chat-user.chat-agent-user.is-editing {
-  border-color: color-mix(in srgb, var(--accent) 38%, var(--border));
-  background: color-mix(in srgb, hsl(38, 48%, 18%) 80%, var(--bg-raised));
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-raised));
   color: var(--text-primary);
 }
 .chat-user.chat-agent-user.is-editing {
-  box-shadow: inset 2px 0 0 var(--accent), var(--bevel);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 .chat-user-row {
   display: flex;
@@ -5808,9 +5780,7 @@ button.chat-avatar.is-clickable:focus-visible {
 .chat-runs-empty {
   margin: 2px 0 6px;
   padding: 14px 12px;
-  border: 1px dashed color-mix(in srgb, var(--border) 82%, transparent);
   border-radius: var(--rail-row-radius);
-  background: color-mix(in srgb, var(--bg-base) 58%, transparent);
   color: color-mix(in srgb, var(--text-secondary) 70%, var(--text-tertiary));
   font-size: 0.75rem;
   line-height: 1.45;
@@ -7211,7 +7181,8 @@ button.chat-avatar.is-clickable:focus-visible {
 .pane-tab-bar {
   min-height: 34px;
 }
-.pane-tab-bar.is-focused {
+/* Only meaningful when panes are split; on a single pane it is just a stray line. */
+.pane-split-child .pane-tab-bar.is-focused {
   box-shadow: inset 0 2px 0 var(--accent-subtle);
 }
 .tab-item .tab-popout {
