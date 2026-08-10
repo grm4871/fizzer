@@ -2785,7 +2785,10 @@ app.get('/api/vaults/:vaultId/vault-agents', requireAuth, (req: AuthedRequest, r
 });
 
 function ensureVaultWideAgents(vaultId: string, channelId: string, userId: number) {
-  const agents = listVaultAgents(db, userId, vaultId).filter((agent) => agent.vaultId === vaultId);
+  // listVaultAgents is the roster visible in this vault. An owned agent may
+  // have been created from another vault, so its historical vault_id is not a
+  // membership boundary. Project every visible roster entry into every chat.
+  const agents = listVaultAgents(db, userId, vaultId);
   for (const agent of agents) {
     try {
       addVaultAgentToChannel(db, userId, vaultId, channelId, agent.id);

@@ -121,6 +121,13 @@ try {
     method: 'PUT', headers: auth,
     body: JSON.stringify({ agentId: 'codex', displayName: 'Terra', mention: 'terra', model: 'gpt-5.6-terra' }),
   });
+  const { vault: originVault } = await must(`${API_BASE}/api/vaults`, {
+    method: 'POST', headers: auth, body: JSON.stringify({ name: 'Other Agent Origin' }),
+  });
+  const { agent: crossVaultIdentity } = await must(`${API_BASE}/api/vaults/${originVault.id}/vault-agents`, {
+    method: 'PUT', headers: auth,
+    body: JSON.stringify({ agentId: 'codex', displayName: 'Luna', mention: 'luna', model: 'gpt-5.6-luna' }),
+  });
   const { note: secondChannel } = await must(`${API_BASE}/api/vaults/${vault.id}/notes`, {
     method: 'POST', headers: auth,
     body: JSON.stringify({ title: 'second-room', content: 'cascade://chat-channel' }),
@@ -132,6 +139,7 @@ try {
   check('vault agents automatically belong to every channel', (
     secondChannelAgents.some((agent) => agent.vaultAgentId === solIdentity.id)
       && secondChannelAgents.some((agent) => agent.vaultAgentId === terraIdentity.id)
+      && secondChannelAgents.some((agent) => agent.vaultAgentId === crossVaultIdentity.id)
   ));
   const { registration: sol } = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/agents/from-vault`, {
     method: 'POST', headers: auth,
