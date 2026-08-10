@@ -1763,17 +1763,16 @@ export function forwardChatMessage(
 
 function hasRunOutput(message: ChatMessage): boolean {
   const body = message.body.trim();
-  return body.length > 0 && body !== 'Thinking...';
+  return body.length > 0 && body !== 'Thinking...' && !isGenericRunSummary(body);
 }
 
 /** Prefer the visible assistant text already on the message over a CLI summary. */
 function honestChatBody(message: ChatMessage | undefined, fallbackSummary: string, emptyFallback: string): string {
   if (message && hasRunOutput(message)) return message.body.trim();
   const summary = fallbackSummary.trim();
-  // Generic CLI/SDK summaries are not chat answers — only use them if we have nothing else.
+  // Generic CLI/SDK summaries are not chat answers — never surface them as body text.
   if (summary && !isGenericRunSummary(summary)) return summary;
-  if (message && hasRunOutput(message)) return message.body.trim();
-  return summary || emptyFallback;
+  return emptyFallback;
 }
 
 function isAntigravityPlannerMonologue(summary: string): boolean {
@@ -2624,13 +2623,14 @@ export function agentChatContentFromAccumulator(
   } else if (status === 'failed' || status === 'canceled') {
     const reason = terminalSummary.trim()
       || (status === 'canceled' ? 'Run canceled by user.' : 'Agent failed.');
-    body = trimmed ? `${trimmed}\n\n> ⚠️ ${reason}` : reason;
+    const useful = trimmed && !isGenericRunSummary(trimmed) ? trimmed : '';
+    body = useful ? `${useful}\n\n> ⚠️ ${reason}` : reason;
   } else if (terminalSummary.trim() && !isGenericRunSummary(terminalSummary)) {
     body = terminalSummary.trim();
-  } else if (trimmed) {
+  } else if (trimmed && !isGenericRunSummary(trimmed)) {
     body = trimmed;
   } else {
-    body = terminalSummary.trim() || 'Done.';
+    body = 'Done.';
   }
 
   return { body, blocks, harnessLog, status, done };

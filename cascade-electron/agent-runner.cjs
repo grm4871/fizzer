@@ -965,7 +965,7 @@ async function runClaudeLocally(opts, emit) {
   if (chatRun && (latestAssistantText.trim() || streamedText.trim())) {
     return { summary: latestAssistantText.trim() || streamedText.trim(), sessionId };
   }
-  return { summary: summary || streamedText.trim() || 'Completed note operations successfully.', sessionId };
+  return { summary: summary || streamedText.trim() || 'Done.', sessionId };
 }
 
 /**

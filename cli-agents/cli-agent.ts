@@ -1000,7 +1000,7 @@ async function runCodex(
   const collectStderr = (chunk: string) => { stderrText += chunk; };
   const drive = (attemptArgs: string[]) => driveProcess(
     CODEX_BIN, attemptArgs, cwd, onLine,
-    () => summary || 'Completed note operations successfully.',
+    () => summary || 'Done.',
     'Codex', runId, emit, env, collectStderr,
   );
   const retryFresh = async () => {
@@ -1123,7 +1123,7 @@ async function runGrok(
   };
 
   try {
-    const summaryText = await driveProcess(GROK_BIN, args, cwd, onLine, () => text || 'Completed note operations successfully.', 'Grok', runId, emit, env);
+    const summaryText = await driveProcess(GROK_BIN, args, cwd, onLine, () => text || 'Done.', 'Grok', runId, emit, env);
     return { summary: summaryText, sessionId };
   } catch (error) {
     const diagnostic = extractGrokDiagnostic(debugFile);
@@ -1981,7 +1981,7 @@ async function runCopilot(prompt: string, cwd: string, emit: AgentEmit, resumeId
     }
   };
 
-  const summaryText = await driveProcess(COPILOT_BIN, args, cwd, onLine, () => summary || 'Completed note operations successfully.', 'Copilot', runId, emit, env);
+  const summaryText = await driveProcess(COPILOT_BIN, args, cwd, onLine, () => summary || 'Done.', 'Copilot', runId, emit, env);
   return { summary: summaryText, sessionId: sessionId || resumeId };
 }
 
@@ -2068,7 +2068,7 @@ async function runHermes(prompt: string, cwd: string, emit: AgentEmit, resumeId?
         cwd,
         onStdoutLine,
         onStderrLine,
-        () => text.trim() || 'Completed note operations successfully.',
+        () => text.trim() || 'Done.',
         'Hermes',
         runId,
         emit,
@@ -2143,7 +2143,7 @@ async function runAkronGrok(prompt: string, cwd: string, emit: AgentEmit, _resum
         cwd,
         onStdoutLine,
         onStderrLine,
-        () => text.trim() || 'Completed note operations successfully.',
+        () => text.trim() || 'Done.',
         'Akron --grok',
         runId,
         emit,
@@ -2477,7 +2477,7 @@ async function runOmp(
       args,
       cwd,
       onLine,
-      () => summary || 'Completed note operations successfully.',
+      () => summary || 'Done.',
       'OMP',
       runId,
       emit,

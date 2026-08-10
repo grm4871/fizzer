@@ -178,7 +178,8 @@ export function honestAgentChatBody(
 ): string {
   const trimmed = streamedText.trim();
   const summaryText = typeof summary === 'string' ? summary.trim() : '';
-  const isGeneric = /^(done\.?|completed note operations successfully\.?|agent failed\.?)$/i.test(summaryText);
+  const isGenericSummary = isGenericAgentRunSummary(summaryText);
+  const usefulStream = trimmed && !isGenericAgentRunSummary(trimmed) ? trimmed : '';
 
   // Automatic lifecycle cleanup (for example an obsolete mission review wake)
   // is terminal but is not a user-visible agent reply.
@@ -187,12 +188,18 @@ export function honestAgentChatBody(
     const reason = summaryText
       || (terminal === 'canceled' ? 'Run canceled by user.' : 'Agent failed.');
     // Prefer a short failure reason; don't dump the whole mid-run monologue.
-    if (trimmed && trimmed.length <= 800) return `${trimmed}\n\n> ⚠️ ${reason}`;
+    if (usefulStream && usefulStream.length <= 800) return `${usefulStream}\n\n> ⚠️ ${reason}`;
     return reason;
   }
-  if (summaryText && !isGeneric) return summaryText;
-  if (trimmed) return trimmed;
-  return summaryText || 'Done.';
+  if (summaryText && !isGenericSummary) return summaryText;
+  if (usefulStream) return usefulStream;
+  // Never surface CLI placeholder summaries as the chat body.
+  return 'Done.';
+}
+
+/** Runner/SDK placeholders — not a real assistant answer. */
+export function isGenericAgentRunSummary(summary: string): boolean {
+  return /^(done\.?|completed note operations successfully\.?|agent failed\.?)$/i.test(summary.trim());
 }
 
 /** Prefer the richer of local streaming vs remote socket/DB copy of the same message. */

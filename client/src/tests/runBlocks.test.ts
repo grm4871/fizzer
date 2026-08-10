@@ -44,6 +44,21 @@ describe('honestAgentChatBody', () => {
       .toBe('Useful final answer.');
   });
 
+  it('never surfaces the legacy note-operations placeholder as chat body', () => {
+    expect(honestAgentChatBody('', 'Completed note operations successfully.', 'completed'))
+      .toBe('Done.');
+    expect(honestAgentChatBody(
+      'Completed note operations successfully.',
+      'Completed note operations successfully.',
+      'completed',
+    )).toBe('Done.');
+    expect(honestAgentChatBody(
+      'Completed note operations successfully.',
+      'Steered into the continuation below.',
+      'canceled',
+    )).toBe('Steered into the continuation below.');
+  });
+
   it('still suppresses a run body after an explicit chat send', () => {
     expect(honestAgentChatBody('duplicate', 'duplicate', 'completed', {
       suppressChatBody: true,
