@@ -1794,7 +1794,8 @@ function isGenericRunSummary(summary: string): boolean {
 function terminalRunPatch(run: RunStatusRow, message?: ChatMessage): Pick<ChatMessage, 'body' | 'status'> | null {
   if (run.status === 'completed') {
     return {
-      body: honestChatBody(message, run.summary || '', 'Done.'),
+      // Empty when there is no real answer — dropShell prunes the placeholder row.
+      body: honestChatBody(message, run.summary || '', ''),
       status: undefined,
     };
   }
@@ -2571,7 +2572,8 @@ export function appendAgentChatRunEvents(
       if (payload?.suppressChatBody === true) suppressChatBody = true;
       if (nextStatus === 'completed') {
         status = undefined;
-        terminalSummary = String(payload?.summary || 'Done.');
+        // Prefer real summary text; never invent a user-visible success placeholder.
+        terminalSummary = String(payload?.summary || '');
       } else if (nextStatus === 'failed') {
         status = 'failed';
         terminalSummary = String(payload?.summary || 'Agent failed.');
@@ -2630,7 +2632,8 @@ export function agentChatContentFromAccumulator(
   } else if (trimmed && !isGenericRunSummary(trimmed)) {
     body = trimmed;
   } else {
-    body = 'Done.';
+    // Successful run with no real answer: empty body (shell is dropped).
+    body = '';
   }
 
   return { body, blocks, harnessLog, status, done };

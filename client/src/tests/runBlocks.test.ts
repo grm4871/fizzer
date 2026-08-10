@@ -44,14 +44,15 @@ describe('honestAgentChatBody', () => {
       .toBe('Useful final answer.');
   });
 
-  it('never surfaces the legacy note-operations placeholder as chat body', () => {
+  it('never surfaces placeholder success text as chat body', () => {
     expect(honestAgentChatBody('', 'Completed note operations successfully.', 'completed'))
-      .toBe('Done.');
+      .toBe('');
+    expect(honestAgentChatBody('', 'Done.', 'completed')).toBe('');
     expect(honestAgentChatBody(
       'Completed note operations successfully.',
       'Completed note operations successfully.',
       'completed',
-    )).toBe('Done.');
+    )).toBe('');
     expect(honestAgentChatBody(
       'Completed note operations successfully.',
       'Steered into the continuation below.',

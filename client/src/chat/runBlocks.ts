@@ -193,11 +193,12 @@ export function honestAgentChatBody(
   }
   if (summaryText && !isGenericSummary) return summaryText;
   if (usefulStream) return usefulStream;
-  // Never surface CLI placeholder summaries as the chat body.
-  return 'Done.';
+  // No invented placeholder: empty completed bodies drop the run shell
+  // (same path as dual-post suppress after cascade-chat send).
+  return '';
 }
 
-/** Runner/SDK placeholders — not a real assistant answer. */
+/** Runner/SDK placeholders — not a real assistant answer. Never surface these. */
 export function isGenericAgentRunSummary(summary: string): boolean {
   return /^(done\.?|completed note operations successfully\.?|agent failed\.?)$/i.test(summary.trim());
 }

@@ -1000,7 +1000,7 @@ async function runCodex(
   const collectStderr = (chunk: string) => { stderrText += chunk; };
   const drive = (attemptArgs: string[]) => driveProcess(
     CODEX_BIN, attemptArgs, cwd, onLine,
-    () => summary || 'Done.',
+    () => summary || '',
     'Codex', runId, emit, env, collectStderr,
   );
   const retryFresh = async () => {
@@ -1123,7 +1123,7 @@ async function runGrok(
   };
 
   try {
-    const summaryText = await driveProcess(GROK_BIN, args, cwd, onLine, () => text || 'Done.', 'Grok', runId, emit, env);
+    const summaryText = await driveProcess(GROK_BIN, args, cwd, onLine, () => text || '', 'Grok', runId, emit, env);
     return { summary: summaryText, sessionId };
   } catch (error) {
     const diagnostic = extractGrokDiagnostic(debugFile);
@@ -1796,7 +1796,8 @@ async function runAntigravity(
   }
 
   if (!emittedText || !summary.trim() || agyIsPlannerMonologue(summary)) {
-    summary = 'Done.';
+    // No user-visible success placeholder — empty summary drops the chat shell.
+    summary = '';
   }
 
   emitHarness(emit, `\x1b[2m# done · ${processedLines} transcript lines\x1b[0m\r\n`);
@@ -1981,7 +1982,7 @@ async function runCopilot(prompt: string, cwd: string, emit: AgentEmit, resumeId
     }
   };
 
-  const summaryText = await driveProcess(COPILOT_BIN, args, cwd, onLine, () => summary || 'Done.', 'Copilot', runId, emit, env);
+  const summaryText = await driveProcess(COPILOT_BIN, args, cwd, onLine, () => summary || '', 'Copilot', runId, emit, env);
   return { summary: summaryText, sessionId: sessionId || resumeId };
 }
 
@@ -2068,7 +2069,7 @@ async function runHermes(prompt: string, cwd: string, emit: AgentEmit, resumeId?
         cwd,
         onStdoutLine,
         onStderrLine,
-        () => text.trim() || 'Done.',
+        () => text.trim() || '',
         'Hermes',
         runId,
         emit,
@@ -2143,7 +2144,7 @@ async function runAkronGrok(prompt: string, cwd: string, emit: AgentEmit, _resum
         cwd,
         onStdoutLine,
         onStderrLine,
-        () => text.trim() || 'Done.',
+        () => text.trim() || '',
         'Akron --grok',
         runId,
         emit,
@@ -2477,7 +2478,7 @@ async function runOmp(
       args,
       cwd,
       onLine,
-      () => summary || 'Done.',
+      () => summary || '',
       'OMP',
       runId,
       emit,

@@ -301,7 +301,7 @@ function emitTerminalStatus(emit, runId, status, summary, sessionId) {
   const suppressChatBody = status === 'completed' && readUsedChatSend(runId);
   emit('status', {
     status,
-    summary: summary || (status === 'completed' ? 'Done.' : status === 'canceled' ? 'Run canceled.' : 'Agent failed.'),
+    summary: summary || (status === 'completed' ? '' : status === 'canceled' ? 'Run canceled.' : 'Agent failed.'),
     ...(sessionId ? { sessionId } : {}),
     ...(suppressChatBody ? { suppressChatBody: true } : {}),
   });
@@ -965,7 +965,7 @@ async function runClaudeLocally(opts, emit) {
   if (chatRun && (latestAssistantText.trim() || streamedText.trim())) {
     return { summary: latestAssistantText.trim() || streamedText.trim(), sessionId };
   }
-  return { summary: summary || streamedText.trim() || 'Done.', sessionId };
+  return { summary: summary || streamedText.trim() || '', sessionId };
 }
 
 /**
@@ -1081,7 +1081,7 @@ async function startLocalAgentRun(opts, sendEvent) {
       emit,
       env,
     });
-    emitTerminalStatus(emit, runId, 'completed', result.summary || 'Done.', result.sessionId);
+    emitTerminalStatus(emit, runId, 'completed', result.summary || '', result.sessionId);
     return { sessionId: result.sessionId };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
