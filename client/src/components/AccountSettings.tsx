@@ -4,6 +4,7 @@ import { api, type User, type VaultMember, type VaultRole } from '../api';
 import { ModalShell } from './ModalShell';
 
 type AssignableRole = Exclude<VaultRole, 'owner'>;
+export type AccountSettingsSection = 'profile' | 'preferences' | 'security' | 'vault';
 type PublicJoinPolicy = 'open' | 'request' | 'invite';
 type PublicVaultSettings = {
   visibility: 'private' | 'public';
@@ -47,10 +48,11 @@ const ROLE_HELP: Record<VaultRole, string> = {
   viewer: 'Read-only access.',
 };
 
-export function AccountSettings({ user, vaultId, vaultName, showAgentMemory, onShowAgentMemoryChange, onClose, onUserChanged, onSessionChanged, onMembershipChanged }: {
+export function AccountSettings({ user, vaultId, vaultName, initialSection = 'profile', showAgentMemory, onShowAgentMemoryChange, onClose, onUserChanged, onSessionChanged, onMembershipChanged }: {
   user: User;
   vaultId?: string | null;
   vaultName?: string;
+  initialSection?: AccountSettingsSection;
   /** Whether agent memory folders are shown in the sidebar and updates feed. */
   showAgentMemory: boolean;
   onShowAgentMemoryChange: (show: boolean) => void;
@@ -60,6 +62,7 @@ export function AccountSettings({ user, vaultId, vaultName, showAgentMemory, onS
   /** Lets the app refresh the vault list so the switcher's shared badge stays accurate. */
   onMembershipChanged?: () => void;
 }) {
+  const [activeSection, setActiveSection] = useState<AccountSettingsSection>(initialSection);
   const [displayName, setDisplayName] = useState(user.displayName || user.username);
   const [avatarUrl, setAvatarUrl] = useState(user.avatarUrl || '');
   const [currentPassword, setCurrentPassword] = useState('');
@@ -402,22 +405,22 @@ export function AccountSettings({ user, vaultId, vaultName, showAgentMemory, onS
           <button type="button" className="btn-icon" onClick={onClose} aria-label="Close account settings"><X size={17} /></button>
         </header>
 
-        <nav className="account-settings-nav" aria-label="Settings sections">
-          <button type="button" onClick={() => document.getElementById('account-profile')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
+        <nav className="account-settings-nav" aria-label="Settings sections" role="tablist">
+          <button type="button" role="tab" aria-selected={activeSection === 'profile'} aria-controls="account-profile" onClick={() => setActiveSection('profile')}>
             <Camera size={15} /><span><strong>Profile</strong><small>Name and picture</small></span>
           </button>
-          <button type="button" onClick={() => document.getElementById('account-preferences')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
+          <button type="button" role="tab" aria-selected={activeSection === 'preferences'} aria-controls="account-preferences" onClick={() => setActiveSection('preferences')}>
             <SlidersHorizontal size={15} /><span><strong>Preferences</strong><small>Workspace behavior</small></span>
           </button>
-          <button type="button" onClick={() => document.getElementById('account-security')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
+          <button type="button" role="tab" aria-selected={activeSection === 'security'} aria-controls="account-security" onClick={() => setActiveSection('security')}>
             <KeyRound size={15} /><span><strong>Security</strong><small>Password</small></span>
           </button>
-          {vaultId && <button type="button" onClick={() => document.getElementById('account-vault')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
+          {vaultId && <button type="button" role="tab" aria-selected={activeSection === 'vault'} aria-controls="account-vault" onClick={() => setActiveSection('vault')}>
             <Users size={15} /><span><strong>Current vault</strong><small>{vaultName || 'Sharing'}</small></span>
           </button>}
         </nav>
 
-        <div className="account-settings-section account-profile-section" id="account-profile">
+        <div className="account-settings-section account-profile-section" id="account-profile" role="tabpanel" hidden={activeSection !== 'profile'}>
           <div className="account-section-heading">
             <span className="surface-kicker">Your identity</span>
             <h3>Profile</h3>
@@ -445,7 +448,7 @@ export function AccountSettings({ user, vaultId, vaultName, showAgentMemory, onS
           <div className="account-settings-actions"><button type="button" disabled={busy || !displayName.trim()} onClick={() => void saveProfile()}>Save profile</button></div>
         </div>
 
-        <div className="account-settings-section" id="account-preferences">
+        <div className="account-settings-section" id="account-preferences" role="tabpanel" hidden={activeSection !== 'preferences'}>
           <div className="account-section-title"><SlidersHorizontal size={15} /><strong>Preferences</strong></div>
           <label className="account-settings-check">
             <input
@@ -460,7 +463,7 @@ export function AccountSettings({ user, vaultId, vaultName, showAgentMemory, onS
           </small>
         </div>
 
-        <div className="account-settings-section" id="account-security">
+        <div className="account-settings-section" id="account-security" role="tabpanel" hidden={activeSection !== 'security'}>
           <div className="account-section-title"><KeyRound size={15} /><strong>Change password</strong></div>
           <label>Current password<input type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} autoComplete="current-password" /></label>
           <label>New password<input type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} autoComplete="new-password" minLength={8} /></label>
@@ -470,7 +473,7 @@ export function AccountSettings({ user, vaultId, vaultName, showAgentMemory, onS
         </div>
 
         {vaultId && (
-          <div className="account-settings-section" id="account-vault">
+          <div className="account-settings-section" id="account-vault" role="tabpanel" hidden={activeSection !== 'vault'}>
             <div className="account-section-title"><Users size={15} /><strong>Vault sharing</strong></div>
             <p className="account-settings-lede">
               <strong>{vaultName || 'This vault'}</strong> ·{' '}

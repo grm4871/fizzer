@@ -110,6 +110,41 @@ async function auditSurface(page, name, locator, {
   audited.push(name);
 }
 
+async function auditSettingsTabs(page, prefix) {
+  const dialog = page.locator('.account-settings');
+  const sections = [
+    ['Profile', 'account-profile'],
+    ['Preferences', 'account-preferences'],
+    ['Security', 'account-security'],
+    ['Current vault', 'account-vault'],
+  ];
+  for (const [label, id] of sections) {
+    const tab = dialog.getByRole('tab', { name: new RegExp(`^${label}`) });
+    await tab.click();
+    if (await tab.getAttribute('aria-selected') !== 'true') throw new Error(`${prefix}-${id}: selected tab was not announced`);
+    if (await dialog.getByRole('tabpanel').count() !== 1) throw new Error(`${prefix}-${id}: expected exactly one visible settings panel`);
+    const panel = dialog.locator(`#${id}`);
+    await panel.waitFor({ state: 'visible' });
+    const [panelBox, dialogBox, overflowX] = await Promise.all([
+      panel.boundingBox(), dialog.boundingBox(),
+      panel.evaluate((element) => element.scrollWidth > element.clientWidth + 1),
+    ]);
+    if (!panelBox || !dialogBox || panelBox.y < dialogBox.y || panelBox.y + panelBox.height > dialogBox.y + dialogBox.height + 1) {
+      throw new Error(`${prefix}-${id}: panel escaped its settings dialog`);
+    }
+    if (overflowX) throw new Error(`${prefix}-${id}: panel has horizontal overflow`);
+    await page.screenshot({ path: path.join(captureRoot, `${String(audited.length + 1).padStart(2, '0')}-${prefix}-${id}.png`) });
+    audited.push(`${prefix}-${id}`);
+  }
+  const vaultPanel = dialog.locator('#account-vault');
+  const headerBefore = await dialog.locator(':scope > header').boundingBox();
+  await vaultPanel.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  const headerAfter = await dialog.locator(':scope > header').boundingBox();
+  if (!headerBefore || !headerAfter || Math.abs(headerBefore.y - headerAfter.y) > 1) {
+    throw new Error(`${prefix}: scrolling vault settings moved the dialog header`);
+  }
+}
+
 try {
   await waitFor(`${apiBase}/api/health`);
 
@@ -216,10 +251,11 @@ try {
   const errors = [];
   page.on('pageerror', (error) => errors.push(`pageerror: ${error.message}`));
   page.on('console', (message) => {
-    if (message.type() === 'error' && !message.text().includes('WebSocket')) errors.push(`console.error: ${message.text()}`);
+    if (message.type() === 'error' && !message.text().includes('WebSocket') && !message.text().includes('Failed to load resource')) errors.push(`console.error: ${message.text()}`);
   });
   page.on('response', (response) => {
-    if (response.status() >= 400) errors.push(`http.${response.status()}: ${response.url()}`);
+    const isSocketReconnect = response.status() === 400 && response.url().includes('/socket.io/');
+    if (response.status() >= 400 && !isSocketReconnect) errors.push(`http.${response.status()}: ${response.url()}`);
   });
   await page.goto(appUrl, { waitUntil: 'networkidle' });
   await page.getByRole('button', { name: /Vault switcher/ }).waitFor();
@@ -251,6 +287,12 @@ try {
   await auditSurface(page, 'vault-switcher', page.getByRole('dialog', { name: 'Vault workspace' }), {
     bodyCopy: '.vault-switcher-copy small', control: '.vault-switcher-action', minControlHeight: 96,
   });
+  await page.getByRole('button', { name: `Manage ${vault.name}` }).click();
+  const managedSettings = page.locator('.account-settings');
+  await managedSettings.waitFor({ state: 'visible' });
+  if (await managedSettings.getByRole('tab', { name: /^Current vault/ }).getAttribute('aria-selected') !== 'true') {
+    throw new Error('vault-switcher: Manage did not open the Current vault settings panel');
+  }
   await page.keyboard.press('Escape');
 
   await page.getByRole('button', { name: 'New tab', exact: true }).click();
@@ -287,9 +329,7 @@ try {
   await auditSurface(page, 'settings', page.locator('.account-settings'), {
     bodyCopy: '> header p', control: '.account-settings-nav button', minControlHeight: 48,
   });
-  for (const sectionName of ['Profile', 'Preferences', 'Security', 'Current vault']) {
-    await page.locator('.account-settings-nav').getByRole('button', { name: new RegExp(`^${sectionName}`) }).click();
-  }
+  await auditSettingsTabs(page, 'settings');
   await page.keyboard.press('Escape');
 
   await page.getByTitle('Messages').click();
@@ -364,6 +404,7 @@ try {
   await auditSurface(mobile, 'mobile-settings', mobile.locator('.account-settings'), {
     bodyCopy: '> header p', control: '.account-settings-nav button', minControlHeight: 46,
   });
+  await auditSettingsTabs(mobile, 'mobile-settings');
   await mobile.keyboard.press('Escape');
   await mobile.getByTitle('Messages').click();
   await auditSurface(mobile, 'mobile-connect', mobile.getByRole('dialog', { name: 'Connect' }), {

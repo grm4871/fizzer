@@ -8909,16 +8909,17 @@ a.chat-mission-chip:hover { color: var(--text-primary); border-color: var(--acce
 /* Settings: a wide, navigable control center with one readable content rail. */
 .account-settings {
   width: min(900px, calc(100vw - 44px));
-  max-height: min(820px, calc(100dvh - 44px));
+  height: min(820px, calc(100dvh - 44px));
+  max-height: none;
   display: grid;
   grid-template-columns: 205px minmax(0, 1fr);
-  align-content: start;
-  overflow: auto;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
   border-radius: 14px;
   background: color-mix(in srgb, var(--bg-surface) 98%, transparent);
 }
 .account-settings > header {
-  position: sticky;
+  position: relative;
   z-index: 6;
   top: 0;
   grid-column: 1 / -1;
@@ -8950,12 +8951,9 @@ a.chat-mission-chip:hover { color: var(--text-primary); border-color: var(--acce
 .discovery-dms-header .btn-icon,
 .admin-panel-header .btn-icon { width: 40px; height: 40px; }
 .account-settings-nav {
-  position: sticky;
-  top: 96px;
   grid-column: 1;
-  grid-row: 2 / 100;
-  align-self: start;
-  min-height: calc(min(820px, 100dvh - 44px) - 96px);
+  grid-row: 2;
+  min-height: 0;
   display: grid;
   align-content: start;
   gap: 5px;
@@ -8977,18 +8975,24 @@ a.chat-mission-chip:hover { color: var(--text-primary); border-color: var(--acce
   cursor: pointer;
 }
 .account-settings-nav button:hover,
-.account-settings-nav button:focus-visible { background: var(--bg-raised); color: var(--accent-hover); }
+.account-settings-nav button:focus-visible,
+.account-settings-nav button[aria-selected='true'] { background: var(--bg-raised); color: var(--accent-hover); }
+.account-settings-nav button[aria-selected='true'] { box-shadow: inset 3px 0 0 var(--accent); }
 .account-settings-nav button > svg { justify-self: center; }
 .account-settings-nav button > span { min-width: 0; display: grid; gap: 2px; }
 .account-settings-nav strong { color: var(--text-primary); font-size: 0.78rem; font-weight: 650; }
 .account-settings-nav small { overflow: hidden; font-size: 0.65rem; text-overflow: ellipsis; white-space: nowrap; }
 .account-settings-section {
   grid-column: 2;
+  grid-row: 2;
+  min-height: 0;
+  align-content: start;
+  overflow-y: auto;
   gap: 15px;
   padding: 24px 28px 27px;
-  scroll-margin-top: 96px;
   background: var(--bg-surface);
 }
+.account-settings-section[hidden] { display: none; }
 .account-section-heading {
   grid-column: 1 / -1;
   display: grid;
@@ -9279,16 +9283,21 @@ a.chat-mission-chip:hover { color: var(--text-primary); border-color: var(--acce
 
   .account-settings {
     width: 100%;
-    max-height: 100dvh;
-    display: block;
+    height: 100dvh;
+    max-height: none;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto minmax(0, 1fr);
     border: 0;
     border-radius: 0;
   }
   .account-settings > header { min-height: 88px; padding: calc(17px + env(safe-area-inset-top)) 18px 16px; }
   .account-settings-nav {
-    position: sticky;
+    position: relative;
     z-index: 5;
-    top: 88px;
+    top: auto;
+    grid-column: 1;
+    grid-row: 2;
     min-height: 0;
     display: flex;
     gap: 5px;
@@ -9298,9 +9307,10 @@ a.chat-mission-chip:hover { color: var(--text-primary); border-color: var(--acce
     border-bottom: 1px solid var(--border);
   }
   .account-settings-nav button { min-width: 128px; min-height: 48px; grid-template-columns: 22px 1fr; padding: 6px 8px; }
+  .account-settings-nav button[aria-selected='true'] { box-shadow: inset 0 -3px 0 var(--accent); }
   .account-settings-nav strong { font-size: 0.8rem; }
   .account-settings-nav small { font-size: 0.74rem; }
-  .account-settings-section { padding: 22px 18px 25px; scroll-margin-top: 150px; }
+  .account-settings-section { grid-column: 1; grid-row: 3; padding: 22px 18px 25px; }
   .account-settings small,
   .account-settings-hint { font-size: 0.76rem; }
   .account-profile-section { grid-template-columns: 72px minmax(0, 1fr); }

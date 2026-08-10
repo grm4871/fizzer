@@ -191,6 +191,7 @@ export default function App() {
   const [isOwner, setIsOwner] = useState(false);
   const [adminOpen, setAdminOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
+  const [accountInitialSection, setAccountInitialSection] = useState<'profile' | 'vault'>('profile');
   const [discoveryDmsOpen, setDiscoveryDmsOpen] = useState<DiscoveryTab | null>(null);
   const [updatesOpen, setUpdatesOpen] = useState(false);
   const [authEpoch, setAuthEpoch] = useState(0);
@@ -3867,6 +3868,7 @@ export default function App() {
           onRenameVault={handleRenameVault}
           onManageVault={(vaultId) => {
             switchVaultWorkspace(vaultId);
+            setAccountInitialSection('vault');
             setAccountOpen(true);
           }}
           onJoinVault={handleJoinVault}
@@ -3896,7 +3898,10 @@ export default function App() {
           onSearch={() => setSearchOpen(true)}
           onCollapse={() => setSidebarOpen(false)}
           onLogout={handleLogout}
-          onOpenAccount={() => setAccountOpen(true)}
+          onOpenAccount={() => {
+            setAccountInitialSection('profile');
+            setAccountOpen(true);
+          }}
           onDeleteNote={handleDeleteNote}
           onMoveNote={handleMoveNote}
           onUnlistNote={handleUnlistNote}
@@ -3913,6 +3918,7 @@ export default function App() {
             user={user}
             vaultId={activeVaultId}
             vaultName={vaults.find((vault) => vault.id === activeVaultId)?.name}
+            initialSection={accountInitialSection}
             showAgentMemory={showAgentMemory}
             onShowAgentMemoryChange={updateShowAgentMemory}
             onClose={() => setAccountOpen(false)}
