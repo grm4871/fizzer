@@ -3957,6 +3957,26 @@ button:focus-visible,
   border-radius: var(--radius-sm);
   background: hsla(226, 12%, 14%, 0.35);
 }
+.chat-message-chunk.is-jump-highlighted {
+  border-radius: var(--radius-sm);
+  animation: chat-message-jump-highlight 1300ms ease-out both;
+}
+@keyframes chat-message-jump-highlight {
+  0% {
+    background: color-mix(in srgb, var(--accent) 31%, var(--bg-raised));
+    box-shadow: inset 3px 0 0 var(--accent), 0 0 0 1px color-mix(in srgb, var(--accent) 48%, transparent);
+  }
+  100% {
+    background: transparent;
+    box-shadow: inset 3px 0 0 transparent, 0 0 0 1px transparent;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-message-chunk.is-jump-highlighted {
+    animation-duration: 1ms;
+    background: color-mix(in srgb, var(--accent) 20%, var(--bg-raised));
+  }
+}
 .chat-swipe-row {
   position: relative;
   touch-action: pan-y;

@@ -116,10 +116,13 @@ try {
   check('anchor starts scrolled out of view', before.found && !before.inView, JSON.stringify(before));
 
   await quote.click();
+  await page.locator(anchorSel).waitFor({ state: 'visible', timeout: 5000 });
+  check('the original briefly pulses after the jump', await page.locator(anchorSel).evaluate((el) => el.classList.contains('is-jump-highlighted')));
   await delay(1400);
   const after = await visibility();
   check('clicking the quote scrolls the original into view', after.inView, JSON.stringify(after));
   check('the original is highlighted after the jump', Boolean(after.selected), JSON.stringify(after));
+  check('the jump pulse clears after the brief highlight', !(await page.locator(anchorSel).evaluate((el) => el.classList.contains('is-jump-highlighted'))));
 
   check('no runtime errors', errors.length === 0, errors.join(' | '));
   if (failures) throw new Error(`${failures} check(s) failed`);

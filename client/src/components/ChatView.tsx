@@ -1878,6 +1878,7 @@ function ChatMissionCard({
 const ChatGroupRow = memo(function ChatGroupRow({
   group,
   selectedMessageId,
+  jumpHighlightMessageId,
   avatarKind,
   avatarUrl,
   authorLabel,
@@ -1909,6 +1910,8 @@ const ChatGroupRow = memo(function ChatGroupRow({
   group: ChatMessageGroup;
   /** Pre-filtered by the parent: non-null only when the selection is inside this group. */
   selectedMessageId: string | null;
+  /** Pre-filtered by the parent: briefly pulses the exact row reached by a jump. */
+  jumpHighlightMessageId: string | null;
   avatarKind: 'agent' | 'human';
   avatarUrl?: string;
   authorLabel?: string;
@@ -2041,10 +2044,11 @@ const ChatGroupRow = memo(function ChatGroupRow({
               const isLatestRunningMessage = message.status !== 'running' || latestRunningMessageId === message.id;
               const isTappable = hasRunWidget || hasThoughtBlocks;
               const selected = selectedMessageId === message.id;
+              const jumpHighlighted = jumpHighlightMessageId === message.id;
               return (<Fragment key={message.id}>
                 <SwipeToReply
                   messageId={message.id}
-                  className={`chat-message-chunk ${isTappable ? 'has-run-widget' : ''} ${selected ? 'selected' : ''}`}
+                  className={`chat-message-chunk ${isTappable ? 'has-run-widget' : ''} ${selected ? 'selected' : ''} ${jumpHighlighted ? 'is-jump-highlighted' : ''}`}
                   onReply={() => onReply(message)}
                   onClick={() => {
                     if (isTappable) onToggleSelect(message.id);
@@ -2203,6 +2207,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
     if (prevMsgs[i] !== nextMsgs[i]) return false;
   }
   return prev.selectedMessageId === next.selectedMessageId
+  && prev.jumpHighlightMessageId === next.jumpHighlightMessageId
   && prev.avatarKind === next.avatarKind
   && prev.avatarUrl === next.avatarUrl
   && prev.authorLabel === next.authorLabel
@@ -2373,6 +2378,7 @@ export const ChatView = memo(function ChatView({
     conversationId: '',
   }));
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
+  const [jumpHighlightMessageId, setJumpHighlightMessageId] = useState<string | null>(null);
   const [replyTarget, setReplyTarget] = useState<ChatReplyRef | null>(null);
   const [replyNotifiesAgent, setReplyNotifiesAgent] = useState(true);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; message: ChatMessage } | null>(null);
@@ -2417,6 +2423,7 @@ export const ChatView = memo(function ChatView({
   const endRef = useRef<HTMLDivElement | null>(null);
   const wasAtBottomRef = useRef(true);
   const scrollFrameRef = useRef<number | null>(null);
+  const jumpHighlightTimerRef = useRef<number | null>(null);
   // null so the first mount counts as a channel change and force-scrolls to bottom.
   const previousChannelIdRef = useRef<string | null>(null);
   // True while we scroll programmatically, so the resulting scroll events aren't
@@ -2674,6 +2681,12 @@ export const ChatView = memo(function ChatView({
   // channel does not yank us back down.
   const runJumpToMessage = useCallback((targetId: string) => {
     setSelectedMessageId(targetId);
+    setJumpHighlightMessageId(targetId);
+    if (jumpHighlightTimerRef.current != null) clearTimeout(jumpHighlightTimerRef.current);
+    jumpHighlightTimerRef.current = window.setTimeout(() => {
+      jumpHighlightTimerRef.current = null;
+      setJumpHighlightMessageId((current) => current === targetId ? null : current);
+    }, 1300);
     wasAtBottomRef.current = false;
     userScrollQuietUntilRef.current = performance.now() + 1200;
     const scrollToTarget = () => {
@@ -2746,6 +2759,7 @@ export const ChatView = memo(function ChatView({
 
   useEffect(() => () => {
     if (scrollFrameRef.current != null) cancelAnimationFrame(scrollFrameRef.current);
+    if (jumpHighlightTimerRef.current != null) clearTimeout(jumpHighlightTimerRef.current);
     if (programmaticClearRef.current != null) clearTimeout(programmaticClearRef.current);
   }, []);
 
@@ -3481,6 +3495,8 @@ export const ChatView = memo(function ChatView({
                 const head = group.messages[0];
                 const groupSelected = selectedMessageId != null
                   && group.messages.some((message) => message.id === selectedMessageId);
+                const groupJumpHighlighted = jumpHighlightMessageId != null
+                  && group.messages.some((message) => message.id === jumpHighlightMessageId);
                 const runKey = head.registrationId || head.agentId || '';
                 const runState = runKey ? runningMessageState.get(runKey) : undefined;
                 return (
@@ -3488,6 +3504,7 @@ export const ChatView = memo(function ChatView({
                     key={head.id}
                     group={group}
                     selectedMessageId={groupSelected ? selectedMessageId : null}
+                    jumpHighlightMessageId={groupJumpHighlighted ? jumpHighlightMessageId : null}
                     avatarKind={getMessageAvatarKind(head)}
                     avatarUrl={getMessageAvatarUrl(head)}
                     authorLabel={getMessageAuthorLabel(head)}
@@ -3544,6 +3561,8 @@ export const ChatView = memo(function ChatView({
                 } : segment.carrier;
                 const traceSelected = selectedMessageId != null
                   && segment.trace.some((message) => message.id === selectedMessageId);
+                const traceJumpHighlighted = jumpHighlightMessageId != null
+                  && segment.trace.some((message) => message.id === jumpHighlightMessageId);
                 const previousSegment = transcriptSegments[segmentIndex - 1];
                 const missionArtifacts = [
                   ...(previousSegment?.kind === 'group'
@@ -3599,6 +3618,7 @@ export const ChatView = memo(function ChatView({
                     key={`work-${segment.id}`}
                     group={{ messages: [displayCarrier, ...clumpedUpdateMessages] }}
                     selectedMessageId={traceSelected ? selectedMessageId : null}
+                    jumpHighlightMessageId={traceJumpHighlighted ? jumpHighlightMessageId : null}
                     avatarKind="agent"
                     avatarUrl={getMessageAvatarUrl(displayCarrier)}
                     authorLabel={getMessageAuthorLabel(displayCarrier)}
