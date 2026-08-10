@@ -8,7 +8,6 @@ import {
   segmentTranscript,
   humanizeActivityLine,
   workTraceHarnessPreview,
-  workTraceAttribution,
   workTracePreview,
   workTraceDecals,
   workTracePhase,
@@ -147,7 +146,7 @@ describe('workTrace', () => {
     expect(segments[0]).toMatchObject({ kind: 'work', carrier, trace: [wake] });
   });
 
-  it('keeps one agent carrier and compact trail around full-weight artifacts', () => {
+  it('keeps different agents and artifacts in chronological rows', () => {
     const before = msg({ id: 'a1', author: 'Sol', body: 'Before', agentId: 'codex' });
     const artifact = msg({
       id: 'a2', author: 'Terra', body: 'Evidence', agentId: 'codex',
@@ -158,15 +157,14 @@ describe('workTrace', () => {
     });
     const final = msg({ id: 'a4', author: 'Sol', body: 'Done', agentId: 'codex' });
     const segments = segmentTranscript([before, artifact, after, final]);
-    expect(segments.map((segment) => segment.kind)).toEqual(['work']);
-    if (segments[0].kind === 'work') {
-      expect(segments[0].trace.map((message) => message.id)).toEqual(['a1', 'a3']);
-      expect(segments[0].fullGroups.flatMap((group) => group.messages.map((message) => message.id))).toEqual(['a2']);
-      expect(segments[0].updateGroups.flatMap((group) => group.messages.map((message) => message.id))).toEqual(['a4']);
-    }
+    expect(segments.map((segment) => segment.kind)).toEqual(['group', 'group', 'work', 'group']);
+    expect(segments.map((segment) => segment.kind === 'group'
+      ? segment.group.messages.map((message) => message.id)
+      : [...segment.trace, ...segment.updateGroups.flatMap((group) => group.messages)].map((message) => message.id)))
+      .toEqual([['a1'], ['a2'], ['a3'], ['a4']]);
   });
 
-  it('keeps mission work and its final user-facing update in one segment', () => {
+  it('keeps mission artifacts separate from agent responses', () => {
     const acknowledgement = msg({ id: 'a1', author: 'Sol', body: 'I am fixing it.', agentId: 'codex', registrationId: 'sol' });
     const mission = msg({
       id: 'm1', author: 'Cascade', body: 'Fix it durably.',
@@ -175,16 +173,16 @@ describe('workTrace', () => {
     const worker = msg({ id: 'w1', author: 'Sol', body: 'Tests pass.', agentId: 'codex', registrationId: 'sol', missionTaskId: 'task-1' });
     const shipped = msg({ id: 'a2', author: 'Sol', body: 'Shipped.', agentId: 'codex', registrationId: 'sol' });
     const segments = segmentTranscript([acknowledgement, mission, worker, shipped]);
-    expect(segments).toHaveLength(1);
-    expect(segments[0]).toMatchObject({ kind: 'work' });
-    if (segments[0].kind === 'work') {
-      expect(segments[0].trace.map((message) => message.id)).toEqual(['a1', 'w1']);
-      expect(segments[0].fullGroups.flatMap((group) => group.messages.map((message) => message.id))).toEqual(['m1']);
-      expect(segments[0].updateGroups.flatMap((group) => group.messages.map((message) => message.id))).toEqual(['a2']);
+    expect(segments.map((segment) => segment.kind)).toEqual(['group', 'group', 'work']);
+    expect(segments[0]).toMatchObject({ kind: 'group', group: { messages: [acknowledgement] } });
+    expect(segments[1]).toMatchObject({ kind: 'group', group: { messages: [mission] } });
+    if (segments[2].kind === 'work') {
+      expect(segments[2].trace).toEqual([worker]);
+      expect(segments[2].updateGroups).toEqual([{ messages: [shipped] }]);
     }
   });
 
-  it('flattens coordinator progress when later worker activity follows', () => {
+  it('never flattens a coordinator response under a later worker', () => {
     const coordinator = msg({
       id: 'a1', author: 'Sol', body: 'Here is the answer.', agentId: 'codex', registrationId: 'sol-reg',
     });
@@ -192,8 +190,9 @@ describe('workTrace', () => {
       id: 'a2', author: 'Terra', body: 'Still checking.', agentId: 'codex', missionTaskId: 'task-1',
     });
     const segments = segmentTranscript([coordinator, laterWorker]);
-    expect(segments.map((segment) => segment.kind)).toEqual(['work']);
-    if (segments[0].kind === 'work') expect(segments[0].trace).toEqual([coordinator, laterWorker]);
+    expect(segments.map((segment) => segment.kind)).toEqual(['group', 'work']);
+    expect(segments[0]).toMatchObject({ kind: 'group', group: { messages: [coordinator] } });
+    if (segments[1].kind === 'work') expect(segments[1].trace).toEqual([laterWorker]);
   });
 
   it('derives a compact ordered workflow decal trail', () => {
@@ -278,17 +277,4 @@ describe('workTrace', () => {
     expect(peek?.decals.at(-1)?.label).toBe('work');
   });
 
-  it('labels a mixed-agent trace as a group instead of its carrier', () => {
-    expect(workTraceAttribution([
-      msg({ author: 'Terra', registrationId: 'terra' }),
-      msg({ author: 'Claude', registrationId: 'claude' }),
-      msg({ author: 'Cascade', id: 'sys-mission-1' }),
-      msg({ author: 'ssol', registrationId: 'ssol' }),
-    ])).toEqual({ multiAgent: true, label: '3-agent flow' });
-
-    expect(workTraceAttribution([
-      msg({ author: 'Terra', registrationId: 'terra' }),
-      msg({ author: 'Terra', registrationId: 'terra' }),
-    ])).toEqual({ multiAgent: false });
-  });
 });

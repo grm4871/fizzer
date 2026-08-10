@@ -495,9 +495,20 @@ export function segmentTranscript(
 
   while (index < messages.length) {
     const head = messages[index];
-    if (!isWorkTraceMessage(head, agentAuthors)) {
+    if (isDurableWorkArtifact(head)) {
+      segments.push({ kind: 'group', group: { messages: [head] } });
+      index += 1;
+      continue;
+    }
+    const headIsAgent = Boolean(head.agentId || head.registrationId)
+      || Boolean(agentAuthors && head.author && agentAuthors.has(head.author));
+    if (!headIsAgent && !isWorkTraceCarrier(head)) {
       const human: ChatMessage[] = [];
-      while (index < messages.length && !isWorkTraceMessage(messages[index], agentAuthors)) {
+      while (index < messages.length) {
+        const message = messages[index];
+        const messageIsAgent = Boolean(message.agentId || message.registrationId)
+          || Boolean(agentAuthors && message.author && agentAuthors.has(message.author));
+        if (messageIsAgent || isWorkTraceCarrier(message)) break;
         human.push(messages[index]);
         index += 1;
       }
@@ -508,7 +519,22 @@ export function segmentTranscript(
     }
 
     const work: ChatMessage[] = [];
-    while (index < messages.length && isWorkTraceMessage(messages[index], agentAuthors)) {
+    const identityKey = head.registrationId
+      || `${head.agentId || 'agent'}:${workTraceAuthorKey(head).toLowerCase()}`;
+    while (index < messages.length) {
+      const message = messages[index];
+      const messageIsAgent = Boolean(message.agentId || message.registrationId)
+        || Boolean(agentAuthors && message.author && agentAuthors.has(message.author));
+      const messageKey = message.registrationId
+        || `${message.agentId || 'agent'}:${workTraceAuthorKey(message).toLowerCase()}`;
+      // An empty persisted carrier may own the immediately following system
+      // wake. Otherwise, agent boundaries are transcript boundaries: never
+      // move one agent's response under another agent's header.
+      const carrierWake = work.length === 1
+        && isWorkTraceCarrier(work[0])
+        && isSystemCascadeMessage(message);
+      if (isDurableWorkArtifact(message)
+        || ((!messageIsAgent || messageKey !== identityKey) && !carrierWake)) break;
       work.push(messages[index]);
       index += 1;
     }
@@ -526,11 +552,8 @@ export function segmentTranscript(
       continue;
     }
 
-    // Status is a single run-level trail, even when a mission/attachment is
-    // persisted between its updates. Splitting at that artifact used the same
-    // carrier twice (or synthesized another shell), producing duplicate agent
-    // headers and progress bubbles. Keep one carrier and render any durable
-    // artifact after its compact trail; it remains a normal full chat row.
+    // Artifacts remain inside this single-agent run only. Cross-agent and
+    // mission boundaries were already split above to preserve chronology.
     const artifacts = full.filter(isDurableWorkArtifact);
     const finalReplies = full.filter((message) => !isDurableWorkArtifact(message));
     segments.push({
@@ -548,21 +571,6 @@ export function segmentTranscript(
 
 export function workTraceAuthorKey(message: Pick<ChatMessage, 'author'>): string {
   return String(message.author || 'agent').trim() || 'agent';
-}
-
-/** Header attribution for a trace that may contain work from several agents. */
-export function workTraceAttribution(trace: ChatMessage[]): {
-  multiAgent: boolean;
-  label?: string;
-} {
-  const agents = new Set(
-    trace
-      .filter((message) => !isSystemCascadeMessage(message))
-      .map((message) => String(message.registrationId || workTraceAuthorKey(message)).toLowerCase()),
-  );
-  return agents.size > 1
-    ? { multiAgent: true, label: `${agents.size}-agent flow` }
-    : { multiAgent: false };
 }
 
 export function workTraceSummary(trace: ChatMessage[]): string {

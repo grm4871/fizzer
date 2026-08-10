@@ -34,7 +34,7 @@ import {
 import { ThinkingSpinner } from './ThinkingSpinner';
 import { ReportDialog } from './ReportDialog';
 import { hasRunActivity } from '../chat/harnessActivity';
-import { isSteeringContinuationMessage, segmentTranscript, workTraceAttribution, workTracePeek } from '../chat/workTrace';
+import { isSteeringContinuationMessage, segmentTranscript, workTracePeek } from '../chat/workTrace';
 import { useChannelMessages } from '../chat/messageStore';
 import {
   canGroupChatMessages,
@@ -3365,7 +3365,7 @@ export const ChatView = memo(function ChatView({
               <span className="chat-empty-hint">No messages yet — say hello or @mention an agent to start.</span>
             </div>
           ) : (
-            transcriptSegments.flatMap((segment, segmentIndex) => {
+            transcriptSegments.flatMap((segment) => {
               const renderGroupRow = (group: ChatMessageGroup) => {
                 const head = group.messages[0];
                 const groupSelected = selectedMessageId != null
@@ -3438,11 +3438,7 @@ export const ChatView = memo(function ChatView({
                   && segment.trace.some((message) => message.id === selectedMessageId);
                 const traceJumpHighlighted = jumpHighlightMessageId != null
                   && segment.trace.some((message) => message.id === jumpHighlightMessageId);
-                const previousSegment = transcriptSegments[segmentIndex - 1];
                 const missionArtifacts = [
-                  ...(previousSegment?.kind === 'group'
-                    ? previousSegment.group.messages.filter((message) => Boolean(message.mission))
-                    : []),
                   ...(carrier.mission ? [carrier] : []),
                   ...segment.fullGroups
                   .flatMap((group) => group.messages)
@@ -3475,7 +3471,6 @@ export const ChatView = memo(function ChatView({
                   />
                 );
                 const peek = workTracePeek(segment.trace);
-                const attribution = workTraceAttribution(segment.trace);
                 const unifiedMission = missionArtifacts.length > 0
                   ? missionArtifacts.map((message) => (
                     <ChatMissionCard
@@ -3498,10 +3493,10 @@ export const ChatView = memo(function ChatView({
                     selectedMessageId={traceSelected ? selectedMessageId : null}
                     jumpHighlightMessageId={traceJumpHighlighted ? jumpHighlightMessageId : null}
                     avatarKind="agent"
-                    avatarUrl={attribution.multiAgent ? undefined : getMessageAvatarUrl(displayCarrier)}
-                    authorLabel={attribution.label || getMessageAuthorLabel(displayCarrier)}
-                    ownerLabel={attribution.multiAgent ? undefined : getMessageOwnerLabel(displayCarrier)}
-                    planUsage={attribution.multiAgent ? undefined : getMessagePlanUsage(displayCarrier)}
+                    avatarUrl={getMessageAvatarUrl(displayCarrier)}
+                    authorLabel={getMessageAuthorLabel(displayCarrier)}
+                    ownerLabel={getMessageOwnerLabel(displayCarrier)}
+                    planUsage={getMessagePlanUsage(displayCarrier)}
                     latestRunningMessageId={undefined}
                     runningSiblingCount={0}
                     steeringPromptLabels={steeringPromptLabels}
@@ -3518,7 +3513,7 @@ export const ChatView = memo(function ChatView({
                     onLightbox={openLightbox}
                     onImageLoad={scrollToBottomIfSticky}
                     onAgentAvatarClick={
-                      !attribution.multiAgent && resolveMessageRegistration(displayCarrier)
+                      resolveMessageRegistration(displayCarrier)
                         ? (event) => openAgentSettingsFromMessage(displayCarrier, event)
                         : undefined
                     }
@@ -3538,14 +3533,6 @@ export const ChatView = memo(function ChatView({
                 return nodes;
               }
 
-              const nextSegment = transcriptSegments[segmentIndex + 1];
-              if (nextSegment?.kind === 'work' && segment.group.messages.some((message) => message.mission)) {
-                return renderGroupRow({
-                  messages: segment.group.messages.map((message) => (
-                    message.mission ? { ...message, mission: undefined } : message
-                  )),
-                });
-              }
               return renderGroupRow(segment.group);
             })
           )}
