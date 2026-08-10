@@ -15,6 +15,10 @@ import {
   type ChatAgentRegistration,
   type ChatMessage,
 } from './chat.js';
+import {
+  chatRelationshipDepth,
+  MAX_CHAT_COLLABORATION_HOPS,
+} from './chat-room-context.js';
 
 type Db = Database.Database;
 
@@ -98,6 +102,14 @@ export function resolveChatAgentTargets(
   const { route } = assertChatChannel(db, channelId, userId);
   const registrations = listChatAgentMembers(db, channelId, userId);
   const fromAgent = Boolean(message.registrationId || message.agentId);
+  // Human turns may always start a fresh branch. Agent-authored typed chains
+  // stop after the same bounded depth as explicit handoffs, preventing natural
+  // @mentions from becoming an unbounded autonomous loop.
+  if (
+    fromAgent
+    && message.replyTo?.relationship
+    && chatRelationshipDepth(db, userId, channelId, message) > MAX_CHAT_COLLABORATION_HOPS
+  ) return [];
   const repliedMessage = message.replyTo?.messageId
     ? getChatMessage(db, channelId, userId, message.replyTo.messageId)
     : undefined;
@@ -107,7 +119,12 @@ export function resolveChatAgentTargets(
     ? `@${message.replyTo.mention}`
     : '';
   const attachmentNames = (message.attachments ?? []).map((item) => item.name).join(' ');
-  const source = [implicitReply, message.body, attachmentNames].filter(Boolean).join(' ');
+  const directSource = [message.body, attachmentNames].filter(Boolean).join(' ');
+  // A named agent is the user's selected target. Keep ordinary reply-to-agent
+  // behavior when nobody is named, but do not let the inferred evidence parent
+  // also wake its author and turn one natural request into accidental fan-out.
+  const hasDirectAgentMention = registrations.some((registration) => mentions(directSource, registration));
+  const source = [hasDirectAgentMention ? '' : implicitReply, directSource].filter(Boolean).join(' ');
   const explicitlyMentioned = new Set(
     registrations.filter((registration) => mentions(source, registration)).map((registration) => registration.id),
   );

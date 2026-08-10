@@ -185,7 +185,6 @@ import {
   agentChatContentFromAccumulator,
   appendAgentChatRunEvents,
   buildAgentChannelWorkspaceContext,
-  buildAgentChatContext,
   CASCADE_AGENT_APP_CONTEXT,
   CASCADE_MISSION_DISCRETION_CONTEXT,
   CHAT_NOTE_MARKER,
@@ -229,6 +228,7 @@ import {
   type ChatReplyRef,
 } from './server/chat.js';
 import { createChatCollaboration } from './server/chat-collaboration.js';
+import { buildAgentRoomContext, inferNaturalChatLink } from './server/chat-room-context.js';
 import {
   attachRunToChatAgentDispatch,
   createChatAgentDispatchForRegistration,
@@ -250,6 +250,7 @@ import {
   linkMissionTaskDispatch,
   listChatMissionEvents,
   listChatMissions,
+  listActiveChatMissions,
   listSchedulableMissionTasks,
   missionRootMessage,
   refreshMissionProjection,
@@ -3162,10 +3163,6 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
   let triggeringMessageId = typeof req.body?.chat?.triggeringMessageId === 'string'
     ? req.body.chat.triggeringMessageId.trim()
     : '';
-  const chatContextNeeded = req.body?.chat?.contextNeeded === true
-    || req.body?.chat?.contextNeeded === 1
-    || req.body?.chat?.contextNeeded === '1'
-    || req.body?.chat?.contextNeeded === 'true';
   const chatWorkspaceNeeded = req.body?.chat?.workspaceNeeded === true
     || req.body?.chat?.workspaceNeeded === 1
     || req.body?.chat?.workspaceNeeded === '1'
@@ -3374,12 +3371,6 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     const includeWorkspace = Boolean(targetChannelId)
       && !willResume
       && (!hermesChatParity || chatWorkspaceNeeded);
-    // A cold provider session needs recent chat only for an unresolved
-    // reference. The folded reply/batch is already in `prompt`; adding an
-    // arbitrary history window to every other provider wastes context.
-    const includeRecentChat = Boolean(targetChannelId)
-      && !willResume
-      && Boolean(chatContextNeeded);
     const includeCascadeMemory = !willResume && !hermesChatParity;
 
     let effectivePrompt = prompt;
@@ -3388,6 +3379,25 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     // correctly resumed follow-up look like another cold system boot.
     const contextChunks: string[] = includeAppContract ? [CASCADE_AGENT_APP_CONTEXT] : [];
     if (targetChannelId) contextChunks.push(CASCADE_MISSION_DISCRETION_CONTEXT);
+    // Provider sessions remember their own prior turns, but not chat posted by
+    // other room participants between invocations. Rejoin every chat run with
+    // a bounded, current server snapshot; cold rotations also get the agent's
+    // own last contributions. The focused renderer-built reply chain remains
+    // in `prompt` and therefore takes priority over this shared state.
+    if (targetChannelId) {
+      try {
+        const room = buildAgentRoomContext({
+          messages: listChatMessages(db, targetChannelId, runnerUserId, { limit: 64 }),
+          registrations: listChatAgentMembers(db, targetChannelId, runnerUserId),
+          missions: listActiveChatMissions(db, runnerUserId, targetChannelId, 3),
+          targetRegistrationId: chatRegistrationId,
+          excludeMessageIds: [chatMessageId, triggeringMessageId],
+          includeOwnPrior: !willResume,
+          maxChars: 4_200,
+        });
+        if (room) contextChunks.push(room);
+      } catch { /* best-effort continuity; the focused request still runs */ }
+    }
     // A resumed session already has the prior workspace snapshot and can use
     // cascade-note when fresh live state matters. Re-sending up to 4k chars on
     // every steering turn was pure context multiplication.
@@ -3402,18 +3412,6 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
       } catch { /* best-effort context; the request still runs without it */ }
     }
     if (!willResume) {
-      if (includeRecentChat) {
-        try {
-          const recent = buildAgentChatContext(
-            listChatMessages(db, targetChannelId, runnerUserId, {
-              limit: 24,
-            }),
-            [chatMessageId, triggeringMessageId],
-            8,
-          );
-          if (recent) contextChunks.push(`Recent channel context:\n${recent}`);
-        } catch { /* best-effort context; the request still runs without it */ }
-      }
       if (includeCascadeMemory) {
         try {
           const channelTitle = targetChannelId
@@ -3767,7 +3765,15 @@ app.post('/api/vaults/:vaultId/channels/:channelId/messages', requireAuth, (req:
     const { route } = assertChatChannel(db, req.params.channelId, req.user!.id);
     ensureVaultWideAgents(db, req.params.vaultId, req.params.channelId, req.user!.id);
     assertDirectMessageSendAllowed(db, route.sourceChannelId, req.user!.id);
-    const input = isAgentRequest(req) ? req.body : { ...req.body, author: req.user!.username, agentId: undefined, registrationId: undefined };
+    const rawInput = isAgentRequest(req)
+      ? req.body
+      : { ...req.body, author: req.user!.username, agentId: undefined, registrationId: undefined };
+    const agents = listChatAgentMembers(db, req.params.channelId, req.user!.id);
+    const input = inferNaturalChatLink(
+      rawInput as ChatMessage,
+      listChatMessages(db, req.params.channelId, req.user!.id, { limit: 48 }),
+      agents,
+    );
     const message = createChatMessage(db, req.user!.id, req.params.vaultId, req.params.channelId, input);
     const dispatches = createChatAgentDispatches(
       db,
@@ -3775,7 +3781,6 @@ app.post('/api/vaults/:vaultId/channels/:channelId/messages', requireAuth, (req:
       req.params.channelId,
       message,
     );
-    const agents = listChatAgentMembers(db, req.params.channelId, req.user!.id);
     refreshChatNoteGrants(req.user!.id, req.params.vaultId, route.sourceChannelId, message);
     try {
       indexChatMessageBacklinks(db, route.sourceVaultId, route.sourceChannelId, {

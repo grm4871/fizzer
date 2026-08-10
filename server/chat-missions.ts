@@ -806,6 +806,26 @@ export function listChatMissions(
   return rows.map((row) => refreshMissionProjection(db, row.id).mission);
 }
 
+/** Small live subset for the per-run shared-room snapshot. */
+export function listActiveChatMissions(
+  db: Db,
+  userId: number,
+  channelId: string,
+  limit = 3,
+): ChatMission[] {
+  const { route } = assertChatChannel(db, channelId, userId);
+  const rows = db.prepare(`
+    SELECT * FROM chat_missions
+    WHERE channel_id = ?
+      AND status IN ('active', 'reviewing', 'attention', 'blocked')
+    ORDER BY updated_at DESC, rowid DESC
+    LIMIT ?
+  `).all(route.sourceChannelId, Math.max(1, Math.min(Number(limit) || 3, 10))) as MissionRow[];
+  // Prompt assembly is a read path. Derive current task/status state without
+  // rewriting transcript projections or appending mission events.
+  return rows.map((row) => projectMission(db, row, taskRows(db, row.id)));
+}
+
 /** Append-only mission timeline. No retention window or result cap. */
 export function listChatMissionEvents(
   db: Db,

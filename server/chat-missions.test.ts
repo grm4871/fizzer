@@ -18,6 +18,7 @@ import {
 } from './chat.js';
 import { ensureWorkItemSchema, getWorkItem } from './workItems.js';
 import { createChatCollaboration, MAX_CHAT_COLLABORATION_HOPS } from './chat-collaboration.js';
+import { inferNaturalChatLink } from './chat-room-context.js';
 import {
   createChatAgentDispatchForRegistration,
   createChatAgentDispatches,
@@ -454,6 +455,38 @@ test('typed collaboration creates one durable linked dispatch and replays idempo
   }
 });
 
+test('a natural review mention persists its evidence edge and dispatches only once', () => {
+  const { db, coordinator, worker } = setup();
+  try {
+    const source = createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: 'natural-source', channelId: 'channel-1', author: '',
+      body: 'A bounded room snapshot should accompany every invocation.',
+      createdAt: '2026-08-03T00:00:00.000Z', registrationId: coordinator.id,
+    });
+    const inferred = inferNaturalChatLink({
+      id: 'natural-review', channelId: 'channel-1', author: 'owner',
+      body: '@terra, what do you think?', createdAt: '2026-08-03T00:00:01.000Z',
+    }, [source], [coordinator, worker]);
+    const review = createChatMessage(db, 1, 'vault-1', 'channel-1', inferred);
+
+    assert.equal(review.replyTo?.messageId, source.id);
+    assert.equal(review.replyTo?.relationship, 'review_request');
+    assert.deepEqual(
+      createChatAgentDispatches(db, 1, 'channel-1', review).map((dispatch) => dispatch.registration.id),
+      [worker.id],
+    );
+    assert.deepEqual(
+      createChatAgentDispatches(db, 1, 'channel-1', review).map((dispatch) => dispatch.registration.id),
+      [worker.id],
+    );
+    const rows = db.prepare('SELECT registration_id FROM chat_agent_dispatches WHERE message_id = ?')
+      .all(review.id);
+    assert.deepEqual(rows, [{ registration_id: worker.id }]);
+  } finally {
+    db.close();
+  }
+});
+
 test('agent handoffs respect opt-in, self-target, and hop limits', () => {
   const { db, coordinator, worker } = setup();
   try {
@@ -500,6 +533,43 @@ test('agent handoffs respect opt-in, self-target, and hop limits', () => {
       }, true),
       /hop limit/,
     );
+  } finally {
+    db.close();
+  }
+});
+
+test('natural agent mention chains stop at the collaboration hop limit', () => {
+  const { db, coordinator, worker } = setup();
+  try {
+    db.prepare('UPDATE chat_agent_members SET taggable_by_agents = 1 WHERE id IN (?, ?)')
+      .run(coordinator.id, worker.id);
+    let parent = createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: 'natural-hop-root', channelId: 'channel-1', author: 'owner', body: 'Root evidence.',
+      createdAt: '2026-08-03T00:00:00.000Z',
+    });
+    for (let depth = 1; depth <= MAX_CHAT_COLLABORATION_HOPS + 1; depth += 1) {
+      const caller = depth % 2 === 1 ? coordinator : worker;
+      const target = depth % 2 === 1 ? worker : coordinator;
+      const next = createChatMessage(db, 1, 'vault-1', 'channel-1', {
+        id: `natural-hop-${depth}`,
+        channelId: 'channel-1',
+        author: '',
+        body: `@${target.mention} build on this result`,
+        createdAt: `2026-08-03T00:00:0${depth}.000Z`,
+        registrationId: caller.id,
+        replyTo: {
+          messageId: parent.id,
+          author: parent.author,
+          mention: '',
+          preview: parent.body,
+          relationship: 'builds_on',
+        },
+      });
+      const targets = resolveChatAgentTargets(db, 1, 'channel-1', next).map((item) => item.id);
+      if (depth <= MAX_CHAT_COLLABORATION_HOPS) assert.deepEqual(targets, [target.id]);
+      else assert.deepEqual(targets, []);
+      parent = next;
+    }
   } finally {
     db.close();
   }

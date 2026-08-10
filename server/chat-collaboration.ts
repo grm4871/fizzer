@@ -14,10 +14,14 @@ import {
   createChatAgentDispatchForRegistration,
   type ChatAgentDispatch,
 } from './chat-dispatch.js';
+import {
+  chatRelationshipDepth,
+  MAX_CHAT_COLLABORATION_HOPS,
+} from './chat-room-context.js';
 
 type Db = Database.Database;
 
-export const MAX_CHAT_COLLABORATION_HOPS = 4;
+export { MAX_CHAT_COLLABORATION_HOPS } from './chat-room-context.js';
 
 export type ChatCollaborationInput = {
   sourceMessageId: string;
@@ -48,19 +52,6 @@ function messagePreview(message: ChatMessage): string {
   }
   if (message.attachments?.length) return message.attachments[0]?.name || '[attachment]';
   return '(message)';
-}
-
-function collaborationDepth(db: Db, userId: number, channelId: string, source: ChatMessage): number {
-  const seen = new Set<string>();
-  let depth = 0;
-  let current: ChatMessage | undefined = source;
-  while (current?.replyTo?.relationship && current.replyTo.messageId && depth <= MAX_CHAT_COLLABORATION_HOPS) {
-    if (seen.has(current.id)) return MAX_CHAT_COLLABORATION_HOPS;
-    seen.add(current.id);
-    depth += 1;
-    current = getChatMessage(db, channelId, userId, current.replyTo.messageId);
-  }
-  return depth;
 }
 
 /**
@@ -105,7 +96,7 @@ export function createChatCollaboration(
     if (target.ownerUserId !== userId && !target.pingableByOthers) {
       throw new Error(`@${target.mention} is not accepting pings from other users`);
     }
-    if (collaborationDepth(db, userId, channelId, source) >= MAX_CHAT_COLLABORATION_HOPS) {
+    if (chatRelationshipDepth(db, userId, channelId, source) >= MAX_CHAT_COLLABORATION_HOPS) {
       throw new Error(`Collaboration hop limit (${MAX_CHAT_COLLABORATION_HOPS}) reached`);
     }
   } else if (target.ownerUserId !== userId && !target.pingableByOthers) {
