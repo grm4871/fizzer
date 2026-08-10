@@ -998,100 +998,6 @@ button:focus-visible,
   padding: 3px 7px;
   box-shadow: 0 0 0 2px var(--accent-glow);
 }
-.cm-cascade-widget {
-  display: block;
-  position: relative;
-  overflow: visible;
-  margin: 12px 0;
-  border: 0;
-  border-radius: var(--radius-md);
-  background: transparent;
-}
-.cm-cascade-widget-header {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  z-index: 5;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 24px;
-  padding: 3px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--bg-raised) 88%, transparent);
-  box-shadow: var(--shadow-sm);
-  opacity: 0.35;
-  transition: opacity var(--transition-fast), border-color var(--transition-fast);
-}
-.cm-cascade-widget:hover .cm-cascade-widget-header,
-.cm-cascade-widget-header:focus-within {
-  opacity: 1;
-}
-.cm-cascade-widget-title {
-  max-width: 160px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-secondary);
-  font-size: 0.6875rem;
-  font-weight: 600;
-  padding: 0 4px;
-}
-.cm-cascade-widget-runtime {
-  flex-shrink: 0;
-  color: var(--text-tertiary);
-  font-family: var(--font-mono);
-  font-size: 0.625rem;
-}
-.cm-cascade-widget.is-running .cm-cascade-widget-title,
-.cm-cascade-widget.is-running .cm-cascade-widget-runtime {
-  display: none;
-}
-.cm-cascade-widget-action {
-  flex-shrink: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-surface);
-  color: var(--text-secondary);
-  padding: 3px 8px;
-  font-size: 0.6875rem;
-  cursor: pointer;
-}
-.cm-cascade-widget-action[hidden],
-.cm-cascade-widget-placeholder[hidden] {
-  display: none !important;
-}
-.cm-cascade-widget-action:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-.cm-cascade-widget-body {
-  min-height: 0;
-}
-.cm-cascade-widget-placeholder {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 96px;
-  padding: 18px;
-  border: 1px dashed var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg-surface);
-  color: var(--text-tertiary);
-  font-size: 0.8125rem;
-}
-.cm-cascade-widget-placeholder.is-error {
-  color: var(--danger);
-}
-.cm-cascade-widget-frame {
-  display: block;
-  width: 100%;
-  height: 240px;
-  border: 0;
-  border-radius: var(--radius-md);
-  background: transparent;
-}
 .tree-context-menu,
 .tab-context-menu,
 .chat-context-menu {
@@ -8557,6 +8463,7 @@ a.chat-mission-chip:hover { color: var(--text-primary); border-color: var(--acce
   min-height: 0;
   background: var(--bg-editor, transparent);
 }
+
 /* ── Overlay surfaces follow the shell's language ──────────────────────
    The main screen separates by background step and fill, and reserves a
    border for real region boundaries. Modals, panels and popup menus used
