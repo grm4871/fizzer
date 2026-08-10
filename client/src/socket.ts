@@ -3,7 +3,7 @@
  *
  * Provides two socket factory functions for real-time communication:
  *
- * 1. **Vault socket** (`/vault` namespace) — note CRUD, feeds, and chat
+ * 1. **Vault socket** (`/vault` namespace) — note CRUD and chat
  *    message/member/presence events for a joined vault room.
  *
  * 2. **Runs socket** (`/runs` namespace) — streams AI agent run events
@@ -29,7 +29,6 @@ type ServerEvents = {
   'vault:noteChanged': (data: { noteId: string; vaultId: string; title?: string }) => void;
   'vault:noteCreated': (data: { noteId: string; vaultId: string; title?: string }) => void;
   'vault:noteDeleted': (data: { noteId: string; vaultId: string; title?: string }) => void;
-  'vault:feedNotify': (data: { noteId: string; feedTitle: string; item?: { title?: string } }) => void;
   /** A new chat message was persisted for a channel in this vault. */
   'vault:chatMessageCreated': (data: { vaultId: string; channelId: string; message: ChatMessagePayload }) => void;
   /** An existing chat message was updated (merge, agent stream, etc.). */

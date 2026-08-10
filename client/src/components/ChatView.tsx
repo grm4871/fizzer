@@ -1903,6 +1903,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
   onHydrateMessage,
   traceContent,
   traceAfterFirstMessage = false,
+  contextMenuMessage,
 }: {
   group: ChatMessageGroup;
   /** Pre-filtered by the parent: non-null only when the selection is inside this group. */
@@ -1939,6 +1940,8 @@ const ChatGroupRow = memo(function ChatGroupRow({
   traceContent?: ReactNode;
   /** Keep later user-facing updates under this author header, after the mission/work trace. */
   traceAfterFirstMessage?: boolean;
+  /** Mission origin targeted when the user right-clicks anywhere on this row. */
+  contextMenuMessage?: ChatMessage;
 }) {
   const head = group.messages[0];
   const tail = group.messages[group.messages.length - 1];
@@ -1996,6 +1999,9 @@ const ChatGroupRow = memo(function ChatGroupRow({
       className={`chat-message-group ${tail.status ? `status-${tail.status}` : ''} ${groupHasRunWidget ? 'has-run-widget' : ''} ${groupSelected ? 'selected' : ''} ${showBody ? '' : 'is-offscreen'}`}
       style={showBody ? undefined : { height: placeholderH, minHeight: placeholderH }}
       aria-hidden={showBody ? undefined : true}
+      onContextMenu={contextMenuMessage
+        ? (event) => onContextMenu(event, contextMenuMessage)
+        : undefined}
     >
       {showBody ? (
         <>
@@ -2223,6 +2229,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
   && prev.vaultId === next.vaultId
   && prev.onHydrateMessage === next.onHydrateMessage
   && prev.traceAfterFirstMessage === next.traceAfterFirstMessage
+  && prev.contextMenuMessage === next.contextMenuMessage
   && prev.traceContent === next.traceContent;
 });
 
@@ -3508,6 +3515,7 @@ export const ChatView = memo(function ChatView({
                     scrollRootRef={messagesRef}
                     vaultId={vaultId}
                     onHydrateMessage={onHydrateMessage}
+                    contextMenuMessage={group.messages.find((message) => Boolean(message.mission))}
                   />
                 );
               };
@@ -3621,6 +3629,7 @@ export const ChatView = memo(function ChatView({
                     onHydrateMessage={onHydrateMessage}
                     traceContent={unifiedMission}
                     traceAfterFirstMessage={clumpedUpdateMessages.length > 0}
+                    contextMenuMessage={missionArtifacts[0]}
                   />,
                 ];
                 for (const group of segment.fullGroups) {

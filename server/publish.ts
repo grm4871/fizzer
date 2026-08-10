@@ -71,7 +71,6 @@ function expandSizedImages(markdown: string): string {
 
 export function sanitizePublicContent(content: string): string {
   let out = redactPrivateBlocksForPublic(content);
-  out = out.replace(/```cascade-widget[\s\S]*?```/g, '_Interactive widget omitted in public view._');
   out = out.replace(/\{\{ai:[^}]+\}\}/g, '');
   out = out.replace(/!\[\[([^\]]+)\]\]/g, '[$1]');
   out = out.replace(/\[\[([^\]]+)\]\]/g, '$1');

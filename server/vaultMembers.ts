@@ -38,7 +38,7 @@ export function canManageVaultMembers(role: VaultRole | null): boolean {
  * API-wide viewer guard for routes whose vault id is the first path segment
  * after `/api/vaults/`. Individual resources such as `/api/notes/:id` still
  * resolve their vault before writing, but this closes every nested vault route
- * (chat, runs, scratchpad, missions, settings, feeds, and future additions).
+ * (chat, runs, scratchpad, missions, settings, and future additions).
  */
 export function isReadOnlyVaultMutation(
   db: Db,

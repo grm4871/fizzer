@@ -163,14 +163,6 @@ import {
   scheduleOrphanReclaimAfterRestart,
   waitForDesktopRunner,
 } from './server/desktop-runner.js';
-import {
-  ensureFeedSchema,
-  fetchFeed,
-  pollWidgetFeeds,
-  setFeedNotifySink,
-  startFeedPoller,
-} from './server/feeds.js';
-import { fetchWidgetData } from './server/widgetData.js';
 import { corsOrigin, rateLimit, resolveDeploySecret, resolveJwtSecret } from './server/security.js';
 import { ensureAndroidBatterySchema, listAndroidBatterySamples, parseAndroidBatterySample, recordAndroidBatterySample } from './server/androidBattery.js';
 import { clientAssetCacheControl } from './server/staticAssets.js';
@@ -532,7 +524,6 @@ ensureRunnerSchema(db);
 // In-memory desktop sockets die with the process, but local agents often keep
 // running. Defer orphan settle so reconnecting desktops can reclaim mid-flight
 // runs (see scheduleOrphanReclaimAfterRestart + activeRunIds on register).
-ensureFeedSchema(db);
 ensureChatSchema(db);
 ensureChatDispatchSchema(db);
 ensureChatMissionSchema(db);
@@ -938,8 +929,6 @@ setNoteMutationSink((database, noteId, actorUserId) => {
     .get(noteId) as { vaultId: string } | undefined;
   if (note) emitCommunityChangedForVault(note.vaultId);
 });
-
-setFeedNotifySink(emitVaultEvent);
 
 function emitChatMessageEvent(
   sourceVaultId: string,
@@ -2940,31 +2929,6 @@ app.get('/api/vaults/:id/graph', requireAuth, (req: AuthedRequest, res) => {
   res.json(getGraph(db, vault.id));
 });
 
-// ── Feed routes ───────────────────────────────────────────────────
-
-app.post('/api/vaults/:id/feed', requireAuth, async (req: AuthedRequest, res) => {
-  const vault = getVault(db, req.params.id, req.user!.id);
-  if (!vault) return res.status(404).json({ error: 'Vault not found' });
-
-  const url = typeof req.body?.url === 'string' ? req.body.url.trim() : '';
-  if (!url) return res.status(400).json({ error: 'Feed URL is required' });
-
-  try {
-    const feed = await fetchFeed(url, { force: Boolean(req.body?.force) });
-    res.json({ feed });
-  } catch (error) {
-    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not fetch feed' });
-  }
-});
-
-app.post('/api/vaults/:id/feed/poll', requireAuth, async (req: AuthedRequest, res) => {
-  const vault = getVault(db, req.params.id, req.user!.id);
-  if (!vault) return res.status(404).json({ error: 'Vault not found' });
-
-  await pollWidgetFeeds(db);
-  res.json({ ok: true });
-});
-
 // ── Agent / Run routes ─────────────────────────────────────────────
 
 app.get('/api/vaults/:id/runs', requireAuth, (req: AuthedRequest, res) => {
@@ -3428,23 +3392,6 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     res.json({ run, reused: false });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
-  }
-});
-
-app.get('/api/vaults/:id/widget-data/:key', requireAuth, async (req: AuthedRequest, res) => {
-  const vault = getVault(db, req.params.id, req.user!.id);
-  if (!vault) return res.status(404).json({ error: 'Vault not found' });
-
-  const key = String(req.params.key || '').trim();
-  if (!key) return res.status(400).json({ error: 'Widget data key is required' });
-
-  try {
-    const result = await fetchWidgetData(vault.root_path, key, {
-      force: req.query.force === '1' || req.query.force === 'true',
-    });
-    res.json(result);
-  } catch (err) {
-    res.status(400).json({ error: err instanceof Error ? err.message : 'Could not fetch widget data' });
   }
 });
 
@@ -4701,7 +4648,6 @@ app.use((_req, res) => {
 httpServer.listen(PORT, () => {
   console.log(`Fizzer API running on http://localhost:${PORT}`);
   console.log(`SQLite database: ${DB_PATH}`);
-  startFeedPoller(db);
   // Tasks may have become ready immediately before a server restart. Rebuild
   // their deterministic dispatch messages from durable dependency state.
   scheduleMissionWork();

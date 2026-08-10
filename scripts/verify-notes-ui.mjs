@@ -57,8 +57,23 @@ try {
   });
   const auth = { authorization: `Bearer ${token}` };
   const { vault } = await json('/api/vaults', { method: 'POST', headers: auth, body: JSON.stringify({ name: 'Notes UI' }) });
+  for (const path of [
+    `/api/vaults/${vault.id}/feed`,
+    `/api/vaults/${vault.id}/feed/poll`,
+    `/api/vaults/${vault.id}/widget-data/system-stats`,
+  ]) {
+    const response = await fetch(`${apiBase}${path}`, {
+      method: path.endsWith('system-stats') ? 'GET' : 'POST',
+      headers: { ...auth, 'content-type': 'application/json' },
+      body: path.endsWith('system-stats') ? undefined : JSON.stringify({ url: 'https://example.com/feed.xml' }),
+    });
+    if (response.status !== 404) throw new Error(`${path} remains available (${response.status})`);
+  }
   const { note: plan } = await json(`/api/vaults/${vault.id}/notes`, {
-    method: 'POST', headers: auth, body: JSON.stringify({ title: 'Release plan', content: '# Release plan\nShip safely.' }),
+    method: 'POST', headers: auth, body: JSON.stringify({
+      title: 'Release plan',
+      content: '# Release plan\nShip safely.\n\n```cascade-widget\n<button>Legacy widget</button>\n```',
+    }),
   });
   const { note: channel } = await json(`/api/vaults/${vault.id}/notes`, {
     method: 'POST', headers: auth, body: JSON.stringify({ title: 'embed-channel', content: 'cascade://chat-channel' }),
@@ -117,6 +132,9 @@ try {
   if (!(await embed.innerText()).includes('Release plan')) throw new Error('embed card did not resolve its note');
   await embed.click();
   await page.locator('.cm-editor').waitFor({ timeout: 15000 });
+  if (await page.locator('#toolbar-widget').count()) throw new Error('sandboxed widget toolbar action is still available');
+  if (await page.locator('.cm-cascade-widget').count()) throw new Error('legacy sandboxed widget still rendered');
+  if (await page.locator('.cm-editor iframe[sandbox][srcdoc]').count()) throw new Error('legacy sandboxed widget iframe still mounted');
 
   // Simulate the old broken state exactly: one note id in two persisted panes.
   const corruptSession = {
@@ -135,7 +153,7 @@ try {
   await page.locator('.cm-editor').waitFor({ timeout: 15000 });
   if (await page.locator('.cm-editor').count() !== 1) throw new Error('corrupted layout mounted the note editor more than once');
   if (errors.length) throw new Error(errors.join('\n'));
-  console.log('[notes-ui] OK — immediate note creation, blank-note save, single action row, embed card, and duplicate-pane recovery');
+  console.log('[notes-ui] OK — notes flows pass; feed APIs and sandboxed widgets are absent');
 } finally {
   await browser?.close();
   preview.kill('SIGTERM');

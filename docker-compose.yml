@@ -15,7 +15,6 @@ services:
       API_PORT: "3000"
       DOCS_DB_PATH: /data/docs.db
       CASCADE_DATA_DIR: /data
-      CASCADE_ENABLE_WIDGET_SHELL: "false"
       CASCADE_TRUST_PROXY_HOPS: "1"
     volumes:
       - /var/lib/cascade:/data

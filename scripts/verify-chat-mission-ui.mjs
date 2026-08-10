@@ -325,6 +325,17 @@ try {
     await page.locator('.chat-reply-bar-preview').innerText()
   ).includes('Implement the chat-first orchestration slice'));
   await page.locator('.chat-reply-bar-close').click();
+  // The whole message row, including its author metadata outside the card,
+  // should expose the mission origin's normal message menu.
+  const missionRow = card.locator('xpath=ancestor::article[1]');
+  await missionRow.locator('.chat-message-meta').click({ button: 'right' });
+  await replyMenu.waitFor({ timeout: 5_000 });
+  await replyMenu.click();
+  await page.locator('.chat-reply-bar').waitFor({ timeout: 5_000 });
+  check('mission row right-click targets the originating message', (
+    await page.locator('.chat-reply-bar-preview').innerText()
+  ).includes('Implement the chat-first orchestration slice'));
+  await page.locator('.chat-reply-bar-close').click();
   // Also when collapsed — user often right-clicks the compact card.
   if (await card.evaluate((node) => node.classList.contains('is-open') || node.getAttribute('data-open') === 'true')) {
     await card.locator('.chat-mission-toggle').click();

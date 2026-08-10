@@ -1525,8 +1525,17 @@ button:focus-visible,
   font-size: 0.7rem;
   color: var(--text-tertiary);
 }
-.account-settings-check { display: flex; grid-template-columns: none; align-items: center; gap: 8px; color: var(--text-secondary); cursor: pointer; }
-.account-settings-check input { width: auto; accent-color: var(--accent); }
+/* `.account-settings label` is a grid, so a checkbox row has to out-specify it
+   or the box stacks above its text and inherits the 36px text-input sizing. */
+.account-settings label.account-settings-check {
+  display: flex; align-items: center; gap: 8px;
+  color: var(--text-secondary); cursor: pointer;
+}
+.account-settings label.account-settings-check input[type='checkbox'] {
+  width: 15px; min-width: 15px; height: 15px; min-height: 0; flex: none;
+  margin: 0; padding: 0; border: 0; border-radius: 0; background: none;
+  accent-color: var(--accent);
+}
 .account-vault-visibility { display: flex; align-items: center; gap: 8px; margin: 10px 0; color: var(--text-secondary); }
 .account-vault-visibility label { display: flex; grid-template-columns: none; flex: 1; align-items: center; gap: 7px; }
 .account-vault-visibility input { width: auto; }
@@ -8548,3 +8557,111 @@ a.chat-mission-chip:hover { color: var(--text-primary); border-color: var(--acce
   min-height: 0;
   background: var(--bg-editor, transparent);
 }
+/* ── Overlay surfaces follow the shell's language ──────────────────────
+   The main screen separates by background step and fill, and reserves a
+   border for real region boundaries. Modals, panels and popup menus used
+   their own outline-per-widget styling, which read as a different app.
+   These rules apply the shell's language to the overlay families without
+   touching the dialog edges themselves. */
+
+.account-settings,
+.admin-panel,
+.session-manager,
+.updates-modal,
+.report-dialog,
+.discovery-dms-modal,
+.command-palette,
+.chat-channel-settings-panel {
+  --overlay-field: color-mix(in srgb, var(--bg-raised) 82%, var(--bg-base));
+}
+
+/* Fields are filled, not outlined; the border shows up on focus. */
+.account-settings :is(input, textarea, select),
+.admin-panel :is(input, textarea, select),
+.session-manager :is(input, textarea, select),
+.updates-modal :is(input, textarea, select),
+.report-dialog :is(input, textarea, select),
+.discovery-dms-modal :is(input, textarea, select),
+.chat-channel-settings-panel :is(input, textarea, select) {
+  border-color: transparent;
+  background: var(--overlay-field);
+}
+.account-settings :is(input, textarea, select):focus,
+.admin-panel :is(input, textarea, select):focus,
+.session-manager :is(input, textarea, select):focus,
+.updates-modal :is(input, textarea, select):focus,
+.report-dialog :is(input, textarea, select):focus,
+.discovery-dms-modal :is(input, textarea, select):focus,
+.chat-channel-settings-panel :is(input, textarea, select):focus {
+  border-color: var(--border);
+  outline: none;
+}
+/* Checkboxes and radios keep their native box. */
+.account-settings :is(input[type='checkbox'], input[type='radio']),
+.admin-panel :is(input[type='checkbox'], input[type='radio']),
+.discovery-dms-modal :is(input[type='checkbox'], input[type='radio']),
+.chat-channel-settings-panel :is(input[type='checkbox'], input[type='radio']) {
+  background: none;
+}
+
+/* Buttons fill instead of outlining at rest. */
+.account-settings .btn,
+.account-settings-actions button,
+.account-avatar-actions button,
+.admin-panel button:not(.btn-icon),
+.discovery-dms-modal button:not(.btn-icon),
+.report-dialog button:not(.btn-icon),
+.chat-channel-settings-panel button:not(.btn-icon) {
+  border-color: transparent;
+}
+.account-settings .btn:hover:not(:disabled),
+.account-settings-actions button:hover:not(:disabled),
+.account-avatar-actions button:hover:not(:disabled),
+.admin-panel button:not(.btn-icon):hover:not(:disabled),
+.discovery-dms-modal button:not(.btn-icon):hover:not(:disabled),
+.report-dialog button:not(.btn-icon):hover:not(:disabled),
+.chat-channel-settings-panel button:not(.btn-icon):hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--bg-overlay);
+}
+/* The primary action keeps its accent fill. */
+.account-settings .btn-primary,
+.admin-panel .btn-primary,
+.discovery-dms-modal .btn-primary,
+.report-dialog .btn-primary { border-color: var(--accent); }
+
+/* Panels and list rows: fill, no resting outline, square-left highlight. */
+.chat-channel-settings-panel {
+  border-color: transparent;
+  background: var(--overlay-field);
+}
+.account-vault-members li,
+.account-banned-users > *,
+.account-join-requests > *:not(strong),
+.admin-panel-list > *,
+.updates-item,
+.command-palette-item {
+  border-color: transparent;
+}
+.updates-item:hover,
+.command-palette-item:hover,
+.command-palette-item.highlighted {
+  border-color: transparent;
+  background: var(--bg-overlay);
+}
+
+/* Popup menus: rows highlight by fill, squared off on the left like the tree. */
+.tree-context-menu button,
+.chat-context-menu button,
+.vault-switcher-menu button {
+  border-radius: 0 var(--rail-row-radius) var(--rail-row-radius) 0;
+}
+.account-settings-actions button,
+.account-avatar-actions button {
+  background: var(--overlay-field);
+}
+/* Status readouts are chips, not controls: colour carries the state, the
+   outline is redundant. */
+.session-manager-count { border-color: transparent; background: var(--overlay-field); }
+.session-manager-runner.online,
+.session-manager-runner.offline { border-color: transparent; }

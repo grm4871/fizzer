@@ -2784,18 +2784,6 @@ export default function App() {
       scheduleSoftVaultReload();
       closeTabRef.current(data.noteId);
     };
-    const handleFeedNotify = (data: { noteId: string; feedTitle: string; item?: { title?: string } }) => {
-      const title = data.item?.title || 'New feed item';
-      setNotice(`${data.feedTitle}: ${title}`);
-      if (!('Notification' in window)) return;
-      const show = () => {
-        const n = new Notification(data.feedTitle || 'Fizzer feed update', { body: title });
-        n.onclick = () => { window.focus(); openNote(data.noteId); };
-      };
-      if (Notification.permission === 'granted') show();
-      else if (Notification.permission === 'default') void Notification.requestPermission().then((p) => { if (p === 'granted') show(); });
-    };
-
     const handleChatMessageCreated = (data: { vaultId: string; channelId: string; message: ChatMessage; dispatches?: ChatAgentDispatch[] }) => {
       if (data.vaultId !== activeVaultId) return;
       chatMessageStore.update(data.channelId, (existing) => (
@@ -2970,7 +2958,6 @@ export default function App() {
     socket.on('vault:noteChanged', handleNoteChanged);
     socket.on('vault:noteCreated', handleNoteCreated);
     socket.on('vault:noteDeleted', handleNoteDeleted);
-    socket.on('vault:feedNotify', handleFeedNotify);
     socket.on('vault:chatMessageCreated', handleChatMessageCreated);
     socket.on('vault:chatMessageUpdated', handleChatMessageUpdated);
     socket.on('vault:chatMessageDeleted', handleChatMessageDeleted);
@@ -2997,7 +2984,6 @@ export default function App() {
       socket.off('vault:noteChanged', handleNoteChanged);
       socket.off('vault:noteCreated', handleNoteCreated);
       socket.off('vault:noteDeleted', handleNoteDeleted);
-      socket.off('vault:feedNotify', handleFeedNotify);
       socket.off('vault:chatMessageCreated', handleChatMessageCreated);
       socket.off('vault:chatMessageUpdated', handleChatMessageUpdated);
       socket.off('vault:chatMessageDeleted', handleChatMessageDeleted);

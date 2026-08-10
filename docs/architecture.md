@@ -46,8 +46,7 @@ Domain behavior is split across `server/`:
 - `scratchpad.ts` — durable agent memory and consolidation;
 - `qmd-search.ts` — hybrid semantic and lexical search;
 - `publish.ts` — public note publishing;
-- `feeds.ts`, `versions.ts`, `noteAssets.ts`, and `widgetData.ts` — supporting
-  product domains.
+- `versions.ts` and `noteAssets.ts` — supporting product domains.
 
 Most API routes are declared in `index.ts`. Treat the route handler and its
 domain module as the source of truth instead of maintaining a duplicated route
@@ -98,4 +97,3 @@ after a model-server restart. See `server/desktop-runner.ts` and
 - Private note blocks are redacted before search, memory, previews, publishing,
   and model prompts.
 - Agent CLIs and their provider credentials remain on the desktop machine.
-- Production disables terminal-backed widgets by default.

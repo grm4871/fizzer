@@ -138,6 +138,13 @@ describe('Markdown Decoration Parser Tests', () => {
     }));
   });
 
+  it('treats legacy cascade-widget fences as inert code blocks', () => {
+    const decos = getParsedDecorations('```cascade-widget\n<button>Legacy widget</button>\n```');
+
+    expect(decos).not.toContainEqual(expect.objectContaining({ type: 'widget' }));
+    expect(decos).toContainEqual(expect.objectContaining({ type: 'cm-code-block-line' }));
+  });
+
   it('collapses private blocks when the cursor is outside and reveals them for editing', () => {
     const text = 'Visible\n:::private\nAPI_KEY=secret\n:::\nTail';
     const collapsed = getParsedDecorations(text);
