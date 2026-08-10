@@ -10,6 +10,7 @@
  */
 
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { io } from 'socket.io-client';
@@ -19,6 +20,12 @@ const root = path.join(__dirname, '..');
 const API_PORT = Number(process.env.TEST_API_PORT || 3098);
 const API_BASE = `http://127.0.0.1:${API_PORT}`;
 const DB_PATH = `/tmp/cascade-chatforward-e2e-${API_PORT}.db`;
+
+function cleanTestDatabase() {
+  for (const suffix of ['', '-wal', '-shm']) {
+    try { fs.unlinkSync(`${DB_PATH}${suffix}`); } catch { /* already clean */ }
+  }
+}
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -117,6 +124,7 @@ function check(name, cond) {
 }
 
 async function main() {
+  cleanTestDatabase();
   const server = startServer();
   server.stdout.on('data', (c) => process.stdout.write(`[server] ${c}`));
   server.stderr.on('data', (c) => process.stderr.write(`[server-err] ${c}`));
@@ -154,7 +162,7 @@ async function main() {
     check('copy keeps attachments', copy?.attachments?.[0]?.name === 'diagram.png');
     check('copy is authored by the forwarder', copy?.author === ownerName);
     check('copy is not attributed to the origin agent', !copy?.agentId);
-    check('copy carries provenance', copy?.forwardedFrom?.channelName === 'general'
+    check('copy carries provenance', copy?.forwardedFrom?.channelName === source.title
       && copy?.forwardedFrom?.author === 'Claude'
       && copy?.forwardedFrom?.messageId === original);
 
@@ -163,7 +171,7 @@ async function main() {
 
     const targetMessages = await listMessages(A.auth, vault.id, target.id);
     const persisted = targetMessages.find((m) => m.id === copy.id);
-    check('copy survives a reload with provenance', persisted?.forwardedFrom?.channelName === 'general');
+    check('copy survives a reload with provenance', persisted?.forwardedFrom?.channelName === source.title);
     check('original stays in the source channel', (await listMessages(A.auth, vault.id, source.id)).some((m) => m.id === original));
 
     // ── Test 2: forwarding into the same channel is refused.
@@ -198,6 +206,7 @@ async function main() {
   } finally {
     server.kill('SIGTERM');
     await sleep(300);
+    cleanTestDatabase();
   }
 }
 

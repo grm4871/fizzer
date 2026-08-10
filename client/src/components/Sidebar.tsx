@@ -27,7 +27,7 @@ import {
   type YouTubeEmbedControlDetail,
   type YouTubeEmbedStateDetail,
 } from '../mediaLinks';
-import { CHAT_NOTE_MARKER } from './ChatView';
+import { CHAT_NOTE_MARKER } from '../chat/shared';
 import {
   Folder as FolderIcon, FolderOpen, FileText, Pin, Edit2, FolderPlus,
   Search, ChevronRight, ChevronDown, Check, PanelLeftClose, LogOut, Trash2, FilePlus, FolderInput, Pencil, RefreshCw,

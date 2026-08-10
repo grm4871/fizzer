@@ -9,10 +9,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content" />
   <title>Fizzer</title>
 
-  <!-- App fonts (async; avoid CSS @import which blocks render) -->
+  <!-- Fonts are visual polish, not a startup dependency. Load the stylesheet
+       asynchronously so a slow third-party origin cannot hold first paint. -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:ital,wght@0,400;0,500;0,600;0,700;1,500;1,600;1,700&family=Saira:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:ital,wght@0,400;0,500;0,600;0,700;1,500;1,600;1,700&family=Saira:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" onload="this.onload=null;this.rel='stylesheet'">
+  <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:ital,wght@0,400;0,500;0,600;0,700;1,500;1,600;1,700&family=Saira:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap"></noscript>
 
   <!-- Version check script - always loaded fresh from server -->
   <script>

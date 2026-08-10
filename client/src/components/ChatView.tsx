@@ -30,6 +30,11 @@ import { hasRunActivity } from '../chat/harnessActivity';
 import { isSteeringContinuationMessage, segmentTranscript, workTracePeek } from '../chat/workTrace';
 import { useChannelMessages } from '../chat/messageStore';
 import {
+  canGroupChatMessages,
+  CHAT_NOTE_MARKER,
+  createChatAgentRegistrationId,
+} from '../chat/shared';
+import {
   chatMediaLink,
   youtubeVideoId,
   YOUTUBE_EMBED_CONTROL_EVENT,
@@ -38,7 +43,15 @@ import {
   type YouTubeEmbedStateDetail,
 } from '../mediaLinks';
 
-export const CHAT_NOTE_MARKER = 'cascade://chat-channel';
+export {
+  canGroupChatMessages,
+  canMergeChatMessages,
+  CHAT_NOTE_MARKER,
+  createChatAgentRegistrationId,
+  dataUrlsToRunImages,
+  mediaToRunImages,
+  mergeChatPresence,
+} from '../chat/shared';
 export const CHAT_MEDIA_LIMIT = 8;
 export const CHAT_MEDIA_MAX_BYTES = 8 * 1024 * 1024;
 const CHAT_EMOJIS = ['😀', '😂', '😍', '🥳', '😎', '🤔', '👍', '👎', '❤️', '🔥', '🎉', '✅', '👀', '🙏', '💎', '🚀'];
@@ -300,10 +313,6 @@ export interface VaultAgent {
   updatedAt?: string;
 }
 
-export function createChatAgentRegistrationId() {
-  return `reg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
 export interface ChatAgentOption {
   id: string;
   label: string;
@@ -347,26 +356,6 @@ export interface ChatChannelPresence {
   online: string[];
   owner?: string;
   profiles?: Record<string, { id: number; username: string; displayName: string; avatarUrl: string }>;
-}
-
-/**
- * Folds an incoming `vault:chatPresence` payload onto the cached presence for a channel.
- * Some presence emits carry no `profiles` (or an empty one); this must never wipe a
- * previously-known profile, only add to or refresh it.
- */
-export function mergeChatPresence(
-  prior: ChatChannelPresence | undefined,
-  incoming: Partial<ChatChannelPresence>,
-): ChatChannelPresence {
-  const nextProfiles = incoming.profiles && Object.keys(incoming.profiles).length > 0
-    ? { ...(prior?.profiles || {}), ...incoming.profiles }
-    : (prior?.profiles || incoming.profiles || {});
-  return {
-    participants: incoming.participants ?? prior?.participants ?? [],
-    online: incoming.online ?? prior?.online ?? [],
-    owner: incoming.owner || prior?.owner || '',
-    profiles: nextProfiles,
-  };
 }
 
 export type SharedChatNote = {
@@ -977,29 +966,6 @@ const ChatMessageText = memo(function ChatMessageText({
   && prev.onOpenNote === next.onOpenNote
 );
 
-/** Keep a burst compact, but never fold a later conversational turn into it. */
-const CHAT_MESSAGE_GROUP_WINDOW_MS = 90_000;
-
-export function canGroupChatMessages(a: ChatMessage, b: ChatMessage) {
-  if (a.author.trim() !== b.author.trim()) return false;
-  const aKey = a.registrationId ?? a.agentId ?? null;
-  const bKey = b.registrationId ?? b.agentId ?? null;
-  if (aKey !== bKey) return false;
-  const elapsed = Date.parse(b.createdAt) - Date.parse(a.createdAt);
-  return Number.isFinite(elapsed) && elapsed >= 0 && elapsed <= CHAT_MESSAGE_GROUP_WINDOW_MS;
-}
-
-export function canMergeChatMessages(a: ChatMessage, b: ChatMessage) {
-  if (!canGroupChatMessages(a, b)) return false;
-  if (a.status === 'running' || b.status === 'running') return false;
-  if (a.replyTo || b.replyTo) return false;
-  // A forward carries its own provenance banner; merging would hide it.
-  if (a.forwardedFrom || b.forwardedFrom) return false;
-  if ((a.images?.length ?? 0) > 0 || (b.images?.length ?? 0) > 0) return false;
-  if ((a.attachments?.length ?? 0) > 0 || (b.attachments?.length ?? 0) > 0) return false;
-  return true;
-}
-
 export function shouldDetachStickyForWheel(deltaY: number) {
   return deltaY < 0;
 }
@@ -1059,24 +1025,6 @@ export function getSteeringPromptLabels(
     labels.set(prompt.id, normalizeMention(registration.mention || registration.agentId));
   }
   return labels;
-}
-
-export function mediaToRunImages(media: ChatMediaAttachment[]) {
-  return media
-    .filter((item) => isImageMediaType(item.media_type))
-    .map(({ media_type, data }) => ({ media_type, data }));
-}
-
-/** Images are stored on a message as data URLs. A reply points at that message
- * but carries none of its media, so the quoted screenshot has to be re-read
- * from the quoted message before a run can see it. */
-export function dataUrlsToRunImages(sources: string[] | undefined) {
-  const images: Array<{ media_type: string; data: string }> = [];
-  for (const src of sources ?? []) {
-    const match = /^data:([^;,]+);base64,(.+)$/s.exec(src.trim());
-    if (match && isImageMediaType(match[1])) images.push({ media_type: match[1], data: match[2] });
-  }
-  return images;
 }
 
 interface ChatMessageGroup {

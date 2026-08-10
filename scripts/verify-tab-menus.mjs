@@ -209,6 +209,10 @@ try {
   const boardSource = page.locator('.tree-item.is-note', { hasText: 'menus-board' }).first();
   await boardSource.dragTo(page.locator('.pane-tab-bar').first());
   await page.locator('.tab-item', { hasText: 'menus-board' }).waitFor({ timeout: 10000 });
+  // NoteEditor is intentionally split out of the startup bundle. Let the lazy
+  // pane finish mounting before beginning another native drag gesture; replacing
+  // the drop target mid-gesture causes Chromium to cancel the drop.
+  await page.locator('.pane-content').first().locator('.editor-container').waitFor({ timeout: 15000 });
   check('sidebar note docks when dropped on the tab bar', true);
 
   const splitSource = page.locator('.tree-item.is-note', { hasText: 'Kanban Feature Test' }).first();

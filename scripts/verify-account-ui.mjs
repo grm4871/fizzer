@@ -136,9 +136,11 @@ try {
   await page.getByLabel('New password', { exact: true }).fill('updatedpass12345');
   await page.getByLabel('Confirm new password').fill('updatedpass12345');
   await page.locator('.account-settings').evaluate((node) => { node.scrollTop = node.scrollHeight; });
+  const passwordReload = page.waitForEvent('load');
   await page.getByRole('button', { name: 'Change password' }).click();
   await page.waitForFunction(() => document.querySelector('.account-settings')?.textContent?.includes('Password changed'));
-  await page.keyboard.press('Escape');
+  await passwordReload;
+  await page.waitForLoadState('networkidle');
   await sharing.waitFor({ state: 'detached' });
 
   await page.getByRole('button', { name: /Vault switcher/ }).click();

@@ -60,7 +60,9 @@ try {
   }
   const download = await fetch(`${base}/download`);
   const downloadHtml = await download.text();
-  check('desktop handoff route serves the installer chooser', download.ok && downloadHtml.includes('Install the desktop app'));
+  check('desktop handoff route serves the installer chooser', download.ok
+    && downloadHtml.includes('id="download"')
+    && downloadHtml.includes('/download/linux'));
   const stamp = Date.now();
   const ownerName = `owner_${stamp}`;
   const guestName = `guest_${stamp}`;
