@@ -174,7 +174,6 @@ test('room snapshots preserve state and only the interleaved changes since the t
     missions: [mission],
     targetRegistrationId: sol.id,
     excludeMessageIds: ['m5'],
-    maxChars: 2_800,
   });
 
   assert.match(context, /Participants: asdfasdf; Sol \(@sol, coordinator\); Terra \(@terra\)/);

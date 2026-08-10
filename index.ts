@@ -3393,7 +3393,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
           targetRegistrationId: chatRegistrationId,
           excludeMessageIds: [chatMessageId, triggeringMessageId],
           includeOwnPrior: !willResume,
-          maxChars: 4_200,
+          maxChars: 2_800,
         });
         if (room) contextChunks.push(room);
       } catch { /* best-effort continuity; the focused request still runs */ }

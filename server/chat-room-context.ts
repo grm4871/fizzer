@@ -178,7 +178,7 @@ export function buildAgentRoomContext(options: AgentRoomContextOptions): string 
     targetRegistrationId = '',
     excludeMessageIds = [],
     includeOwnPrior = false,
-    maxChars = 4_200,
+  maxChars = 2_800,
   } = options;
   const excluded = new Set(excludeMessageIds.filter(Boolean));
   const roomMessages = messages.filter((message) => !excluded.has(message.id));
@@ -238,7 +238,7 @@ export function buildAgentRoomContext(options: AgentRoomContextOptions): string 
     : [];
 
   const sections: string[] = [];
-  if (participantLabels.length) sections.push(`Participants: ${participantLabels.join('; ')}`);
+  if (participantLabels.length) sections.push(`Participants: ${compactText(participantLabels.join('; '), 720)}`);
   if (activeMissions.length) sections.push(`Active goals:\n${activeMissions.map(missionLine).join('\n')}`);
   if (activeAgents.length) sections.push(`Active work:\n${activeAgents.join('\n')}`);
   if (decisions.length) sections.push(`Recent decisions:\n${decisions.map(roomMessageLine).join('\n')}`);
