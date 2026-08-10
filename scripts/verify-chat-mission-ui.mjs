@@ -278,18 +278,26 @@ try {
     await card.locator('.chat-mission-toggle .thinking-spinner.chat-mission-whirl').count()
   ) === 1);
   check('live mission marks the card as live', await card.evaluate((node) => node.classList.contains('is-live')));
+  check('live mission keeps a directly accessible stop action', (
+    await card.getByRole('button', { name: 'Stop', exact: true }).count()
+  ) === 1);
   check('collapsed mission exposes thinking activity strip', (
     await card.locator('.chat-mission-peek').count()
   ) === 1 && (await card.locator('.chat-mission-peek').isVisible()));
   check('collapsed mission peek shows live work summary', (
     (await card.locator('.chat-mission-peek').innerText()).length > 0
   ));
+  check('collapsed peek has no second solid status ball', (
+    await card.locator('.chat-mission-peek-dot').count()
+  ) === 0);
   await card.locator('.chat-mission-toggle').click();
   check('mission expands to its worker task', (await card.innerText()).includes('Verify multiplayer persistence'));
   check('thinking trace is nested inside the mission card', (
     await card.locator('.chat-mission-trace .chat-work-trace.is-embedded').count()
   ) === 1);
-  check('expanded mission stream keeps peek visible', await card.locator('.chat-mission-peek').isVisible());
+  check('expanded mission hides the collapsed peek', (
+    await card.locator('.chat-mission-peek').count()
+  ) === 0);
   check('embedded work stream has no nested card chrome', await card.locator('.chat-mission-trace .chat-work-trace').evaluate((node) => {
     const style = getComputedStyle(node);
     return node.classList.contains('is-embedded')
@@ -331,37 +339,47 @@ try {
   await archive.getByRole('button', { name: 'Close mission history' }).click();
   await archive.waitFor({ state: 'detached', timeout: 5_000 });
 
-  // Nested mission traces force-open the stream; activity peeks live on the
-  // mission head so collapsed cards still read as working.
+  // Nested mission traces force-open the stream; collapsed peek is only for
+  // compact activity (hidden while expanded).
   const workTrace = card.locator('.chat-mission-trace .chat-work-trace').first();
   await workTrace.waitFor({ timeout: 10_000 });
   check('worker chatter collapses into a work trace', await workTrace.isVisible());
-  check('mission peek exposes a phase label while compact', await card.locator('.chat-mission-peek-phase').count() >= 1);
+  // Collapse again to assert the compact activity line geometry.
+  await card.locator('.chat-mission-toggle').click();
+  await card.locator('.chat-mission-peek').waitFor({ timeout: 5_000 });
   const railStyle = await card.evaluate((node) => {
     const headDot = node.querySelector('.chat-mission-toggle .thinking-spinner, .chat-mission-toggle .chat-mission-state');
-    const peekDot = node.querySelector('.chat-mission-peek-dot, .chat-mission-peek .thinking-spinner');
-    const phase = node.querySelector('.chat-mission-peek-phase');
+    const gutter = node.querySelector('.chat-mission-peek-gutter');
+    const author = node.querySelector('.chat-mission-peek-author, .chat-mission-peek-label');
+    const kicker = node.querySelector('.chat-mission-kicker');
     const head = headDot ? headDot.getBoundingClientRect() : null;
-    const peek = peekDot ? peekDot.getBoundingClientRect() : null;
+    const gut = gutter ? gutter.getBoundingClientRect() : null;
+    const text = author ? author.getBoundingClientRect() : null;
+    const kick = kicker ? kicker.getBoundingClientRect() : null;
     return {
       headW: headDot ? getComputedStyle(headDot).width : '',
-      peekW: peekDot ? getComputedStyle(peekDot).width : '',
-      peekRadius: peekDot ? getComputedStyle(peekDot).borderRadius : '',
-      phaseWeight: phase ? Number(getComputedStyle(phase).fontWeight) : 0,
+      gutW: gutter ? getComputedStyle(gutter).width : '',
       headCenterX: head ? head.left + head.width / 2 : null,
-      peekCenterX: peek ? peek.left + peek.width / 2 : null,
+      gutCenterX: gut ? gut.left + gut.width / 2 : null,
+      textLeft: text ? text.left : null,
+      kickerLeft: kick ? kick.left : null,
     };
   });
-  check('peek rail uses the same 8px status-dot geometry', (
-    railStyle.headW === '8px'
-      && railStyle.peekW === '8px'
-      && railStyle.peekRadius === '50%'
-      && railStyle.phaseWeight >= 500
+  check('collapsed peek reserves the status-dot column', (
+    railStyle.headW === '8px' && railStyle.gutW === '8px'
   ), JSON.stringify(railStyle));
-  check('peek rail aligns under the mission status slot', (
-    railStyle.headCenterX != null && railStyle.peekCenterX != null
-      && Math.abs(railStyle.headCenterX - railStyle.peekCenterX) <= 1.5
+  check('peek gutter aligns under the mission status slot', (
+    railStyle.headCenterX != null && railStyle.gutCenterX != null
+      && Math.abs(railStyle.headCenterX - railStyle.gutCenterX) <= 1.5
   ), JSON.stringify(railStyle));
+  // Author/label start with the MISSION kicker (title is further right after the badge).
+  check('peek text aligns with the mission kicker column', (
+    railStyle.textLeft != null && railStyle.kickerLeft != null
+      && Math.abs(railStyle.textLeft - railStyle.kickerLeft) <= 2
+  ), JSON.stringify(railStyle));
+  // Re-open for the remaining expanded-stream assertions.
+  await card.locator('.chat-mission-toggle').click();
+  await workTrace.waitFor({ timeout: 5_000 });
   // Coordinator follow-ups that stay in the work run render as compact lines
   // inside the mission stream (not a second full bubble above the mission).
   const finalAsWorkLine = await workTrace.locator(`.chat-work-line[data-message-id="${traceMessages[2].id}"]`).count();

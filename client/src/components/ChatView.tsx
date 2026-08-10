@@ -1,5 +1,5 @@
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { Bot, ChevronRight, ClipboardList, Flag, Forward, Hash, History, ImagePlus, Paperclip, Reply, Send, Smile, Trash2, X } from 'lucide-react';
+import { Bot, ChevronRight, ClipboardList, Flag, Forward, Hash, History, ImagePlus, Loader2, Paperclip, Reply, Send, Smile, Square, Trash2, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
@@ -1668,6 +1668,7 @@ function ChatMissionCard({
   const [timelineOpen, setTimelineOpen] = useState(false);
   const [events, setEvents] = useState<ChatMissionEvent[] | null>(null);
   const [historyError, setHistoryError] = useState('');
+  const [stopping, setStopping] = useState(false);
   const [fileCounts, setFileCounts] = useState<ReadonlyMap<string, number>>(() => new Map());
   const bridge = useMemo(workspaceBridge, []);
   useEffect(() => {
@@ -1737,6 +1738,25 @@ function ChatMissionCard({
       setHistoryError(error instanceof Error ? error.message : 'Could not load mission history');
     }
   }
+  async function stopMission() {
+    if (!vaultId || !channelId || stopping) return;
+    setStopping(true);
+    setHistoryError('');
+    try {
+      await api(`/api/vaults/${vaultId}/channels/${channelId}/missions/${mission.id}/finish`, {
+        method: 'POST',
+        body: JSON.stringify({
+          coordinatorRegistrationId: mission.coordinatorMention || mission.coordinator,
+          status: 'canceled',
+          summary: 'Stopped by user.',
+        }),
+      });
+    } catch (error) {
+      setHistoryError(error instanceof Error ? error.message : 'Could not stop mission');
+    } finally {
+      setStopping(false);
+    }
+  }
   return (
     <div
       className={`chat-mission-card is-${mission.status}${live ? ' is-live' : ''}${open ? ' is-open' : ''}`}
@@ -1761,6 +1781,18 @@ function ChatMissionCard({
           <span className="chat-mission-status">{statusLabel}</span>
           <ChevronRight size={13} className={`chat-mission-chevron${open ? ' open' : ''}`} aria-hidden="true" />
         </button>
+        {live && vaultId && channelId && (
+          <button
+            type="button"
+            className="chat-mission-stop"
+            onClick={() => void stopMission()}
+            disabled={stopping}
+            title="Stop mission"
+          >
+            {stopping ? <Loader2 className="is-spinning" size={11} /> : <Square size={10} fill="currentColor" />}
+            {stopping ? 'Stopping' : 'Stop'}
+          </button>
+        )}
         {showPeek && (
           <button
             type="button"
@@ -1769,12 +1801,8 @@ function ChatMissionCard({
             aria-expanded={false}
             aria-label={`Mission activity: ${peekAuthor ? `${peekAuthor} — ` : ''}${peekLabel}`}
           >
-            {/* Spacer matches status slot so text lines up under the title, not a 2nd status ball. */}
-            <span className="chat-mission-peek-gutter" aria-hidden="true">
-              {peekLive
-                ? <ThinkingSpinner className="chat-mission-peek-spin" title="Thinking" />
-                : null}
-            </span>
+            {/* Empty gutter matches the status-dot column; header owns the spinner. */}
+            <span className="chat-mission-peek-gutter" aria-hidden="true" />
             {peekAuthor && <span className="chat-mission-peek-author">{peekAuthor}</span>}
             <span className="chat-mission-peek-label">{peekLabel}</span>
           </button>
