@@ -9,18 +9,24 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const electronRoot = path.join(root, 'cascade-electron');
 const requireFromElectron = createRequire(path.join(electronRoot, 'package.json'));
 const { listPackage } = requireFromElectron('@electron/asar');
+const electronManifest = JSON.parse(fs.readFileSync(path.join(electronRoot, 'package.json'), 'utf8'));
+const productName = String(electronManifest.productName || electronManifest.name || '').trim();
+if (!productName) throw new Error('Desktop package manifest has no product name');
 const valueAfter = (flag) => {
   const index = process.argv.indexOf(flag);
   return index >= 0 ? process.argv[index + 1] : '';
 };
 const platform = valueAfter('--platform') || process.platform;
 const arch = valueAfter('--arch') || process.arch;
-const packageRoot = path.join(electronRoot, 'out', `Cascade-${platform}-${arch}`);
+// Electron Packager names both the output directory and macOS app bundle from
+// the product identity. Derive it from the manifest so a rebrand cannot leave
+// this verifier looking for a stale hard-coded package name.
+const packageRoot = path.join(electronRoot, 'out', `${productName}-${platform}-${arch}`);
 const resources = platform === 'darwin'
-  ? path.join(packageRoot, 'Cascade.app', 'Contents', 'Resources')
+  ? path.join(packageRoot, `${productName}.app`, 'Contents', 'Resources')
   : path.join(packageRoot, 'resources');
 const executable = platform === 'darwin'
-  ? path.join(packageRoot, 'Cascade.app', 'Contents', 'MacOS', 'cascade')
+  ? path.join(packageRoot, `${productName}.app`, 'Contents', 'MacOS', 'cascade')
   : path.join(packageRoot, platform === 'win32' ? 'cascade.exe' : 'cascade');
 
 const requiredFiles = [
