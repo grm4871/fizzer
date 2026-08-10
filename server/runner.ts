@@ -266,7 +266,7 @@ export function listRunEvents(db: Db, runId: number, afterSeq = 0) {
 export async function cancelRun(
   db: Db,
   runId: number,
-  opts: { steering?: boolean } = {},
+  opts: { steering?: boolean; force?: boolean } = {},
 ): Promise<boolean> {
   const run = getRun(db, runId);
   if (!run) return false;
@@ -289,7 +289,7 @@ export async function cancelRun(
         // Steering is a product requirement: never leave the next turn stuck on
         // "still stopping" because a hung CLI never acked cancel while online.
         // Non-steering cancels still wait for a clean stop when the runner is up.
-        if (isDesktopRunnerOnline(ownerId) && !opts.steering) return false;
+        if (isDesktopRunnerOnline(ownerId) && !opts.steering && !opts.force) return false;
       }
     }
     clearDelegatedRun(runId);

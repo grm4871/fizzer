@@ -3483,7 +3483,12 @@ app.post('/api/runs/:id/cancel', requireAuth, async (req: AuthedRequest, res) =>
   if (!vault) return res.status(403).json({ error: 'Access denied' });
 
   try {
-    const success = await cancelRun(db, run.id, { steering: req.body?.steering === true });
+    // An explicit operator stop must settle server state even if the desktop
+    // process races its acknowledgement or the runner socket is wedged.
+    const success = await cancelRun(db, run.id, {
+      steering: req.body?.steering === true,
+      force: req.body?.steering !== true,
+    });
     if (success) {
       for (const update of settleChatMessagesForRun(db, run.id)) {
         emitChatMessageEvent(update.vaultId, update.channelId, 'vault:chatMessageUpdated', update.message);
@@ -3798,13 +3803,13 @@ app.post('/api/vaults/:vaultId/channels/:channelId/missions/:missionId/finish', 
     if (status === 'canceled') {
       await Promise.all(update.mission.tasks
         .filter((task) => task.status === 'canceled' && task.runId != null)
-        .map((task) => cancelRun(db, task.runId!)));
+        .map((task) => cancelRun(db, task.runId!, { force: true })));
     }
     emitMissionProjection(update);
     for (const messageId of update.removedWakeMessageIds || []) {
       emitChatMessageDeleted(update.vaultId, update.channelId, messageId);
     }
-    await Promise.all((update.canceledWakeRunIds || []).map((runId) => cancelRun(db, runId)));
+    await Promise.all((update.canceledWakeRunIds || []).map((runId) => cancelRun(db, runId, { force: true })));
     res.json({ mission: update.mission });
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : 'Could not finish mission' });

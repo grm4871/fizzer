@@ -406,8 +406,14 @@ export function SessionManager({
     if (!selected || stoppingId != null) return;
     setStoppingId(selected.id);
     try {
-      await onCancel(selected.id);
+      const stopped = await onCancel(selected.id);
+      if (stopped === false) {
+        setError('The session did not acknowledge the stop request.');
+        return;
+      }
       await refresh(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not stop session');
     } finally {
       setStoppingId(null);
     }

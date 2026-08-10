@@ -495,6 +495,13 @@ try {
   await permissionCard.getByRole('button', { name: 'Deny' }).click();
   await permissionCard.waitFor({ state: 'detached', timeout: 5_000 });
 
+  const stopCard = page.locator('.chat-mission-card', { hasText: 'Chat-first orchestration' });
+  await stopCard.getByRole('button', { name: 'Stop', exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('.chat-mission-card.is-canceled') !== null, null, { timeout: 10_000 });
+  check('mission stop settles the mission and removes the live stop action', (
+    await stopCard.getByRole('button', { name: 'Stop', exact: true }).count()
+  ) === 0 && (await stopCard.innerText()).includes('canceled'));
+
   await page.locator(`#note-${ordinaryNote.id}`).click();
   await page.getByText('Ordinary note', { exact: true }).waitFor({ timeout: 10_000 });
   check('ordinary note keeps the same vault people and agents rail', (

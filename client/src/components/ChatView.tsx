@@ -1704,10 +1704,13 @@ function ChatMissionCard({
   }, [bridge, mission.tasks, open]);
   const done = mission.tasks.filter((task) => task.status === 'completed' || task.status === 'canceled').length;
   const total = mission.tasks.length;
-  const live = mission.status === 'active'
-    || mission.status === 'reviewing'
-    || mission.tasks.some((task) => task.status === 'running' || task.status === 'pending')
-    || Boolean(tracePeek?.live);
+  const terminal = mission.status === 'completed' || mission.status === 'canceled';
+  const live = !terminal && (
+    mission.status === 'active'
+      || mission.status === 'reviewing'
+      || mission.tasks.some((task) => task.status === 'running' || task.status === 'pending')
+      || Boolean(tracePeek?.live)
+  );
   const statusLabel = mission.status === 'active'
     ? (total ? `${done}/${total} tasks` : 'planning')
     : needsAttention ? 'needs review' : mission.status;
