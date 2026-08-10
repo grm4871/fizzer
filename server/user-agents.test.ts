@@ -15,6 +15,7 @@ import {
   listVaultAgents,
   upsertVaultAgent,
   deleteVaultAgent,
+  removeVaultAgentFromVault,
   addVaultAgentToChannel,
 } from './chat.js';
 import { addVaultMember, ensureVaultMembersSchema } from './vaultMembers.js';
@@ -44,7 +45,7 @@ function setup() {
     CREATE TABLE note_tags (note_id TEXT, tag_id TEXT);
   `);
   db.prepare("INSERT INTO users (id, username) VALUES (1, 'owner'), (2, 'alice')").run();
-  db.prepare("INSERT INTO vaults (id, name, created_by) VALUES ('v1', 'Owner vault', 1), ('v2', 'Alice vault', 2)").run();
+  db.prepare("INSERT INTO vaults (id, name, created_by) VALUES ('v1', 'Owner vault', 1), ('v2', 'Alice vault', 2), ('v3', 'Owner test vault', 1)").run();
   ensureVaultMembersSchema(db);
   ensureCommunityModerationSchema(db);
   ensureChatSchema(db);
@@ -92,6 +93,35 @@ test('a member cannot delete another person agent', () => {
     addVaultMember(db, 'v1', 1, 2, 'editor');
     assert.throws(() => deleteVaultAgent(db, 2, 'v1', owned.id), /owner/i);
     assert.equal(deleteVaultAgent(db, 1, 'v1', owned.id), true);
+  } finally {
+    db.close();
+  }
+});
+
+test('removing an agent from a test vault preserves its profile and other vault memberships', () => {
+  const db = setup();
+  try {
+    db.prepare(`
+      INSERT INTO notes (id, vault_id, title, content, content_preview)
+      VALUES
+        ('home-room', 'v1', 'home', 'cascade://chat-channel', 'cascade://chat-channel'),
+        ('test-room', 'v3', 'test', 'cascade://chat-channel', 'cascade://chat-channel')
+    `).run();
+    const owned = upsertVaultAgent(db, 1, 'v1', {
+      agentId: 'codex', displayName: 'Sol', mention: 'sol',
+    });
+    addVaultAgentToChannel(db, 1, 'v1', 'home-room', owned.id);
+    addVaultAgentToChannel(db, 1, 'v3', 'test-room', owned.id);
+
+    assert.equal(removeVaultAgentFromVault(db, 1, 'v3', owned.id), true);
+    assert.ok(listVaultAgents(db, 1, 'v1').some((agent) => agent.id === owned.id));
+    assert.ok(listChatAgentMembers(db, 'home-room', 1).some((agent) => agent.vaultAgentId === owned.id));
+    assert.ok(!listChatAgentMembers(db, 'test-room', 1).some((agent) => agent.vaultAgentId === owned.id));
+    ensureVaultWideAgents(db, 'v3', 'test-room', 1);
+    assert.ok(!listChatAgentMembers(db, 'test-room', 1).some((agent) => agent.vaultAgentId === owned.id));
+
+    addVaultAgentToChannel(db, 1, 'v3', 'test-room', owned.id);
+    assert.ok(listChatAgentMembers(db, 'test-room', 1).some((agent) => agent.vaultAgentId === owned.id));
   } finally {
     db.close();
   }

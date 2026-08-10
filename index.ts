@@ -211,6 +211,7 @@ import {
   listVaultAgents,
   upsertVaultAgent,
   deleteVaultAgent,
+  removeVaultAgentFromVault,
   getVaultAgent,
   addVaultAgentToChannel,
   ensureVaultWideAgents,
@@ -3007,9 +3008,20 @@ app.get('/api/vaults/:vaultId/vault-agents/:agentId', requireAuth, (req: AuthedR
 
 app.delete('/api/vaults/:vaultId/vault-agents/:agentId', requireAuth, (req: AuthedRequest, res) => {
   try {
-    const removed = deleteVaultAgent(db, req.user!.id, req.params.vaultId, req.params.agentId);
+    const removed = removeVaultAgentFromVault(db, req.user!.id, req.params.vaultId, req.params.agentId);
     if (!removed) return res.status(404).json({ error: 'Vault agent not found' });
     emitVaultEvent(req.params.vaultId, 'vault:vaultAgentRemoved', { agentId: req.params.agentId });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+app.delete('/api/vaults/:vaultId/vault-agents/:agentId/profile', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const removed = deleteVaultAgent(db, req.user!.id, req.params.vaultId, req.params.agentId);
+    if (!removed) return res.status(404).json({ error: 'Vault agent not found' });
+    emitVaultEvent(req.params.vaultId, 'vault:vaultAgentDeleted', { agentId: req.params.agentId });
     res.json({ success: true });
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : String(err) });

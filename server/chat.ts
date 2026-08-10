@@ -430,6 +430,13 @@ export function ensureChatSchema(db: Db): void {
     );
     CREATE INDEX IF NOT EXISTS vault_agents_vault_idx ON vault_agents(vault_id);
 
+    CREATE TABLE IF NOT EXISTS vault_agent_exclusions (
+      vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
+      vault_agent_id TEXT NOT NULL REFERENCES vault_agents(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (vault_id, vault_agent_id)
+    );
+
     CREATE TABLE IF NOT EXISTS chat_channel_links (
       local_channel_id TEXT PRIMARY KEY REFERENCES notes(id) ON DELETE CASCADE,
       local_vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
@@ -1116,6 +1123,7 @@ export function upsertVaultAgent(
     `).run(id, vaultId, agentId, displayName, avatarUrl, mention, model, cwd, contextPrompt, userId);
   }
   db.prepare('UPDATE vault_agents SET owner_user_id = COALESCE(owner_user_id, ?) WHERE id = ?').run(userId, id);
+  db.prepare('DELETE FROM vault_agent_exclusions WHERE vault_id = ? AND vault_agent_id = ?').run(vaultId, id);
   return rowToVaultAgent(db.prepare(`
     SELECT va.*, u.username AS owner_username
     FROM vault_agents va LEFT JOIN users u ON u.id = va.owner_user_id
@@ -1140,6 +1148,30 @@ export function deleteVaultAgent(db: Db, userId: number, vaultId: string, vaultA
   return result.changes > 0;
 }
 
+/** Remove an owned agent from one vault without retiring its global profile. */
+export function removeVaultAgentFromVault(
+  db: Db,
+  userId: number,
+  vaultId: string,
+  vaultAgentId: string,
+): boolean {
+  const vault = getVault(db, vaultId, userId);
+  if (!vault) throw new Error('Vault not found');
+  const target = db.prepare('SELECT owner_user_id FROM vault_agents WHERE id = ?')
+    .get(vaultAgentId) as { owner_user_id: number | null } | undefined;
+  if (!target) return false;
+  if (target.owner_user_id != null && target.owner_user_id !== userId) {
+    throw new Error('Only the agent owner can remove it');
+  }
+  db.transaction(() => {
+    db.prepare('INSERT OR IGNORE INTO vault_agent_exclusions (vault_id, vault_agent_id) VALUES (?, ?)')
+      .run(vaultId, vaultAgentId);
+    db.prepare('DELETE FROM chat_agent_members WHERE vault_agent_id = ? AND vault_id = ?')
+      .run(vaultAgentId, vaultId);
+  })();
+  return true;
+}
+
 /**
  * Add an existing vault agent to a channel (or refresh membership flags).
  * Identity always comes from vault_agents.
@@ -1160,6 +1192,8 @@ export function addVaultAgentToChannel(
     'SELECT * FROM vault_agents WHERE id = ? AND (owner_user_id = ? OR vault_id = ?)',
   ).get(vaultAgentId, userId, route.localVaultId) as VaultAgentRow | undefined;
   if (!va) throw new Error('Vault agent not found');
+  db.prepare('DELETE FROM vault_agent_exclusions WHERE vault_id = ? AND vault_agent_id = ?')
+    .run(route.localVaultId, va.id);
   // The handle has to stay unambiguous inside the vault it is joining.
   const handleClash = db.prepare(`
     SELECT id FROM chat_agent_members
@@ -2747,9 +2781,12 @@ export function ensureVaultWideAgents(db: Db, vaultId: string, channelId: string
   const { route } = assertChatChannel(db, channelId, userId);
   if (route.localVaultId !== vaultId) throw new Error('Chat channel not found');
 
+  const excluded = new Set((db.prepare(`
+    SELECT vault_agent_id AS id FROM vault_agent_exclusions WHERE vault_id = ?
+  `).all(vaultId) as Array<{ id: string }>).map((row) => row.id));
   const vaultAgentIds = new Set<string>();
   for (const agent of listVaultAgents(db, userId, vaultId)) {
-    if (agent.id) vaultAgentIds.add(agent.id);
+    if (agent.id && !excluded.has(agent.id)) vaultAgentIds.add(agent.id);
   }
 
   // Any vault agent already seated in a channel of this vault (including
@@ -2767,7 +2804,7 @@ export function ensureVaultWideAgents(db: Db, vaultId: string, channelId: string
       )
   `).all(vaultId, vaultId, `${CHAT_NOTE_MARKER}%`) as Array<{ id: string }>;
   for (const row of seated) {
-    if (row.id) vaultAgentIds.add(row.id);
+    if (row.id && !excluded.has(row.id)) vaultAgentIds.add(row.id);
   }
 
   for (const vaultAgentId of vaultAgentIds) {

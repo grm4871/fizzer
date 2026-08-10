@@ -389,6 +389,7 @@ interface ChatViewProps {
   onRemoveAgent: (channelId: string, registrationId: string) => void;
   onUpsertVaultAgent?: (agent: Partial<VaultAgent> & { agentId: string }) => Promise<VaultAgent | void> | VaultAgent | void;
   onDeleteVaultAgent?: (vaultAgentId: string) => Promise<void> | void;
+  onDeleteAgentProfile?: (vaultAgentId: string) => Promise<void> | void;
   onAddVaultAgentToChannel?: (channelId: string, vaultAgentId: string) => Promise<void> | void;
   onCreateInviteLink: (channelId: string) => Promise<string>;
   onInviteUser: (channelId: string, username: string) => Promise<void>;
@@ -2058,6 +2059,7 @@ export const ChatView = memo(function ChatView({
   onRemoveAgent,
   onUpsertVaultAgent,
   onDeleteVaultAgent,
+  onDeleteAgentProfile,
   onAddVaultAgentToChannel,
   onCreateInviteLink,
   onInviteUser,
@@ -4025,7 +4027,7 @@ export const ChatView = memo(function ChatView({
                   if (agent.registration.vaultAgentId && onDeleteVaultAgent) void onDeleteVaultAgent(agent.registration.vaultAgentId);
                   else onRemoveAgent(channelId, agent.registration.id);
                 }}
-                title="Delete agent from vault"
+                title="Remove agent from this vault"
               >
                 <X size={12} />
               </button>}
@@ -4063,15 +4065,15 @@ export const ChatView = memo(function ChatView({
                         </span>
                       </span>
                     </button>
-                    {onDeleteVaultAgent && canManage && (
+                    {onDeleteAgentProfile && canManage && (
                       <button
                         type="button"
                         className="chat-remove-agent"
-                        title="Delete vault agent (all channels)"
+                        title="Permanently delete agent profile"
                         onClick={(event) => {
                           event.stopPropagation();
-                          if (window.confirm(`Delete vault agent @${va.mention}?`)) {
-                            void onDeleteVaultAgent(va.id);
+                          if (window.confirm(`Permanently delete @${va.mention} from your agent profiles and every vault?`)) {
+                            void onDeleteAgentProfile(va.id);
                           }
                         }}
                       >
