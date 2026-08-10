@@ -315,7 +315,7 @@ try {
     missionPeekText.trim().length > 0
       && !missionPeekText.includes('[36m')
       && !missionPeekText.includes('{"command"')
-      && missionPeekText.includes('Bash python -c verify')
+      && !missionPeekText.includes('[reasoning hidden]')
   ), missionPeekText);
   check('collapsed peek has no second solid status ball', (
     await card.locator('.chat-mission-peek-dot').count()
