@@ -9,6 +9,7 @@ import {
   workTracePreview,
   workTraceDecals,
   workTracePhase,
+  workTracePeek,
   workTraceStatusLabel,
   workTraceSummary,
 } from '../chat/workTrace';
@@ -213,5 +214,26 @@ describe('workTrace', () => {
     ];
     expect(workTraceSummary(trace)).toContain('2 steps');
     expect(workTraceSummary(trace)).toContain('Sol');
+  });
+
+  it('builds a collapsed mission peek from the live step', () => {
+    const peek = workTracePeek([
+      msg({ id: '1', author: 'Sol', body: 'Queued', status: 'sending', missionTaskId: 't1' }),
+      msg({
+        id: '2',
+        author: 'Terra',
+        body: 'Thinking…',
+        status: 'running',
+        harnessLog: 'Bash rg "mission" client/src',
+      }),
+    ]);
+    expect(peek).toMatchObject({
+      live: true,
+      author: 'Terra',
+      label: 'Bash rg "mission" client/src',
+      phase: 'working',
+    });
+    expect(peek?.summary).toContain('live');
+    expect(peek?.decals.at(-1)?.label).toBe('work');
   });
 });

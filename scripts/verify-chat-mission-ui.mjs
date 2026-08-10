@@ -271,22 +271,45 @@ try {
     throw error;
   }
   check('mission artifact renders inline', await card.isVisible());
-  check('active mission starts compact', !(await card.evaluate((node) => node.open)));
+  check('active mission starts compact', !(await card.evaluate((node) => (
+    node.classList.contains('is-open') || node.getAttribute('data-open') === 'true'
+  ))));
   check('live mission shows thinking whirl on the card', (
-    await card.locator('summary .thinking-spinner.chat-mission-whirl').count()
+    await card.locator('.chat-mission-toggle .thinking-spinner.chat-mission-whirl').count()
   ) === 1);
   check('live mission marks the card as live', await card.evaluate((node) => node.classList.contains('is-live')));
-  await card.locator('summary').click();
+  check('collapsed mission exposes thinking activity strip', (
+    await card.locator('.chat-mission-peek').count()
+  ) === 1 && (await card.locator('.chat-mission-peek').isVisible()));
+  check('collapsed mission peek shows live work summary', (
+    (await card.locator('.chat-mission-peek').innerText()).length > 0
+  ));
+  await card.locator('.chat-mission-toggle').click();
   check('mission expands to its worker task', (await card.innerText()).includes('Verify multiplayer persistence'));
   check('thinking trace is nested inside the mission card', (
-    await card.locator('.chat-mission-trace .chat-work-trace').count()
+    await card.locator('.chat-mission-trace .chat-work-trace.is-embedded').count()
   ) === 1);
-  await card.getByRole('button', { name: 'Reply', exact: true }).click();
+  check('expanded mission stream keeps peek visible', await card.locator('.chat-mission-peek').isVisible());
+  check('embedded work stream has no nested card chrome', await card.locator('.chat-mission-trace .chat-work-trace').evaluate((node) => {
+    const style = getComputedStyle(node);
+    return node.classList.contains('is-embedded')
+      && style.borderTopWidth === '0px'
+      && (style.boxShadow === 'none' || style.boxShadow === '');
+  }));
+  // Reply lives on the shared message context menu (right-click the mission
+  // head so we hit the card's replyMessage, not a nested work-trace line).
+  await card.locator('.chat-mission-toggle').click({ button: 'right' });
+  const replyMenu = page.getByRole('menuitem', { name: /Reply/i });
+  await replyMenu.waitFor({ timeout: 5_000 });
+  await replyMenu.click();
   await page.locator('.chat-reply-bar').waitFor({ timeout: 5_000 });
-  check('mission reply targets its originating message', (
+  check('right-click reply targets the mission originating message', (
     await page.locator('.chat-reply-bar-preview').innerText()
   ).includes('Implement the chat-first orchestration slice'));
   await page.locator('.chat-reply-bar-close').click();
+  check('mission has no dedicated Reply button', (
+    await card.getByRole('button', { name: 'Reply', exact: true }).count()
+  ) === 0);
   check('mission task renders durable change-state chips', await card.locator('.chat-mission-chips .chat-mission-chip').count() >= 1);
   check('mission exposes worker model and adaptive effort', (
     (await card.innerText()).includes('gpt-5.6-terra') && (await card.innerText()).includes('high effort')
@@ -308,54 +331,46 @@ try {
   await archive.getByRole('button', { name: 'Close mission history' }).click();
   await archive.waitFor({ state: 'detached', timeout: 5_000 });
 
-  // Compact lines are intentionally not mounted until the trace opens, so
-  // select this fixture by its visible system author rather than :has().
-  const workTrace = page.locator('.chat-work-trace').filter({ hasText: 'Cascade' }).first();
+  // Nested mission traces force-open the stream; activity peeks live on the
+  // mission head so collapsed cards still read as working.
+  const workTrace = card.locator('.chat-mission-trace .chat-work-trace').first();
   await workTrace.waitFor({ timeout: 10_000 });
-  const traceText = await workTrace.innerText();
-  const finalVisible = await page.locator(`[data-message-id="${traceMessages[2].id}"]`).isVisible();
-  const initiallyExpanded = await workTrace.locator('.chat-work-trace-toggle').getAttribute('aria-expanded');
   check('worker chatter collapses into a work trace', await workTrace.isVisible());
-  check('collapsed work trace exposes workflow decals', await workTrace.locator('.chat-work-decal').count() >= 1);
-  const inlineActivityStyle = await workTrace.evaluate((node) => {
-    const toggle = node.querySelector('.chat-work-trace-toggle');
+  check('mission peek exposes workflow decals while compact', await card.locator('.chat-mission-peek .chat-work-decal').count() >= 1);
+  const peekStyle = await card.locator('.chat-mission-peek').evaluate((node) => {
     const dot = node.querySelector('.chat-work-decal.is-current .chat-work-decal-mark');
     const label = node.querySelector('.chat-work-decal.is-current .chat-work-decal-label');
     return {
-      border: getComputedStyle(node).borderTopWidth,
-      boxShadow: getComputedStyle(node).boxShadow,
-      paddingLeft: toggle ? getComputedStyle(toggle).paddingLeft : '',
+      paddingLeft: getComputedStyle(node).paddingLeft,
       dotWidth: dot ? getComputedStyle(dot).width : '',
       dotRadius: dot ? getComputedStyle(dot).borderRadius : '',
       labelWeight: label ? Number(getComputedStyle(label).fontWeight) : 0,
     };
   });
   check('collapsed workflow uses an inline status dot aligned with chat text', (
-    inlineActivityStyle.border === '0px'
-      && inlineActivityStyle.boxShadow === 'none'
-      && inlineActivityStyle.paddingLeft === '0px'
-      && inlineActivityStyle.dotWidth === '8px'
-      && inlineActivityStyle.dotRadius === '50%'
-      && inlineActivityStyle.labelWeight >= 500
-  ), JSON.stringify(inlineActivityStyle));
-  const activityDotBox = await workTrace.locator('.chat-work-decal.is-current .chat-work-decal-mark').boundingBox();
-  const missionTraceBox = await card.locator('.chat-mission-trace').boundingBox();
+    peekStyle.dotWidth === '8px'
+      && peekStyle.dotRadius === '50%'
+      && peekStyle.labelWeight >= 500
+  ), JSON.stringify(peekStyle));
+  const activityDotBox = await card.locator('.chat-mission-peek .chat-work-decal.is-current .chat-work-decal-mark').boundingBox();
+  const missionBox = await card.boundingBox();
   check('workflow dot stays on the mission content axis', (
-    activityDotBox != null && missionTraceBox != null
-      && activityDotBox.x >= missionTraceBox.x
-      && activityDotBox.x <= missionTraceBox.x + missionTraceBox.width
-  ), `dot=${JSON.stringify(activityDotBox)}, mission=${JSON.stringify(missionTraceBox)}`);
-  check('coordinator prose flattens when later work is still active', (
-    !finalVisible && !traceText.includes('user-facing answer remains')
-  ), `finalVisible=${finalVisible}, trace=${JSON.stringify(traceText)}`);
-  check('settled trace starts collapsed and is keyboard-expandable', initiallyExpanded === 'false', `aria-expanded=${initiallyExpanded}`);
-  await workTrace.locator('.chat-work-trace-toggle').click();
+    activityDotBox != null && missionBox != null
+      && activityDotBox.x >= missionBox.x
+      && activityDotBox.x <= missionBox.x + missionBox.width
+  ), `dot=${JSON.stringify(activityDotBox)}, mission=${JSON.stringify(missionBox)}`);
+  // Coordinator follow-ups that stay in the work run render as compact lines
+  // inside the mission stream (not a second full bubble above the mission).
+  const finalAsWorkLine = await workTrace.locator(`.chat-work-line[data-message-id="${traceMessages[2].id}"]`).count();
+  const finalAsFullBubble = await page.locator(`.chat-message-chunk[data-message-id="${traceMessages[2].id}"]`).count();
+  check('coordinator prose stays in the mission stream when work continues', (
+    finalAsWorkLine === 1 && finalAsFullBubble === 0
+  ), `workLine=${finalAsWorkLine}, fullBubble=${finalAsFullBubble}`);
+  check('embedded mission stream starts expanded', await workTrace.evaluate((node) => node.classList.contains('is-open') && node.classList.contains('is-forced-open')));
   const traceLines = workTrace.locator('.chat-work-line');
   const traceLineCount = await traceLines.count();
   check('expanded trace exposes its worker steps', traceLineCount >= 1, `count=${traceLineCount}`);
-  check('expanded trace retains flattened coordinator evidence', (
-    await workTrace.locator(`[data-message-id="${traceMessages[2].id}"]`).count()
-  ) === 1);
+  check('expanded stream retains coordinator evidence', finalAsWorkLine === 1);
   const workerLine = workTrace.locator(`[data-message-id="${traceMessages[1].id}"]`);
   await workerLine.locator('.chat-work-line-fold').click();
   check('an individual step restores its full evidence', (
@@ -367,20 +382,22 @@ try {
     body: JSON.stringify({ status: 'running', summary: 'Second client connected.' }),
   });
   await page.waitForFunction(() => document.querySelector('.chat-mission-task.is-running') !== null, null, { timeout: 10_000 });
-  check('live task update does not collapse an open artifact', await card.evaluate((node) => node.open));
+  check('live task update does not collapse an open artifact', await card.evaluate((node) => (
+    node.classList.contains('is-open') || node.getAttribute('data-open') === 'true'
+  )));
 
   await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/missions/tasks/${task.id}`, {
     method: 'PATCH', headers: auth,
     body: JSON.stringify({ status: 'completed', summary: 'Reload and multiplayer projection passed.' }),
   });
   await page.waitForFunction(() => document.querySelector('.chat-mission-card.is-reviewing') !== null, null, { timeout: 10_000 });
-  check('worker completion waits for coordinator review', (await card.locator('summary').innerText()).includes('reviewing'));
+  check('worker completion waits for coordinator review', (await card.locator('.chat-mission-toggle').innerText()).includes('reviewing'));
 
   await page.reload({ waitUntil: 'networkidle' });
   await openChannel();
   const reloadedCard = page.locator('.chat-mission-card', { hasText: 'Chat-first orchestration' });
   await reloadedCard.waitFor({ timeout: 20_000 });
-  await reloadedCard.locator('summary').click();
+  await reloadedCard.locator('.chat-mission-toggle').click();
   check('reload retains task status and evidence', (await reloadedCard.innerText()).includes('Reload and multiplayer projection passed.'));
 
   await page.locator('.sidebar-footer .user-info').click();

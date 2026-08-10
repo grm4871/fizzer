@@ -317,3 +317,41 @@ export function workTraceSummary(trace: ChatMessage[]): string {
     ? `${n} step${n === 1 ? '' : 's'} · ${who} · live`
     : `${n} step${n === 1 ? '' : 's'} · ${who}`;
 }
+
+/** Compact always-visible strip for collapsed mission cards. */
+export interface WorkTracePeek {
+  live: boolean;
+  summary: string;
+  author: string;
+  label: string;
+  decals: WorkTraceDecal[];
+  phase: WorkTracePhase;
+}
+
+/**
+ * Prefer the live step; fall back to the latest settled line so collapsed
+ * mission chrome still reads as "working" rather than a static task counter.
+ */
+export function workTracePeek(trace: ChatMessage[]): WorkTracePeek | null {
+  if (trace.length === 0) return null;
+  const liveMessage = [...trace].reverse().find((message) => (
+    message.status === 'running' || message.status === 'sending'
+  ));
+  const message = liveMessage || trace[trace.length - 1];
+  const live = Boolean(liveMessage);
+  const harnessLine = workTracePreview(message.harnessLog || '', 90);
+  const bodyLine = workTracePreview(message.body || '', 90);
+  const label = live
+    ? (harnessLine || (bodyLine && !/^Thinking(?:\.{3}|…)$/i.test(bodyLine) ? bodyLine : '') || 'working…')
+    : (workTraceStatusLabel(message) || bodyLine || 'settled');
+  const decals = workTraceDecals(trace);
+  const phase = decals[decals.length - 1]?.phase || workTracePhase(message);
+  return {
+    live,
+    summary: workTraceSummary(trace),
+    author: workTraceAuthorKey(message),
+    label,
+    decals,
+    phase,
+  };
+}

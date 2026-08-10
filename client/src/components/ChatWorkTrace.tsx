@@ -6,7 +6,7 @@
  */
 
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ChevronRight, Reply } from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
@@ -70,7 +70,6 @@ const WorkTraceLine = memo(function WorkTraceLine({
   onToggle,
   onCancelRun,
   onContextMenu,
-  onReply,
   selected,
   vaultId,
   onHydrateMessage,
@@ -81,7 +80,6 @@ const WorkTraceLine = memo(function WorkTraceLine({
   onToggle: () => void;
   onCancelRun: (runId: number) => void;
   onContextMenu: (event: React.MouseEvent, message: ChatMessage) => void;
-  onReply: (message: ChatMessage) => void;
   selected: boolean;
   vaultId?: string;
   onHydrateMessage?: (message: ChatMessage) => void;
@@ -98,6 +96,7 @@ const WorkTraceLine = memo(function WorkTraceLine({
     <div
       className={`chat-work-line ${open ? 'is-open' : ''} ${selected ? 'is-selected' : ''} status-${message.status || 'done'}`}
       data-message-id={message.id}
+      onContextMenu={(event) => onContextMenu(event, message)}
     >
       <button
         type="button"
@@ -135,18 +134,6 @@ const WorkTraceLine = memo(function WorkTraceLine({
               onHydrateMessage={onHydrateMessage}
             />
           )}
-          <div className="chat-work-line-actions">
-            <button
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                onReply(message);
-              }}
-            >
-              <Reply size={12} />
-              Reply
-            </button>
-          </div>
         </div>
       )}
     </div>
@@ -158,28 +145,37 @@ export const ChatWorkTrace = memo(function ChatWorkTrace({
   selectedMessageId,
   onCancelRun,
   onContextMenu,
-  onReply,
   vaultId,
   onHydrateMessage,
   runningMessageState,
+  /** Nested in a mission card: no outer chrome; stream is the mission body. */
+  embedded = false,
+  /** When true, skip the local collapse toggle and always show the stream. */
+  forceOpen = false,
 }: {
   trace: ChatMessage[];
   selectedMessageId: string | null;
   onCancelRun: (runId: number) => void;
   onContextMenu: (event: React.MouseEvent, message: ChatMessage) => void;
-  onReply: (message: ChatMessage) => void;
   vaultId?: string;
   onHydrateMessage?: (message: ChatMessage) => void;
   runningMessageState: ReadonlyMap<string, { latestId: string; count: number }>;
+  embedded?: boolean;
+  forceOpen?: boolean;
 }) {
   const live = trace.some((m) => m.status === 'running' || m.status === 'sending');
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(Boolean(forceOpen || (embedded && live)));
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const pinBottomRef = useRef(true);
   const summary = useMemo(() => workTraceSummary(trace), [trace]);
   const decals = useMemo(() => workTraceDecals(trace), [trace]);
   const currentPhase = decals[decals.length - 1]?.phase || 'working';
+  const streamOpen = forceOpen || open;
+
+  useEffect(() => {
+    if (forceOpen) setOpen(true);
+  }, [forceOpen]);
 
   useEffect(() => {
     if (!selectedMessageId) return;
@@ -194,13 +190,13 @@ export const ChatWorkTrace = memo(function ChatWorkTrace({
   }, [selectedMessageId, trace]);
 
   useLayoutEffect(() => {
-    if (!open || !live || !pinBottomRef.current) return;
+    if (!streamOpen || !live || !pinBottomRef.current) return;
     const el = bodyRef.current;
     if (!el) return;
     requestAnimationFrame(() => {
       el.scrollTop = el.scrollHeight;
     });
-  }, [open, live, trace]);
+  }, [streamOpen, live, trace]);
 
   const toggleLine = (id: string) => {
     setExpandedIds((prev) => {
@@ -214,34 +210,45 @@ export const ChatWorkTrace = memo(function ChatWorkTrace({
   if (trace.length === 0) return null;
 
   return (
-    <div className={`chat-work-trace phase-${currentPhase} ${open ? 'is-open' : ''} ${live ? 'is-live' : ''}`}>
-      <button
-        type="button"
-        className="chat-work-trace-toggle"
-        onClick={() => setOpen((value) => !value)}
-        aria-expanded={open}
-      >
-        <span className="chat-work-trace-kicker">flow</span>
-        <span className="chat-work-decals" aria-label={`Workflow: ${decals.map((decal) => decal.label).join(', ')}`}>
-          {decals.map((decal, index) => {
-            const current = index === decals.length - 1;
-            return (
-              <span
-                key={`${decal.phase}-${index}`}
-                className={`chat-work-decal phase-${decal.phase}${current ? ' is-current' : ''}${current && live ? ' is-live' : ''}`}
-                title={decal.label}
-              >
-                <span className="chat-work-decal-mark" aria-hidden="true">{decal.mark}</span>
-                <span className="chat-work-decal-label">{decal.label}</span>
-              </span>
-            );
-          })}
-        </span>
-        <span className="chat-work-trace-summary">{summary}</span>
-        {live && <ThinkingSpinner className="chat-work-trace-spinner" title="Thinking" />}
-        <ChevronRight size={13} className={`chat-work-trace-chevron${open ? ' open' : ''}`} />
-      </button>
-      {open && (
+    <div
+      className={[
+        'chat-work-trace',
+        `phase-${currentPhase}`,
+        streamOpen ? 'is-open' : '',
+        live ? 'is-live' : '',
+        embedded ? 'is-embedded' : '',
+        forceOpen ? 'is-forced-open' : '',
+      ].filter(Boolean).join(' ')}
+    >
+      {!forceOpen && (
+        <button
+          type="button"
+          className="chat-work-trace-toggle"
+          onClick={() => setOpen((value) => !value)}
+          aria-expanded={streamOpen}
+        >
+          {!embedded && <span className="chat-work-trace-kicker">flow</span>}
+          <span className="chat-work-decals" aria-label={`Workflow: ${decals.map((decal) => decal.label).join(', ')}`}>
+            {decals.map((decal, index) => {
+              const current = index === decals.length - 1;
+              return (
+                <span
+                  key={`${decal.phase}-${index}`}
+                  className={`chat-work-decal phase-${decal.phase}${current ? ' is-current' : ''}${current && live ? ' is-live' : ''}`}
+                  title={decal.label}
+                >
+                  <span className="chat-work-decal-mark" aria-hidden="true">{decal.mark}</span>
+                  <span className="chat-work-decal-label">{decal.label}</span>
+                </span>
+              );
+            })}
+          </span>
+          <span className="chat-work-trace-summary">{summary}</span>
+          {live && <ThinkingSpinner className="chat-work-trace-spinner" title="Thinking" />}
+          <ChevronRight size={13} className={`chat-work-trace-chevron${streamOpen ? ' open' : ''}`} />
+        </button>
+      )}
+      {streamOpen && (
         <div
           ref={bodyRef}
           className="chat-work-trace-body"
@@ -263,7 +270,6 @@ export const ChatWorkTrace = memo(function ChatWorkTrace({
                 onToggle={() => toggleLine(message.id)}
                 onCancelRun={onCancelRun}
                 onContextMenu={onContextMenu}
-                onReply={onReply}
                 selected={selectedMessageId === message.id}
                 vaultId={vaultId}
                 onHydrateMessage={onHydrateMessage}

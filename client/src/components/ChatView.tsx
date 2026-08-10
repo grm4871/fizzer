@@ -27,7 +27,7 @@ import { ChatQuoteRefs } from './ChatQuoteRefs';
 import { ThinkingSpinner } from './ThinkingSpinner';
 import { ReportDialog } from './ReportDialog';
 import { hasRunActivity } from '../chat/harnessActivity';
-import { isSteeringContinuationMessage, segmentTranscript } from '../chat/workTrace';
+import { isSteeringContinuationMessage, segmentTranscript, workTracePeek } from '../chat/workTrace';
 import { useChannelMessages } from '../chat/messageStore';
 import {
   chatMediaLink,
@@ -1641,15 +1641,27 @@ function ChatMissionCard({
   vaultId,
   channelId,
   traceContent,
+  tracePeek,
   replyMessage,
-  onReply,
+  onContextMenu,
 }: {
   mission: ChatMission;
   vaultId?: string;
   channelId?: string;
+  /** Full work stream, rendered only while the mission is expanded. */
   traceContent?: ReactNode;
+  /** Always-visible activity strip (collapsed + expanded). */
+  tracePeek?: {
+    live: boolean;
+    summary: string;
+    author: string;
+    label: string;
+    decals: Array<{ phase: string; label: string; mark: string }>;
+    phase: string;
+  } | null;
+  /** Originating message for right-click reply (same as any other chat row). */
   replyMessage?: ChatMessage;
-  onReply?: (message: ChatMessage) => void;
+  onContextMenu?: (event: React.MouseEvent, message: ChatMessage) => void;
 }) {
   const needsAttention = mission.status === 'attention' || mission.status === 'blocked';
   const [open, setOpen] = useState(needsAttention);
@@ -1693,11 +1705,25 @@ function ChatMissionCard({
   const total = mission.tasks.length;
   const live = mission.status === 'active'
     || mission.status === 'reviewing'
-    || mission.tasks.some((task) => task.status === 'running' || task.status === 'pending');
+    || mission.tasks.some((task) => task.status === 'running' || task.status === 'pending')
+    || Boolean(tracePeek?.live);
   const statusLabel = mission.status === 'active'
     ? (total ? `${done}/${total} tasks` : 'planning')
     : needsAttention ? 'needs review' : mission.status;
   const lead = mission.coordinatorMention || mission.coordinator;
+  const runningTask = mission.tasks.find((task) => task.status === 'running');
+  const peekDecals = tracePeek?.decals?.length
+    ? tracePeek.decals
+    : null;
+  const peekAuthor = tracePeek?.author
+    || (runningTask ? (runningTask.assigneeMention || runningTask.assignee) : '')
+    || lead
+    || '';
+  const peekLabel = tracePeek?.label
+    || (runningTask ? runningTask.title : '')
+    || (mission.status === 'active' && total === 0 ? 'deciding approach…' : '')
+    || (mission.status === 'active' ? `${done}/${total} tasks in flight` : statusLabel);
+  const showPeek = Boolean(tracePeek || live || peekLabel);
   async function toggleTimeline() {
     const next = !timelineOpen;
     setTimelineOpen(next);
@@ -1713,112 +1739,164 @@ function ChatMissionCard({
     }
   }
   return (
-    <details
-      className={`chat-mission-card is-${mission.status}${live ? ' is-live' : ''}`}
-      open={open}
-      onToggle={(event) => setOpen(event.currentTarget.open)}
+    <div
+      className={`chat-mission-card is-${mission.status}${live ? ' is-live' : ''}${open ? ' is-open' : ''}`}
+      data-open={open ? 'true' : 'false'}
+      data-message-id={replyMessage?.id}
+      onContextMenu={replyMessage && onContextMenu
+        ? (event) => onContextMenu(event, replyMessage)
+        : undefined}
     >
-      <summary>
-        {live
-          ? <ThinkingSpinner className="chat-mission-whirl" title="Mission working" />
-          : <span className="chat-mission-state" aria-hidden="true" />}
-        <span className="chat-mission-kicker">Mission</span>
-        <strong>{mission.title}</strong>
-        <span className="chat-mission-status">{statusLabel}</span>
-      </summary>
-      <div className="chat-mission-content">
-        {traceContent && <div className="chat-mission-trace">{traceContent}</div>}
-        {lead && (
-          <p className="chat-mission-lead">
-            Led by <strong>@{lead}</strong>
-            {total > 0 ? ` · ${done}/${total} agent tasks` : ''}
-          </p>
-        )}
-        {mission.objective && <p>{mission.objective}</p>}
-        {mission.tasks.length > 0 ? (
-          <div className="chat-mission-tasks">
-            {mission.tasks.map((task) => (
-              <div className={`chat-mission-task is-${task.status}`} key={task.id}>
-                <span className="chat-mission-task-state" aria-label={task.status}>
-                  {task.status === 'completed' ? '✓' : task.status === 'failed' || task.status === 'blocked' ? '!' : task.status === 'running' ? '●' : '○'}
-                </span>
-                <div>
-                  <strong>{task.title}</strong>
-                  <span>
-                    @{task.assigneeMention || task.assignee} · {task.status}
-                    {task.anonymous ? ' · subagent' : ''}
-                    {task.attempt > 0 ? ` · attempt ${task.attempt + 1}` : ''}
-                    {task.queueReason === 'dependency' ? ` · waiting for ${task.waitingFor.length}` : ''}
-                    {task.queueReason === 'dependency-attention' ? ' · waiting on review' : ''}
-                    {task.queueReason === 'agent-busy' ? ' · agent busy' : ''}
-                    {task.queueReason === 'queued' ? ' · queued' : ''}
-                    {task.assigneeModel ? ` · ${task.assigneeModel}` : ''}
-                    {task.reasoningEffort ? ` · ${task.reasoningEffort} effort` : ''}
-                  </span>
-                  {task.workItemId && (
-                    <div className="chat-mission-chips">
-                      {missionTaskChangeChips(task, task.worktreePath ? fileCounts.get(task.worktreePath) : undefined).map((chip, index) => (
-                        chip.href ? (
-                          <a key={`${chip.label}:${index}`} className={`chat-mission-chip is-${chip.tone || 'idle'}`} href={chip.href} target="_blank" rel="noreferrer" title={chip.title}>
-                            {chip.label}
-                          </a>
-                        ) : (
-                          <span key={`${chip.label}:${index}`} className={`chat-mission-chip is-${chip.tone || 'idle'}`} title={chip.title}>
-                            {chip.label}
-                          </span>
-                        )
-                      ))}
-                    </div>
-                  )}
-                  {task.summary && <small>{task.summary}</small>}
-                  {task.workItemId && task.worktreePath && (
-                    <ChatTaskReview workItemId={task.workItemId} worktreePath={task.worktreePath} />
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <span className="chat-mission-empty">@{lead || mission.coordinator} is deciding how to handle this.</span>
-        )}
-        {mission.summary && <div className="chat-mission-summary">{mission.summary}</div>}
-        {((onReply && replyMessage) || (vaultId && channelId)) && (
-          <div className="chat-mission-history">
-            {onReply && replyMessage && (
-              <button type="button" onClick={() => onReply(replyMessage)}>
-                <Reply size={12} />
-                Reply
-              </button>
+      <div className="chat-mission-head">
+        <button
+          type="button"
+          className="chat-mission-toggle"
+          onClick={() => setOpen((value) => !value)}
+          aria-expanded={open}
+        >
+          {live
+            ? <ThinkingSpinner className="chat-mission-whirl" title="Mission working" />
+            : <span className="chat-mission-state" aria-hidden="true" />}
+          <span className="chat-mission-kicker">Mission</span>
+          <strong>{mission.title}</strong>
+          <span className="chat-mission-status">{statusLabel}</span>
+          <ChevronRight size={13} className={`chat-mission-chevron${open ? ' open' : ''}`} aria-hidden="true" />
+        </button>
+        {showPeek && (
+          <button
+            type="button"
+            className={`chat-mission-peek${tracePeek?.live || live ? ' is-live' : ''}`}
+            onClick={() => setOpen((value) => !value)}
+            aria-expanded={open}
+            aria-label={`Mission activity: ${peekAuthor ? `${peekAuthor} — ` : ''}${peekLabel}`}
+          >
+            {peekDecals && peekDecals.length > 0 ? (
+              <span className="chat-mission-peek-decals" aria-hidden="true">
+                {peekDecals.slice(-3).map((decal, index, list) => {
+                  const current = index === list.length - 1;
+                  return (
+                    <span
+                      key={`${decal.phase}-${index}`}
+                      className={`chat-work-decal phase-${decal.phase}${current ? ' is-current' : ''}${current && (tracePeek?.live || live) ? ' is-live' : ''}`}
+                      title={decal.label}
+                    >
+                      <span className="chat-work-decal-mark">{decal.mark}</span>
+                      {current && <span className="chat-work-decal-label">{decal.label}</span>}
+                    </span>
+                  );
+                })}
+              </span>
+            ) : (
+              <span className="chat-mission-peek-dot" aria-hidden="true" />
             )}
-            {vaultId && channelId && <>
-            <button type="button" onClick={() => void toggleTimeline()}>
-              <History size={12} />
-              {timelineOpen ? 'Hide timeline' : 'Timeline'}
-            </button>
-            {timelineOpen && (
-              <div className="chat-mission-timeline">
-                {events === null && !historyError && <span>Loading history…</span>}
-                {historyError && <span className="is-error">{historyError}</span>}
-                {events?.length === 0 && <span>No recorded events.</span>}
-                {events?.map((event) => (
-                  <div className="chat-mission-event" key={event.id}>
-                    <i aria-hidden="true" />
-                    <div>
-                      <strong>{missionEventLabel(event)}</strong>
-                      <time dateTime={event.createdAt}>{formatTime(event.createdAt)}</time>
-                      {event.title && event.title !== mission.title && <span>{event.title}</span>}
-                      {event.attempt > 0 && <span>Attempt {event.attempt + 1}</span>}
-                      {event.summary && <small>{event.summary}</small>}
-                    </div>
-                  </div>
-                ))}
-              </div>
+            {peekAuthor && <span className="chat-mission-peek-author">{peekAuthor}</span>}
+            <span className="chat-mission-peek-label">{peekLabel}</span>
+            {(tracePeek?.live || live) && (
+              <ThinkingSpinner className="chat-mission-peek-spinner" title="Thinking" />
             )}
-            </>}
-          </div>
+            {tracePeek?.summary && (
+              <span className="chat-mission-peek-meta">{tracePeek.summary}</span>
+            )}
+          </button>
         )}
       </div>
-    </details>
+      {open && (
+        <div className="chat-mission-content">
+          <div className="chat-mission-stream">
+            {traceContent && (
+              <div className="chat-mission-trace">{traceContent}</div>
+            )}
+            <div className="chat-mission-plan">
+              {lead && (
+                <p className="chat-mission-lead">
+                  Led by <strong>@{lead}</strong>
+                  {total > 0 ? ` · ${done}/${total} agent tasks` : ''}
+                </p>
+              )}
+              {mission.objective && <p className="chat-mission-objective">{mission.objective}</p>}
+              {mission.tasks.length > 0 ? (
+                <div className="chat-mission-tasks">
+                  {mission.tasks.map((task) => (
+                    <div className={`chat-mission-task is-${task.status}`} key={task.id}>
+                      <span className="chat-mission-task-state" aria-label={task.status}>
+                        {task.status === 'completed' ? '✓'
+                          : task.status === 'failed' || task.status === 'blocked' ? '!'
+                            : task.status === 'running' ? (
+                              <ThinkingSpinner className="chat-mission-task-whirl" title="Task running" />
+                            ) : '○'}
+                      </span>
+                      <div>
+                        <strong>{task.title}</strong>
+                        <span>
+                          @{task.assigneeMention || task.assignee} · {task.status}
+                          {task.anonymous ? ' · subagent' : ''}
+                          {task.attempt > 0 ? ` · attempt ${task.attempt + 1}` : ''}
+                          {task.queueReason === 'dependency' ? ` · waiting for ${task.waitingFor.length}` : ''}
+                          {task.queueReason === 'dependency-attention' ? ' · waiting on review' : ''}
+                          {task.queueReason === 'agent-busy' ? ' · agent busy' : ''}
+                          {task.queueReason === 'queued' ? ' · queued' : ''}
+                          {task.assigneeModel ? ` · ${task.assigneeModel}` : ''}
+                          {task.reasoningEffort ? ` · ${task.reasoningEffort} effort` : ''}
+                        </span>
+                        {task.workItemId && (
+                          <div className="chat-mission-chips">
+                            {missionTaskChangeChips(task, task.worktreePath ? fileCounts.get(task.worktreePath) : undefined).map((chip, index) => (
+                              chip.href ? (
+                                <a key={`${chip.label}:${index}`} className={`chat-mission-chip is-${chip.tone || 'idle'}`} href={chip.href} target="_blank" rel="noreferrer" title={chip.title}>
+                                  {chip.label}
+                                </a>
+                              ) : (
+                                <span key={`${chip.label}:${index}`} className={`chat-mission-chip is-${chip.tone || 'idle'}`} title={chip.title}>
+                                  {chip.label}
+                                </span>
+                              )
+                            ))}
+                          </div>
+                        )}
+                        {task.summary && <small>{task.summary}</small>}
+                        {task.workItemId && task.worktreePath && (
+                          <ChatTaskReview workItemId={task.workItemId} worktreePath={task.worktreePath} />
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <span className="chat-mission-empty">@{lead || mission.coordinator} is deciding how to handle this.</span>
+              )}
+              {mission.summary && <div className="chat-mission-summary">{mission.summary}</div>}
+            </div>
+          </div>
+          {vaultId && channelId && (
+            <div className="chat-mission-history">
+              <button type="button" onClick={() => void toggleTimeline()}>
+                <History size={12} />
+                {timelineOpen ? 'Hide timeline' : 'Timeline'}
+              </button>
+              {timelineOpen && (
+                <div className="chat-mission-timeline">
+                  {events === null && !historyError && <span>Loading history…</span>}
+                  {historyError && <span className="is-error">{historyError}</span>}
+                  {events?.length === 0 && <span>No recorded events.</span>}
+                  {events?.map((event) => (
+                    <div className="chat-mission-event" key={event.id}>
+                      <i aria-hidden="true" />
+                      <div>
+                        <strong>{missionEventLabel(event)}</strong>
+                        <time dateTime={event.createdAt}>{formatTime(event.createdAt)}</time>
+                        {event.title && event.title !== mission.title && <span>{event.title}</span>}
+                        {event.attempt > 0 && <span>Attempt {event.attempt + 1}</span>}
+                        {event.summary && <small>{event.summary}</small>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -3445,18 +3523,21 @@ export const ChatView = memo(function ChatView({
                 }
                 const clumpedSelected = selectedMessageId != null
                   && clumpedUpdateMessages.some((message) => message.id === selectedMessageId);
+                const missionHasTrace = missionArtifacts.length > 0 && segment.trace.length > 0;
                 const workTrace = (
                   <ChatWorkTrace
                     trace={segment.trace}
                     selectedMessageId={traceSelected || clumpedSelected ? selectedMessageId : null}
                     onCancelRun={onCancelRun}
                     onContextMenu={openMessageContextMenu}
-                    onReply={startReply}
                     vaultId={vaultId}
                     onHydrateMessage={onHydrateMessage}
                     runningMessageState={runningMessageState}
+                    embedded={missionHasTrace}
+                    forceOpen={missionHasTrace}
                   />
                 );
+                const peek = workTracePeek(segment.trace);
                 const unifiedMission = missionArtifacts.length > 0
                   ? missionArtifacts.map((message) => (
                     <ChatMissionCard
@@ -3465,8 +3546,9 @@ export const ChatView = memo(function ChatView({
                       vaultId={vaultId}
                       channelId={message.channelId}
                       traceContent={workTrace}
+                      tracePeek={peek}
                       replyMessage={message}
-                      onReply={startReply}
+                      onContextMenu={openMessageContextMenu}
                     />
                   ))
                   : workTrace;
