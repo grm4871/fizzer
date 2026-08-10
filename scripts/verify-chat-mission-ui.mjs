@@ -336,29 +336,32 @@ try {
   const workTrace = card.locator('.chat-mission-trace .chat-work-trace').first();
   await workTrace.waitFor({ timeout: 10_000 });
   check('worker chatter collapses into a work trace', await workTrace.isVisible());
-  check('mission peek exposes workflow decals while compact', await card.locator('.chat-mission-peek .chat-work-decal').count() >= 1);
-  const peekStyle = await card.locator('.chat-mission-peek').evaluate((node) => {
-    const dot = node.querySelector('.chat-work-decal.is-current .chat-work-decal-mark');
-    const label = node.querySelector('.chat-work-decal.is-current .chat-work-decal-label');
+  check('mission peek exposes a phase label while compact', await card.locator('.chat-mission-peek-phase').count() >= 1);
+  const railStyle = await card.evaluate((node) => {
+    const headDot = node.querySelector('.chat-mission-toggle .thinking-spinner, .chat-mission-toggle .chat-mission-state');
+    const peekDot = node.querySelector('.chat-mission-peek-dot, .chat-mission-peek .thinking-spinner');
+    const phase = node.querySelector('.chat-mission-peek-phase');
+    const head = headDot ? headDot.getBoundingClientRect() : null;
+    const peek = peekDot ? peekDot.getBoundingClientRect() : null;
     return {
-      paddingLeft: getComputedStyle(node).paddingLeft,
-      dotWidth: dot ? getComputedStyle(dot).width : '',
-      dotRadius: dot ? getComputedStyle(dot).borderRadius : '',
-      labelWeight: label ? Number(getComputedStyle(label).fontWeight) : 0,
+      headW: headDot ? getComputedStyle(headDot).width : '',
+      peekW: peekDot ? getComputedStyle(peekDot).width : '',
+      peekRadius: peekDot ? getComputedStyle(peekDot).borderRadius : '',
+      phaseWeight: phase ? Number(getComputedStyle(phase).fontWeight) : 0,
+      headCenterX: head ? head.left + head.width / 2 : null,
+      peekCenterX: peek ? peek.left + peek.width / 2 : null,
     };
   });
-  check('collapsed workflow uses an inline status dot aligned with chat text', (
-    peekStyle.dotWidth === '8px'
-      && peekStyle.dotRadius === '50%'
-      && peekStyle.labelWeight >= 500
-  ), JSON.stringify(peekStyle));
-  const activityDotBox = await card.locator('.chat-mission-peek .chat-work-decal.is-current .chat-work-decal-mark').boundingBox();
-  const missionBox = await card.boundingBox();
-  check('workflow dot stays on the mission content axis', (
-    activityDotBox != null && missionBox != null
-      && activityDotBox.x >= missionBox.x
-      && activityDotBox.x <= missionBox.x + missionBox.width
-  ), `dot=${JSON.stringify(activityDotBox)}, mission=${JSON.stringify(missionBox)}`);
+  check('peek rail uses the same 8px status-dot geometry', (
+    railStyle.headW === '8px'
+      && railStyle.peekW === '8px'
+      && railStyle.peekRadius === '50%'
+      && railStyle.phaseWeight >= 500
+  ), JSON.stringify(railStyle));
+  check('peek rail aligns under the mission status slot', (
+    railStyle.headCenterX != null && railStyle.peekCenterX != null
+      && Math.abs(railStyle.headCenterX - railStyle.peekCenterX) <= 1.5
+  ), JSON.stringify(railStyle));
   // Coordinator follow-ups that stay in the work run render as compact lines
   // inside the mission stream (not a second full bubble above the mission).
   const finalAsWorkLine = await workTrace.locator(`.chat-work-line[data-message-id="${traceMessages[2].id}"]`).count();

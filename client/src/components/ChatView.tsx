@@ -1712,18 +1712,17 @@ function ChatMissionCard({
     : needsAttention ? 'needs review' : mission.status;
   const lead = mission.coordinatorMention || mission.coordinator;
   const runningTask = mission.tasks.find((task) => task.status === 'running');
-  const peekDecals = tracePeek?.decals?.length
-    ? tracePeek.decals
-    : null;
+  const peekLive = Boolean(tracePeek?.live || (live && mission.status === 'active'));
   const peekAuthor = tracePeek?.author
     || (runningTask ? (runningTask.assigneeMention || runningTask.assignee) : '')
-    || lead
     || '';
   const peekLabel = tracePeek?.label
     || (runningTask ? runningTask.title : '')
     || (mission.status === 'active' && total === 0 ? 'deciding approach…' : '')
-    || (mission.status === 'active' ? `${done}/${total} tasks in flight` : statusLabel);
-  const showPeek = Boolean(tracePeek || live || peekLabel);
+    || (mission.status === 'active' ? `${done}/${total} tasks in flight` : '');
+  // Peek is collapsed-only activity exposure. When open, the stream/tasks are the UI.
+  // Settled missions without useful activity text skip the second rail entirely.
+  const showPeek = !open && (peekLive || Boolean(peekLabel && (tracePeek || runningTask)));
   async function toggleTimeline() {
     const next = !timelineOpen;
     setTimelineOpen(next);
@@ -1765,38 +1764,19 @@ function ChatMissionCard({
         {showPeek && (
           <button
             type="button"
-            className={`chat-mission-peek${tracePeek?.live || live ? ' is-live' : ''}`}
+            className={`chat-mission-peek${peekLive ? ' is-live' : ''}`}
             onClick={() => setOpen((value) => !value)}
-            aria-expanded={open}
+            aria-expanded={false}
             aria-label={`Mission activity: ${peekAuthor ? `${peekAuthor} — ` : ''}${peekLabel}`}
           >
-            {peekDecals && peekDecals.length > 0 ? (
-              <span className="chat-mission-peek-decals" aria-hidden="true">
-                {peekDecals.slice(-3).map((decal, index, list) => {
-                  const current = index === list.length - 1;
-                  return (
-                    <span
-                      key={`${decal.phase}-${index}`}
-                      className={`chat-work-decal phase-${decal.phase}${current ? ' is-current' : ''}${current && (tracePeek?.live || live) ? ' is-live' : ''}`}
-                      title={decal.label}
-                    >
-                      <span className="chat-work-decal-mark">{decal.mark}</span>
-                      {current && <span className="chat-work-decal-label">{decal.label}</span>}
-                    </span>
-                  );
-                })}
-              </span>
-            ) : (
-              <span className="chat-mission-peek-dot" aria-hidden="true" />
-            )}
+            {/* Spacer matches status slot so text lines up under the title, not a 2nd status ball. */}
+            <span className="chat-mission-peek-gutter" aria-hidden="true">
+              {peekLive
+                ? <ThinkingSpinner className="chat-mission-peek-spin" title="Thinking" />
+                : null}
+            </span>
             {peekAuthor && <span className="chat-mission-peek-author">{peekAuthor}</span>}
             <span className="chat-mission-peek-label">{peekLabel}</span>
-            {(tracePeek?.live || live) && (
-              <ThinkingSpinner className="chat-mission-peek-spinner" title="Thinking" />
-            )}
-            {tracePeek?.summary && (
-              <span className="chat-mission-peek-meta">{tracePeek.summary}</span>
-            )}
           </button>
         )}
       </div>
