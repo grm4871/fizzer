@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { Bot, ChevronRight, ClipboardList, Flag, Forward, Hash, History, ImagePlus, Paperclip, Reply, Send, Smile, Trash2, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -1856,6 +1856,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
   vaultId,
   onHydrateMessage,
   traceContent,
+  traceAfterFirstMessage = false,
 }: {
   group: ChatMessageGroup;
   /** Pre-filtered by the parent: non-null only when the selection is inside this group. */
@@ -1886,6 +1887,8 @@ const ChatGroupRow = memo(function ChatGroupRow({
   onHydrateMessage?: (message: ChatMessage) => void;
   /** A collapsed workflow trace carried by this agent row. */
   traceContent?: ReactNode;
+  /** Keep later user-facing updates under this author header, after the mission/work trace. */
+  traceAfterFirstMessage?: boolean;
 }) {
   const head = group.messages[0];
   const tail = group.messages[group.messages.length - 1];
@@ -1975,15 +1978,14 @@ const ChatGroupRow = memo(function ChatGroupRow({
                 <span className="chat-message-status is-error">canceled</span>
               )}
             </div>
-            {group.messages.map((message) => {
+            {group.messages.map((message, messageIndex) => {
               const hasRunWidget = message.status === 'running';
               const hasThoughtBlocks = hasExpandableTrace(message);
               const isLatestRunningMessage = message.status !== 'running' || latestRunningMessageId === message.id;
               const isTappable = hasRunWidget || hasThoughtBlocks;
               const selected = selectedMessageId === message.id;
-              return (
+              return (<Fragment key={message.id}>
                 <SwipeToReply
-                  key={message.id}
                   messageId={message.id}
                   className={`chat-message-chunk ${isTappable ? 'has-run-widget' : ''} ${selected ? 'selected' : ''}`}
                   onReply={() => onReply(message)}
@@ -2111,9 +2113,10 @@ const ChatGroupRow = memo(function ChatGroupRow({
                     />
                   )}
                 </SwipeToReply>
-              );
+                {traceAfterFirstMessage && messageIndex === 0 && traceContent}
+              </Fragment>);
             })}
-            {traceContent}
+            {!traceAfterFirstMessage && traceContent}
           </div>
         </>
       ) : (
@@ -2155,6 +2158,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
   && prev.scrollRootRef === next.scrollRootRef
   && prev.vaultId === next.vaultId
   && prev.onHydrateMessage === next.onHydrateMessage
+  && prev.traceAfterFirstMessage === next.traceAfterFirstMessage
   && prev.traceContent === next.traceContent;
 });
 
@@ -3400,17 +3404,23 @@ export const ChatView = memo(function ChatView({
                 // that start a run are attributed when persisted; older
                 // unowned notices deliberately stay out of the transcript
                 // instead of looking like progress on the human message.
-                const host = segment.carrier
+                // Anchor a completed mission clump to its user-facing update,
+                // not to an empty worker shell that happened to start the run.
+                // This keeps the mission, mixed-agent trace, and outcome under
+                // one coordinator header while preserving each trace author.
+                const updateHost = segment.updateGroups.at(-1)?.messages.at(-1);
+                const host = updateHost
+                  || segment.carrier
                   || segment.trace.find((message) => message.registrationId || message.agentId);
                 if (!host) return [];
                 // A real carrier is persisted for system-only work. Existing
                 // agent traces use the same empty shell shape at render time.
-                const carrier = segment.carrier || {
+                const carrier = updateHost || !segment.carrier ? {
                   ...host,
                   id: `agent-trace-${segment.id}`,
                   body: '',
                   status: undefined,
-                };
+                } : segment.carrier;
                 const traceSelected = selectedMessageId != null
                   && segment.trace.some((message) => message.id === selectedMessageId);
                 const previousSegment = transcriptSegments[segmentIndex - 1];
@@ -3424,10 +3434,21 @@ export const ChatView = memo(function ChatView({
                   .filter((message) => Boolean(message.mission)),
                 ];
                 const displayCarrier = carrier.mission ? { ...carrier, mission: undefined } : carrier;
+                const carrierKey = displayCarrier.registrationId || displayCarrier.agentId || displayCarrier.author;
+                const clumpedUpdateMessages: ChatMessage[] = [];
+                const separateUpdateGroups: ChatMessageGroup[] = [];
+                for (const group of segment.updateGroups) {
+                  const head = group.messages[0];
+                  const headKey = head.registrationId || head.agentId || head.author;
+                  if (headKey === carrierKey) clumpedUpdateMessages.push(...group.messages);
+                  else separateUpdateGroups.push(group);
+                }
+                const clumpedSelected = selectedMessageId != null
+                  && clumpedUpdateMessages.some((message) => message.id === selectedMessageId);
                 const workTrace = (
                   <ChatWorkTrace
                     trace={segment.trace}
-                    selectedMessageId={traceSelected ? selectedMessageId : null}
+                    selectedMessageId={traceSelected || clumpedSelected ? selectedMessageId : null}
                     onCancelRun={onCancelRun}
                     onContextMenu={openMessageContextMenu}
                     onReply={startReply}
@@ -3452,7 +3473,7 @@ export const ChatView = memo(function ChatView({
                 const nodes: ReactNode[] = [
                   <ChatGroupRow
                     key={`work-${segment.id}`}
-                    group={{ messages: [displayCarrier] }}
+                    group={{ messages: [displayCarrier, ...clumpedUpdateMessages] }}
                     selectedMessageId={traceSelected ? selectedMessageId : null}
                     avatarKind="agent"
                     avatarUrl={getMessageAvatarUrl(displayCarrier)}
@@ -3481,12 +3502,14 @@ export const ChatView = memo(function ChatView({
                     vaultId={vaultId}
                     onHydrateMessage={onHydrateMessage}
                     traceContent={unifiedMission}
+                    traceAfterFirstMessage={clumpedUpdateMessages.length > 0}
                   />,
                 ];
                 for (const group of segment.fullGroups) {
                   const messagesWithoutMissions = group.messages.filter((message) => !message.mission);
                   if (messagesWithoutMissions.length) nodes.push(renderGroupRow({ messages: messagesWithoutMissions }));
                 }
+                for (const group of separateUpdateGroups) nodes.push(renderGroupRow(group));
                 return nodes;
               }
 

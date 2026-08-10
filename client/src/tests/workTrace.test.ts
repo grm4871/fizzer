@@ -122,7 +122,7 @@ describe('workTrace', () => {
     const mid = msg({ id: 'a1', author: 'Sol', body: 'Looking…', agentId: 'codex' });
     const final = msg({ id: 'a2', author: 'Sol', body: 'Done.', agentId: 'codex' });
     const segments = segmentTranscript([human, mid, final]);
-    expect(segments).toHaveLength(3);
+    expect(segments).toHaveLength(2);
     expect(segments[0]).toMatchObject({ kind: 'group' });
     expect(segments[1]).toMatchObject({
       kind: 'work',
@@ -130,7 +130,7 @@ describe('workTrace', () => {
       trace: [mid],
     });
     if (segments[1].kind === 'work') expect(segments[1].fullGroups).toHaveLength(0);
-    expect(segments[2]).toMatchObject({ kind: 'group', group: { messages: [final] } });
+    if (segments[1].kind === 'work') expect(segments[1].updateGroups).toEqual([{ messages: [final] }]);
   });
 
   it('nests a system wake in its persisted empty agent carrier', () => {
@@ -154,12 +154,30 @@ describe('workTrace', () => {
     });
     const final = msg({ id: 'a4', author: 'Sol', body: 'Done', agentId: 'codex' });
     const segments = segmentTranscript([before, artifact, after, final]);
-    expect(segments.map((segment) => segment.kind)).toEqual(['work', 'group']);
+    expect(segments.map((segment) => segment.kind)).toEqual(['work']);
     if (segments[0].kind === 'work') {
       expect(segments[0].trace.map((message) => message.id)).toEqual(['a1', 'a3']);
       expect(segments[0].fullGroups.flatMap((group) => group.messages.map((message) => message.id))).toEqual(['a2']);
+      expect(segments[0].updateGroups.flatMap((group) => group.messages.map((message) => message.id))).toEqual(['a4']);
     }
-    if (segments[1].kind === 'group') expect(segments[1].group.messages.map((message) => message.id)).toEqual(['a4']);
+  });
+
+  it('keeps mission work and its final user-facing update in one segment', () => {
+    const acknowledgement = msg({ id: 'a1', author: 'Sol', body: 'I am fixing it.', agentId: 'codex', registrationId: 'sol' });
+    const mission = msg({
+      id: 'm1', author: 'Cascade', body: 'Fix it durably.',
+      mission: { id: 'mission-1', title: 'Fix it', status: 'active', coordinator: 'sol', tasks: [] },
+    });
+    const worker = msg({ id: 'w1', author: 'Sol', body: 'Tests pass.', agentId: 'codex', registrationId: 'sol', missionTaskId: 'task-1' });
+    const shipped = msg({ id: 'a2', author: 'Sol', body: 'Shipped.', agentId: 'codex', registrationId: 'sol' });
+    const segments = segmentTranscript([acknowledgement, mission, worker, shipped]);
+    expect(segments).toHaveLength(1);
+    expect(segments[0]).toMatchObject({ kind: 'work' });
+    if (segments[0].kind === 'work') {
+      expect(segments[0].trace.map((message) => message.id)).toEqual(['a1', 'w1']);
+      expect(segments[0].fullGroups.flatMap((group) => group.messages.map((message) => message.id))).toEqual(['m1']);
+      expect(segments[0].updateGroups.flatMap((group) => group.messages.map((message) => message.id))).toEqual(['a2']);
+    }
   });
 
   it('flattens coordinator progress when later worker activity follows', () => {

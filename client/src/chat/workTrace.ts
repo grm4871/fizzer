@@ -33,6 +33,8 @@ export type TranscriptSegment =
       trace: ChatMessage[];
       /** Full-weight bubbles after the trace (final answer, live run, mission). */
       fullGroups: ChatMessageGroup[];
+      /** User-facing answers that follow the compact work stream. */
+      updateGroups: ChatMessageGroup[];
       /** Empty persisted agent shell that owns a system-only trace. */
       carrier?: ChatMessage;
     };
@@ -284,9 +286,9 @@ export function segmentTranscript(
       id: trace[0].id,
       trace,
       fullGroups: groupMessages(artifacts),
+      updateGroups: groupMessages(finalReplies),
       ...(carrier ? { carrier } : {}),
     });
-    for (const group of groupMessages(finalReplies)) segments.push({ kind: 'group', group });
   }
 
   return segments;
