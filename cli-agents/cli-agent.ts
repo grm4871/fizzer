@@ -582,6 +582,8 @@ interface CliAgentOpts {
   model?: string;
   /** Codex-only reasoning effort override. */
   reasoningEffort?: string;
+  /** Codex-only priority processing override. */
+  priorityServiceTier?: boolean;
   /** Run with permission prompts bypassed ("yolo"). For Codex this widens the
    * sandbox from workspace-write to danger-full-access. */
   yolo?: boolean;
@@ -624,7 +626,7 @@ export async function runCliAgent(opts: CliAgentOpts): Promise<CliAgentResult> {
     ? `[Context: ${opts.context}]\n\n${opts.userPrompt}`
     : opts.userPrompt;
   if (opts.agent === 'codex') {
-    return runCodex(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.images || [], opts.runId, opts.model, opts.reasoningEffort, opts.yolo, opts.env);
+    return runCodex(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.images || [], opts.runId, opts.model, opts.reasoningEffort, opts.priorityServiceTier, opts.yolo, opts.env);
   } else if (opts.agent === 'grok') {
     return runGrok(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.runId, opts.model, opts.env);
   } else if (opts.agent === 'copilot') {
@@ -865,6 +867,7 @@ async function runCodex(
   runId?: number,
   model?: string,
   reasoningEffort?: string,
+  priorityServiceTier?: boolean,
   yolo?: boolean,
   env?: NodeJS.ProcessEnv,
 ): Promise<CliAgentResult> {
@@ -880,13 +883,14 @@ async function runCodex(
   const reasoningEffortArgs = normalizedEffort === 'low' || normalizedEffort === 'medium' || normalizedEffort === 'high' || normalizedEffort === 'xhigh' || normalizedEffort === 'max' || normalizedEffort === 'ultra'
     ? ['-c', `model_reasoning_effort="${normalizedEffort}"`]
     : [];
+  const serviceTierArgs = priorityServiceTier ? ['-c', 'service_tier="priority"'] : [];
   const sandbox = yolo ? 'danger-full-access' : 'workspace-write';
   const sandboxConfigArgs = yolo
     ? []
     : ['-c', 'sandbox_workspace_write.network_access=true'];
   const buildArgs = (resume?: string) => (resume
-    ? ['exec', 'resume', '--json', '--skip-git-repo-check', '-c', `sandbox_mode=${sandbox}`, ...sandboxConfigArgs, ...reasoningEffortArgs, ...modelArgs, resume, prompt, ...imageArgs]
-    : ['exec', '--json', '--skip-git-repo-check', '--sandbox', sandbox, ...sandboxConfigArgs, ...reasoningEffortArgs, ...modelArgs, prompt, ...imageArgs]);
+    ? ['exec', 'resume', '--json', '--skip-git-repo-check', '-c', `sandbox_mode=${sandbox}`, ...sandboxConfigArgs, ...reasoningEffortArgs, ...serviceTierArgs, ...modelArgs, resume, prompt, ...imageArgs]
+    : ['exec', '--json', '--skip-git-repo-check', '--sandbox', sandbox, ...sandboxConfigArgs, ...reasoningEffortArgs, ...serviceTierArgs, ...modelArgs, prompt, ...imageArgs]);
 
   let summary = '';
   let sessionId: string | undefined;

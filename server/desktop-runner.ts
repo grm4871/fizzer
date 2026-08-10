@@ -34,6 +34,8 @@ export type DelegatedRunPayload = {
   model?: string;
   /** Codex-only override; omitted means defer to the local CLI default. */
   reasoningEffort?: string;
+  /** Codex-only priority processing override. */
+  priorityServiceTier?: boolean;
   resumeSessionId?: string;
   chatChannelId?: string;
   chatMessageId?: string;

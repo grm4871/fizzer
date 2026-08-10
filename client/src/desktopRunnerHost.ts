@@ -41,6 +41,7 @@ type DelegatedRunPayload = {
   vaultRoot?: string;
   model?: string;
   reasoningEffort?: string;
+  priorityServiceTier?: boolean;
   yolo?: boolean;
   resumeSessionId?: string;
   images?: unknown[];

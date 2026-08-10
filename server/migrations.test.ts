@@ -263,6 +263,26 @@ test('Codex reasoning effort persists on a channel registration', () => {
   });
 });
 
+test('Codex priority service tier persists on a channel registration', () => {
+  withDb((db) => {
+    addChannel(db, 'chan-1', 'general');
+    ensureChatSchema(db);
+    const saved = upsertChatAgentMember(db, 1, 'vault-1', 'chan-1', {
+      id: 'reg-fast-sol', agentId: 'codex', displayName: 'Sol', mention: 'fast-sol',
+      priorityServiceTier: true,
+    });
+    assert.equal(saved.priorityServiceTier, true);
+    const row = db.prepare('SELECT priority_service_tier FROM chat_agent_members WHERE id = ?')
+      .get('reg-fast-sol') as { priority_service_tier: number };
+    assert.equal(row.priority_service_tier, 1);
+
+    const updated = upsertChatAgentMember(db, 1, 'vault-1', 'chan-1', {
+      ...saved, priorityServiceTier: false,
+    });
+    assert.equal(updated.priorityServiceTier, false);
+  });
+});
+
 test('Claude Code reasoning effort persists through max and rejects ultra', () => {
   withDb((db) => {
     addChannel(db, 'chan-1', 'general');

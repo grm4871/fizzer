@@ -3208,6 +3208,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
   let selectedAgent: AgentId;
   let selectedModel: string | undefined;
   let selectedReasoningEffort: string | undefined;
+  let priorityServiceTier = false;
   let selectedCwd: string | undefined;
   let yoloMode: boolean;
   let targetChannelId = chatChannelId;
@@ -3241,6 +3242,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     selectedReasoningEffort = selectedAgent === 'codex' || selectedAgent === 'claude-code'
       ? chatDispatch?.reasoningEffort || registration.reasoningEffort || undefined
       : undefined;
+    priorityServiceTier = selectedAgent === 'codex' && registration.priorityServiceTier;
     selectedCwd = normalizeRunCwd(registration.cwd);
     // A channel cwd is a path on the channel owner's machine. Never pass that
     // path to somebody else's runner: shared agents keep their owner's own cwd.
@@ -3556,6 +3558,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
       vaultRoot: runVault.root_path,
       model: selectedModel,
       reasoningEffort: selectedReasoningEffort,
+      priorityServiceTier,
       resumeSessionId,
       chatChannelId: targetChannelId,
       chatMessageId,

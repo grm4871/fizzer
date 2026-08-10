@@ -279,6 +279,8 @@ export interface ChatAgentRegistration {
   model: string;
   /** Optional per-channel Codex reasoning effort pin. Empty uses the CLI default. */
   reasoningEffort: string;
+  /** Codex-only priority processing override for this channel membership. */
+  priorityServiceTier: boolean;
   cwd: string;
   contextPrompt: string;
   taggableByAgents: boolean;
@@ -2350,6 +2352,7 @@ export const ChatView = memo(function ChatView({
       mention: agent?.label.toLowerCase().replace(/\s+/g, '-') ?? '',
       model: agent?.models[0]?.id ?? '',
       reasoningEffort: '',
+      priorityServiceTier: false,
       cwd: '',
       contextPrompt: '',
       taggableByAgents: false,
@@ -2368,6 +2371,7 @@ export const ChatView = memo(function ChatView({
     mention: availableAgents[0]?.label.toLowerCase().replace(/\s+/g, '-') ?? '',
     model: availableAgents[0]?.models[0]?.id ?? '',
     reasoningEffort: '',
+    priorityServiceTier: false,
     cwd: '',
     contextPrompt: '',
     taggableByAgents: false,
@@ -2971,6 +2975,7 @@ export const ChatView = memo(function ChatView({
           mention: va.mention,
           model: va.model,
           reasoningEffort: '',
+          priorityServiceTier: false,
           cwd: va.cwd,
           contextPrompt: va.contextPrompt,
           taggableByAgents: false,
@@ -4392,6 +4397,14 @@ export const ChatView = memo(function ChatView({
                 />
                 <span className="chat-agent-field-hint">Default follows the local CLI configuration on the agent owner's desktop.</span>
               </label>
+            )}
+            {agentForm.agentId === 'codex' && (agentPanelMode === 'edit-member' || agentPanelMode === 'create') && (
+              <ChatAgentToggle
+                checked={agentForm.priorityServiceTier}
+                onChange={(event) => setAgentForm((value) => ({ ...value, priorityServiceTier: event.target.checked }))}
+                name="Fast mode"
+                hint="Uses Codex priority processing for new runs; may consume usage faster."
+              />
             )}
             </div>
             {(agentPanelMode === 'edit-member' || agentPanelMode === 'create') && (

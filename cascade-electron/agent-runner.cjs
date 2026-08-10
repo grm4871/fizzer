@@ -1075,6 +1075,7 @@ async function startLocalAgentRun(opts, sendEvent) {
       images: Array.isArray(opts.images) ? opts.images : [],
       model: typeof opts.model === 'string' ? opts.model : undefined,
       reasoningEffort: typeof opts.reasoningEffort === 'string' ? opts.reasoningEffort : undefined,
+      priorityServiceTier: opts.priorityServiceTier === true,
       yolo: opts.yolo === true,
       runId,
       emit,

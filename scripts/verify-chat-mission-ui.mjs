@@ -511,6 +511,10 @@ try {
   await solRow.click();
   const coordinatorToggle = page.getByLabel('Coordinate this channel');
   await coordinatorToggle.waitFor({ timeout: 5_000 });
+  const fastModeToggle = page.getByLabel('Fast mode');
+  await fastModeToggle.waitFor({ timeout: 5_000 });
+  check('Codex membership exposes Fast mode in runtime settings', await fastModeToggle.isVisible());
+  check('Fast mode defaults off', !(await fastModeToggle.isChecked()));
   check('coordinator toggle reflects persisted membership', await coordinatorToggle.isChecked());
   check('coordinator implies the default human-message route', await page.getByLabel('Reply to every human message').isDisabled());
   const membershipMenu = page.locator('.chat-agent-menu');
@@ -539,10 +543,13 @@ try {
   }
 
   await coordinatorToggle.uncheck();
+  await fastModeToggle.check();
   await page.getByRole('button', { name: 'Save', exact: true }).click();
   let agents = await waitForCoordinator(vault.id, channel.id, auth, sol.id, false);
   check('disabling coordination persists', agents.find((item) => item.id === sol.id)?.orchestrator === false);
+  check('enabling Fast mode persists', agents.find((item) => item.id === sol.id)?.priorityServiceTier === true);
   await solRow.click();
+  check('Fast mode survives reopening agent settings', await page.getByLabel('Fast mode').isChecked());
   await page.getByLabel('Coordinate this channel').check();
   await page.getByRole('button', { name: 'Save', exact: true }).click();
   agents = await waitForCoordinator(vault.id, channel.id, auth, sol.id, true);

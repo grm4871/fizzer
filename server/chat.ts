@@ -245,6 +245,8 @@ export type ChatAgentRegistration = {
   model: string;
   /** Optional per-channel Codex effort override. Empty inherits the local CLI config. */
   reasoningEffort: string;
+  /** Codex-only priority processing override for this channel membership. */
+  priorityServiceTier: boolean;
   cwd: string;
   contextPrompt: string;
   taggableByAgents: boolean;
@@ -382,6 +384,7 @@ export function ensureChatSchema(db: Db): void {
       mention TEXT NOT NULL DEFAULT '',
       model TEXT NOT NULL DEFAULT '',
       reasoning_effort TEXT NOT NULL DEFAULT '',
+      priority_service_tier INTEGER NOT NULL DEFAULT 0,
       cwd TEXT NOT NULL DEFAULT '',
       context_prompt TEXT NOT NULL DEFAULT '',
       taggable_by_agents INTEGER NOT NULL DEFAULT 0,
@@ -462,6 +465,9 @@ export function ensureChatSchema(db: Db): void {
   if (!memberCols.some((col) => col.name === 'yolo')) {
     db.exec('ALTER TABLE chat_agent_members ADD COLUMN yolo INTEGER NOT NULL DEFAULT 0');
   }
+  if (!memberCols.some((col) => col.name === 'priority_service_tier')) {
+    db.exec('ALTER TABLE chat_agent_members ADD COLUMN priority_service_tier INTEGER NOT NULL DEFAULT 0');
+  }
   if (!memberCols.some((col) => col.name === 'conversation_id')) {
     db.exec("ALTER TABLE chat_agent_members ADD COLUMN conversation_id TEXT NOT NULL DEFAULT ''");
   }
@@ -527,6 +533,7 @@ type ChatAgentMemberRow = {
   mention: string;
   model: string;
   reasoning_effort: string;
+  priority_service_tier: number;
   cwd: string;
   context_prompt: string;
   taggable_by_agents: number;
@@ -584,6 +591,7 @@ function rowToAgentMember(row: ChatAgentMemberRow): ChatAgentRegistration {
     mention: row.mention,
     model: row.model,
     reasoningEffort: row.reasoning_effort || '',
+    priorityServiceTier: row.priority_service_tier !== 0,
     cwd: row.cwd,
     contextPrompt: row.context_prompt,
     taggableByAgents: row.taggable_by_agents !== 0,
@@ -893,6 +901,7 @@ function normalizeAgentRegistration(input: Partial<ChatAgentRegistration>, fallb
     mention,
     model: String(input.model || ''),
     reasoningEffort,
+    priorityServiceTier: agentId === 'codex' && input.priorityServiceTier === true,
     cwd: String(input.cwd || ''),
     contextPrompt: String(input.contextPrompt || ''),
     taggableByAgents: input.taggableByAgents === true,
@@ -1126,7 +1135,7 @@ export function addVaultAgentToChannel(
   vaultId: string,
   channelId: string,
   vaultAgentId: string,
-  flags: Partial<Pick<ChatAgentRegistration, 'reasoningEffort' | 'taggableByAgents' | 'replyToEveryMessage' | 'orchestrator' | 'pingableByOthers' | 'yolo' | 'conversationId'>> = {},
+  flags: Partial<Pick<ChatAgentRegistration, 'reasoningEffort' | 'priorityServiceTier' | 'taggableByAgents' | 'replyToEveryMessage' | 'orchestrator' | 'pingableByOthers' | 'yolo' | 'conversationId'>> = {},
 ): ChatAgentRegistration {
   const { route } = assertChatChannel(db, channelId, userId);
   if (route.localVaultId !== vaultId) throw new Error('Chat channel not found');
@@ -1157,6 +1166,8 @@ export function addVaultAgentToChannel(
   const replyEvery = orchestrator || (flags.replyToEveryMessage !== undefined ? flags.replyToEveryMessage : (existing ? existing.reply_to_every_message !== 0 : false));
   const pingable = flags.pingableByOthers !== undefined ? flags.pingableByOthers : (existing ? existing.pingable_by_others !== 0 : false);
   const yolo = flags.yolo !== undefined ? flags.yolo : (existing ? existing.yolo !== 0 : false);
+  const priorityServiceTier = va.agent_id === 'codex'
+    && (flags.priorityServiceTier !== undefined ? flags.priorityServiceTier : (existing ? existing.priority_service_tier !== 0 : false));
   const requestedEffort = String(flags.reasoningEffort ?? existing?.reasoning_effort ?? '').trim().toLowerCase();
   const supportedEfforts = va.agent_id === 'codex'
     ? ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']
@@ -1173,23 +1184,23 @@ export function addVaultAgentToChannel(
     db.prepare(`
       UPDATE chat_agent_members SET
         agent_id = ?, display_name = ?, avatar_url = ?, mention = ?, model = ?, reasoning_effort = ?, cwd = ?, context_prompt = ?,
-        taggable_by_agents = ?, reply_to_every_message = ?, orchestrator = ?, pingable_by_others = ?, yolo = ?,
+        taggable_by_agents = ?, reply_to_every_message = ?, orchestrator = ?, pingable_by_others = ?, yolo = ?, priority_service_tier = ?,
         conversation_id = ?, vault_agent_id = ?, updated_at = datetime('now')
       WHERE id = ? AND channel_id = ?
     `).run(
       va.agent_id, va.display_name, va.avatar_url, va.mention, va.model, reasoningEffort, va.cwd, va.context_prompt,
-      taggable ? 1 : 0, replyEvery ? 1 : 0, orchestrator ? 1 : 0, pingable ? 1 : 0, yolo ? 1 : 0,
+      taggable ? 1 : 0, replyEvery ? 1 : 0, orchestrator ? 1 : 0, pingable ? 1 : 0, yolo ? 1 : 0, priorityServiceTier ? 1 : 0,
       conversationId, va.id, memberId, route.sourceChannelId,
     );
   } else {
     db.prepare(`
       INSERT INTO chat_agent_members (
         id, channel_id, vault_id, vault_agent_id, agent_id, display_name, avatar_url, mention,
-        model, reasoning_effort, cwd, context_prompt, taggable_by_agents, reply_to_every_message, orchestrator, pingable_by_others, yolo, conversation_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        model, reasoning_effort, priority_service_tier, cwd, context_prompt, taggable_by_agents, reply_to_every_message, orchestrator, pingable_by_others, yolo, conversation_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       memberId, route.sourceChannelId, route.localVaultId, va.id,
-      va.agent_id, va.display_name, va.avatar_url, va.mention, va.model, reasoningEffort, va.cwd, va.context_prompt,
+      va.agent_id, va.display_name, va.avatar_url, va.mention, va.model, reasoningEffort, priorityServiceTier ? 1 : 0, va.cwd, va.context_prompt,
       taggable ? 1 : 0, replyEvery ? 1 : 0, orchestrator ? 1 : 0, pingable ? 1 : 0, yolo ? 1 : 0, conversationId,
     );
   }
@@ -3129,6 +3140,7 @@ export function upsertChatAgentMember(
       orchestrator: input.orchestrator,
       pingableByOthers: input.pingableByOthers,
       yolo: input.yolo,
+      priorityServiceTier: input.priorityServiceTier,
       reasoningEffort: input.reasoningEffort,
       conversationId: input.conversationId,
     });
@@ -3178,6 +3190,7 @@ export function upsertChatAgentMember(
         mention = ?,
         model = ?,
         reasoning_effort = ?,
+        priority_service_tier = ?,
         cwd = ?,
         context_prompt = ?,
         taggable_by_agents = ?,
@@ -3196,6 +3209,7 @@ export function upsertChatAgentMember(
       member.mention,
       member.model,
       member.reasoningEffort,
+      member.priorityServiceTier ? 1 : 0,
       member.cwd,
       member.contextPrompt,
       member.taggableByAgents ? 1 : 0,
@@ -3211,8 +3225,8 @@ export function upsertChatAgentMember(
     db.prepare(`
       INSERT INTO chat_agent_members (
         id, channel_id, vault_id, vault_agent_id, agent_id, display_name, avatar_url, mention,
-        model, reasoning_effort, cwd, context_prompt, taggable_by_agents, reply_to_every_message, orchestrator, pingable_by_others, yolo, conversation_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        model, reasoning_effort, priority_service_tier, cwd, context_prompt, taggable_by_agents, reply_to_every_message, orchestrator, pingable_by_others, yolo, conversation_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       member.id,
       route.sourceChannelId,
@@ -3224,6 +3238,7 @@ export function upsertChatAgentMember(
       member.mention,
       member.model,
       member.reasoningEffort,
+      member.priorityServiceTier ? 1 : 0,
       member.cwd,
       member.contextPrompt,
       member.taggableByAgents ? 1 : 0,

@@ -356,6 +356,32 @@ test('resume passes the session id positionally, right before the prompt', async
   assert.equal(result.summary, 'answered');
 });
 
+test('Codex priority processing reaches fresh and resumed runs', async () => {
+  resetArgs();
+  await runCliAgent({
+    agent: 'codex', context: '', userPrompt: 'fast fresh', cwd: scratch, emit,
+    priorityServiceTier: true,
+  });
+
+  process.env.FAKE_CODEX_RESUME_OK = '1';
+  try {
+    await runCliAgent({
+      agent: 'codex', context: '', userPrompt: 'fast resume', cwd: scratch, emit,
+      resumeSessionId: 'sess-fast', priorityServiceTier: true,
+    });
+  } finally {
+    delete process.env.FAKE_CODEX_RESUME_OK;
+  }
+
+  const attempts = readArgs();
+  assert.equal(attempts.length, 2);
+  for (const args of attempts) {
+    const tierIndex = args.indexOf('service_tier="priority"');
+    assert.ok(tierIndex > 0, 'priority service tier must reach Codex');
+    assert.equal(args[tierIndex - 1], '-c');
+  }
+});
+
 test('a session Codex no longer has falls back to a fresh one instead of a silent empty turn', async () => {
   resetArgs();
   const result = await runCliAgent({
