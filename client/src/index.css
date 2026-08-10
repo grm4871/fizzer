@@ -7597,7 +7597,10 @@ button.chat-avatar.is-clickable:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: hsl(224, 8%, 48%);
+  color: hsl(222, 10%, 62%);
+  font-family: var(--font-sans, inherit);
+  font-size: 0.75rem;
+  font-weight: 500;
 }
 .chat-work-line-fold time {
   flex-shrink: 0;
@@ -7887,7 +7890,11 @@ button.chat-avatar.is-clickable:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: inherit;
+  color: color-mix(in srgb, var(--text-secondary) 88%, var(--text-primary));
+  font-family: var(--font-sans, inherit);
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
 }
 .chat-mission-content {
   padding: 8px 10px 10px 12px;

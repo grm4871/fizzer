@@ -69,21 +69,144 @@ export function isForcedWorkTraceLine(
   return isSystemCascadeMessage(message);
 }
 
-export function workTracePreview(body: string, max = 110): string {
-  const line = String(body || '')
-    .replace(/\r\n/g, '\n')
-    .replace(/\r/g, '\n')
-    .split('\n')
-    .map((part) => part.trim())
-    .find((part) => part.length > 0) || '';
-  const collapsed = line.replace(/\s+/g, ' ').trim();
+function truncateActivity(text: string, max: number): string {
+  const collapsed = text.replace(/\s+/g, ' ').trim();
   if (!collapsed) return '';
   if (collapsed.length <= max) return collapsed;
   return `${collapsed.slice(0, Math.max(1, max - 1))}…`;
 }
 
-export function workTraceStatusLabel(message: Pick<ChatMessage, 'status' | 'body'>): string {
-  if (message.status === 'running') return 'working…';
+function shortPath(value: unknown): string {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const parts = raw.split(/[/\\]/).filter(Boolean);
+  if (parts.length <= 2) return raw;
+  return parts.slice(-2).join('/');
+}
+
+function previewText(value: unknown, max = 90): string {
+  const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
+}
+
+/**
+ * Turn a single harness/body line into operator-facing prose.
+ * Protocol JSONL (Codex/Claude/Grok) becomes short status phrases instead of
+ * raw `{"type":...}` dumps in peeks and work-trace previews.
+ */
+export function humanizeActivityLine(line: string): string {
+  const trimmed = String(line || '').trim();
+  if (!trimmed) return '';
+  // Skip our own meta comments unless they already read as status.
+  if (trimmed.startsWith('# ')) {
+    if (/^#\s*(thinking|cwd |exit |claude-code|cascade-stats|result|system)/i.test(trimmed)) return '';
+    return trimmed.replace(/^#\s*/, '');
+  }
+  if (trimmed.startsWith('$ ')) return `Bash ${previewText(trimmed.slice(2), 80)}`.trim();
+  if (/^[▶>]\s+\S/.test(trimmed)) return trimmed.replace(/^[▶>]\s+/, '');
+  if (!trimmed.startsWith('{')) return trimmed;
+
+  try {
+    const ev = JSON.parse(trimmed) as Record<string, unknown>;
+    const type = String(ev.type || ev.event || '').trim();
+    const item = (ev.item && typeof ev.item === 'object')
+      ? ev.item as Record<string, unknown>
+      : undefined;
+    const data = (ev.data && typeof ev.data === 'object')
+      ? ev.data as Record<string, unknown>
+      : undefined;
+
+    if (type === 'thread.started' || type === 'session.created') return 'session started';
+    if (type === 'thread.completed' || type === 'session.completed') return 'session finished';
+    if (type === 'thought' || type === 'reasoning') {
+      return previewText(ev.data ?? ev.text ?? ev.content, 90) || 'thinking…';
+    }
+    if (type === 'message' || type === 'agent_message' || type === 'assistant') {
+      return previewText(ev.text ?? ev.content ?? ev.message ?? data?.text, 90) || 'replying…';
+    }
+    if (type === 'item.started' || type === 'item.completed') {
+      const itemType = String(item?.type || '');
+      const done = type === 'item.completed';
+      if (itemType === 'reasoning') {
+        return previewText(item?.text, 90) || (done ? 'thought' : 'thinking…');
+      }
+      if (itemType === 'agent_message') {
+        return previewText(item?.text, 90) || (done ? 'replied' : 'replying…');
+      }
+      if (itemType === 'command_execution') {
+        const cmd = previewText(item?.command, 70);
+        return done
+          ? (cmd ? `ran ${cmd}` : 'command done')
+          : (cmd ? `Bash ${cmd}` : 'running command…');
+      }
+      if (itemType === 'file_change' || itemType === 'file_edit') {
+        const path = shortPath(item?.path ?? item?.file ?? item?.filename);
+        return done
+          ? (path ? `edited ${path}` : 'edited file')
+          : (path ? `Edit ${path}` : 'editing…');
+      }
+      if (itemType === 'web_search' || itemType === 'search') {
+        const q = previewText(item?.query ?? item?.pattern, 60);
+        return q ? `Search ${q}` : 'searching…';
+      }
+      if (itemType) {
+        const label = itemType.replace(/[_-]+/g, ' ');
+        return done ? `${label} done` : `${label}…`;
+      }
+      return done ? 'step done' : 'working…';
+    }
+    if (type === 'tool.execution_start' || type === 'tool_use') {
+      const name = String(data?.toolName ?? ev.name ?? 'tool');
+      const detail = previewText(data?.arguments ?? ev.input ?? data?.command, 60);
+      return detail ? `${name} ${detail}` : `${name}…`;
+    }
+    if (type === 'tool.execution_complete' || type === 'tool_result') {
+      const name = String(data?.toolName ?? ev.name ?? 'tool');
+      return data?.success === false ? `${name} failed` : `${name} done`;
+    }
+    if (type === 'error') {
+      return previewText(ev.message ?? ev.error ?? data?.message, 90) || 'error';
+    }
+    if (type === 'result' || type === 'message_end') return 'finishing…';
+    // Unknown protocol object — never dump the whole JSON blob into the UI.
+    if (type) return type.replace(/[._]+/g, ' ');
+    return 'working…';
+  } catch {
+    // Not JSON after all.
+    return trimmed;
+  }
+}
+
+/** Prefer the latest human-readable activity line (harness tails grow live). */
+export function workTracePreview(body: string, max = 110): string {
+  const lines = String(body || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .split('\n')
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (lines.length === 0) return '';
+
+  // Scan newest-first so live harness tails surface the current step, not
+  // the session-start protocol event that often leads the buffer.
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const human = humanizeActivityLine(lines[i]);
+    if (!human) continue;
+    // Pure lifecycle noise is only used if nothing better exists.
+    if (/^session (started|finished)$/i.test(human) && i > 0) continue;
+    return truncateActivity(human, max);
+  }
+  const fallback = humanizeActivityLine(lines[lines.length - 1] || lines[0] || '');
+  return truncateActivity(fallback, max);
+}
+
+export function workTraceStatusLabel(message: Pick<ChatMessage, 'status' | 'body' | 'harnessLog'>): string {
+  if (message.status === 'running') {
+    const live = workTracePreview(message.harnessLog || message.body || '', 90);
+    if (live && !/^Thinking(?:\.{3}|…)$/i.test(live)) return live;
+    return 'working…';
+  }
   if (message.status === 'sending') return 'queued…';
   if (message.status === 'failed') return 'failed';
   if (isSteeringContinuationMessage(message)) return 'steered';
@@ -339,6 +462,7 @@ export function workTracePeek(trace: ChatMessage[]): WorkTracePeek | null {
   ));
   const message = liveMessage || trace[trace.length - 1];
   const live = Boolean(liveMessage);
+  // Prefer harness tail (live tools/thinking), then body — both humanized.
   const harnessLine = workTracePreview(message.harnessLog || '', 90);
   const bodyLine = workTracePreview(message.body || '', 90);
   const label = live

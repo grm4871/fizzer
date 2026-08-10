@@ -6,6 +6,7 @@ import {
   isWorkTraceMessage,
   partitionWorkRun,
   segmentTranscript,
+  humanizeActivityLine,
   workTracePreview,
   workTraceDecals,
   workTracePhase,
@@ -206,7 +207,8 @@ describe('workTrace', () => {
   });
 
   it('previews and summarizes compactly', () => {
-    expect(workTracePreview('line one\nline two')).toBe('line one');
+    // Newest useful line wins (live harness tails grow downward).
+    expect(workTracePreview('line one\nline two')).toBe('line two');
     expect(workTracePreview('x'.repeat(200)).endsWith('…')).toBe(true);
     const trace = [
       msg({ id: '1', author: 'Sol', body: 'a', agentId: 'codex' }),
@@ -214,6 +216,25 @@ describe('workTrace', () => {
     ];
     expect(workTraceSummary(trace)).toContain('2 steps');
     expect(workTraceSummary(trace)).toContain('Sol');
+  });
+
+  it('humanizes protocol JSONL instead of dumping raw objects', () => {
+    expect(humanizeActivityLine('{"type":"thread.started","thread_id":"abc"}')).toBe('session started');
+    expect(humanizeActivityLine(JSON.stringify({
+      type: 'item.started',
+      item: { type: 'command_execution', command: 'rg "mission" client/src' },
+    }))).toBe('Bash rg "mission" client/src');
+    expect(humanizeActivityLine(JSON.stringify({
+      type: 'item.started',
+      item: { type: 'reasoning', text: '' },
+    }))).toBe('thinking…');
+    expect(humanizeActivityLine(JSON.stringify({
+      type: 'item.completed',
+      item: { type: 'file_change', path: '/home/jt/Desktop/cascade/client/src/App.tsx' },
+    }))).toBe('edited src/App.tsx');
+    // Never surface the full JSON blob.
+    expect(workTracePreview('{"type":"thread.started","thread_id":"abc"}\n{"type":"item.started","item":{"type":"reasoning"}}'))
+      .toBe('thinking…');
   });
 
   it('builds a collapsed mission peek from the live step', () => {
@@ -224,7 +245,7 @@ describe('workTrace', () => {
         author: 'Terra',
         body: 'Thinking…',
         status: 'running',
-        harnessLog: 'Bash rg "mission" client/src',
+        harnessLog: '{"type":"thread.started","thread_id":"x"}\nBash rg "mission" client/src',
       }),
     ]);
     expect(peek).toMatchObject({
