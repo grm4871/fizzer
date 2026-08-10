@@ -4168,7 +4168,7 @@ app.put('/api/vaults/:vaultId/channels/:channelId/agents', requireAuth, (req: Au
 
 // Used by the agent helper. The registration id is supplied by its isolated run
 // context, so a running agent can only update the identity it was launched as.
-app.put('/api/vaults/:vaultId/channels/:channelId/agents/:registrationId/avatar', requireAuth, requireUserAccess, (req: AuthedRequest, res) => {
+app.put('/api/vaults/:vaultId/channels/:channelId/agents/:registrationId/avatar', requireAuth, (req: AuthedRequest, res) => {
   try {
     const { route } = assertChatChannel(db, req.params.channelId, req.user!.id);
     const registration = setChatAgentAvatar(
