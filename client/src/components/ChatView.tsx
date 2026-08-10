@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { Bot, ChevronRight, ClipboardList, Copy, Flag, Forward, Hash, History, ImagePlus, Paperclip, Reply, Send, Smile, Trash2, X } from 'lucide-react';
+import { Bot, ChevronRight, ClipboardList, Flag, Forward, Hash, History, ImagePlus, Paperclip, Reply, Send, Smile, Trash2, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
@@ -1637,10 +1637,12 @@ function ChatMissionCard({
   mission,
   vaultId,
   channelId,
+  embedded = false,
 }: {
   mission: ChatMission;
   vaultId?: string;
   channelId?: string;
+  embedded?: boolean;
 }) {
   const needsAttention = mission.status === 'attention' || mission.status === 'blocked';
   const [open, setOpen] = useState(needsAttention);
@@ -1658,7 +1660,7 @@ function ChatMissionCard({
     setHistoryError('');
   }, [mission.id]);
   useEffect(() => {
-    if (!open || !bridge) return;
+    if ((!open && !embedded) || !bridge) return;
     const paths = [...new Set(mission.tasks
       .map((task) => task.worktreePath)
       .filter((path): path is string => Boolean(path)))];
@@ -1679,7 +1681,7 @@ function ChatMissionCard({
       });
     }).catch(() => {});
     return () => { cancelled = true; };
-  }, [bridge, mission.tasks, open]);
+  }, [bridge, mission.tasks, open, embedded]);
   const done = mission.tasks.filter((task) => task.status === 'completed' || task.status === 'canceled').length;
   const total = mission.tasks.length;
   const statusLabel = mission.status === 'active'
@@ -1703,10 +1705,10 @@ function ChatMissionCard({
   return (
     <details
       className={`chat-mission-card is-${mission.status}`}
-      open={open}
-      onToggle={(event) => setOpen(event.currentTarget.open)}
+      open={embedded || open}
+      onToggle={(event) => { if (!embedded) setOpen(event.currentTarget.open); }}
     >
-      <summary>
+      <summary onClick={embedded ? (event) => event.preventDefault() : undefined}>
         <span className="chat-mission-state" aria-hidden="true" />
         <span className="chat-mission-kicker">Mission</span>
         <strong>{mission.title}</strong>
@@ -2194,7 +2196,6 @@ export const ChatView = memo(function ChatView({
   const [inviteUsername, setInviteUsername] = useState('');
   const [inviteStatus, setInviteStatus] = useState('');
   const [inviteBusy, setInviteBusy] = useState(false);
-  const [inviteLinkBusy, setInviteLinkBusy] = useState(false);
   const [editingRegistrationId, setEditingRegistrationId] = useState<string | null>(null);
   const [agentFormError, setAgentFormError] = useState('');
   const [modelChoice, setModelChoice] = useState('');
@@ -3037,25 +3038,11 @@ export const ChatView = memo(function ChatView({
     try {
       await onInviteUser(channelId, username);
       setInviteUsername('');
-      setInviteStatus(`Invited @${username}.`);
+      setInviteStatus(`Added @${username} to the vault.`);
     } catch (error) {
       setInviteStatus(error instanceof Error ? error.message : 'Could not invite user');
     } finally {
       setInviteBusy(false);
-    }
-  }
-
-  async function copyInviteLink() {
-    setInviteLinkBusy(true);
-    setInviteStatus('');
-    try {
-      const url = await onCreateInviteLink(channelId);
-      await navigator.clipboard.writeText(url);
-      setInviteStatus('Invite link copied.');
-    } catch (error) {
-      setInviteStatus(error instanceof Error ? error.message : 'Could not copy invite link');
-    } finally {
-      setInviteLinkBusy(false);
     }
   }
 
@@ -3404,16 +3391,23 @@ export const ChatView = memo(function ChatView({
                 };
                 const traceSelected = selectedMessageId != null
                   && segment.trace.some((message) => message.id === selectedMessageId);
+                const missionArtifacts = [
+                  ...(carrier.mission ? [carrier] : []),
+                  ...segment.fullGroups
+                  .flatMap((group) => group.messages)
+                  .filter((message) => Boolean(message.mission)),
+                ];
+                const displayCarrier = carrier.mission ? { ...carrier, mission: undefined } : carrier;
                 const nodes: ReactNode[] = [
                   <ChatGroupRow
                     key={`work-${segment.id}`}
-                    group={{ messages: [carrier] }}
+                    group={{ messages: [displayCarrier] }}
                     selectedMessageId={traceSelected ? selectedMessageId : null}
                     avatarKind="agent"
-                    avatarUrl={getMessageAvatarUrl(carrier)}
-                    authorLabel={getMessageAuthorLabel(carrier)}
-                    ownerLabel={getMessageOwnerLabel(carrier)}
-                    planUsage={getMessagePlanUsage(carrier)}
+                    avatarUrl={getMessageAvatarUrl(displayCarrier)}
+                    authorLabel={getMessageAuthorLabel(displayCarrier)}
+                    ownerLabel={getMessageOwnerLabel(displayCarrier)}
+                    planUsage={getMessagePlanUsage(displayCarrier)}
                     latestRunningMessageId={undefined}
                     runningSiblingCount={0}
                     steeringPromptLabels={steeringPromptLabels}
@@ -3428,8 +3422,8 @@ export const ChatView = memo(function ChatView({
                     onLightbox={openLightbox}
                     onImageLoad={scrollToBottomIfSticky}
                     onAgentAvatarClick={
-                      resolveMessageRegistration(carrier)
-                        ? (event) => openAgentSettingsFromMessage(carrier, event)
+                      resolveMessageRegistration(displayCarrier)
+                        ? (event) => openAgentSettingsFromMessage(displayCarrier, event)
                         : undefined
                     }
                     scrollRootRef={messagesRef}
@@ -3445,12 +3439,22 @@ export const ChatView = memo(function ChatView({
                         vaultId={vaultId}
                         onHydrateMessage={onHydrateMessage}
                         runningMessageState={runningMessageState}
+                        artifactContent={missionArtifacts.map((message) => (
+                          <ChatMissionCard
+                            key={message.id}
+                            mission={message.mission!}
+                            vaultId={vaultId}
+                            channelId={message.channelId}
+                            embedded
+                          />
+                        ))}
                       />
                     )}
                   />,
                 ];
                 for (const group of segment.fullGroups) {
-                  nodes.push(renderGroupRow(group));
+                  const messagesWithoutMissions = group.messages.filter((message) => !message.mission);
+                  if (messagesWithoutMissions.length) nodes.push(renderGroupRow({ messages: messagesWithoutMissions }));
                 }
                 return nodes;
               }
@@ -3816,10 +3820,6 @@ export const ChatView = memo(function ChatView({
           <>
         {inviteOpen && (
           <form className="chat-invite-menu" onSubmit={submitInvite} onClick={(event) => event.stopPropagation()}>
-            <button type="button" className="chat-copy-invite-btn" onClick={copyInviteLink} disabled={inviteLinkBusy}>
-              <Copy size={13} />
-              {inviteLinkBusy ? 'Copying' : 'Copy invite link'}
-            </button>
             <label>
               Username
               <input
@@ -3841,7 +3841,7 @@ export const ChatView = memo(function ChatView({
           </form>
         )}
 
-        <div className="chat-users-title">People</div>
+        <div className="chat-users-title">People in this vault</div>
         {humanUsers.map((name) => {
           const isSelf = name === currentUser;
           const isOnline = isSelf || onlineUsers.has(name);
@@ -3858,12 +3858,12 @@ export const ChatView = memo(function ChatView({
               </div>
             </div>
             {presence.owner === currentUser && !isSelf && onRemoveParticipant && (
-              <button type="button" className="chat-remove-agent" title={`Remove @${name}`} onClick={() => void onRemoveParticipant(channelId, name)}>
+              <button type="button" className="chat-remove-agent" title={`Remove @${name} from vault`} onClick={() => void onRemoveParticipant(channelId, name)}>
                 <X size={12} />
               </button>
             )}
             {isSelf && !isOwner && onLeaveChannel && (
-              <button type="button" className="chat-remove-agent" title="Leave channel" onClick={() => void onLeaveChannel(channelId)}>
+              <button type="button" className="chat-remove-agent" title="Leave vault" onClick={() => void onLeaveChannel(channelId)}>
                 <X size={12} />
               </button>
             )}
@@ -3872,9 +3872,9 @@ export const ChatView = memo(function ChatView({
         })}
 
         <div className="chat-agent-section">
-          <div className="chat-users-title">Agents in this channel</div>
+          <div className="chat-users-title">Agents in this vault</div>
           {registeredAgentRows.length === 0 && (
-            <div className="chat-runs-empty">No agents yet — add from vault</div>
+            <div className="chat-runs-empty">No agents in this vault yet</div>
           )}
           {registeredAgentRows.map((agent) => {
           const selectedModel = agent.registration.model || agent.models[0]?.id || '';
@@ -3913,9 +3913,10 @@ export const ChatView = memo(function ChatView({
                 className="chat-remove-agent"
                 onClick={(event) => {
                   event.stopPropagation();
-                  onRemoveAgent(channelId, agent.registration.id);
+                  if (agent.registration.vaultAgentId && onDeleteVaultAgent) void onDeleteVaultAgent(agent.registration.vaultAgentId);
+                  else onRemoveAgent(channelId, agent.registration.id);
                 }}
-                title="Remove agent from channel"
+                title="Delete agent from vault"
               >
                 <X size={12} />
               </button>}
@@ -3925,14 +3926,13 @@ export const ChatView = memo(function ChatView({
 
           {agentMenuOpen && agentPanelMode === 'picker' && (
           <div className="chat-agent-menu" onClick={(event) => event.stopPropagation()}>
-            <div className="chat-agent-menu-heading">Add agent to #{channelName}</div>
+            <div className="chat-agent-menu-heading">Vault agents</div>
             {vaultAgents.length === 0 ? (
               <div className="chat-runs-empty">No vault agents yet</div>
             ) : (
               vaultAgents.map((va) => {
                 const inChannel = channelVaultAgentIds.has(va.id);
                 const canManage = va.ownerUsername === currentUser;
-                const nCh = va.channelIds?.length ?? 0;
                 return (
                   <div key={va.id} className={`chat-vault-pick-row${inChannel ? ' is-in-channel' : ''}`}>
                     <button
@@ -3942,7 +3942,7 @@ export const ChatView = memo(function ChatView({
                       onClick={() => {
                         if (!inChannel) void addVaultAgentFromPicker(va.id);
                       }}
-                      title={inChannel ? 'Already in this channel' : canManage ? 'Add to this channel' : 'Only the agent owner can add it'}
+                      title={inChannel ? 'Already in this vault' : canManage ? 'Add to this vault' : 'Only the agent owner can add it'}
                     >
                       <ChatAvatar name={va.displayName || va.mention} kind="agent" avatarUrl={va.avatarUrl} size="sm" />
                       <span className="chat-user-copy">
@@ -3950,7 +3950,7 @@ export const ChatView = memo(function ChatView({
                         <span>
                           @{va.mention} · {va.model || va.agentId}
                           {va.ownerUsername ? ` · ${va.ownerUsername}'s agent` : ''}
-                          {inChannel ? ' · already here' : nCh > 0 ? ` · ${nCh} ch` : ''}
+                          {inChannel ? ' · in vault' : ''}
                         </span>
                       </span>
                     </button>
@@ -3961,7 +3961,7 @@ export const ChatView = memo(function ChatView({
                         title="Delete vault agent (all channels)"
                         onClick={(event) => {
                           event.stopPropagation();
-                          if (window.confirm(`Delete vault agent @${va.mention}? Removes from ${nCh || 'all'} channel(s).`)) {
+                          if (window.confirm(`Delete vault agent @${va.mention}?`)) {
                             void onDeleteVaultAgent(va.id);
                           }
                         }}
@@ -4014,9 +4014,9 @@ export const ChatView = memo(function ChatView({
                 {agentPanelMode === 'create' && 'New vault agent'}
               </strong>
               <span>
-                {agentPanelMode === 'edit-member' && `Applies to #${channelName} only.`}
+                {agentPanelMode === 'edit-member' && 'Run behavior for this conversation.'}
                 {agentPanelMode === 'edit-identity' && 'Applies to every channel in this vault.'}
-                {agentPanelMode === 'create' && 'Added to this vault, then to this channel.'}
+                {agentPanelMode === 'create' && 'Added to every channel in this vault.'}
               </span>
               <button
                 type="button"

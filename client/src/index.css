@@ -7617,6 +7617,18 @@ button.chat-avatar.is-clickable:focus-visible {
   overflow: hidden;
   box-shadow: var(--bevel);
 }
+.chat-work-trace-artifact {
+  margin: 2px 8px 8px 25px;
+  padding-left: 10px;
+  border-left: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+}
+.chat-work-trace-artifact .chat-mission-card {
+  max-width: none;
+  margin-top: 0;
+  border-radius: 0 8px 8px 0;
+  border-left: 0;
+  box-shadow: none;
+}
 .chat-mission-card.is-active { border-color: color-mix(in srgb, var(--accent) 34%, var(--border)); }
 .chat-mission-card.is-attention { border-color: color-mix(in srgb, var(--warning) 48%, var(--border)); }
 .chat-mission-card.is-blocked { border-color: color-mix(in srgb, var(--danger) 54%, var(--border)); }

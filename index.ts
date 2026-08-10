@@ -2784,6 +2784,17 @@ app.get('/api/vaults/:vaultId/vault-agents', requireAuth, (req: AuthedRequest, r
   }
 });
 
+function ensureVaultWideAgents(vaultId: string, channelId: string, userId: number) {
+  const agents = listVaultAgents(db, userId, vaultId).filter((agent) => agent.vaultId === vaultId);
+  for (const agent of agents) {
+    try {
+      addVaultAgentToChannel(db, userId, vaultId, channelId, agent.id);
+    } catch (error) {
+      console.warn('vault-wide agent sync skipped:', error instanceof Error ? error.message : error);
+    }
+  }
+}
+
 app.put('/api/vaults/:vaultId/vault-agents', requireAuth, (req: AuthedRequest, res) => {
   try {
     const agent = upsertVaultAgent(db, req.user!.id, req.params.vaultId, req.body || {});
@@ -2793,6 +2804,10 @@ app.put('/api/vaults/:vaultId/vault-agents', requireAuth, (req: AuthedRequest, r
     } catch (error) {
       console.warn('agent memory folder ensure skipped:', error instanceof Error ? error.message : error);
     }
+    const channels = db.prepare(`
+      SELECT id FROM notes WHERE vault_id = ? AND trim(content) LIKE ?
+    `).all(req.params.vaultId, `${CHAT_NOTE_MARKER}%`) as Array<{ id: string }>;
+    for (const channel of channels) ensureVaultWideAgents(req.params.vaultId, channel.id, req.user!.id);
     emitVaultEvent(req.params.vaultId, 'vault:vaultAgentUpserted', { agent });
     res.json({ agent });
   } catch (err) {
@@ -3603,6 +3618,7 @@ app.get('/api/vaults/:vaultId/channels/:channelId/messages/:messageId/embeds', r
 app.post('/api/vaults/:vaultId/channels/:channelId/messages', requireAuth, (req: AuthedRequest, res) => {
   try {
     const { route } = assertChatChannel(db, req.params.channelId, req.user!.id);
+    ensureVaultWideAgents(req.params.vaultId, req.params.channelId, req.user!.id);
     assertDirectMessageSendAllowed(db, route.sourceChannelId, req.user!.id);
     const input = isAgentRequest(req) ? req.body : { ...req.body, author: req.user!.username, agentId: undefined, registrationId: undefined };
     const message = createChatMessage(db, req.user!.id, req.params.vaultId, req.params.channelId, input);
@@ -4059,6 +4075,7 @@ app.post('/api/vaults/:vaultId/channels/:channelId/messages/:messageId/clarifica
 
 app.get('/api/vaults/:vaultId/channels/:channelId/agents', requireAuth, (req: AuthedRequest, res) => {
   try {
+    ensureVaultWideAgents(req.params.vaultId, req.params.channelId, req.user!.id);
     const agents = listChatAgentMembers(db, req.params.channelId, req.user!.id);
     res.json({ agents });
   } catch {

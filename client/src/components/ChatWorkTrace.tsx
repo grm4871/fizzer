@@ -5,7 +5,7 @@
  * Intentionally avoids importing runtime values from ChatView (circular).
  */
 
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ChevronRight, Reply } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -159,6 +159,7 @@ export const ChatWorkTrace = memo(function ChatWorkTrace({
   vaultId,
   onHydrateMessage,
   runningMessageState,
+  artifactContent,
 }: {
   trace: ChatMessage[];
   selectedMessageId: string | null;
@@ -168,6 +169,7 @@ export const ChatWorkTrace = memo(function ChatWorkTrace({
   vaultId?: string;
   onHydrateMessage?: (message: ChatMessage) => void;
   runningMessageState: ReadonlyMap<string, { latestId: string; count: number }>;
+  artifactContent?: ReactNode;
 }) {
   const live = trace.some((m) => m.status === 'running' || m.status === 'sending');
   const [open, setOpen] = useState(false);
@@ -211,7 +213,7 @@ export const ChatWorkTrace = memo(function ChatWorkTrace({
   if (trace.length === 0) return null;
 
   return (
-    <div className={`chat-work-trace phase-${currentPhase} ${open ? 'is-open' : ''} ${live ? 'is-live' : ''}`}>
+    <div className={`chat-work-trace phase-${currentPhase} ${open ? 'is-open' : ''} ${live ? 'is-live' : ''}${artifactContent ? ' has-artifact' : ''}`}>
       <button
         type="button"
         className="chat-work-trace-toggle"
@@ -273,6 +275,7 @@ export const ChatWorkTrace = memo(function ChatWorkTrace({
               <span>█</span>
             </div>
           )}
+          {artifactContent && <div className="chat-work-trace-artifact">{artifactContent}</div>}
         </div>
       )}
     </div>

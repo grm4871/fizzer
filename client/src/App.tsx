@@ -46,7 +46,7 @@ import { UpdatesModal } from './components/UpdatesModal';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import * as Layout from './layout/tree';
 import type { LayoutNode } from './layout/tree';
-import { api, ApiError, type CommunityUpdateItem, type CommunityUpdates, type User, type Vault, type Folder, type NoteSummary, type Note } from './api';
+import { api, ApiError, type CommunityUpdateItem, type CommunityUpdates, type User, type Vault, type VaultMember, type Folder, type NoteSummary, type Note } from './api';
 import { connectRunsSocket, connectVaultSocket } from './socket';
 import { isLocalRunId, cancelLocalAgentRun } from './localAgentRunner';
 import { ensureDesktopRunnerHost, respondToAgentPermission, startDesktopRunnerHost } from './desktopRunnerHost';
@@ -1579,11 +1579,12 @@ export default function App() {
   const handleInviteChatUser = useCallback(async (channelId: string, username: string) => {
     const vaultId = activeVaultIdRef.current;
     if (!vaultId) throw new Error('No active vault');
-    await api(`/api/vaults/${vaultId}/channels/${channelId}/invites`, {
+    await api(`/api/vaults/${vaultId}/members`, {
       method: 'POST',
-      body: JSON.stringify({ username }),
+      body: JSON.stringify({ username, role: 'editor' }),
     });
-  }, []);
+    await loadVaultData(vaultId, { soft: true });
+  }, [loadVaultData]);
 
   const handleCreateChatInviteLink = useCallback(async (channelId: string) => {
     const vaultId = activeVaultIdRef.current;
@@ -1597,16 +1598,24 @@ export default function App() {
   const handleRemoveChatParticipant = useCallback(async (channelId: string, username: string) => {
     const vaultId = activeVaultIdRef.current;
     if (!vaultId) return;
-    await api(`/api/vaults/${vaultId}/channels/${channelId}/members/${encodeURIComponent(username)}`, { method: 'DELETE' });
-  }, []);
+    const data = await api<{ members: VaultMember[] }>(`/api/vaults/${vaultId}/members`);
+    const member = data.members.find((item) => item.username.toLowerCase() === username.toLowerCase());
+    if (!member) throw new Error('Vault member not found');
+    await api(`/api/vaults/${vaultId}/members/${member.userId}`, { method: 'DELETE' });
+    await loadVaultData(vaultId, { soft: true });
+  }, [loadVaultData]);
 
   const handleLeaveChatChannel = useCallback(async (channelId: string) => {
     const vaultId = activeVaultIdRef.current;
-    if (!vaultId || !window.confirm('Leave this channel?')) return;
-    await api(`/api/vaults/${vaultId}/channels/${channelId}/members/me`, { method: 'DELETE' });
-    closeTabRef.current(channelId);
-    await loadVaultData(vaultId);
-  }, [loadVaultData]);
+    if (!vaultId || !user || !window.confirm('Leave this vault?')) return;
+    await api(`/api/vaults/${vaultId}/members/${user.id}`, { method: 'DELETE' });
+    const pane = Layout.createPane();
+    setOpenTabs([]);
+    setLayout(pane);
+    setFocusedPaneId(pane.id);
+    setActiveVaultId(null);
+    await loadVaults();
+  }, [user, loadVaults]);
 
   const startAgentChatRun = useCallback(async (
     channelId: string,
@@ -3718,8 +3727,8 @@ export default function App() {
                 setChatMembersOpen(true);
                 if (isMobileViewport()) setSidebarOpen(false);
               }}
-              title="Show channel members"
-              aria-label="Show channel members"
+              title="Show vault members"
+              aria-label="Show vault members"
             >
               <Users size={16} />
             </button>}

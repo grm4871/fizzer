@@ -116,6 +116,18 @@ try {
     method: 'PUT', headers: auth,
     body: JSON.stringify({ agentId: 'codex', displayName: 'Terra', mention: 'terra', model: 'gpt-5.6-terra' }),
   });
+  const { note: secondChannel } = await must(`${API_BASE}/api/vaults/${vault.id}/notes`, {
+    method: 'POST', headers: auth,
+    body: JSON.stringify({ title: 'second-room', content: 'cascade://chat-channel' }),
+  });
+  const { agents: secondChannelAgents } = await must(
+    `${API_BASE}/api/vaults/${vault.id}/channels/${secondChannel.id}/agents`,
+    { headers: auth },
+  );
+  check('vault agents automatically belong to every channel', (
+    secondChannelAgents.some((agent) => agent.vaultAgentId === solIdentity.id)
+      && secondChannelAgents.some((agent) => agent.vaultAgentId === terraIdentity.id)
+  ));
   const { registration: sol } = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/agents/from-vault`, {
     method: 'POST', headers: auth,
     body: JSON.stringify({ vaultAgentId: solIdentity.id, orchestrator: true }),
