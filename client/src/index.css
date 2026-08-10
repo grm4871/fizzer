@@ -5226,6 +5226,24 @@ button.chat-avatar.is-clickable:focus-visible {
   overflow: visible;
   padding: var(--rail-pad-y) 6px;
 }
+.chat-view.is-sidebar-hidden > .chat-users {
+  display: none;
+}
+.chat-view.is-sidebar-only {
+  width: var(--rail-width);
+  flex: 0 0 var(--rail-width);
+}
+.chat-view.is-sidebar-only:has(.chat-users.is-collapsed) {
+  width: 44px;
+  flex-basis: 44px;
+}
+.chat-view.is-sidebar-only > .chat-main {
+  display: none;
+}
+.chat-view.is-sidebar-only > .chat-users {
+  width: 100%;
+  flex-basis: 100%;
+}
 .csb.is-collapsed {
   display: flex !important;
   flex-direction: column;
@@ -6770,6 +6788,19 @@ button.chat-avatar.is-clickable:focus-visible {
   }
   .chat-view {
     position: relative;
+  }
+  .chat-view.is-sidebar-only {
+    position: absolute;
+    inset: 0 0 0 auto;
+    width: min(86vw, 300px);
+    z-index: 80;
+    pointer-events: none;
+  }
+  .chat-view.is-sidebar-only:has(.chat-users.is-collapsed) {
+    display: none;
+  }
+  .chat-view.is-sidebar-only > .chat-users {
+    pointer-events: auto;
   }
   .chat-users,
   .chat-users.is-collapsed {

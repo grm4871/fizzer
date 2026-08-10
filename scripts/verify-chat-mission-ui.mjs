@@ -93,6 +93,10 @@ try {
     method: 'POST', headers: auth,
     body: JSON.stringify({ title: 'mission-room', content: 'cascade://chat-channel' }),
   });
+  const { note: ordinaryNote } = await must(`${API_BASE}/api/vaults/${vault.id}/notes`, {
+    method: 'POST', headers: auth,
+    body: JSON.stringify({ title: 'vault-sidebar-note', content: '# Ordinary note' }),
+  });
   const rootMessage = {
     id: `mission-root-${stamp}`,
     channelId: channel.id,
@@ -234,6 +238,9 @@ try {
     }
   };
   await openChannel();
+  const sharedVaultRail = page.locator('.chat-view.is-sidebar-only .chat-users');
+  await sharedVaultRail.waitFor({ timeout: 10_000 });
+  check('channel uses the vault-shell people and agents rail', await sharedVaultRail.isVisible());
   const browserSeed = await page.evaluate(async ({ vaultId, channelId }) => {
     const headers = { authorization: `Bearer ${localStorage.getItem('docs_token') || ''}` };
     const [messages, agents] = await Promise.all([
@@ -369,7 +376,7 @@ try {
   await openChannel();
   check('profile identity survives reload', (await page.locator('.sidebar-footer .user-info').innerText()).includes('Mission Operator'));
 
-  const solRow = page.locator('.chat-agent-edit-btn', { hasText: 'Sol' });
+  const solRow = sharedVaultRail.locator('.chat-agent-edit-btn', { hasText: 'Sol' });
   await solRow.waitFor({ timeout: 10_000 });
   await solRow.click();
   const coordinatorToggle = page.getByLabel('Coordinate this channel');
@@ -425,6 +432,14 @@ try {
       && await permissionCard.getByRole('button', { name: 'Deny' }).count() === 1);
   await permissionCard.getByRole('button', { name: 'Deny' }).click();
   await permissionCard.waitFor({ state: 'detached', timeout: 5_000 });
+
+  await page.locator(`#note-${ordinaryNote.id}`).click();
+  await page.getByText('Ordinary note', { exact: true }).waitFor({ timeout: 10_000 });
+  check('ordinary note keeps the same vault people and agents rail', (
+    await sharedVaultRail.isVisible()
+      && (await sharedVaultRail.textContent()).includes('People in this vault')
+      && (await sharedVaultRail.textContent()).includes('Agents in this vault')
+  ));
 
   const expectedOfflineRun = errors.some((line) => line.startsWith('http.503:') && line.endsWith('/runs'));
   const fatal = errors.filter((line) => {

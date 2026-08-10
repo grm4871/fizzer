@@ -413,6 +413,8 @@ interface ChatViewProps {
   jumpToMessageId?: string;
   /** Called after a jump target has been consumed so the parent can clear it. */
   onJumpHandled?: () => void;
+  /** Mount the shared vault rail outside the channel content, or suppress the inline copy. */
+  sidebarMode?: 'inline' | 'only' | 'hidden';
 }
 
 // Stable fallback: an inline `= []` default would mint a new identity every
@@ -2169,6 +2171,7 @@ export const ChatView = memo(function ChatView({
   onHydrateMessage,
   jumpToMessageId,
   onJumpHandled,
+  sidebarMode = 'inline',
 }: ChatViewProps) {
   // Messages come from an external per-channel store, not props: streaming tokens
   // then re-render only this ChatView, never the App shell. See messageStore.ts.
@@ -3264,8 +3267,8 @@ export const ChatView = memo(function ChatView({
   }, [draft]);
 
   return (
-    <section className="chat-view">
-      <div className="chat-main">
+    <section className={`chat-view${sidebarMode === 'only' ? ' is-sidebar-only' : ''}${sidebarMode === 'hidden' ? ' is-sidebar-hidden' : ''}`}>
+      {sidebarMode !== 'only' && <div className="chat-main">
         <header className="chat-header">
           <div className="chat-header-copy">
             <h2>{channelName}</h2>
@@ -3636,7 +3639,7 @@ export const ChatView = memo(function ChatView({
           </button>
           {mediaError && <span className="chat-media-error">{mediaError}</span>}
         </footer>
-      </div>
+      </div>}
 
       {contextMenu && (
         <div
@@ -3711,7 +3714,7 @@ export const ChatView = memo(function ChatView({
         </div>
       )}
 
-      <aside
+      {sidebarMode !== 'hidden' && <aside
         className={`chat-users${usersCollapsed ? ' is-collapsed' : ''}`}
         aria-label="Chat users"
       >
@@ -4250,7 +4253,7 @@ export const ChatView = memo(function ChatView({
         </div>
           </>
         )}
-      </aside>
+      </aside>}
 
       {missionArchiveOpen && (
         <div

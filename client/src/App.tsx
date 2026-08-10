@@ -233,6 +233,9 @@ export default function App() {
   const activeTabId = focusedPane.activeTabId;
   const focusedTab = openTabs.find((tab) => tab.id === activeTabId) ?? null;
   const focusedIsChat = focusedTab?.type === 'chat';
+  const vaultSidebarChannel = focusedIsChat
+    ? focusedTab.id
+    : notes.find((note) => note.content_preview.trim().startsWith(CHAT_NOTE_MARKER))?.id;
   const currentUsername = user?.username ?? '';
   // Refs mirror the latest state so event handlers stay stable (no dep churn)
   // and never read a stale closure during drags / async work.
@@ -298,13 +301,6 @@ export default function App() {
       setChatMembersOpen(false);
     }
   }, []);
-
-  // Mobile: members only while a chat is focused. Desktop keeps rail preference.
-  useEffect(() => {
-    if (!focusedIsChat && isMobileViewport()) {
-      setChatMembersOpen(false);
-    }
-  }, [focusedIsChat]);
 
   useEffect(() => {
     if (typeof localStorage === 'undefined') return;
@@ -1105,8 +1101,8 @@ export default function App() {
   // so ChatView shows "Loading messages…" instead of the empty state.
   useEffect(() => {
     if (!user || !activeVaultId) return;
-    if (focusedTab?.type === 'chat') ensureChatChannelLoaded(focusedTab.id);
-  }, [user, activeVaultId, notes, focusedTab?.id, focusedTab?.type, ensureChatChannelLoaded]);
+    if (vaultSidebarChannel) ensureChatChannelLoaded(vaultSidebarChannel);
+  }, [user, activeVaultId, notes, vaultSidebarChannel, ensureChatChannelLoaded]);
 
   /** Merge full message detail (harness log) after expand-fetch. */
   const handleHydrateChatMessage = useCallback((message: ChatMessage) => {
@@ -3453,6 +3449,7 @@ export default function App() {
           onHydrateMessage={handleHydrateChatMessage}
           jumpToMessageId={chatJumpTarget?.channelId === channel.id ? chatJumpTarget.messageId : undefined}
           onJumpHandled={handleChatJumpHandled}
+          sidebarMode="hidden"
         />
       );
     }
@@ -3719,7 +3716,7 @@ export default function App() {
                 <span className="workspace-session-badge">{runnerHealth!.activeRuns}</span>
               )}
             </button>
-            {focusedIsChat && !chatMembersOpen && <button
+            {activeVaultId && vaultSidebarChannel && !chatMembersOpen && <button
               id="chat-members-expand-btn"
               type="button"
               className="btn-icon chat-members-toolbar-btn"
@@ -3761,6 +3758,35 @@ export default function App() {
             }}
             renderContent={renderTabContent}
           />
+          {activeVaultId && vaultSidebarChannel && (
+            <ChatView
+              channelId={vaultSidebarChannel}
+              channelName={notes.find((note) => note.id === vaultSidebarChannel)?.title || 'Vault'}
+              currentUser={currentUsername}
+              presence={chatPresenceByChannel[vaultSidebarChannel] ?? EMPTY_CHAT_PRESENCE}
+              availableAgents={AVAILABLE_CHAT_AGENTS}
+              registeredAgents={chatState.registeredAgentsByChannel[vaultSidebarChannel] ?? EMPTY_CHAT_AGENTS}
+              vaultAgents={vaultAgents}
+              runnerHealth={runnerHealth}
+              onRegisterAgent={handleRegisterChatAgent}
+              onRemoveAgent={handleRemoveChatAgent}
+              onUpsertVaultAgent={handleUpsertVaultAgent}
+              onDeleteVaultAgent={handleDeleteVaultAgent}
+              onAddVaultAgentToChannel={handleAddVaultAgentToChannel}
+              onCreateInviteLink={handleCreateChatInviteLink}
+              onInviteUser={handleInviteChatUser}
+              onRemoveParticipant={handleRemoveChatParticipant}
+              onLeaveChannel={handleLeaveChatChannel}
+              onSendMessage={handleSendChatMessage}
+              onCancelRun={handleCancelChatRun}
+              notes={notes}
+              onOpenNote={openNote}
+              membersOpen={chatMembersOpen}
+              onMembersOpenChange={setChatMembersOpen}
+              vaultId={activeVaultId}
+              sidebarMode="only"
+            />
+          )}
         </div>
       </div>
       <SessionManager
