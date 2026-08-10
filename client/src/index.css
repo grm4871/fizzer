@@ -824,7 +824,7 @@ button:focus-visible,
   border: 1px solid transparent;
   background: none;
   text-align: left;
-  border-radius: var(--rail-row-radius);
+  border-radius: 0 var(--rail-row-radius) var(--rail-row-radius) 0;
   transition:
     background var(--transition-fast),
     border-color var(--transition-fast),
@@ -845,10 +845,10 @@ button:focus-visible,
   content: '';
   position: absolute;
   left: 0;
-  top: 6px;
-  bottom: 6px;
-  width: 3px;
-  border-radius: 0 2px 2px 0;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  border-radius: 0;
   background: var(--decal-stripe);
   box-shadow: 0 0 8px var(--accent-glow);
 }
