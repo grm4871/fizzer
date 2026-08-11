@@ -223,14 +223,26 @@ verify_maintenance_gate() {
     return 1
   fi
 
-  local code
-  code=$(curl --noproxy '*' -sS -o /dev/null -w '%{http_code}' --connect-timeout 3 --max-time 10 \
-    --resolve "$DEPLOY_DOMAIN:443:127.0.0.1" "https://$DEPLOY_DOMAIN/api/health" || true)
-  if [[ "$code" != "503" ]]; then
-    echo "Error: nginx maintenance gate did not return 503 (got ${code:-000})." >&2
-    return 1
-  fi
-  echo "==> Nginx maintenance gate verified"
+  # A graceful nginx reload can leave the retiring worker generation alive for
+  # a moment. Prove that fresh connections consistently reach the gated
+  # generation before stopping the old backend.
+  local code="000" consecutive=0
+  for _attempt in $(seq 1 20); do
+    code=$(curl --noproxy '*' -sS -o /dev/null -w '%{http_code}' --connect-timeout 3 --max-time 10 \
+      --resolve "$DEPLOY_DOMAIN:443:127.0.0.1" "https://$DEPLOY_DOMAIN/api/health" || true)
+    if [[ "$code" == "503" ]]; then
+      consecutive=$((consecutive + 1))
+      if [[ "$consecutive" -ge 3 ]]; then
+        echo "==> Nginx maintenance gate verified"
+        return 0
+      fi
+    else
+      consecutive=0
+    fi
+    sleep 1
+  done
+  echo "Error: nginx maintenance gate did not stabilize at HTTP 503 (last status: ${code:-000})." >&2
+  return 1
 }
 
 sync_nginx_security() {

@@ -165,6 +165,9 @@ test('production gives runners ten minutes to reclaim after gated candidate star
 test('maintenance and cleanup operations fail closed and stay project scoped', () => {
   assert.match(source, /install -m 0644 -o 0 -g 0 \/dev\/null "\$MAINTENANCE_MARKER"/);
   assert.match(source, /if ! rm -f -- "\$MAINTENANCE_MARKER" \|\| \[\[ -e "\$MAINTENANCE_MARKER" \|\| -L "\$MAINTENANCE_MARKER" \]\]/);
+  assert.match(source, /consecutive=\$\(\(consecutive \+ 1\)\)/);
+  assert.match(source, /"\$consecutive" -ge 3/);
+  assert.match(source, /maintenance gate did not stabilize at HTTP 503/);
   assert.match(source, /docker compose "\$\{COMPOSE_ARGS\[@\]\}" ps -aq[\s\S]*--status created --status exited --status dead cascade/);
   assert.doesNotMatch(source, /--filter "label=com\.docker\.compose\.service=cascade"/);
 });
