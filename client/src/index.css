@@ -1687,6 +1687,21 @@ button:focus-visible,
   box-shadow: 0 24px 80px hsla(228, 30%, 2%, 0.6), var(--bevel);
   animation: slideDown var(--transition-normal) ease;
 }
+.orbit-backdrop {
+  align-items: center;
+  padding: 20px;
+}
+.orbit-modal {
+  position: relative;
+  width: min(660px, 100%);
+  height: min(520px, calc(100vh - 40px));
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--border));
+  border-radius: 13px;
+  background: var(--bg-base);
+  box-shadow: 0 24px 80px hsla(228, 30%, 2%, 0.6), var(--bevel);
+  animation: slideDown var(--transition-normal) ease;
+}
 .updates-header {
   padding: 16px 18px 13px;
 }
