@@ -1956,7 +1956,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
                   {message.body
                     && !isSteeringContinuationMessage(message)
                     && !(message.status === 'running' && /^Thinking(?:\.{3}|…)$/.test(message.body.trim()))
-                    && <ChatMessageText messageId={message.id} body={message.body} streaming={message.status === 'running'} isAgent={Boolean(message.agentId || message.registrationId)} mentionableAliases={mentionableAliases} notes={notes} onOpenNote={onOpenNote} onOpenSharedNote={onOpenSharedNote} />}
+                    && <ChatMessageText messageId={message.id} body={message.body} streaming={message.status === 'running'} isAgent={avatarKind === 'agent'} mentionableAliases={mentionableAliases} notes={notes} onOpenNote={onOpenNote} onOpenSharedNote={onOpenSharedNote} />}
                   {message.mission && (
                     <ChatMissionCard
                       mission={message.mission}
