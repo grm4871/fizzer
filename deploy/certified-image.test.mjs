@@ -11,6 +11,7 @@ import {
   PRODUCTION_APPLICATION_TABLES,
   compareProductionRows,
   compareCorpusTree,
+  configureSnapshotScratch,
   phaseWorkloadEvidence,
   validateBaselineOrphanState,
   validateCapacityFixtureArtifact,
@@ -68,6 +69,23 @@ const releaseThresholds = {
   minimumWorkloadCompletedRatio: 0.999,
   minimumWorkloadSucceededRatio: 0.999,
 };
+
+test('direct certifier commands reject memory-backed SQLite scratch', (t) => {
+  const memoryBackedParent = ['/dev/shm', os.tmpdir()].find((candidate) => {
+    if (!fs.existsSync(candidate)) return false;
+    const type = BigInt.asUintN(64, BigInt(fs.statfsSync(candidate).type));
+    return type === 0x01021994n || type === 0x858458f6n;
+  });
+  assert.ok(memoryBackedParent, 'the Linux release test requires a tmpfs or ramfs fixture');
+  const scratch = fs.mkdtempSync(path.join(memoryBackedParent, 'cascade-certifier-scratch-'));
+  fs.chmodSync(scratch, 0o700);
+  t.after(() => fs.rmSync(scratch, { recursive: true, force: true }));
+
+  assert.throws(
+    () => configureSnapshotScratch(scratch),
+    /disk-backed storage, not tmpfs or ramfs/u,
+  );
+});
 
 function artifact(index) {
   return { path: `/tmp/cascade-load-${index}.json`, sha256: `${index}`.repeat(64) };

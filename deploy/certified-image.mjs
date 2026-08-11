@@ -324,7 +324,7 @@ function commandOutput(command, args, options = {}) {
   return result.stdout.trim();
 }
 
-function configureSnapshotScratch(directory) {
+export function configureSnapshotScratch(directory) {
   invariant(directory, '--scratch-directory is required');
   const resolved = fs.realpathSync(path.resolve(directory));
   const metadata = fs.lstatSync(resolved);
@@ -335,6 +335,9 @@ function configureSnapshotScratch(directory) {
   'SQLite snapshot scratch must be private and owned by the certifier user');
   fs.accessSync(resolved, fs.constants.R_OK | fs.constants.W_OK | fs.constants.X_OK);
   const filesystem = fs.statfsSync(resolved);
+  const filesystemType = BigInt.asUintN(64, BigInt(filesystem.type));
+  invariant(filesystemType !== 0x01021994n && filesystemType !== 0x858458f6n,
+    'SQLite snapshot scratch must be on disk-backed storage, not tmpfs or ramfs');
   const availableBytes = Number(filesystem.bavail) * Number(filesystem.bsize);
   invariant(availableBytes >= 2 * 1024 ** 3,
     'SQLite snapshot scratch requires at least 2 GiB free');
