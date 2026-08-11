@@ -62,6 +62,7 @@ import {
 } from './chat/shared';
 import { NewsTicker } from './components/NewsTicker';
 import { ModalShell } from './components/ModalShell';
+import { OrbitGraph } from './components/OrbitGraph';
 import { PaneGrid, type TabDragPayload } from './components/PaneGrid';
 import type { WorkItem } from './chat/workItems';
 import type { DiscoveryTab } from './components/DiscoveryDmsModal';
@@ -4149,17 +4150,7 @@ export default function App() {
           ariaLabel="Orbit"
           onClose={() => setOrbitOpen(false)}
         >
-          <svg
-            aria-hidden="true"
-            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
-          >
-            <defs>
-              <pattern id="orbit-dots" width="20" height="20" patternUnits="userSpaceOnUse">
-                <circle cx="4" cy="4" r="2" fill="#999" />
-              </pattern>
-            </defs>
-            <rect width="100%" height="100%" fill="url(#orbit-dots)" />
-          </svg>
+          <OrbitGraph promptNoteId={notes.find((note) => note.title.toLowerCase() === 'prompt')?.id} />
         </ModalShell>
       )}
       {updatesOpen && (

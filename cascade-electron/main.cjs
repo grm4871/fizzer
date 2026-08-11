@@ -34,6 +34,7 @@ const { startLocalAgentRun, cancelLocalAgentRun, reapOrphanedLocalAgentRuns, res
 const { connectDesktopRunner, disconnectDesktopRunner, isDesktopRunnerConnected } = require('./desktop-runner-host.cjs');
 const { collectPlanUsage } = require('./plan-usage.cjs');
 const { AgentRunState, settleCancelAcknowledgement } = require('./agent-run-state.cjs');
+const { collectLocalAgents } = require('./local-agents.cjs');
 const worktrees = require('./worktrees.cjs');
 
 // Suppress GLib-GObject and GTK warnings on Linux.
@@ -579,6 +580,16 @@ ipcMain.handle('runner:planUsage', async () => {
   } catch (error) {
     console.error('[IPC] Failed to probe subscription usage:', error);
     return { usage: {}, error: error.message };
+  }
+});
+
+/** Read local agent state and begin/refresh local Ollama captions. */
+ipcMain.handle('orbit:getLocalAgents', async (_event, { template } = {}) => {
+  try {
+    return collectLocalAgents(typeof template === 'string' ? template : '');
+  } catch (error) {
+    console.error('[IPC] Failed to inspect local agents:', error);
+    return { nodes: [], edges: [], scannedAt: Date.now(), error: error.message };
   }
 });
 
