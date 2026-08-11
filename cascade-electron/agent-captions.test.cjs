@@ -41,3 +41,25 @@ test('publishes a completed caption while a fresher log waits', async () => {
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(captioner.getCached('live'), 'Reading the current trace');
 });
+
+test('backs off when Qwen is not installed', async () => {
+  let calls = 0;
+  let clock = 1_000;
+  const captioner = createCaptioner({
+    fetchImpl: async () => {
+      calls += 1;
+      return { ok: false, status: 404 };
+    },
+    retryAfterMs: 60_000,
+    now: () => clock,
+  });
+  captioner.getCaption('missing', 'Label', 'exec npm test');
+  await new Promise((resolve) => setImmediate(resolve));
+  captioner.getCaption('missing', 'Label', 'exec npm test again');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(calls, 1);
+  clock += 60_001;
+  captioner.getCaption('missing', 'Label', 'exec npm test again');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(calls, 2);
+});

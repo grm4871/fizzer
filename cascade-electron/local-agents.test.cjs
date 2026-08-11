@@ -6,7 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 const { DatabaseSync } = require('node:sqlite');
-const { claudeTurnIsActive, collectLocalAgents, codexTurnIsActive } = require('./local-agents.cjs');
+const { claudeTurnIsActive, codexFallback, collectLocalAgents, codexTurnIsActive } = require('./local-agents.cjs');
 
 test('discovers a live Codex thread without reviving a completed open-edge child', () => {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'orbit-local-agents-'));
@@ -74,4 +74,10 @@ test('uses Claude stop reasons instead of transcript recency', () => {
   }];
   assert.equal(claudeTurnIsActive(working), true);
   assert.equal(claudeTurnIsActive(stopped), false);
+});
+
+test('provides deterministic Codex captions without Qwen', () => {
+  assert.equal(codexFallback('exec npm test'), 'Running a command');
+  assert.equal(codexFallback('apply_patch update local-agents.cjs'), 'Editing code');
+  assert.equal(codexFallback(''), 'Working');
 });
