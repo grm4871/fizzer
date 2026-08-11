@@ -61,6 +61,8 @@ import {
   mergeChatPresence,
 } from './chat/shared';
 import { NewsTicker } from './components/NewsTicker';
+import { ModalShell } from './components/ModalShell';
+import { OrbitGraph } from './components/OrbitGraph';
 import { PaneGrid, type TabDragPayload } from './components/PaneGrid';
 import type { WorkItem } from './chat/workItems';
 import type { DiscoveryTab } from './components/DiscoveryDmsModal';
@@ -194,6 +196,7 @@ export default function App() {
   const [accountInitialSection, setAccountInitialSection] = useState<'profile' | 'vault'>('profile');
   const [discoveryDmsOpen, setDiscoveryDmsOpen] = useState<DiscoveryTab | null>(null);
   const [updatesOpen, setUpdatesOpen] = useState(false);
+  const [orbitOpen, setOrbitOpen] = useState(false);
   const [authEpoch, setAuthEpoch] = useState(0);
   const [authMode, setAuthMode] = useState<'login' | 'register' | 'reset'>('login');
   const [username, setUsername] = useState('');
@@ -3975,6 +3978,29 @@ export default function App() {
               </a>
             )}
             <button
+              id="orbit-btn"
+              type="button"
+              className="btn-icon"
+              onClick={() => setOrbitOpen(true)}
+              title="Orbit"
+              aria-label="Orbit"
+            >
+              <svg width="16" height="16" viewBox="0 0 200 200" fill="none" stroke="currentColor" strokeWidth={10} aria-hidden="true">
+                <mask id="orbit-cut">
+                  <rect width="200" height="200" fill="white" />
+                  <circle cx="160" cy="100" r="20" fill="black" />
+                  <circle cx="100" cy="40" r="20" fill="black" />
+                  <circle cx="40" cy="100" r="20" fill="black" />
+                  <circle cx="100" cy="160" r="20" fill="black" />
+                </mask>
+                <circle cx="100" cy="100" r="60" mask="url(#orbit-cut)" />
+                <circle cx="160" cy="100" r="20" />
+                <circle cx="100" cy="40" r="20" />
+                <circle cx="40" cy="100" r="20" />
+                <circle cx="100" cy="160" r="20" />
+              </svg>
+            </button>
+            <button
               id="community-updates-btn"
               type="button"
               className="btn-icon workspace-updates-btn"
@@ -4116,6 +4142,16 @@ export default function App() {
         <Suspense fallback={null}>
           <CommandPalette open onClose={() => setCommandPaletteOpen(false)} notes={notes} onSelectNote={(id) => openNote(id)} onCreateNote={handleCreateNote} />
         </Suspense>
+      )}
+      {orbitOpen && (
+        <ModalShell
+          backdropClassName="overlay-backdrop orbit-backdrop"
+          dialogClassName="orbit-modal"
+          ariaLabel="Orbit"
+          onClose={() => setOrbitOpen(false)}
+        >
+          <OrbitGraph promptNoteId={notes.find((note) => note.title.toLowerCase() === 'prompt')?.id} />
+        </ModalShell>
       )}
       {updatesOpen && (
         <Suspense fallback={null}>

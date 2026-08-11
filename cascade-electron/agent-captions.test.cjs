@@ -1,0 +1,43 @@
+'use strict';
+
+const assert = require('node:assert/strict');
+const test = require('node:test');
+const { createCaptioner, normalizeCaption } = require('./agent-captions.cjs');
+
+test('normalizes model chatter into a six-word plain caption', () => {
+  assert.equal(
+    normalizeCaption('<think>secret</think>\nStatus: Reading AGENTS.md and inspecting Electron IPC now.'),
+    'Reading AGENTS md and inspecting Electron',
+  );
+});
+
+test('returns immediately and caches a generated caption', async () => {
+  const calls = [];
+  const captioner = createCaptioner({
+    fetchImpl: async (_url, options) => {
+      calls.push(JSON.parse(options.body));
+      return { ok: true, json: async () => ({ response: 'Inspecting local agent logs' }) };
+    },
+  });
+  assert.equal(captioner.getCaption('a', 'Label this', 'tool call'), null);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(captioner.getCaption('a', 'Label this', 'tool call'), 'Inspecting local agent logs');
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].prompt, /Label this[\s\S]*tool call/);
+});
+
+test('publishes a completed caption while a fresher log waits', async () => {
+  let release;
+  const firstResponse = new Promise((resolve) => { release = resolve; });
+  const captioner = createCaptioner({
+    fetchImpl: async () => {
+      await firstResponse;
+      return { ok: true, json: async () => ({ response: 'Reading the current trace' }) };
+    },
+  });
+  captioner.getCaption('live', 'Label', 'first log');
+  captioner.getCaption('live', 'Label', 'newer log');
+  release();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(captioner.getCached('live'), 'Reading the current trace');
+});

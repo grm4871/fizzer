@@ -1687,6 +1687,100 @@ button:focus-visible,
   box-shadow: 0 24px 80px hsla(228, 30%, 2%, 0.6), var(--bevel);
   animation: slideDown var(--transition-normal) ease;
 }
+.orbit-backdrop {
+  align-items: center;
+  padding: 20px;
+}
+.orbit-modal {
+  position: relative;
+  width: min(660px, 100%);
+  height: min(520px, calc(100vh - 40px));
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--border));
+  border-radius: 13px;
+  background: var(--bg-base);
+  box-shadow: 0 24px 80px hsla(228, 30%, 2%, 0.6), var(--bevel);
+  animation: slideDown var(--transition-normal) ease;
+}
+.orbit-graph {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+  background-color: var(--bg-base);
+  background-image: radial-gradient(color-mix(in srgb, var(--text-tertiary) 48%, transparent) 1.3px, transparent 1.3px);
+  background-size: 20px 20px;
+}
+.orbit-graph:active { cursor: grabbing; }
+.orbit-graph-header {
+  position: absolute;
+  top: 14px;
+  left: 16px;
+  z-index: 3;
+  pointer-events: none;
+}
+.orbit-graph-header h2 {
+  margin-top: 2px;
+  font: italic 750 1rem/1.2 var(--font-display);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.orbit-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--text-tertiary);
+  font-size: 0.82rem;
+  pointer-events: none;
+}
+.orbit-edges,
+.orbit-layer {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+}
+.orbit-edges { overflow: visible; }
+.orbit-edge-line {
+  stroke: color-mix(in srgb, var(--accent) 45%, var(--border));
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+.orbit-node {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  width: 150px;
+  padding: 8px;
+  cursor: grab;
+  user-select: none;
+  text-align: center;
+}
+.orbit-node:active { cursor: grabbing; }
+.orbit-node-icon { display: grid; place-items: center; color: var(--accent); }
+.orbit-node.is-codex .orbit-node-icon { color: color-mix(in srgb, var(--accent) 40%, #7dd3fc); }
+.orbit-claude-art {
+  margin: 0;
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  line-height: 1.02;
+  letter-spacing: -0.5px;
+  white-space: pre;
+}
+.orbit-node.is-child { opacity: 0.92; }
+.orbit-node.is-child .orbit-claude-art { font-size: 8px; }
+.orbit-node.is-child .orbit-codex-mark { width: 24px; height: 24px; }
+.orbit-node-meta { display: flex; flex-direction: column; gap: 1px; max-width: 150px; }
+.orbit-node-label,
+.orbit-node-status { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.orbit-node-label { color: var(--text-primary); font-size: 0.74rem; font-weight: 650; }
+.orbit-node-status { color: var(--text-tertiary); font-size: 0.66rem; }
 .updates-header {
   padding: 16px 18px 13px;
 }
