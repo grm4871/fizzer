@@ -123,6 +123,16 @@ test('snapshot creation fails closed on a busy checkpoint and records integrity 
   assert.match(source, /git rev-parse HEAD > "\$SNAPSHOT_DIR\/revision\.txt"/);
 });
 
+test('isolated preflight checkpoints the migrated WAL before main-file compatibility inspection', () => {
+  assert.match(source, /busy preflight WAL checkpoint/);
+  assert.match(source, /preflight SQLite quick_check failed/);
+  assertOrdered(
+    "    'case Application.ensure_all_started(:cascade_elixir) do {:ok, _} -> :ok; other -> raise inspect(other) end'",
+    '  docker run --rm --network none --user 1000:1000 --entrypoint node \\',
+    '  docker run --rm --network none --entrypoint node \\',
+  );
+});
+
 test('preflight and live cutover bind the complete vault and QMD corpus without exemptions', () => {
   assert.match(source, /before-data\/vaults/);
   assert.match(source, /before-data\/qmd/);

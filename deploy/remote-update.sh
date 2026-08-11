@@ -415,6 +415,21 @@ preflight_candidate() {
     "$CANDIDATE_IMAGE" eval \
     'case Application.ensure_all_started(:cascade_elixir) do {:ok, _} -> :ok; other -> raise inspect(other) end'
 
+  # `release eval` stops the VM immediately after evaluation. With the source
+  # database in WAL mode, the final schema recreation can therefore still be
+  # present only in after.db-wal. Checkpoint the now-quiescent clone before the
+  # compatibility checker deliberately snapshots the main database file.
+  docker run --rm --network none --user 1000:1000 --entrypoint node \
+    -v "$PREFLIGHT_DIR:/preflight" "$CANDIDATE_IMAGE" --input-type=module -e '
+      import Database from "better-sqlite3";
+      const db = new Database("/preflight/after.db", { fileMustExist: true });
+      try {
+        const result = db.pragma("wal_checkpoint(TRUNCATE)");
+        if (result.some((row) => Number(row.busy) !== 0)) throw new Error(`busy preflight WAL checkpoint: ${JSON.stringify(result)}`);
+        if (db.pragma("quick_check", { simple: true }) !== "ok") throw new Error("preflight SQLite quick_check failed");
+      } finally { db.close(); }
+    '
+
   docker run --rm --network none --entrypoint node \
     -e CASCADE_SQLITE_SNAPSHOT_TMPDIR=/sqlite-scratch \
     -v "$PREFLIGHT_DIR:/preflight:ro" \
