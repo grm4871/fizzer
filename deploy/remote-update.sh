@@ -481,7 +481,9 @@ preflight_candidate() {
 
 checkpoint_and_snapshot() {
   echo "==> Checkpointing and snapshotting the quiescent production database"
-  docker run --rm --network none --user 0:0 --entrypoint node \
+  # Match the production database owner. SQLite may need to recreate WAL/SHM
+  # sidecars after the old container was force-stopped at its drain deadline.
+  docker run --rm --network none --user 1000:1000 --entrypoint node \
     -v "$DATA_DIR:/data" "$CANDIDATE_IMAGE" --input-type=module -e '
       import Database from "better-sqlite3";
       const db = new Database("/data/docs.db", { fileMustExist: true });

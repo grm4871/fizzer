@@ -115,6 +115,7 @@ test('failure handling restores only a verified snapshot after the candidate is 
 });
 
 test('snapshot creation fails closed on a busy checkpoint and records integrity evidence', () => {
+  assert.match(source, /Match the production database owner[\s\S]*--user 1000:1000 --entrypoint node/);
   assert.match(source, /wal_checkpoint\(TRUNCATE\)/);
   assert.match(source, /busy WAL checkpoint/);
   assert.match(source, /SQLite quick_check failed/);
