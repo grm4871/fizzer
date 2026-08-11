@@ -128,8 +128,19 @@ export function resolveChatAgentTargets(
   const explicitlyMentioned = new Set(
     registrations.filter((registration) => mentions(source, registration)).map((registration) => registration.id),
   );
-  const explicitlyCallsSpecialist = registrations.some((registration) => (
-    !registration.orchestrator && explicitlyMentioned.has(registration.id)
+  // Only bother scanning for a competing @mention when a reply-all agent is
+  // actually in the room from this human's roster — that's the only case where
+  // the answer changes who runs.
+  const hasReplyAllAgent = registrations.some(
+    (registration) => registration.replyToEveryMessage && registration.ownerUserId === userId,
+  );
+  // The human explicitly named a specialist (a non-coordinator agent) that can
+  // actually respond here. A reply-all agent stands down for it — unless it was
+  // itself the one named — so it doesn't answer over the pinged specialist.
+  const explicitlyCallsSpecialist = hasReplyAllAgent && registrations.some((registration) => (
+    !registration.orchestrator
+    && explicitlyMentioned.has(registration.id)
+    && (registration.ownerUserId === userId || registration.pingableByOthers)
   ));
   const selected: ChatAgentRegistration[] = [];
   const seen = new Set<string>();
@@ -152,7 +163,7 @@ export function resolveChatAgentTargets(
     const always = !fromAgent
       && registration.ownerUserId === userId
       && registration.replyToEveryMessage
-      && !(registration.orchestrator && explicitlyCallsSpecialist);
+      && !(explicitlyCallsSpecialist && !explicit);
     if (!explicit && !always) continue;
     const key = registration.vaultAgentId || registration.id;
     if (seen.has(key)) continue;

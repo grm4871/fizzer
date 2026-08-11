@@ -254,6 +254,7 @@ export default function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const [runnerHealth, setRunnerHealth] = useState<DesktopRunnerHealth | null>(null);
   const [sessionManagerOpen, setSessionManagerOpen] = useState(false);
+  const [focusSessionId, setFocusSessionId] = useState<string | null>(null);
   const [agentPermissions, setAgentPermissions] = useState<AgentPermissionRequest[]>([]);
   const [vaultAgents, setVaultAgents] = useState<VaultAgent[]>([]);
   // ─── Derived focus state ────────────────────────────────────────
@@ -4114,7 +4115,9 @@ export default function App() {
             open
             vaultId={activeVaultId}
             runnerOnline={Boolean(runnerHealth?.online)}
-            onClose={() => setSessionManagerOpen(false)}
+            focusSessionId={focusSessionId}
+            onFocusHandled={() => setFocusSessionId(null)}
+            onClose={() => { setFocusSessionId(null); setSessionManagerOpen(false); }}
             onOpenChat={(channelId) => {
               openNote(channelId);
               setSessionManagerOpen(false);
@@ -4150,7 +4153,14 @@ export default function App() {
           ariaLabel="Orbit"
           onClose={() => setOrbitOpen(false)}
         >
-          <OrbitGraph promptNoteId={notes.find((note) => note.title.toLowerCase() === 'prompt')?.id} />
+          <OrbitGraph
+            promptNoteId={notes.find((note) => note.title.toLowerCase() === 'prompt')?.id}
+            onOpenActivity={(activity) => {
+              setOrbitOpen(false);
+              setFocusSessionId(activity.sessionId);
+              setSessionManagerOpen(true);
+            }}
+          />
         </ModalShell>
       )}
       {updatesOpen && (

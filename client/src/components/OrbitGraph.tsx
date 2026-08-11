@@ -36,7 +36,9 @@ function CodexMark() {
   );
 }
 
-export function OrbitGraph({ promptNoteId }: { promptNoteId?: string }) {
+type ActivityRef = { sessionId: string; title: string };
+
+export function OrbitGraph({ promptNoteId, onOpenActivity }: { promptNoteId?: string; onOpenActivity?: (activity: ActivityRef) => void }) {
   const [template, setTemplate] = useState('');
   const [promptReady, setPromptReady] = useState(false);
   const [graph, setGraph] = useState<LocalAgentGraph | null>(null);
@@ -44,6 +46,7 @@ export function OrbitGraph({ promptNoteId }: { promptNoteId?: string }) {
   const [pan, setPan] = useState<Pos>({ x: 0, y: 0 });
   const [positions, setPositions] = useState<Record<string, Pos>>({});
   const dragRef = useRef<DragState>(null);
+  const nodeMovedRef = useRef(false); // true once a node drag actually moved, so a trailing click is a real click
   const positionsRef = useRef(positions);
   const panRef = useRef(pan);
   positionsRef.current = positions;
@@ -53,8 +56,8 @@ export function OrbitGraph({ promptNoteId }: { promptNoteId?: string }) {
     let alive = true;
     setPromptReady(false);
     if (!promptNoteId) {
+      // No note id supplied — the server falls back to reading the "prompt" note.
       setTemplate('');
-      setError('Create a note named prompt to caption activity');
       setPromptReady(true);
       return () => { alive = false; };
     }
@@ -81,7 +84,7 @@ export function OrbitGraph({ promptNoteId }: { promptNoteId?: string }) {
         const next = await fetchLocalAgents(template);
         if (!alive) return;
         setGraph(next);
-        if (template) setError('');
+        setError('');
         setPositions((previous) => {
           const merged = { ...previous };
           next.nodes.forEach((node, index) => {
@@ -108,6 +111,7 @@ export function OrbitGraph({ promptNoteId }: { promptNoteId?: string }) {
     if (!drag) return;
     const dx = event.clientX - drag.startX;
     const dy = event.clientY - drag.startY;
+    if (drag.mode === 'node' && (Math.abs(dx) > 3 || Math.abs(dy) > 3)) nodeMovedRef.current = true;
     if (drag.mode === 'pan') setPan({ x: drag.origin.x + dx, y: drag.origin.y + dy });
     else setPositions((previous) => ({
       ...previous,
@@ -129,6 +133,7 @@ export function OrbitGraph({ promptNoteId }: { promptNoteId?: string }) {
 
   const startNodeDrag = useCallback((event: React.PointerEvent, id: string) => {
     event.stopPropagation();
+    nodeMovedRef.current = false;
     dragRef.current = {
       mode: 'node',
       id,
@@ -145,7 +150,7 @@ export function OrbitGraph({ promptNoteId }: { promptNoteId?: string }) {
   const nodes = graph?.nodes || [];
   const edges = graph?.edges || [];
   return (
-    <div className="orbit-graph" onPointerDown={startPan}>
+    <div className="orbit-graph" onPointerDown={startPan} style={{ backgroundPosition: `${pan.x}px ${pan.y}px` }}>
       <div className="orbit-graph-header">
         <span className="surface-kicker">Live activity</span>
         <h2>Running agents</h2>
@@ -171,9 +176,12 @@ export function OrbitGraph({ promptNoteId }: { promptNoteId?: string }) {
           return (
             <div
               key={node.id}
-              className={`orbit-node is-${node.kind} is-${node.role}`}
+              className={`orbit-node is-${node.kind} is-${node.role} is-${node.state}${node.activity ? ' is-linked' : ''}`}
               style={{ left: position.x, top: position.y }}
               onPointerDown={(event) => startNodeDrag(event, node.id)}
+              onClick={() => {
+                if (!nodeMovedRef.current && node.activity) onOpenActivity?.(node.activity);
+              }}
             >
               <div className="orbit-node-icon">
                 {node.kind === 'claude' ? <pre className="orbit-claude-art">{CLAUDE_ART}</pre> : <CodexMark />}
@@ -181,6 +189,7 @@ export function OrbitGraph({ promptNoteId }: { promptNoteId?: string }) {
               <div className="orbit-node-meta">
                 <span className="orbit-node-label">{node.label}</span>
                 <span className="orbit-node-status" title={node.status}>{node.status}</span>
+                {node.action && <span className="orbit-node-action">{node.action}</span>}
               </div>
             </div>
           );

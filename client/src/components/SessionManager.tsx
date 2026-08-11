@@ -36,6 +36,7 @@ export type ActiveSession = {
   prompt: string;
   agent: string;
   conversation_id: string;
+  session_id: string | null;
   status: 'queued' | 'running';
   started_at: string;
   model: string | null;
@@ -68,6 +69,9 @@ type Props = {
   open: boolean;
   vaultId: string | null;
   runnerOnline: boolean;
+  /** When set (from an Orbit node click), auto-select the run with this agent session id. */
+  focusSessionId?: string | null;
+  onFocusHandled?: () => void;
   onClose: () => void;
   onOpenChat: (channelId: string) => void;
   onCancel: (runId: number) => boolean | void | Promise<boolean | void>;
@@ -251,6 +255,8 @@ export function SessionManager({
   open,
   vaultId,
   runnerOnline,
+  focusSessionId,
+  onFocusHandled,
   onClose,
   onOpenChat,
   onCancel,
@@ -317,6 +323,17 @@ export function SessionManager({
       sessionRequestRef.current += 1;
     };
   }, [open, refresh]);
+
+  // An Orbit node click asks us to focus a specific agent session. Wait for it to
+  // appear in the loaded list, then select it once and clear the request.
+  useEffect(() => {
+    if (!open || !focusSessionId) return;
+    const match = sessions.find((session) => session.session_id === focusSessionId);
+    if (match) {
+      setSelectedId(match.id);
+      onFocusHandled?.();
+    }
+  }, [open, focusSessionId, sessions, onFocusHandled]);
 
   useEffect(() => {
     if (!open || selectedId == null) {

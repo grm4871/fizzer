@@ -289,6 +289,7 @@ import {
   tombstoneChatMessageBacklinks,
 } from './server/evolution.js';
 import { searchWithQmd } from './server/qmd-search.js';
+import { collectLocalAgents } from './server/localAgents.js';
 import {
   isAgentApiRequestAllowed,
   redactPrivateBlocks,
@@ -1524,6 +1525,58 @@ initDesktopRunners(io, db, {
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
+
+// Local agent graph for the Orbit canvas: running Claude Code / Codex instances
+// and their subagents. Only populated when the server shares a host with them.
+// Map an Orbit node to the Cascade activity view it belongs to, if any. Only
+// sessions Cascade itself spawned (recorded in the `runs` table) resolve; a
+// stray terminal Claude/Codex session returns null and stays non-clickable.
+function resolveCascadeActivity(nodeId: string): { sessionId: string; title: string } | null {
+  try {
+    const firstColon = nodeId.indexOf(':');
+    if (firstColon < 0) return null;
+    const sessionId = nodeId.slice(firstColon + 1).split(':')[0];
+    if (!sessionId) return null;
+    const run = db
+      .prepare(
+        `SELECT r.note_id AS noteId, r.id AS runId,
+                (SELECT channel_id FROM chat_agent_dispatches WHERE run_id = r.id ORDER BY created_at DESC LIMIT 1) AS channelId
+         FROM runs r WHERE r.session_id = ? ORDER BY r.started_at DESC, r.id DESC LIMIT 1`,
+      )
+      .get(sessionId) as { noteId: string | null; runId: number; channelId: string | null } | undefined;
+    if (!run) return null; // not a Cascade-spawned session
+    const targetId = run.channelId || run.noteId;
+    const noteRow = targetId
+      ? (db.prepare('SELECT title FROM notes WHERE id = ?').get(targetId) as { title?: string } | undefined)
+      : undefined;
+    return { sessionId, title: noteRow?.title || 'Activity' };
+  } catch {
+    return null; // missing table / malformed id — treat as a non-Cascade node
+  }
+}
+
+app.all('/api/local-agents', (req, res) => {
+  try {
+    // Caption template comes from the client (the user-editable "prompt" note);
+    // fall back to reading that note here if the client didn't send one.
+    let template = typeof req.body?.template === 'string' ? req.body.template : '';
+    if (!template.trim()) {
+      const row = db
+        .prepare("SELECT content FROM notes WHERE title = 'prompt' AND is_archived = 0 ORDER BY updated_at DESC LIMIT 1")
+        .get() as { content?: string } | undefined;
+      template = row?.content ?? '';
+    }
+    const graph = collectLocalAgents(template);
+    for (const node of graph.nodes) {
+      const activity = resolveCascadeActivity(node.id);
+      if (activity) node.activity = activity;
+    }
+    res.json(graph);
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Could not scan agents' });
+  }
+});
+
 
 // ── Deploy trigger ─────────────────────────────────────────────────
 

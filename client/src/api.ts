@@ -233,16 +233,20 @@ export function formatRelativeDate(value: string) {
   if (diffDays < 7) return `${diffDays}d ago`;
   return formatDate(value);
 }
-
 // ── Local agent graph (Orbit canvas) ───────────────────────────────
 export type LocalAgentKind = 'claude' | 'codex';
+export type LocalAgentState = 'active' | 'idle';
 export type LocalAgentNode = {
   id: string;
   kind: LocalAgentKind;
   role: 'parent' | 'child';
   label: string;
   status: string;
+  action: string;
+  state: LocalAgentState;
   updatedAt: number;
+  /** Present only for Cascade-spawned sessions: opens the Agent Sessions panel focused on this run. */
+  activity?: { sessionId: string; title: string };
 };
 export type LocalAgentEdge = { from: string; to: string };
 export type LocalAgentGraph = {
@@ -251,16 +255,14 @@ export type LocalAgentGraph = {
   scannedAt: number;
 };
 
-type ElectronOrbitApi = {
-  getLocalAgents?: (input: { template: string }) => Promise<LocalAgentGraph & { error?: string }>;
-};
-
-/** Local logs and Ollama stay behind Electron's context-isolated IPC bridge. */
+/**
+ * Fetch the running-agent graph. Scanning local logs + Ollama runs server-side
+ * (the host that shares a machine with the agents); the editable prompt-note
+ * template is sent along so the caption wording stays user-controlled.
+ */
 export async function fetchLocalAgents(template: string): Promise<LocalAgentGraph> {
-  const electron = (window as unknown as { electronAPI?: ElectronOrbitApi }).electronAPI;
-  if (!electron) throw new Error('Orbit requires the desktop app');
-  if (!electron.getLocalAgents) throw new Error('Update the desktop shell to enable Orbit');
-  const graph = await electron.getLocalAgents({ template });
-  if (graph.error) throw new Error(graph.error);
-  return graph;
+  return api<LocalAgentGraph>('/api/local-agents', {
+    method: 'POST',
+    body: JSON.stringify({ template }),
+  });
 }

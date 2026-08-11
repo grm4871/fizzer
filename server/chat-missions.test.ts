@@ -790,6 +790,47 @@ test('an explicit specialist call takes the zero-hop route instead of also runni
   }
 });
 
+test('a non-orchestrator reply-all agent stands down when a different specialist is pinged', () => {
+  const { db, coordinator, worker } = setup();
+  try {
+    const nova = upsertChatAgentMember(db, 1, 'vault-1', 'channel-1', {
+      id: 'reg-nova', agentId: 'codex', displayName: 'Nova', mention: 'nova',
+      model: 'gpt-5.6-nova', orchestrator: false, replyToEveryMessage: true,
+    });
+
+    // Ordinary chatter wakes every reply-all agent (coordinator + Nova).
+    const plain = createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: 'plain-nova', channelId: 'channel-1', author: 'owner', body: 'anyone around?',
+      createdAt: '2026-08-03T00:01:00.000Z',
+    });
+    assert.deepEqual(
+      resolveChatAgentTargets(db, 1, 'channel-1', plain).map((item) => item.id).sort(),
+      [coordinator.id, nova.id].sort(),
+    );
+
+    // Pinging the specialist silences BOTH reply-all agents, not just the coordinator.
+    const pingSpecialist = createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: 'ping-terra', channelId: 'channel-1', author: 'owner', body: '@terra take this one',
+      createdAt: '2026-08-03T00:01:01.000Z',
+    });
+    assert.deepEqual(
+      resolveChatAgentTargets(db, 1, 'channel-1', pingSpecialist).map((item) => item.id),
+      [worker.id],
+    );
+
+    // Naming the reply-all agent itself still lets it answer.
+    const pingNova = createChatMessage(db, 1, 'vault-1', 'channel-1', {
+      id: 'ping-nova', channelId: 'channel-1', author: 'owner', body: '@nova and @terra both look',
+      createdAt: '2026-08-03T00:01:02.000Z',
+    });
+    assert.deepEqual(
+      resolveChatAgentTargets(db, 1, 'channel-1', pingNova).map((item) => item.id).sort(),
+      [nova.id, worker.id].sort(),
+    );
+  } finally {
+    db.close();
+  }
+});
 test('explicit owned-agent pings are distinguishable and can root missions', () => {
   const { db, coordinator, worker } = setup();
   try {

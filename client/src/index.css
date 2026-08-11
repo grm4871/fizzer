@@ -1745,8 +1745,8 @@ button:focus-visible,
 }
 .orbit-edges { overflow: visible; }
 .orbit-edge-line {
-  stroke: color-mix(in srgb, var(--accent) 45%, var(--border));
-  stroke-width: 1.5;
+  stroke: color-mix(in srgb, var(--accent) 80%, var(--border));
+  stroke-width: 2;
   stroke-linecap: round;
 }
 .orbit-node {
@@ -1756,7 +1756,8 @@ button:focus-visible,
   flex-direction: column;
   align-items: center;
   gap: 5px;
-  width: 150px;
+  width: max-content;
+  max-width: 240px;
   padding: 8px;
   cursor: grab;
   user-select: none;
@@ -1776,11 +1777,19 @@ button:focus-visible,
 .orbit-node.is-child { opacity: 0.92; }
 .orbit-node.is-child .orbit-claude-art { font-size: 8px; }
 .orbit-node.is-child .orbit-codex-mark { width: 24px; height: 24px; }
-.orbit-node-meta { display: flex; flex-direction: column; gap: 1px; max-width: 150px; }
-.orbit-node-label,
-.orbit-node-status { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.orbit-node-label { color: var(--text-primary); font-size: 0.74rem; font-weight: 650; }
-.orbit-node-status { color: var(--text-tertiary); font-size: 0.66rem; }
+.orbit-node-meta { display: flex; flex-direction: column; gap: 1px; max-width: 240px; }
+/* Label stays a single tidy line; the status caption wraps fully (no truncation). */
+.orbit-node-label { color: var(--text-primary); font-size: 0.74rem; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.orbit-node-status { color: var(--text-secondary); font-size: 0.66rem; white-space: normal; overflow-wrap: anywhere; line-height: 1.25; }
+/* Secondary heuristic action line, shown under the qwen caption. */
+.orbit-node-action { color: var(--text-tertiary); font-size: 0.58rem; letter-spacing: 0.03em; text-transform: uppercase; margin-top: 2px; }
+/* Idle agents dim out and desaturate. */
+.orbit-node.is-idle { opacity: 0.5; }
+.orbit-node.is-idle .orbit-node-icon { filter: grayscale(0.8); }
+.orbit-node.is-idle .orbit-node-status { font-style: italic; }
+/* Cascade-spawned sessions are clickable — they open their activity view. */
+.orbit-node.is-linked { cursor: pointer; }
+.orbit-node.is-linked:hover .orbit-node-label { text-decoration: underline; }
 .updates-header {
   padding: 16px 18px 13px;
 }
