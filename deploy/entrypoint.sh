@@ -1,3 +1,8 @@
 #!/bin/sh
-set -e
-exec node dist/index.js
+set -eu
+
+if [ "$#" -eq 0 ]; then
+  set -- start
+fi
+
+exec /app/release/bin/cascade_elixir "$@"

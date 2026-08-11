@@ -1,0 +1,3282 @@
+{
+  "manifestVersion": 1,
+  "generator": "scripts/check-backend-contract.mjs",
+  "scope": {
+    "sources": [
+      "index.ts",
+      "server/androidBattery.ts",
+      "server/chat-collaboration.ts",
+      "server/chat-dispatch.ts",
+      "server/chat-missions.ts",
+      "server/chat-room-context.ts",
+      "server/chat.ts",
+      "server/communityActivity.ts",
+      "server/communityModeration.ts",
+      "server/desktop-runner.ts",
+      "server/directMessages.ts",
+      "server/evolution.ts",
+      "server/managedAgents.ts",
+      "server/noteAssets.ts",
+      "server/privacy.ts",
+      "server/publicVaults.ts",
+      "server/publish.ts",
+      "server/qmd-search.ts",
+      "server/runner.ts",
+      "server/scratchpad.ts",
+      "server/security.ts",
+      "server/staticAssets.ts",
+      "server/vault.ts",
+      "server/vaultMembers.ts",
+      "server/versions.ts",
+      "server/workItems.ts"
+    ],
+    "excludes": [
+      "**/*.test.ts",
+      "**/*.d.ts",
+      "client/**"
+    ],
+    "note": "Static declarations only; runtime status, headers, bodies, ordering, Engine.IO frames, and ACK payloads require differential tests."
+  },
+  "summary": {
+    "httpRoutes": 167,
+    "socketIoInboundDeclarations": 14,
+    "socketIoOutboundLiteralDeclarations": 59,
+    "sqliteDeclarations": 110
+  },
+  "httpRoutes": [
+    {
+      "method": "GET",
+      "path": "/api/health",
+      "handlers": [
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 1524
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/deploy",
+      "handlers": [
+        "requireDeployAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 1547
+    },
+    {
+      "method": "POST",
+      "path": "/api/deploy",
+      "handlers": [
+        "requireDeployAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 1547
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/deploy/status",
+      "handlers": [
+        "requireDeployAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 1560
+    },
+    {
+      "method": "GET",
+      "path": "/api/deploy/status",
+      "handlers": [
+        "requireDeployAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 1560
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/register",
+      "handlers": [
+        "authRateLimit",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 1598
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/login",
+      "handlers": [
+        "authRateLimit",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 1634
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/password",
+      "handlers": [
+        "requireAuth",
+        "authRateLimit",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 1651
+    },
+    {
+      "method": "PUT",
+      "path": "/api/me/profile",
+      "handlers": [
+        "requireAuth",
+        "requireUserAccess",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 1670
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/reset/issue",
+      "handlers": [
+        "requireAuth",
+        "authRateLimit",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 1695
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/reset",
+      "handlers": [
+        "authRateLimit",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 1709
+    },
+    {
+      "method": "GET",
+      "path": "/api/me",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 1742
+    },
+    {
+      "method": "GET",
+      "path": "/api/session",
+      "handlers": [
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 1747
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/logout",
+      "handlers": [
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 1759
+    },
+    {
+      "method": "POST",
+      "path": "/api/diagnostics/android-battery",
+      "handlers": [
+        "requireAuth",
+        "requireUserAccess",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 1764
+    },
+    {
+      "method": "GET",
+      "path": "/api/diagnostics/android-battery",
+      "handlers": [
+        "requireAuth",
+        "requireUserAccess",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 1773
+    },
+    {
+      "method": "GET",
+      "path": "/api/community/updates",
+      "handlers": [
+        "requireAuth",
+        "requireUserAccess",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 1781
+    },
+    {
+      "method": "POST",
+      "path": "/api/community/updates/read",
+      "handlers": [
+        "requireAuth",
+        "requireUserAccess",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 1792
+    },
+    {
+      "method": "POST",
+      "path": "/api/community/updates/read-all",
+      "handlers": [
+        "requireAuth",
+        "requireUserAccess",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 1802
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/agent-token",
+      "handlers": [
+        "requireAuth",
+        "requireUserAccess",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 1810
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/users",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 1815
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/reports",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 1821
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/admin/reports/:reportId",
+      "handlers": [
+        "requireAuth",
+        "requireUserAccess",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 1828
+    },
+    {
+      "method": "GET",
+      "path": "/api/vaults",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 1842
+    },
+    {
+      "method": "POST",
+      "path": "/api/vaults",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 1846
+    },
+    {
+      "method": "GET",
+      "path": "/api/vaults/:id",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 1855
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/vaults/:id",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 1861
+    },
+    {
+      "method": "GET",
+      "path": "/api/vaults/:id/members",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 1877
+    },
+    {
+      "method": "POST",
+      "path": "/api/vaults/:id/members",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 1886
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/vaults/:id/members/:userId",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 1911
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/vaults/:id/members/:userId",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 1931
+    },
+    {
+      "method": "GET",
+      "path": "/api/vaults/:id/bans",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 1947
+    },
+    {
+      "method": "POST",
+      "path": "/api/vaults/:id/bans",
+      "handlers": [
+        "requireAuth",
+        "requireUserAccess",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 1958
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/vaults/:id/bans/:userId",
+      "handlers": [
+        "requireAuth",
+        "requireUserAccess",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 1972
+    },
+    {
+      "method": "POST",
+      "path": "/api/vaults/:id/invite-link",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 1986
+    },
+    {
+      "method": "GET",
+      "path": "/api/vault-invites/:token",
+      "handlers": [
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2003
+    },
+    {
+      "method": "POST",
+      "path": "/api/vault-invites/:token/accept",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2021
+    },
+    {
+      "method": "GET",
+      "path": "/api/vaults/:id/visibility",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2045
+    },
+    {
+      "method": "PUT",
+      "path": "/api/vaults/:id/visibility",
+      "handlers": [
+        "requireAuth",
+        "requireUserAccess",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2053
+    },
+    {
+      "method": "GET",
+      "path": "/api/vaults/:id/public-home-notes",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2078
+    },
+    {
+      "method": "GET",
+      "path": "/api/vaults/:id/join-requests",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2089
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/vaults/:id/join-requests/:requestId",
+      "handlers": [
+        "requireAuth",
+        "requireUserAccess",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2100
+    },
+    {
+      "method": "GET",
+      "path": "/api/public-vaults",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2116
+    },
+    {
+      "method": "GET",
+      "path": "/api/public-vaults/:id",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2126
+    },
+    {
+      "method": "POST",
+      "path": "/api/public-vaults/:id/join",
+      "handlers": [
+        "requireAuth",
+        "requireUserAccess",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2132
+    },
+    {
+      "method": "POST",
+      "path": "/api/vaults/:id/reports",
+      "handlers": [
+        "requireAuth",
+        "requireUserAccess",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2144
+    },
+    {
+      "method": "GET",
+      "path": "/api/vaults/:id/reports",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2161
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/vaults/:id/reports/:reportId",
+      "handlers": [
+        "requireAuth",
+        "requireUserAccess",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2174
+    },
+    {
+      "method": "GET",
+      "path": "/api/vaults/:id/managed-agent/entitlement",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2189
+    },
+    {
+      "method": "PUT",
+      "path": "/api/vaults/:id/managed-agent/entitlement",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2199
+    },
+    {
+      "method": "GET",
+      "path": "/api/vaults/:id/work-items",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2213
+    },
+    {
+      "method": "POST",
+      "path": "/api/vaults/:id/work-items",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2225
+    },
+    {
+      "method": "GET",
+      "path": "/api/work-items/:id",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2253
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/work-items/:id",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2264
+    },
+    {
+      "method": "PUT",
+      "path": "/api/work-items/:id/git-state",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2295
+    },
+    {
+      "method": "POST",
+      "path": "/api/work-items/:id/lease",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2308
+    },
+    {
+      "method": "POST",
+      "path": "/api/work-items/:id/release",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2323
+    },
+    {
+      "method": "POST",
+      "path": "/api/work-items/:id/runs",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2337
+    },
+    {
+      "method": "POST",
+      "path": "/api/work-items/:id/handoff",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2346
+    },
+    {
+      "method": "POST",
+      "path": "/api/work-items/:id/reviews",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2359
+    },
+    {
+      "method": "POST",
+      "path": "/api/work-items/:id/stop",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2376
+    },
+    {
+      "method": "GET",
+      "path": "/api/vaults/:id/folders",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2398
+    },
+    {
+      "method": "POST",
+      "path": "/api/vaults/:id/folders",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2404
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/folders/:id",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2418
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/folders/:id",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2443
+    },
+    {
+      "method": "GET",
+      "path": "/api/vaults/:id/notes",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2470
+    },
+    {
+      "method": "POST",
+      "path": "/api/vaults/:id/notes",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2488
+    },
+    {
+      "method": "GET",
+      "path": "/api/notes/:id",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2505
+    },
+    {
+      "method": "PUT",
+      "path": "/api/notes/:id",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2514
+    },
+    {
+      "method": "POST",
+      "path": "/api/notes/:id/rename",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2537
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/notes/:id",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2556
+    },
+    {
+      "method": "POST",
+      "path": "/api/notes/:id/move",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2576
+    },
+    {
+      "method": "POST",
+      "path": "/api/notes/:id/unlist",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2597
+    },
+    {
+      "method": "POST",
+      "path": "/api/notes/:id/pin",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2616
+    },
+    {
+      "method": "POST",
+      "path": "/api/notes/:id/assets",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2631
+    },
+    {
+      "method": "GET",
+      "path": "/api/notes/:id/assets/:assetId",
+      "handlers": [
+        "requireAuth",
+        "serveNoteAsset(...)"
+      ],
+      "source": "index.ts",
+      "line": 2641
+    },
+    {
+      "method": "POST",
+      "path": "/api/notes/:id/archive",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2643
+    },
+    {
+      "method": "GET",
+      "path": "/api/vaults/:id/search",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2660
+    },
+    {
+      "method": "POST",
+      "path": "/api/vaults/:id/scratchpad/journal",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2686
+    },
+    {
+      "method": "GET",
+      "path": "/api/vaults/:id/scratchpad/journal",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2700
+    },
+    {
+      "method": "POST",
+      "path": "/api/vaults/:id/scratchpad/consolidate",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2714
+    },
+    {
+      "method": "GET",
+      "path": "/api/vaults/:id/scratchpad/status",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2726
+    },
+    {
+      "method": "GET",
+      "path": "/api/vaults/:id/scratchpad/threads",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2734
+    },
+    {
+      "method": "POST",
+      "path": "/api/vaults/:id/scratchpad/threads",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2747
+    },
+    {
+      "method": "POST",
+      "path": "/api/vaults/:id/scratchpad/threads/:threadId/close",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2763
+    },
+    {
+      "method": "POST",
+      "path": "/api/vaults/:id/scratchpad/skills",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2776
+    },
+    {
+      "method": "GET",
+      "path": "/api/vaults/:id/scratchpad/skills",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2789
+    },
+    {
+      "method": "POST",
+      "path": "/api/vaults/:id/scratchpad/outcome",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2798
+    },
+    {
+      "method": "POST",
+      "path": "/api/vaults/:id/scratchpad/promote",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2811
+    },
+    {
+      "method": "GET",
+      "path": "/api/vaults/:id/scratchpad/recall",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2826
+    },
+    {
+      "method": "GET",
+      "path": "/api/notes/:id/backlinks",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2856
+    },
+    {
+      "method": "POST",
+      "path": "/api/vaults/:id/chat-backlinks/backfill",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2875
+    },
+    {
+      "method": "POST",
+      "path": "/api/vaults/:vaultId/channels/:channelId/distill",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2890
+    },
+    {
+      "method": "GET",
+      "path": "/api/vaults/:id/agent-memory",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2919
+    },
+    {
+      "method": "PUT",
+      "path": "/api/vaults/:id/agent-memory",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2938
+    },
+    {
+      "method": "GET",
+      "path": "/api/vaults/:vaultId/vault-agents",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2968
+    },
+    {
+      "method": "PUT",
+      "path": "/api/vaults/:vaultId/vault-agents",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 2980
+    },
+    {
+      "method": "GET",
+      "path": "/api/vaults/:vaultId/vault-agents/:agentId",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 3000
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/vaults/:vaultId/vault-agents/:agentId",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 3010
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/vaults/:vaultId/vault-agents/:agentId/profile",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 3021
+    },
+    {
+      "method": "POST",
+      "path": "/api/vaults/:vaultId/channels/:channelId/agents/from-vault",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 3032
+    },
+    {
+      "method": "GET",
+      "path": "/api/vaults/:id/tags",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 3054
+    },
+    {
+      "method": "POST",
+      "path": "/api/notes/:id/tags",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 3060
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/notes/:id/tags/:tagId",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 3078
+    },
+    {
+      "method": "GET",
+      "path": "/api/notes/:id/versions",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 3094
+    },
+    {
+      "method": "GET",
+      "path": "/api/notes/:id/diff",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 3103
+    },
+    {
+      "method": "GET",
+      "path": "/api/vaults/:id/graph",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 3129
+    },
+    {
+      "method": "GET",
+      "path": "/api/vaults/:id/runs",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 3137
+    },
+    {
+      "method": "GET",
+      "path": "/api/vaults/:id/active-sessions",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 3143
+    },
+    {
+      "method": "POST",
+      "path": "/api/vaults/:id/runs",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 3149
+    },
+    {
+      "method": "GET",
+      "path": "/api/runs/:id",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 3614
+    },
+    {
+      "method": "GET",
+      "path": "/api/runs/:id/events",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 3624
+    },
+    {
+      "method": "GET",
+      "path": "/api/me/desktop-runner",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 3635
+    },
+    {
+      "method": "POST",
+      "path": "/api/runs/:id/cancel",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 3639
+    },
+    {
+      "method": "GET",
+      "path": "/api/vaults/:vaultId/channels/:channelId/messages",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 3666
+    },
+    {
+      "method": "GET",
+      "path": "/api/vaults/:vaultId/channels/:channelId/messages/:messageId",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 3680
+    },
+    {
+      "method": "GET",
+      "path": "/api/vaults/:vaultId/channels/:channelId/messages/:messageId/embeds",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 3733
+    },
+    {
+      "method": "POST",
+      "path": "/api/vaults/:vaultId/channels/:channelId/messages",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 3787
+    },
+    {
+      "method": "POST",
+      "path": "/api/vaults/:vaultId/channels/:channelId/messages/:messageId/collaborate",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 3826
+    },
+    {
+      "method": "GET",
+      "path": "/api/vaults/:vaultId/channels/:channelId/agent-dispatches/pending",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 3872
+    },
+    {
+      "method": "POST",
+      "path": "/api/vaults/:vaultId/channels/:channelId/missions",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 3881
+    },
+    {
+      "method": "GET",
+      "path": "/api/vaults/:vaultId/channels/:channelId/missions",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 3921
+    },
+    {
+      "method": "GET",
+      "path": "/api/vaults/:vaultId/channels/:channelId/missions/:missionId/history",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 3935
+    },
+    {
+      "method": "GET",
+      "path": "/api/vaults/:vaultId/channels/:channelId/missions/:missionId",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 3949
+    },
+    {
+      "method": "POST",
+      "path": "/api/vaults/:vaultId/channels/:channelId/missions/:missionId/tasks",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 3964
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/vaults/:vaultId/channels/:channelId/missions/tasks/:taskId",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 3991
+    },
+    {
+      "method": "POST",
+      "path": "/api/vaults/:vaultId/channels/:channelId/missions/:missionId/finish",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 4007
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/vaults/:vaultId/channels/:channelId/messages/:messageId",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 4037
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/vaults/:vaultId/channels/:channelId/messages/:messageId",
+      "handlers": [
+        "requireAuth",
+        "requireUserAccess",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 4088
+    },
+    {
+      "method": "POST",
+      "path": "/api/vaults/:vaultId/channels/:channelId/messages/:messageId/forward",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 4115
+    },
+    {
+      "method": "POST",
+      "path": "/api/vaults/:vaultId/channels/:channelId/messages/:messageId/approve",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 4149
+    },
+    {
+      "method": "POST",
+      "path": "/api/vaults/:vaultId/channels/:channelId/messages/:messageId/merge",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 4160
+    },
+    {
+      "method": "POST",
+      "path": "/api/vaults/:vaultId/channels/:channelId/messages/:messageId/clarification/answer",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 4172
+    },
+    {
+      "method": "POST",
+      "path": "/api/vaults/:vaultId/channels/:channelId/messages/:messageId/clarification/accept",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 4190
+    },
+    {
+      "method": "GET",
+      "path": "/api/vaults/:vaultId/channels/:channelId/agents",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 4302
+    },
+    {
+      "method": "GET",
+      "path": "/api/vaults/:vaultId/channels/:channelId/settings",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 4312
+    },
+    {
+      "method": "PUT",
+      "path": "/api/vaults/:vaultId/channels/:channelId/settings",
+      "handlers": [
+        "requireAuth",
+        "requireUserAccess",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 4320
+    },
+    {
+      "method": "GET",
+      "path": "/api/vaults/:vaultId/channels/:channelId/presence",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 4362
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/vaults/:vaultId/channels/:channelId/members/me",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 4387
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/vaults/:vaultId/channels/:channelId/members/:username",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 4403
+    },
+    {
+      "method": "PUT",
+      "path": "/api/vaults/:vaultId/channels/:channelId/agents",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 4427
+    },
+    {
+      "method": "PUT",
+      "path": "/api/vaults/:vaultId/channels/:channelId/agents/:registrationId/avatar",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 4440
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/vaults/:vaultId/channels/:channelId/agents/:registrationId",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 4453
+    },
+    {
+      "method": "POST",
+      "path": "/api/vaults/:vaultId/channels/:channelId/invites",
+      "handlers": [
+        "requireAuth",
+        "usernameActionRateLimit",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 4527
+    },
+    {
+      "method": "POST",
+      "path": "/api/vaults/:vaultId/channels/:channelId/invite-link",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 4573
+    },
+    {
+      "method": "GET",
+      "path": "/api/chat-invites/:token",
+      "handlers": [
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 4610
+    },
+    {
+      "method": "POST",
+      "path": "/api/chat-invites/:token/accept",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 4627
+    },
+    {
+      "method": "GET",
+      "path": "/api/me/dm-settings",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 4663
+    },
+    {
+      "method": "PUT",
+      "path": "/api/me/dm-settings",
+      "handlers": [
+        "requireAuth",
+        "requireUserAccess",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 4667
+    },
+    {
+      "method": "GET",
+      "path": "/api/me/blocks",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 4675
+    },
+    {
+      "method": "POST",
+      "path": "/api/me/blocks",
+      "handlers": [
+        "requireAuth",
+        "requireUserAccess",
+        "usernameActionRateLimit",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 4679
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/me/blocks/:username",
+      "handlers": [
+        "requireAuth",
+        "requireUserAccess",
+        "usernameActionRateLimit",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 4693
+    },
+    {
+      "method": "GET",
+      "path": "/api/me/direct-messages",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 4704
+    },
+    {
+      "method": "POST",
+      "path": "/api/direct-messages",
+      "handlers": [
+        "requireAuth",
+        "requireUserAccess",
+        "usernameActionRateLimit",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 4708
+    },
+    {
+      "method": "GET",
+      "path": "/p/:slug",
+      "handlers": [
+        "servePublicNotePage(...)"
+      ],
+      "source": "index.ts",
+      "line": 4786
+    },
+    {
+      "method": "GET",
+      "path": "/p/:slug.json",
+      "handlers": [
+        "servePublicNoteJson(...)"
+      ],
+      "source": "index.ts",
+      "line": 4787
+    },
+    {
+      "method": "GET",
+      "path": "/oembed",
+      "handlers": [
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 4789
+    },
+    {
+      "method": "GET",
+      "path": "/api/notes/:id/publish",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 4794
+    },
+    {
+      "method": "POST",
+      "path": "/api/notes/:id/publish",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 4813
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/notes/:id/publish",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 4832
+    },
+    {
+      "method": "GET",
+      "path": "/download/android",
+      "handlers": [
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 4845
+    },
+    {
+      "method": "GET",
+      "path": "/download/mac",
+      "handlers": [
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 4857
+    },
+    {
+      "method": "GET",
+      "path": "/download/linux",
+      "handlers": [
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 4863
+    },
+    {
+      "method": "GET",
+      "path": "/download/:platform",
+      "handlers": [
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 4871
+    },
+    {
+      "method": "GET",
+      "path": "/",
+      "handlers": [
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 4885
+    },
+    {
+      "method": "GET",
+      "path": "/download",
+      "handlers": [
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 4885
+    },
+    {
+      "method": "GET",
+      "path": "*",
+      "handlers": [
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 4898
+    }
+  ],
+  "socketIo": {
+    "inbound": [
+      {
+        "namespace": "/vault",
+        "event": "connection",
+        "source": "index.ts",
+        "line": 912
+      },
+      {
+        "namespace": "/vault",
+        "event": "joinVault",
+        "source": "index.ts",
+        "line": 918
+      },
+      {
+        "namespace": "/vault",
+        "event": "leaveVault",
+        "source": "index.ts",
+        "line": 923
+      },
+      {
+        "namespace": "/vault",
+        "event": "joinChatChannel",
+        "source": "index.ts",
+        "line": 927
+      },
+      {
+        "namespace": "/vault",
+        "event": "leaveChatChannel",
+        "source": "index.ts",
+        "line": 956
+      },
+      {
+        "namespace": "/vault",
+        "event": "disconnect",
+        "source": "index.ts",
+        "line": 969
+      },
+      {
+        "namespace": "/runs",
+        "event": "connection",
+        "source": "index.ts",
+        "line": 984
+      },
+      {
+        "namespace": "/runs",
+        "event": "joinRun",
+        "source": "index.ts",
+        "line": 985
+      },
+      {
+        "namespace": "/runs",
+        "event": "leaveRun",
+        "source": "index.ts",
+        "line": 1000
+      },
+      {
+        "namespace": "/runners",
+        "event": "connection",
+        "source": "server/desktop-runner.ts",
+        "line": 243
+      },
+      {
+        "namespace": "/runners",
+        "event": "runner:register",
+        "source": "server/desktop-runner.ts",
+        "line": 264
+      },
+      {
+        "namespace": "/runners",
+        "event": "runner:planUsage",
+        "source": "server/desktop-runner.ts",
+        "line": 307
+      },
+      {
+        "namespace": "/runners",
+        "event": "runner:runEvent",
+        "source": "server/desktop-runner.ts",
+        "line": 352
+      },
+      {
+        "namespace": "/runners",
+        "event": "disconnect",
+        "source": "server/desktop-runner.ts",
+        "line": 391
+      }
+    ],
+    "outbound": [
+      {
+        "namespace": "/vault",
+        "event": "vault:chatPresence",
+        "source": "index.ts",
+        "line": 942
+      },
+      {
+        "namespace": "/runs",
+        "event": "event",
+        "source": "index.ts",
+        "line": 1006
+      },
+      {
+        "namespace": "/vault",
+        "event": "community:changed",
+        "source": "index.ts",
+        "line": 1018
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:userProfileUpdated",
+        "source": "index.ts",
+        "line": 1067
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:chatMessageUpdated",
+        "source": "index.ts",
+        "line": 1115
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:chatMessageCreated",
+        "source": "index.ts",
+        "line": 1165
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:chatMessageUpdated",
+        "source": "index.ts",
+        "line": 1192
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:chatMessageDeleted",
+        "source": "index.ts",
+        "line": 1199
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:chatPresence",
+        "source": "index.ts",
+        "line": 1267
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:chatMessageCreated",
+        "source": "index.ts",
+        "line": 1339
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:chatMessageCreated",
+        "source": "index.ts",
+        "line": 1340
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:chatMessageUpdated",
+        "source": "index.ts",
+        "line": 1377
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:chatMessageUpdated",
+        "source": "index.ts",
+        "line": 1398
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:chatMessageUpdated",
+        "source": "index.ts",
+        "line": 1478
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:chatMessageUpdated",
+        "source": "index.ts",
+        "line": 1515
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:renamed",
+        "source": "index.ts",
+        "line": 1870
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:membersChanged",
+        "source": "index.ts",
+        "line": 1964
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:visibilityChanged",
+        "source": "index.ts",
+        "line": 2070
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:membersChanged",
+        "source": "index.ts",
+        "line": 2107
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:noteCreated",
+        "source": "index.ts",
+        "line": 2498
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:noteChanged",
+        "source": "index.ts",
+        "line": 2530
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:noteChanged",
+        "source": "index.ts",
+        "line": 2549
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:noteDeleted",
+        "source": "index.ts",
+        "line": 2569
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:noteChanged",
+        "source": "index.ts",
+        "line": 2590
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:noteChanged",
+        "source": "index.ts",
+        "line": 2609
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:noteChanged",
+        "source": "index.ts",
+        "line": 2627
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:noteChanged",
+        "source": "index.ts",
+        "line": 2654
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:noteChanged",
+        "source": "index.ts",
+        "line": 2906
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:noteCreated",
+        "source": "index.ts",
+        "line": 2956
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:vaultAgentUpserted",
+        "source": "index.ts",
+        "line": 2993
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:vaultAgentRemoved",
+        "source": "index.ts",
+        "line": 3014
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:vaultAgentDeleted",
+        "source": "index.ts",
+        "line": 3025
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:chatAgentMemberUpserted",
+        "source": "index.ts",
+        "line": 3045
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:chatMessageUpdated",
+        "source": "index.ts",
+        "line": 3494
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:chatMessageUpdated",
+        "source": "index.ts",
+        "line": 3503
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:chatMessageUpdated",
+        "source": "index.ts",
+        "line": 3655
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:chatMessageCreated",
+        "source": "index.ts",
+        "line": 3819
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:chatMessageCreated",
+        "source": "index.ts",
+        "line": 3859
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:chatMessageUpdated",
+        "source": "index.ts",
+        "line": 4076
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:chatMessageCreated",
+        "source": "index.ts",
+        "line": 4142
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:chatMessageUpdated",
+        "source": "index.ts",
+        "line": 4153
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:chatMessageUpdated",
+        "source": "index.ts",
+        "line": 4164
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:chatMessageUpdated",
+        "source": "index.ts",
+        "line": 4177
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:chatMessageCreated",
+        "source": "index.ts",
+        "line": 4271
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:chatMessageCreated",
+        "source": "index.ts",
+        "line": 4277
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:chatMessageUpdated",
+        "source": "index.ts",
+        "line": 4291
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:chatChannelSettings",
+        "source": "index.ts",
+        "line": 4351
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:noteDeleted",
+        "source": "index.ts",
+        "line": 4395
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:noteDeleted",
+        "source": "index.ts",
+        "line": 4419
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:chatAgentMemberUpserted",
+        "source": "index.ts",
+        "line": 4431
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:chatAgentMemberUpserted",
+        "source": "index.ts",
+        "line": 4446
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:chatAgentMemberRemoved",
+        "source": "index.ts",
+        "line": 4458
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:noteCreated",
+        "source": "index.ts",
+        "line": 4523
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:chatMessageCreated",
+        "source": "index.ts",
+        "line": 4564
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:noteCreated",
+        "source": "index.ts",
+        "line": 4655
+      },
+      {
+        "namespace": "/runners",
+        "event": "runner:registered",
+        "source": "server/desktop-runner.ts",
+        "line": 302
+      },
+      {
+        "namespace": "/runners",
+        "event": "workspace:prepare",
+        "source": "server/desktop-runner.ts",
+        "line": 454
+      },
+      {
+        "namespace": "/runners",
+        "event": "run:delegate",
+        "source": "server/desktop-runner.ts",
+        "line": 486
+      },
+      {
+        "namespace": "/runners",
+        "event": "run:cancel",
+        "source": "server/desktop-runner.ts",
+        "line": 502
+      }
+    ]
+  },
+  "sqlite": {
+    "declarations": [
+      {
+        "kind": "table",
+        "name": "users",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY AUTOINCREMENT,username TEXT NOT NULL UNIQUE,password_hash TEXT NOT NULL,display_name TEXT NOT NULL DEFAULT '',avatar_url TEXT NOT NULL DEFAULT '',auth_version INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL DEFAULT(datetime('now')));",
+        "source": "index.ts",
+        "line": 406
+      },
+      {
+        "kind": "table",
+        "name": "registration_invites_used",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS registration_invites_used(token_hash TEXT PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id)ON DELETE CASCADE,used_at TEXT NOT NULL DEFAULT(datetime('now')));",
+        "source": "index.ts",
+        "line": 416
+      },
+      {
+        "kind": "table",
+        "name": "vaults",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS vaults(id TEXT PRIMARY KEY,name TEXT NOT NULL,root_path TEXT NOT NULL,created_by INTEGER NOT NULL REFERENCES users(id),created_at TEXT NOT NULL DEFAULT(datetime('now')));",
+        "source": "index.ts",
+        "line": 422
+      },
+      {
+        "kind": "table",
+        "name": "folders",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS folders(id TEXT PRIMARY KEY,vault_id TEXT NOT NULL REFERENCES vaults(id)ON DELETE CASCADE,parent_id TEXT REFERENCES folders(id)ON DELETE CASCADE,name TEXT NOT NULL,position INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL DEFAULT(datetime('now')));",
+        "source": "index.ts",
+        "line": 430
+      },
+      {
+        "kind": "table",
+        "name": "notes",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS notes(id TEXT PRIMARY KEY,vault_id TEXT NOT NULL REFERENCES vaults(id)ON DELETE CASCADE,folder_id TEXT REFERENCES folders(id)ON DELETE SET NULL,title TEXT NOT NULL,content TEXT NOT NULL DEFAULT '',content_preview TEXT NOT NULL DEFAULT '',is_pinned INTEGER NOT NULL DEFAULT 0,is_archived INTEGER NOT NULL DEFAULT 0,is_listed INTEGER NOT NULL DEFAULT 1,position INTEGER NOT NULL DEFAULT 0,word_count INTEGER NOT NULL DEFAULT 0,created_by INTEGER NOT NULL REFERENCES users(id),created_at TEXT NOT NULL DEFAULT(datetime('now')),updated_at TEXT NOT NULL DEFAULT(datetime('now')));",
+        "source": "index.ts",
+        "line": 439
+      },
+      {
+        "kind": "table",
+        "name": "tags",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS tags(id TEXT PRIMARY KEY,vault_id TEXT NOT NULL REFERENCES vaults(id)ON DELETE CASCADE,name TEXT NOT NULL,color TEXT,UNIQUE(vault_id,name));",
+        "source": "index.ts",
+        "line": 456
+      },
+      {
+        "kind": "table",
+        "name": "note_tags",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS note_tags(note_id TEXT NOT NULL REFERENCES notes(id)ON DELETE CASCADE,tag_id TEXT NOT NULL REFERENCES tags(id)ON DELETE CASCADE,PRIMARY KEY(note_id,tag_id));",
+        "source": "index.ts",
+        "line": 464
+      },
+      {
+        "kind": "table",
+        "name": "note_links",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS note_links(source_id TEXT NOT NULL REFERENCES notes(id)ON DELETE CASCADE,target_id TEXT,target_title TEXT NOT NULL,context TEXT,PRIMARY KEY(source_id,target_title));",
+        "source": "index.ts",
+        "line": 470
+      },
+      {
+        "kind": "table",
+        "name": "note_versions",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS note_versions(id TEXT PRIMARY KEY,note_id TEXT NOT NULL REFERENCES notes(id)ON DELETE CASCADE,content TEXT NOT NULL,label TEXT,created_at TEXT NOT NULL DEFAULT(datetime('now')));",
+        "source": "index.ts",
+        "line": 478
+      },
+      {
+        "kind": "table",
+        "name": "notes_fts",
+        "unique": false,
+        "virtual": true,
+        "ifNotExists": true,
+        "sql": "CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(title,content,content='notes',content_rowid='rowid');",
+        "source": "index.ts",
+        "line": 528
+      },
+      {
+        "kind": "trigger",
+        "name": "notes_ai",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TRIGGER IF NOT EXISTS notes_ai AFTER INSERT ON notes BEGIN INSERT INTO notes_fts(rowid,title,content)VALUES(NEW.rowid,NEW.title,NEW.content);END;",
+        "source": "index.ts",
+        "line": 532
+      },
+      {
+        "kind": "trigger",
+        "name": "notes_ad",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TRIGGER IF NOT EXISTS notes_ad AFTER DELETE ON notes BEGIN INSERT INTO notes_fts(notes_fts,rowid,title,content)VALUES('delete',OLD.rowid,OLD.title,OLD.content);END;",
+        "source": "index.ts",
+        "line": 535
+      },
+      {
+        "kind": "trigger",
+        "name": "notes_au",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TRIGGER IF NOT EXISTS notes_au AFTER UPDATE ON notes BEGIN INSERT INTO notes_fts(notes_fts,rowid,title,content)VALUES('delete',OLD.rowid,OLD.title,OLD.content);INSERT INTO notes_fts(rowid,title,content)VALUES(NEW.rowid,NEW.title,NEW.content);END;",
+        "source": "index.ts",
+        "line": 538
+      },
+      {
+        "kind": "table",
+        "name": "chat_note_grants",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS chat_note_grants(message_id TEXT NOT NULL REFERENCES chat_messages(id)ON DELETE CASCADE,channel_id TEXT NOT NULL REFERENCES notes(id)ON DELETE CASCADE,note_id TEXT NOT NULL REFERENCES notes(id)ON DELETE CASCADE,granted_by INTEGER NOT NULL REFERENCES users(id),created_at TEXT NOT NULL DEFAULT(datetime('now')),PRIMARY KEY(message_id,note_id));",
+        "source": "index.ts",
+        "line": 581
+      },
+      {
+        "kind": "index",
+        "name": "chat_note_grants_channel_idx",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS chat_note_grants_channel_idx ON chat_note_grants(channel_id,message_id);",
+        "source": "index.ts",
+        "line": 589
+      },
+      {
+        "kind": "table",
+        "name": "android_battery_samples",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS android_battery_samples(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL REFERENCES users(id)ON DELETE CASCADE,session_id TEXT NOT NULL,reason TEXT NOT NULL CHECK(reason IN('launch','interval','background','resume')),foreground INTEGER NOT NULL,captured_at INTEGER NOT NULL,received_at TEXT NOT NULL DEFAULT(datetime('now')),elapsed_realtime_ms INTEGER NOT NULL,process_cpu_ms INTEGER NOT NULL,uid_rx_bytes INTEGER NOT NULL,uid_tx_bytes INTEGER NOT NULL,power_save INTEGER NOT NULL,thermal_status INTEGER,level_percent INTEGER,charge_counter_uah INTEGER,current_now_ua INTEGER,current_average_ua INTEGER,charging INTEGER);",
+        "source": "server/androidBattery.ts",
+        "line": 15
+      },
+      {
+        "kind": "index",
+        "name": "android_battery_samples_user_time_idx",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS android_battery_samples_user_time_idx ON android_battery_samples(user_id,captured_at DESC);",
+        "source": "server/androidBattery.ts",
+        "line": 28
+      },
+      {
+        "kind": "index",
+        "name": "android_battery_samples_session_idx",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS android_battery_samples_session_idx ON android_battery_samples(session_id,captured_at ASC);",
+        "source": "server/androidBattery.ts",
+        "line": 30
+      },
+      {
+        "kind": "table",
+        "name": "chat_agent_dispatches",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS chat_agent_dispatches(id TEXT PRIMARY KEY,message_id TEXT NOT NULL REFERENCES chat_messages(id)ON DELETE CASCADE,channel_id TEXT NOT NULL REFERENCES notes(id)ON DELETE CASCADE,registration_id TEXT NOT NULL,run_id INTEGER,reasoning_effort TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL DEFAULT(datetime('now')),UNIQUE(message_id,registration_id));",
+        "source": "server/chat-dispatch.ts",
+        "line": 48
+      },
+      {
+        "kind": "index",
+        "name": "chat_agent_dispatches_pending_idx",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS chat_agent_dispatches_pending_idx ON chat_agent_dispatches(channel_id,run_id,created_at);",
+        "source": "server/chat-dispatch.ts",
+        "line": 58
+      },
+      {
+        "kind": "table",
+        "name": "chat_missions",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS chat_missions(id TEXT PRIMARY KEY,vault_id TEXT NOT NULL REFERENCES vaults(id)ON DELETE CASCADE,channel_id TEXT NOT NULL REFERENCES notes(id)ON DELETE CASCADE,root_message_id TEXT NOT NULL REFERENCES chat_messages(id)ON DELETE CASCADE,coordinator_registration_id TEXT NOT NULL,title TEXT NOT NULL,objective TEXT NOT NULL DEFAULT '',status TEXT NOT NULL DEFAULT 'active',summary TEXT NOT NULL DEFAULT '',wake_sent INTEGER NOT NULL DEFAULT 0,created_by INTEGER NOT NULL REFERENCES users(id),created_at TEXT NOT NULL DEFAULT(datetime('now')),updated_at TEXT NOT NULL DEFAULT(datetime('now')),UNIQUE(channel_id,root_message_id));",
+        "source": "server/chat-missions.ts",
+        "line": 135
+      },
+      {
+        "kind": "index",
+        "name": "chat_missions_channel_idx",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS chat_missions_channel_idx ON chat_missions(channel_id,status,updated_at);",
+        "source": "server/chat-missions.ts",
+        "line": 151
+      },
+      {
+        "kind": "table",
+        "name": "chat_mission_tasks",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS chat_mission_tasks(id TEXT PRIMARY KEY,mission_id TEXT NOT NULL REFERENCES chat_missions(id)ON DELETE CASCADE,title TEXT NOT NULL,assignee_registration_id TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',summary TEXT NOT NULL DEFAULT '',prompt TEXT NOT NULL DEFAULT '',depends_on_json TEXT NOT NULL DEFAULT '[]',priority INTEGER NOT NULL DEFAULT 0,reasoning_effort TEXT NOT NULL DEFAULT '',anonymous INTEGER NOT NULL DEFAULT 0,dispatch_id TEXT,run_id INTEGER,attempt INTEGER NOT NULL DEFAULT 0,work_item_id TEXT,created_at TEXT NOT NULL DEFAULT(datetime('now')),updated_at TEXT NOT NULL DEFAULT(datetime('now')));",
+        "source": "server/chat-missions.ts",
+        "line": 154
+      },
+      {
+        "kind": "index",
+        "name": "chat_mission_tasks_mission_idx",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS chat_mission_tasks_mission_idx ON chat_mission_tasks(mission_id,created_at);",
+        "source": "server/chat-missions.ts",
+        "line": 173
+      },
+      {
+        "kind": "index",
+        "name": "chat_mission_tasks_dispatch_idx",
+        "unique": true,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE UNIQUE INDEX IF NOT EXISTS chat_mission_tasks_dispatch_idx ON chat_mission_tasks(dispatch_id)WHERE dispatch_id IS NOT NULL;",
+        "source": "server/chat-missions.ts",
+        "line": 175
+      },
+      {
+        "kind": "index",
+        "name": "chat_mission_tasks_run_idx",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS chat_mission_tasks_run_idx ON chat_mission_tasks(run_id)WHERE run_id IS NOT NULL;",
+        "source": "server/chat-missions.ts",
+        "line": 177
+      },
+      {
+        "kind": "table",
+        "name": "chat_mission_events",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS chat_mission_events(id INTEGER PRIMARY KEY AUTOINCREMENT,mission_id TEXT NOT NULL REFERENCES chat_missions(id)ON DELETE CASCADE,task_id TEXT,kind TEXT NOT NULL,title TEXT NOT NULL DEFAULT '',from_status TEXT NOT NULL DEFAULT '',to_status TEXT NOT NULL DEFAULT '',summary TEXT NOT NULL DEFAULT '',run_id INTEGER,attempt INTEGER NOT NULL DEFAULT 0,source_key TEXT UNIQUE,created_at TEXT NOT NULL DEFAULT(strftime('%Y-%m-%dT%H:%M:%fZ','now')));",
+        "source": "server/chat-missions.ts",
+        "line": 180
+      },
+      {
+        "kind": "index",
+        "name": "chat_mission_events_mission_idx",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS chat_mission_events_mission_idx ON chat_mission_events(mission_id,id);",
+        "source": "server/chat-missions.ts",
+        "line": 194
+      },
+      {
+        "kind": "table",
+        "name": "chat_messages",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS chat_messages(id TEXT PRIMARY KEY,channel_id TEXT NOT NULL REFERENCES notes(id)ON DELETE CASCADE,vault_id TEXT NOT NULL REFERENCES vaults(id)ON DELETE CASCADE,author TEXT NOT NULL,body TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL DEFAULT(datetime('now')),activity_at TEXT,actor_user_id INTEGER REFERENCES users(id),status TEXT,agent_id TEXT,registration_id TEXT,run_id INTEGER,blocks_json TEXT,harness_log TEXT,images_json TEXT,attachments_json TEXT,reply_to_json TEXT,forwarded_from_json TEXT,change_request_json TEXT,mission_json TEXT,mission_task_id TEXT);",
+        "source": "server/chat.ts",
+        "line": 357
+      },
+      {
+        "kind": "index",
+        "name": "chat_messages_channel_idx",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS chat_messages_channel_idx ON chat_messages(channel_id,created_at);",
+        "source": "server/chat.ts",
+        "line": 380
+      },
+      {
+        "kind": "index",
+        "name": "chat_messages_run_idx",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS chat_messages_run_idx ON chat_messages(run_id);",
+        "source": "server/chat.ts",
+        "line": 381
+      },
+      {
+        "kind": "table",
+        "name": "chat_messages_fts",
+        "unique": false,
+        "virtual": true,
+        "ifNotExists": true,
+        "sql": "CREATE VIRTUAL TABLE IF NOT EXISTS chat_messages_fts USING fts5(author,body,content='chat_messages',content_rowid='rowid');",
+        "source": "server/chat.ts",
+        "line": 382
+      },
+      {
+        "kind": "trigger",
+        "name": "chat_messages_ai",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TRIGGER IF NOT EXISTS chat_messages_ai AFTER INSERT ON chat_messages BEGIN INSERT INTO chat_messages_fts(rowid,author,body)VALUES(NEW.rowid,NEW.author,NEW.body);END;",
+        "source": "server/chat.ts",
+        "line": 383
+      },
+      {
+        "kind": "trigger",
+        "name": "chat_messages_ad",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TRIGGER IF NOT EXISTS chat_messages_ad AFTER DELETE ON chat_messages BEGIN INSERT INTO chat_messages_fts(chat_messages_fts,rowid,author,body)VALUES('delete',OLD.rowid,OLD.author,OLD.body);END;",
+        "source": "server/chat.ts",
+        "line": 386
+      },
+      {
+        "kind": "trigger",
+        "name": "chat_messages_au",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TRIGGER IF NOT EXISTS chat_messages_au AFTER UPDATE ON chat_messages BEGIN INSERT INTO chat_messages_fts(chat_messages_fts,rowid,author,body)VALUES('delete',OLD.rowid,OLD.author,OLD.body);INSERT INTO chat_messages_fts(rowid,author,body)VALUES(NEW.rowid,NEW.author,NEW.body);END;",
+        "source": "server/chat.ts",
+        "line": 389
+      },
+      {
+        "kind": "table",
+        "name": "chat_agent_members",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS chat_agent_members(id TEXT PRIMARY KEY,channel_id TEXT NOT NULL REFERENCES notes(id)ON DELETE CASCADE,vault_id TEXT NOT NULL REFERENCES vaults(id)ON DELETE CASCADE,agent_id TEXT NOT NULL,display_name TEXT NOT NULL DEFAULT '',avatar_url TEXT NOT NULL DEFAULT '',mention TEXT NOT NULL DEFAULT '',model TEXT NOT NULL DEFAULT '',reasoning_effort TEXT NOT NULL DEFAULT '',priority_service_tier INTEGER NOT NULL DEFAULT 0,cwd TEXT NOT NULL DEFAULT '',context_prompt TEXT NOT NULL DEFAULT '',taggable_by_agents INTEGER NOT NULL DEFAULT 0,reply_to_every_message INTEGER NOT NULL DEFAULT 0,orchestrator INTEGER NOT NULL DEFAULT 0,pingable_by_others INTEGER NOT NULL DEFAULT 0,yolo INTEGER NOT NULL DEFAULT 0,conversation_id TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL DEFAULT(datetime('now')),updated_at TEXT NOT NULL DEFAULT(datetime('now')));",
+        "source": "server/chat.ts",
+        "line": 394
+      },
+      {
+        "kind": "index",
+        "name": "chat_agent_members_channel_idx",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS chat_agent_members_channel_idx ON chat_agent_members(channel_id);",
+        "source": "server/chat.ts",
+        "line": 416
+      },
+      {
+        "kind": "table",
+        "name": "vault_agents",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS vault_agents(id TEXT PRIMARY KEY,vault_id TEXT NOT NULL REFERENCES vaults(id)ON DELETE CASCADE,agent_id TEXT NOT NULL,display_name TEXT NOT NULL,avatar_url TEXT NOT NULL DEFAULT '',mention TEXT NOT NULL,model TEXT NOT NULL DEFAULT '',cwd TEXT NOT NULL DEFAULT '',context_prompt TEXT NOT NULL DEFAULT '',owner_user_id INTEGER REFERENCES users(id),created_at TEXT NOT NULL DEFAULT(datetime('now')),updated_at TEXT NOT NULL DEFAULT(datetime('now')),UNIQUE(vault_id,mention));",
+        "source": "server/chat.ts",
+        "line": 418
+      },
+      {
+        "kind": "index",
+        "name": "vault_agents_vault_idx",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS vault_agents_vault_idx ON vault_agents(vault_id);",
+        "source": "server/chat.ts",
+        "line": 433
+      },
+      {
+        "kind": "table",
+        "name": "vault_agent_exclusions",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS vault_agent_exclusions(vault_id TEXT NOT NULL REFERENCES vaults(id)ON DELETE CASCADE,vault_agent_id TEXT NOT NULL REFERENCES vault_agents(id)ON DELETE CASCADE,created_at TEXT NOT NULL DEFAULT(datetime('now')),PRIMARY KEY(vault_id,vault_agent_id));",
+        "source": "server/chat.ts",
+        "line": 435
+      },
+      {
+        "kind": "table",
+        "name": "chat_channel_links",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS chat_channel_links(local_channel_id TEXT PRIMARY KEY REFERENCES notes(id)ON DELETE CASCADE,local_vault_id TEXT NOT NULL REFERENCES vaults(id)ON DELETE CASCADE,source_channel_id TEXT NOT NULL REFERENCES notes(id)ON DELETE CASCADE,source_vault_id TEXT NOT NULL REFERENCES vaults(id)ON DELETE CASCADE,created_by INTEGER NOT NULL REFERENCES users(id),created_at TEXT NOT NULL DEFAULT(strftime('%Y-%m-%dT%H:%M:%fZ','now')),UNIQUE(local_vault_id,source_channel_id));",
+        "source": "server/chat.ts",
+        "line": 442
+      },
+      {
+        "kind": "index",
+        "name": "chat_channel_links_source_idx",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS chat_channel_links_source_idx ON chat_channel_links(source_channel_id);",
+        "source": "server/chat.ts",
+        "line": 451
+      },
+      {
+        "kind": "table",
+        "name": "chat_channel_settings",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS chat_channel_settings(channel_id TEXT PRIMARY KEY REFERENCES notes(id)ON DELETE CASCADE,cwd TEXT NOT NULL DEFAULT '',kanban_note_id TEXT REFERENCES notes(id)ON DELETE SET NULL,updated_at TEXT NOT NULL DEFAULT(datetime('now')));",
+        "source": "server/chat.ts",
+        "line": 453
+      },
+      {
+        "kind": "index",
+        "name": "chat_messages_activity_idx",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS chat_messages_activity_idx ON chat_messages(channel_id,activity_at)",
+        "source": "server/chat.ts",
+        "line": 469
+      },
+      {
+        "kind": "table",
+        "name": "vault_agents_owner_scoped",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": false,
+        "sql": "CREATE TABLE vault_agents_owner_scoped(id TEXT PRIMARY KEY,vault_id TEXT NOT NULL REFERENCES vaults(id)ON DELETE CASCADE,agent_id TEXT NOT NULL,display_name TEXT NOT NULL,avatar_url TEXT NOT NULL DEFAULT '',mention TEXT NOT NULL,model TEXT NOT NULL DEFAULT '',cwd TEXT NOT NULL DEFAULT '',context_prompt TEXT NOT NULL DEFAULT '',owner_user_id INTEGER REFERENCES users(id),created_at TEXT NOT NULL DEFAULT(datetime('now')),updated_at TEXT NOT NULL DEFAULT(datetime('now')),UNIQUE(owner_user_id,mention));",
+        "source": "server/chat.ts",
+        "line": 763
+      },
+      {
+        "kind": "index",
+        "name": "vault_agents_vault_idx",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS vault_agents_vault_idx ON vault_agents(vault_id);",
+        "source": "server/chat.ts",
+        "line": 784
+      },
+      {
+        "kind": "index",
+        "name": "vault_agents_owner_idx",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS vault_agents_owner_idx ON vault_agents(owner_user_id);",
+        "source": "server/chat.ts",
+        "line": 785
+      },
+      {
+        "kind": "table",
+        "name": "community_read_state",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS community_read_state(user_id INTEGER NOT NULL REFERENCES users(id)ON DELETE CASCADE,source_type TEXT NOT NULL CHECK(source_type IN('channel','note')),source_id TEXT NOT NULL,read_at TEXT NOT NULL,PRIMARY KEY(user_id,source_type,source_id));",
+        "source": "server/communityActivity.ts",
+        "line": 98
+      },
+      {
+        "kind": "index",
+        "name": "community_read_state_source_idx",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS community_read_state_source_idx ON community_read_state(source_type,source_id);",
+        "source": "server/communityActivity.ts",
+        "line": 105
+      },
+      {
+        "kind": "table",
+        "name": "community_note_activity",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS community_note_activity(id INTEGER PRIMARY KEY AUTOINCREMENT,note_id TEXT NOT NULL REFERENCES notes(id)ON DELETE CASCADE,actor_user_id INTEGER NOT NULL REFERENCES users(id)ON DELETE CASCADE,changed_at TEXT NOT NULL);",
+        "source": "server/communityActivity.ts",
+        "line": 108
+      },
+      {
+        "kind": "index",
+        "name": "community_note_activity_note_idx",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS community_note_activity_note_idx ON community_note_activity(note_id,changed_at DESC,id DESC);",
+        "source": "server/communityActivity.ts",
+        "line": 114
+      },
+      {
+        "kind": "table",
+        "name": "vault_bans",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS vault_bans(vault_id TEXT NOT NULL REFERENCES vaults(id)ON DELETE CASCADE,user_id INTEGER NOT NULL REFERENCES users(id)ON DELETE CASCADE,banned_by INTEGER REFERENCES users(id)ON DELETE SET NULL,reason TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL DEFAULT(datetime('now')),PRIMARY KEY(vault_id,user_id));",
+        "source": "server/communityModeration.ts",
+        "line": 68
+      },
+      {
+        "kind": "index",
+        "name": "idx_vault_bans_user",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS idx_vault_bans_user ON vault_bans(user_id);",
+        "source": "server/communityModeration.ts",
+        "line": 76
+      },
+      {
+        "kind": "table",
+        "name": "content_reports",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS content_reports(id INTEGER PRIMARY KEY AUTOINCREMENT,vault_id TEXT NOT NULL REFERENCES vaults(id)ON DELETE CASCADE,target_type TEXT NOT NULL,target_id TEXT NOT NULL,reporter_user_id INTEGER NOT NULL REFERENCES users(id)ON DELETE CASCADE,reason TEXT NOT NULL,detail TEXT NOT NULL DEFAULT '',status TEXT NOT NULL DEFAULT 'open',reviewed_by INTEGER REFERENCES users(id)ON DELETE SET NULL,reviewed_at TEXT,created_at TEXT NOT NULL DEFAULT(datetime('now')),UNIQUE(vault_id,target_type,target_id,reporter_user_id));",
+        "source": "server/communityModeration.ts",
+        "line": 78
+      },
+      {
+        "kind": "index",
+        "name": "idx_content_reports_vault",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS idx_content_reports_vault ON content_reports(vault_id,status,created_at);",
+        "source": "server/communityModeration.ts",
+        "line": 92
+      },
+      {
+        "kind": "index",
+        "name": "idx_content_reports_status",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS idx_content_reports_status ON content_reports(status,created_at);",
+        "source": "server/communityModeration.ts",
+        "line": 94
+      },
+      {
+        "kind": "index",
+        "name": "idx_content_reports_reporter",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS idx_content_reports_reporter ON content_reports(reporter_user_id,created_at);",
+        "source": "server/communityModeration.ts",
+        "line": 96
+      },
+      {
+        "kind": "table",
+        "name": "user_dm_settings",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS user_dm_settings(user_id INTEGER PRIMARY KEY REFERENCES users(id)ON DELETE CASCADE,allow_direct_messages INTEGER NOT NULL DEFAULT 1,updated_at TEXT NOT NULL DEFAULT(datetime('now')));",
+        "source": "server/directMessages.ts",
+        "line": 76
+      },
+      {
+        "kind": "table",
+        "name": "user_blocks",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS user_blocks(blocker_user_id INTEGER NOT NULL REFERENCES users(id)ON DELETE CASCADE,blocked_user_id INTEGER NOT NULL REFERENCES users(id)ON DELETE CASCADE,created_at TEXT NOT NULL DEFAULT(datetime('now')),PRIMARY KEY(blocker_user_id,blocked_user_id),CHECK(blocker_user_id != blocked_user_id));",
+        "source": "server/directMessages.ts",
+        "line": 82
+      },
+      {
+        "kind": "index",
+        "name": "idx_user_blocks_blocked",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS idx_user_blocks_blocked ON user_blocks(blocked_user_id);",
+        "source": "server/directMessages.ts",
+        "line": 89
+      },
+      {
+        "kind": "table",
+        "name": "direct_message_channels",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS direct_message_channels(user_a_id INTEGER NOT NULL REFERENCES users(id)ON DELETE CASCADE,user_b_id INTEGER NOT NULL REFERENCES users(id)ON DELETE CASCADE,source_vault_id TEXT NOT NULL REFERENCES vaults(id)ON DELETE CASCADE,source_channel_id TEXT NOT NULL REFERENCES notes(id)ON DELETE CASCADE,created_by INTEGER NOT NULL REFERENCES users(id),created_at TEXT NOT NULL DEFAULT(datetime('now')),PRIMARY KEY(user_a_id,user_b_id),CHECK(user_a_id < user_b_id));",
+        "source": "server/directMessages.ts",
+        "line": 93
+      },
+      {
+        "kind": "index",
+        "name": "idx_dm_channels_source",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS idx_dm_channels_source ON direct_message_channels(source_channel_id);",
+        "source": "server/directMessages.ts",
+        "line": 103
+      },
+      {
+        "kind": "table",
+        "name": "user_dm_vaults",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS user_dm_vaults(user_id INTEGER PRIMARY KEY REFERENCES users(id)ON DELETE CASCADE,vault_id TEXT NOT NULL REFERENCES vaults(id)ON DELETE CASCADE,created_at TEXT NOT NULL DEFAULT(datetime('now')));",
+        "source": "server/directMessages.ts",
+        "line": 107
+      },
+      {
+        "kind": "index",
+        "name": "idx_user_dm_vaults_vault",
+        "unique": true,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE UNIQUE INDEX IF NOT EXISTS idx_user_dm_vaults_vault ON user_dm_vaults(vault_id);",
+        "source": "server/directMessages.ts",
+        "line": 112
+      },
+      {
+        "kind": "table",
+        "name": "chat_note_backlinks",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS chat_note_backlinks(id TEXT PRIMARY KEY,vault_id TEXT NOT NULL,note_id TEXT,target_title TEXT NOT NULL,message_id TEXT NOT NULL,channel_id TEXT NOT NULL,author TEXT NOT NULL,snippet TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL DEFAULT(datetime('now')),deleted INTEGER NOT NULL DEFAULT 0,UNIQUE(message_id,target_title));",
+        "source": "server/evolution.ts",
+        "line": 35
+      },
+      {
+        "kind": "index",
+        "name": "chat_note_backlinks_note_idx",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS chat_note_backlinks_note_idx ON chat_note_backlinks(note_id,created_at DESC);",
+        "source": "server/evolution.ts",
+        "line": 48
+      },
+      {
+        "kind": "index",
+        "name": "chat_note_backlinks_msg_idx",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS chat_note_backlinks_msg_idx ON chat_note_backlinks(message_id);",
+        "source": "server/evolution.ts",
+        "line": 50
+      },
+      {
+        "kind": "index",
+        "name": "chat_note_backlinks_unresolved_idx",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS chat_note_backlinks_unresolved_idx ON chat_note_backlinks(vault_id,note_id,target_title);",
+        "source": "server/evolution.ts",
+        "line": 52
+      },
+      {
+        "kind": "table",
+        "name": "vault_settings",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS vault_settings(vault_id TEXT PRIMARY KEY,agent_memory_enabled INTEGER NOT NULL DEFAULT 1,updated_at TEXT NOT NULL DEFAULT(datetime('now')));",
+        "source": "server/evolution.ts",
+        "line": 55
+      },
+      {
+        "kind": "table",
+        "name": "distill_jobs",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS distill_jobs(id TEXT PRIMARY KEY,vault_id TEXT NOT NULL,channel_id TEXT NOT NULL,mode TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'completed',note_id TEXT,message_ids_json TEXT NOT NULL DEFAULT '[]',created_by INTEGER,created_at TEXT NOT NULL DEFAULT(datetime('now')),fingerprint TEXT);",
+        "source": "server/evolution.ts",
+        "line": 61
+      },
+      {
+        "kind": "index",
+        "name": "distill_jobs_fp_idx",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS distill_jobs_fp_idx ON distill_jobs(vault_id,fingerprint);",
+        "source": "server/evolution.ts",
+        "line": 73
+      },
+      {
+        "kind": "table",
+        "name": "managed_agent_entitlements",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS managed_agent_entitlements(vault_id TEXT PRIMARY KEY REFERENCES vaults(id)ON DELETE CASCADE,enabled INTEGER NOT NULL DEFAULT 0,monthly_cap_micros INTEGER NOT NULL DEFAULT 0,per_run_cap_micros INTEGER NOT NULL DEFAULT 0,included_micros INTEGER NOT NULL DEFAULT 0,concurrency_limit INTEGER NOT NULL DEFAULT 1,allowed_models_json TEXT NOT NULL DEFAULT '[\"deepseek-v4-flash\"]',updated_at TEXT NOT NULL DEFAULT(datetime('now')));",
+        "source": "server/managedAgents.ts",
+        "line": 60
+      },
+      {
+        "kind": "table",
+        "name": "managed_usage_reservations",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS managed_usage_reservations(id TEXT PRIMARY KEY,vault_id TEXT NOT NULL REFERENCES vaults(id)ON DELETE CASCADE,run_id INTEGER UNIQUE REFERENCES runs(id)ON DELETE SET NULL,model TEXT NOT NULL,estimated_micros INTEGER NOT NULL,checkpointed_micros INTEGER NOT NULL DEFAULT 0,state TEXT NOT NULL CHECK(state IN('reserved','settled','released','expired')),month_key TEXT NOT NULL,expires_at TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT(datetime('now')),settled_at TEXT);",
+        "source": "server/managedAgents.ts",
+        "line": 70
+      },
+      {
+        "kind": "index",
+        "name": "managed_usage_reservations_budget_idx",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS managed_usage_reservations_budget_idx ON managed_usage_reservations(vault_id,month_key,state);",
+        "source": "server/managedAgents.ts",
+        "line": 83
+      },
+      {
+        "kind": "table",
+        "name": "managed_usage_ledger",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS managed_usage_ledger(id TEXT PRIMARY KEY,reservation_id TEXT UNIQUE REFERENCES managed_usage_reservations(id),vault_id TEXT NOT NULL REFERENCES vaults(id)ON DELETE CASCADE,run_id INTEGER REFERENCES runs(id)ON DELETE SET NULL,provider TEXT NOT NULL,model TEXT NOT NULL,input_tokens INTEGER NOT NULL DEFAULT 0,cached_input_tokens INTEGER NOT NULL DEFAULT 0,reasoning_tokens INTEGER NOT NULL DEFAULT 0,output_tokens INTEGER NOT NULL DEFAULT 0,estimated_micros INTEGER NOT NULL,settled_micros INTEGER NOT NULL,outcome TEXT NOT NULL,provider_request_id TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL DEFAULT(datetime('now')));",
+        "source": "server/managedAgents.ts",
+        "line": 85
+      },
+      {
+        "kind": "index",
+        "name": "managed_usage_ledger_vault_idx",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS managed_usage_ledger_vault_idx ON managed_usage_ledger(vault_id,created_at);",
+        "source": "server/managedAgents.ts",
+        "line": 102
+      },
+      {
+        "kind": "table",
+        "name": "managed_agent_executions",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS managed_agent_executions(id TEXT PRIMARY KEY,reservation_id TEXT NOT NULL UNIQUE REFERENCES managed_usage_reservations(id)ON DELETE CASCADE,vault_id TEXT NOT NULL REFERENCES vaults(id)ON DELETE CASCADE,run_id INTEGER NOT NULL UNIQUE REFERENCES runs(id)ON DELETE CASCADE,model TEXT NOT NULL,execution_owner TEXT NOT NULL,provider TEXT NOT NULL,state TEXT NOT NULL CHECK(state IN('queued','claimed','completed','failed','canceled','expired')),attempt INTEGER NOT NULL DEFAULT 0,dispatch_secret_hash TEXT NOT NULL,claim_token_hash TEXT,claim_expires_at TEXT,last_heartbeat_at TEXT,provider_idempotency_key TEXT NOT NULL UNIQUE,provider_request_id TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL DEFAULT(datetime('now')),claimed_at TEXT,completed_at TEXT);",
+        "source": "server/managedAgents.ts",
+        "line": 103
+      },
+      {
+        "kind": "index",
+        "name": "managed_agent_executions_owner_idx",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS managed_agent_executions_owner_idx ON managed_agent_executions(execution_owner,state,claim_expires_at);",
+        "source": "server/managedAgents.ts",
+        "line": 123
+      },
+      {
+        "kind": "table",
+        "name": "managed_agent_audit",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS managed_agent_audit(id TEXT PRIMARY KEY,vault_id TEXT NOT NULL REFERENCES vaults(id)ON DELETE CASCADE,execution_id TEXT REFERENCES managed_agent_executions(id)ON DELETE SET NULL,reservation_id TEXT REFERENCES managed_usage_reservations(id)ON DELETE SET NULL,actor TEXT NOT NULL,event TEXT NOT NULL,detail_json TEXT NOT NULL DEFAULT '{}',created_at TEXT NOT NULL DEFAULT(datetime('now')));",
+        "source": "server/managedAgents.ts",
+        "line": 125
+      },
+      {
+        "kind": "index",
+        "name": "managed_agent_audit_vault_idx",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS managed_agent_audit_vault_idx ON managed_agent_audit(vault_id,created_at DESC);",
+        "source": "server/managedAgents.ts",
+        "line": 135
+      },
+      {
+        "kind": "index",
+        "name": "idx_vaults_visibility",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS idx_vaults_visibility ON vaults(visibility);",
+        "source": "server/publicVaults.ts",
+        "line": 117
+      },
+      {
+        "kind": "table",
+        "name": "public_vault_join_requests",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS public_vault_join_requests(id INTEGER PRIMARY KEY AUTOINCREMENT,vault_id TEXT NOT NULL REFERENCES vaults(id)ON DELETE CASCADE,user_id INTEGER NOT NULL REFERENCES users(id)ON DELETE CASCADE,status TEXT NOT NULL DEFAULT 'pending',reviewed_by INTEGER REFERENCES users(id)ON DELETE SET NULL,created_at TEXT NOT NULL DEFAULT(datetime('now')),updated_at TEXT NOT NULL DEFAULT(datetime('now')),UNIQUE(vault_id,user_id));",
+        "source": "server/publicVaults.ts",
+        "line": 118
+      },
+      {
+        "kind": "index",
+        "name": "idx_public_join_requests_owner",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS idx_public_join_requests_owner ON public_vault_join_requests(vault_id,status,created_at);",
+        "source": "server/publicVaults.ts",
+        "line": 128
+      },
+      {
+        "kind": "table",
+        "name": "published_notes",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS published_notes(slug TEXT PRIMARY KEY,note_id TEXT NOT NULL UNIQUE REFERENCES notes(id)ON DELETE CASCADE,title TEXT NOT NULL,content TEXT NOT NULL,author_username TEXT NOT NULL,published_at TEXT NOT NULL DEFAULT(datetime('now')),updated_at TEXT NOT NULL DEFAULT(datetime('now')),revoked_at TEXT);",
+        "source": "server/publish.ts",
+        "line": 35
+      },
+      {
+        "kind": "index",
+        "name": "idx_published_notes_note_id",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS idx_published_notes_note_id ON published_notes(note_id);",
+        "source": "server/publish.ts",
+        "line": 45
+      },
+      {
+        "kind": "table",
+        "name": "runs",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS runs(id INTEGER PRIMARY KEY AUTOINCREMENT,vault_id TEXT NOT NULL REFERENCES vaults(id)ON DELETE CASCADE,note_id TEXT REFERENCES notes(id)ON DELETE SET NULL,prompt TEXT NOT NULL,agent TEXT NOT NULL DEFAULT 'claude-code',session_id TEXT,conversation_id TEXT NOT NULL DEFAULT '',status TEXT NOT NULL DEFAULT 'queued',started_at TEXT NOT NULL DEFAULT(datetime('now')),finished_at TEXT,summary TEXT,model TEXT,chat_dispatch_id TEXT);",
+        "source": "server/runner.ts",
+        "line": 99
+      },
+      {
+        "kind": "table",
+        "name": "run_events",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS run_events(id INTEGER PRIMARY KEY AUTOINCREMENT,run_id INTEGER NOT NULL REFERENCES runs(id)ON DELETE CASCADE,seq INTEGER NOT NULL,type TEXT NOT NULL,payload_json TEXT NOT NULL,ts TEXT NOT NULL DEFAULT(datetime('now')),UNIQUE(run_id,seq));",
+        "source": "server/runner.ts",
+        "line": 115
+      },
+      {
+        "kind": "table",
+        "name": "delegated_runs",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS delegated_runs(run_id INTEGER PRIMARY KEY REFERENCES runs(id)ON DELETE CASCADE,owner_user_id INTEGER NOT NULL,started_at TEXT NOT NULL DEFAULT(datetime('now')));",
+        "source": "server/runner.ts",
+        "line": 126
+      },
+      {
+        "kind": "index",
+        "name": "delegated_runs_owner_idx",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS delegated_runs_owner_idx ON delegated_runs(owner_user_id);",
+        "source": "server/runner.ts",
+        "line": 131
+      },
+      {
+        "kind": "index",
+        "name": "runs_chat_dispatch_idx",
+        "unique": true,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE UNIQUE INDEX IF NOT EXISTS runs_chat_dispatch_idx ON runs(chat_dispatch_id)WHERE chat_dispatch_id IS NOT NULL",
+        "source": "server/runner.ts",
+        "line": 152
+      },
+      {
+        "kind": "table",
+        "name": "agent_journal",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS agent_journal(id INTEGER PRIMARY KEY AUTOINCREMENT,vault_id TEXT NOT NULL,agent_key TEXT NOT NULL DEFAULT '',run_id INTEGER,kind TEXT NOT NULL DEFAULT 'observation',body TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT(datetime('now')),consolidated_at TEXT);",
+        "source": "server/scratchpad.ts",
+        "line": 64
+      },
+      {
+        "kind": "index",
+        "name": "agent_journal_vault_idx",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS agent_journal_vault_idx ON agent_journal(vault_id,agent_key,id);",
+        "source": "server/scratchpad.ts",
+        "line": 74
+      },
+      {
+        "kind": "index",
+        "name": "agent_journal_open_idx",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS agent_journal_open_idx ON agent_journal(vault_id,agent_key,consolidated_at);",
+        "source": "server/scratchpad.ts",
+        "line": 76
+      },
+      {
+        "kind": "table",
+        "name": "scratchpad_state",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS scratchpad_state(vault_id TEXT NOT NULL,agent_key TEXT NOT NULL DEFAULT '',last_consolidation_at TEXT,PRIMARY KEY(vault_id,agent_key));",
+        "source": "server/scratchpad.ts",
+        "line": 79
+      },
+      {
+        "kind": "table",
+        "name": "scratchpad_note_stats",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS scratchpad_note_stats(note_id TEXT PRIMARY KEY,vault_id TEXT NOT NULL,uses INTEGER NOT NULL DEFAULT 0,wins INTEGER NOT NULL DEFAULT 0,losses INTEGER NOT NULL DEFAULT 0,last_result TEXT,last_used_at TEXT);",
+        "source": "server/scratchpad.ts",
+        "line": 86
+      },
+      {
+        "kind": "index",
+        "name": "scratchpad_note_stats_vault_idx",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS scratchpad_note_stats_vault_idx ON scratchpad_note_stats(vault_id);",
+        "source": "server/scratchpad.ts",
+        "line": 95
+      },
+      {
+        "kind": "table",
+        "name": "agent_open_threads",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS agent_open_threads(id INTEGER PRIMARY KEY AUTOINCREMENT,vault_id TEXT NOT NULL,agent_key TEXT NOT NULL DEFAULT '',intent TEXT NOT NULL,blocked_on TEXT NOT NULL DEFAULT '',next_try TEXT NOT NULL DEFAULT '',pointer TEXT NOT NULL DEFAULT '',run_id INTEGER,created_at TEXT NOT NULL DEFAULT(datetime('now')),updated_at TEXT NOT NULL DEFAULT(datetime('now')),closed_at TEXT,close_reason TEXT);",
+        "source": "server/scratchpad.ts",
+        "line": 98
+      },
+      {
+        "kind": "index",
+        "name": "agent_open_threads_open_idx",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS agent_open_threads_open_idx ON agent_open_threads(vault_id,agent_key,closed_at,id);",
+        "source": "server/scratchpad.ts",
+        "line": 112
+      },
+      {
+        "kind": "index",
+        "name": "vaults_root_path_uidx",
+        "unique": true,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE UNIQUE INDEX IF NOT EXISTS vaults_root_path_uidx ON vaults(root_path)",
+        "source": "server/vault.ts",
+        "line": 463
+      },
+      {
+        "kind": "table",
+        "name": "${name}",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": false,
+        "sql": "CREATE TABLE ${name}(vault_id TEXT NOT NULL REFERENCES vaults(id)ON DELETE CASCADE,user_id INTEGER NOT NULL REFERENCES users(id)ON DELETE CASCADE,role TEXT NOT NULL DEFAULT 'editor' CHECK(role IN('owner','editor','viewer')),invited_by INTEGER REFERENCES users(id),created_at TEXT NOT NULL DEFAULT(strftime('%Y-%m-%dT%H:%M:%fZ','now')),PRIMARY KEY(vault_id,user_id))",
+        "source": "server/vaultMembers.ts",
+        "line": 74,
+        "resolvedNames": [
+          "vault_members",
+          "vault_members_next"
+        ]
+      },
+      {
+        "kind": "index",
+        "name": "idx_vault_members_user",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS idx_vault_members_user ON vault_members(user_id)",
+        "source": "server/vaultMembers.ts",
+        "line": 125
+      },
+      {
+        "kind": "table",
+        "name": "work_items",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS work_items(id TEXT PRIMARY KEY,vault_id TEXT NOT NULL REFERENCES vaults(id)ON DELETE CASCADE,channel_id TEXT REFERENCES notes(id)ON DELETE SET NULL,title TEXT NOT NULL,brief TEXT NOT NULL DEFAULT '',status TEXT NOT NULL DEFAULT 'open',priority INTEGER NOT NULL DEFAULT 0,source_kind TEXT NOT NULL DEFAULT '',source_id TEXT NOT NULL DEFAULT '',assignee_registration_id TEXT,lease_holder TEXT,lease_expires_at TEXT,repository TEXT NOT NULL DEFAULT '',base_commit TEXT NOT NULL DEFAULT '',branch TEXT NOT NULL DEFAULT '',workspace_mode TEXT NOT NULL DEFAULT 'shared',worktree_path TEXT NOT NULL DEFAULT '',pr_number INTEGER,pr_url TEXT NOT NULL DEFAULT '',pr_state TEXT NOT NULL DEFAULT '',summary TEXT NOT NULL DEFAULT '',verification TEXT NOT NULL DEFAULT '',git_state_json TEXT NOT NULL DEFAULT '',git_state_updated_at TEXT,contract TEXT NOT NULL DEFAULT '',token_budget INTEGER NOT NULL DEFAULT 0,tokens_used INTEGER NOT NULL DEFAULT 0,stop_reason TEXT NOT NULL DEFAULT '',created_by INTEGER NOT NULL REFERENCES users(id),created_at TEXT NOT NULL DEFAULT(datetime('now')),updated_at TEXT NOT NULL DEFAULT(datetime('now')));",
+        "source": "server/workItems.ts",
+        "line": 171
+      },
+      {
+        "kind": "index",
+        "name": "work_items_vault_idx",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS work_items_vault_idx ON work_items(vault_id,status,updated_at);",
+        "source": "server/workItems.ts",
+        "line": 204
+      },
+      {
+        "kind": "index",
+        "name": "work_items_channel_idx",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS work_items_channel_idx ON work_items(channel_id,status,updated_at);",
+        "source": "server/workItems.ts",
+        "line": 205
+      },
+      {
+        "kind": "index",
+        "name": "work_items_lease_idx",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS work_items_lease_idx ON work_items(lease_expires_at)WHERE lease_expires_at IS NOT NULL;",
+        "source": "server/workItems.ts",
+        "line": 206
+      },
+      {
+        "kind": "table",
+        "name": "work_item_dependencies",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS work_item_dependencies(work_item_id TEXT NOT NULL REFERENCES work_items(id)ON DELETE CASCADE,depends_on_id TEXT NOT NULL REFERENCES work_items(id)ON DELETE CASCADE,PRIMARY KEY(work_item_id,depends_on_id));",
+        "source": "server/workItems.ts",
+        "line": 209
+      },
+      {
+        "kind": "table",
+        "name": "work_item_runs",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS work_item_runs(work_item_id TEXT NOT NULL REFERENCES work_items(id)ON DELETE CASCADE,run_id INTEGER NOT NULL,linked_at TEXT NOT NULL DEFAULT(datetime('now')),PRIMARY KEY(work_item_id,run_id));",
+        "source": "server/workItems.ts",
+        "line": 215
+      },
+      {
+        "kind": "index",
+        "name": "work_item_runs_run_idx",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS work_item_runs_run_idx ON work_item_runs(run_id);",
+        "source": "server/workItems.ts",
+        "line": 221
+      },
+      {
+        "kind": "table",
+        "name": "work_item_reviews",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE TABLE IF NOT EXISTS work_item_reviews(id TEXT PRIMARY KEY,work_item_id TEXT NOT NULL REFERENCES work_items(id)ON DELETE CASCADE,kind TEXT NOT NULL DEFAULT 'handoff',author_user_id INTEGER,from_registration_id TEXT,to_registration_id TEXT,note TEXT NOT NULL DEFAULT '',file_path TEXT NOT NULL DEFAULT '',line INTEGER,base_commit TEXT NOT NULL DEFAULT '',head_commit TEXT NOT NULL DEFAULT '',status TEXT NOT NULL DEFAULT 'requested',created_at TEXT NOT NULL DEFAULT(datetime('now')));",
+        "source": "server/workItems.ts",
+        "line": 223
+      },
+      {
+        "kind": "index",
+        "name": "work_item_reviews_item_idx",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS work_item_reviews_item_idx ON work_item_reviews(work_item_id,created_at);",
+        "source": "server/workItems.ts",
+        "line": 238
+      }
+    ]
+  }
+}

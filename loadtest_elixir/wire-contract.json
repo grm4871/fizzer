@@ -1,0 +1,68 @@
+{
+  "engineIo": {
+    "protocol": 4,
+    "path": "/socket.io/",
+    "transports": ["polling", "websocket"],
+    "clientOrder": ["polling", "websocket"],
+    "pollingSeparatorHex": "1e",
+    "pingIntervalMs": 25000,
+    "pingTimeoutMs": 60000,
+    "maxPayload": 1000000,
+    "upgradeProbe": ["2probe", "3probe", "5"]
+  },
+  "socketIo": {
+    "protocol": 5,
+    "binaryPacketsUsed": false,
+    "namespaces": {
+      "/vault": {
+        "clientEvents": ["joinVault", "leaveVault", "joinChatChannel", "leaveChatChannel"],
+        "serverEvents": [
+          "community:changed",
+          "vault:renamed",
+          "vault:membersChanged",
+          "vault:visibilityChanged",
+          "vault:noteChanged",
+          "vault:noteCreated",
+          "vault:noteDeleted",
+          "vault:chatMessageCreated",
+          "vault:chatMessageUpdated",
+          "vault:chatMessageDeleted",
+          "vault:chatAgentMemberUpserted",
+          "vault:chatAgentMemberRemoved",
+          "vault:chatPresence",
+          "vault:userProfileUpdated",
+          "vault:vaultAgentUpserted",
+          "vault:vaultAgentRemoved",
+          "vault:vaultAgentDeleted",
+          "vault:chatChannelSettings"
+        ]
+      },
+      "/runs": {
+        "clientEvents": ["joinRun", "leaveRun"],
+        "serverEvents": ["event"]
+      },
+      "/runners": {
+        "clientEvents": ["runner:register", "runner:planUsage", "runner:runEvent"],
+        "serverEvents": ["runner:registered", "run:delegate", "run:cancel", "workspace:prepare"],
+        "acknowledgedServerEvents": ["run:cancel", "workspace:prepare"]
+      }
+    },
+    "namespaceAuth": ["auth.token", "cookie:cascade_session"],
+    "rooms": ["user:<user-id>", "vault:<vault-id>", "run:<run-id>", "chat:<source-channel-id>"],
+    "clientRejoinsRoomsOnEveryConnect": true,
+    "connectionStateRecoveryExtensionUsed": false
+  },
+  "runnerLifecycle": {
+    "singleSocketPerOwner": true,
+    "disconnectGraceMs": 20000,
+    "orphanReclaimMs": 120000,
+    "registerFields": ["activeRunIds", "runnerInstanceId"],
+    "terminalStatuses": ["completed", "failed", "canceled"]
+  },
+  "ordering": {
+    "runEvents": "persisted integer seq ascending per run",
+    "chatMessages": "server persistence seq ascending; created_at then rowid on reload",
+    "persistBeforeBroadcast": true,
+    "terminalSessionCommitBeforeBroadcast": true
+  }
+}

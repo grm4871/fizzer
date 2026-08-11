@@ -10,12 +10,13 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { io } from 'socket.io-client';
+import { launchTestBackend, resolveTestBackend } from './lib/test-backend.mjs';
+import { pickPort } from './lib/test-ports.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, '..');
-const API_PORT = Number(process.env.TEST_API_PORT || 3097);
+const API_PORT = Number(process.env.TEST_API_PORT) || await pickPort();
 const API_BASE = `http://127.0.0.1:${API_PORT}`;
-const DB_PATH = `/tmp/cascade-runner-e2e-${API_PORT}.db`;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -36,50 +37,29 @@ async function fetchJson(url, options = {}) {
   return data;
 }
 
-async function waitForHealth(timeoutMs = 15000) {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    try {
-      const data = await fetchJson(`${API_BASE}/api/health`);
-      if (data.status === 'ok') return;
-    } catch {
-      // retry
-    }
-    await sleep(200);
-  }
-  throw new Error('Server did not become healthy in time');
-}
-
 function startServer() {
-  const child = spawn('node', ['dist/index.js'], {
-    cwd: root,
+  return launchTestBackend({
+    name: 'desktop-runner-e2e', repoRoot: root, port: API_PORT,
     env: {
-      ...process.env,
-      API_PORT: String(API_PORT),
-      API_HOST: '127.0.0.1',
-      DOCS_DB_PATH: DB_PATH,
       JWT_SECRET: 'e2e-test-secret',
       CASCADE_ALLOW_OPEN_REGISTRATION: 'true',
     },
-    stdio: ['ignore', 'pipe', 'pipe'],
   });
-  return child;
 }
 
 async function main() {
-  console.log('[e2e] Building server...');
-  const build = spawn('npm', ['run', 'build'], { cwd: root, stdio: 'inherit', shell: true });
-  await new Promise((resolve, reject) => {
-    build.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`build failed: ${code}`))));
-  });
+  if (resolveTestBackend() === 'node') {
+    console.log('[e2e] Building server...');
+    const build = spawn('npm', ['run', 'build'], { cwd: root, stdio: 'inherit', shell: true });
+    await new Promise((resolve, reject) => {
+      build.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`build failed: ${code}`))));
+    });
+  }
 
   console.log('[e2e] Starting server on', API_BASE);
-  const server = startServer();
-  server.stdout.on('data', (chunk) => process.stdout.write(`[server] ${chunk}`));
-  server.stderr.on('data', (chunk) => process.stderr.write(`[server-err] ${chunk}`));
+  const server = await startServer();
 
   try {
-    await waitForHealth();
 
     const username = `runner_e2e_${Date.now()}`;
     const { token } = await fetchJson(`${API_BASE}/api/auth/register`, {
@@ -388,8 +368,7 @@ async function main() {
 
     console.log('[e2e] All desktop runner tests passed');
   } finally {
-    server.kill('SIGTERM');
-    await sleep(300);
+    await server.stop();
   }
 }
 

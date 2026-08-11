@@ -29,6 +29,7 @@ debug.log
 # Local-only operational scripts and secrets.
 .private/
 .cascade/
+.cascade-release/
 deploy-secret
 *.secret
 

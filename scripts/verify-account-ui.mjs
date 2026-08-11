@@ -75,6 +75,7 @@ try {
   await page.locator('.sidebar-footer .user-info').click();
   const sharing = page.locator('.account-settings');
   await sharing.waitFor();
+  await sharing.getByRole('tab', { name: /Current vault/ }).click();
   if (!(await page.locator('.vault-name-meta').innerText()).includes('Private')) throw new Error('a private vault should read as private in the sidebar header');
   await sharing.getByLabel('Public summary').fill('A focused workspace for public product research.');
   await sharing.getByLabel('Topics').fill('Research, Product Design, research');
@@ -89,6 +90,7 @@ try {
   await page.keyboard.press('Escape');
   await sharing.waitFor({ state: 'detached' });
   await page.locator('.sidebar-footer .user-info').click();
+  await sharing.getByRole('tab', { name: /Current vault/ }).click();
   await sharing.getByText(`@${requesterName}`).waitFor();
   await sharing.getByRole('button', { name: 'Approve as viewer' }).click();
   await sharing.getByText(`Added @${requesterName} as viewer`).waitFor();
@@ -103,6 +105,7 @@ try {
   await sharing.waitFor({ state: 'detached' });
   await page.locator('.sidebar-footer .user-info').click();
   await sharing.waitFor();
+  await sharing.getByRole('tab', { name: /Current vault/ }).click();
   const queuedReport = sharing.locator('.account-moderation-queue article', { hasText: 'Viewer report detail' });
   await queuedReport.waitFor();
   if ((await queuedReport.innerText()).includes(requesterName)) throw new Error('vault owner queue exposed reporter identity');
@@ -136,6 +139,7 @@ try {
   await sharing.locator('.account-banned-users', { hasText: mateName }).getByRole('button', { name: 'Unban' }).click();
   await sharing.getByText(`Unbanned @${mateName}`).waitFor();
 
+  await sharing.getByRole('tab', { name: /Security/ }).click();
   await page.getByLabel('Current password').fill('testpass12345');
   await page.getByLabel('New password', { exact: true }).fill('updatedpass12345');
   await page.getByLabel('Confirm new password').fill('updatedpass12345');

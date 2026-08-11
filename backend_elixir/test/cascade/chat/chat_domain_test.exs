@@ -1,0 +1,844 @@
+defmodule Cascade.ChatDomainTest do
+  use ExUnit.Case, async: false
+
+  import Plug.Conn
+  import Plug.Test
+
+  alias Cascade.Accounts.SQL
+  alias Cascade.Auth.Token
+  alias Cascade.Chat.{Agents, Channel, Messages, RoomContext, Schema}
+  alias Cascade.Content.Store
+  alias Cascade.Missions.Dispatches
+
+  @node_column_signatures %{
+    "chat_messages" => [
+      ["id", "TEXT", 0, nil, 1],
+      ["channel_id", "TEXT", 1, nil, 0],
+      ["vault_id", "TEXT", 1, nil, 0],
+      ["author", "TEXT", 1, nil, 0],
+      ["body", "TEXT", 1, "''", 0],
+      ["created_at", "TEXT", 1, "datetime('now')", 0],
+      ["activity_at", "TEXT", 0, nil, 0],
+      ["actor_user_id", "INTEGER", 0, nil, 0],
+      ["status", "TEXT", 0, nil, 0],
+      ["agent_id", "TEXT", 0, nil, 0],
+      ["registration_id", "TEXT", 0, nil, 0],
+      ["run_id", "INTEGER", 0, nil, 0],
+      ["blocks_json", "TEXT", 0, nil, 0],
+      ["harness_log", "TEXT", 0, nil, 0],
+      ["images_json", "TEXT", 0, nil, 0],
+      ["attachments_json", "TEXT", 0, nil, 0],
+      ["reply_to_json", "TEXT", 0, nil, 0],
+      ["forwarded_from_json", "TEXT", 0, nil, 0],
+      ["change_request_json", "TEXT", 0, nil, 0],
+      ["mission_json", "TEXT", 0, nil, 0],
+      ["mission_task_id", "TEXT", 0, nil, 0],
+      ["clarification_json", "TEXT", 0, nil, 0]
+    ],
+    "chat_agent_members" => [
+      ["id", "TEXT", 0, nil, 1],
+      ["channel_id", "TEXT", 1, nil, 0],
+      ["vault_id", "TEXT", 1, nil, 0],
+      ["agent_id", "TEXT", 1, nil, 0],
+      ["display_name", "TEXT", 1, "''", 0],
+      ["avatar_url", "TEXT", 1, "''", 0],
+      ["mention", "TEXT", 1, "''", 0],
+      ["model", "TEXT", 1, "''", 0],
+      ["reasoning_effort", "TEXT", 1, "''", 0],
+      ["priority_service_tier", "INTEGER", 1, "0", 0],
+      ["cwd", "TEXT", 1, "''", 0],
+      ["context_prompt", "TEXT", 1, "''", 0],
+      ["taggable_by_agents", "INTEGER", 1, "0", 0],
+      ["reply_to_every_message", "INTEGER", 1, "0", 0],
+      ["orchestrator", "INTEGER", 1, "0", 0],
+      ["pingable_by_others", "INTEGER", 1, "0", 0],
+      ["yolo", "INTEGER", 1, "0", 0],
+      ["conversation_id", "TEXT", 1, "''", 0],
+      ["created_at", "TEXT", 1, "datetime('now')", 0],
+      ["updated_at", "TEXT", 1, "datetime('now')", 0],
+      ["vault_agent_id", "TEXT", 1, "''", 0]
+    ],
+    "chat_channel_links" => [
+      ["local_channel_id", "TEXT", 0, nil, 1],
+      ["local_vault_id", "TEXT", 1, nil, 0],
+      ["source_channel_id", "TEXT", 1, nil, 0],
+      ["source_vault_id", "TEXT", 1, nil, 0],
+      ["created_by", "INTEGER", 1, nil, 0],
+      ["created_at", "TEXT", 1, "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')", 0]
+    ],
+    "chat_note_grants" => [
+      ["message_id", "TEXT", 1, nil, 1],
+      ["channel_id", "TEXT", 1, nil, 0],
+      ["note_id", "TEXT", 1, nil, 2],
+      ["granted_by", "INTEGER", 1, nil, 0],
+      ["created_at", "TEXT", 1, "datetime('now')", 0],
+      ["title_snapshot", "TEXT", 0, nil, 0],
+      ["content_snapshot", "TEXT", 0, nil, 0],
+      ["preview_snapshot", "TEXT", 0, nil, 0]
+    ]
+  }
+
+  @node_foreign_key_signatures %{
+    "chat_messages" => [
+      ["actor_user_id", "users", "id", "NO ACTION", "NO ACTION", "NONE"],
+      ["channel_id", "notes", "id", "NO ACTION", "CASCADE", "NONE"],
+      ["vault_id", "vaults", "id", "NO ACTION", "CASCADE", "NONE"]
+    ],
+    "chat_agent_members" => [
+      ["channel_id", "notes", "id", "NO ACTION", "CASCADE", "NONE"],
+      ["vault_id", "vaults", "id", "NO ACTION", "CASCADE", "NONE"]
+    ],
+    "chat_channel_links" => [
+      ["created_by", "users", "id", "NO ACTION", "NO ACTION", "NONE"],
+      ["local_channel_id", "notes", "id", "NO ACTION", "CASCADE", "NONE"],
+      ["local_vault_id", "vaults", "id", "NO ACTION", "CASCADE", "NONE"],
+      ["source_channel_id", "notes", "id", "NO ACTION", "CASCADE", "NONE"],
+      ["source_vault_id", "vaults", "id", "NO ACTION", "CASCADE", "NONE"]
+    ],
+    "chat_note_grants" => [
+      ["channel_id", "notes", "id", "NO ACTION", "CASCADE", "NONE"],
+      ["granted_by", "users", "id", "NO ACTION", "NO ACTION", "NONE"],
+      ["message_id", "chat_messages", "id", "NO ACTION", "CASCADE", "NONE"],
+      ["note_id", "notes", "id", "NO ACTION", "CASCADE", "NONE"]
+    ]
+  }
+
+  setup do
+    root =
+      Path.join(System.tmp_dir!(), "cascade-elixir-chat-#{System.unique_integer([:positive])}")
+
+    previous = System.get_env("CASCADE_VAULTS_BASE_DIR")
+    System.put_env("CASCADE_VAULTS_BASE_DIR", root)
+
+    Cascade.Accounts.Schema.ensure!()
+    Cascade.Runs.Schema.ensure!()
+    Schema.ensure!()
+    Cascade.Missions.Schema.ensure!()
+    reset_database()
+
+    SQL.exec("""
+    INSERT INTO users(id,username,password_hash,display_name,avatar_url,auth_version) VALUES
+      (1,'alice','x','Alice','',0),(2,'bob','x','Bob','',0),(3,'carol','x','Carol','',0)
+    """)
+
+    on_exit(fn ->
+      reset_database()
+      File.rm_rf!(root)
+
+      if previous,
+        do: System.put_env("CASCADE_VAULTS_BASE_DIR", previous),
+        else: System.delete_env("CASCADE_VAULTS_BASE_DIR")
+    end)
+
+    :ok
+  end
+
+  test "fresh schema creates every table, index, FTS table, and trigger explicitly" do
+    for trigger <- ~w(chat_messages_ai chat_messages_ad chat_messages_au),
+        do: SQL.exec("DROP TRIGGER IF EXISTS #{trigger}")
+
+    SQL.exec("DROP TABLE IF EXISTS chat_messages_fts")
+
+    for table <-
+          ~w(chat_note_grants chat_channel_settings chat_channel_links vault_agent_exclusions chat_agent_members vault_agents chat_messages),
+        do: SQL.exec("DROP TABLE IF EXISTS #{table}")
+
+    assert :ok = Schema.ensure!()
+
+    for table <-
+          ~w(chat_messages chat_agent_members vault_agents vault_agent_exclusions chat_channel_links chat_channel_settings chat_note_grants chat_messages_fts) do
+      assert SQL.one("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", [table]) == [1]
+    end
+
+    for index <-
+          ~w(chat_messages_channel_idx chat_messages_activity_idx chat_messages_run_idx chat_agent_members_channel_idx vault_agents_vault_idx vault_agents_owner_idx chat_channel_links_source_idx chat_note_grants_channel_idx) do
+      assert SQL.one("SELECT 1 FROM sqlite_master WHERE type='index' AND name=?", [index]) == [1]
+    end
+
+    for table <- Map.keys(@node_column_signatures), do: assert_node_columns(table)
+
+    refute SQL.table_sql("chat_agent_members") =~ "UNIQUE(channel_id,vault_agent_id)"
+    assert SQL.table_sql("chat_channel_links") =~ "UNIQUE(local_vault_id,source_channel_id)"
+    assert SQL.table_sql("chat_messages") =~ "REFERENCES users(id)"
+    assert SQL.table_sql("chat_note_grants") =~ "PRIMARY KEY(message_id,note_id)"
+
+    for trigger <- ~w(chat_messages_ai chat_messages_ad chat_messages_au) do
+      assert SQL.one("SELECT 1 FROM sqlite_master WHERE type='trigger' AND name=?", [trigger]) ==
+               [1]
+    end
+  end
+
+  test "Node upgrade canonicalizes legacy Elixir ordering without losing chat data" do
+    {source, source_channel} = chat_vault(1, "Schema source", "Source")
+    {local, local_channel} = chat_vault(2, "Schema local", "Local")
+    shared_note = Store.create_note(source.id, 1, %{title: "Shared", content: "payload"})
+
+    identity = Ecto.UUID.generate()
+
+    SQL.exec(
+      "INSERT INTO vault_agents(id,vault_id,agent_id,display_name,mention,owner_user_id) VALUES(?,?,'codex','Sol','sol',1)",
+      [identity, source.id]
+    )
+
+    Cascade.DB.Repo.checkout(fn ->
+      SQL.exec("PRAGMA foreign_keys=OFF")
+
+      try do
+        SQL.transaction(fn ->
+          for trigger <- ~w(chat_messages_ai chat_messages_ad chat_messages_au),
+              do: SQL.exec("DROP TRIGGER IF EXISTS #{trigger}")
+
+          SQL.exec("DROP TABLE IF EXISTS chat_messages_fts")
+
+          for table <- ~w(chat_note_grants chat_channel_links chat_agent_members chat_messages),
+              do: SQL.exec("DROP TABLE #{table}")
+
+          SQL.exec("""
+          CREATE TABLE chat_messages (
+            id TEXT PRIMARY KEY,channel_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+            vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,author TEXT NOT NULL,
+            body TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL DEFAULT(datetime('now')),
+            activity_at TEXT,actor_user_id INTEGER REFERENCES users(id),status TEXT,agent_id TEXT,
+            registration_id TEXT,run_id INTEGER,blocks_json TEXT,harness_log TEXT,images_json TEXT,
+            attachments_json TEXT,reply_to_json TEXT,forwarded_from_json TEXT,change_request_json TEXT,
+            clarification_json TEXT,mission_json TEXT,mission_task_id TEXT)
+          """)
+
+          SQL.exec("""
+          CREATE TABLE chat_agent_members (
+            id TEXT PRIMARY KEY,channel_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+            vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,vault_agent_id TEXT NOT NULL DEFAULT '',
+            agent_id TEXT NOT NULL,display_name TEXT NOT NULL DEFAULT '',avatar_url TEXT NOT NULL DEFAULT '',
+            mention TEXT NOT NULL DEFAULT '',model TEXT NOT NULL DEFAULT '',reasoning_effort TEXT NOT NULL DEFAULT '',
+            priority_service_tier INTEGER NOT NULL DEFAULT 0,cwd TEXT NOT NULL DEFAULT '',context_prompt TEXT NOT NULL DEFAULT '',
+            taggable_by_agents INTEGER NOT NULL DEFAULT 0,reply_to_every_message INTEGER NOT NULL DEFAULT 0,
+            orchestrator INTEGER NOT NULL DEFAULT 0,pingable_by_others INTEGER NOT NULL DEFAULT 0,yolo INTEGER NOT NULL DEFAULT 0,
+            conversation_id TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL DEFAULT(datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT(datetime('now')),UNIQUE(channel_id,vault_agent_id))
+          """)
+
+          SQL.exec("""
+          CREATE TABLE chat_channel_links (
+            local_channel_id TEXT PRIMARY KEY REFERENCES notes(id) ON DELETE CASCADE,
+            local_vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
+            source_channel_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+            source_vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
+            created_by INTEGER NOT NULL REFERENCES users(id),
+            created_at TEXT NOT NULL DEFAULT(strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+            UNIQUE(local_vault_id,source_channel_id))
+          """)
+
+          SQL.exec("""
+          CREATE TABLE chat_note_grants (
+            message_id TEXT NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
+            channel_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+            note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+            granted_by INTEGER NOT NULL REFERENCES users(id),title_snapshot TEXT,content_snapshot TEXT,
+            preview_snapshot TEXT,created_at TEXT NOT NULL DEFAULT(datetime('now')),
+            PRIMARY KEY(message_id,note_id))
+          """)
+
+          SQL.exec(
+            "INSERT INTO chat_messages(rowid,id,channel_id,vault_id,author,body,created_at,clarification_json,mission_json,mission_task_id) VALUES(41,'schema-message',?,?,'alice','preserve me','2026-08-10T12:00:00.000Z','{\"question\":\"q\"}','{\"title\":\"m\"}','task-1')",
+            [source_channel.id, source.id]
+          )
+
+          SQL.exec(
+            "INSERT INTO chat_agent_members(id,channel_id,vault_id,vault_agent_id,agent_id,display_name,mention,created_at,updated_at) VALUES('schema-member',?,?,?,'codex','Sol','sol','2026-08-10T12:01:00.000Z','2026-08-10T12:02:00.000Z')",
+            [source_channel.id, source.id, identity]
+          )
+
+          SQL.exec(
+            "INSERT INTO chat_channel_links VALUES(?,?,?,?,1,'2026-08-10T12:03:00.000Z')",
+            [local_channel.id, local.id, source_channel.id, source.id]
+          )
+
+          SQL.exec(
+            "INSERT INTO chat_note_grants VALUES('schema-message',?,?,1,'Shared','payload','preview','2026-08-10T12:04:00.000Z')",
+            [source_channel.id, shared_note.id]
+          )
+        end)
+      after
+        SQL.exec("PRAGMA foreign_keys=ON")
+      end
+    end)
+
+    assert :ok = Schema.ensure!()
+    for table <- Map.keys(@node_column_signatures), do: assert_node_columns(table)
+
+    assert ["preserve me", ~s({"title":"m"}), "task-1", ~s({"question":"q"})] ==
+             SQL.one(
+               "SELECT body,mission_json,mission_task_id,clarification_json FROM chat_messages WHERE id='schema-message'"
+             )
+
+    assert [41] == SQL.one("SELECT rowid FROM chat_messages WHERE id='schema-message'")
+
+    assert [41] ==
+             SQL.one(
+               "SELECT rowid FROM chat_messages_fts WHERE chat_messages_fts MATCH 'preserve' AND rowid=41"
+             )
+
+    assert ["schema-member", identity, "2026-08-10T12:01:00.000Z"] ==
+             SQL.one(
+               "SELECT id,vault_agent_id,created_at FROM chat_agent_members WHERE id='schema-member'"
+             )
+
+    assert ["Shared", "payload", "preview", "2026-08-10T12:04:00.000Z"] ==
+             SQL.one(
+               "SELECT title_snapshot,content_snapshot,preview_snapshot,created_at FROM chat_note_grants WHERE message_id='schema-message'"
+             )
+
+    assert [source_channel.id, "2026-08-10T12:03:00.000Z"] ==
+             SQL.one(
+               "SELECT source_channel_id,created_at FROM chat_channel_links WHERE local_channel_id=?",
+               [local_channel.id]
+             )
+
+    assert [] = SQL.all("PRAGMA foreign_key_check")
+  end
+
+  test "legacy per-vault identities upgrade on one checked-out connection and merge by owner handle" do
+    {one, first_channel} = chat_vault(1, "Legacy one", "First")
+    {two, second_channel} = chat_vault(1, "Legacy two", "Second")
+
+    Cascade.DB.Repo.checkout(fn ->
+      SQL.exec("PRAGMA foreign_keys=OFF")
+
+      try do
+        SQL.exec("DROP TABLE vault_agent_exclusions")
+        SQL.exec("DROP TABLE chat_agent_members")
+        SQL.exec("DROP TABLE vault_agents")
+
+        SQL.exec("""
+        CREATE TABLE vault_agents (
+          id TEXT PRIMARY KEY,vault_id TEXT NOT NULL,agent_id TEXT NOT NULL,display_name TEXT NOT NULL,
+          avatar_url TEXT NOT NULL DEFAULT '',mention TEXT NOT NULL,model TEXT NOT NULL DEFAULT '',
+          cwd TEXT NOT NULL DEFAULT '',context_prompt TEXT NOT NULL DEFAULT '',owner_user_id INTEGER,
+          created_at TEXT NOT NULL,updated_at TEXT NOT NULL,UNIQUE(vault_id,mention)
+        )
+        """)
+
+        SQL.exec("""
+        CREATE TABLE chat_agent_members (
+          id TEXT PRIMARY KEY,channel_id TEXT NOT NULL,vault_id TEXT NOT NULL,vault_agent_id TEXT NOT NULL DEFAULT '',
+          agent_id TEXT NOT NULL,display_name TEXT NOT NULL DEFAULT '',avatar_url TEXT NOT NULL DEFAULT '',
+          mention TEXT NOT NULL DEFAULT '',model TEXT NOT NULL DEFAULT '',reasoning_effort TEXT NOT NULL DEFAULT '',
+          priority_service_tier INTEGER NOT NULL DEFAULT 0,cwd TEXT NOT NULL DEFAULT '',context_prompt TEXT NOT NULL DEFAULT '',
+          taggable_by_agents INTEGER NOT NULL DEFAULT 0,reply_to_every_message INTEGER NOT NULL DEFAULT 0,
+          orchestrator INTEGER NOT NULL DEFAULT 0,pingable_by_others INTEGER NOT NULL DEFAULT 0,yolo INTEGER NOT NULL DEFAULT 0,
+          conversation_id TEXT NOT NULL DEFAULT '',created_at TEXT,updated_at TEXT
+        )
+        """)
+
+        SQL.exec(
+          "INSERT INTO vault_agents VALUES('old-a',?,'codex','Sol','','sol','','','',1,'2020-01-01','2020-01-01')",
+          [one.id]
+        )
+
+        SQL.exec(
+          "INSERT INTO vault_agents VALUES('old-b',?,'codex','Sol','','sol','','','',1,'2021-01-01','2021-01-01')",
+          [two.id]
+        )
+
+        SQL.exec(
+          "INSERT INTO chat_agent_members(id,channel_id,vault_id,vault_agent_id,agent_id,display_name,mention) VALUES('member-a',?,?,'old-a','codex','Sol','sol')",
+          [first_channel.id, one.id]
+        )
+
+        SQL.exec(
+          "INSERT INTO chat_agent_members(id,channel_id,vault_id,vault_agent_id,agent_id,display_name,mention) VALUES('member-b',?,?,'old-b','codex','Sol','sol')",
+          [second_channel.id, two.id]
+        )
+      after
+        SQL.exec("PRAGMA foreign_keys=ON")
+      end
+    end)
+
+    assert :ok = Schema.ensure!()
+    assert [["old-a", 1, "sol"]] = SQL.all("SELECT id,owner_user_id,mention FROM vault_agents")
+    assert SQL.all("SELECT DISTINCT vault_agent_id FROM chat_agent_members") == [["old-a"]]
+    assert SQL.table_sql("vault_agents") =~ "UNIQUE(owner_user_id,mention)"
+  end
+
+  test "linked projections keep chronological rows separate with truthful human and agent attribution" do
+    {source, source_channel} = chat_vault(1, "Source", "Room")
+    {local, local_channel} = chat_vault(2, "Bob", "Mirror")
+    assert {:ok, _} = Channel.link(source.id, source_channel.id, local.id, local_channel.id, 1)
+
+    alice = %{id: 1, username: "alice"}
+    bob = %{id: 2, username: "bob"}
+    at = "2026-08-10T12:00:00.000Z"
+
+    assert {:ok, first} =
+             Messages.create(alice, source.id, source_channel.id, %{
+               id: "m-human",
+               author: "spoof",
+               body: "one",
+               createdAt: at
+             })
+
+    assert first.author == "alice"
+
+    assert {:ok, identity} =
+             Agents.upsert_identity(1, source.id, %{
+               agentId: "codex",
+               displayName: "Sol",
+               mention: "sol"
+             })
+
+    assert {:ok, registration} =
+             Agents.add_to_channel(1, source.id, source_channel.id, identity.id)
+
+    assert {:ok, second} =
+             Messages.create(
+               alice,
+               source.id,
+               source_channel.id,
+               %{
+                 id: "m-agent",
+                 body: "two",
+                 createdAt: at,
+                 registrationId: registration.id,
+                 author: "Terra"
+               },
+               access: :agent
+             )
+
+    assert second.author == "Sol"
+    assert second.registrationId == registration.id
+
+    assert {:ok, third} =
+             Messages.create(bob, local.id, local_channel.id, %{
+               id: "m-bob",
+               body: "three",
+               createdAt: at
+             })
+
+    assert third.channelId == local_channel.id
+
+    assert {:ok, messages} = Messages.list(local_channel.id, 2)
+    assert Enum.map(messages, & &1.id) == ~w(m-human m-agent m-bob)
+    assert Enum.map(messages, & &1.author) == ["alice", "Sol", "bob"]
+    assert Enum.all?(messages, &(&1.channelId == local_channel.id))
+    assert Enum.sort(Enum.map(messages, & &1.seq)) == Enum.map(messages, & &1.seq)
+  end
+
+  test "vault unlink preserves the owner profile and memberships elsewhere until explicit profile deletion" do
+    {first_vault, first_channel} = chat_vault(1, "One", "A")
+    {test_vault, test_channel} = chat_vault(1, "Test", "B")
+
+    assert {:ok, identity} =
+             Agents.upsert_identity(1, first_vault.id, %{
+               agentId: "codex",
+               displayName: "Sol",
+               mention: "sol"
+             })
+
+    assert {:ok, first_member} =
+             Agents.add_to_channel(1, first_vault.id, first_channel.id, identity.id)
+
+    assert {:ok, test_member} =
+             Agents.add_to_channel(1, test_vault.id, test_channel.id, identity.id)
+
+    assert {:ok, true} = Agents.unlink_from_vault(1, test_vault.id, identity.id)
+    assert {:ok, still_present} = Agents.get(1, first_vault.id, identity.id)
+    assert first_channel.id in still_present.channelIds
+    refute test_channel.id in still_present.channelIds
+
+    assert SQL.one("SELECT id FROM chat_agent_members WHERE id=?", [first_member.id]) == [
+             first_member.id
+           ]
+
+    assert SQL.one("SELECT id FROM chat_agent_members WHERE id=?", [test_member.id]) == nil
+    assert SQL.one("SELECT id FROM vault_agents WHERE id=?", [identity.id]) == [identity.id]
+
+    assert {:ok, true} = Agents.delete_profile(1, first_vault.id, identity.id)
+    assert SQL.one("SELECT id FROM vault_agents WHERE id=?", [identity.id]) == nil
+
+    assert SQL.one("SELECT id FROM chat_agent_members WHERE vault_agent_id=?", [identity.id]) ==
+             nil
+  end
+
+  test "message list strips heavy images while detail hydrates and embeds stay frozen and redact for agents" do
+    {vault, channel} = chat_vault(1, "Notes", "Room")
+    Store.create_note(vault.id, 1, %{title: "Plan", content: "public\n:::private\nsecret\n:::"})
+    user = %{id: 1, username: "alice"}
+
+    assert {:ok, created} =
+             Messages.create(user, vault.id, channel.id, %{
+               id: "media",
+               body: "See ![[Plan|short#part]]",
+               images: ["data:image/png;base64,AAAA", "https://example.com/a.png"]
+             })
+
+    assert {:ok, [listed]} = Messages.list(channel.id, 1)
+    assert listed.hasImages
+    assert listed.images == ["https://example.com/a.png"]
+    assert {:ok, detailed} = Messages.get(channel.id, 1, created.id)
+    assert length(detailed.images) == 2
+    assert {:ok, [human]} = Messages.embeds(channel.id, 1, created.id)
+    assert human.content =~ "secret"
+    assert {:ok, [agent]} = Messages.embeds(channel.id, 1, created.id, access: :agent)
+    refute agent.content =~ "secret"
+    assert agent.content =~ "Private block hidden"
+  end
+
+  test "typed ancestry is bounded and natural links point to a specific prior message" do
+    input = %{body: "@sol can you review this approach?"}
+
+    prior = [
+      %{
+        id: "m1",
+        author: "alice",
+        body: "This is a sufficiently substantive prior proposal for review.",
+        createdAt: "2026-01-01",
+        status: nil
+      }
+    ]
+
+    registrations = [%{id: "r1", agentId: "codex", mention: "sol", displayName: "Sol"}]
+    linked = RoomContext.infer_natural_link(input, prior, registrations)
+    assert linked.replyTo.messageId == "m1"
+    assert linked.replyTo.relationship == "review_request"
+  end
+
+  test "chat route catalog is complete and has no duplicates" do
+    catalog = CascadeWeb.ChatRoutes.catalog()
+    assert length(catalog) == 31
+    assert length(Enum.uniq(catalog)) == 31
+    assert {"DELETE", "/api/vaults/:vault_id/vault-agents/:agent_id/profile"} in catalog
+
+    assert {"POST", "/api/vaults/:vault_id/channels/:channel_id/messages/:message_id/collaborate"} in catalog
+  end
+
+  test "isolated router authenticates and serves projected message history" do
+    {vault, channel} = chat_vault(1, "HTTP", "Room")
+    user = %{id: 1, username: "alice"}
+
+    assert {:ok, _} =
+             Messages.create(user, vault.id, channel.id, %{id: "http-message", body: "hello"})
+
+    token = Cascade.Auth.Token.sign_user(%{id: 1, username: "alice", auth_version: 0})
+
+    response =
+      conn(:get, "/api/vaults/#{vault.id}/channels/#{channel.id}/messages")
+      |> put_req_header("authorization", "Bearer " <> token)
+      |> CascadeWeb.ChatRouter.call(CascadeWeb.ChatRouter.init([]))
+
+    assert response.status == 200
+
+    assert %{"messages" => [%{"id" => "http-message", "author" => "alice"}]} =
+             Jason.decode!(response.resp_body)
+  end
+
+  test "concurrent message commits publish created events in rowid order" do
+    {vault, channel} = chat_vault(1, "Ordered", "Room")
+    token = Token.sign_user(%{id: 1, username: "alice", auth_version: 0})
+    test_pid = self()
+
+    events = fn
+      %{event: "vault:chatMessageCreated", message: %{id: "ordered-first"} = message} ->
+        send(test_pid, {:first_emit_blocked, self(), message.seq})
+
+        receive do
+          :release_first_emit -> :ok
+        after
+          2_000 -> raise "first ordered event was not released"
+        end
+
+        send(test_pid, {:ordered_event, message.id, message.seq})
+
+      %{event: "vault:chatMessageCreated", message: message} ->
+        send(test_pid, {:ordered_event, message.id, message.seq})
+
+      _intent ->
+        :ok
+    end
+
+    path = "/api/vaults/#{vault.id}/channels/#{channel.id}/messages"
+
+    first =
+      Task.async(fn ->
+        chat_request(:post, path, token, %{id: "ordered-first", body: "first"}, events: events)
+      end)
+
+    assert_receive {:first_emit_blocked, first_emitter, first_seq}, 2_000
+
+    second =
+      Task.async(fn ->
+        chat_request(:post, path, token, %{id: "ordered-second", body: "second"}, events: events)
+      end)
+
+    refute_receive {:ordered_event, "ordered-second", _seq}, 200
+    assert SQL.one("SELECT id FROM chat_messages WHERE id='ordered-second'") == nil
+
+    send(first_emitter, :release_first_emit)
+    assert_receive {:ordered_event, "ordered-first", ^first_seq}, 2_000
+    assert_receive {:ordered_event, "ordered-second", second_seq}, 2_000
+    assert first_seq < second_seq
+    assert Task.await(first, 2_000).status == 201
+    assert Task.await(second, 2_000).status == 201
+  end
+
+  test "message update and delete mutations publish in execution order" do
+    {vault, channel} = chat_vault(1, "Ordered updates", "Room")
+    user = %{id: 1, username: "alice"}
+    token = Token.sign_user(%{id: 1, username: "alice", auth_version: 0})
+    test_pid = self()
+
+    assert {:ok, _message} =
+             Messages.create(user, vault.id, channel.id, %{
+               id: "ordered-mutation",
+               body: "before"
+             })
+
+    events = fn
+      %{event: "vault:chatMessageUpdated", message: %{id: "ordered-mutation"}} ->
+        send(test_pid, {:update_emit_blocked, self()})
+
+        receive do
+          :release_update -> :ok
+        after
+          2_000 -> raise "update event was not released"
+        end
+
+        send(test_pid, {:ordered_mutation_event, :updated})
+
+      %{event: "vault:chatMessageDeleted", messageId: "ordered-mutation"} ->
+        send(test_pid, {:ordered_mutation_event, :deleted})
+
+      _intent ->
+        :ok
+    end
+
+    path = "/api/vaults/#{vault.id}/channels/#{channel.id}/messages/ordered-mutation"
+
+    update =
+      Task.async(fn ->
+        chat_request(:patch, path, token, %{body: "after"}, events: events)
+      end)
+
+    assert_receive {:update_emit_blocked, publisher}, 2_000
+
+    delete = Task.async(fn -> chat_request(:delete, path, token, %{}, events: events) end)
+
+    refute_receive {:ordered_mutation_event, :deleted}, 200
+    assert SQL.one("SELECT body FROM chat_messages WHERE id='ordered-mutation'") == ["after"]
+
+    send(publisher, :release_update)
+    assert_receive {:ordered_mutation_event, :updated}, 2_000
+    assert_receive {:ordered_mutation_event, :deleted}, 2_000
+    assert Task.await(update, 2_000).status == 200
+    assert Task.await(delete, 2_000).status == 200
+    assert SQL.one("SELECT id FROM chat_messages WHERE id='ordered-mutation'") == nil
+  end
+
+  test "restricted agent posts retain explicit unregistered attribution and can be forwarded safely" do
+    {source_vault, source_channel} = chat_vault(1, "Source", "Agent source")
+    {target_vault, target_channel} = chat_vault(1, "Target", "Forward target")
+    agent_token = Token.sign_agent(%{id: 1, username: "alice", auth_version: 0})
+    user_token = Token.sign_user(%{id: 1, username: "alice", auth_version: 0})
+
+    posted =
+      chat_request(
+        :post,
+        "/api/vaults/#{source_vault.id}/channels/#{source_channel.id}/messages",
+        agent_token,
+        %{
+          id: "restricted-source",
+          channelId: source_channel.id,
+          author: "Claude",
+          body: "the renderer stalled for ~1s",
+          createdAt: "2026-08-10T16:00:00.000Z",
+          agentId: "claude",
+          attachments: [
+            %{
+              name: "diagram.png",
+              media_type: "image/png",
+              url: "https://example.test/diagram.png"
+            }
+          ]
+        }
+      )
+
+    assert posted.status == 201
+    source = Jason.decode!(posted.resp_body)["message"]
+    assert source["author"] == "Claude"
+    assert source["agentId"] == "claude"
+    assert is_nil(source["registrationId"])
+
+    forwarded =
+      chat_request(
+        :post,
+        "/api/vaults/#{source_vault.id}/channels/#{source_channel.id}/messages/restricted-source/forward",
+        user_token,
+        %{targetVaultId: target_vault.id, targetChannelId: target_channel.id}
+      )
+
+    assert forwarded.status == 201
+    message = Jason.decode!(forwarded.resp_body)["message"]
+    assert message["author"] == "alice"
+    assert message["forwardedFrom"]["author"] == "Claude"
+
+    assert [%{"name" => "diagram.png", "url" => "https://example.test/diagram.png"}] =
+             message["attachments"]
+
+    missing =
+      chat_request(
+        :post,
+        "/api/vaults/#{source_vault.id}/channels/#{source_channel.id}/messages/unknown/forward",
+        user_token,
+        %{targetVaultId: target_vault.id, targetChannelId: target_channel.id}
+      )
+
+    assert missing.status == 400
+    assert Jason.decode!(missing.resp_body) == %{"error" => "Message not found"}
+
+    outsider =
+      chat_request(
+        :post,
+        "/api/vaults/#{source_vault.id}/channels/#{source_channel.id}/messages/restricted-source/forward",
+        Token.sign_user(%{id: 3, username: "carol", auth_version: 0}),
+        %{targetVaultId: target_vault.id, targetChannelId: target_channel.id}
+      )
+
+    assert outsider.status == 400
+    assert Jason.decode!(outsider.resp_body) == %{"error" => "Chat channel not found"}
+    assert {:ok, target_messages} = Messages.list(target_channel.id, 1)
+    assert Enum.map(target_messages, & &1.forwardedFrom["messageId"]) == ["restricted-source"]
+  end
+
+  test "ordinary owner and linked-guest turns persist only their own coordinator dispatch" do
+    {source_vault, source_channel} = chat_vault(1, "Source", "Shared room")
+    {guest_vault, guest_channel} = chat_vault(2, "Guest", "Guest mirror")
+
+    assert {:ok, _} =
+             Channel.link(
+               source_vault.id,
+               source_channel.id,
+               guest_vault.id,
+               guest_channel.id,
+               1
+             )
+
+    {:ok, sol_identity} =
+      Agents.upsert_identity(1, source_vault.id, %{
+        agentId: "codex",
+        displayName: "Sol",
+        mention: "sol",
+        model: "gpt-5.6-sol"
+      })
+
+    {:ok, sol} =
+      Agents.add_to_channel(1, source_vault.id, source_channel.id, sol_identity.id, %{
+        orchestrator: true,
+        pingableByOthers: true
+      })
+
+    {:ok, guest_identity} =
+      Agents.upsert_identity(2, guest_vault.id, %{
+        agentId: "codex",
+        displayName: "Guest Sol",
+        mention: "guest_sol",
+        model: "gpt-5.6-sol"
+      })
+
+    {:ok, guest_coordinator} =
+      Agents.add_to_channel(2, guest_vault.id, guest_channel.id, guest_identity.id, %{
+        orchestrator: true
+      })
+
+    owner_post =
+      chat_request(
+        :post,
+        "/api/vaults/#{source_vault.id}/channels/#{source_channel.id}/messages",
+        Token.sign_user(%{id: 1, username: "alice", auth_version: 0}),
+        %{
+          id: "owner-root",
+          channelId: source_channel.id,
+          author: "spoofed",
+          body: "Investigate and verify multiplayer orchestration.",
+          createdAt: "2026-08-10T16:01:00.000Z"
+        }
+      )
+
+    assert owner_post.status == 201
+    assert [owner_dispatch] = Jason.decode!(owner_post.resp_body)["dispatches"]
+    assert owner_dispatch["registration"]["id"] == sol.id
+
+    guest_post =
+      chat_request(
+        :post,
+        "/api/vaults/#{guest_vault.id}/channels/#{guest_channel.id}/messages",
+        Token.sign_user(%{id: 2, username: "bob", auth_version: 0}),
+        %{
+          id: "guest-root",
+          channelId: guest_channel.id,
+          author: "spoofed",
+          body: "Coordinate this shared-channel request.",
+          createdAt: "2026-08-10T16:02:00.000Z"
+        }
+      )
+
+    assert guest_post.status == 201
+    assert [guest_dispatch] = Jason.decode!(guest_post.resp_body)["dispatches"]
+    assert guest_dispatch["registration"]["id"] == guest_coordinator.id
+
+    assert {:ok, owner_pending} = Dispatches.list_pending(1, source_channel.id)
+    assert Enum.map(owner_pending, & &1.registration.id) == [sol.id]
+    refute Enum.any?(owner_pending, &(&1.registration.id == guest_coordinator.id))
+
+    assert {:ok, guest_pending} = Dispatches.list_pending(2, guest_channel.id)
+    assert Enum.any?(guest_pending, &(&1.registration.id == guest_coordinator.id))
+
+    assert SQL.all(
+             "SELECT message_id,registration_id FROM chat_agent_dispatches WHERE message_id IN ('owner-root','guest-root') ORDER BY message_id",
+             []
+           ) == [["guest-root", guest_coordinator.id], ["owner-root", sol.id]]
+  end
+
+  defp chat_request(method, path, token, body, options \\ []) do
+    request =
+      conn(method, path, Jason.encode!(body))
+      |> put_req_header("authorization", "Bearer " <> token)
+      |> put_req_header("content-type", "application/json")
+
+    request = if options == [], do: request, else: assign(request, :domain_options, options)
+    CascadeWeb.ChatRouter.call(request, CascadeWeb.ChatRouter.init([]))
+  end
+
+  defp chat_vault(user_id, name, title) do
+    vault = Store.create_vault(user_id, %{name: name})
+
+    channel =
+      Store.create_note(vault.id, user_id, %{title: title, content: "cascade://chat-channel"})
+
+    {vault, channel}
+  end
+
+  defp reset_database do
+    for table <-
+          ~w(chat_note_grants chat_channel_settings vault_agent_exclusions chat_agent_members chat_channel_links chat_messages work_item_dependencies work_item_runs work_item_reviews work_items vault_agents note_versions note_links note_tags tags notes folders vault_members vaults registration_invites_used users) do
+      if SQL.table_exists?(table), do: SQL.exec("DELETE FROM #{table}")
+    end
+
+    File.rm_rf!(Store.vaults_base_dir())
+  end
+
+  defp assert_node_columns(table) do
+    actual =
+      SQL.all("PRAGMA table_info(#{table})")
+      |> Enum.map(fn [_cid | definition] -> definition end)
+
+    assert actual == Map.fetch!(@node_column_signatures, table)
+
+    foreign_keys =
+      SQL.all("PRAGMA foreign_key_list(#{table})")
+      |> Enum.map(fn [_id, _seq, target, source, destination, on_update, on_delete, match] ->
+        [source, target, destination, on_update, on_delete, match]
+      end)
+      |> Enum.sort()
+
+    assert foreign_keys == Enum.sort(Map.fetch!(@node_foreign_key_signatures, table))
+  end
+end

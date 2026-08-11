@@ -1,16 +1,14 @@
 #!/usr/bin/env node
 /** Real-server persistence/multiplayer test for chat-first missions. */
-import { spawn } from 'node:child_process';
-import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { io } from 'socket.io-client';
+import { launchTestBackend } from './lib/test-backend.mjs';
 import { pickPort } from './lib/test-ports.mjs';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const API_PORT = Number(process.env.TEST_API_PORT) || await pickPort();
 const API_BASE = `http://127.0.0.1:${API_PORT}`;
-const DB_PATH = `/tmp/cascade-chatmission-e2e-${API_PORT}.db`;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function request(url, options = {}) {
@@ -26,18 +24,6 @@ async function must(url, options = {}) {
   const result = await request(url, options);
   if (!result.ok) throw new Error(`${result.status} ${url}: ${result.data.error || 'request failed'}`);
   return result.data;
-}
-
-async function waitForHealth() {
-  const deadline = Date.now() + 15_000;
-  while (Date.now() < deadline) {
-    try {
-      const result = await request(`${API_BASE}/api/health`);
-      if (result.ok) return;
-    } catch { /* booting */ }
-    await sleep(150);
-  }
-  throw new Error('server did not become healthy');
 }
 
 async function register(username) {
@@ -72,24 +58,15 @@ function check(label, condition) {
 }
 
 async function main() {
-  try { fs.unlinkSync(DB_PATH); } catch { /* clean */ }
-  const server = spawn('node', ['dist/index.js'], {
-    cwd: root,
+  const server = await launchTestBackend({
+    name: 'chat-mission-e2e', repoRoot: root, port: API_PORT,
     env: {
-      ...process.env,
-      API_PORT: String(API_PORT),
-      API_HOST: '127.0.0.1',
-      DOCS_DB_PATH: DB_PATH,
       JWT_SECRET: 'mission-e2e-secret',
       CASCADE_ALLOW_OPEN_REGISTRATION: '1',
     },
-    stdio: ['ignore', 'pipe', 'pipe'],
   });
-  server.stdout.on('data', (chunk) => process.stdout.write(`[server] ${chunk}`));
-  server.stderr.on('data', (chunk) => process.stderr.write(`[server-err] ${chunk}`));
 
   try {
-    await waitForHealth();
     const stamp = Date.now();
     const owner = await register(`owner_${stamp}`);
     const guest = await register(`guest_${stamp}`);
@@ -274,9 +251,7 @@ async function main() {
     if (failures) throw new Error(`${failures} mission check(s) failed`);
     console.log('[mission-e2e] All chat-first mission checks passed');
   } finally {
-    server.kill('SIGTERM');
-    await sleep(250);
-    try { fs.unlinkSync(DB_PATH); } catch { /* clean */ }
+    await server.stop();
   }
 }
 

@@ -292,9 +292,28 @@ try {
   if ((await missionCard.getAttribute('data-open')) !== 'true') {
     throw new Error('mission tap no longer expands the card');
   }
-  const trace = missionCard.locator('.chat-work-trace');
+  // Agent-identity boundaries keep the worker trace in its own chronological
+  // row rather than nesting Terra's work under Sol's mission card.
+  const traces = page.locator('.chat-work-trace:not(.is-embedded)');
+  await traces.first().waitFor({ timeout: 10_000 });
+  let trace;
+  for (let index = 0; index < await traces.count(); index += 1) {
+    const candidate = traces.nth(index);
+    const candidateToggle = candidate.locator('.chat-work-trace-toggle');
+    if (!(await candidate.evaluate((node) => node.classList.contains('is-open')))) {
+      await candidateToggle.scrollIntoViewIfNeeded();
+      await candidateToggle.tap();
+    }
+    if (await candidate.locator(`.chat-work-line[data-message-id="${traceTargetId}"]`).count()) {
+      trace = candidate;
+      break;
+    }
+  }
+  if (!trace) throw new Error('worker trace target was not rendered');
   const traceToggle = trace.locator('.chat-work-trace-toggle');
   if (await traceToggle.count()) {
+    if (await trace.evaluate((node) => node.classList.contains('is-open'))) await traceToggle.tap();
+    await traceToggle.scrollIntoViewIfNeeded();
     const traceCardBox = await traceToggle.boundingBox();
     if (!traceCardBox) throw new Error('collapsed trace toggle has no box');
     const traceWasExpanded = await trace.evaluate((node) => node.classList.contains('is-open'));
@@ -302,7 +321,21 @@ try {
       x: traceCardBox.x + Math.min(250, traceCardBox.width - 18),
       y: traceCardBox.y + traceCardBox.height / 2,
     }, -82, 3);
-    await replyBar.waitFor({ timeout: 5000 });
+    try {
+      await replyBar.waitFor({ timeout: 1500 });
+    } catch {
+      // Expanding candidate traces immediately above this row can leave one
+      // compositor frame with stale touch geometry. Re-resolve the live box
+      // once; a genuinely broken reply gesture still fails the second probe.
+      await traceToggle.scrollIntoViewIfNeeded();
+      const retryBox = await traceToggle.boundingBox();
+      if (!retryBox) throw new Error('collapsed trace toggle disappeared before retry');
+      await dispatchSwipe(client, {
+        x: retryBox.x + Math.min(250, retryBox.width - 18),
+        y: retryBox.y + retryBox.height / 2,
+      }, -82, 3);
+      await replyBar.waitFor({ timeout: 5000 });
+    }
     const traceReplyPreview = await page.locator('.chat-reply-bar-preview').innerText();
     if (!traceReplyPreview.trim() || traceReplyPreview.includes(missionRootBody)) {
       throw new Error('collapsed trace swipe did not target a work message');
@@ -316,6 +349,7 @@ try {
   const traceLine = trace.locator(`.chat-work-line[data-message-id="${traceTargetId}"]`);
   await traceLine.waitFor({ timeout: 10_000 });
   const traceFold = traceLine.locator('.chat-work-line-fold');
+  await traceFold.scrollIntoViewIfNeeded();
   const traceWasOpen = await traceLine.evaluate((node) => node.classList.contains('is-open'));
   const traceBox = await traceFold.boundingBox();
   if (!traceBox) throw new Error('trace fold row has no box');
@@ -323,7 +357,21 @@ try {
     x: traceBox.x + Math.min(250, traceBox.width - 18),
     y: traceBox.y + traceBox.height / 2,
   }, -82, 3);
-  await replyBar.waitFor({ timeout: 5000 });
+  try {
+    await replyBar.waitFor({ timeout: 1500 });
+  } catch {
+    // Opening the nested scroll region can move its first row after the
+    // compositor has already returned a box. Resolve and exercise the live
+    // fold row once more; a broken gesture still fails this second probe.
+    await traceFold.scrollIntoViewIfNeeded();
+    const retryBox = await traceFold.boundingBox();
+    if (!retryBox) throw new Error('trace fold row disappeared before retry');
+    await dispatchSwipe(client, {
+      x: retryBox.x + Math.min(250, retryBox.width - 18),
+      y: retryBox.y + retryBox.height / 2,
+    }, -82, 3);
+    await replyBar.waitFor({ timeout: 5000 });
+  }
   if (!(await page.locator('.chat-reply-bar-preview').innerText()).includes(traceTargetBody)) {
     throw new Error('trace swipe did not target the individual work message');
   }
@@ -336,8 +384,10 @@ try {
   const fatal = errors.filter((line) => {
     if (line.includes('[VersionCheck]')) return false;
     // The mission fixture has no desktop runner. Its optimistic dispatch shell
-    // can be hydrated after the synthetic settle and return one expected 404.
+    // can be hydrated after the synthetic settle and return one expected 404;
+    // the runner-backed dispatch itself is expected to shed with 503.
     if (line.includes('Failed to load resource: the server responded with a status of 404')) return false;
+    if (line.includes('Failed to load resource: the server responded with a status of 503')) return false;
     return true;
   });
   if (fatal.length) throw new Error(`Runtime errors:\n${fatal.join('\n')}`);

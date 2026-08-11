@@ -123,6 +123,7 @@ try {
   await page.locator('.sidebar-footer .user-info').click();
   const modal = page.locator('.account-settings');
   await modal.waitFor({ timeout: 15000 });
+  await modal.getByRole('tab', { name: /Preferences/ }).click();
   const toggle = modal.locator('.account-settings-check input');
   check('account settings host the agent-memory preference', await toggle.count() === 1);
   await toggle.check();

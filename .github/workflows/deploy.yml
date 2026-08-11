@@ -1,8 +1,9 @@
 name: Deploy Production
 
 on:
-  push:
-    branches: [master]
+  # Production master pushes are handled by the authenticated host webhook.
+  # Keep this only as an explicit operator fallback so one push cannot trigger
+  # two cutovers.
   workflow_dispatch:
 
 concurrency:
@@ -67,8 +68,8 @@ jobs:
           DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
         run: |
           PORT="${DEPLOY_PORT:-22}"
-          # Keepalives: long docker builds were killing the SSH session
-          # (Broken pipe after ~5m) even when the remote build was still fine.
+          # Keepalives cover the isolated preflight, snapshot, and verified
+          # cutover. Production never rebuilds the certified image here.
           ssh -p "$PORT" \
             -o ServerAliveInterval=20 \
             -o ServerAliveCountMax=90 \
@@ -77,7 +78,7 @@ jobs:
           set -euo pipefail
           cd /var/www/cascade-browser
 
-          # Serialize the entire sync/build/swap sequence on the host.
+          # Serialize the entire sync/preflight/swap sequence on the host.
           exec {DEPLOY_LOCK_FD}<"$PWD"
           echo "==> Waiting for production deploy lock (up to 900s)"
           flock -w 900 "$DEPLOY_LOCK_FD"

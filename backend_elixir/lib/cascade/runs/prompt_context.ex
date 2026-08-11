@@ -1,0 +1,154 @@
+defmodule Cascade.Runs.PromptContext do
+  @moduledoc "Node-compatible cold-start prompt enrichment and desktop delegation payloads."
+
+  alias Cascade.Content.Privacy
+  alias Cascade.Evolution
+  alias Cascade.Scratchpad
+
+  @removed_model_presets ~w(codex-flash codex-pro grok-2 grok-beta gpt-4o claude-3.5-sonnet o1-mini)
+
+  @app_context "Cascade is a user-facing, Obsidian-style workspace for AI-native project management. " <>
+                 "Its vault folders, project docs, notes, and chats are live app data, not a mirror of the agent process cwd. " <>
+                 "Use `cascade-note` by command name to list, read, create, edit, move live notes, and create/list folders; it is on PATH and pre-authorized. " <>
+                 "Use `cascade-note folder create <name>`, then `cascade-note move <note> --folder <folder>` to organize existing notes. Use `--listed` and `--folder` when placing a new note in the sidebar. " <>
+                 "Do not replace the helper with an absolute path, inspect a local docs.db, or conclude notes are unavailable " <>
+                 "because they are absent from the local filesystem or named tool list. " <>
+                 "Use normal filesystem tools only for local repository/workspace work the user actually requested. " <>
+                 "Chat messages can carry images and files; the text transcript only marks them. " <>
+                 "When a message has media, open it with `cascade-chat attachment --message-id <id>` (writes the file and prints its path) " <>
+                 "before answering about the image. Never claim you cannot see/receive an attachment, and never invent its contents. " <>
+                 "To hand one chat result to another opted-in agent, use `cascade-chat send --to @handle --reply-to <message-id> " <>
+                 "--relation <builds_on|review_request|question|contradiction|decision> --message \"<instruction>\"`; " <>
+                 "this creates a durable linked request instead of copying the whole channel. " <>
+                 "Chat provider sessions are append-only: continued turns carry only new room activity plus an exact message cursor. " <>
+                 "Use `cascade-chat history --around-message-id <id> --include-reply-context` or `cascade-chat search <query>` when the cursor delta is not enough; do not ask for the whole room to be repeated in every prompt. " <>
+                 "Shipping to this repo: run `npm run build` before push to master; after push watch Deploy Production with `gh run watch` until green. " <>
+                 "Push is not ship. Do not ignore a red deploy."
+
+  def app_context, do: @app_context
+
+  def normalize_model(value) when is_binary(value) do
+    value = String.trim(value)
+    if value == "" or value in @removed_model_presets, do: nil, else: value
+  end
+
+  def normalize_model(_value), do: nil
+
+  def normalize_cwd(value) when is_binary(value) do
+    value = String.trim(value)
+
+    if value == "" or Regex.match?(~r/^(vault\s*root|root|\.\/?)$/iu, value),
+      do: nil,
+      else: value
+  end
+
+  def normalize_cwd(_value), do: nil
+
+  def agent_memory_key("akron-grok"), do: "akron"
+  def agent_memory_key(agent), do: to_string(agent)
+
+  def enrich_prompt(vault_id, user_id, prompt, agent, resume_session_id) do
+    if resume_session_id in [nil, ""] do
+      key = agent_memory_key(agent)
+      memory = memory_context(vault_id, user_id, prompt, key)
+      scratchpad = scratchpad_context(vault_id, user_id, key)
+
+      [@app_context, memory, scratchpad]
+      |> Enum.reject(&(&1 in [nil, ""]))
+      |> Enum.join("\n\n")
+      |> then(&(prompt <> "\n\n[Context: " <> &1 <> "]"))
+      |> Privacy.redact_blocks()
+    else
+      Privacy.redact_blocks(prompt)
+    end
+  end
+
+  def delegate_payload(run, vault_root, agent, prompt, params, resume_session_id, runtime \\ %{}) do
+    memory_key = field(runtime, :agent_memory_key, agent_memory_key(agent))
+
+    %{
+      runId: run.id,
+      vaultId: run.vault_id,
+      agent: agent,
+      prompt: prompt,
+      vaultRoot: vault_root,
+      priorityServiceTier: field(runtime, :priority_service_tier, false) == true,
+      chatChannelId: field(runtime, :chat_channel_id, ""),
+      chatMessageId: field(runtime, :chat_message_id, ""),
+      chatTriggeringMessageId: field(runtime, :chat_triggering_message_id, ""),
+      chatAuthor: field(runtime, :chat_author, ""),
+      agentMemoryKey: memory_key,
+      chatRegistrationId: field(runtime, :chat_registration_id, ""),
+      images: clean_images(params["images"]),
+      yolo: field(runtime, :yolo, params["yolo"] == true) == true
+    }
+    |> maybe_put(:cwd, normalize_cwd(field(runtime, :cwd, params["cwd"])))
+    |> maybe_put(:model, normalize_model(field(runtime, :model, params["model"])))
+    |> maybe_put(:reasoningEffort, field(runtime, :reasoning_effort))
+    |> maybe_put(:resumeSessionId, resume_session_id)
+    |> maybe_put(:workItemId, field(runtime, :work_item_id))
+  end
+
+  def append_context(prompt, chunks) do
+    context = chunks |> List.wrap() |> Enum.reject(&(&1 in [nil, ""])) |> Enum.join("\n\n")
+
+    if context == "",
+      do: Privacy.redact_blocks(prompt),
+      else: Privacy.redact_blocks(prompt <> "\n\n[Context: " <> context <> "]")
+  end
+
+  defp memory_context(vault_id, user_id, prompt, key) do
+    try do
+      Evolution.ensure_agent_named_memory_folders(vault_id, user_id, key)
+
+      Evolution.build_agent_memory_injection(vault_id,
+        channel_topic: String.slice(" #{prompt}", 0, 400),
+        max_chars: 900,
+        agent_key: key,
+        note_stats: Scratchpad.note_stats(vault_id)
+      ).text
+    rescue
+      _ -> ""
+    end
+  end
+
+  defp scratchpad_context(vault_id, user_id, key) do
+    try do
+      Scratchpad.ensure_policies(vault_id, user_id, key)
+
+      Scratchpad.build_injection(vault_id,
+        agent_key: key,
+        user_id: user_id,
+        max_chars: 1_400
+      )
+    rescue
+      _ -> ""
+    end
+  end
+
+  defp clean_images(images) when is_list(images) do
+    images
+    |> Enum.filter(fn
+      %{"media_type" => media_type, "data" => data}
+      when is_binary(media_type) and is_binary(data) ->
+        true
+
+      _ ->
+        false
+    end)
+    |> Enum.take(8)
+    |> Enum.map(&Map.take(&1, ["media_type", "data"]))
+  end
+
+  defp clean_images(_images), do: []
+
+  defp maybe_put(map, _key, value) when value in [nil, ""], do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
+
+  defp field(map, key, fallback \\ nil)
+
+  defp field(map, key, fallback) when is_map(map),
+    do: Map.get(map, key, Map.get(map, Atom.to_string(key), fallback))
+
+  defp field(_map, _key, fallback), do: fallback
+end

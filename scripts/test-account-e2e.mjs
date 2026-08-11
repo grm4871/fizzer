@@ -1,15 +1,11 @@
 #!/usr/bin/env node
-import { spawn } from 'node:child_process';
-import fs from 'node:fs';
 import Database from 'better-sqlite3';
 import { io } from 'socket.io-client';
-import { setTimeout as delay } from 'node:timers/promises';
+import { launchTestBackend } from './lib/test-backend.mjs';
 import { pickPort } from './lib/test-ports.mjs';
 
 const port = await pickPort();
 const base = `http://127.0.0.1:${port}`;
-const dbPath = `/tmp/cascade-account-${port}.db`;
-const root = new URL('..', import.meta.url).pathname;
 let failures = 0;
 
 async function request(path, options = {}) {
@@ -41,36 +37,26 @@ async function register(username, inviteToken = '') {
   return { ...data, auth: { authorization: `Bearer ${data.token}` } };
 }
 
-try { fs.unlinkSync(dbPath); } catch {}
-{
-  const legacy = new Database(dbPath);
-  legacy.exec(`CREATE TABLE users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT NOT NULL UNIQUE,
-    password_hash TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-  )`);
-  legacy.close();
-}
-const server = spawn('node', ['dist/index.js'], {
-  cwd: root,
+const server = await launchTestBackend({
+  name: 'account-e2e',
+  port,
   env: {
-    ...process.env,
-    API_PORT: String(port),
-    API_HOST: '127.0.0.1',
-    DOCS_DB_PATH: dbPath,
     JWT_SECRET: 'account-test-secret',
     CASCADE_REQUIRE_INVITE_REGISTRATION: 'true',
   },
-  stdio: ['ignore', 'pipe', 'pipe'],
+  prepare({ databasePath }) {
+    const legacy = new Database(databasePath);
+    legacy.exec(`CREATE TABLE users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`);
+    legacy.close();
+  },
 });
-server.stderr.on('data', (chunk) => process.stderr.write(`[server] ${chunk}`));
 
 try {
-  for (let i = 0; i < 100; i += 1) {
-    try { if ((await request('/api/health')).ok) break; } catch {}
-    await delay(100);
-  }
   const download = await fetch(`${base}/download`);
   const downloadHtml = await download.text();
   check('desktop handoff route serves the installer chooser', download.ok
@@ -203,7 +189,5 @@ try {
   if (failures) throw new Error(`${failures} account checks failed`);
   console.log('[account-e2e] All account and multiplayer permission checks passed');
 } finally {
-  server.kill('SIGTERM');
-  await delay(200);
-  try { fs.unlinkSync(dbPath); } catch {}
+  await server.stop();
 }

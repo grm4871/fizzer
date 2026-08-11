@@ -1,0 +1,50 @@
+defmodule CascadeWeb.AccountRoutes do
+  @moduledoc "Explicit integration catalog for the isolated account/social/community router."
+
+  @routes [
+    {"POST", "/api/auth/register"},
+    {"POST", "/api/auth/password"},
+    {"PUT", "/api/me/profile"},
+    {"POST", "/api/auth/reset/issue"},
+    {"POST", "/api/auth/reset"},
+    {"POST", "/api/auth/agent-token"},
+    {"GET", "/api/admin/users"},
+    {"GET", "/api/vaults/:id/members"},
+    {"POST", "/api/vaults/:id/members"},
+    {"PATCH", "/api/vaults/:id/members/:user_id"},
+    {"DELETE", "/api/vaults/:id/members/:user_id"},
+    {"POST", "/api/vaults/:id/invite-link"},
+    {"GET", "/api/vault-invites/:token"},
+    {"POST", "/api/vault-invites/:token/accept"},
+    {"GET", "/api/vaults/:id/visibility"},
+    {"PUT", "/api/vaults/:id/visibility"},
+    {"GET", "/api/vaults/:id/public-home-notes"},
+    {"GET", "/api/vaults/:id/join-requests"},
+    {"PATCH", "/api/vaults/:id/join-requests/:request_id"},
+    {"GET", "/api/public-vaults"},
+    {"GET", "/api/public-vaults/:id"},
+    {"POST", "/api/public-vaults/:id/join"},
+    {"GET", "/api/vaults/:id/bans"},
+    {"POST", "/api/vaults/:id/bans"},
+    {"DELETE", "/api/vaults/:id/bans/:user_id"},
+    {"POST", "/api/vaults/:id/reports"},
+    {"GET", "/api/vaults/:id/reports"},
+    {"PATCH", "/api/vaults/:id/reports/:report_id"},
+    {"GET", "/api/admin/reports"},
+    {"PATCH", "/api/admin/reports/:report_id"},
+    {"GET", "/api/me/dm-settings"},
+    {"PUT", "/api/me/dm-settings"},
+    {"GET", "/api/me/blocks"},
+    {"POST", "/api/me/blocks"},
+    {"DELETE", "/api/me/blocks/:username"},
+    {"GET", "/api/me/direct-messages"},
+    {"POST", "/api/direct-messages"},
+    {"GET", "/api/community/updates"},
+    {"POST", "/api/community/updates/read"},
+    {"POST", "/api/community/updates/read-all"},
+    {"POST", "/api/diagnostics/android-battery"},
+    {"GET", "/api/diagnostics/android-battery"}
+  ]
+
+  def catalog, do: @routes
+end

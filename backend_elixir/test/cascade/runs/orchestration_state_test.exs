@@ -1,0 +1,390 @@
+defmodule Cascade.Runs.OrchestrationStateTest do
+  use ExUnit.Case, async: false
+
+  import Plug.Conn
+  import Plug.Test
+
+  alias Cascade.Accounts.SQL
+  alias Cascade.Auth.Token
+  alias Cascade.Runs.{RunnerLifecycle, Store}
+  alias CascadeWeb.DomainDispatch
+
+  setup_all do
+    Cascade.Accounts.Schema.ensure!()
+    Cascade.Runs.Schema.ensure!()
+
+    if is_nil(Process.whereis(RunnerLifecycle)) do
+      start_supervised!({RunnerLifecycle, disconnect_grace_ms: 40, orphan_reclaim_ms: 3_600_000})
+    end
+
+    :ok
+  end
+
+  setup do
+    suffix = System.unique_integer([:positive])
+    username = "orchestration-#{suffix}"
+    vault_id = "orchestration-vault-#{suffix}"
+
+    SQL.exec(
+      "INSERT INTO users (username,password_hash,display_name,avatar_url) VALUES (?,?,?,?)",
+      [username, "x", username, ""]
+    )
+
+    user_id = SQL.last_insert_id()
+
+    SQL.exec("INSERT INTO vaults (id,name,root_path,created_by) VALUES (?,?,?,?)", [
+      vault_id,
+      "Orchestration",
+      "/tmp/#{vault_id}",
+      user_id
+    ])
+
+    SQL.exec(
+      "INSERT INTO vault_members (vault_id,user_id,role,invited_by) VALUES (?,?,?,?)",
+      [vault_id, user_id, "owner", user_id]
+    )
+
+    on_exit(fn ->
+      SQL.exec("DELETE FROM vaults WHERE id=?", [vault_id])
+      SQL.exec("DELETE FROM users WHERE id=?", [user_id])
+    end)
+
+    %{user_id: user_id, username: username, vault_id: vault_id}
+  end
+
+  test "run events remain append-only and strictly ordered under concurrent writers", context do
+    assert {:ok, run} = Store.start(context.vault_id, nil, "exercise ordering", "codex")
+    assert [%{seq: 1, type: "status"}] = Store.events(run.id)
+
+    1..20
+    |> Task.async_stream(
+      fn value -> Store.publish(run.id, "trace", %{value: value}) end,
+      max_concurrency: 8,
+      ordered: false,
+      timeout: 5_000
+    )
+    |> Enum.each(fn result ->
+      assert {:ok, %{run_id: run_id}} = result
+      assert run_id == run.id
+    end)
+
+    events = Store.events(run.id)
+    assert Enum.map(events, & &1.seq) == Enum.to_list(1..21)
+    assert Enum.all?(tl(events), &(&1.type == "trace"))
+  end
+
+  test "terminal settlement is durable, idempotent, and clears a missing CLI session", context do
+    assert {:ok, run} =
+             Store.start(context.vault_id, nil, "resume", "claude-code", session_id: "stale")
+
+    assert :ok =
+             Store.finish(
+               run.id,
+               "failed",
+               "No conversation found with session ID stale",
+               "replacement"
+             )
+
+    assert %{status: "failed", session_id: nil} = Store.get(run.id)
+    assert :already_terminal = Store.finish(run.id, "completed", "must not overwrite")
+    assert %{status: "failed", summary: summary} = Store.get(run.id)
+    assert summary =~ "No conversation found"
+  end
+
+  test "a steering continuation inherits and persists the provider session", context do
+    conversation_id = "steering-#{System.unique_integer([:positive])}"
+
+    assert {:ok, prior} =
+             Store.start(context.vault_id, nil, "first turn", "codex",
+               conversation_id: conversation_id
+             )
+
+    assert :ok = Store.persist_session(prior.id, "provider-session")
+    assert Store.cancel(prior.id, steering: true)
+    assert Store.get(prior.id).session_id == "provider-session"
+
+    query = %{
+      vault_id: context.vault_id,
+      note_id: nil,
+      agent: "codex",
+      conversation_id: conversation_id
+    }
+
+    assert Store.find_conversation_session(query) == "provider-session"
+
+    assert {:ok, continuation} =
+             Store.start(context.vault_id, nil, "second turn", "codex",
+               conversation_id: conversation_id,
+               session_id: Store.find_conversation_session(query)
+             )
+
+    assert continuation.session_id == "provider-session"
+  end
+
+  test "runner replacement preserves reclaimed runs and fails only omitted runs", context do
+    assert {:ok, kept} = Store.start(context.vault_id, nil, "keep", "codex")
+    assert {:ok, omitted} = Store.start(context.vault_id, nil, "omit", "codex")
+    :ok = Store.record_delegated(kept.id, context.user_id)
+    :ok = Store.record_delegated(omitted.id, context.user_id)
+
+    assert {:ok, [kept_id, omitted_id]} =
+             RunnerLifecycle.register(context.user_id, "sid-old", %{
+               activeRunIds: [kept.id, omitted.id],
+               runnerInstanceId: "desktop-a"
+             })
+
+    assert {kept_id, omitted_id} == {kept.id, omitted.id}
+
+    assert {:ok, [reclaimed]} =
+             RunnerLifecycle.register(context.user_id, "sid-new", %{
+               activeRunIds: [kept.id],
+               runnerInstanceId: "desktop-b"
+             })
+
+    assert reclaimed == kept.id
+    assert Store.get(kept.id).status == "queued"
+
+    assert %{status: "failed", summary: summary} = Store.get(omitted.id)
+    assert summary == "Desktop app restarted before this run completed."
+  end
+
+  test "runner reconnect storms cancel stale disconnect timers without losing an active run",
+       context do
+    assert {:ok, run} = Store.start(context.vault_id, nil, "survive reconnect storm", "codex")
+    :ok = Store.record_delegated(run.id, context.user_id)
+
+    assert {:ok, [run_id]} =
+             RunnerLifecycle.register(context.user_id, "storm-0", %{
+               activeRunIds: [run.id],
+               runnerInstanceId: "desktop-storm"
+             })
+
+    assert run_id == run.id
+
+    final_sid =
+      Enum.reduce(1..50, "storm-0", fn index, previous_sid ->
+        RunnerLifecycle.disconnected(context.user_id, previous_sid, %{}, :transport_close)
+        next_sid = "storm-#{index}"
+
+        assert {:ok, [^run_id]} =
+                 RunnerLifecycle.register(context.user_id, next_sid, %{
+                   activeRunIds: [run.id],
+                   runnerInstanceId: "desktop-storm"
+                 })
+
+        next_sid
+      end)
+
+    Process.sleep(80)
+    assert Store.get(run.id).status == "queued"
+    state = :sys.get_state(RunnerLifecycle)
+    refute Map.has_key?(state.disconnect_timers, context.user_id)
+    assert get_in(state, [:runners, context.user_id, :sid]) == final_sid
+  end
+
+  test "an unreclaimed runner disconnect settles its durable run after the grace window",
+       context do
+    previous_state = :sys.get_state(RunnerLifecycle)
+
+    :sys.replace_state(
+      RunnerLifecycle,
+      &%{&1 | disconnect_grace: 40, disconnect_flush_coalesce: 10}
+    )
+
+    on_exit(fn ->
+      :sys.replace_state(
+        RunnerLifecycle,
+        &%{
+          &1
+          | disconnect_grace: previous_state.disconnect_grace,
+            disconnect_flush_coalesce: previous_state.disconnect_flush_coalesce
+        }
+      )
+    end)
+
+    assert {:ok, run} = Store.start(context.vault_id, nil, "fail after disconnect", "codex")
+    :ok = Store.record_delegated(run.id, context.user_id)
+
+    assert {:ok, [run_id]} =
+             RunnerLifecycle.register(context.user_id, "gone", %{
+               activeRunIds: [run.id],
+               runnerInstanceId: "desktop-gone"
+             })
+
+    assert run_id == run.id
+    RunnerLifecycle.disconnected(context.user_id, "gone", %{}, :transport_close)
+
+    assert %{status: "failed", summary: "Desktop agent runner disconnected."} =
+             eventually_status(run.id, "failed")
+
+    assert Store.events(run.id) |> List.last() |> Map.fetch!(:payload_json) |> Jason.decode!() ==
+             %{
+               "status" => "failed",
+               "summary" => "Desktop agent runner disconnected."
+             }
+  end
+
+  test "mass runner grace expiry uses one delegated snapshot and preserves a reconnected owner",
+       context do
+    previous_state = :sys.get_state(RunnerLifecycle)
+
+    if previous_state.disconnect_flush_timer,
+      do: Process.cancel_timer(previous_state.disconnect_flush_timer)
+
+    :sys.replace_state(RunnerLifecycle, fn state ->
+      %{
+        state
+        | runners: %{},
+          disconnect_timers: %{},
+          disconnect_flush_timer: nil,
+          disconnect_flush_due_at: nil,
+          disconnect_flush_coalesce: 1_000,
+          disconnect_grace: 1_000
+      }
+    end)
+
+    on_exit(fn ->
+      current = :sys.get_state(RunnerLifecycle)
+      if current.disconnect_flush_timer, do: Process.cancel_timer(current.disconnect_flush_timer)
+      :sys.replace_state(RunnerLifecycle, fn _state -> previous_state end)
+    end)
+
+    assert {:ok, run} = Store.start(context.vault_id, nil, "batch runner expiry", "codex")
+    :ok = Store.record_delegated(run.id, context.user_id)
+    owners = [context.user_id | Enum.to_list(-1_000..-2)]
+    reconnect_owner = -2
+
+    Enum.each(owners, fn owner_id ->
+      sid = "batch-#{owner_id}"
+
+      assert {:ok, []} =
+               RunnerLifecycle.register(owner_id, sid, %{
+                 activeRunIds: [],
+                 runnerInstanceId: "batch"
+               })
+
+      RunnerLifecycle.disconnected(owner_id, sid, %{}, :transport_close)
+    end)
+
+    assert {:ok, []} =
+             RunnerLifecycle.register(reconnect_owner, "batch-reconnected", %{
+               activeRunIds: [],
+               runnerInstanceId: "batch"
+             })
+
+    handler_id = "runner-batch-query-#{System.unique_integer([:positive])}"
+    flush_handler_id = "runner-batch-flush-#{System.unique_integer([:positive])}"
+    test_pid = self()
+
+    :ok =
+      :telemetry.attach(
+        handler_id,
+        [:cascade, :db, :repo, :query],
+        fn _event, _measurements, metadata, _config ->
+          query = metadata[:query] |> to_string() |> String.replace(~r/\s+/u, " ")
+
+          if String.contains?(query, "SELECT d.run_id,d.owner_user_id FROM delegated_runs") do
+            send(test_pid, :delegated_snapshot_query)
+          end
+        end,
+        nil
+      )
+
+    on_exit(fn -> :telemetry.detach(handler_id) end)
+
+    :ok =
+      :telemetry.attach(
+        flush_handler_id,
+        [:cascade, :runs, :runner_disconnect_flush],
+        fn _event, measurements, metadata, _config ->
+          send(test_pid, {:runner_disconnect_flush, measurements, metadata})
+        end,
+        nil
+      )
+
+    on_exit(fn -> :telemetry.detach(flush_handler_id) end)
+
+    assert %{status: "failed", summary: "Desktop agent runner disconnected."} =
+             eventually_status(run.id, "failed", 350)
+
+    assert_receive :delegated_snapshot_query, 500
+    refute_receive :delegated_snapshot_query, 150
+    assert_receive {:runner_disconnect_flush, %{count: 999}, %{outcome: :snapshot}}, 500
+    refute_receive {:runner_disconnect_flush, _, _}, 150
+
+    state = :sys.get_state(RunnerLifecycle)
+    assert state.disconnect_timers == %{}
+    assert get_in(state, [:runners, reconnect_owner, :sid]) == "batch-reconnected"
+    refute Map.has_key?(state.last_error, reconnect_owner)
+  end
+
+  test "startup orphan recovery fails delegated runs that no desktop reclaims", context do
+    assert {:ok, run} = Store.start(context.vault_id, nil, "orphan after restart", "codex")
+    :ok = Store.record_delegated(run.id, context.user_id)
+
+    send(RunnerLifecycle, :orphan_reclaim)
+
+    assert %{
+             status: "failed",
+             summary: "Desktop agent runner did not reclaim this run after server restart."
+           } = eventually_status(run.id, "failed")
+  end
+
+  test "runner callback registration is intentionally single-owned by DomainAdapter", context do
+    assert {:ok, run} = Store.start(context.vault_id, nil, "single registration", "codex")
+    :ok = Store.record_delegated(run.id, context.user_id)
+
+    assert {:ok, [run_id]} =
+             RunnerLifecycle.register(context.user_id, "sid-domain", %{
+               activeRunIds: [run.id],
+               runnerInstanceId: "desktop-single"
+             })
+
+    assert run_id == run.id
+    assert :ok = RunnerLifecycle.registered(context.user_id, "sid-hub", %{}, nil)
+
+    health = RunnerLifecycle.health(context.user_id)
+    assert health.activeRuns == 1
+    assert Store.get(run.id).status == "queued"
+  end
+
+  test "catalog dispatch accepts a body already parsed by the main router", context do
+    token =
+      Token.sign_user(%{
+        id: context.user_id,
+        username: context.username,
+        auth_version: 0
+      })
+
+    conn =
+      conn(:post, "/api/vaults/#{context.vault_id}/work-items", %{title: "Preparsed"})
+      |> put_req_header("authorization", "Bearer #{token}")
+
+    assert is_map(conn.body_params)
+
+    assert {:handled, response} =
+             DomainDispatch.dispatch(conn, [
+               {CascadeWeb.OrchestrationRoutes, CascadeWeb.OrchestrationRouter}
+             ])
+
+    assert response.status == 201
+    assert Jason.decode!(response.resp_body)["item"]["title"] == "Preparsed"
+  end
+
+  defp eventually_status(run_id, expected, attempts \\ 50)
+
+  defp eventually_status(run_id, expected, 0) do
+    flunk("run #{run_id} did not reach #{expected}; last state: #{inspect(Store.get(run_id))}")
+  end
+
+  defp eventually_status(run_id, expected, attempts) do
+    case Store.get(run_id) do
+      %{status: ^expected} = run ->
+        run
+
+      _ ->
+        Process.sleep(10)
+        eventually_status(run_id, expected, attempts - 1)
+    end
+  end
+end

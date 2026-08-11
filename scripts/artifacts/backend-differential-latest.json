@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "pass": true,
+  "normalizationRules": [
+    "Generated numeric and UUID identity fields become <id>.",
+    "ISO/SQLite timestamps and timestamp fields become <timestamp>.",
+    "JWTs, invite/public slugs, cookie values, password hashes, and secrets become opaque markers.",
+    "Loopback origins become <origin> because each backend owns a different ephemeral port."
+  ],
+  "normalizationReview": {
+    "fixedBeforeCapture": [
+      "URL-encoded loopback origins and public slugs now use the existing opaque origin/token markers."
+    ],
+    "remainingKnownNormalizationDefects": [],
+    "note": "Every reported item remains fail-closed as a contract gap; clustering never removes a diff."
+  },
+  "summary": {
+    "httpSteps": [
+      "health",
+      "auth.register",
+      "auth.browser-login",
+      "account.me",
+      "account.profile",
+      "vault.create",
+      "vault.list",
+      "content.folder-create",
+      "content.note-create",
+      "content.note-update",
+      "content.note-get",
+      "chat.channel-create",
+      "chat.message-create",
+      "chat.message-list",
+      "publish.create",
+      "publish.get",
+      "publish.public-page",
+      "search.lexical",
+      "run.runner-status",
+      "run.create",
+      "run.get-completed",
+      "run.events"
+    ],
+    "differenceCount": 0,
+    "clusters": {}
+  },
+  "clusters": [],
+  "diffs": []
+}

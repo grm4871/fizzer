@@ -118,8 +118,8 @@ try {
   await dialog.getByRole('button', { name: 'Ask agent', exact: true }).click();
 
   await page.getByText('@terra Verify this claim against the implementation.', { exact: true }).first().waitFor({ timeout: 10_000 });
-  const chip = page.locator('.chat-relationship-chip', { hasText: 'Review request' }).last();
-  await chip.waitFor({ timeout: 5_000 });
+  await page.locator('.chat-reply-quote', { hasText: 'Source result for a focused review.' })
+    .last().waitFor({ timeout: 5_000 });
   const messages = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/messages?detail=full`, { headers: auth });
   const request = messages.messages.find((message) => message.replyTo?.messageId === source.message.id);
   if (!request) throw new Error('linked collaboration request was not persisted');

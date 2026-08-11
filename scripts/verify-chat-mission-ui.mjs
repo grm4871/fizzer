@@ -352,24 +352,22 @@ try {
   ) === 0);
   await card.locator('.chat-mission-toggle').click();
   check('mission expands to its worker task', (await card.innerText()).includes('Verify multiplayer persistence'));
-  check('thinking trace is nested inside the mission card', (
-    await card.locator('.chat-mission-trace .chat-work-trace.is-embedded').count()
-  ) === 1);
+  check('cross-agent worker trace keeps its chronological agent row', (
+    await card.locator('.chat-mission-trace .chat-work-trace').count()
+  ) === 0 && (await page.locator('.chat-work-trace:not(.is-embedded)').count()) >= 1);
   check('expanded mission hides the collapsed peek', (
     await card.locator('.chat-mission-peek').count()
   ) === 0);
-  check('embedded work stream has no nested card chrome', await card.locator('.chat-mission-trace .chat-work-trace').evaluate((node) => {
-    const style = getComputedStyle(node);
-    return node.classList.contains('is-embedded')
-      && style.borderTopWidth === '0px'
-      && (style.boxShadow === 'none' || style.boxShadow === '');
+  check('worker stream stays outside mission card chrome', await page.locator('.chat-work-trace:not(.is-embedded)').first().evaluate((node) => {
+    return !node.classList.contains('is-embedded')
+      && !node.closest('.chat-mission-card');
   }));
   // Mission chrome is a normal message surface: right-click Reply anywhere on
   // the card header (collapsed or expanded) targets the originating message.
   await card.locator('.chat-mission-toggle').click({ button: 'right' });
   const replyMenu = page.getByRole('menuitem', { name: /Reply/i });
   await replyMenu.waitFor({ timeout: 5_000 });
-  await replyMenu.click();
+  await replyMenu.evaluate((node) => node.click());
   await page.locator('.chat-reply-bar').waitFor({ timeout: 5_000 });
   check('right-click reply targets the mission originating message', (
     await page.locator('.chat-reply-bar-preview').innerText()
@@ -380,7 +378,7 @@ try {
   const missionRow = card.locator('xpath=ancestor::article[1]');
   await missionRow.locator('.chat-message-meta').click({ button: 'right' });
   await replyMenu.waitFor({ timeout: 5_000 });
-  await replyMenu.click();
+  await replyMenu.evaluate((node) => node.click());
   await page.locator('.chat-reply-bar').waitFor({ timeout: 5_000 });
   check('mission row right-click targets the originating message', (
     await page.locator('.chat-reply-bar-preview').innerText()
@@ -392,7 +390,7 @@ try {
   }
   await card.locator('.chat-mission-toggle').click({ button: 'right' });
   await replyMenu.waitFor({ timeout: 5_000 });
-  await replyMenu.click();
+  await replyMenu.evaluate((node) => node.click());
   await page.locator('.chat-reply-bar').waitFor({ timeout: 5_000 });
   check('collapsed mission right-click still replies to the origin', (
     await page.locator('.chat-reply-bar-preview').innerText()
@@ -426,9 +424,12 @@ try {
   await archive.getByRole('button', { name: 'Close mission history' }).click();
   await archive.waitFor({ state: 'detached', timeout: 5_000 });
 
-  // Nested mission traces force-open the stream; collapsed peek is only for
-  // compact activity (hidden while expanded).
-  const workTrace = card.locator('.chat-mission-trace .chat-work-trace').first();
+  // Cross-agent work remains in its own chronological row; the mission card
+  // retains only its durable task projection and compact activity peek.
+  const workerLineSelector = `.chat-work-line[data-message-id="${traceMessages[1].id}"]`;
+  const workTrace = page.locator('.chat-work-trace:not(.is-embedded)', {
+    has: page.locator(workerLineSelector),
+  }).first();
   await workTrace.waitFor({ timeout: 10_000 });
   check('worker chatter collapses into a work trace', await workTrace.isVisible());
   // Collapse again to assert the compact activity line geometry.
@@ -467,20 +468,21 @@ try {
   // Re-open for the remaining expanded-stream assertions.
   await card.locator('.chat-mission-toggle').click();
   await workTrace.waitFor({ timeout: 5_000 });
-  check('embedded mission stream starts collapsed', await workTrace.evaluate((node) => !node.classList.contains('is-open')));
-  await workTrace.locator('.chat-work-trace-toggle').click();
-  // Coordinator follow-ups that stay in the work run render as compact lines
-  // inside the progressively disclosed mission stream (not a second full bubble).
+  check('live standalone worker stream stays open', await workTrace.evaluate((node) => (
+    node.classList.contains('is-open') && !node.classList.contains('is-embedded')
+  )));
+  // The coordinator follow-up is a different agent identity, so it remains a
+  // chronological full bubble instead of being folded into Terra's trace.
   const finalAsWorkLine = await workTrace.locator(`.chat-work-line[data-message-id="${traceMessages[2].id}"]`).count();
   const finalAsFullBubble = await page.locator(`.chat-message-chunk[data-message-id="${traceMessages[2].id}"]`).count();
-  check('coordinator prose stays in the mission stream when work continues', (
-    finalAsWorkLine === 1 && finalAsFullBubble === 0
+  check('cross-agent coordinator prose remains a chronological full bubble', (
+    finalAsWorkLine === 0 && finalAsFullBubble === 1
   ), `workLine=${finalAsWorkLine}, fullBubble=${finalAsFullBubble}`);
-  check('embedded mission stream expands independently', await workTrace.evaluate((node) => node.classList.contains('is-open') && !node.classList.contains('is-forced-open')));
+  check('standalone worker stream remains independently visible', await workTrace.evaluate((node) => node.classList.contains('is-open') && !node.classList.contains('is-forced-open')));
   const traceLines = workTrace.locator('.chat-work-line');
   const traceLineCount = await traceLines.count();
   check('expanded trace exposes its worker steps', traceLineCount >= 1, `count=${traceLineCount}`);
-  check('expanded stream retains coordinator evidence', finalAsWorkLine === 1);
+  check('expanded stream retains worker evidence', await workTrace.locator(workerLineSelector).count() === 1);
   const workerLine = workTrace.locator(`[data-message-id="${traceMessages[1].id}"]`);
   if (!(await workerLine.evaluate((node) => node.classList.contains('is-open')))) {
     await workerLine.locator('.chat-work-line-fold').click();

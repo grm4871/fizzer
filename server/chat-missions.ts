@@ -291,6 +291,7 @@ export function ensureChatMissionSchema(db: Db): void {
       SELECT task.id
       FROM chat_mission_tasks task
       WHERE task.run_id = chat_messages.run_id
+      ORDER BY task.rowid
       LIMIT 1
     )
     WHERE mission_task_id IS NULL

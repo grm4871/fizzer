@@ -1,9 +1,15 @@
 services:
   cascade:
-    build: .
-    image: cascade:latest
+    image: ${CASCADE_IMAGE:-cascade:latest}
     container_name: cascade
+    init: true
     restart: unless-stopped
+    stop_grace_period: 2m
+    cpus: 2
+    cpuset: "0-1"
+    mem_limit: 3g
+    memswap_limit: 3g
+    pids_limit: 100000
     ports:
       - "127.0.0.1:3000:3000"
     env_file:
@@ -11,11 +17,30 @@ services:
     environment:
       NODE_ENV: production
       CASCADE_NETWORK_MODE: "true"
-      API_HOST: "0.0.0.0"
+      CASCADE_BIND_IP: "0.0.0.0"
       API_PORT: "3000"
       DOCS_DB_PATH: /data/docs.db
       CASCADE_DATA_DIR: /data
+      CASCADE_CLIENT_DIST_DIR: /app/client/dist
+      CASCADE_NODE_ROOT: /app
+      # Preserve the Node backend's HOME-derived storage locations exactly.
+      CASCADE_VAULTS_BASE_DIR: /data/.cascade/vaults
+      CASCADE_QMD_DIR: /data/.cascade/qmd
+      CASCADE_HTTP_MAX_CONNECTIONS: "32768"
+      CASCADE_HTTP_ACCEPTORS: "4"
+      CASCADE_HTTP_BACKLOG: "65535"
+      CASCADE_REALTIME_HIBERNATE_AFTER_MS: "5000"
+      CASCADE_SQLITE_POOL_SIZE: "20"
+      CASCADE_SQLITE_BUSY_TIMEOUT_MS: "5000"
+      # The cutover maintenance gate can remain closed for health, protocol,
+      # and full database verification; preserve runner reclaim state throughout.
+      CASCADE_RUNNER_ORPHAN_RECLAIM_MS: "600000"
       CASCADE_TRUST_PROXY_HOPS: "1"
       CASCADE_PUBLIC_URL: ${CASCADE_PUBLIC_URL:-https://cscd.online}
+      ERL_AFLAGS: "+sbwt none +sbwtdcpu none +sbwtdio none"
+    ulimits:
+      nofile:
+        soft: 200000
+        hard: 200000
     volumes:
       - /var/lib/cascade:/data

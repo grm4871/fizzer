@@ -3,13 +3,12 @@
 ## Ship hard gate (never skip)
 
 Pushing to `master` is **not** shipping. Production only updates after the host
-has rebuilt and the health check passes.
+has loaded the staged certified image and every cutover check passes.
 
-**Deploys no longer run on GitHub Actions.** The Actions quota for this private
-repo ran out (macOS desktop-build legs bill at 10x), jobs stopped starting, and
-every push produced a red run. `Deploy Production`, `Android Beta APK` and
-`Desktop builds` are all **disabled**; re-enable with `gh workflow enable <name>`
-once billing is sorted.
+**Automatic deploys do not run on GitHub Actions.** `Deploy Production` has no
+`push` trigger; its `workflow_dispatch` entry is retained only as an explicit
+fallback after host autodeploy fails. This keeps one automatic production
+trigger per push.
 
 **Before every `git push` to master:**
 
@@ -76,27 +75,28 @@ So when a UI feature is "missing in prod but works locally", do not stop at "sta
 
 `gh` is installed and authenticated (account `grm4871`; scopes `repo`, `workflow`, `gist`, `read:org`). Use it instead of guessing at deploy state:
 
-- `gh run list --limit 5` — recent runs. All deploy/build workflows are currently disabled (see above), so this is history only.
+- `gh run list --limit 5` — recent runs, including any manually dispatched fallback deploy.
 - `gh run view <id> --log-failed` — the failing step's log.
 - `gh run watch <id>` — block until a run finishes. Not the deploy path any more; use `journalctl -u cascade-autodeploy -f` on the host.
 
 ## Deploying changes
 
-Production deploys use the same GitHub Actions → SSH pattern as Simcluster.
+Production deploys use the authenticated repository webhook and host-side
+autodeploy described above.
 
-1. **Commit and push** to `master`. That triggers `.github/workflows/deploy.yml`, which SSHs to the host, `git fetch`/`reset --hard origin/master`, and runs `deploy/remote-update.sh` (docker compose build + up + health check).
-2. **Wait for the host deploy** (do not assume push means live) — `journalctl -u cascade-autodeploy -f`, or: `docker compose -f /var/www/cascade-browser/docker-compose.yml ps` and `curl -sf http://127.0.0.1:3000/api/health`. Confirm the expected commit (`git -C /var/www/cascade-browser rev-parse --short HEAD`) before claiming ship. A green deploy only proves the bundle built — for a UI change, also grep the served bundle (above).
-3. First-time host bootstrap (nginx, certbot, `.env`) remains `deploy/deploy.sh <domain>` — not used for routine releases. Required Actions secrets (same names as Simcluster): `DEPLOY_SSH_KEY`, `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_PORT`.
+1. **Commit, build, certify, and stage** the exact full-SHA image before pushing. Then push to `master`; the webhook starts the host service, which fetches/reset to `origin/master` and runs `deploy/remote-update.sh` with `--no-build`.
+2. **Wait for the host deploy** (do not assume push means live) — `journalctl -u cascade-autodeploy -f`, or: `docker compose -f /var/www/cascade-browser/docker-compose.yml ps` and `curl -sf http://127.0.0.1:3000/api/health`. Confirm the expected commit (`git -C /var/www/cascade-browser rev-parse --short HEAD`) before claiming ship. A verified cutover still does not prove a changed UI behaves correctly; also inspect and exercise the served bundle for client changes.
+3. First-time host bootstrap (nginx, certbot, `.env`) remains `deploy/deploy.sh <domain>` — not used for routine releases. If host autodeploy explicitly fails, manually dispatch `.github/workflows/deploy.yml`; never dispatch it concurrently with the webhook path.
 
 ### When a deployment fails
 
-- Read the failing step with `gh run view <id> --log-failed` **before** changing anything.
+- Read `journalctl -u cascade-autodeploy` first. For a manually dispatched fallback, read its failing step with `gh run view <id> --log-failed` **before** changing anything.
 - Classify from that log:
   - **`tsc` / `npm run build` in the server image** → fix types/imports locally with `npm run build` (not client-only).
   - **client `vite build`** → `npm run build:client` on the exact commit.
   - **before SSH** → repository secrets/connectivity.
-  - **after SSH / remote-update** → host build, compose, or health check output is truth.
-- Fix, validate the same command that failed, push, and **watch Deploy to green** before claiming ship.
+  - **after SSH / remote-update** → host preflight, snapshot, Compose, or health-check output is truth.
+- Fix, validate the same command that failed, push, and **watch the host deploy complete successfully** before claiming ship.
 
 ### After deploy lands — refresh in place (never kill the app)
 

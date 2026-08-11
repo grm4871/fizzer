@@ -1,4 +1,4 @@
-# Shared-memory edge limits run before requests reach Node. The burst budgets
+# Shared-memory edge limits run before requests reach Cascade. The burst budgets
 # permit normal app startup and reconnect storms while bounding one address.
 limit_req_zone  $binary_remote_addr zone=cascade_auth_per_ip:10m rate=10r/m;
 limit_req_zone  $binary_remote_addr zone=cascade_api_per_ip:20m  rate=20r/s;
@@ -32,6 +32,13 @@ server {
     ssl_dhparam         /etc/letsencrypt/ssl-dhparams.pem;
 
     client_max_body_size 32M;
+
+    # remote-update.sh creates this marker only after the old backend has
+    # drained and keeps it in place until the candidate has passed its data,
+    # HTTP, and Engine.IO checks. Existing keep-alive requests are checked too.
+    if (-f /run/cascade-maintenance) {
+        return 503;
+    }
 
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
     add_header X-Content-Type-Options "nosniff" always;

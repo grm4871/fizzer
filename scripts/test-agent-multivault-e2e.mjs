@@ -6,15 +6,11 @@
  * in every vault its owner works in, keeping one handle and one roster entry
  * instead of a separate copy (and a separate @handle) per vault.
  */
-import { spawn } from 'node:child_process';
-import fs from 'node:fs';
-import { setTimeout as delay } from 'node:timers/promises';
+import { launchTestBackend } from './lib/test-backend.mjs';
 import { pickPort } from './lib/test-ports.mjs';
 
 const port = await pickPort();
 const base = `http://127.0.0.1:${port}`;
-const dbPath = `/tmp/cascade-multivault-${port}.db`;
-const root = new URL('..', import.meta.url).pathname;
 const CHAT_MARKER = 'cascade://chat-channel';
 let failures = 0;
 
@@ -35,23 +31,14 @@ function check(label, condition) {
   if (!condition) failures += 1;
 }
 
-try { fs.unlinkSync(dbPath); } catch {}
-const server = spawn('node', ['dist/index.js'], {
-  cwd: root,
+const server = await launchTestBackend({
+  name: 'agent-multivault-e2e', port,
   env: {
-    ...process.env, API_PORT: String(port), API_HOST: '127.0.0.1',
-    DOCS_DB_PATH: dbPath, JWT_SECRET: 'multivault-secret', CASCADE_ALLOW_OPEN_REGISTRATION: '1',
+    JWT_SECRET: 'multivault-secret', CASCADE_ALLOW_OPEN_REGISTRATION: '1',
   },
-  stdio: ['ignore', 'pipe', 'pipe'],
 });
-server.stderr.on('data', (c) => process.stderr.write(`[server] ${c}`));
 
 try {
-  for (let i = 0; i < 200; i += 1) {
-    try { if ((await request('/api/health')).ok) break; } catch {}
-    await delay(100);
-  }
-
   const me = await must('/api/auth/register', {
     method: 'POST', body: JSON.stringify({ username: `multi_${Date.now()}`, password: 'testpass12345' }),
   });
@@ -115,9 +102,7 @@ try {
   console.error('[multivault] ERROR', error);
   failures += 1;
 } finally {
-  server.kill('SIGTERM');
-  await delay(200);
-  try { fs.unlinkSync(dbPath); } catch {}
+  await server.stop();
 }
 
 console.log(failures === 0 ? '[multivault] all checks passed' : `[multivault] ${failures} failure(s)`);

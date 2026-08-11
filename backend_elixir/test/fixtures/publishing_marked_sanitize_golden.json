@@ -1,0 +1,42 @@
+[
+  {
+    "name": "paragraphs",
+    "markdown": "# Heading\n\nText **bold** *em* ~~gone~~ `code`.",
+    "html": "<h1>Heading</h1>\n<p>Text <strong>bold</strong> <em>em</em> <del>gone</del> <code>code</code>.</p>\n"
+  },
+  {
+    "name": "lists",
+    "markdown": "- one\n- two\n\n1. first\n2. second",
+    "html": "<ul>\n<li>one</li>\n<li>two</li>\n</ul>\n<ol>\n<li>first</li>\n<li>second</li>\n</ol>\n"
+  },
+  {
+    "name": "quote_code",
+    "markdown": "> quote\n\n```js\nalert(1)\n```",
+    "html": "<blockquote>\n<p>quote</p>\n</blockquote>\n<pre><code>alert(1)\n</code></pre>\n"
+  },
+  {
+    "name": "table",
+    "markdown": "| a | b |\n|---|---|\n| 1 | 2 |",
+    "html": "<table>\n<thead>\n<tr>\n<th>a</th>\n<th>b</th>\n</tr>\n</thead>\n<tbody><tr>\n<td>1</td>\n<td>2</td>\n</tr>\n</tbody></table>\n"
+  },
+  {
+    "name": "links_images",
+    "markdown": "[safe](https://example.com/a?b=1) [mail](mailto:person@example.com) [local](/notes/one) ![image](https://example.com/image.png)",
+    "html": "<p><a href=\"https://example.com/a?b=1\" rel=\"noopener noreferrer\">safe</a> <a href=\"mailto:person@example.com\" rel=\"noopener noreferrer\">mail</a> <a href=\"/notes/one\" rel=\"noopener noreferrer\">local</a> <img src=\"https://example.com/image.png\" alt=\"image\" /></p>\n"
+  },
+  {
+    "name": "private_wiki_ai",
+    "markdown": "keep\n:::private\nsecret\n:::\n[[Target]] ![[Embed]] {{ai:hidden}}",
+    "html": "<p>keep</p>\n<blockquote>\n<p>Private block omitted from the public note.\nTarget [Embed] </p>\n</blockquote>\n"
+  },
+  {
+    "name": "xss",
+    "markdown": "<script>alert(1)</script><img src=x onerror=alert(2)> [x](jav%61script:alert(1)) ![svg](data:image/svg+xml;base64,PHN2Zz4=)",
+    "html": "<p>alert(1) <a rel=\"noopener noreferrer\">x</a> <img alt=\"svg\" /></p>\n"
+  },
+  {
+    "name": "raster_data",
+    "markdown": "![png](data:image/png;base64,iVBORw0KGgo=)",
+    "html": "<p><img src=\"data:image/png;base64,iVBORw0KGgo=\" alt=\"png\" /></p>\n"
+  }
+]

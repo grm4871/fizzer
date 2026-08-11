@@ -6,20 +6,20 @@
  * channel's source vault), the socket broadcast that removes it from every
  * linked participant's client, and that restricted agent tokens can't delete.
  *
- * Reuses the real server (dist/index.js). Build first: `npm run build`.
+ * Uses the real backend selected by CASCADE_TEST_BACKEND (node by default).
+ * Build Node first with `npm run build`.
  */
 
-import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { io } from 'socket.io-client';
+import { launchTestBackend } from './lib/test-backend.mjs';
 import { pickPort } from './lib/test-ports.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, '..');
 const API_PORT = Number(process.env.TEST_API_PORT) || await pickPort();
 const API_BASE = `http://127.0.0.1:${API_PORT}`;
-const DB_PATH = `/tmp/cascade-chatdelete-e2e-${API_PORT}.db`;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -38,33 +38,14 @@ async function must(url, options) {
   return data;
 }
 
-async function waitForHealth(timeoutMs = 15000) {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    try {
-      const { ok, data } = await fetchJson(`${API_BASE}/api/health`);
-      if (ok && data.status === 'ok') return;
-    } catch {
-      // Server socket is not listening yet.
-    }
-    await sleep(200);
-  }
-  throw new Error('Server did not become healthy in time');
-}
-
 function startServer() {
-  return spawn('node', ['dist/index.js'], {
-    cwd: root,
+  return launchTestBackend({
+    name: 'chat-delete-e2e', repoRoot: root, port: API_PORT,
     env: {
-      ...process.env,
-      API_PORT: String(API_PORT),
-      API_HOST: '127.0.0.1',
-      DOCS_DB_PATH: DB_PATH,
       JWT_SECRET: 'chatdelete-e2e-secret',
       // The test needs two accounts; skip the invite-link gate on this throwaway db.
       CASCADE_ALLOW_OPEN_REGISTRATION: '1',
     },
-    stdio: ['ignore', 'pipe', 'pipe'],
   });
 }
 
@@ -112,12 +93,9 @@ function check(name, cond) {
 }
 
 async function main() {
-  const server = startServer();
-  server.stdout.on('data', (c) => process.stdout.write(`[server] ${c}`));
-  server.stderr.on('data', (c) => process.stderr.write(`[server-err] ${c}`));
+  const server = await startServer();
 
   try {
-    await waitForHealth();
     const stamp = Date.now();
     const hostName = `host_${stamp}`;
     const guestName = `guest_${stamp}`;
@@ -201,8 +179,7 @@ async function main() {
     if (failures > 0) throw new Error(`${failures} check(s) failed`);
     console.log('[e2e] All chat message delete tests passed');
   } finally {
-    server.kill('SIGTERM');
-    await sleep(300);
+    await server.stop();
   }
 }
 

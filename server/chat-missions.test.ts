@@ -653,6 +653,11 @@ test('schema repair marks historical worker replies as internal mission evidence
     `).run();
     db.prepare('UPDATE chat_mission_tasks SET run_id = ? WHERE id = ?')
       .run(Number(run.lastInsertRowid), task.task.id);
+    const laterTask = addChatMissionTask(db, 1, 'channel-1', mission.mission.id, {
+      coordinatorRegistrationId: coordinator.id, title: 'Later audit', assignee: worker.id,
+    });
+    db.prepare('UPDATE chat_mission_tasks SET run_id = ? WHERE id = ?')
+      .run(Number(run.lastInsertRowid), laterTask.task.id);
     createChatMessage(db, 1, 'vault-1', 'channel-1', {
       id: 'historical-worker-report', channelId: 'channel-1', author: 'Terra',
       body: 'A long internal audit.', createdAt: '2026-08-03T00:00:01.000Z',

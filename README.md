@@ -83,7 +83,12 @@ npm run make             # build distributables
 
 ## Production deploy (CI/CD)
 
-Same model as Simcluster: push to `master` runs `.github/workflows/deploy.yml`, which SSHs to the server and runs `deploy/remote-update.sh` (image rebuild + container swap). First-time server setup is still `deploy/deploy.sh <domain>`.
+Pushes to `master` reach the authenticated host webhook, whose autodeploy
+service fast-forwards the server checkout and runs `deploy/remote-update.sh`.
+The GitHub Actions deploy workflow is `workflow_dispatch` fallback only, so a
+push has one production trigger. Production loads the already-certified image
+without rebuilding it. First-time server setup is still
+`deploy/deploy.sh <domain>`.
 
 GitHub Actions secrets (mirror the Simcluster repo values):
 
@@ -93,6 +98,7 @@ GitHub Actions secrets (mirror the Simcluster repo values):
 | `DEPLOY_HOST` | Server hostname or IP |
 | `DEPLOY_USER` | SSH user (typically `root`) |
 | `DEPLOY_PORT` | SSH port (optional; default 22) |
+| `DEPLOY_KNOWN_HOSTS` | Pinned SSH host-key line used by the manual fallback |
 
 Desktop Electron installers are built separately by `.github/workflows/desktop-build.yml` on `v*` tags.
 

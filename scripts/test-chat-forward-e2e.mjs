@@ -6,26 +6,20 @@
  * broadcast into the target channel, access control on the target, and the
  * refusals (same channel, unknown message).
  *
- * Reuses the real server (dist/index.js). Build first: `npm run build`.
+ * Uses the real backend selected by CASCADE_TEST_BACKEND (node by default).
+ * Build Node first with `npm run build`.
  */
 
-import { spawn } from 'node:child_process';
-import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { io } from 'socket.io-client';
+import { launchTestBackend } from './lib/test-backend.mjs';
+import { pickPort } from './lib/test-ports.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, '..');
-const API_PORT = Number(process.env.TEST_API_PORT || 3098);
+const API_PORT = Number(process.env.TEST_API_PORT) || await pickPort();
 const API_BASE = `http://127.0.0.1:${API_PORT}`;
-const DB_PATH = `/tmp/cascade-chatforward-e2e-${API_PORT}.db`;
-
-function cleanTestDatabase() {
-  for (const suffix of ['', '-wal', '-shm']) {
-    try { fs.unlinkSync(`${DB_PATH}${suffix}`); } catch { /* already clean */ }
-  }
-}
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -44,32 +38,13 @@ async function must(url, options) {
   return data;
 }
 
-async function waitForHealth(timeoutMs = 15000) {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    try {
-      const { ok, data } = await fetchJson(`${API_BASE}/api/health`);
-      if (ok && data.status === 'ok') return;
-    } catch {
-      // Server socket is not listening yet.
-    }
-    await sleep(200);
-  }
-  throw new Error('Server did not become healthy in time');
-}
-
 function startServer() {
-  return spawn('node', ['dist/index.js'], {
-    cwd: root,
+  return launchTestBackend({
+    name: 'chat-forward-e2e', repoRoot: root, port: API_PORT,
     env: {
-      ...process.env,
-      API_PORT: String(API_PORT),
-      API_HOST: '127.0.0.1',
-      DOCS_DB_PATH: DB_PATH,
       JWT_SECRET: 'chatforward-e2e-secret',
       CASCADE_ALLOW_OPEN_REGISTRATION: '1',
     },
-    stdio: ['ignore', 'pipe', 'pipe'],
   });
 }
 
@@ -119,18 +94,15 @@ async function createChannel(auth, vaultId, title) {
 }
 
 let failures = 0;
-function check(name, cond) {
+function check(name, cond, detail = '') {
   if (cond) { console.log(`[e2e] OK  ${name}`); } else { console.error(`[e2e] FAIL ${name}`); failures++; }
+  if (!cond && detail) console.error(`[e2e]      ${detail}`);
 }
 
 async function main() {
-  cleanTestDatabase();
-  const server = startServer();
-  server.stdout.on('data', (c) => process.stdout.write(`[server] ${c}`));
-  server.stderr.on('data', (c) => process.stderr.write(`[server-err] ${c}`));
+  const server = await startServer();
 
   try {
-    await waitForHealth();
     const stamp = Date.now();
     const ownerName = `owner_${stamp}`;
     const otherName = `other_${stamp}`;
@@ -184,7 +156,8 @@ async function main() {
     const missing = await fetchJson(`${API_BASE}/api/vaults/${vault.id}/channels/${source.id}/messages/does-not-exist/forward`, {
       method: 'POST', headers: A.auth, body: JSON.stringify({ targetChannelId: target.id }),
     });
-    check('unknown message is refused (400)', missing.status === 400);
+    check('unknown message is refused (400)', missing.status === 400,
+      `received ${missing.status}: ${missing.data.error || JSON.stringify(missing.data)}`);
 
     // ── Test 4: missing target is refused.
     const noTarget = await fetchJson(`${API_BASE}/api/vaults/${vault.id}/channels/${source.id}/messages/${original}/forward`, {
@@ -196,7 +169,8 @@ async function main() {
     const outsider = await fetchJson(`${API_BASE}/api/vaults/${vault.id}/channels/${source.id}/messages/${original}/forward`, {
       method: 'POST', headers: B.auth, body: JSON.stringify({ targetChannelId: target.id }),
     });
-    check('outsider cannot forward (400)', outsider.status === 400);
+    check('outsider cannot forward (400)', outsider.status === 400,
+      `received ${outsider.status}: ${outsider.data.error || JSON.stringify(outsider.data)}`);
     check('outsider forward posted nothing', (await listMessages(A.auth, vault.id, target.id)).length === targetMessages.length);
 
     sock.socket.disconnect();
@@ -204,9 +178,7 @@ async function main() {
     if (failures > 0) throw new Error(`${failures} check(s) failed`);
     console.log('[e2e] All chat message forward tests passed');
   } finally {
-    server.kill('SIGTERM');
-    await sleep(300);
-    cleanTestDatabase();
+    await server.stop();
   }
 }
 
