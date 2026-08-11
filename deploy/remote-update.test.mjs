@@ -119,6 +119,10 @@ test('snapshot creation fails closed on a busy checkpoint and records integrity 
   assert.match(source, /wal_checkpoint\(TRUNCATE\)/);
   assert.match(source, /busy WAL checkpoint/);
   assert.match(source, /SQLite quick_check failed/);
+  assert.match(source, /SQL query-only while allowing those disposable files/);
+  assert.match(source, /-v "\$SNAPSHOT_DIR:\/snapshot"/);
+  assert.match(source, /db\.pragma\("query_only = ON"\)/);
+  assert.match(source, /rm -f -- "\$snapshot_tmp-wal" "\$snapshot_tmp-shm"/);
   assert.match(source, /snapshot foreign_key_check failed/);
   assert.match(source, /sha256sum docs\.db > docs\.db\.sha256/);
   assert.match(source, /git rev-parse HEAD > "\$SNAPSHOT_DIR\/revision\.txt"/);

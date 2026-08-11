@@ -498,15 +498,21 @@ checkpoint_and_snapshot() {
   install -d -m 0700 "$SNAPSHOT_DIR"
   local snapshot_tmp="$SNAPSHOT_DIR/.docs.db.incomplete"
   cp --reflink=auto --sparse=always --preserve=mode,ownership,timestamps "$LIVE_DB" "$snapshot_tmp"
+  # A WAL-mode database opened from a read-only mount can fail before
+  # `quick_check` because SQLite still needs transient SHM/WAL sidecars. Keep
+  # SQL query-only while allowing those disposable files in the private,
+  # root-owned snapshot directory.
   docker run --rm --network none --user 0:0 --entrypoint node \
-    -v "$SNAPSHOT_DIR:/snapshot:ro" "$CANDIDATE_IMAGE" --input-type=module -e '
+    -v "$SNAPSHOT_DIR:/snapshot" "$CANDIDATE_IMAGE" --input-type=module -e '
       import Database from "better-sqlite3";
-      const db = new Database("/snapshot/.docs.db.incomplete", { readonly: true, fileMustExist: true });
+      const db = new Database("/snapshot/.docs.db.incomplete", { fileMustExist: true });
       try {
+        db.pragma("query_only = ON");
         if (db.pragma("quick_check", { simple: true }) !== "ok") throw new Error("snapshot quick_check failed");
         if (db.pragma("foreign_key_check").length) throw new Error("snapshot foreign_key_check failed");
       } finally { db.close(); }
     '
+  rm -f -- "$snapshot_tmp-wal" "$snapshot_tmp-shm"
   mv "$snapshot_tmp" "$SNAPSHOT_DIR/docs.db"
   install -d -m 0700 "$SNAPSHOT_DIR/corpus"
   cp -a --reflink=auto -- "$DATA_DIR/.cascade/vaults" "$SNAPSHOT_DIR/corpus/vaults"
