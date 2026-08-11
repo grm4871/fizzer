@@ -4081,6 +4081,15 @@ button.chat-avatar.is-clickable:focus-visible {
   min-width: 0;
   flex: 1;
 }
+.chat-svg {
+  display: inline-block;
+  max-width: 100%;
+  margin: 4px 0;
+}
+.chat-svg svg {
+  max-width: 100%;
+  height: auto;
+}
 .chat-message-meta {
   display: flex;
   align-items: baseline;

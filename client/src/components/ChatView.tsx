@@ -3,6 +3,7 @@ import { Bot, ChevronRight, ClipboardList, Flag, Forward, Hash, History, ImagePl
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
+import DOMPurify from 'dompurify';
 import { api, type NoteSummary } from '../api';
 import {
   bodyHasNoteRefs,
@@ -867,6 +868,7 @@ const ChatMessageText = memo(function ChatMessageText({
   messageId,
   body,
   streaming = false,
+  isAgent = false,
   mentionableAliases,
   notes = [],
   onOpenNote,
@@ -875,6 +877,7 @@ const ChatMessageText = memo(function ChatMessageText({
   messageId: string;
   body: string;
   streaming?: boolean;
+  isAgent?: boolean;
   mentionableAliases: string[];
   notes?: NoteSummary[];
   onOpenNote?: (id: string) => void;
@@ -908,7 +911,15 @@ const ChatMessageText = memo(function ChatMessageText({
   }, [mentionableAliases, messageId, notes, onOpenNote, onOpenSharedNote]);
 
   const formattedBody = useMemo(() => {
-    const processed = paintBody.replace(/\\+`/g, '`');
+    // Raw <svg>…</svg> is escaped by react-markdown, so (agents only) lift it
+    // into a ```svg fence — the code renderer sanitizes and draws it inline.
+    // User messages never render SVG; they show the markup as plain text.
+    const ticks = paintBody.replace(/\\+`/g, '`');
+    const processed = isAgent
+      ? ticks.replace(/```svg\s*[\r\n]+([\s\S]*?)```|(<svg[\s\S]*?<\/svg>)/gi, (whole, _fenced, raw) =>
+          raw ? `\n\`\`\`svg\n${raw}\n\`\`\`\n` : whole,
+        )
+      : ticks;
     const trimmed = processed.trim();
     if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
       try {
@@ -921,7 +932,7 @@ const ChatMessageText = memo(function ChatMessageText({
       }
     }
     return processed;
-  }, [paintBody]);
+  }, [paintBody, isAgent]);
 
   const components = useMemo(() => ({
     a: ({ href = '', children }: { href?: string; children?: ReactNode }) => (
@@ -935,6 +946,13 @@ const ChatMessageText = memo(function ChatMessageText({
       const match = /language-(\w+)/.exec(className || '');
       const isInline = !className;
       const value = String(children).replace(/\n$/, '');
+
+      // ```svg blocks render as inline graphics. Sanitize first — message
+      // bodies are untrusted, and raw SVG can smuggle <script>/onload/etc.
+      if (!isInline && match && match[1] === 'svg' && isAgent) {
+        const clean = DOMPurify.sanitize(value, { USE_PROFILES: { svg: true, svgFilters: true } });
+        return <span className="chat-svg" dangerouslySetInnerHTML={{ __html: clean }} />;
+      }
 
       if (!isInline && (!match || match[1] === 'json')) {
         const trimmed = value.trim();
@@ -961,7 +979,7 @@ const ChatMessageText = memo(function ChatMessageText({
       }
       return <code className={className} {...props}>{children}</code>;
     }
-  }), [withInlineMarkup]);
+  }), [withInlineMarkup, isAgent]);
 
   return (
     <ChatMarkdownBody
@@ -1138,6 +1156,11 @@ function ChatClarificationCard({
   const answeredCount = clarification.questions.filter((q) => String(answers[q.id] || '').trim()).length;
   const allAnswered = answeredCount === clarification.questions.length;
 
+  const clarificationAnswers = () => clarification.questions.map((q) => ({
+    id: q.id,
+    answer: answers[q.id] || '',
+  }));
+
   const runBusy = async (fallback: string, work: () => Promise<void>) => {
     setBusy(true);
     setError('');
@@ -1156,7 +1179,7 @@ function ChatClarificationCard({
       await api(`/api/vaults/${vaultId}/channels/${message.channelId}/messages/${message.id}/clarification/answer`, {
         method: 'POST',
         body: JSON.stringify({
-          answers: clarification.questions.map((q) => ({ id: q.id, answer: answers[q.id] || '' })),
+          answers: clarificationAnswers(),
         }),
       });
     });
@@ -1168,7 +1191,7 @@ function ChatClarificationCard({
       await api(`/api/vaults/${vaultId}/channels/${message.channelId}/messages/${message.id}/clarification/answer`, {
         method: 'POST',
         body: JSON.stringify({
-          answers: clarification.questions.map((q) => ({ id: q.id, answer: answers[q.id] || '' })),
+          answers: clarificationAnswers(),
         }),
       });
       await api(`/api/vaults/${vaultId}/channels/${message.channelId}/messages/${message.id}/clarification/accept`, {
@@ -1933,7 +1956,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
                   {message.body
                     && !isSteeringContinuationMessage(message)
                     && !(message.status === 'running' && /^Thinking(?:\.{3}|…)$/.test(message.body.trim()))
-                    && <ChatMessageText messageId={message.id} body={message.body} streaming={message.status === 'running'} mentionableAliases={mentionableAliases} notes={notes} onOpenNote={onOpenNote} onOpenSharedNote={onOpenSharedNote} />}
+                    && <ChatMessageText messageId={message.id} body={message.body} streaming={message.status === 'running'} isAgent={Boolean(message.agentId || message.registrationId)} mentionableAliases={mentionableAliases} notes={notes} onOpenNote={onOpenNote} onOpenSharedNote={onOpenSharedNote} />}
                   {message.mission && (
                     <ChatMissionCard
                       mission={message.mission}
@@ -2969,6 +2992,19 @@ export const ChatView = memo(function ChatView({
       return;
     }
 
+    const persistMembership = (overrides: Partial<ChatAgentRegistration> = {}) => {
+      onRegisterAgent(channelId, {
+        ...agentForm,
+        ...overrides,
+        id: agentForm.id || createChatAgentRegistrationId(),
+        displayName: agentForm.displayName.trim(),
+        mention: overrides.mention ?? mention,
+        model: overrides.model ?? model,
+        cwd: agentForm.cwd.trim(),
+        contextPrompt: agentForm.contextPrompt.trim(),
+      });
+    };
+
     try {
       if (agentPanelMode === 'edit-identity' && onUpsertVaultAgent && agentForm.vaultAgentId) {
         await onUpsertVaultAgent({
@@ -2981,14 +3017,7 @@ export const ChatView = memo(function ChatView({
           contextPrompt: agentForm.contextPrompt.trim(),
         });
         // Also refresh this channel membership copy
-        onRegisterAgent(channelId, {
-          ...agentForm,
-          displayName: agentForm.displayName.trim(),
-          mention,
-          model,
-          cwd: agentForm.cwd.trim(),
-          contextPrompt: agentForm.contextPrompt.trim(),
-        });
+        persistMembership();
       } else if (agentPanelMode === 'create' && onUpsertVaultAgent) {
         const va = await onUpsertVaultAgent({
           agentId: agentForm.agentId,
@@ -3003,28 +3032,8 @@ export const ChatView = memo(function ChatView({
           await onAddVaultAgentToChannel(channelId, vaultAgentId);
           // Persist membership-only flags selected in the create form. Adding
           // the vault identity alone intentionally starts with safe defaults.
-          onRegisterAgent(channelId, {
-            ...agentForm,
-            id: agentForm.id || createChatAgentRegistrationId(),
-            vaultAgentId,
-            displayName: agentForm.displayName.trim(),
-            mention,
-            model,
-            cwd: agentForm.cwd.trim(),
-            contextPrompt: agentForm.contextPrompt.trim(),
-          });
-        } else {
-          onRegisterAgent(channelId, {
-            ...agentForm,
-            id: agentForm.id || createChatAgentRegistrationId(),
-            vaultAgentId,
-            displayName: agentForm.displayName.trim(),
-            mention,
-            model,
-            cwd: agentForm.cwd.trim(),
-            contextPrompt: agentForm.contextPrompt.trim(),
-          });
         }
+        persistMembership({ vaultAgentId });
       } else {
         // edit-member (or fallback create without vault-agent API).
         // Model is canonical on the vault identity — the membership PUT echoes
@@ -3042,14 +3051,9 @@ export const ChatView = memo(function ChatView({
             contextPrompt: agentForm.contextPrompt.trim(),
           });
         }
-        onRegisterAgent(channelId, {
-          ...agentForm,
-          id: agentForm.id || createChatAgentRegistrationId(),
-          displayName: agentForm.displayName.trim(),
+        persistMembership({
           mention: mention || agentForm.mention,
           model: model || agentForm.model,
-          cwd: agentForm.cwd.trim(),
-          contextPrompt: agentForm.contextPrompt.trim(),
         });
       }
       setAgentMenuOpen(false);

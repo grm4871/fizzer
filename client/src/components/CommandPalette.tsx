@@ -17,6 +17,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { NoteSummary } from '../api';
 import { Search, Sparkles, FileText } from 'lucide-react';
+import { moveListSelection, useListSelection } from '../ui/listNavigation';
 
 interface CommandPaletteProps {
   open: boolean;
@@ -57,30 +58,18 @@ export function CommandPalette({
       })
     : notes;
 
-  // Clamp highlight
-  useEffect(() => {
-    if (highlightIndex >= filtered.length) {
-      setHighlightIndex(Math.max(0, filtered.length - 1));
-    }
-  }, [filtered.length, highlightIndex]);
-
-  // Scroll highlighted item into view
-  useEffect(() => {
-    if (!listRef.current) return;
-    const item = listRef.current.children[highlightIndex] as HTMLElement | undefined;
-    item?.scrollIntoView({ block: 'nearest' });
-  }, [highlightIndex]);
+  useListSelection(listRef, highlightIndex, filtered.length, setHighlightIndex);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       switch (e.key) {
         case 'ArrowDown':
           e.preventDefault();
-          setHighlightIndex((i) => Math.min(i + 1, filtered.length - 1));
+          setHighlightIndex((i) => moveListSelection(i, 1, filtered.length));
           break;
         case 'ArrowUp':
           e.preventDefault();
-          setHighlightIndex((i) => Math.max(i - 1, 0));
+          setHighlightIndex((i) => moveListSelection(i, -1, filtered.length));
           break;
         case 'Enter':
           e.preventDefault();

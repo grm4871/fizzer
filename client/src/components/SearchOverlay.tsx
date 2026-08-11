@@ -19,6 +19,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { api, type SearchResult } from '../api';
 import { Search, Loader2 } from 'lucide-react';
+import { moveListSelection, useListSelection } from '../ui/listNavigation';
 
 interface SearchOverlayProps {
   open: boolean;
@@ -82,19 +83,7 @@ export function SearchOverlay({
     doSearch(query);
   }, [query, doSearch]);
 
-  // Clamp highlight
-  useEffect(() => {
-    if (highlightIndex >= results.length) {
-      setHighlightIndex(Math.max(0, results.length - 1));
-    }
-  }, [results.length, highlightIndex]);
-
-  // Scroll highlighted into view
-  useEffect(() => {
-    if (!listRef.current) return;
-    const item = listRef.current.children[highlightIndex] as HTMLElement | undefined;
-    item?.scrollIntoView({ block: 'nearest' });
-  }, [highlightIndex]);
+  useListSelection(listRef, highlightIndex, results.length, setHighlightIndex);
 
   const selectResult = useCallback((result: SearchResult) => {
     if (result.type === 'chat' && result.channelId) {
@@ -110,11 +99,11 @@ export function SearchOverlay({
       switch (e.key) {
         case 'ArrowDown':
           e.preventDefault();
-          setHighlightIndex((i) => Math.min(i + 1, results.length - 1));
+          setHighlightIndex((i) => moveListSelection(i, 1, results.length));
           break;
         case 'ArrowUp':
           e.preventDefault();
-          setHighlightIndex((i) => Math.max(i - 1, 0));
+          setHighlightIndex((i) => moveListSelection(i, -1, results.length));
           break;
         case 'Enter':
           e.preventDefault();
