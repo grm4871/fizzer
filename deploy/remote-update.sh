@@ -611,27 +611,31 @@ verify_authenticated_live_candidate() {
 
 verify_reopened_production_edge() {
   echo "==> Verifying the reopened production edge"
-  local health_code root_html engine_open
-  health_code="$(curl --noproxy '*' -sS -o /dev/null -w '%{http_code}' --connect-timeout 3 --max-time 10 \
-    --resolve "$DEPLOY_DOMAIN:443:127.0.0.1" "https://$DEPLOY_DOMAIN/api/health")"
-  if [[ "$health_code" != "200" ]]; then
-    echo "Error: reopened production health returned HTTP ${health_code:-000}." >&2
-    return 1
-  fi
-  root_html="$(curl --noproxy '*' -fsS --connect-timeout 3 --max-time 10 \
-    --resolve "$DEPLOY_DOMAIN:443:127.0.0.1" "https://$DEPLOY_DOMAIN/app.html")"
-  if [[ "$root_html" != *'<div id="root"></div>'* ]]; then
-    echo "Error: reopened production edge did not serve the client entrypoint." >&2
-    return 1
-  fi
-  engine_open="$(curl --noproxy '*' -fsS --connect-timeout 3 --max-time 10 \
-    --resolve "$DEPLOY_DOMAIN:443:127.0.0.1" \
-    "https://$DEPLOY_DOMAIN/socket.io/?EIO=4&transport=polling&t=$RANDOM")"
-  if [[ "$engine_open" != 0* ]]; then
-    echo "Error: reopened production edge did not return an Engine.IO v4 OPEN packet." >&2
-    return 1
-  fi
-  echo "==> Reopened production health, client, TLS edge, and Engine.IO are verified"
+  local health_code="000" root_html="" engine_open="" consecutive=0
+  # As with gate closure, nginx's graceful reload can briefly leave a retiring
+  # worker generation serving the old marker state. Require three complete,
+  # fresh edge probes before declaring the public cutover finished.
+  for _attempt in $(seq 1 20); do
+    health_code="$(curl --noproxy '*' -sS -o /dev/null -w '%{http_code}' --connect-timeout 3 --max-time 10 \
+      --resolve "$DEPLOY_DOMAIN:443:127.0.0.1" "https://$DEPLOY_DOMAIN/api/health" || true)"
+    root_html="$(curl --noproxy '*' -fsS --connect-timeout 3 --max-time 10 \
+      --resolve "$DEPLOY_DOMAIN:443:127.0.0.1" "https://$DEPLOY_DOMAIN/app.html" || true)"
+    engine_open="$(curl --noproxy '*' -fsS --connect-timeout 3 --max-time 10 \
+      --resolve "$DEPLOY_DOMAIN:443:127.0.0.1" \
+      "https://$DEPLOY_DOMAIN/socket.io/?EIO=4&transport=polling&t=$RANDOM" || true)"
+    if [[ "$health_code" == "200" && "$root_html" == *'<div id="root"></div>'* && "$engine_open" == 0* ]]; then
+      consecutive=$((consecutive + 1))
+      if [[ "$consecutive" -ge 3 ]]; then
+        echo "==> Reopened production health, client, TLS edge, and Engine.IO are verified"
+        return 0
+      fi
+    else
+      consecutive=0
+    fi
+    sleep 1
+  done
+  echo "Error: reopened production edge did not stabilize (health HTTP ${health_code:-000}, client=$([[ "$root_html" == *'<div id="root"></div>'* ]] && echo ok || echo failed), Engine.IO=$([[ "$engine_open" == 0* ]] && echo ok || echo failed))." >&2
+  return 1
 }
 
 ensure_cutover_disk_capacity() {

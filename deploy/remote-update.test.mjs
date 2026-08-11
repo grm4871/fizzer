@@ -102,6 +102,10 @@ test('the reopened TLS edge serves health, client assets, and Engine.IO', () => 
   assert.match(source, /--resolve "\$DEPLOY_DOMAIN:443:127\.0\.0\.1" "https:\/\/\$DEPLOY_DOMAIN\/app\.html"/);
   assert.match(source, /root_html[\s\S]*<div id="root"><\/div>/);
   assert.match(source, /socket\.io\/\?EIO=4&transport=polling/);
+  assert.match(source, /Require three complete,[\s\S]*fresh edge probes/);
+  assert.match(source, /health_code" == "200"[\s\S]*root_html[\s\S]*engine_open/);
+  assert.match(source, /"\$consecutive" -ge 3/);
+  assert.match(source, /reopened production edge did not stabilize/);
   assertOrdered(
     'open_maintenance_gate',
     'verify_reopened_production_edge',
