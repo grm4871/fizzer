@@ -166,6 +166,17 @@ function codexExcerpt(rolloutPath) {
   return snippets.slice(-16).join('\n').slice(-2400);
 }
 
+function codexFallback(excerpt) {
+  const last = String(excerpt || '').split('\n').filter(Boolean).at(-1) || '';
+  const tool = last.split(/\s+/, 1)[0].toLowerCase();
+  if (['exec', 'exec_command', 'write_stdin', 'wait'].includes(tool)) return 'Running a command';
+  if (tool === 'apply_patch') return 'Editing code';
+  if (tool === 'view_image') return 'Inspecting an image';
+  if (tool.includes('web')) return 'Browsing the web';
+  if (tool.includes('spawn_agent')) return 'Delegating to subagents';
+  return 'Working';
+}
+
 /** Codex emits task_complete synchronously when a turn stops, including subagents. */
 function codexTurnIsActive(rolloutPath) {
   if (!rolloutPath || !fs.existsSync(rolloutPath)) return false;
@@ -222,7 +233,7 @@ function scanCodex(now, template, homeDir, captionService) {
       if (!thread) continue;
       const nodeId = `codex:${id}`;
       const excerpt = codexExcerpt(thread.rollout_path);
-      const fallback = template && excerpt ? 'Generating caption…' : 'Working';
+      const fallback = codexFallback(excerpt);
       nodes.push({
         id: nodeId,
         kind: 'codex',
@@ -254,4 +265,4 @@ function collectLocalAgents(template = '', now = Date.now(), options = {}) {
   };
 }
 
-module.exports = { claudeTurnIsActive, collectLocalAgents, codexExcerpt, codexTurnIsActive, oneLine };
+module.exports = { claudeTurnIsActive, codexFallback, collectLocalAgents, codexExcerpt, codexTurnIsActive, oneLine };

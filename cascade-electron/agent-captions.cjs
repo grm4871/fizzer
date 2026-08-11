@@ -36,6 +36,8 @@ function createCaptioner({
   model = DEFAULT_MODEL,
   ollamaUrl = DEFAULT_OLLAMA_URL,
   maxConcurrent = 1,
+  retryAfterMs = 60_000,
+  now = Date.now,
 } = {}) {
   const cache = new Map();
   const pending = new Map();
@@ -43,6 +45,7 @@ function createCaptioner({
   const running = new Set();
   const queue = [];
   let sequence = 0;
+  let unavailableUntil = 0;
 
   const schedule = (id) => {
     if (queued.has(id) || running.has(id)) return;
@@ -67,7 +70,10 @@ function createCaptioner({
         }),
         signal: AbortSignal.timeout(45_000),
       });
-      if (!response.ok) return;
+      if (!response.ok) {
+        unavailableUntil = now() + retryAfterMs;
+        return;
+      }
       const data = await response.json();
       const caption = normalizeCaption(data?.response);
       // Publish completed work even if a fresher log arrived during inference;
@@ -75,9 +81,11 @@ function createCaptioner({
       // later completion still wins by sequence number.
       if (caption && (!cache.get(id) || cache.get(id).sequence <= job.sequence)) {
         cache.set(id, { hash: job.hash, caption, sequence: job.sequence });
+        unavailableUntil = 0;
       }
     } catch {
       // Ollama is optional. The scanner retains its deterministic fallback.
+      unavailableUntil = now() + retryAfterMs;
     } finally {
       running.delete(id);
       if (pending.get(id)?.hash !== job.hash) schedule(id);
@@ -100,6 +108,7 @@ function createCaptioner({
       const cleanTemplate = String(template || '').trim();
       const cleanExcerpt = String(excerpt || '').trim();
       if (!cleanTemplate || !cleanExcerpt) return cache.get(id)?.caption || null;
+      if (now() < unavailableUntil) return cache.get(id)?.caption || null;
       const hash = fingerprint(cleanTemplate, cleanExcerpt);
       const current = cache.get(id);
       if (current?.hash === hash) return current.caption;
