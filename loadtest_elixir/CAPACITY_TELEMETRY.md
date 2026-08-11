@@ -67,6 +67,11 @@ absent and must be on disk-backed storage. Under the locked results root, the
 controller creates an owned mode-0700 SQLite snapshot scratch directory,
 requires at least 2 GiB free, passes its exact path to every preflight/freeze,
 and removes it on completion, error, or signal. Do not place results on `/tmp`.
+Before any clone or container creation, the wrapper requires a clean checkout,
+an exact full revision, a canonical revision tag resolving to the requested
+immutable image ID and OCI revision label, and pairwise-disjoint template,
+approved source database/corpus, fixture, results, and phase data paths. No
+mutable output may be nested in an immutable provenance tree.
 The prepared template must already be a closed, checkpointed,
 production-derived fixture tree. The controller starts the monitor before
 exactly four group-preserving shards, writes the workload marker only after all

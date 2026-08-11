@@ -8,10 +8,19 @@ defmodule Mix.Tasks.Cascade.LoadFixtures do
   the production data path, including symlink and inode aliases. Use a fresh
   database and data directory:
 
+      mkdir -p /tmp/cascade-capacity/data/.cascade/vaults \
+        /tmp/cascade-capacity/data/.cascade/qmd
+      : "${CAPACITY_JWT_SECRET:?set the retained private fixture JWT secret}"
       CASCADE_ALLOW_LOAD_FIXTURES=1 \
-      DOCS_DB_PATH=/tmp/cascade-capacity/docs.db \
+      CASCADE_SERVER=false \
+      CASCADE_QMD_WORKER_ENABLED=false \
+      DOCS_DB_PATH=/tmp/cascade-capacity/data/docs.db \
       CASCADE_DATA_DIR=/tmp/cascade-capacity/data \
+      CASCADE_VAULTS_BASE_DIR=/tmp/cascade-capacity/data/.cascade/vaults \
+      CASCADE_QMD_DIR=/tmp/cascade-capacity/data/.cascade/qmd \
+      JWT_SECRET="$CAPACITY_JWT_SECRET" \
       mix cascade.load_fixtures --users 10000 \
+        --persisted-vaults-base-dir /data/.cascade/vaults \
         --output /tmp/cascade-capacity/fixtures.jsonl
 
   A non-empty database copy also requires an explicit disposable marker at
@@ -35,7 +44,8 @@ defmodule Mix.Tasks.Cascade.LoadFixtures do
     group_size: :integer,
     output: :string,
     prefix: :string,
-    runner_percent: :integer
+    runner_percent: :integer,
+    persisted_vaults_base_dir: :string
   ]
 
   @impl true
@@ -79,6 +89,7 @@ defmodule Mix.Tasks.Cascade.LoadFixtures do
     output = Keyword.get(options, :output)
     prefix = Keyword.get(options, :prefix, "capacity") |> String.trim()
     runner_percent = Keyword.get(options, :runner_percent, 100)
+    persisted_vaults_base_dir = Keyword.get(options, :persisted_vaults_base_dir)
 
     unless is_integer(users) and users >= 1 and users <= 100_000,
       do: Mix.raise("--users must be an integer between 1 and 100000")
@@ -95,14 +106,49 @@ defmodule Mix.Tasks.Cascade.LoadFixtures do
     unless is_integer(runner_percent) and runner_percent in 0..100,
       do: Mix.raise("--runner-percent must be between 0 and 100")
 
+    unless persisted_vaults_base_dir == "/data/.cascade/vaults",
+      do:
+        Mix.raise(
+          "--persisted-vaults-base-dir must be the certified runtime path /data/.cascade/vaults"
+        )
+
     %{
       users: users,
       group_size: group_size,
       group_count: div(users + group_size - 1, group_size),
       output: output,
       prefix: prefix,
-      runner_percent: runner_percent
+      runner_percent: runner_percent,
+      persisted_vaults_base_dir: persisted_vaults_base_dir
     }
+  end
+
+  @doc false
+  def persisted_vault_root!(physical_base_dir, physical_vault_root, persisted_base_dir) do
+    physical_base_dir = Path.expand(physical_base_dir)
+    physical_vault_root = Path.expand(physical_vault_root)
+    relative = Path.relative_to(physical_vault_root, physical_base_dir)
+
+    if relative in ["", ".", ".."] or Path.type(relative) == :absolute or
+         String.starts_with?(relative, "../") do
+      Mix.raise("fixture vault root must be contained by CASCADE_VAULTS_BASE_DIR")
+    end
+
+    Path.join(persisted_base_dir, relative)
+  end
+
+  @doc false
+  def persist_fixture_vault_root!(vault, physical_base_dir, persisted_base_dir) do
+    persisted_root =
+      persisted_vault_root!(physical_base_dir, vault.root_path, persisted_base_dir)
+
+    case SQL.changes(
+           "UPDATE vaults SET root_path=? WHERE id=? AND root_path=?",
+           [persisted_root, vault.id, vault.root_path]
+         ) do
+      1 -> persisted_root
+      _ -> Mix.raise("capacity vault #{vault.id} root path changed during provisioning")
+    end
   end
 
   defp assert_isolated! do
@@ -287,6 +333,12 @@ defmodule Mix.Tasks.Cascade.LoadFixtures do
 
     [owner | guests] = users
     vault = Store.create_vault(owner.id, %{name: "Capacity #{group_index}"})
+
+    persist_fixture_vault_root!(
+      vault,
+      Store.vaults_base_dir(),
+      config.persisted_vaults_base_dir
+    )
 
     [channel_id] =
       SQL.one(

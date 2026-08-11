@@ -48,17 +48,23 @@ The load driver reads JSON Lines with one real staging account per line:
 
 Provision fixtures with the guarded Elixir task against an isolated staging
 database. It creates groups of 25 distinct authenticated users sharing a real
-vault/channel, and refuses `/data` and `/var/lib/cascade`:
+vault/channel, refuses `/data` and `/var/lib/cascade`, and records the certified
+container vault prefix while writing files only into the isolated host tree:
 
 ```bash
-mkdir -p /tmp/cascade-capacity/data
+mkdir -p /tmp/cascade-capacity/data/.cascade/{vaults,qmd}
+: "${CAPACITY_JWT_SECRET:?set the retained private fixture JWT secret}"
 cd backend_elixir
 CASCADE_ALLOW_LOAD_FIXTURES=1 \
+CASCADE_SERVER=false \
 CASCADE_QMD_WORKER_ENABLED=false \
 DOCS_DB_PATH=/tmp/cascade-capacity/data/docs.db \
 CASCADE_DATA_DIR=/tmp/cascade-capacity/data \
-CASCADE_VAULTS_BASE_DIR=/tmp/cascade-capacity/data/vaults \
+CASCADE_VAULTS_BASE_DIR=/tmp/cascade-capacity/data/.cascade/vaults \
+CASCADE_QMD_DIR=/tmp/cascade-capacity/data/.cascade/qmd \
+JWT_SECRET="$CAPACITY_JWT_SECRET" \
 mix cascade.load_fixtures --users 10000 \
+  --persisted-vaults-base-dir /data/.cascade/vaults \
   --output /tmp/cascade-capacity/fixtures.jsonl
 ```
 

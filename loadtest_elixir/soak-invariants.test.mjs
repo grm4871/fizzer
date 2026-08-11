@@ -6,6 +6,7 @@ import {
   RETURN_THRESHOLDS,
   SOAK_PROFILE,
   SOAK_RUNTIME_CONFIGURATION,
+  databaseReconciliation,
   evaluateSoakEvidence,
   persistedEventFailures,
   recomputeSoakJournal,
@@ -26,6 +27,47 @@ const resources = {
   runners: 0,
   memberships: 0,
 };
+
+function productionShapedDatabase() {
+  const summary = 'Desktop agent runner did not reclaim this run after server restart.';
+  return {
+    baseline: {
+      users: 5_007,
+      vaults: 212,
+      memberships: 5_015,
+      runs: 1_897,
+      runEvents: 403_514,
+      delegatedRuns: 2,
+      baselineOrphans: [
+        { id: 1_896, status: 'queued', summary: null, ownerUserId: 1, maxSeq: 1_913 },
+        { id: 1_897, status: 'queued', summary: null, ownerUserId: 4, maxSeq: 27 },
+      ],
+      foreignKeyViolations: 0,
+      quickCheck: 'ok',
+    },
+    final: {
+      users: 5_007,
+      vaults: 212,
+      memberships: 5_015,
+      runs: 9_097,
+      runEvents: 432_316,
+      delegatedRuns: 0,
+      baselineOrphans: [
+        {
+          id: 1_896, status: 'failed', summary, ownerUserId: null, maxSeq: 1_914,
+          lastType: 'status', lastPayload: JSON.stringify({ status: 'failed', summary }),
+        },
+        {
+          id: 1_897, status: 'failed', summary, ownerUserId: null, maxSeq: 28,
+          lastType: 'status', lastPayload: JSON.stringify({ status: 'failed', summary }),
+        },
+      ],
+      foreignKeyViolations: 0,
+      quickCheck: 'ok',
+    },
+    failures: [],
+  };
+}
 
 function passingEvidence() {
   const soakStartedAt = '2026-08-11T00:00:00.000Z';
@@ -143,11 +185,7 @@ function passingEvidence() {
       eventDigest: 'f'.repeat(64),
       failures: [],
     },
-    database: {
-      baseline: { users: 5_000, vaults: 200, memberships: 5_000, runs: 10, runEvents: 40, delegatedRuns: 0, foreignKeyViolations: 0, quickCheck: 'ok' },
-      final: { users: 5_000, vaults: 200, memberships: 5_000, runs: 7_210, runEvents: 28_840, delegatedRuns: 0, foreignKeyViolations: 0, quickCheck: 'ok' },
-      failures: [],
-    },
+    database: productionShapedDatabase(),
     recovery: { final: { ...resources }, consecutivePassing: 3 },
     returnThresholds: { ...RETURN_THRESHOLDS },
     probe: {
@@ -199,6 +237,32 @@ function passingEvidence() {
 
 test('accepts exact-image two-hour soak with periodic churn, run events, and baseline recovery', () => {
   assert.deepEqual(evaluateSoakEvidence(passingEvidence()), { ok: true, failures: [] });
+});
+
+test('requires the exact production orphan reclaim transition during the two-hour soak', () => {
+  const database = productionShapedDatabase();
+  assert.deepEqual(databaseReconciliation(
+    database.baseline, database.final, 7_200, 28_800,
+  ).failures, []);
+  for (const mutate of [
+    (copy) => { copy.final.delegatedRuns = 2; },
+    (copy) => { copy.final.runEvents -= 2; },
+    (copy) => { copy.final.baselineOrphans[0].maxSeq = 1_915; },
+    (copy) => { copy.final.baselineOrphans[1].summary = 'different'; },
+    (copy) => { copy.final.baselineOrphans[0].lastPayload = '{"status":"failed"}'; },
+    (copy) => {
+      const summary = copy.final.baselineOrphans[0].summary;
+      copy.final.baselineOrphans[0].lastPayload = JSON.stringify({
+        status: 'failed', summary, sessionId: 'unexpected',
+      });
+    },
+  ]) {
+    const copy = structuredClone(database);
+    mutate(copy);
+    assert.notEqual(databaseReconciliation(
+      copy.baseline, copy.final, 7_200, 28_800,
+    ).failures.length, 0);
+  }
 });
 
 test('fails closed on a short or undersized soak and incomplete churn', () => {

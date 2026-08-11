@@ -116,7 +116,7 @@ set -euo pipefail
 if [[ " $* " == *' rev-parse HEAD '* ]]; then
   printf '%s\n' "$FAKE_GIT_REVISION"
 elif [[ " $* " == *' status --porcelain --untracked-files=all '* ]]; then
-  [[ "${FAKE_GIT_DIRTY:-0}" == '0' ]] || printf ' M dirty\n'
+  [[ "\${FAKE_GIT_DIRTY:-0}" == '0' ]] || printf ' M dirty\n'
   exit 0
 else
   exit 2
@@ -469,6 +469,57 @@ test('results nested in approved corpus fail before Docker or immutable-input mu
   assert.equal(fs.existsSync(item.log), false);
 });
 
+test('mutable data nested in the checkout fails before Docker or checkout mutation', (t) => {
+  const item = fixture();
+  t.after(() => fs.rmSync(item.root, { recursive: true, force: true }));
+  const checkoutRoot = path.dirname(here);
+  const nestedData = path.join(checkoutRoot, `.capacity-data-${path.basename(item.root)}`);
+  const env = environment(item);
+  delete env.CASCADE_CAPACITY_TESTING;
+  delete env.CASCADE_CAPACITY_TEST_LOCK_FILE;
+  env.XDG_RUNTIME_DIR = item.root;
+  assert.equal(fs.existsSync(nestedData), false);
+  const result = spawnSync('bash', [
+    controller,
+    '--profile', 'final10k',
+    '--image', imageId,
+    '--data-template-dir', item.template,
+    '--data-dir', nestedData,
+    '--fault-data-dir', item.faultData,
+    '--soak-data-dir', item.soakData,
+    '--', ...checkedInControllerOptions(item),
+  ], { env, encoding: 'utf8' });
+  assert.equal(result.status, 64);
+  assert.match(result.stderr, /disjoint from immutable input directories/u);
+  assert.equal(fs.existsSync(nestedData), false);
+  assert.equal(fs.existsSync(item.faultData), false);
+  assert.equal(fs.existsSync(item.soakData), false);
+  assert.equal(fs.existsSync(item.resultsDir), false);
+  assert.equal(fs.existsSync(item.log), false);
+});
+
+test('results nested in the checkout fail before Docker or checkout mutation', (t) => {
+  const item = fixture();
+  t.after(() => fs.rmSync(item.root, { recursive: true, force: true }));
+  const checkoutRoot = path.dirname(here);
+  const nestedResults = path.join(checkoutRoot, `.capacity-results-${path.basename(item.root)}`);
+  const env = environment(item);
+  delete env.CASCADE_CAPACITY_TESTING;
+  delete env.CASCADE_CAPACITY_TEST_LOCK_FILE;
+  env.XDG_RUNTIME_DIR = item.root;
+  assert.equal(fs.existsSync(nestedResults), false);
+  const result = spawnSync('bash', args(item, checkedInControllerOptions(item, {
+    resultsDir: nestedResults,
+  })), { env, encoding: 'utf8' });
+  assert.equal(result.status, 64);
+  assert.match(result.stderr, /disjoint from immutable input directories/u);
+  assert.equal(fs.existsSync(nestedResults), false);
+  assert.equal(fs.existsSync(item.data), false);
+  assert.equal(fs.existsSync(item.faultData), false);
+  assert.equal(fs.existsSync(item.soakData), false);
+  assert.equal(fs.existsSync(item.log), false);
+});
+
 test('immutable source and fixture files cannot be hidden inside template/corpus trees', (t) => {
   const item = fixture();
   t.after(() => fs.rmSync(item.root, { recursive: true, force: true }));
@@ -486,6 +537,63 @@ test('immutable source and fixture files cannot be hidden inside template/corpus
   assert.equal(fs.readFileSync(nestedFixture, 'utf8'), '{}\n');
   assert.equal(fs.existsSync(item.data), false);
   assert.equal(fs.existsSync(item.log), false);
+});
+
+test('dirty checkout fails before Docker or candidate data mutation', (t) => {
+  const item = fixture();
+  t.after(() => fs.rmSync(item.root, { recursive: true, force: true }));
+  const env = environment(item);
+  delete env.CASCADE_CAPACITY_TESTING;
+  delete env.CASCADE_CAPACITY_TEST_LOCK_FILE;
+  env.XDG_RUNTIME_DIR = item.root;
+  env.FAKE_GIT_DIRTY = '1';
+  const result = spawnSync('bash', args(item, checkedInControllerOptions(item)), {
+    env, encoding: 'utf8',
+  });
+  assert.equal(result.status, 65);
+  assert.match(result.stderr, /requires a clean checkout/u);
+  assert.equal(fs.existsSync(item.log), false);
+  assert.equal(fs.existsSync(item.data), false);
+  assert.equal(fs.existsSync(item.resultsDir), false);
+});
+
+test('canonical image tag must resolve to the exact wrapper image ID before clone/create', (t) => {
+  const item = fixture();
+  t.after(() => fs.rmSync(item.root, { recursive: true, force: true }));
+  const env = environment(item);
+  delete env.CASCADE_CAPACITY_TESTING;
+  delete env.CASCADE_CAPACITY_TEST_LOCK_FILE;
+  env.XDG_RUNTIME_DIR = item.root;
+  env.FAKE_IMAGE_ID = `sha256:${'7'.repeat(64)}`;
+  const result = spawnSync('bash', args(item, checkedInControllerOptions(item)), {
+    env, encoding: 'utf8',
+  });
+  assert.equal(result.status, 73);
+  assert.match(result.stderr, /image tag\/ID\/revision evidence does not match/u);
+  const lines = fs.readFileSync(item.log, 'utf8').trim().split('\n');
+  assert.ok(lines.some((line) => line.startsWith(`image inspect cascade:certified-${revision} `)));
+  assert.ok(!lines.some((line) => line.startsWith('create ')));
+  assert.equal(fs.existsSync(item.data), false);
+  assert.equal(fs.existsSync(item.resultsDir), false);
+});
+
+test('OCI revision label must equal requested clean HEAD before clone/create', (t) => {
+  const item = fixture();
+  t.after(() => fs.rmSync(item.root, { recursive: true, force: true }));
+  const env = environment(item);
+  delete env.CASCADE_CAPACITY_TESTING;
+  delete env.CASCADE_CAPACITY_TEST_LOCK_FILE;
+  env.XDG_RUNTIME_DIR = item.root;
+  env.FAKE_REVISION = '8'.repeat(40);
+  const result = spawnSync('bash', args(item, checkedInControllerOptions(item)), {
+    env, encoding: 'utf8',
+  });
+  assert.equal(result.status, 73);
+  assert.match(result.stderr, /image tag\/ID\/revision evidence does not match/u);
+  const lines = fs.readFileSync(item.log, 'utf8').trim().split('\n');
+  assert.ok(!lines.some((line) => line.startsWith('create ')));
+  assert.equal(fs.existsSync(item.data), false);
+  assert.equal(fs.existsSync(item.resultsDir), false);
 });
 
 test('a running reserved sibling fails before any Docker mutation', (t) => {

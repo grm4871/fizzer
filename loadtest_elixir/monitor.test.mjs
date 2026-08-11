@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import test from 'node:test';
 
 import {
@@ -582,6 +583,8 @@ test('ends capacity coverage at workload completion but keeps global teardown fa
 });
 
 function workloadResult(index, overrides = {}) {
+  const successfulMessageIds = [`load-${index}-a`, `load-${index}-b`, `load-${index}-c`];
+  const requestedRunIds = [1_898 + index * 2, 1_899 + index * 2];
   return {
     target: 'http://127.0.0.1:3000',
     sourceIp: `192.0.2.${40 + index}`,
@@ -611,6 +614,17 @@ function workloadResult(index, overrides = {}) {
       connectFailures: 0,
       pollingOnly: index === 0 ? 13 : 12,
       forcedReconnectsExpected: 25,
+      workload: { chat: { succeeded: 3 }, run: { succeeded: 2 } },
+    },
+    workloadIdentity: {
+      successfulMessageIds,
+      successfulMessageIdsCount: successfulMessageIds.length,
+      successfulMessageIdsSha256: createHash('sha256')
+        .update(JSON.stringify(successfulMessageIds)).digest('hex'),
+      requestedRunIds,
+      requestedRunIdsCount: requestedRunIds.length,
+      requestedRunIdsSha256: createHash('sha256')
+        .update(JSON.stringify(requestedRunIds)).digest('hex'),
     },
     rampCompletedAt: `2026-01-01T00:05:0${index + 1}.000Z`,
     soakStartedAt: `2026-01-01T00:05:0${index + 1}.000Z`,

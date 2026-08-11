@@ -10,6 +10,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   SOAK_PROFILE,
   SOAK_RUNTIME_CONFIGURATION,
+  databaseReconciliation as reconcileLongSoakDatabase,
   evaluateSoakEvidence as evaluateLongSoakEvidence,
   parseSoakJournal,
   recomputeSoakJournal,
@@ -106,6 +107,23 @@ const REQUIRED_LOAD_THRESHOLDS = {
   minimumWorkloadSucceededRatio: 0.999,
 };
 const REQUIRED_ERL_AFLAGS = '+S 2:2 +sbwt none +sbwtdcpu none +sbwtdio none';
+const ORPHAN_RECLAIM_MS = SOAK_RUNTIME_CONFIGURATION.runnerOrphanReclaimMs;
+export const PRODUCTION_APPLICATION_TABLES = Object.freeze([
+  'agent_journal', 'agent_memory_captures', 'agent_open_threads', 'android_battery_samples',
+  'chat_agent_dispatches', 'chat_agent_members', 'chat_channel_links', 'chat_channel_settings',
+  'chat_messages', 'chat_mission_events', 'chat_mission_tasks', 'chat_missions',
+  'chat_note_backlinks', 'chat_note_grants', 'community_note_activity', 'community_read_state',
+  'content_reports', 'delegated_runs', 'direct_message_channels', 'distill_jobs', 'folders',
+  'managed_agent_audit', 'managed_agent_entitlements', 'managed_agent_executions',
+  'managed_usage_ledger', 'managed_usage_reservations', 'note_links', 'note_tags', 'note_versions',
+  'notes', 'public_vault_join_requests', 'published_notes', 'registration_invites_used',
+  'run_events', 'runs', 'scratchpad_note_stats', 'scratchpad_state', 'tags', 'user_blocks',
+  'user_dm_settings', 'user_dm_vaults', 'users', 'vault_agent_exclusions', 'vault_agents',
+  'vault_bans', 'vault_members', 'vault_settings', 'vaults', 'widget_feed_state',
+  'work_item_dependencies', 'work_item_reviews', 'work_item_runs', 'work_items',
+]);
+const PRODUCTION_APPLICATION_TABLES_SHA256 =
+  '7dc78043644bbc48221038b787d1c7df0edb23c0635ba51ac56dfcec3ef145ff';
 
 function stable(value) {
   if (Array.isArray(value)) return value.map(stable);
@@ -717,6 +735,8 @@ export function compareCorpusTree(
     `${label} candidate contains ${unexpectedExtras.length} extras not attributable to fixture vaults`);
   return {
     approvedRecords: sourceRecords.length,
+    approvedSha256: createHash('sha256')
+      .update(`${sourceRecords.map(stableJson).join('\n')}\n`).digest('hex'),
     missingOrChanged,
     extraRecords: extras.length,
     unexpectedExtras: unexpectedExtras.length,
@@ -968,6 +988,8 @@ export function compareProductionRows(
     phase,
     profile: profileName,
     tables: rows.length,
+    tableNames: sourceTableNames,
+    tableNamesSha256: createHash('sha256').update(stableJson(sourceTableNames)).digest('hex'),
     tableDeltas: rows,
     missingRows: rows.reduce((sum, row) => sum + row.missingRows, 0),
     extraRows: rows.reduce((sum, row) => sum + row.extraRows, 0),
@@ -982,10 +1004,40 @@ export function compareProductionRows(
   };
 }
 
+function validateLogicalTableEvidence(sourceRows, expectedTableNames = null) {
+  const deltas = sourceRows?.tableDeltas;
+  invariant(Array.isArray(deltas) && deltas.length > 0
+    && sourceRows.tables === deltas.length,
+  'logical production row evidence has an incomplete table set');
+  const names = deltas.map((row) => row.tableName);
+  const sortedNames = [...names].sort();
+  invariant(names.every((name) => typeof name === 'string' && name !== '')
+    && new Set(names).size === names.length
+    && stableJson(names) === stableJson(sortedNames)
+    && stableJson(sourceRows.tableNames) === stableJson(names)
+    && stableJson(names) === stableJson(PRODUCTION_APPLICATION_TABLES)
+    && sourceRows.tableNamesSha256 === createHash('sha256').update(stableJson(names)).digest('hex'),
+  'logical production row evidence has duplicate, missing, or reordered tables');
+  invariant(sourceRows.tableNamesSha256 === PRODUCTION_APPLICATION_TABLES_SHA256,
+    'logical production row evidence table set differs from the approved production database');
+  invariant(sourceRows.tableEvidenceSha256
+    === createHash('sha256').update(stableJson(deltas)).digest('hex'),
+  'logical production row evidence digest differs from its table deltas');
+  invariant(deltas.every((row) => Number.isInteger(row.missingRows)
+    && row.missingRows >= 0 && Number.isInteger(row.extraRows) && row.extraRows >= 0),
+  'logical production row evidence contains invalid table counts');
+  if (expectedTableNames) {
+    invariant(stableJson(names) === stableJson(expectedTableNames),
+      'phase freeze logical table set differs from its approved preflight');
+  }
+  return names;
+}
+
 export function validateBaselineOrphanState(database, reclaimed) {
   const rows = sqliteJson(database, `
 SELECT r.id,r.status,r.summary,
   EXISTS(SELECT 1 FROM delegated_runs d WHERE d.run_id=r.id) AS delegated,
+  (SELECT owner_user_id FROM delegated_runs d WHERE d.run_id=r.id) AS ownerUserId,
   (SELECT max(seq) FROM run_events e WHERE e.run_id=r.id) AS maxSeq,
   (SELECT type FROM run_events e WHERE e.run_id=r.id ORDER BY seq DESC LIMIT 1) AS lastType,
   (SELECT payload_json FROM run_events e WHERE e.run_id=r.id ORDER BY seq DESC LIMIT 1) AS lastPayload
@@ -994,6 +1046,7 @@ FROM runs r WHERE r.id IN (1896,1897) ORDER BY r.id;
   invariant(rows.length === 2, 'approved baseline delegated runs are missing');
   const expectedSummary = 'Desktop agent runner did not reclaim this run after server restart.';
   const expectedSeq = new Map([[1896, reclaimed ? 1914 : 1913], [1897, reclaimed ? 28 : 27]]);
+  const expectedOwner = new Map([[1896, 1], [1897, 4]]);
   for (const row of rows) {
     invariant(row.maxSeq === expectedSeq.get(row.id),
       `baseline delegated run ${row.id} event sequence differs from the duration contract`);
@@ -1001,10 +1054,12 @@ FROM runs r WHERE r.id IN (1896,1897) ORDER BY r.id;
       let payload;
       try { payload = JSON.parse(row.lastPayload); } catch { payload = null; }
       invariant(row.status === 'failed' && row.summary === expectedSummary && row.delegated === 0
-        && row.lastType === 'status' && payload?.status === 'failed' && payload?.summary === expectedSummary,
+        && row.ownerUserId == null && row.lastType === 'status'
+        && stableJson(payload) === stableJson({ status: 'failed', summary: expectedSummary }),
       `baseline delegated run ${row.id} was not reclaimed with the exact terminal event`);
     } else {
-      invariant(row.status === 'queued' && row.summary == null && row.delegated === 1,
+      invariant(row.status === 'queued' && row.summary == null && row.delegated === 1
+        && row.ownerUserId === expectedOwner.get(row.id),
         `baseline delegated run ${row.id} changed before the 600-second reclaim boundary`);
     }
   }
@@ -1130,6 +1185,7 @@ export function validateFixturePreflight(
     && DIGEST_PATTERN.test(result.sourceRows?.chatTransforms?.sha256 || '')
     && result.sourceRows?.fts?.integrityCheck === 'rank=1 passed on disposable snapshot',
   'fixture preflight does not prove exact preservation of approved production rows');
+  validateLogicalTableEvidence(result.sourceRows);
   const createdAt = Date.parse(result.createdAt);
   invariant(Number.isFinite(createdAt)
     && (monitorStartedAt == null || createdAt <= Date.parse(monitorStartedAt)),
@@ -1144,6 +1200,7 @@ export function validateFixturePreflight(
   invariant(['vaults', 'qmd'].every((name) => (
     Number.isInteger(result.candidateCorpus?.[name]?.approvedRecords)
     && result.candidateCorpus[name].approvedRecords > 0
+    && DIGEST_PATTERN.test(result.candidateCorpus[name].approvedSha256 || '')
     && result.candidateCorpus[name].missingOrChanged === 0
     && result.candidateCorpus[name].unexpectedExtras === 0
     && result.candidateCorpus[name].derivedIndexChanges === 0
@@ -1282,13 +1339,22 @@ export function validateFreezeEvidence(result, artifact, preflightEvidence, imag
   invariant(result.containerState?.running === false
     && result.containerState?.restartCount === 0 && result.containerState?.oomKilled === false,
   'phase freeze container was not cleanly stopped');
+  const containerStartedAt = Date.parse(result.containerStartedAt);
+  const frozenAt = Date.parse(result.frozenAt);
+  invariant(Number.isFinite(containerStartedAt) && Number.isFinite(frozenAt)
+    && frozenAt >= containerStartedAt,
+  'phase freeze container lifetime is missing or invalid');
   invariant(result.snapshotScratch?.policy
     === 'private owned disk-backed scratch with at least 2 GiB free'
     && /^[0-9]+$/u.test(result.snapshotScratch?.device || '')
     && result.snapshotScratch?.availableBytes >= 2 * 1024 ** 3,
   'phase freeze did not use the required disk-backed snapshot scratch');
   invariant(['vaults', 'qmd'].every((name) => (
-    result.candidateCorpus?.[name]?.missingOrChanged === 0
+    result.candidateCorpus?.[name]?.approvedRecords
+      === preflightEvidence.candidateCorpus?.[name]?.approvedRecords
+    && result.candidateCorpus?.[name]?.approvedSha256
+      === preflightEvidence.candidateCorpus?.[name]?.approvedSha256
+    && result.candidateCorpus?.[name]?.missingOrChanged === 0
     && result.candidateCorpus[name].unexpectedExtras === 0
     && result.candidateCorpus[name].derivedIndexChanges === 0
     && DIGEST_PATTERN.test(result.candidateCorpus[name].extrasSha256 || '')
@@ -1301,8 +1367,15 @@ export function validateFreezeEvidence(result, artifact, preflightEvidence, imag
     && result.sourceRows?.schemaValidation === 'pinned Elixir transform passed'
     && result.sourceRows?.fts?.integrityCheck === 'rank=1 passed on disposable snapshot',
   'phase freeze does not preserve approved production rows');
-  invariant(result.orphanState?.state
-    === (['main10k', 'soak5k'].includes(result.phase) ? 'reclaimed' : 'preserved'),
+  validateLogicalTableEvidence(
+    result.sourceRows,
+    preflightEvidence.sourceRows.tableNames,
+  );
+  invariant(stableJson(result.identity) === stableJson(preflightEvidence.identity),
+    'phase freeze fixture identity joins differ from preflight');
+  const expectedOrphanState = frozenAt - containerStartedAt >= ORPHAN_RECLAIM_MS
+    ? 'reclaimed' : 'preserved';
+  invariant(result.orphanState?.state === expectedOrphanState,
   'phase freeze baseline orphan state differs from its duration contract');
   return {
     sha256: artifact.sha256,
@@ -1315,18 +1388,22 @@ export function validateFreezeEvidence(result, artifact, preflightEvidence, imag
     databaseBytes: result.databaseBytes,
     databaseDevice: result.databaseDevice,
     databaseInode: result.databaseInode,
+    baseline: result.baseline,
     runtime: result.runtime,
     candidateCorpus: result.candidateCorpus,
     sourceRows: result.sourceRows,
+    identity: result.identity,
     orphanState: result.orphanState,
     phaseWorkload: result.phaseWorkload,
     snapshotScratch: result.snapshotScratch,
+    containerStartedAt: result.containerStartedAt,
     frozenAt: result.frozenAt,
   };
 }
 
 export function validatePhaseTableDeltas(freezeEvidence, fixture, workload) {
-  const deltas = new Map((freezeEvidence.sourceRows?.tableDeltas || [])
+  validateLogicalTableEvidence(freezeEvidence.sourceRows);
+  const deltas = new Map(freezeEvidence.sourceRows.tableDeltas
     .map((row) => [row.tableName, row]));
   invariant(deltas.size > 0, `phase ${freezeEvidence.phase} has no logical table deltas`);
   const expectedExtras = {
@@ -1336,25 +1413,79 @@ export function validatePhaseTableDeltas(freezeEvidence, fixture, workload) {
     notes: fixture.groups,
     community_note_activity: fixture.groups,
   };
+  const orphanReclaimed = freezeEvidence.orphanState?.state === 'reclaimed';
   if (freezeEvidence.phase === 'main10k') {
     expectedExtras.chat_messages = workload.successfulChatWrites;
-    expectedExtras.runs = workload.successfulRuns + 2;
-    expectedExtras.run_events = workload.successfulRuns * 4 + 2;
+    expectedExtras.runs = workload.successfulRuns;
+    expectedExtras.run_events = workload.successfulRuns * 4;
   } else if (freezeEvidence.phase === 'faults') {
     expectedExtras.chat_messages = 1;
     expectedExtras.runs = 1;
     expectedExtras.run_events = workload.runEvents;
   } else if (freezeEvidence.phase === 'soak5k') {
-    expectedExtras.runs = workload.runCount + 2;
-    expectedExtras.run_events = workload.persistedEventCount + 2;
+    expectedExtras.runs = workload.runCount;
+    expectedExtras.run_events = workload.persistedEventCount;
+  }
+  if (orphanReclaimed) {
+    expectedExtras.runs = (expectedExtras.runs || 0) + 2;
+    expectedExtras.run_events = (expectedExtras.run_events || 0) + 2;
   }
   for (const [table, row] of deltas) {
-    const expectedMissing = ['main10k', 'soak5k'].includes(freezeEvidence.phase)
-      && ['runs', 'delegated_runs'].includes(table) ? 2 : 0;
+    const expectedMissing = orphanReclaimed && ['runs', 'delegated_runs'].includes(table) ? 2 : 0;
     invariant(row.missingRows === expectedMissing,
       `phase ${freezeEvidence.phase} table ${table} changes ${row.missingRows} approved rows`);
     invariant(row.extraRows === (expectedExtras[table] || 0),
       `phase ${freezeEvidence.phase} table ${table} has ${row.extraRows} unexpected rows`);
+  }
+  return true;
+}
+
+function validateFrozenPhaseAgainstMount(
+  sourceDatabase,
+  sourceCorpusRoot,
+  fixtureArtifact,
+  preflightEvidence,
+  freezeEvidence,
+  mount,
+) {
+  invariant(mount.inspection.Id === freezeEvidence.containerId
+    && mount.inspection.Image === freezeEvidence.imageId
+    && mount.inspection.State?.Running === false
+    && mount.inspection.RestartCount === 0
+    && mount.inspection.State?.OOMKilled === false
+    && mount.inspection.State?.StartedAt === freezeEvidence.containerStartedAt,
+  `phase ${freezeEvidence.phase} frozen container identity or state drifted`);
+  invariant(stableJson(containerRuntimeEvidence(mount.inspection)) === stableJson(freezeEvidence.runtime),
+    `phase ${freezeEvidence.phase} frozen runtime shape drifted`);
+  for (const suffix of ['-wal', '-shm']) {
+    invariant(!fs.existsSync(`${mount.database}${suffix}`),
+      `phase ${freezeEvidence.phase} frozen database has a live ${suffix.slice(1).toUpperCase()} sidecar`);
+  }
+  const database = digestRegularFile(mount.database, `${freezeEvidence.phase} frozen database`);
+  invariant(database.sha256 === freezeEvidence.databaseSha256
+    && database.bytes === freezeEvidence.databaseBytes
+    && database.device === freezeEvidence.databaseDevice
+    && database.inode === freezeEvidence.databaseInode,
+  `phase ${freezeEvidence.phase} frozen database identity drifted`);
+  const expected = {
+    baseline: databaseBaseline(mount.database),
+    identity: validateFixtureDatabaseIdentity(mount.database, fixtureArtifact),
+    candidateCorpus: validateCandidateCorpus(
+      sourceCorpusRoot, mount, mount.database, fixtureArtifact, { postRun: true },
+    ),
+    sourceRows: compareProductionRows(sourceDatabase, mount.database, {
+      profileName: preflightEvidence.profile,
+      phase: 'post-run',
+      allowOrphanReclaim: freezeEvidence.orphanState.state === 'reclaimed',
+    }),
+    orphanState: validateBaselineOrphanState(
+      mount.database, freezeEvidence.orphanState.state === 'reclaimed',
+    ),
+    phaseWorkload: phaseWorkloadEvidence(mount.database, freezeEvidence.phase),
+  };
+  for (const [name, value] of Object.entries(expected)) {
+    invariant(stableJson(value) === stableJson(freezeEvidence[name]),
+      `phase ${freezeEvidence.phase} frozen ${name} differs from independent database/corpus evidence`);
   }
   return true;
 }
@@ -1395,7 +1526,14 @@ function freeze(options) {
   invariant(database.device === preflightEvidence.databaseDevice
     && database.inode === preflightEvidence.databaseInode,
   'phase freeze database inode differs from preflight');
-  const longRunning = ['main10k', 'soak5k'].includes(preflightEvidence.phase);
+  const frozenAt = new Date().toISOString();
+  const containerStartedAt = mount.inspection.State?.StartedAt;
+  const startedAtMs = Date.parse(containerStartedAt);
+  const frozenAtMs = Date.parse(frozenAt);
+  invariant(Number.isFinite(startedAtMs) && Number.isFinite(frozenAtMs)
+    && frozenAtMs >= startedAtMs,
+  'phase freeze cannot bind the owned container lifetime');
+  const longRunning = frozenAtMs - startedAtMs >= ORPHAN_RECLAIM_MS;
   const evidence = {
     schemaVersion: 1,
     type: 'cascade-capacity-phase-freeze',
@@ -1435,9 +1573,10 @@ function freeze(options) {
       restartCount: mount.inspection.RestartCount,
       oomKilled: mount.inspection.State.OOMKilled,
     },
+    containerStartedAt,
     walPresent: false,
     shmPresent: false,
-    frozenAt: new Date().toISOString(),
+    frozenAt,
   };
   const output = writeExclusiveJson(options.output, evidence);
   process.stdout.write(`${output}\n`);
@@ -1733,6 +1872,21 @@ export function validateLoadEvidence(results, monitorStart, monitorFinish, artif
     sourceIps.add(result.sourceIp);
     invariant(result.metrics?.connected === result.requestedUsers && result.metrics?.connectFailures === 0,
       `load shard ${result.shard.index} did not connect every requested user`);
+    const messageIds = result.workloadIdentity?.successfulMessageIds;
+    const runIds = result.workloadIdentity?.requestedRunIds;
+    invariant(Array.isArray(messageIds) && Array.isArray(runIds)
+      && messageIds.length === result.metrics?.workload?.chat?.succeeded
+      && runIds.length === result.metrics?.workload?.run?.succeeded
+      && result.workloadIdentity.successfulMessageIdsCount === messageIds.length
+      && result.workloadIdentity.requestedRunIdsCount === runIds.length
+      && new Set(messageIds).size === messageIds.length && new Set(runIds).size === runIds.length
+      && stableJson(messageIds) === stableJson([...messageIds].sort())
+      && stableJson(runIds) === stableJson([...runIds].sort((left, right) => left - right))
+      && result.workloadIdentity.successfulMessageIdsSha256
+        === createHash('sha256').update(stableJson(messageIds)).digest('hex')
+      && result.workloadIdentity.requestedRunIdsSha256
+        === createHash('sha256').update(stableJson(runIds)).digest('hex'),
+    `load shard ${result.shard.index} has invalid successful message/run identity evidence`);
     const selectedCount = (percent) => Math.floor(result.requestedUsers / 100) * percent
       + Math.min(result.requestedUsers % 100, percent);
     invariant(result.metrics?.pollingOnly === selectedCount(result.pollingPercent),
@@ -1770,6 +1924,12 @@ export function validateLoadEvidence(results, monitorStart, monitorFinish, artif
       `load shard ${result.shard.index} checksum differs from the workload marker`);
     invariant(markerShard?.users === result.requestedUsers,
       `load shard ${result.shard.index} user count differs from the workload marker`);
+    invariant(markerShard?.successfulMessageIdsCount === messageIds.length
+      && markerShard?.successfulMessageIdsSha256
+        === result.workloadIdentity.successfulMessageIdsSha256
+      && markerShard?.requestedRunIdsCount === runIds.length
+      && markerShard?.requestedRunIdsSha256 === result.workloadIdentity.requestedRunIdsSha256,
+    `load shard ${result.shard.index} workload identity differs from the workload marker`);
     invariant(markerShard?.sourceIp === result.sourceIp
       && markerShard?.soakStartedAt === result.soakStartedAt
       && markerShard?.workloadFinishedAt === result.workloadFinishedAt
@@ -2031,7 +2191,25 @@ export function validateReconciliationEvidence(
     successfulRuns: loadResults.reduce(
       (sum, load) => sum + (load.metrics?.workload?.run?.succeeded || 0), 0,
     ),
+    successfulMessageIds: loadResults
+      .flatMap((load) => load.workloadIdentity?.successfulMessageIds || []).sort(),
+    requestedRunIds: loadResults
+      .flatMap((load) => load.workloadIdentity?.requestedRunIds || [])
+      .sort((left, right) => left - right),
   };
+  expected.successfulMessageIdsSha256 = createHash('sha256')
+    .update(stableJson(expected.successfulMessageIds)).digest('hex');
+  expected.requestedRunIdsSha256 = createHash('sha256')
+    .update(stableJson(expected.requestedRunIds)).digest('hex');
+  expected.shardWorkloadIdentities = loadResults
+    .map((load) => ({
+      shard: load.shard.index,
+      successfulMessageIdsCount: load.workloadIdentity.successfulMessageIdsCount,
+      successfulMessageIdsSha256: load.workloadIdentity.successfulMessageIdsSha256,
+      requestedRunIdsCount: load.workloadIdentity.requestedRunIdsCount,
+      requestedRunIdsSha256: load.workloadIdentity.requestedRunIdsSha256,
+    }))
+    .sort((left, right) => left.shard - right.shard);
   invariant(stableJson(result.expected) === stableJson(expected),
     'capacity reconciliation expected counts differ from source, fixture, or load evidence');
   invariant(Array.isArray(result.shards) && result.shards.length === REQUIRED_SHARDS,
@@ -2042,7 +2220,14 @@ export function validateReconciliationEvidence(
     const shard = shardEvidence.get(load.shard.index);
     invariant(shard?.sha256 === loadArtifacts[index]?.sha256
       && shard?.successfulChatWrites === load.metrics?.workload?.chat?.succeeded
-      && shard?.successfulRuns === load.metrics?.workload?.run?.succeeded,
+      && shard?.successfulRuns === load.metrics?.workload?.run?.succeeded
+      && shard?.successfulMessageIdsCount === load.workloadIdentity?.successfulMessageIdsCount
+      && shard?.successfulMessageIdsSha256 === load.workloadIdentity?.successfulMessageIdsSha256
+      && stableJson(shard?.successfulMessageIds)
+        === stableJson(load.workloadIdentity?.successfulMessageIds)
+      && shard?.requestedRunIdsCount === load.workloadIdentity?.requestedRunIdsCount
+      && shard?.requestedRunIdsSha256 === load.workloadIdentity?.requestedRunIdsSha256
+      && stableJson(shard?.requestedRunIds) === stableJson(load.workloadIdentity?.requestedRunIds),
     `capacity reconciliation shard ${load.shard.index} differs from load evidence`);
   }
   const recomputedObserved = queryReconciliationDatabase(
@@ -2068,7 +2253,9 @@ export function validateReconciliationEvidence(
     && observed.completedLoadRuns === expected.successfulRuns,
   'capacity reconciliation observed counts do not match the bound workload');
   invariant(['duplicateMessageIds', 'unexercisedFixtureChannels', 'badMessageScope',
-    'unexpectedNewRuns', 'badTerminalEventCounts', 'badEventSequences', 'openDelegatedRuns',
+    'badMessageBodies', 'unexpectedNewRuns', 'badRunPrompts', 'badRunRows',
+    'badTerminalEventCounts', 'badEventSequences',
+    'badRunEventSignatures', 'openDelegatedRuns',
     'foreignKeyViolations'].every((key) => observed[key] === 0)
     && observed.quickCheck === 'ok',
   'capacity reconciliation integrity or scope checks failed');
@@ -2083,14 +2270,17 @@ export function validateReconciliationEvidence(
   'capacity reconciliation does not preserve exact production totals and workload deltas');
   const fixtureIdentity = validateFixtureDatabaseIdentity(postDatabase.path, fixtureArtifact);
   invariant(fixtureIdentity.userMismatches === 0, 'capacity fixture identities changed after the run');
+  const { successfulMessageIds: _successfulMessageIds, requestedRunIds: _requestedRunIds,
+    ...expectedSummary } = expected;
+  const { loadMessageIds: _loadMessageIds, loadRunIds: _loadRunIds, ...observedSummary } = observed;
   return {
     sha256: artifact.sha256,
     databaseSha256: postDatabase.sha256,
     driverSha256: reconciliationDriverArtifact.sha256,
     fixturePrefixSha256: createHash('sha256').update(result.fixturePrefix || '').digest('hex'),
     baselineMaxRunId: result.baselineMaxRunId,
-    expected,
-    observed,
+    expected: expectedSummary,
+    observed: observedSummary,
     fixtureIdentity,
     finishedAt: result.finishedAt,
     evaluation: 'passed',
@@ -2162,6 +2352,7 @@ export function validateFaultEvidence(results, artifacts, imageId, revision, tar
     return {
       fault: result.fault,
       sha256: artifact.sha256,
+      fixtureSha256: result.fixtureSha256,
       containerId: result.containerId,
       startedAt: result.startedAt,
       finishedAt: result.finishedAt,
@@ -2169,6 +2360,88 @@ export function validateFaultEvidence(results, artifacts, imageId, revision, tar
       observations,
     };
   });
+}
+
+export function validateFaultPersistence(phaseWorkload, faults) {
+  invariant(phaseWorkload?.runs === 1
+    && phaseWorkload?.completedRuns === 1
+    && phaseWorkload?.messages === 1,
+  'phase B freeze workload differs from the two exact fault proofs');
+  const runnerFault = faults.find((fault) => fault.fault === 'runner-restart-reclaim');
+  const sqliteFault = faults.find((fault) => fault.fault === 'sqlite-write-lock');
+  invariant(runnerFault && sqliteFault, 'phase B is missing a required fault proof');
+  const [persistedFaultRun] = phaseWorkload.workloadRuns || [];
+  const persistedFaultEvents = phaseWorkload.workloadRunEvents || [];
+  const [persistedRecoveryMessage] = phaseWorkload.workloadMessages || [];
+  let persistedTerminalPayload;
+  try { persistedTerminalPayload = JSON.parse(persistedFaultRun?.lastPayload || 'null'); } catch {
+    persistedTerminalPayload = null;
+  }
+  invariant(persistedFaultRun?.id === runnerFault.observations.runId
+    && persistedFaultRun?.status === 'completed'
+    && persistedFaultRun?.summary === 'restart recovery passed'
+    && persistedFaultRun?.eventCount === 3
+    && persistedFaultRun?.completedTerminalEvents === 1
+    && persistedFaultRun?.lastType === 'status'
+    && persistedTerminalPayload?.status === 'completed'
+    && persistedTerminalPayload?.summary === 'restart recovery passed'
+    && persistedTerminalPayload?.sessionId === `fault-session-${runnerFault.observations.runId}`,
+  'phase B database does not contain the exact runner-restart run/event signature');
+  const expectedFaultEvents = [
+    { seq: 1, type: 'status', payload: { status: 'queued' } },
+    { seq: 2, type: 'status', payload: { status: 'running' } },
+    {
+      seq: 3,
+      type: 'status',
+      payload: {
+        status: 'completed',
+        summary: 'restart recovery passed',
+        sessionId: `fault-session-${runnerFault.observations.runId}`,
+      },
+    },
+  ];
+  invariant(persistedFaultEvents.length === expectedFaultEvents.length
+    && persistedFaultEvents.every((event, index) => {
+      let payload;
+      try { payload = JSON.parse(event.payloadJson); } catch { payload = null; }
+      const expected = expectedFaultEvents[index];
+      return event.runId === runnerFault.observations.runId
+        && event.seq === expected.seq && event.type === expected.type
+        && stableJson(payload) === stableJson(expected.payload);
+    }),
+  'phase B runner restart events differ from the exact queued/running/completed sequence');
+  invariant(persistedRecoveryMessage?.id === sqliteFault.observations.recoveryId
+    && persistedRecoveryMessage?.vaultId === sqliteFault.observations.vaultId
+    && persistedRecoveryMessage?.channelId === sqliteFault.observations.channelId
+    && persistedRecoveryMessage?.body === 'dependency recovered'
+    && !(phaseWorkload.workloadMessages || []).some(
+      (message) => message.id === sqliteFault.observations.blockedId,
+    ),
+  'phase B database does not contain only the exact scoped SQLite recovery message');
+  return true;
+}
+
+export function validatePhaseChronology(preflights, freezes, reconciliation, faults, soak) {
+  const mainFrozenAt = Date.parse(freezes.main10k?.frozenAt);
+  const faultPreflightAt = Date.parse(preflights.faults?.createdAt);
+  const soakPreflightAt = Date.parse(preflights.soak5k?.createdAt);
+  invariant(Number.isFinite(mainFrozenAt)
+    && Number.isFinite(faultPreflightAt) && Number.isFinite(soakPreflightAt),
+  'phase lifecycle timestamps are missing or invalid');
+  invariant(Date.parse(reconciliation.finishedAt) <= mainFrozenAt,
+    'phase A freeze predates its authoritative reconciliation');
+  invariant(faults.every((result) => Date.parse(result.finishedAt) <= Date.parse(freezes.faults.frozenAt))
+    && Date.parse(soak.finishedAt) <= Date.parse(freezes.soak5k.frozenAt),
+  'phase B/C freeze predates its workload evidence');
+  invariant(faults.every((result) => Date.parse(result.startedAt) >= mainFrozenAt)
+    && Date.parse(soak.startedAt) >= mainFrozenAt,
+  'phase B/C started before phase A was reconciled and frozen');
+  invariant(faultPreflightAt >= mainFrozenAt && soakPreflightAt >= mainFrozenAt,
+    'phase B/C preflight was created before phase A was reconciled and frozen');
+  invariant(faults.every((result) => faultPreflightAt <= Date.parse(result.startedAt))
+    && soakPreflightAt <= Date.parse(soak.startedAt),
+  'phase B/C workload started before its never-started preflight was captured');
+  return true;
 }
 
 function selectedFixtureEvidence(artifact) {
@@ -2380,6 +2653,15 @@ export function validateSoakEvidence(
   invariant(result.database?.baseline && result.database?.final
     && Array.isArray(result.database?.failures) && result.database.failures.length === 0,
   'two-hour soak SQLite count/integrity reconciliation is incomplete');
+  const recomputedDatabase = reconcileLongSoakDatabase(
+    result.database.baseline,
+    result.database.final,
+    runs.created,
+    result.postDb.totalEvents,
+  );
+  invariant(stableJson(result.database) === stableJson(recomputedDatabase)
+    && recomputedDatabase.failures.length === 0,
+  'two-hour soak SQLite orphan transition or workload reconciliation differs from recomputed evidence');
 
   invariant(Number.isInteger(result.recovery?.consecutivePassing)
     && result.recovery.consecutivePassing >= profile.recoveryConsecutiveSamples
@@ -2545,12 +2827,14 @@ export function validateManifest(manifest) {
     && DIGEST_PATTERN.test(reconciliation?.fixturePrefixSha256 || '')
     && reconciliation?.driverSha256 === runtimeProof.embedded.reconciliationDriverSha256
     && reconciliation?.baselineMaxRunId === sourceSnapshot.database.counts.maxRunId
+    && reconciliation?.expected?.successfulMessageIdsSha256
+      === reconciliation?.observed?.loadMessageIdsSha256
+    && reconciliation?.expected?.requestedRunIdsSha256
+      === reconciliation?.observed?.loadRunIdsSha256
+    && DIGEST_PATTERN.test(reconciliation?.expected?.successfulMessageIdsSha256 || '')
+    && DIGEST_PATTERN.test(reconciliation?.expected?.requestedRunIdsSha256 || '')
     && Number.isFinite(Date.parse(reconciliation?.finishedAt)),
   'manifest capacity reconciliation provenance is missing, failed, or unbound');
-  invariant(Date.parse(reconciliation.finishedAt) <= Date.parse(freezes.main10k.frozenAt)
-    && Date.parse(preflights.faults.createdAt) >= Date.parse(freezes.main10k.frozenAt)
-    && Date.parse(preflights.soak5k.createdAt) >= Date.parse(freezes.main10k.frozenAt),
-  'manifest phase lifecycle timestamps are stale or out of order');
   invariant(monitor?.evaluation === 'passed', 'manifest monitor gate did not pass');
   invariant(DIGEST_PATTERN.test(monitor?.sha256 || ''), 'manifest monitor checksum is invalid');
   invariant(monitor?.imageId === manifest.image.id, 'manifest monitor image differs from the certified image');
@@ -2695,6 +2979,16 @@ export function validateManifest(manifest) {
     invariant(Number.isInteger(entry.successfulChatWrites) && entry.successfulChatWrites > 0
       && Number.isInteger(entry.successfulRuns) && entry.successfulRuns > 0,
     `manifest load shard ${entry.shard} has no exact successful workload counts`);
+    invariant(entry.workloadIdentity?.successfulMessageIdsCount === entry.successfulChatWrites
+      && entry.workloadIdentity?.requestedRunIdsCount === entry.successfulRuns
+      && DIGEST_PATTERN.test(entry.workloadIdentity?.successfulMessageIdsSha256 || '')
+      && DIGEST_PATTERN.test(entry.workloadIdentity?.requestedRunIdsSha256 || '')
+      && markerShard?.successfulMessageIdsCount === entry.successfulChatWrites
+      && markerShard?.successfulMessageIdsSha256
+        === entry.workloadIdentity.successfulMessageIdsSha256
+      && markerShard?.requestedRunIdsCount === entry.successfulRuns
+      && markerShard?.requestedRunIdsSha256 === entry.workloadIdentity.requestedRunIdsSha256,
+    `manifest load shard ${entry.shard} workload identities differ from its artifact marker`);
     invariant(Date.parse(entry.soakStartedAt) <= gateStartAt
       && Date.parse(entry.rampCompletedAt) <= gateStartAt
       && Date.parse(entry.workloadFinishedAt) >= gateEndAt
@@ -2719,6 +3013,11 @@ export function validateManifest(manifest) {
       (sum, entry) => sum + entry.successfulChatWrites, 0,
     ),
     successfulRuns: certification.loads.reduce((sum, entry) => sum + entry.successfulRuns, 0),
+    successfulMessageIdsSha256: reconciliation.expected.successfulMessageIdsSha256,
+    requestedRunIdsSha256: reconciliation.expected.requestedRunIdsSha256,
+    shardWorkloadIdentities: certification.loads
+      .map((entry) => ({ shard: entry.shard, ...entry.workloadIdentity }))
+      .sort((left, right) => left.shard - right.shard),
   };
   invariant(stableJson(reconciliation.expected) === stableJson(expectedReconciliation),
     'manifest reconciliation expectations differ from source, fixture, or load evidence');
@@ -2733,7 +3032,9 @@ export function validateManifest(manifest) {
     && reconciledObserved.loadRunCount === expectedReconciliation.successfulRuns
     && reconciledObserved.completedLoadRuns === expectedReconciliation.successfulRuns
     && ['duplicateMessageIds', 'unexercisedFixtureChannels', 'badMessageScope',
-      'unexpectedNewRuns', 'badTerminalEventCounts', 'badEventSequences', 'openDelegatedRuns',
+      'badMessageBodies', 'unexpectedNewRuns', 'badRunPrompts', 'badRunRows',
+      'badTerminalEventCounts', 'badEventSequences',
+      'badRunEventSignatures', 'openDelegatedRuns',
       'foreignKeyViolations'].every((key) => reconciledObserved[key] === 0)
     && reconciledObserved.quickCheck === 'ok',
   'manifest reconciliation counts, scope, or integrity evidence is invalid');
@@ -2745,6 +3046,7 @@ export function validateManifest(manifest) {
   'manifest fault-recovery identities are incomplete');
   invariant(faults.every((entry) => entry.evaluation === 'passed'
     && DIGEST_PATTERN.test(entry.sha256 || '')
+    && entry.fixtureSha256 === fixture.sha256
     && entry.containerId === preflights.faults.containerId),
   'manifest contains failed or unbound fault-recovery evidence');
   const soak = certification?.soak;
@@ -2762,6 +3064,7 @@ export function validateManifest(manifest) {
     && soak?.target === certification.target
     && soak?.containerId === preflights.soak5k.containerId,
   'manifest two-hour soak image, revision, or target differs from the release certificate');
+  validatePhaseChronology(preflights, freezes, reconciliation, faults, soak);
   invariant(soak?.users === REQUIRED_LONG_SOAK_USERS
     && soak?.rampSeconds === SOAK_PROFILE.rampSeconds
     && soak?.soakSeconds === REQUIRED_LONG_SOAK_SECONDS
@@ -2782,6 +3085,7 @@ export function validateManifest(manifest) {
   'manifest two-hour soak does not bind the observed 300-second ramp');
   invariant(soak?.fixtures?.users === REQUIRED_LONG_SOAK_USERS
     && soak?.fixtures?.groups === REQUIRED_LONG_SOAK_USERS / 25
+    && soak?.fixtures?.sha256 === fixture.sha256
     && Number.isInteger(soak?.fixtures?.bytes) && soak.fixtures.bytes > 0,
   'manifest two-hour soak fixture evidence is incomplete');
   invariant(soak?.serverLogs?.policy === 'zero fatal/error lines from container start through soak finish'
@@ -2800,13 +3104,29 @@ export function validateManifest(manifest) {
     && soak.database.final.foreignKeyViolations === 0
     && soak.database.final.quickCheck === 'ok',
   'manifest two-hour soak SQLite reconciliation is incomplete');
-  invariant(soak.database.final.users === soak.database.baseline.users
-    && soak.database.final.vaults === soak.database.baseline.vaults
-    && soak.database.final.memberships === soak.database.baseline.memberships
-    && soak.database.final.delegatedRuns === soak.database.baseline.delegatedRuns
-    && soak.database.final.runs - soak.database.baseline.runs === soak.runCount
-    && soak.database.final.runEvents - soak.database.baseline.runEvents === soak.persistedEventCount,
-  'manifest two-hour soak SQLite counts do not reconcile');
+  const manifestSoakDatabase = reconcileLongSoakDatabase(
+    soak.database.baseline,
+    soak.database.final,
+    soak.runCount,
+    soak.persistedEventCount,
+  );
+  invariant(stableJson(soak.database) === stableJson(manifestSoakDatabase)
+    && manifestSoakDatabase.failures.length === 0,
+  'manifest two-hour soak SQLite counts or approved orphan transition do not reconcile');
+  invariant(freezes.main10k.phaseWorkload?.runs === expectedReconciliation.successfulRuns
+    && freezes.main10k.phaseWorkload?.completedRuns === expectedReconciliation.successfulRuns
+    && freezes.main10k.phaseWorkload?.runEvents === expectedReconciliation.successfulRuns * 4
+    && freezes.main10k.phaseWorkload?.messages === expectedReconciliation.successfulChatWrites,
+  'manifest phase A workload differs from reconciliation evidence');
+  validateFaultPersistence(freezes.faults.phaseWorkload, faults);
+  invariant(freezes.soak5k.phaseWorkload?.runs === soak.runCount
+    && freezes.soak5k.phaseWorkload?.completedRuns === soak.runCount
+    && freezes.soak5k.phaseWorkload?.runEvents === soak.persistedEventCount
+    && freezes.soak5k.phaseWorkload?.messages === 0,
+  'manifest phase C workload differs from soak evidence');
+  validatePhaseTableDeltas(freezes.main10k, fixture, expectedReconciliation);
+  validatePhaseTableDeltas(freezes.faults, fixture, freezes.faults.phaseWorkload);
+  validatePhaseTableDeltas(freezes.soak5k, fixture, soak);
   const soakHeadroom = soak?.journalHeadroom;
   invariant(soakHeadroom
     && [
@@ -2926,6 +3246,7 @@ function certify(options) {
   invariant(options.mainFreeze, '--main-freeze is required');
   invariant(options.faultFreeze, '--fault-freeze is required');
   invariant(options.soakFreeze, '--soak-freeze is required');
+  configureSnapshotScratch(options.scratchDirectory);
   invariant(options.loadResults.length > 0, '--load-result is required for every shard');
   invariant(options.faultResults.length === REQUIRED_FAULTS.size,
     '--fault-result is required for runner restart and SQLite lock recovery');
@@ -3065,74 +3386,29 @@ function certify(options) {
     );
     return [phase, evidence];
   }));
-  invariant(Date.parse(reconciliation.finishedAt) <= Date.parse(freezes.main10k.frozenAt),
-    'phase A freeze predates its authoritative reconciliation');
-  invariant(faultResults.every((result) => Date.parse(result.finishedAt) <= Date.parse(freezes.faults.frozenAt))
-    && Date.parse(soak.finishedAt) <= Date.parse(freezes.soak5k.frozenAt),
-  'phase B/C freeze predates its workload evidence');
-  invariant(faultResults.every((result) => Date.parse(result.startedAt) >= Date.parse(freezes.main10k.frozenAt))
-    && Date.parse(soak.startedAt) >= Date.parse(freezes.main10k.frozenAt),
-  'phase B/C started before phase A was reconciled and frozen');
-  invariant(Date.parse(preflights.faults.evidence.createdAt) >= Date.parse(freezes.main10k.frozenAt)
-    && Date.parse(preflights.soak5k.evidence.createdAt) >= Date.parse(freezes.main10k.frozenAt),
-  'phase B/C preflight was created before phase A was reconciled and frozen');
+  for (const phase of ['main10k', 'faults', 'soak5k']) {
+    validateFrozenPhaseAgainstMount(
+      options.sourceDatabase,
+      options.sourceCorpusRoot,
+      fixtureArtifact,
+      preflights[phase].evidence,
+      freezes[phase],
+      preflights[phase].mount,
+    );
+  }
+  validatePhaseChronology(
+    Object.fromEntries(Object.entries(preflights).map(([phase, entry]) => [phase, entry.evidence])),
+    freezes,
+    reconciliation,
+    faultResults,
+    soak,
+  );
   invariant(freezes.main10k.phaseWorkload?.runs === reconciliation.expected.successfulRuns
     && freezes.main10k.phaseWorkload?.completedRuns === reconciliation.expected.successfulRuns
     && freezes.main10k.phaseWorkload?.runEvents === reconciliation.expected.successfulRuns * 4
     && freezes.main10k.phaseWorkload?.messages === reconciliation.expected.successfulChatWrites,
   'phase A freeze workload differs from reconciliation evidence');
-  invariant(freezes.faults.phaseWorkload?.runs === 1
-    && freezes.faults.phaseWorkload?.completedRuns === 1
-    && freezes.faults.phaseWorkload?.messages === 1,
-  'phase B freeze workload differs from the two exact fault proofs');
-  const runnerFault = faults.find((fault) => fault.fault === 'runner-restart-reclaim');
-  const sqliteFault = faults.find((fault) => fault.fault === 'sqlite-write-lock');
-  const [persistedFaultRun] = freezes.faults.phaseWorkload.workloadRuns || [];
-  const persistedFaultEvents = freezes.faults.phaseWorkload.workloadRunEvents || [];
-  const [persistedRecoveryMessage] = freezes.faults.phaseWorkload.workloadMessages || [];
-  let persistedTerminalPayload;
-  try { persistedTerminalPayload = JSON.parse(persistedFaultRun?.lastPayload || 'null'); } catch {
-    persistedTerminalPayload = null;
-  }
-  invariant(persistedFaultRun?.id === runnerFault?.observations?.runId
-    && persistedFaultRun?.status === 'completed'
-    && persistedFaultRun?.summary === 'restart recovery passed'
-    && persistedFaultRun?.completedTerminalEvents === 1
-    && persistedFaultRun?.lastType === 'status'
-    && persistedTerminalPayload?.status === 'completed'
-    && persistedTerminalPayload?.summary === 'restart recovery passed',
-  'phase B database does not contain the exact runner-restart run/event signature');
-  const expectedFaultEvents = [
-    { seq: 1, type: 'status', payload: { status: 'queued' } },
-    { seq: 2, type: 'status', payload: { status: 'running' } },
-    {
-      seq: 3,
-      type: 'status',
-      payload: {
-        status: 'completed',
-        summary: 'restart recovery passed',
-        sessionId: `fault-session-${runnerFault?.observations?.runId}`,
-      },
-    },
-  ];
-  invariant(persistedFaultEvents.length === expectedFaultEvents.length
-    && persistedFaultEvents.every((event, index) => {
-      let payload;
-      try { payload = JSON.parse(event.payloadJson); } catch { payload = null; }
-      const expected = expectedFaultEvents[index];
-      return event.runId === runnerFault?.observations?.runId
-        && event.seq === expected.seq && event.type === expected.type
-        && stableJson(payload) === stableJson(expected.payload);
-    }),
-  'phase B runner restart events differ from the exact queued/running/completed sequence');
-  invariant(persistedRecoveryMessage?.id === sqliteFault?.observations?.recoveryId
-    && persistedRecoveryMessage?.vaultId === sqliteFault?.observations?.vaultId
-    && persistedRecoveryMessage?.channelId === sqliteFault?.observations?.channelId
-    && persistedRecoveryMessage?.body === 'dependency recovered'
-    && !freezes.faults.phaseWorkload.workloadMessages.some(
-      (message) => message.id === sqliteFault?.observations?.blockedId,
-    ),
-  'phase B database does not contain only the exact scoped SQLite recovery message');
+  validateFaultPersistence(freezes.faults.phaseWorkload, faults);
   invariant(freezes.soak5k.phaseWorkload?.runs === soak.runCount
     && freezes.soak5k.phaseWorkload?.completedRuns === soak.runCount
     && freezes.soak5k.phaseWorkload?.runEvents === soak.persistedEventCount
@@ -3227,6 +3503,10 @@ function certify(options) {
             forcedReconnectOwnedChatChannels: shard.forcedReconnectOwnedChatChannels,
             forcedReconnectStrategy: shard.forcedReconnectStrategy,
             forcedReconnectOwnerUserIds: shard.forcedReconnectOwnerUserIds,
+            successfulMessageIdsCount: shard.successfulMessageIdsCount,
+            successfulMessageIdsSha256: shard.successfulMessageIdsSha256,
+            requestedRunIdsCount: shard.requestedRunIdsCount,
+            requestedRunIdsSha256: shard.requestedRunIdsSha256,
           })),
         },
         evaluation: finish.evaluation.ok ? 'passed' : 'failed',
@@ -3250,6 +3530,12 @@ function certify(options) {
         thresholds: loadResults[index].thresholds,
         successfulChatWrites: loadResults[index].metrics.workload.chat.succeeded,
         successfulRuns: loadResults[index].metrics.workload.run.succeeded,
+        workloadIdentity: {
+          successfulMessageIdsCount: loadResults[index].workloadIdentity.successfulMessageIdsCount,
+          successfulMessageIdsSha256: loadResults[index].workloadIdentity.successfulMessageIdsSha256,
+          requestedRunIdsCount: loadResults[index].workloadIdentity.requestedRunIdsCount,
+          requestedRunIdsSha256: loadResults[index].workloadIdentity.requestedRunIdsSha256,
+        },
         rampCompletedAt: loadResults[index].rampCompletedAt,
         soakStartedAt: loadResults[index].soakStartedAt,
         workloadFinishedAt: loadResults[index].workloadFinishedAt,

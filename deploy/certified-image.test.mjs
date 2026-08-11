@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 
 import {
+  PRODUCTION_APPLICATION_TABLES,
   compareProductionRows,
   compareCorpusTree,
   phaseWorkloadEvidence,
@@ -15,6 +16,7 @@ import {
   validateCapacityFixtureArtifact,
   validateCapacityFixtureSummary,
   validateFaultEvidence,
+  validateFaultPersistence,
   validateFixturePreflight,
   validateFreezeEvidence,
   validateLoadEvidence,
@@ -22,6 +24,7 @@ import {
   validateManifest,
   validateMonitorEvidence,
   validatePhaseTableDeltas,
+  validatePhaseChronology,
   validateProductionSourceSummary,
   validateReconciliationEvidence,
   validateServerLogArtifact,
@@ -212,6 +215,47 @@ function soakFixtureArtifact() {
 
 function soakServerLogArtifact() {
   return { path: '/tmp/cascade-soak-server.log', sha256: '9'.repeat(64), text: '[info ] ok\n' };
+}
+
+function soakDatabaseEvidence() {
+  const summary = 'Desktop agent runner did not reclaim this run after server restart.';
+  return {
+    baseline: {
+      users: 5_007,
+      vaults: 212,
+      memberships: 5_015,
+      runs: 1_897,
+      runEvents: 403_514,
+      delegatedRuns: 2,
+      baselineOrphans: [
+        { id: 1_896, status: 'queued', summary: null, ownerUserId: 1, maxSeq: 1_913 },
+        { id: 1_897, status: 'queued', summary: null, ownerUserId: 4, maxSeq: 27 },
+      ],
+      foreignKeyViolations: 0,
+      quickCheck: 'ok',
+    },
+    final: {
+      users: 5_007,
+      vaults: 212,
+      memberships: 5_015,
+      runs: 9_097,
+      runEvents: 432_316,
+      delegatedRuns: 0,
+      baselineOrphans: [
+        {
+          id: 1_896, status: 'failed', summary, ownerUserId: null, maxSeq: 1_914,
+          lastType: 'status', lastPayload: JSON.stringify({ status: 'failed', summary }),
+        },
+        {
+          id: 1_897, status: 'failed', summary, ownerUserId: null, maxSeq: 28,
+          lastType: 'status', lastPayload: JSON.stringify({ status: 'failed', summary }),
+        },
+      ],
+      foreignKeyViolations: 0,
+      quickCheck: 'ok',
+    },
+    failures: [],
+  };
 }
 
 function soakSample({ index, phase, elapsedSeconds, at, container, resources }) {
@@ -468,29 +512,7 @@ function soakResult() {
       eventDigest: 'f'.repeat(64),
       failures: [],
     },
-    database: {
-      baseline: {
-        users: 5_000,
-        vaults: 200,
-        memberships: 5_000,
-        runs: 10,
-        runEvents: 40,
-        delegatedRuns: 0,
-        foreignKeyViolations: 0,
-        quickCheck: 'ok',
-      },
-      final: {
-        users: 5_000,
-        vaults: 200,
-        memberships: 5_000,
-        runs: 7_210,
-        runEvents: 28_840,
-        delegatedRuns: 0,
-        foreignKeyViolations: 0,
-        quickCheck: 'ok',
-      },
-      failures: [],
-    },
+    database: soakDatabaseEvidence(),
     recovery: null,
     probe: {
       owned: true,
@@ -601,7 +623,9 @@ function monitor({ ok = true, id = imageId } = {}) {
     runnerDisconnectFlushOwners: 9_999,
     presenceDispatcher,
   };
-  const shards = [0, 1, 2, 3].map((index) => ({
+  const shards = [0, 1, 2, 3].map((index) => {
+    const workloadIdentity = loadShard(index).workloadIdentity;
+    return {
     index,
     users: 2_500,
     sourceIp: `198.51.100.${index + 1}`,
@@ -616,7 +640,12 @@ function monitor({ ok = true, id = imageId } = {}) {
     forcedReconnectOwnedChatChannels: 10,
     forcedReconnectStrategy: 'owner-stratified-v1',
     forcedReconnectOwnerUserIds: reconnectOwnerUserIds.slice(index * 10, (index + 1) * 10),
-  }));
+    successfulMessageIdsCount: workloadIdentity.successfulMessageIdsCount,
+    successfulMessageIdsSha256: workloadIdentity.successfulMessageIdsSha256,
+    requestedRunIdsCount: workloadIdentity.requestedRunIdsCount,
+    requestedRunIdsSha256: workloadIdentity.requestedRunIdsSha256,
+  };
+  });
   const endpoints = [
     {
       type: 'start',
@@ -747,6 +776,14 @@ function monitorEndpoints(options) {
 }
 
 function loadShard(index, overrides = {}) {
+  const successfulMessageIds = Array.from(
+    { length: 11_625 },
+    (_unused, id) => `load-${index}-${String(id).padStart(5, '0')}`,
+  );
+  const requestedRunIds = Array.from(
+    { length: 465 },
+    (_unused, id) => 1_898 + index * 465 + id,
+  );
   return {
     target: 'https://staging.example',
     sourceIp: `198.51.100.${index + 1}`,
@@ -784,6 +821,15 @@ function loadShard(index, overrides = {}) {
       forcedReconnectsRecovered: 250,
       forcedReconnectsWithin10s: 248,
       forcedReconnectsWithin20s: 250,
+      workload: { chat: { succeeded: successfulMessageIds.length }, run: { succeeded: requestedRunIds.length } },
+    },
+    workloadIdentity: {
+      successfulMessageIds,
+      successfulMessageIdsCount: successfulMessageIds.length,
+      successfulMessageIdsSha256: sha256(JSON.stringify(stable(successfulMessageIds))),
+      requestedRunIds,
+      requestedRunIdsCount: requestedRunIds.length,
+      requestedRunIdsSha256: sha256(JSON.stringify(stable(requestedRunIds))),
     },
     finishedAt: `2026-08-11T00:36:0${index + 4}.000Z`,
     evaluation: { ok: true, failures: [] },
@@ -920,12 +966,26 @@ function phaseRuntimeFixture() {
 }
 
 function logicalSourceRows(overrides = {}) {
+  const fixtureExtras = new Map([
+    ['community_note_activity', 400], ['notes', 400], ['users', 10_000],
+    ['vault_members', 10_000], ['vaults', 400],
+  ]);
+  const tableDeltas = PRODUCTION_APPLICATION_TABLES.map((tableName) => ({
+    tableName,
+    missingRows: 0,
+    extraRows: fixtureExtras.get(tableName) || 0,
+  }));
+  const tableNames = tableDeltas.map((row) => row.tableName);
   return {
     sourceSha256: productionSourceSummary().database.sha256,
     forbiddenChanges: 0,
     missingRows: 0,
     extraRows: 21_200,
-    tableEvidenceSha256: '1'.repeat(64),
+    tables: tableDeltas.length,
+    tableNames,
+    tableNamesSha256: sha256(JSON.stringify(stable(tableNames))),
+    tableDeltas,
+    tableEvidenceSha256: sha256(JSON.stringify(stable(tableDeltas))),
     schemaMigrationSha256: '2'.repeat(64),
     schemaEvidenceSha256: '3'.repeat(64),
     schemaValidation: 'pinned Elixir transform passed',
@@ -938,6 +998,7 @@ function logicalSourceRows(overrides = {}) {
 function candidateCorpusEvidence() {
   return Object.fromEntries(['vaults', 'qmd'].map((name) => [name, {
     approvedRecords: 1,
+    approvedSha256: sha256(`approved-${name}`),
     missingOrChanged: 0,
     unexpectedExtras: 0,
     derivedIndexChanges: 0,
@@ -1022,10 +1083,12 @@ test('phase preflight and freeze validators bind never-started identity, scratch
     runtime,
     candidateCorpus: candidateCorpusEvidence(),
     sourceRows: logicalSourceRows(),
+    identity: result.identity,
     orphanState: { state: 'reclaimed' },
     phaseWorkload: { runs: 1 },
     snapshotScratch: scratch,
     containerState: { running: false, restartCount: 0, oomKilled: false },
+    containerStartedAt: '2026-08-11T00:00:00.000Z',
     walPresent: false,
     shmPresent: false,
     frozenAt: '2026-08-11T01:00:00.000Z',
@@ -1036,6 +1099,23 @@ test('phase preflight and freeze validators bind never-started identity, scratch
     () => validateFreezeEvidence({ ...freeze, orphanState: { state: 'preserved' } },
       { sha256: 'c'.repeat(64) }, evidence, imageId),
     /orphan state/,
+  );
+  assert.throws(
+    () => validateFreezeEvidence({
+      ...freeze,
+      candidateCorpus: {
+        ...freeze.candidateCorpus,
+        vaults: { ...freeze.candidateCorpus.vaults, approvedRecords: 0 },
+      },
+    }, { sha256: 'c'.repeat(64) }, evidence, imageId),
+    /candidate corpus/,
+  );
+  assert.throws(
+    () => validateFreezeEvidence({
+      ...freeze,
+      identity: { ...freeze.identity, userMismatches: 1 },
+    }, { sha256: 'c'.repeat(64) }, evidence, imageId),
+    /identity joins/,
   );
 });
 
@@ -1077,14 +1157,35 @@ test('orphan, phase-workload, and exact table-delta evidence fail closed', () =>
       INSERT INTO delegated_runs VALUES(1896,1),(1897,4);
       INSERT INTO run_events VALUES
         (1896,1913,'queued','{}'),(1897,27,'queued','{}'),
-        (1898,1,'queued','{}'),(1898,2,'status','{"status":"completed","summary":"restart recovery passed"}');
-      INSERT INTO chat_messages VALUES('fault-lock-recovery-test','vault','channel','dependency recovered');
+        (1898,1,'status','{"status":"queued"}'),
+        (1898,2,'status','{"status":"running"}'),
+        (1898,3,'status','{"status":"completed","summary":"restart recovery passed","sessionId":"fault-session-1898"}');
+      INSERT INTO chat_messages VALUES(
+        'fault-lock-recovery-test','vault-test','channel-test','dependency recovered'
+      );
     `);
     db.close();
     assert.equal(validateBaselineOrphanState(database, false).state, 'preserved');
     const workload = phaseWorkloadEvidence(database, 'faults');
     assert.deepEqual(workload.workloadMessages.map((row) => row.id), ['fault-lock-recovery-test']);
     assert.equal(workload.badRunEventSequences, 0);
+    const faults = validateFaultEvidence(
+      [faultResult('runner-restart-reclaim'), faultResult('sqlite-write-lock')],
+      [faultArtifact(0), faultArtifact(1)], imageId, revision, 'https://staging.example',
+      'e'.repeat(64),
+    );
+    assert.equal(validateFaultPersistence(workload, faults), true);
+    for (const mutate of [
+      (copy) => copy.workloadRunEvents.splice(1, 0, {
+        runId: 1_898, seq: 2, type: 'text', payloadJson: '{"text":"arbitrary"}',
+      }),
+      (copy) => { copy.workloadRunEvents[1].payloadJson = '{"status":"queued"}'; },
+      (copy) => { copy.workloadRunEvents[2].payloadJson = '{"status":"completed","summary":"restart recovery passed"}'; },
+    ]) {
+      const changed = structuredClone(workload);
+      mutate(changed);
+      assert.throws(() => validateFaultPersistence(changed, faults), /exact queued\/running\/completed|exact runner-restart/);
+    }
 
     const reclaimed = new Database(database);
     const summary = 'Desktop agent runner did not reclaim this run after server restart.';
@@ -1096,23 +1197,61 @@ test('orphan, phase-workload, and exact table-delta evidence fail closed', () =>
       .run(1897, 28, 'status', JSON.stringify({ status: 'failed', summary }));
     reclaimed.close();
     assert.equal(validateBaselineOrphanState(database, true).state, 'reclaimed');
+    const compensated = new Database(database);
+    compensated.prepare('UPDATE run_events SET payload_json=? WHERE run_id=1896 AND seq=1914')
+      .run(JSON.stringify({ status: 'failed', summary, sessionId: 'unexpected' }));
+    compensated.close();
+    assert.throws(() => validateBaselineOrphanState(database, true), /exact terminal event/);
+    const restored = new Database(database);
+    restored.prepare('UPDATE run_events SET payload_json=? WHERE run_id=1896 AND seq=1914')
+      .run(JSON.stringify({ status: 'failed', summary }));
+    restored.close();
 
-    const deltas = [
+    const phaseExtras = new Map([
       ['users', 10_000], ['vaults', 400], ['vault_members', 10_000],
       ['notes', 400], ['community_note_activity', 400], ['chat_messages', 1],
-      ['runs', 1], ['run_events', 2],
-    ].map(([tableName, extraRows]) => ({ tableName, missingRows: 0, extraRows }));
+      ['runs', 1], ['run_events', 3],
+    ]);
+    const deltas = PRODUCTION_APPLICATION_TABLES.map((tableName) => ({
+      tableName, missingRows: 0, extraRows: phaseExtras.get(tableName) || 0,
+    }));
+    const deltaEvidence = () => ({
+      tables: deltas.length,
+      tableNames: deltas.map((row) => row.tableName),
+      tableNamesSha256: sha256(JSON.stringify(stable(deltas.map((row) => row.tableName)))),
+      tableDeltas: deltas,
+      tableEvidenceSha256: sha256(JSON.stringify(stable(deltas))),
+    });
     assert.equal(validatePhaseTableDeltas(
-      { phase: 'faults', sourceRows: { tableDeltas: deltas } },
+      { phase: 'faults', orphanState: { state: 'preserved' }, sourceRows: deltaEvidence() },
       { users: 10_000, groups: 400 },
-      { runEvents: 2 },
+      { runEvents: 3 },
     ), true);
-    deltas.at(-1).extraRows = 3;
+    deltas.find((row) => row.tableName === 'run_events').extraRows = 4;
     assert.throws(() => validatePhaseTableDeltas(
-      { phase: 'faults', sourceRows: { tableDeltas: deltas } },
+      { phase: 'faults', orphanState: { state: 'preserved' }, sourceRows: deltaEvidence() },
       { users: 10_000, groups: 400 },
-      { runEvents: 2 },
+      { runEvents: 3 },
     ), /unexpected rows/);
+    const deleted = structuredClone(deltaEvidence());
+    deleted.tableDeltas.pop();
+    deleted.tables = deleted.tableDeltas.length;
+    deleted.tableNames = deleted.tableDeltas.map((row) => row.tableName);
+    deleted.tableNamesSha256 = sha256(JSON.stringify(stable(deleted.tableNames)));
+    deleted.tableEvidenceSha256 = sha256(JSON.stringify(stable(deleted.tableDeltas)));
+    assert.throws(() => validatePhaseTableDeltas(
+      { phase: 'faults', orphanState: { state: 'preserved' }, sourceRows: deleted },
+      { users: 10_000, groups: 400 }, { runEvents: 3 },
+    ), /approved production database|duplicate, missing, or reordered/);
+    const duplicate = structuredClone(deltaEvidence());
+    duplicate.tableDeltas[1].tableName = duplicate.tableDeltas[0].tableName;
+    duplicate.tableNames[1] = duplicate.tableNames[0];
+    duplicate.tableNamesSha256 = sha256(JSON.stringify(stable(duplicate.tableNames)));
+    duplicate.tableEvidenceSha256 = sha256(JSON.stringify(stable(duplicate.tableDeltas)));
+    assert.throws(() => validatePhaseTableDeltas(
+      { phase: 'faults', orphanState: { state: 'preserved' }, sourceRows: duplicate },
+      { users: 10_000, groups: 400 }, { runEvents: 3 },
+    ), /duplicate, missing, or reordered/);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
@@ -1317,6 +1456,41 @@ test('fault certification binds runner restart and SQLite lock recovery to the e
     ),
     /phantom failure/,
   );
+  const wrongFixture = structuredClone(results);
+  wrongFixture[1].fixtureSha256 = '0'.repeat(64);
+  assert.throws(
+    () => validateFaultEvidence(
+      wrongFixture, artifacts, imageId, revision, 'https://staging.example', 'e'.repeat(64),
+    ),
+    /different authenticated fixture cohort/,
+  );
+});
+
+test('phase chronology binds each never-started preflight before its workload', () => {
+  const preflights = {
+    faults: { createdAt: '2026-08-11T01:01:00.000Z' },
+    soak5k: { createdAt: '2026-08-11T01:02:00.000Z' },
+  };
+  const freezes = {
+    main10k: { frozenAt: '2026-08-11T01:00:00.000Z' },
+    faults: { frozenAt: '2026-08-11T01:10:00.000Z' },
+    soak5k: { frozenAt: '2026-08-11T04:00:00.000Z' },
+  };
+  const reconciliation = { finishedAt: '2026-08-11T00:59:00.000Z' };
+  const faults = [
+    { startedAt: '2026-08-11T01:03:00.000Z', finishedAt: '2026-08-11T01:04:00.000Z' },
+    { startedAt: '2026-08-11T01:04:00.000Z', finishedAt: '2026-08-11T01:05:00.000Z' },
+  ];
+  const soak = { startedAt: '2026-08-11T01:03:00.000Z', finishedAt: '2026-08-11T03:30:00.000Z' };
+  assert.equal(validatePhaseChronology(preflights, freezes, reconciliation, faults, soak), true);
+  assert.throws(() => validatePhaseChronology(
+    { ...preflights, faults: { createdAt: '2026-08-11T01:04:30.000Z' } },
+    freezes, reconciliation, faults, soak,
+  ), /before its never-started preflight/);
+  assert.throws(() => validatePhaseChronology(
+    { ...preflights, soak5k: { createdAt: '2026-08-11T01:04:00.000Z' } },
+    freezes, reconciliation, faults, soak,
+  ), /before its never-started preflight/);
 });
 
 test('soak certification binds two hours, 5,000 users, churn, run events, and recovery journal', () => {
@@ -1614,10 +1788,23 @@ test('certification manifest is bound to a canonical revision tag and all shards
   };
   const sourceSnapshot = productionSourceSummary();
   const fixtureSummary = validateCapacityFixtureArtifact(capacityFixtureArtifact());
+  for (const fault of manifest.certification.faults) fault.fixtureSha256 = fixtureSummary.sha256;
+  manifest.certification.soak.fixtures.sha256 = fixtureSummary.sha256;
   for (const entry of manifest.certification.loads) {
+    const workloadIdentity = loadShard(entry.shard).workloadIdentity;
     entry.thresholds = { ...releaseThresholds };
     entry.successfulChatWrites = 11_625;
     entry.successfulRuns = 465;
+    entry.workloadIdentity = {
+      successfulMessageIdsCount: workloadIdentity.successfulMessageIdsCount,
+      successfulMessageIdsSha256: workloadIdentity.successfulMessageIdsSha256,
+      requestedRunIdsCount: workloadIdentity.requestedRunIdsCount,
+      requestedRunIdsSha256: workloadIdentity.requestedRunIdsSha256,
+    };
+    Object.assign(
+      manifest.certification.monitor.workload.shards.find((shard) => shard.shard === entry.shard),
+      entry.workloadIdentity,
+    );
     entry.configurationSha256 = sha256(JSON.stringify(stable(loadConfiguration(entry))));
   }
   const configurations = manifest.certification.loads
@@ -1646,6 +1833,71 @@ test('certification manifest is bound to a canonical revision tag and all shards
     faults: preflight('faults', 'fault-container', 2, '2026-08-11T00:41:00.000Z'),
     soak5k: preflight('soak5k', 'soak-container', 3, '2026-08-11T00:50:00.000Z'),
   };
+  const phaseSourceRows = (phase) => {
+    const sourceRows = logicalSourceRows();
+    const extras = new Map(sourceRows.tableDeltas.map((row) => [row.tableName, row.extraRows]));
+    if (phase === 'main10k') {
+      extras.set('chat_messages', 46_500);
+      extras.set('runs', 1_862);
+      extras.set('run_events', 7_442);
+    } else if (phase === 'faults') {
+      extras.set('chat_messages', 1);
+      extras.set('runs', 1);
+      extras.set('run_events', 3);
+    } else {
+      extras.set('runs', 7_202);
+      extras.set('run_events', 28_802);
+    }
+    sourceRows.tableDeltas = sourceRows.tableDeltas.map((row) => ({
+      ...row,
+      missingRows: ['main10k', 'soak5k'].includes(phase)
+        && ['runs', 'delegated_runs'].includes(row.tableName) ? 2 : 0,
+      extraRows: extras.get(row.tableName) || 0,
+    }));
+    sourceRows.tableEvidenceSha256 = sha256(JSON.stringify(stable(sourceRows.tableDeltas)));
+    return sourceRows;
+  };
+  const phaseWorkload = (phase) => {
+    if (phase === 'main10k') return {
+      runs: 1_860, completedRuns: 1_860, runEvents: 7_440, messages: 46_500,
+    };
+    if (phase === 'soak5k') return {
+      runs: 7_200, completedRuns: 7_200, runEvents: 28_800, messages: 0,
+    };
+    return {
+      runs: 1,
+      completedRuns: 1,
+      runEvents: 3,
+      messages: 1,
+      workloadRuns: [{
+        id: 1_898,
+        status: 'completed',
+        summary: 'restart recovery passed',
+        eventCount: 3,
+        completedTerminalEvents: 1,
+        lastType: 'status',
+        lastPayload: JSON.stringify({
+          status: 'completed', summary: 'restart recovery passed', sessionId: 'fault-session-1898',
+        }),
+      }],
+      workloadRunEvents: [
+        { runId: 1_898, seq: 1, type: 'status', payloadJson: '{"status":"queued"}' },
+        { runId: 1_898, seq: 2, type: 'status', payloadJson: '{"status":"running"}' },
+        {
+          runId: 1_898,
+          seq: 3,
+          type: 'status',
+          payloadJson: JSON.stringify({
+            status: 'completed', summary: 'restart recovery passed', sessionId: 'fault-session-1898',
+          }),
+        },
+      ],
+      workloadMessages: [{
+        id: 'fault-lock-recovery-test', vaultId: 'vault-test', channelId: 'channel-test',
+        body: 'dependency recovered',
+      }],
+    };
+  };
   const freeze = (phase, frozenAt) => ({
     sha256: sha256(`freeze-${phase}`),
     phase,
@@ -1656,10 +1908,18 @@ test('certification manifest is bound to a canonical revision tag and all shards
     databaseSha256: sha256(`frozen-database-${phase}`),
     databaseDevice: preflights[phase].databaseDevice,
     databaseInode: preflights[phase].databaseInode,
+    sourceRows: phaseSourceRows(phase),
+    orphanState: { state: ['main10k', 'soak5k'].includes(phase) ? 'reclaimed' : 'preserved' },
+    phaseWorkload: phaseWorkload(phase),
     frozenAt,
   });
   const successfulChatWrites = 46_500;
   const successfulRuns = 1_860;
+  const aggregateMessageIds = [0, 1, 2, 3]
+    .flatMap((shard) => loadShard(shard).workloadIdentity.successfulMessageIds).sort();
+  const aggregateRunIds = [0, 1, 2, 3]
+    .flatMap((shard) => loadShard(shard).workloadIdentity.requestedRunIds)
+    .sort((left, right) => left - right);
   const reconciliationExpected = {
     users: 10_007,
     vaults: 412,
@@ -1667,6 +1927,10 @@ test('certification manifest is bound to a canonical revision tag and all shards
     channels: 400,
     successfulChatWrites,
     successfulRuns,
+    successfulMessageIdsSha256: sha256(JSON.stringify(stable(aggregateMessageIds))),
+    requestedRunIdsSha256: sha256(JSON.stringify(stable(aggregateRunIds))),
+    shardWorkloadIdentities: manifest.certification.loads
+      .map((entry) => ({ shard: entry.shard, ...entry.workloadIdentity })),
   };
   const reconciliationObserved = {
     users: 10_007,
@@ -1681,15 +1945,21 @@ test('certification manifest is bound to a canonical revision tag and all shards
     loadMessageCount: successfulChatWrites,
     loadMessageDistinctIds: successfulChatWrites,
     loadMessageChannels: 400,
+    loadMessageIdsSha256: sha256(JSON.stringify(stable(aggregateMessageIds))),
     duplicateMessageIds: 0,
     unexercisedFixtureChannels: 0,
     badMessageScope: 0,
+    badMessageBodies: 0,
     loadRunCount: successfulRuns,
     completedLoadRuns: successfulRuns,
+    loadRunIdsSha256: sha256(JSON.stringify(stable(aggregateRunIds))),
     loadRunEventCount: successfulRuns * 4,
     unexpectedNewRuns: 0,
+    badRunPrompts: 0,
+    badRunRows: 0,
     badTerminalEventCounts: 0,
     badEventSequences: 0,
+    badRunEventSignatures: 0,
     openDelegatedRuns: 0,
     foreignKeyViolations: 0,
     quickCheck: 'ok',
@@ -1736,6 +2006,33 @@ test('certification manifest is bound to a canonical revision tag and all shards
     },
   };
   assert.equal(validateManifest(manifest), manifest);
+  const faultPersistenceDrift = structuredClone(manifest);
+  faultPersistenceDrift.certification.provenance.freezes.faults
+    .phaseWorkload.workloadRunEvents[1].payloadJson = '{"status":"running","extra":true}';
+  assert.throws(() => validateManifest(faultPersistenceDrift), /queued\/running\/completed sequence/);
+  const phaseDeltaDrift = structuredClone(manifest);
+  const driftedRunEvents = phaseDeltaDrift.certification.provenance.freezes.main10k
+    .sourceRows.tableDeltas.find((row) => row.tableName === 'run_events');
+  driftedRunEvents.extraRows += 1;
+  phaseDeltaDrift.certification.provenance.freezes.main10k.sourceRows.tableEvidenceSha256
+    = sha256(JSON.stringify(stable(
+      phaseDeltaDrift.certification.provenance.freezes.main10k.sourceRows.tableDeltas,
+    )));
+  assert.throws(() => validateManifest(phaseDeltaDrift), /unexpected rows/);
+  const faultFixtureDrift = structuredClone(manifest);
+  faultFixtureDrift.certification.faults[0].fixtureSha256 = '0'.repeat(64);
+  assert.throws(() => validateManifest(faultFixtureDrift), /fault-recovery evidence/);
+  const soakFixtureDrift = structuredClone(manifest);
+  soakFixtureDrift.certification.soak.fixtures.sha256 = '0'.repeat(64);
+  assert.throws(() => validateManifest(soakFixtureDrift), /fixture evidence/);
+  const lateFaultPreflight = structuredClone(manifest);
+  lateFaultPreflight.certification.provenance.preflights.faults.createdAt
+    = '2026-08-11T00:43:00.000Z';
+  assert.throws(() => validateManifest(lateFaultPreflight), /before its never-started preflight/);
+  const lateSoakPreflight = structuredClone(manifest);
+  lateSoakPreflight.certification.provenance.preflights.soak5k.createdAt
+    = '2026-08-11T00:55:00.000Z';
+  assert.throws(() => validateManifest(lateSoakPreflight), /before its never-started preflight/);
   assert.throws(() => validateManifest({ ...manifest, image: { ...manifest.image, tag: 'cascade:latest' } }),
     /not canonical/);
   assert.throws(() => validateManifest({
@@ -1819,7 +2116,7 @@ test('certification manifest is bound to a canonical revision tag and all shards
         },
       },
     },
-  }), /SQLite counts do not reconcile/);
+  }), /SQLite counts or approved orphan transition do not reconcile/);
 });
 
 test('certification hashes the same regular-file snapshot it validates', () => {

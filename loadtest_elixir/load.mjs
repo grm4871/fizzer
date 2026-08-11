@@ -1200,6 +1200,17 @@ async function run() {
   for (const context of contexts) context.closing = true;
   for (const manager of managers) manager.disconnect();
 
+  const successfulMessageIdList = [...successfulMessageIds].sort();
+  const requestedRunIdList = [...requestedRuns.keys()].sort((left, right) => left - right);
+  const workloadIdentity = {
+    successfulMessageIds: successfulMessageIdList,
+    successfulMessageIdsCount: successfulMessageIdList.length,
+    successfulMessageIdsSha256: sha256(stableJson(successfulMessageIdList)),
+    requestedRunIds: requestedRunIdList,
+    requestedRunIdsCount: requestedRunIdList.length,
+    requestedRunIdsSha256: sha256(stableJson(requestedRunIdList)),
+  };
+
   const result = {
     target,
     ...(sourceIp ? { sourceIp } : {}),
@@ -1223,6 +1234,7 @@ async function run() {
       read: readRps > 0 ? Math.max(1, Math.floor(readRps * soakSeconds)) : 0,
       run: runRps > 0 ? Math.max(1, Math.floor(runRps * soakSeconds)) : 0,
     },
+    workloadIdentity,
     finishedAt: new Date().toISOString(),
   };
   result.provenance = {

@@ -396,7 +396,7 @@ if [[ "${CASCADE_CAPACITY_TESTING:-0}" != '1' ]]; then
   runner_results_dir="$(readlink -m -- "$runner_results_dir")"
 
   mutable_roots=("${capacity_data_dirs[@]}" "$runner_results_dir")
-  immutable_directories=("$data_template_dir" "$runner_source_corpus_root")
+  immutable_directories=("$data_template_dir" "$runner_source_corpus_root" "$checkout_root")
   immutable_files=("$runner_source_database" "$runner_fixture")
 
   for left_root in "${mutable_roots[@]}"; do

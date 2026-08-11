@@ -925,6 +925,7 @@ async function runCertification(context) {
     '--fault-freeze', freezePath(context.options, 'faults'),
     '--soak-result', output(context.options, 'soak-invariants.json'),
     '--soak-freeze', freezePath(context.options, 'soak5k'),
+    '--scratch-directory', context.scratch.path,
     '--output', certificate,
   ], 'final-image-certification');
   invariant(fs.existsSync(certificate) && fs.existsSync(`${certificate}.sha256`),

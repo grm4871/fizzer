@@ -655,6 +655,26 @@ export function validateWorkloadResults(
     if (result.metrics?.connected !== result.requestedUsers || result.metrics?.connectFailures !== 0) {
       throw new Error(`shard ${index} did not connect every requested user`);
     }
+    const workloadIdentity = result.workloadIdentity || {};
+    const messageIds = workloadIdentity.successfulMessageIds;
+    const runIds = workloadIdentity.requestedRunIds;
+    if (!Array.isArray(messageIds) || !Array.isArray(runIds)
+      || messageIds.length !== result.metrics?.workload?.chat?.succeeded
+      || runIds.length !== result.metrics?.workload?.run?.succeeded
+      || workloadIdentity.successfulMessageIdsCount !== messageIds.length
+      || workloadIdentity.requestedRunIdsCount !== runIds.length
+      || new Set(messageIds).size !== messageIds.length
+      || new Set(runIds).size !== runIds.length
+      || messageIds.some((id) => typeof id !== 'string' || !id.startsWith('load-'))
+      || runIds.some((id) => !Number.isInteger(id) || id <= 1_897)
+      || JSON.stringify(messageIds) !== JSON.stringify([...messageIds].sort())
+      || JSON.stringify(runIds) !== JSON.stringify([...runIds].sort((left, right) => left - right))
+      || workloadIdentity.successfulMessageIdsSha256
+        !== createHash('sha256').update(JSON.stringify(messageIds)).digest('hex')
+      || workloadIdentity.requestedRunIdsSha256
+        !== createHash('sha256').update(JSON.stringify(runIds)).digest('hex')) {
+      throw new Error(`shard ${index} has invalid successful message/run identity evidence`);
+    }
     if (expectedSessions % expected.shardCount !== 0
       || result.requestedUsers !== expectedSessions / expected.shardCount) {
       throw new Error(`shard ${index} user count differs from the equal certified partition`);
@@ -723,6 +743,10 @@ export function validateWorkloadResults(
       initialOwnedChatChannels,
       forcedReconnectOwnedChatChannels,
       forcedReconnectOwnerUserIds,
+      successfulMessageIdsCount: workloadIdentity.successfulMessageIdsCount,
+      successfulMessageIdsSha256: workloadIdentity.successfulMessageIdsSha256,
+      requestedRunIdsCount: workloadIdentity.requestedRunIdsCount,
+      requestedRunIdsSha256: workloadIdentity.requestedRunIdsSha256,
       path: filename,
       sha256: digest,
       markerSha256: entry.sha256,

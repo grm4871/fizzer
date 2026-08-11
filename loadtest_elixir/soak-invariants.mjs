@@ -53,6 +53,12 @@ const EXPECTED_LIVE_EVENT_SIGNATURE = Object.freeze([
   '3:text',
   '4:status:completed',
 ]);
+const BASELINE_ORPHAN_RECLAIM_SUMMARY =
+  'Desktop agent runner did not reclaim this run after server restart.';
+const BASELINE_ORPHANS = Object.freeze([
+  { id: 1_896, ownerUserId: 1, queuedSeq: 1_913, failedSeq: 1_914 },
+  { id: 1_897, ownerUserId: 4, queuedSeq: 27, failedSeq: 28 },
+]);
 
 export const RETURN_THRESHOLDS = Object.freeze({
   processCountRatio: 1.05,
@@ -942,11 +948,47 @@ async function reconcilePersistedRuns(target, metrics) {
 function databaseSnapshot(container) {
   return parseLastJson(releaseRpc(
     container,
-    'scalar = fn sql -> case Cascade.Accounts.SQL.one(sql) do [value] -> value; _ -> nil end end; Jason.encode!(%{users: scalar.("SELECT count(*) FROM users"), vaults: scalar.("SELECT count(*) FROM vaults"), memberships: scalar.("SELECT count(*) FROM vault_members"), runs: scalar.("SELECT count(*) FROM runs"), runEvents: scalar.("SELECT count(*) FROM run_events"), delegatedRuns: scalar.("SELECT count(*) FROM delegated_runs"), foreignKeyViolations: scalar.("SELECT count(*) FROM pragma_foreign_key_check"), quickCheck: scalar.("SELECT group_concat(quick_check, \'\') FROM pragma_quick_check")}) |> IO.puts()',
+    'scalar = fn sql -> case Cascade.Accounts.SQL.one(sql) do [value] -> value; _ -> nil end end; orphans = Cascade.Accounts.SQL.all("SELECT r.id,r.status,r.summary,d.owner_user_id,(SELECT max(seq) FROM run_events e WHERE e.run_id=r.id),(SELECT type FROM run_events e WHERE e.run_id=r.id ORDER BY seq DESC LIMIT 1),(SELECT payload_json FROM run_events e WHERE e.run_id=r.id ORDER BY seq DESC LIMIT 1) FROM runs r LEFT JOIN delegated_runs d ON d.run_id=r.id WHERE r.id IN (1896,1897) ORDER BY r.id") |> Enum.map(fn [id,status,summary,owner_user_id,max_seq,last_type,last_payload] -> %{id: id,status: status,summary: summary,ownerUserId: owner_user_id,maxSeq: max_seq,lastType: last_type,lastPayload: last_payload} end); Jason.encode!(%{users: scalar.("SELECT count(*) FROM users"), vaults: scalar.("SELECT count(*) FROM vaults"), memberships: scalar.("SELECT count(*) FROM vault_members"), runs: scalar.("SELECT count(*) FROM runs"), runEvents: scalar.("SELECT count(*) FROM run_events"), delegatedRuns: scalar.("SELECT count(*) FROM delegated_runs"), baselineOrphans: orphans, foreignKeyViolations: scalar.("SELECT count(*) FROM pragma_foreign_key_check"), quickCheck: scalar.("SELECT group_concat(quick_check, \'\') FROM pragma_quick_check")}) |> IO.puts()',
   ));
 }
 
-function databaseReconciliation(baseline, final, runs, totalEvents) {
+function parsePayload(payload) {
+  try { return JSON.parse(payload); } catch { return null; }
+}
+
+function baselineOrphanFailures(baseline, final) {
+  const failures = [];
+  if (!Array.isArray(baseline?.baselineOrphans)
+      || baseline.baselineOrphans.length !== BASELINE_ORPHANS.length) {
+    failures.push('database baseline does not contain the two approved queued delegated runs');
+    return failures;
+  }
+  if (!Array.isArray(final?.baselineOrphans)
+      || final.baselineOrphans.length !== BASELINE_ORPHANS.length) {
+    failures.push('database final state does not contain the two approved orphaned runs');
+    return failures;
+  }
+  for (const expected of BASELINE_ORPHANS) {
+    const before = baseline.baselineOrphans.find((row) => row.id === expected.id);
+    const after = final.baselineOrphans.find((row) => row.id === expected.id);
+    if (!before || before.status !== 'queued' || before.summary != null
+        || before.ownerUserId !== expected.ownerUserId || before.maxSeq !== expected.queuedSeq) {
+      failures.push(`database baseline orphan run ${expected.id} is not the exact queued delegation`);
+    }
+    const payload = parsePayload(after?.lastPayload);
+    if (!after || after.status !== 'failed' || after.summary !== BASELINE_ORPHAN_RECLAIM_SUMMARY
+        || after.ownerUserId != null || after.maxSeq !== expected.failedSeq
+        || after.lastType !== 'status'
+        || stableJson(payload) !== stableJson({
+          status: 'failed', summary: BASELINE_ORPHAN_RECLAIM_SUMMARY,
+        })) {
+      failures.push(`database final orphan run ${expected.id} lacks the exact reclaim terminal event`);
+    }
+  }
+  return failures;
+}
+
+export function databaseReconciliation(baseline, final, runs, totalEvents) {
   const failures = [];
   for (const key of ['users', 'vaults', 'memberships']) {
     if (!Number.isInteger(baseline?.[key]) || final?.[key] !== baseline[key]) {
@@ -954,8 +996,13 @@ function databaseReconciliation(baseline, final, runs, totalEvents) {
     }
   }
   if (final?.runs - baseline?.runs !== runs) failures.push(`database run delta is ${final?.runs - baseline?.runs}, expected ${runs}`);
-  if (final?.runEvents - baseline?.runEvents !== totalEvents) failures.push(`database run-event delta is ${final?.runEvents - baseline?.runEvents}, expected ${totalEvents}`);
-  if (final?.delegatedRuns !== baseline?.delegatedRuns) failures.push('database delegated-run count did not return to baseline');
+  if (baseline?.delegatedRuns !== BASELINE_ORPHANS.length || final?.delegatedRuns !== 0) {
+    failures.push(`database delegated-run transition is ${baseline?.delegatedRuns ?? 'missing'} to ${final?.delegatedRuns ?? 'missing'}, expected 2 to 0`);
+  }
+  if (final?.runEvents - baseline?.runEvents !== totalEvents + BASELINE_ORPHANS.length) {
+    failures.push(`database run-event delta is ${final?.runEvents - baseline?.runEvents}, expected ${totalEvents + BASELINE_ORPHANS.length}`);
+  }
+  failures.push(...baselineOrphanFailures(baseline, final));
   if (final?.foreignKeyViolations !== 0) failures.push(`${final?.foreignKeyViolations ?? 'missing'} SQLite foreign-key violations`);
   if (final?.quickCheck !== 'ok') failures.push(`SQLite quick_check is ${final?.quickCheck ?? 'missing'}, expected ok`);
   return { baseline, final, failures };
