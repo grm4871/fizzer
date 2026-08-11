@@ -1,4 +1,4 @@
-/** Interactive graph of recently-active local Claude Code and Codex sessions. */
+/** Interactive graph of currently-running local Claude Code and Codex sessions. */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   api,
@@ -14,7 +14,7 @@ type DragState =
   | { mode: 'node'; id: string; startX: number; startY: number; origin: Pos }
   | null;
 
-const POLL_MS = 2_000;
+const POLL_MS = 750;
 const CLAUDE_ART = ['▐▛███▜▌', '▝▜█████▛▘', '▘▘ ▝▝'].join('\n');
 
 function seedPosition(node: LocalAgentNode, parent: Pos | undefined, index: number): Pos {
@@ -147,11 +147,11 @@ export function OrbitGraph({ promptNoteId }: { promptNoteId?: string }) {
   return (
     <div className="orbit-graph" onPointerDown={startPan}>
       <div className="orbit-graph-header">
-        <span className="surface-kicker">Recent activity</span>
+        <span className="surface-kicker">Live activity</span>
         <h2>Running agents</h2>
       </div>
 
-      {nodes.length === 0 && <div className="orbit-empty">{error || 'No recent activity'}</div>}
+      {nodes.length === 0 && <div className="orbit-empty">{error || 'No agents running'}</div>}
 
       <svg className="orbit-edges" aria-hidden="true">
         <g transform={`translate(${pan.x}, ${pan.y})`}>

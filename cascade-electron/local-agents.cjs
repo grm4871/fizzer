@@ -1,6 +1,6 @@
 'use strict';
 
-/** Discover recently-active local Claude Code and Codex sessions for Orbit. */
+/** Discover currently-running local Claude Code and Codex sessions for Orbit. */
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -50,6 +50,21 @@ function claudeProjectLabel(dir, cwd) {
   return dir.split('-').filter(Boolean).at(-1) || 'Claude';
 }
 
+/** Claude logs a final assistant stop reason as soon as a turn settles. */
+function claudeTurnIsActive(events) {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event?.isSidechain) continue;
+    if (event?.type === 'assistant') {
+      const stopReason = event.message?.stop_reason;
+      if (stopReason === 'end_turn' || stopReason === 'stop_sequence') return false;
+      if (stopReason === 'tool_use' || stopReason === 'max_tokens') return true;
+    }
+    if (event?.type === 'user' && !event.isMeta) return true;
+  }
+  return false;
+}
+
 function scanClaude(now, template, homeDir, captionService) {
   const nodes = [];
   const edges = [];
@@ -73,10 +88,14 @@ function scanClaude(now, template, homeDir, captionService) {
       const snippets = [];
       const openTasks = new Map();
       let lines;
-      try { lines = readTail(full).split('\n').filter(Boolean); } catch { continue; }
+      // Tool results can be larger than the normal caption tail; retain enough
+      // history to see the user/tool-use event that proves the turn is live.
+      try { lines = readTail(full, 8_000_000).split('\n').filter(Boolean); } catch { continue; }
+      const events = [];
       for (const line of lines) {
         let event;
         try { event = JSON.parse(line); } catch { continue; }
+        events.push(event);
         if (typeof event.cwd === 'string') cwd = event.cwd;
         const content = Array.isArray(event.message?.content) ? event.message.content : [];
         for (const block of content) {
@@ -106,6 +125,7 @@ function scanClaude(now, template, homeDir, captionService) {
       // A recently-touched transcript containing only local slash commands is
       // not a running agent and gives the captioner nothing meaningful.
       if (!excerpt) continue;
+      if (!claudeTurnIsActive(events)) continue;
       nodes.push({
         id,
         kind: 'claude',
@@ -146,6 +166,23 @@ function codexExcerpt(rolloutPath) {
   return snippets.slice(-16).join('\n').slice(-2400);
 }
 
+/** Codex emits task_complete synchronously when a turn stops, including subagents. */
+function codexTurnIsActive(rolloutPath) {
+  if (!rolloutPath || !fs.existsSync(rolloutPath)) return false;
+  let lines;
+  // Large command output may follow task_started, so liveness needs a wider
+  // tail than caption generation does.
+  try { lines = readTail(rolloutPath, 8_000_000).split('\n').filter(Boolean); } catch { return false; }
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    let event;
+    try { event = JSON.parse(lines[index]); } catch { continue; }
+    if (event.type !== 'event_msg') continue;
+    if (event.payload?.type === 'task_complete') return false;
+    if (event.payload?.type === 'task_started') return true;
+  }
+  return false;
+}
+
 function scanCodex(now, template, homeDir, captionService) {
   const nodes = [];
   let edges = [];
@@ -163,7 +200,9 @@ function scanCodex(now, template, homeDir, captionService) {
     const active = new Set();
     for (const thread of threads) {
       const updatedAt = Number(thread.updated_at_ms || Number(thread.updated_at || 0) * 1000);
-      if (updatedAt && now - updatedAt <= RUNNING_WINDOW_MS) active.add(thread.id);
+      if (updatedAt && now - updatedAt <= RUNNING_WINDOW_MS && codexTurnIsActive(thread.rollout_path)) {
+        active.add(thread.id);
+      }
     }
 
     const spawnRows = db.prepare(
@@ -171,8 +210,9 @@ function scanCodex(now, template, homeDir, captionService) {
     ).all();
     const children = new Set();
     for (const edge of spawnRows) {
-      if (!active.has(edge.parent_thread_id)) continue;
-      active.add(edge.child_thread_id);
+      // Codex can leave a spawn edge marked open after the child has already
+      // written task_complete. Both endpoints must independently be live.
+      if (!active.has(edge.parent_thread_id) || !active.has(edge.child_thread_id)) continue;
       children.add(edge.child_thread_id);
       edges.push({ from: `codex:${edge.parent_thread_id}`, to: `codex:${edge.child_thread_id}` });
     }
@@ -214,4 +254,4 @@ function collectLocalAgents(template = '', now = Date.now(), options = {}) {
   };
 }
 
-module.exports = { collectLocalAgents, codexExcerpt, oneLine };
+module.exports = { claudeTurnIsActive, collectLocalAgents, codexExcerpt, codexTurnIsActive, oneLine };
