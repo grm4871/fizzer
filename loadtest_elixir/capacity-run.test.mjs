@@ -94,7 +94,7 @@ elif [[ "$1" == 'create' ]]; then
     diagnostic) id="$FAKE_DIAGNOSTIC_CONTAINER_ID" ;;
     *) exit 2 ;;
   esac
-  printf '%s\\n' "$id" >"$cidfile"
+  printf '%s' "$id" >"$cidfile"
   printf '%s|%s|%s|%s|false|0001-01-01T00:00:00Z|0|false\\n' "$id" "$owner" "$phase" "$name" >"$FAKE_DOCKER_STATE/$id"
   printf '%s\\n' "$id"
 elif [[ "$1 $2" == 'container start' ]]; then

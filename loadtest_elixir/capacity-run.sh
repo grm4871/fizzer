@@ -735,7 +735,12 @@ create_candidate() {
     -v "$root:/data" \
     "$image" >/dev/null
 
-  [[ -f "$cid_file" ]] && IFS= read -r id <"$cid_file"
+  if [[ -f "$cid_file" ]]; then
+    # Docker writes --cidfile as 64 hex bytes without a trailing newline.
+    # `read` still populates the value but returns nonzero at EOF, which would
+    # otherwise trip `set -e` before ownership validation can run.
+    IFS= read -r id <"$cid_file" || true
+  fi
   [[ "$id" =~ ^[a-f0-9]{64}$ ]] || {
     echo "Error: Docker did not record an exact $phase container ID." >&2
     exit 70
