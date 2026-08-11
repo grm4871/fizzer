@@ -99,6 +99,7 @@ test('authenticated production smoke stays behind the reversible maintenance gat
 
 test('the reopened TLS edge serves health, client assets, and Engine.IO', () => {
   assert.match(source, /--resolve "\$DEPLOY_DOMAIN:443:127\.0\.0\.1" "https:\/\/\$DEPLOY_DOMAIN\/api\/health"/);
+  assert.match(source, /--resolve "\$DEPLOY_DOMAIN:443:127\.0\.0\.1" "https:\/\/\$DEPLOY_DOMAIN\/app\.html"/);
   assert.match(source, /root_html[\s\S]*<div id="root"><\/div>/);
   assert.match(source, /socket\.io\/\?EIO=4&transport=polling/);
   assertOrdered(

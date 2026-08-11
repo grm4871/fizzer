@@ -619,7 +619,7 @@ verify_reopened_production_edge() {
     return 1
   fi
   root_html="$(curl --noproxy '*' -fsS --connect-timeout 3 --max-time 10 \
-    --resolve "$DEPLOY_DOMAIN:443:127.0.0.1" "https://$DEPLOY_DOMAIN/")"
+    --resolve "$DEPLOY_DOMAIN:443:127.0.0.1" "https://$DEPLOY_DOMAIN/app.html")"
   if [[ "$root_html" != *'<div id="root"></div>'* ]]; then
     echo "Error: reopened production edge did not serve the client entrypoint." >&2
     return 1
