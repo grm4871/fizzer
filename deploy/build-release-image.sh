@@ -24,10 +24,11 @@ echo "==> Building immutable release candidate $IMAGE"
 # boundary that prevents a concurrent edit from entering a revision-labelled
 # image after that check has passed.
 git archive --format=tar "$REVISION" | DOCKER_BUILDKIT=1 docker build --pull \
+  --provenance=false \
   --build-arg "CASCADE_REVISION=$REVISION" \
   --tag "$IMAGE" -
 
-IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
+IMAGE_ID="$(docker image inspect --format '{{if .Descriptor}}{{index .Descriptor.Annotations "config.digest"}}{{else}}{{.Id}}{{end}}' "$IMAGE")"
 LABEL_REVISION="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$IMAGE")"
 if [[ ! "$IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ || "$LABEL_REVISION" != "$REVISION" ]]; then
   echo "Error: built image identity or revision label is invalid." >&2

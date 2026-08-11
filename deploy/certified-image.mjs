@@ -3210,10 +3210,17 @@ function inspectImage(image) {
   return inspection;
 }
 
+function runtimeImageId(inspection) {
+  const id = inspection.Descriptor?.annotations?.['config.digest'] || inspection.Id;
+  invariant(/^sha256:[0-9a-f]{64}$/u.test(id || ''), 'image has no canonical runtime config ID');
+  return id;
+}
+
 function verifyImage(manifest) {
   const inspection = inspectImage(manifest.image.tag);
-  invariant(inspection.Id === manifest.image.id,
-    `local image ${manifest.image.tag} is ${inspection.Id}, expected ${manifest.image.id}`);
+  const localImageId = runtimeImageId(inspection);
+  invariant(localImageId === manifest.image.id,
+    `local image ${manifest.image.tag} is ${localImageId}, expected ${manifest.image.id}`);
   invariant(inspection.Config?.Labels?.['org.opencontainers.image.revision'] === manifest.revision,
     'image revision label does not match the certification manifest');
   invariant(inspection.Config?.Labels?.['io.cascade.backend'] === 'elixir', 'image is not labeled as the Elixir backend');
@@ -3255,7 +3262,7 @@ function certify(options) {
     '--fault-result is required for runner restart and SQLite lock recovery');
   invariant(options.soakResult, '--soak-result is required for the 5,000-user two-hour soak');
   const inspection = inspectImage(options.image);
-  const imageId = inspection.Id;
+  const imageId = runtimeImageId(inspection);
   const revision = inspection.Config?.Labels?.['org.opencontainers.image.revision'];
   invariant(SHA_PATTERN.test(revision || ''), 'image has no full Git revision label');
   invariant(options.image === `cascade:certified-${revision}`, 'certification requires the canonical revision tag');

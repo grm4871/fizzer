@@ -51,12 +51,19 @@ test('production promotes the staged certified image and never rebuilds a candid
   assert.match(source, /CERTIFIED_RELEASE_DIR="\/var\/lib\/cascade-release"/);
   assert.match(source, /CERTIFIED_MANIFEST="\$CERTIFIED_IMAGE_DIR\/\$REVISION\.json"/);
   assert.match(source, /certification directories must be canonical root-owned directories, mode 0700/);
-  assert.match(source, /for certificate_file in "\$CERTIFIED_MANIFEST" "\$CERTIFIED_MANIFEST\.sha256"/);
-  assert.match(source, /regular root-owned files, mode 0600/);
+  assert.match(source, /OPERATOR_WAIVER_DIR="\$CERTIFIED_RELEASE_DIR\/operator-waivers"/);
+  assert.match(source, /no staged certification or explicit operator capacity waiver exists/);
+  assert.match(source, /for authorization_part in "\$authorization_file" "\$authorization_file\.sha256"/);
+  assert.match(source, /release authorization and checksum must be regular root-owned files, mode 0600/);
   assert.match(source, /git status --porcelain --untracked-files=no/);
-  assert.match(source, /-L "\$certificate_file"/);
-  assert.match(source, /certified-image\.mjs verify --manifest "\$CERTIFIED_MANIFEST"/);
+  assert.match(source, /-L "\$authorization_part"/);
+  assert.match(source, /certified-image\.mjs verify --manifest "\$authorization_file"/);
   assert.match(source, /CANDIDATE_IMAGE="\$\(node deploy\/certified-image\.mjs field/);
+  assert.match(source, /operator-capacity-waiver\.mjs verify/);
+  assert.match(source, /explicit 1,000-certified \/ 10,000-demonstrated operator capacity waiver/);
+  assert.match(source, /OPERATOR_WAIVER_USED=1/);
+  assert.match(source, /mv "\$OPERATOR_WAIVER" "\$OPERATOR_WAIVER\.used"/);
+  assert.match(source, /loaded_image_id="\$\(docker image inspect/);
   assert.match(source, /docker run --rm --network none[\s\S]*RouteCatalog\.swap_ready\?\(\)/);
   assert.match(source, /RUNNING_IMAGE_ID="\$\(docker inspect --format '\{\{\.Image\}\}'/);
   assert.match(source, /RUNNING_IMAGE_ID" != "\$CERTIFIED_IMAGE_ID/);
@@ -95,6 +102,7 @@ test('the reopened TLS edge serves health, client assets, and Engine.IO', () => 
   assertOrdered(
     'open_maintenance_gate',
     'verify_reopened_production_edge',
+    '  mv "$OPERATOR_WAIVER" "$OPERATOR_WAIVER.used"',
     'docker compose "${COMPOSE_ARGS[@]}" ps',
   );
 });

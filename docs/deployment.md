@@ -20,7 +20,7 @@ npm run release:image:build
 
 # Run the four load shards and capacity monitor against:
 IMAGE="cascade:certified-$(git rev-parse HEAD)"
-IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
+IMAGE_ID="$(docker image inspect --format '{{if .Descriptor}}{{index .Descriptor.Annotations "config.digest"}}{{else}}{{.Id}}{{end}}' "$IMAGE")"
 
 npm run release:image:certify -- \
   --image "$IMAGE" \

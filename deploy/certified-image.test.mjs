@@ -2170,9 +2170,11 @@ test('release build binds a clean full revision to one canonical image tag and l
   assert.match(build, /REVISION="\$\(git rev-parse HEAD\)"/);
   assert.match(build, /git status --porcelain --untracked-files=all/);
   assert.match(build, /git archive --format=tar "\$REVISION" \| DOCKER_BUILDKIT=1 docker build/);
+  assert.match(build, /--provenance=false/);
   assert.match(build, /IMAGE="cascade:certified-\$REVISION"/);
   assert.match(build, /--build-arg "CASCADE_REVISION=\$REVISION"/);
   assert.match(build, /IMAGE_ID="\$\(docker image inspect/);
+  assert.match(build, /Descriptor\.Annotations "config\.digest"/);
   assert.match(build, /org\.opencontainers\.image\.revision/);
   assert.match(build, /--tag "\$IMAGE" -/);
   assert.doesNotMatch(build, /cascade:latest/);
