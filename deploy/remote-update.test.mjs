@@ -153,6 +153,9 @@ test('preflight and live cutover bind the complete vault and QMD corpus without 
   assert.match(source, /"\$SNAPSHOT_DIR\/corpus\/vaults"/);
   assert.match(source, /"\$SNAPSHOT_DIR\/corpus\/qmd"/);
   assert.match(source, /--before-root \/snapshot\/corpus --after-root \/live-corpus/);
+  assert.match(source, /"\$DATA_DIR\/\.cascade\/vaults:\/live-corpus\/vaults:ro"/);
+  assert.match(source, /"\$DATA_DIR\/\.cascade\/qmd:\/live-corpus\/qmd:ro"/);
+  assert.doesNotMatch(source, /"\$DATA_DIR\/\.cascade:\/live-corpus:ro"/);
   assert.match(source, /CASCADE_SQLITE_SNAPSHOT_TMPDIR=\/sqlite-scratch/);
   assert.match(source, /sqlite-scratch:\/sqlite-scratch/);
   assert.doesNotMatch(source, /allow-derived|ignore.*index\.sqlite/iu);

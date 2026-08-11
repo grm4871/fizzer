@@ -562,12 +562,15 @@ checkpoint_and_snapshot() {
 
 verify_live_database() {
   backup_running_database "$PREFLIGHT_DIR/live-after.db"
+  mkdir -p "$PREFLIGHT_DIR/live-corpus"
   docker run --rm --network none --user 0:0 --entrypoint node \
     -e CASCADE_SQLITE_SNAPSHOT_TMPDIR=/sqlite-scratch \
     -v "$SNAPSHOT_DIR:/snapshot:ro" \
     -v "$PREFLIGHT_DIR:/preflight:ro" \
     -v "$PREFLIGHT_DIR/sqlite-scratch:/sqlite-scratch" \
-    -v "$DATA_DIR/.cascade:/live-corpus:ro" \
+    -v "$PREFLIGHT_DIR/live-corpus:/live-corpus" \
+    -v "$DATA_DIR/.cascade/vaults:/live-corpus/vaults:ro" \
+    -v "$DATA_DIR/.cascade/qmd:/live-corpus/qmd:ro" \
     "$CANDIDATE_IMAGE" /app/scripts/check-elixir-data-compat.mjs \
     --before /snapshot/docs.db --after /preflight/live-after.db \
     --before-root /snapshot/corpus --after-root /live-corpus
