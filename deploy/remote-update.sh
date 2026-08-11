@@ -579,21 +579,26 @@ verify_live_database() {
 verify_authenticated_live_candidate() {
   echo "==> Running authenticated production read/realtime smoke behind the maintenance gate"
   local probe_token
-  probe_token="$(docker exec "$CONTAINER_NAME" /app/release/bin/cascade_elixir eval '
-    case Cascade.Accounts.SQL.one("""
-      SELECT DISTINCT u.id FROM users u
-      JOIN vaults v ON v.created_by=u.id
-      JOIN notes n ON n.vault_id=v.id
-      WHERE n.is_archived=0
-        AND (n.content LIKE 'cascade://chat-channel%' OR n.content_preview LIKE 'cascade://chat-channel%')
-      ORDER BY u.id ASC LIMIT 1
-    """) do
-      [id] ->
-        {:ok, user} = Cascade.Auth.Accounts.fetch_by_id(id)
-        IO.write(Cascade.Auth.Token.sign_user(user))
-      _ ->
-        raise "production has no owner account with an accessible chat channel"
-    end
+  # `release eval` starts a separate VM, not an RPC session in the running
+  # release, so its Repo is intentionally absent. Mint the ephemeral parity
+  # token from the same immutable image's pinned Node JWT/SQLite libraries;
+  # the live Elixir edge still performs every authorization check below.
+  probe_token="$(docker exec "$CONTAINER_NAME" node --input-type=module -e '
+    import Database from "better-sqlite3";
+    import jwt from "jsonwebtoken";
+    const db = new Database("/data/docs.db", { readonly: true, fileMustExist: true });
+    try {
+      const user = db.prepare(`
+        SELECT DISTINCT u.id,u.username,u.auth_version AS authVersion FROM users u
+        JOIN vaults v ON v.created_by=u.id
+        JOIN notes n ON n.vault_id=v.id
+        WHERE n.is_archived=0
+          AND (n.content LIKE ? OR n.content_preview LIKE ?)
+        ORDER BY u.id ASC LIMIT 1
+      `).get("cascade://chat-channel%", "cascade://chat-channel%");
+      if (!user) throw new Error("production has no owner account with an accessible chat channel");
+      process.stdout.write(jwt.sign({ ...user, access: "user" }, process.env.JWT_SECRET, { expiresIn: "7d" }));
+    } finally { db.close(); }
   ')"
   if [[ -z "$probe_token" ]]; then
     echo "Error: could not mint the ephemeral authenticated smoke token." >&2

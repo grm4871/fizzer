@@ -83,7 +83,9 @@ test('preflight, Compose, and the running candidate share the certified resource
 
 test('authenticated production smoke stays behind the reversible maintenance gate', () => {
   assert.match(source, /Running authenticated production read\/realtime smoke behind the maintenance gate/);
-  assert.match(source, /Cascade\.Auth\.Token\.sign_user\(user\)/);
+  assert.match(source, /release eval` starts a separate VM, not an RPC session/);
+  assert.match(source, /new Database\("\/data\/docs\.db", \{ readonly: true, fileMustExist: true \}\)/);
+  assert.match(source, /jwt\.sign\(\{ \.\.\.user, access: "user" \}/);
   assert.match(source, /authenticated-live-smoke\.mjs "http:\/\/127\.0\.0\.1:3000"/);
   assert.doesNotMatch(source, /runner:register/);
   assert.match(dockerfile, /COPY --chown=node:node deploy\/authenticated-live-smoke\.mjs \.\/deploy\/authenticated-live-smoke\.mjs/);
