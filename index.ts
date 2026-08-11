@@ -4577,7 +4577,9 @@ function addLinkedChatToUserVault(sourceVault: { id: string }, sourceChannel: { 
   return { vaultId: targetVault.id, channelId: localChannel.id, title: localChannel.title, created: true };
 }
 
-app.post('/api/vaults/:vaultId/channels/:channelId/invites', requireAuth, usernameActionRateLimit, (req: AuthedRequest, res) => {
+const removedSharedChannelRoute = (..._args: unknown[]) => undefined;
+
+removedSharedChannelRoute('/api/vaults/:vaultId/channels/:channelId/invites', requireAuth, usernameActionRateLimit, (req: AuthedRequest, res: Response) => {
   const vault = getVault(db, req.params.vaultId, req.user!.id);
   if (!vault) return res.status(404).json({ error: 'Vault not found' });
   const channel = getNote(db, req.params.channelId);
@@ -4623,7 +4625,7 @@ app.post('/api/vaults/:vaultId/channels/:channelId/invites', requireAuth, userna
   }
 });
 
-app.post('/api/vaults/:vaultId/channels/:channelId/invite-link', requireAuth, (req: AuthedRequest, res) => {
+removedSharedChannelRoute('/api/vaults/:vaultId/channels/:channelId/invite-link', requireAuth, (req: AuthedRequest, res: Response) => {
   const vault = getVault(db, req.params.vaultId, req.user!.id);
   if (!vault) return res.status(404).json({ error: 'Vault not found' });
   const channel = getNote(db, req.params.channelId);
@@ -4660,7 +4662,7 @@ function resolveChatInvite(token: string): { channel: NonNullable<ReturnType<typ
   return { channel, vaultId: invite.sourceVaultId };
 }
 
-app.get('/api/chat-invites/:token', (req, res) => {
+removedSharedChannelRoute('/api/chat-invites/:token', (req: AuthedRequest, res: Response) => {
   const resolved = resolveChatInvite(req.params.token);
   const vault = resolved
     ? db.prepare('SELECT id, name, created_by FROM vaults WHERE id = ?').get(resolved.vaultId) as { id: string; name: string; created_by: number } | undefined
@@ -4677,7 +4679,7 @@ app.get('/api/chat-invites/:token', (req, res) => {
   });
 });
 
-app.post('/api/chat-invites/:token/accept', requireAuth, (req: AuthedRequest, res) => {
+removedSharedChannelRoute('/api/chat-invites/:token/accept', requireAuth, (req: AuthedRequest, res: Response) => {
   try {
     const resolved = resolveChatInvite(req.params.token);
     const vault = resolved
@@ -4794,6 +4796,9 @@ function escapeOembedHtml(value: string): string {
 }
 
 function serveInviteOembed(req: Request, res: Response): boolean {
+  // Shared-channel invites were removed; leave vault and public-note embeds intact.
+  return false;
+  /* legacy parser retained temporarily for database compatibility
   const rawUrl = typeof req.query.url === 'string' ? req.query.url : '';
   const base = publicBaseUrl(req);
   const token = parseInviteUrl(rawUrl, base);
@@ -4832,6 +4837,7 @@ function serveInviteOembed(req: Request, res: Response): boolean {
     res.status(404).json({ error: 'Invite not found' });
     return true;
   }
+  */
 }
 
 // ── Public note publishing ─────────────────────────────────────────

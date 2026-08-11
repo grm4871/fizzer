@@ -30,11 +30,7 @@ defmodule CascadeWeb.ChatRoutes do
     {"PUT", "/api/vaults/:vault_id/channels/:channel_id/settings"},
     {"GET", "/api/vaults/:vault_id/channels/:channel_id/presence"},
     {"DELETE", "/api/vaults/:vault_id/channels/:channel_id/members/me"},
-    {"DELETE", "/api/vaults/:vault_id/channels/:channel_id/members/:username"},
-    {"POST", "/api/vaults/:vault_id/channels/:channel_id/invites"},
-    {"POST", "/api/vaults/:vault_id/channels/:channel_id/invite-link"},
-    {"GET", "/api/chat-invites/:token"},
-    {"POST", "/api/chat-invites/:token/accept"}
+    {"DELETE", "/api/vaults/:vault_id/channels/:channel_id/members/:username"}
   ]
 
   def catalog, do: @routes

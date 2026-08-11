@@ -392,7 +392,6 @@ interface ChatViewProps {
   onDeleteVaultAgent?: (vaultAgentId: string) => Promise<void> | void;
   onDeleteAgentProfile?: (vaultAgentId: string) => Promise<void> | void;
   onAddVaultAgentToChannel?: (channelId: string, vaultAgentId: string) => Promise<void> | void;
-  onCreateInviteLink: (channelId: string) => Promise<string>;
   onInviteUser: (channelId: string, username: string) => Promise<void>;
   onRemoveParticipant?: (channelId: string, username: string) => Promise<void>;
   onLeaveChannel?: (channelId: string) => Promise<void>;
@@ -2084,7 +2083,6 @@ export const ChatView = memo(function ChatView({
   onDeleteVaultAgent,
   onDeleteAgentProfile,
   onAddVaultAgentToChannel,
-  onCreateInviteLink,
   onInviteUser,
   onRemoveParticipant,
   onLeaveChannel,

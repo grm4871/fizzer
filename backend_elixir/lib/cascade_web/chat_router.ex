@@ -5,7 +5,7 @@ defmodule CascadeWeb.ChatRouter do
   import Plug.Conn
 
   alias Cascade.Accounts.VaultMembers
-  alias Cascade.Chat.{Agents, Channel, Collaborations, Invites, Messages, RoomContext}
+  alias Cascade.Chat.{Agents, Channel, Collaborations, Messages, RoomContext}
   alias Cascade.Missions.Dispatches
   alias Cascade.Realtime.OrderedPublisher
   alias CascadeWeb.{Auth, JSON}
@@ -483,64 +483,6 @@ defmodule CascadeWeb.ChatRouter do
     end)
   end
 
-  post "/api/vaults/:vault_id/channels/:channel_id/invites" do
-    authenticated(conn, :user, :vault, fn conn, user ->
-      case serialized_create_and_emit(
-             conn,
-             fn ->
-               Invites.invite_by_username(
-                 user,
-                 vault_id,
-                 channel_id,
-                 body(conn, "username", "")
-               )
-             end,
-             fn result ->
-               %{
-                 event: "vault:chatMessageCreated",
-                 vaultId: vault_id,
-                 channelId: channel_id,
-                 message: result.message
-               }
-             end
-           ) do
-        {:ok, result} ->
-          JSON.send(conn, 201, result)
-
-        error ->
-          domain_error(conn, error)
-      end
-    end)
-  end
-
-  post "/api/vaults/:vault_id/channels/:channel_id/invite-link" do
-    authenticated(conn, :user, :vault, fn conn, user ->
-      case serialized_mutation(fn -> Invites.create_link(user.id, vault_id, channel_id) end) do
-        {:ok, token} ->
-          JSON.send(conn, 200, %{
-            token: token,
-            url: public_base(conn) <> "/invite/" <> URI.encode(token)
-          })
-
-        error ->
-          domain_error(conn, error)
-      end
-    end)
-  end
-
-  get "/api/chat-invites/:token" do
-    case Invites.preview(token) do
-      {:ok, invite} -> JSON.send(conn, 200, %{invite: invite})
-      error -> domain_error(conn, error)
-    end
-  end
-
-  post "/api/chat-invites/:token/accept" do
-    authenticated(conn, :user, :account, fn conn, user ->
-      respond_status(conn, serialized_mutation(fn -> Invites.accept(token, user.id) end), 201)
-    end)
-  end
-
   match _ do
     JSON.send(conn, 404, %{error: "Not found"})
   end
@@ -563,8 +505,6 @@ defmodule CascadeWeb.ChatRouter do
   defp access(conn), do: if(conn.assigns.auth_access == "agent", do: :agent, else: :user)
   defp respond(conn, {:ok, value}, key), do: JSON.send(conn, 200, %{key => value})
   defp respond(conn, error, _key), do: domain_error(conn, error)
-  defp respond_status(conn, {:ok, value}, status), do: JSON.send(conn, status, value)
-  defp respond_status(conn, error, _status), do: domain_error(conn, error)
 
   defp mutation_result(conn, mutation, intent) when is_function(mutation, 0) do
     case serialized_mutation_and_emit(conn, mutation, fn
@@ -627,9 +567,6 @@ defmodule CascadeWeb.ChatRouter do
       end
     end)
   end
-
-  defp serialized_mutation(mutation) when is_function(mutation, 0),
-    do: OrderedPublisher.mutate(mutation)
 
   defp callback(conn, key), do: Keyword.get(conn.assigns.domain_options, key)
 
@@ -700,19 +637,6 @@ defmodule CascadeWeb.ChatRouter do
     case Integer.parse(value) do
       {number, _} -> number
       _ -> nil
-    end
-  end
-
-  defp public_base(conn) do
-    case callback(conn, :public_base_url) do
-      value when is_binary(value) ->
-        String.trim_trailing(value, "/")
-
-      fun when is_function(fun, 1) ->
-        fun.(conn)
-
-      _ ->
-        "#{conn.scheme}://#{conn.host}#{if conn.port in [80, 443], do: "", else: ":#{conn.port}"}"
     end
   end
 end

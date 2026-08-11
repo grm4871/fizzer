@@ -1467,28 +1467,6 @@ export default function App() {
     ensureChatChannelLoaded(channelId);
   }, [ensureChatChannelLoaded]);
 
-  useEffect(() => {
-    const match = window.location.pathname.match(/^\/invite\/([^/]+)$/);
-    const token = match ? decodeURIComponent(match[1]) : '';
-    if (!token || !user || acceptedInviteTokenRef.current === token) return;
-    acceptedInviteTokenRef.current = token;
-    (async () => {
-      try {
-        const data = await api<{ vaultId: string; channelId: string; title: string }>(`/api/chat-invites/${encodeURIComponent(token)}/accept`, {
-          method: 'POST',
-        });
-        await loadVaults();
-        switchVaultWorkspace(data.vaultId);
-        await loadVaultData(data.vaultId);
-        openChatChannel(data.channelId, data.title || 'shared-chat', 'replace');
-        window.history.replaceState({}, '', '/app.html');
-        setNotice(`Added #${data.title || 'shared-chat'} to your vault.`);
-      } catch (error) {
-        setNotice(error instanceof Error ? error.message : 'Could not accept invite link');
-      }
-    })();
-  }, [loadVaultData, loadVaults, openChatChannel, switchVaultWorkspace, user]);
-
   const acceptVaultInvite = useCallback(async (token: string): Promise<boolean> => {
     try {
       const data = await api<{ vaultId: string; name: string; role: string; alreadyMember?: boolean }>(
@@ -1757,15 +1735,6 @@ export default function App() {
     });
     await loadVaultData(vaultId, { soft: true });
   }, [loadVaultData]);
-
-  const handleCreateChatInviteLink = useCallback(async (channelId: string) => {
-    const vaultId = activeVaultIdRef.current;
-    if (!vaultId) throw new Error('No active vault');
-    const data = await api<{ url: string }>(`/api/vaults/${vaultId}/channels/${channelId}/invite-link`, {
-      method: 'POST',
-    });
-    return data.url;
-  }, []);
 
   const handleRemoveChatParticipant = useCallback(async (channelId: string, username: string) => {
     const vaultId = activeVaultIdRef.current;
@@ -3707,7 +3676,6 @@ export default function App() {
             onDeleteVaultAgent={handleDeleteVaultAgent}
             onDeleteAgentProfile={handleDeleteAgentProfile}
             onAddVaultAgentToChannel={handleAddVaultAgentToChannel}
-            onCreateInviteLink={handleCreateChatInviteLink}
             onInviteUser={handleInviteChatUser}
             onRemoveParticipant={handleRemoveChatParticipant}
             onLeaveChannel={handleLeaveChatChannel}
@@ -3748,7 +3716,7 @@ export default function App() {
         </Suspense>
       </ErrorBoundary>
     );
-  }, [chatState.registeredAgentsByChannel, chatPresenceByChannel, currentUsername, loadingChatChannels, runnerHealth, vaultAgents, handleCancelChatRun, handleCreateChatInviteLink, handleInviteChatUser, handleRemoveChatParticipant, handleLeaveChatChannel, handleRegisterChatAgent, handleRemoveChatAgent, handleUpsertVaultAgent, handleDeleteVaultAgent, handleDeleteAgentProfile, handleAddVaultAgentToChannel, handleSendChatMessage, handleCollaborateChatMessage, handleForwardChatMessage, noteContents, notes, getNoteChangeHandler, getNoteSaveHandler, getNoteRenameHandler, handleExecuteDirective, handleOpenWikilink, openNote, chatMembersOpen, activeVaultId, handleHydrateChatMessage, handleOpenSharedChatNote, superkanbanNotes, superkanbanLiveWork, superkanbanLoading, superkanbanError, chatJumpTarget, handleChatJumpHandled]);
+  }, [chatState.registeredAgentsByChannel, chatPresenceByChannel, currentUsername, loadingChatChannels, runnerHealth, vaultAgents, handleCancelChatRun, handleInviteChatUser, handleRemoveChatParticipant, handleLeaveChatChannel, handleRegisterChatAgent, handleRemoveChatAgent, handleUpsertVaultAgent, handleDeleteVaultAgent, handleDeleteAgentProfile, handleAddVaultAgentToChannel, handleSendChatMessage, handleCollaborateChatMessage, handleForwardChatMessage, noteContents, notes, getNoteChangeHandler, getNoteSaveHandler, getNoteRenameHandler, handleExecuteDirective, handleOpenWikilink, openNote, chatMembersOpen, activeVaultId, handleHydrateChatMessage, handleOpenSharedChatNote, superkanbanNotes, superkanbanLiveWork, superkanbanLoading, superkanbanError, chatJumpTarget, handleChatJumpHandled]);
 
   if (!user) {
     const hasInvite = /^\/invite\/[^/]+$/.test(window.location.pathname);
@@ -4091,7 +4059,6 @@ export default function App() {
                 onDeleteVaultAgent={handleDeleteVaultAgent}
                 onDeleteAgentProfile={handleDeleteAgentProfile}
                 onAddVaultAgentToChannel={handleAddVaultAgentToChannel}
-                onCreateInviteLink={handleCreateChatInviteLink}
                 onInviteUser={handleInviteChatUser}
                 onRemoveParticipant={handleRemoveChatParticipant}
                 onLeaveChannel={handleLeaveChatChannel}
