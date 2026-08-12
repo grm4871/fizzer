@@ -59,7 +59,7 @@ export function chatMediaLink(href: string): ChatMediaLink | null {
       if (!id) return null;
       return {
         provider: 'twitter',
-        embedUrl: `https://platform.twitter.com/embed/Tweet.html?id=${id}&dnt=true`,
+        embedUrl: `https://platform.twitter.com/embed/Tweet.html?id=${id}&dnt=true&theme=dark&conversation=none`,
         title: 'X post',
         aspect: 'social',
       };

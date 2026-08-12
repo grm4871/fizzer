@@ -39,6 +39,8 @@ describe('chatMediaLink', () => {
   it('recognizes allow-listed social, music, and video providers', () => {
     expect(chatMediaLink('https://x.com/user/status/123456789')?.provider).toBe('twitter');
     expect(chatMediaLink('https://twitter.com/user/status/123456789')?.embedUrl).toContain('dnt=true');
+    expect(chatMediaLink('https://twitter.com/user/status/123456789')?.embedUrl).toContain('theme=dark');
+    expect(chatMediaLink('https://twitter.com/user/status/123456789')?.embedUrl).toContain('conversation=none');
     expect(chatMediaLink('https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC')?.provider).toBe('spotify');
     expect(chatMediaLink('https://vimeo.com/12345678')?.provider).toBe('vimeo');
     expect(chatMediaLink('https://www.tiktok.com/@creator/video/7401234567890123456')?.provider).toBe('tiktok');
@@ -56,7 +58,7 @@ describe('ChatMediaEmbed', () => {
     const markup = renderToStaticMarkup(
       createElement(ChatMediaEmbed, { href: 'https://youtu.be/jK-tt-3XJ7c', label: 'Video' }),
     );
-    expect(markup).toContain('class="chat-media-embed is-video"');
+    expect(markup).toContain('class="chat-media-embed is-video is-youtube"');
     expect(markup).toContain('youtube.com/embed/jK-tt-3XJ7c');
     expect(markup).toContain('enablejsapi=1');
     expect(markup).toContain('allowFullScreen');
@@ -72,6 +74,9 @@ describe('ChatMediaEmbed', () => {
     expect(spotify).toContain('open.spotify.com/embed/album/');
     expect(spotify).toContain('loading="lazy"');
     expect(twitter).toContain('platform.twitter.com/embed/Tweet.html');
+    expect(twitter).toContain('chat-media-embed is-social is-twitter');
+    expect(twitter).toContain('theme=dark');
+    expect(twitter).toContain('conversation=none');
     expect(twitter).toContain('sandbox=');
   });
 });

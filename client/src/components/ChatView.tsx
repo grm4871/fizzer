@@ -750,7 +750,7 @@ export function ChatMediaEmbed({ href, label }: { href: string; label: ReactNode
   }, [href, media?.provider]);
   if (!media) return <a href={href} target="_blank" rel="noopener noreferrer">{label}</a>;
   return (
-    <span className={`chat-media-embed is-${media.aspect}`}>
+    <span className={`chat-media-embed is-${media.aspect} is-${media.provider}`}>
       <a href={href} target="_blank" rel="noopener noreferrer">{label}</a>
       <iframe
         ref={frameRef}
