@@ -29,6 +29,7 @@ const NORMALIZED_OBJECT_SQL_SHA256 = new Map([
   ['trigger:chat_messages_ad', 'd5ca273ea2357f3e4868b3595e75ea29d152cb4d41081f1a25a04abe19f3f60e'],
   ['trigger:chat_messages_au', '839d6582356d56eb5ae5b8391e078d3922762de41e5d77f09c678a70496143e1'],
   ['index:chat_mission_events_source_key_idx', '2c8b0abee1bdda9732d0801bfb1370a05c349190a1d6d7b1a75bb1ec2b564767'],
+  ['index:runs_owner_active_idx', '2f1bd1bf23ba264283a4b5097177e08c9f5e37defd10b936faa4bdff93fc3ea9'],
 ]);
 
 const MIGRATION_LEDGER_SQL_SHA256 =
@@ -206,6 +207,19 @@ function databaseSnapshotFromCopy(filename) {
         WHERE run_id IS NOT NULL ORDER BY rowid
       `).all();
     }
+    if (tables.runs) {
+      const hasOwner = tables.runs.columns.some((column) => column.name === 'owner_user_id');
+      compatibility.runOwnership = db.prepare(`
+        SELECT rowid,id,${hasOwner ? 'owner_user_id' : 'NULL'} AS ownerUserId
+        FROM runs ORDER BY rowid
+      `).all();
+    }
+    if (tables.delegated_runs) {
+      compatibility.delegatedRunOwners = db.prepare(`
+        SELECT run_id AS runId,owner_user_id AS ownerUserId
+        FROM delegated_runs ORDER BY run_id
+      `).all();
+    }
     return { quickCheck, schema, tables, compatibility };
   } finally {
     db.close();
@@ -250,6 +264,78 @@ function exactRowsOrMissionTaskBackfill(table, before, after) {
     const expected = oldLink.missionTaskId
       ?? (oldLink.runId == null ? null : firstTaskByRun.get(oldLink.runId) ?? null);
     if (newLink.missionTaskId !== expected) return false;
+  }
+  return true;
+}
+
+function exactRunOwnershipSchema(before, after) {
+  const oldTable = before.tables.runs;
+  const newTable = after.tables.runs;
+  if (!oldTable || !newTable) return false;
+
+  const oldOwner = oldTable.columns.find((column) => column.name === 'owner_user_id');
+  const newOwner = newTable.columns.find((column) => column.name === 'owner_user_id');
+  if (!newOwner
+      || newOwner.type !== 'INTEGER'
+      || Number(newOwner.notnull) !== 0
+      || newOwner.dflt_value !== null
+      || Number(newOwner.pk) !== 0) return false;
+
+  if (oldOwner) {
+    return same(oldTable.schema, newTable.schema)
+      && same(oldTable.columns, newTable.columns)
+      && same(oldTable.normalizedForeignKeys, newTable.normalizedForeignKeys);
+  }
+
+  const expectedColumns = [
+    ...oldTable.columns,
+    { ...newOwner, cid: oldTable.columns.length },
+  ];
+  const expectedForeignKeys = [
+    ...oldTable.normalizedForeignKeys,
+    {
+      table: 'users',
+      from: 'owner_user_id',
+      to: 'id',
+      onUpdate: 'NO ACTION',
+      onDelete: 'NO ACTION',
+      match: 'NONE',
+    },
+  ].sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+  const expectedSql = oldTable.schema.sql.replace(
+    /\)\s*$/u,
+    ', owner_user_id INTEGER REFERENCES users(id))',
+  );
+  return same(expectedColumns, newTable.columns)
+    && same(expectedForeignKeys, newTable.normalizedForeignKeys)
+    && newTable.schema.sql === expectedSql;
+}
+
+function exactRunOwnershipBackfill(before, after) {
+  if (!exactRunOwnershipSchema(before, after)) return false;
+  const oldRows = before.tables.runs.rows;
+  const newRows = after.tables.runs.rows;
+  const oldColumns = oldRows.columns.filter((column) => column !== 'owner_user_id');
+  if (oldRows.count !== newRows.count
+      || oldRows.includesRowid !== newRows.includesRowid
+      || !oldColumns.every((column) => newRows.columns.includes(column))) return false;
+  for (const column of oldColumns) {
+    if (oldRows.columnSha256[column] !== newRows.columnSha256[column]) return false;
+  }
+
+  const oldOwnership = before.compatibility.runOwnership || [];
+  const newOwnership = after.compatibility.runOwnership || [];
+  if (oldOwnership.length !== newOwnership.length) return false;
+  const delegated = new Map(
+    (before.compatibility.delegatedRunOwners || [])
+      .map((row) => [row.runId, row.ownerUserId]),
+  );
+  for (let index = 0; index < oldOwnership.length; index += 1) {
+    const oldRun = oldOwnership[index];
+    const newRun = newOwnership[index];
+    if (oldRun.rowid !== newRun.rowid || oldRun.id !== newRun.id) return false;
+    const expectedOwner = oldRun.ownerUserId ?? delegated.get(oldRun.id) ?? null;
+    if (newRun.ownerUserId !== expectedOwner) return false;
   }
   return true;
 }
@@ -354,7 +440,15 @@ export function compareDatabaseSnapshots(before, after, allowedAdditions = DEFAU
       continue;
     }
     if (derivedFtsTables.has(table)) continue;
-    if (NORMALIZED_TABLE_SQL_SHA256.has(table)) {
+    if (table === 'runs') {
+      if (!exactRunOwnershipBackfill(before, after)) {
+        const oldRows = before.tables[table].rows;
+        const newRows = after.tables[table].rows;
+        failures.push(
+          `table changed outside pinned ownership migration: ${table} (rows ${oldRows.count}/${oldRows.sha256.slice(0, 12)} -> ${newRows.count}/${newRows.sha256.slice(0, 12)})`,
+        );
+      }
+    } else if (NORMALIZED_TABLE_SQL_SHA256.has(table)) {
       const oldTable = before.tables[table];
       const newTable = after.tables[table];
       const normalized = newTable.schema.sqlSha256 === NORMALIZED_TABLE_SQL_SHA256.get(table)
@@ -427,7 +521,11 @@ export function validatePinnedElixirSchema(before, after) {
     }
     if (derivedFtsTables.has(table)) continue;
     const normalized = NORMALIZED_TABLE_SQL_SHA256.get(table);
-    if (normalized) {
+    if (table === 'runs') {
+      if (!exactRunOwnershipSchema(before, after)) {
+        failures.push(`table schema differs from pinned ownership migration: ${table}`);
+      }
+    } else if (normalized) {
       if (next.schema.sqlSha256 !== normalized
           || !same(oldTable.rows.columns, next.rows.columns)
           || !same(oldTable.normalizedForeignKeys, next.normalizedForeignKeys)) {

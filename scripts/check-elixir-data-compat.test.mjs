@@ -215,6 +215,60 @@ function normalizeChatMessages(filename, missionTaskExpression) {
   db.close();
 }
 
+function runOwnershipFixture() {
+  const files = fixture();
+  const before = new Database(files.before);
+  before.exec(`
+    INSERT INTO users VALUES (2, 'other');
+    CREATE TABLE vaults (id TEXT PRIMARY KEY);
+    INSERT INTO vaults VALUES ('vault-1'), ('vault-2');
+    CREATE TABLE runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
+      note_id TEXT REFERENCES notes(id) ON DELETE SET NULL,
+      prompt TEXT NOT NULL,
+      agent TEXT NOT NULL DEFAULT 'claude-code',
+      session_id TEXT,
+      conversation_id TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'queued',
+      started_at TEXT NOT NULL DEFAULT (datetime('now')),
+      finished_at TEXT,
+      summary TEXT,
+      model TEXT
+    );
+    ALTER TABLE runs ADD COLUMN chat_dispatch_id TEXT;
+    CREATE UNIQUE INDEX runs_chat_dispatch_idx
+      ON runs(chat_dispatch_id) WHERE chat_dispatch_id IS NOT NULL;
+    CREATE TABLE delegated_runs (
+      run_id INTEGER PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
+      owner_user_id INTEGER NOT NULL,
+      started_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    INSERT INTO runs(id,vault_id,prompt,status) VALUES
+      (10,'vault-1','owned active','running'),
+      (11,'vault-2','legacy terminal','completed'),
+      (12,'vault-1','other active','queued');
+    INSERT INTO delegated_runs(run_id,owner_user_id) VALUES (10,1),(12,2);
+  `);
+  before.close();
+  fs.copyFileSync(files.before, files.after);
+  return files;
+}
+
+function migrateRunOwnership(filename) {
+  const db = new Database(filename);
+  db.exec(`
+    ALTER TABLE runs ADD COLUMN owner_user_id INTEGER REFERENCES users(id);
+    UPDATE runs
+    SET owner_user_id=(SELECT d.owner_user_id FROM delegated_runs d WHERE d.run_id=runs.id)
+    WHERE owner_user_id IS NULL
+      AND EXISTS (SELECT 1 FROM delegated_runs d WHERE d.run_id=runs.id);
+    CREATE INDEX runs_owner_active_idx
+      ON runs(owner_user_id,status,started_at DESC,id DESC);
+  `);
+  db.close();
+}
+
 test('accepts only the pinned schema normalization while preserving rows and rowids', () => {
   const files = normalizationFixture();
   try {
@@ -262,6 +316,34 @@ test('rejects an unrelated mission-task mutation hidden in chat normalization', 
     assert.equal(result.ok, false);
     assert.ok(result.failures.some((failure) => failure.startsWith(
       'table changed outside pinned normalization: chat_messages',
+    )));
+  } finally {
+    fs.rmSync(files.directory, { recursive: true, force: true });
+  }
+});
+
+test('accepts only the exact run-owner schema and delegated-owner backfill', () => {
+  const files = runOwnershipFixture();
+  try {
+    migrateRunOwnership(files.after);
+    const result = runComparison(files);
+    assert.equal(result.ok, true, result.failures.join('\n'));
+  } finally {
+    fs.rmSync(files.directory, { recursive: true, force: true });
+  }
+});
+
+test('rejects a foreign owner hidden in the run ownership migration', () => {
+  const files = runOwnershipFixture();
+  try {
+    migrateRunOwnership(files.after);
+    const after = new Database(files.after);
+    after.prepare('UPDATE runs SET owner_user_id=? WHERE id=?').run(2, 10);
+    after.close();
+    const result = runComparison(files);
+    assert.equal(result.ok, false);
+    assert.ok(result.failures.some((failure) => failure.startsWith(
+      'table changed outside pinned ownership migration: runs',
     )));
   } finally {
     fs.rmSync(files.directory, { recursive: true, force: true });
