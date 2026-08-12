@@ -525,10 +525,16 @@ export function compareIdenticalSnapshots(before, after) {
   const failures = [];
   if (!same(before.schema, after.schema)) failures.push('database schema changed');
 
+  // FTS5 may merge or repack its data/idx shadow pages when an unchanged
+  // logical index is opened by a new process. Compare the virtual table and
+  // content table exactly, and verify integrity separately, but do not treat
+  // the engine's private physical representation as application state.
+  const derivedFtsTables = commonFts5ShadowTables(before, after);
   const tables = new Set([...Object.keys(before.tables), ...Object.keys(after.tables)]);
   for (const table of tables) {
     if (!before.tables[table]) failures.push(`table added: ${table}`);
     else if (!after.tables[table]) failures.push(`table removed: ${table}`);
+    else if (derivedFtsTables.has(table)) continue;
     else if (!same(before.tables[table], after.tables[table])) {
       failures.push(`table changed during rolling preflight: ${table}`);
     }

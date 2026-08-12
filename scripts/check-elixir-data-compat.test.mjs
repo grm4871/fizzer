@@ -92,6 +92,38 @@ test('rolling eligibility requires exact data and corpus identity', () => {
   }
 });
 
+test('rolling eligibility ignores only valid FTS5 physical index repacking', () => {
+  const files = fixture();
+  try {
+    const before = new Database(files.before);
+    before.exec(`
+      CREATE VIRTUAL TABLE notes_fts USING fts5(body);
+      INSERT INTO notes_fts(rowid,body) VALUES (1,'alpha beta');
+    `);
+    before.close();
+    fs.copyFileSync(files.before, files.after);
+
+    const after = new Database(files.after);
+    after.exec(`
+      INSERT INTO notes_fts(rowid,body) VALUES (2,'temporary segment');
+      DELETE FROM notes_fts WHERE rowid=2;
+      INSERT INTO notes_fts(notes_fts) VALUES('optimize');
+    `);
+    after.close();
+
+    const beforeSnapshot = databaseSnapshot(files.before);
+    const afterSnapshot = databaseSnapshot(files.after);
+    assert.notEqual(
+      beforeSnapshot.tables.notes_fts_data.rows.sha256,
+      afterSnapshot.tables.notes_fts_data.rows.sha256,
+    );
+    const rolling = runComparison({ ...files, requireIdentical: true });
+    assert.equal(rolling.ok, true, rolling.failures.join('\n'));
+  } finally {
+    fs.rmSync(files.directory, { recursive: true, force: true });
+  }
+});
+
 test('rolling live verification permits row churn but rejects schema drift', () => {
   const files = fixture();
   try {
