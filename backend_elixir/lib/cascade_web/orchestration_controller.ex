@@ -17,7 +17,7 @@ defmodule CascadeWeb.OrchestrationController do
   def list_runs(conn, vault_id) do
     authenticated(conn, fn conn, user ->
       with_vault(conn, vault_id, user.id, fn ->
-        JSON.send(conn, 200, %{runs: Store.list(vault_id)})
+        JSON.send(conn, 200, %{runs: Store.list(vault_id, user.id)})
       end)
     end)
   end
@@ -25,8 +25,14 @@ defmodule CascadeWeb.OrchestrationController do
   def active_sessions(conn, vault_id) do
     authenticated(conn, fn conn, user ->
       with_vault(conn, vault_id, user.id, fn ->
-        JSON.send(conn, 200, %{sessions: Store.active_sessions(vault_id)})
+        JSON.send(conn, 200, %{sessions: Store.active_sessions(user.id, vault_id)})
       end)
+    end)
+  end
+
+  def my_active_sessions(conn) do
+    authenticated(conn, fn conn, user ->
+      JSON.send(conn, 200, %{sessions: Store.active_sessions(user.id)})
     end)
   end
 
@@ -77,7 +83,7 @@ defmodule CascadeWeb.OrchestrationController do
           JSON.send(conn, 404, %{error: "Run not found"})
 
         run ->
-          if VaultMembers.role(run.vault_id, user.id) in ["owner", "editor"] do
+          if Store.owned?(run.id, user.id) do
             success =
               Store.cancel(run.id,
                 steering: body(conn)["steering"] == true,
@@ -86,7 +92,7 @@ defmodule CascadeWeb.OrchestrationController do
 
             JSON.send(conn, 200, %{success: success})
           else
-            JSON.send(conn, 403, %{error: "Access denied"})
+            JSON.send(conn, 404, %{error: "Run not found"})
           end
       end
     end)
@@ -272,6 +278,7 @@ defmodule CascadeWeb.OrchestrationController do
           )
 
         case Store.start(vault.id, note_id, effective_prompt, agent,
+               owner_user_id: user.id,
                conversation_id: conversation_id,
                model: model,
                session_id: resume_session_id
@@ -677,6 +684,7 @@ defmodule CascadeWeb.OrchestrationController do
 
   defp start_chat_run(execution, note_id, prompt, conversation_id, resume, dispatch_id) do
     case Store.start(execution.vault.id, note_id, prompt, execution.agent,
+           owner_user_id: execution.runner_user_id,
            conversation_id: conversation_id,
            model: execution.model,
            session_id: resume,
@@ -941,9 +949,9 @@ defmodule CascadeWeb.OrchestrationController do
         JSON.send(conn, 404, %{error: "Run not found"})
 
       run ->
-        if VaultMembers.accessible_vault(run.vault_id, user_id),
+        if Store.owned?(run.id, user_id),
           do: callback.(run),
-          else: JSON.send(conn, 403, %{error: "Access denied"})
+          else: JSON.send(conn, 404, %{error: "Run not found"})
     end
   end
 

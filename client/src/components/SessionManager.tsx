@@ -32,6 +32,7 @@ import { ModalShell } from './ModalShell';
 export type ActiveSession = {
   id: number;
   vault_id: string;
+  vault_name: string;
   note_id: string | null;
   prompt: string;
   agent: string;
@@ -67,15 +68,14 @@ export type SessionTimelineItem = {
 
 type Props = {
   open: boolean;
-  vaultId: string | null;
   runnerOnline: boolean;
   /** When set (from an Orbit node click), auto-select the run with this agent session id. */
   focusSessionId?: string | null;
   onFocusHandled?: () => void;
   onClose: () => void;
-  onOpenChat: (channelId: string) => void;
+  onOpenChat: (vaultId: string, channelId: string, channelTitle: string) => void | Promise<void>;
   onCancel: (runId: number) => boolean | void | Promise<boolean | void>;
-  onInterrogate: (channelId: string, message: string) => void;
+  onInterrogate: (vaultId: string, channelId: string, message: string) => void | Promise<void>;
 };
 
 const ANSI_RE = /\u001b\[[0-?]*[ -/]*[@-~]/g;
@@ -253,7 +253,6 @@ function TraceEmpty({ icon, children }: { icon: ReactNode; children: ReactNode }
 
 export function SessionManager({
   open,
-  vaultId,
   runnerOnline,
   focusSessionId,
   onFocusHandled,
@@ -281,12 +280,12 @@ export function SessionManager({
   const sessionRequestRef = useRef(0);
 
   const refresh = useCallback(async (manual = false) => {
-    if (!open || !vaultId) return;
+    if (!open) return;
     const request = ++sessionRequestRef.current;
     if (sessions.length === 0) setLoading(true);
     if (manual) setRefreshing(true);
     try {
-      const response = await api<{ sessions: ActiveSession[] }>(`/api/vaults/${vaultId}/active-sessions`);
+      const response = await api<{ sessions: ActiveSession[] }>('/api/me/active-sessions');
       if (request !== sessionRequestRef.current) return;
       setSessions(response.sessions);
       setSelectedId((current) => {
@@ -306,7 +305,7 @@ export function SessionManager({
         setRefreshing(false);
       }
     }
-  }, [open, sessions.length, vaultId]);
+  }, [open, sessions.length]);
 
   useEffect(() => {
     if (!open) return;
@@ -408,7 +407,11 @@ export function SessionManager({
   const submit = (event: FormEvent) => {
     event.preventDefault();
     if (!selected?.channel_id || !draft.trim()) return;
-    onInterrogate(selected.channel_id, `@${sessionHandle(selected)} ${draft.trim()}`);
+    void onInterrogate(
+      selected.vault_id,
+      selected.channel_id,
+      `@${sessionHandle(selected)} ${draft.trim()}`,
+    );
     setDraft('');
   };
 
@@ -560,6 +563,8 @@ export function SessionManager({
                       <span className="session-manager-item-meta">
                         {session.channel_title ? <><Hash size={10} />{session.channel_title}</> : 'note run'}
                         <i />
+                        {session.vault_name}
+                        <i />
                         {shortModel(session.model)}
                         <i />
                         {elapsedLabel(session.started_at, now)}
@@ -596,7 +601,15 @@ export function SessionManager({
                   </div>
                   <div className="session-manager-actions">
                     {selected.channel_id && (
-                      <button type="button" className="btn btn-sm" onClick={() => onOpenChat(selected.channel_id!)}>
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        onClick={() => void onOpenChat(
+                          selected.vault_id,
+                          selected.channel_id!,
+                          selected.channel_title || 'Chat',
+                        )}
+                      >
                         <ExternalLink size={13} /> Open chat
                       </button>
                     )}

@@ -4097,17 +4097,26 @@ export default function App() {
         <Suspense fallback={null}>
           <SessionManager
             open
-            vaultId={activeVaultId}
             runnerOnline={Boolean(runnerHealth?.online)}
             focusSessionId={focusSessionId}
             onFocusHandled={() => setFocusSessionId(null)}
             onClose={() => { setFocusSessionId(null); setSessionManagerOpen(false); }}
-            onOpenChat={(channelId) => {
-              openNote(channelId);
+            onOpenChat={async (vaultId, channelId, channelTitle) => {
+              if (activeVaultIdRef.current !== vaultId) {
+                switchVaultWorkspace(vaultId);
+                await loadVaultData(vaultId);
+              }
+              openChatChannel(channelId, channelTitle);
               setSessionManagerOpen(false);
             }}
             onCancel={handleCancelChatRun}
-            onInterrogate={(channelId, message) => handleSendChatMessage(channelId, message)}
+            onInterrogate={async (vaultId, channelId, message) => {
+              if (activeVaultIdRef.current !== vaultId) {
+                switchVaultWorkspace(vaultId);
+                await loadVaultData(vaultId);
+              }
+              await handleSendChatMessage(channelId, message);
+            }}
           />
         </Suspense>
       )}

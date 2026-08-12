@@ -524,7 +524,9 @@ defmodule Cascade.Realtime.OutboundEventIntegrationTest do
     vault = Store.create_vault(1, %{name: "Runs"})
     client = open_probe(target, token(1, "alice"), "alice")
     close_on_exit([client])
-    {:ok, run} = RunStore.start(vault.id, nil, "prove ordering", "codex")
+
+    {:ok, run} =
+      RunStore.start(vault.id, nil, "prove ordering", "codex", owner_user_id: 1)
 
     command(client, "runs", "joinRun", [run.id])
     assert eventually(fn -> joined?("run:#{run.id}", 1, "/runs") end)

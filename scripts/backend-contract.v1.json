@@ -40,10 +40,10 @@
     "note": "Static declarations only; runtime status, headers, bodies, ordering, Engine.IO frames, and ACK payloads require differential tests."
   },
   "summary": {
-    "httpRoutes": 165,
+    "httpRoutes": 166,
     "socketIoInboundDeclarations": 14,
     "socketIoOutboundLiteralDeclarations": 59,
-    "sqliteDeclarations": 110
+    "sqliteDeclarations": 111
   },
   "httpRoutes": [
     {
@@ -53,7 +53,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 1526
+      "line": 1519
     },
     {
       "method": "POST",
@@ -63,7 +63,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 1559
+      "line": 1552
     },
     {
       "method": "POST",
@@ -73,7 +73,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 1601
+      "line": 1594
     },
     {
       "method": "POST",
@@ -83,7 +83,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 1601
+      "line": 1594
     },
     {
       "method": "GET",
@@ -93,7 +93,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 1614
+      "line": 1607
     },
     {
       "method": "GET",
@@ -103,7 +103,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 1614
+      "line": 1607
     },
     {
       "method": "POST",
@@ -113,7 +113,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 1652
+      "line": 1645
     },
     {
       "method": "POST",
@@ -123,7 +123,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 1688
+      "line": 1681
     },
     {
       "method": "POST",
@@ -134,7 +134,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 1705
+      "line": 1698
     },
     {
       "method": "PUT",
@@ -145,7 +145,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 1724
+      "line": 1717
     },
     {
       "method": "POST",
@@ -156,7 +156,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 1749
+      "line": 1742
     },
     {
       "method": "POST",
@@ -166,7 +166,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 1763
+      "line": 1756
     },
     {
       "method": "GET",
@@ -176,7 +176,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 1796
+      "line": 1789
     },
     {
       "method": "GET",
@@ -185,7 +185,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 1801
+      "line": 1794
     },
     {
       "method": "POST",
@@ -194,7 +194,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 1813
+      "line": 1806
     },
     {
       "method": "POST",
@@ -205,7 +205,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 1818
+      "line": 1811
     },
     {
       "method": "GET",
@@ -216,7 +216,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 1827
+      "line": 1820
     },
     {
       "method": "GET",
@@ -227,7 +227,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 1835
+      "line": 1828
     },
     {
       "method": "POST",
@@ -238,7 +238,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 1846
+      "line": 1839
     },
     {
       "method": "POST",
@@ -249,7 +249,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 1856
+      "line": 1849
     },
     {
       "method": "POST",
@@ -260,7 +260,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 1864
+      "line": 1857
     },
     {
       "method": "GET",
@@ -270,7 +270,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 1869
+      "line": 1862
     },
     {
       "method": "GET",
@@ -280,7 +280,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 1875
+      "line": 1868
     },
     {
       "method": "PATCH",
@@ -291,7 +291,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 1882
+      "line": 1875
     },
     {
       "method": "GET",
@@ -301,7 +301,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 1896
+      "line": 1889
     },
     {
       "method": "POST",
@@ -311,7 +311,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 1900
+      "line": 1893
     },
     {
       "method": "GET",
@@ -321,7 +321,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 1909
+      "line": 1902
     },
     {
       "method": "PATCH",
@@ -331,7 +331,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 1915
+      "line": 1908
     },
     {
       "method": "DELETE",
@@ -342,7 +342,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 1931
+      "line": 1924
     },
     {
       "method": "GET",
@@ -352,7 +352,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 1942
+      "line": 1935
     },
     {
       "method": "POST",
@@ -362,7 +362,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 1951
+      "line": 1944
     },
     {
       "method": "PATCH",
@@ -372,7 +372,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 1976
+      "line": 1969
     },
     {
       "method": "DELETE",
@@ -382,7 +382,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 1996
+      "line": 1989
     },
     {
       "method": "GET",
@@ -392,7 +392,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2012
+      "line": 2005
     },
     {
       "method": "POST",
@@ -403,7 +403,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2023
+      "line": 2016
     },
     {
       "method": "DELETE",
@@ -414,7 +414,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2037
+      "line": 2030
     },
     {
       "method": "POST",
@@ -424,7 +424,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2051
+      "line": 2044
     },
     {
       "method": "GET",
@@ -433,7 +433,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2068
+      "line": 2061
     },
     {
       "method": "POST",
@@ -443,7 +443,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2086
+      "line": 2079
     },
     {
       "method": "GET",
@@ -453,7 +453,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2110
+      "line": 2103
     },
     {
       "method": "PUT",
@@ -464,7 +464,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2118
+      "line": 2111
     },
     {
       "method": "GET",
@@ -474,7 +474,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2143
+      "line": 2136
     },
     {
       "method": "GET",
@@ -484,7 +484,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2154
+      "line": 2147
     },
     {
       "method": "PATCH",
@@ -495,7 +495,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2165
+      "line": 2158
     },
     {
       "method": "GET",
@@ -505,7 +505,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2181
+      "line": 2174
     },
     {
       "method": "GET",
@@ -515,7 +515,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2191
+      "line": 2184
     },
     {
       "method": "POST",
@@ -526,7 +526,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2197
+      "line": 2190
     },
     {
       "method": "POST",
@@ -537,7 +537,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2209
+      "line": 2202
     },
     {
       "method": "GET",
@@ -547,7 +547,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2226
+      "line": 2219
     },
     {
       "method": "PATCH",
@@ -558,7 +558,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2239
+      "line": 2232
     },
     {
       "method": "GET",
@@ -568,7 +568,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2254
+      "line": 2247
     },
     {
       "method": "PUT",
@@ -578,7 +578,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2264
+      "line": 2257
     },
     {
       "method": "GET",
@@ -588,7 +588,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2278
+      "line": 2271
     },
     {
       "method": "POST",
@@ -598,7 +598,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2290
+      "line": 2283
     },
     {
       "method": "GET",
@@ -608,7 +608,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2318
+      "line": 2311
     },
     {
       "method": "PATCH",
@@ -618,7 +618,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2329
+      "line": 2322
     },
     {
       "method": "PUT",
@@ -628,7 +628,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2360
+      "line": 2353
     },
     {
       "method": "POST",
@@ -638,7 +638,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2373
+      "line": 2366
     },
     {
       "method": "POST",
@@ -648,7 +648,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2388
+      "line": 2381
     },
     {
       "method": "POST",
@@ -658,7 +658,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2402
+      "line": 2395
     },
     {
       "method": "POST",
@@ -668,7 +668,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2411
+      "line": 2404
     },
     {
       "method": "POST",
@@ -678,7 +678,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2424
+      "line": 2417
     },
     {
       "method": "POST",
@@ -688,7 +688,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2441
+      "line": 2434
     },
     {
       "method": "GET",
@@ -698,7 +698,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2463
+      "line": 2456
     },
     {
       "method": "POST",
@@ -708,7 +708,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2469
+      "line": 2462
     },
     {
       "method": "PATCH",
@@ -718,7 +718,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2483
+      "line": 2476
     },
     {
       "method": "DELETE",
@@ -728,7 +728,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2508
+      "line": 2501
     },
     {
       "method": "GET",
@@ -738,7 +738,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2535
+      "line": 2528
     },
     {
       "method": "POST",
@@ -748,7 +748,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2553
+      "line": 2546
     },
     {
       "method": "GET",
@@ -758,7 +758,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2570
+      "line": 2563
     },
     {
       "method": "PUT",
@@ -768,7 +768,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2579
+      "line": 2572
     },
     {
       "method": "POST",
@@ -778,7 +778,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2602
+      "line": 2595
     },
     {
       "method": "DELETE",
@@ -788,7 +788,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2621
+      "line": 2614
     },
     {
       "method": "POST",
@@ -798,7 +798,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2641
+      "line": 2634
     },
     {
       "method": "POST",
@@ -808,7 +808,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2662
+      "line": 2655
     },
     {
       "method": "POST",
@@ -818,7 +818,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2681
+      "line": 2674
     },
     {
       "method": "POST",
@@ -828,7 +828,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2696
+      "line": 2689
     },
     {
       "method": "GET",
@@ -838,7 +838,7 @@
         "serveNoteAsset(...)"
       ],
       "source": "index.ts",
-      "line": 2706
+      "line": 2699
     },
     {
       "method": "POST",
@@ -848,7 +848,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2708
+      "line": 2701
     },
     {
       "method": "GET",
@@ -858,7 +858,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2725
+      "line": 2718
     },
     {
       "method": "POST",
@@ -868,7 +868,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2751
+      "line": 2744
     },
     {
       "method": "GET",
@@ -878,7 +878,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2765
+      "line": 2758
     },
     {
       "method": "POST",
@@ -888,7 +888,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2779
+      "line": 2772
     },
     {
       "method": "GET",
@@ -898,7 +898,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2791
+      "line": 2784
     },
     {
       "method": "GET",
@@ -908,7 +908,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2799
+      "line": 2792
     },
     {
       "method": "POST",
@@ -918,7 +918,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2812
+      "line": 2805
     },
     {
       "method": "POST",
@@ -928,7 +928,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2828
+      "line": 2821
     },
     {
       "method": "POST",
@@ -938,7 +938,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2841
+      "line": 2834
     },
     {
       "method": "GET",
@@ -948,7 +948,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2854
+      "line": 2847
     },
     {
       "method": "POST",
@@ -958,7 +958,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2863
+      "line": 2856
     },
     {
       "method": "POST",
@@ -968,7 +968,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2876
+      "line": 2869
     },
     {
       "method": "GET",
@@ -978,7 +978,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2891
+      "line": 2884
     },
     {
       "method": "GET",
@@ -988,7 +988,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2921
+      "line": 2914
     },
     {
       "method": "POST",
@@ -998,7 +998,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2940
+      "line": 2933
     },
     {
       "method": "POST",
@@ -1008,7 +1008,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2955
+      "line": 2948
     },
     {
       "method": "GET",
@@ -1018,7 +1018,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 2984
+      "line": 2977
     },
     {
       "method": "PUT",
@@ -1028,7 +1028,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 3003
+      "line": 2996
     },
     {
       "method": "GET",
@@ -1038,7 +1038,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 3033
+      "line": 3026
     },
     {
       "method": "PUT",
@@ -1048,7 +1048,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 3045
+      "line": 3038
     },
     {
       "method": "GET",
@@ -1058,7 +1058,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 3065
+      "line": 3058
     },
     {
       "method": "DELETE",
@@ -1068,7 +1068,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 3075
+      "line": 3068
     },
     {
       "method": "DELETE",
@@ -1078,7 +1078,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 3086
+      "line": 3079
     },
     {
       "method": "POST",
@@ -1088,7 +1088,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 3097
+      "line": 3090
     },
     {
       "method": "GET",
@@ -1098,7 +1098,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 3119
+      "line": 3112
     },
     {
       "method": "POST",
@@ -1108,7 +1108,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 3125
+      "line": 3118
     },
     {
       "method": "DELETE",
@@ -1118,7 +1118,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 3143
+      "line": 3136
     },
     {
       "method": "GET",
@@ -1128,7 +1128,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 3159
+      "line": 3152
     },
     {
       "method": "GET",
@@ -1138,7 +1138,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 3168
+      "line": 3161
     },
     {
       "method": "GET",
@@ -1148,7 +1148,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 3194
+      "line": 3187
     },
     {
       "method": "GET",
@@ -1158,7 +1158,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 3202
+      "line": 3195
     },
     {
       "method": "GET",
@@ -1168,7 +1168,17 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 3208
+      "line": 3201
+    },
+    {
+      "method": "GET",
+      "path": "/api/me/active-sessions",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 3207
     },
     {
       "method": "POST",
@@ -1178,7 +1188,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 3214
+      "line": 3211
     },
     {
       "method": "GET",
@@ -1188,7 +1198,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 3679
+      "line": 3677
     },
     {
       "method": "GET",
@@ -1198,7 +1208,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 3689
+      "line": 3684
     },
     {
       "method": "GET",
@@ -1208,7 +1218,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 3700
+      "line": 3692
     },
     {
       "method": "POST",
@@ -1218,7 +1228,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 3704
+      "line": 3696
     },
     {
       "method": "GET",
@@ -1228,7 +1238,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 3731
+      "line": 3720
     },
     {
       "method": "GET",
@@ -1238,7 +1248,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 3745
+      "line": 3734
     },
     {
       "method": "GET",
@@ -1248,7 +1258,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 3798
+      "line": 3787
     },
     {
       "method": "POST",
@@ -1258,7 +1268,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 3852
+      "line": 3841
     },
     {
       "method": "POST",
@@ -1268,7 +1278,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 3891
+      "line": 3880
     },
     {
       "method": "GET",
@@ -1278,7 +1288,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 3937
+      "line": 3926
     },
     {
       "method": "POST",
@@ -1288,7 +1298,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 3946
+      "line": 3935
     },
     {
       "method": "GET",
@@ -1298,7 +1308,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 3986
+      "line": 3975
     },
     {
       "method": "GET",
@@ -1308,7 +1318,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 4000
+      "line": 3989
     },
     {
       "method": "GET",
@@ -1318,7 +1328,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 4014
+      "line": 4003
     },
     {
       "method": "POST",
@@ -1328,7 +1338,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 4029
+      "line": 4018
     },
     {
       "method": "PATCH",
@@ -1338,7 +1348,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 4056
+      "line": 4045
     },
     {
       "method": "POST",
@@ -1348,7 +1358,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 4072
+      "line": 4061
     },
     {
       "method": "PATCH",
@@ -1358,7 +1368,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 4102
+      "line": 4091
     },
     {
       "method": "DELETE",
@@ -1369,7 +1379,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 4153
+      "line": 4142
     },
     {
       "method": "POST",
@@ -1379,7 +1389,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 4180
+      "line": 4169
     },
     {
       "method": "POST",
@@ -1389,7 +1399,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 4214
+      "line": 4203
     },
     {
       "method": "POST",
@@ -1399,7 +1409,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 4225
+      "line": 4214
     },
     {
       "method": "POST",
@@ -1409,7 +1419,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 4237
+      "line": 4226
     },
     {
       "method": "POST",
@@ -1419,7 +1429,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 4255
+      "line": 4244
     },
     {
       "method": "GET",
@@ -1429,7 +1439,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 4367
+      "line": 4356
     },
     {
       "method": "GET",
@@ -1439,7 +1449,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 4377
+      "line": 4366
     },
     {
       "method": "PUT",
@@ -1450,7 +1460,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 4385
+      "line": 4374
     },
     {
       "method": "GET",
@@ -1460,7 +1470,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 4427
+      "line": 4416
     },
     {
       "method": "DELETE",
@@ -1470,7 +1480,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 4452
+      "line": 4441
     },
     {
       "method": "DELETE",
@@ -1480,7 +1490,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 4468
+      "line": 4457
     },
     {
       "method": "PUT",
@@ -1490,7 +1500,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 4492
+      "line": 4481
     },
     {
       "method": "PUT",
@@ -1500,7 +1510,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 4505
+      "line": 4494
     },
     {
       "method": "DELETE",
@@ -1510,7 +1520,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 4518
+      "line": 4507
     },
     {
       "method": "GET",
@@ -1520,7 +1530,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 4730
+      "line": 4719
     },
     {
       "method": "PUT",
@@ -1531,7 +1541,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 4734
+      "line": 4723
     },
     {
       "method": "GET",
@@ -1541,7 +1551,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 4742
+      "line": 4731
     },
     {
       "method": "POST",
@@ -1553,7 +1563,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 4746
+      "line": 4735
     },
     {
       "method": "DELETE",
@@ -1565,7 +1575,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 4760
+      "line": 4749
     },
     {
       "method": "GET",
@@ -1575,7 +1585,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 4771
+      "line": 4760
     },
     {
       "method": "POST",
@@ -1587,7 +1597,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 4775
+      "line": 4764
     },
     {
       "method": "GET",
@@ -1596,7 +1606,7 @@
         "servePublicNotePage(...)"
       ],
       "source": "index.ts",
-      "line": 4857
+      "line": 4846
     },
     {
       "method": "GET",
@@ -1605,7 +1615,7 @@
         "servePublicNoteJson(...)"
       ],
       "source": "index.ts",
-      "line": 4858
+      "line": 4847
     },
     {
       "method": "GET",
@@ -1614,7 +1624,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 4860
+      "line": 4849
     },
     {
       "method": "GET",
@@ -1624,7 +1634,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 4865
+      "line": 4854
     },
     {
       "method": "POST",
@@ -1634,7 +1644,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 4884
+      "line": 4873
     },
     {
       "method": "DELETE",
@@ -1644,7 +1654,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 4903
+      "line": 4892
     },
     {
       "method": "GET",
@@ -1653,7 +1663,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 4916
+      "line": 4905
     },
     {
       "method": "GET",
@@ -1662,7 +1672,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 4928
+      "line": 4917
     },
     {
       "method": "GET",
@@ -1671,7 +1681,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 4934
+      "line": 4923
     },
     {
       "method": "GET",
@@ -1680,7 +1690,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 4942
+      "line": 4931
     },
     {
       "method": "GET",
@@ -1689,7 +1699,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 4956
+      "line": 4945
     },
     {
       "method": "GET",
@@ -1698,7 +1708,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 4956
+      "line": 4945
     },
     {
       "method": "GET",
@@ -1707,7 +1717,7 @@
         "<inline>"
       ],
       "source": "index.ts",
-      "line": 4969
+      "line": 4958
     }
   ],
   "socketIo": {
@@ -1716,55 +1726,55 @@
         "namespace": "/vault",
         "event": "connection",
         "source": "index.ts",
-        "line": 914
+        "line": 915
       },
       {
         "namespace": "/vault",
         "event": "joinVault",
         "source": "index.ts",
-        "line": 920
+        "line": 921
       },
       {
         "namespace": "/vault",
         "event": "leaveVault",
         "source": "index.ts",
-        "line": 925
+        "line": 926
       },
       {
         "namespace": "/vault",
         "event": "joinChatChannel",
         "source": "index.ts",
-        "line": 929
+        "line": 930
       },
       {
         "namespace": "/vault",
         "event": "leaveChatChannel",
         "source": "index.ts",
-        "line": 958
+        "line": 959
       },
       {
         "namespace": "/vault",
         "event": "disconnect",
         "source": "index.ts",
-        "line": 971
+        "line": 972
       },
       {
         "namespace": "/runs",
         "event": "connection",
         "source": "index.ts",
-        "line": 986
+        "line": 987
       },
       {
         "namespace": "/runs",
         "event": "joinRun",
         "source": "index.ts",
-        "line": 987
+        "line": 988
       },
       {
         "namespace": "/runs",
         "event": "leaveRun",
         "source": "index.ts",
-        "line": 1002
+        "line": 995
       },
       {
         "namespace": "/runners",
@@ -1802,239 +1812,245 @@
         "namespace": "/vault",
         "event": "vault:chatPresence",
         "source": "index.ts",
-        "line": 944
+        "line": 945
       },
       {
         "namespace": "/runs",
         "event": "event",
         "source": "index.ts",
-        "line": 1008
+        "line": 1001
       },
       {
         "namespace": "/vault",
         "event": "community:changed",
         "source": "index.ts",
-        "line": 1020
+        "line": 1013
       },
       {
         "namespace": "/vault",
         "event": "vault:userProfileUpdated",
         "source": "index.ts",
-        "line": 1069
+        "line": 1062
       },
       {
         "namespace": "/vault",
         "event": "vault:chatMessageUpdated",
         "source": "index.ts",
-        "line": 1117
+        "line": 1110
       },
       {
         "namespace": "/vault",
         "event": "vault:chatMessageCreated",
         "source": "index.ts",
-        "line": 1167
+        "line": 1160
       },
       {
         "namespace": "/vault",
         "event": "vault:chatMessageUpdated",
         "source": "index.ts",
-        "line": 1194
+        "line": 1187
       },
       {
         "namespace": "/vault",
         "event": "vault:chatMessageDeleted",
         "source": "index.ts",
-        "line": 1201
+        "line": 1194
       },
       {
         "namespace": "/vault",
         "event": "vault:chatPresence",
         "source": "index.ts",
-        "line": 1269
+        "line": 1262
       },
       {
         "namespace": "/vault",
         "event": "vault:chatMessageCreated",
         "source": "index.ts",
-        "line": 1341
+        "line": 1334
       },
       {
         "namespace": "/vault",
         "event": "vault:chatMessageCreated",
         "source": "index.ts",
-        "line": 1342
+        "line": 1335
       },
       {
         "namespace": "/vault",
         "event": "vault:chatMessageUpdated",
         "source": "index.ts",
-        "line": 1379
+        "line": 1372
       },
       {
         "namespace": "/vault",
         "event": "vault:chatMessageUpdated",
         "source": "index.ts",
-        "line": 1400
+        "line": 1393
       },
       {
         "namespace": "/vault",
         "event": "vault:chatMessageUpdated",
         "source": "index.ts",
-        "line": 1480
+        "line": 1473
       },
       {
         "namespace": "/vault",
         "event": "vault:chatMessageUpdated",
         "source": "index.ts",
-        "line": 1517
+        "line": 1510
       },
       {
         "namespace": "/vault",
         "event": "vault:renamed",
         "source": "index.ts",
-        "line": 1924
+        "line": 1917
       },
       {
         "namespace": "/vault",
         "event": "vault:membersChanged",
         "source": "index.ts",
-        "line": 2029
+        "line": 2022
       },
       {
         "namespace": "/vault",
         "event": "vault:visibilityChanged",
         "source": "index.ts",
-        "line": 2135
+        "line": 2128
       },
       {
         "namespace": "/vault",
         "event": "vault:membersChanged",
         "source": "index.ts",
-        "line": 2172
+        "line": 2165
       },
       {
         "namespace": "/vault",
         "event": "vault:noteCreated",
         "source": "index.ts",
-        "line": 2563
+        "line": 2556
       },
       {
         "namespace": "/vault",
         "event": "vault:noteChanged",
         "source": "index.ts",
-        "line": 2595
+        "line": 2588
       },
       {
         "namespace": "/vault",
         "event": "vault:noteChanged",
         "source": "index.ts",
-        "line": 2614
+        "line": 2607
       },
       {
         "namespace": "/vault",
         "event": "vault:noteDeleted",
         "source": "index.ts",
-        "line": 2634
+        "line": 2627
       },
       {
         "namespace": "/vault",
         "event": "vault:noteChanged",
         "source": "index.ts",
-        "line": 2655
+        "line": 2648
       },
       {
         "namespace": "/vault",
         "event": "vault:noteChanged",
         "source": "index.ts",
-        "line": 2674
+        "line": 2667
       },
       {
         "namespace": "/vault",
         "event": "vault:noteChanged",
         "source": "index.ts",
-        "line": 2692
+        "line": 2685
       },
       {
         "namespace": "/vault",
         "event": "vault:noteChanged",
         "source": "index.ts",
-        "line": 2719
+        "line": 2712
       },
       {
         "namespace": "/vault",
         "event": "vault:noteChanged",
         "source": "index.ts",
-        "line": 2971
+        "line": 2964
       },
       {
         "namespace": "/vault",
         "event": "vault:noteCreated",
         "source": "index.ts",
-        "line": 3021
+        "line": 3014
       },
       {
         "namespace": "/vault",
         "event": "vault:vaultAgentUpserted",
         "source": "index.ts",
-        "line": 3058
+        "line": 3051
       },
       {
         "namespace": "/vault",
         "event": "vault:vaultAgentRemoved",
         "source": "index.ts",
-        "line": 3079
+        "line": 3072
       },
       {
         "namespace": "/vault",
         "event": "vault:vaultAgentDeleted",
         "source": "index.ts",
-        "line": 3090
+        "line": 3083
       },
       {
         "namespace": "/vault",
         "event": "vault:chatAgentMemberUpserted",
         "source": "index.ts",
-        "line": 3110
+        "line": 3103
       },
       {
         "namespace": "/vault",
         "event": "vault:chatMessageUpdated",
         "source": "index.ts",
-        "line": 3559
+        "line": 3556
       },
       {
         "namespace": "/vault",
         "event": "vault:chatMessageUpdated",
         "source": "index.ts",
-        "line": 3568
+        "line": 3565
       },
       {
         "namespace": "/vault",
         "event": "vault:chatMessageUpdated",
         "source": "index.ts",
-        "line": 3720
+        "line": 3709
       },
       {
         "namespace": "/vault",
         "event": "vault:chatMessageCreated",
         "source": "index.ts",
-        "line": 3884
+        "line": 3873
       },
       {
         "namespace": "/vault",
         "event": "vault:chatMessageCreated",
         "source": "index.ts",
-        "line": 3924
+        "line": 3913
       },
       {
         "namespace": "/vault",
         "event": "vault:chatMessageUpdated",
         "source": "index.ts",
-        "line": 4141
+        "line": 4130
       },
       {
         "namespace": "/vault",
         "event": "vault:chatMessageCreated",
+        "source": "index.ts",
+        "line": 4196
+      },
+      {
+        "namespace": "/vault",
+        "event": "vault:chatMessageUpdated",
         "source": "index.ts",
         "line": 4207
       },
@@ -2048,85 +2064,79 @@
         "namespace": "/vault",
         "event": "vault:chatMessageUpdated",
         "source": "index.ts",
-        "line": 4229
-      },
-      {
-        "namespace": "/vault",
-        "event": "vault:chatMessageUpdated",
-        "source": "index.ts",
-        "line": 4242
+        "line": 4231
       },
       {
         "namespace": "/vault",
         "event": "vault:chatMessageCreated",
         "source": "index.ts",
-        "line": 4336
+        "line": 4325
       },
       {
         "namespace": "/vault",
         "event": "vault:chatMessageCreated",
         "source": "index.ts",
-        "line": 4342
+        "line": 4331
       },
       {
         "namespace": "/vault",
         "event": "vault:chatMessageUpdated",
         "source": "index.ts",
-        "line": 4356
+        "line": 4345
       },
       {
         "namespace": "/vault",
         "event": "vault:chatChannelSettings",
         "source": "index.ts",
-        "line": 4416
+        "line": 4405
       },
       {
         "namespace": "/vault",
         "event": "vault:noteDeleted",
         "source": "index.ts",
-        "line": 4460
+        "line": 4449
       },
       {
         "namespace": "/vault",
         "event": "vault:noteDeleted",
         "source": "index.ts",
-        "line": 4484
+        "line": 4473
       },
       {
         "namespace": "/vault",
         "event": "vault:chatAgentMemberUpserted",
         "source": "index.ts",
-        "line": 4496
+        "line": 4485
       },
       {
         "namespace": "/vault",
         "event": "vault:chatAgentMemberUpserted",
         "source": "index.ts",
-        "line": 4511
+        "line": 4500
       },
       {
         "namespace": "/vault",
         "event": "vault:chatAgentMemberRemoved",
         "source": "index.ts",
-        "line": 4523
+        "line": 4512
       },
       {
         "namespace": "/vault",
         "event": "vault:noteCreated",
         "source": "index.ts",
-        "line": 4588
+        "line": 4577
       },
       {
         "namespace": "/vault",
         "event": "vault:chatMessageCreated",
         "source": "index.ts",
-        "line": 4631
+        "line": 4620
       },
       {
         "namespace": "/vault",
         "event": "vault:noteCreated",
         "source": "index.ts",
-        "line": 4722
+        "line": 4711
       },
       {
         "namespace": "/runners",
@@ -2164,7 +2174,7 @@
         "ifNotExists": true,
         "sql": "CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY AUTOINCREMENT,username TEXT NOT NULL UNIQUE,password_hash TEXT NOT NULL,display_name TEXT NOT NULL DEFAULT '',avatar_url TEXT NOT NULL DEFAULT '',auth_version INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL DEFAULT(datetime('now')));",
         "source": "index.ts",
-        "line": 408
+        "line": 409
       },
       {
         "kind": "table",
@@ -2174,7 +2184,7 @@
         "ifNotExists": true,
         "sql": "CREATE TABLE IF NOT EXISTS registration_invites_used(token_hash TEXT PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id)ON DELETE CASCADE,used_at TEXT NOT NULL DEFAULT(datetime('now')));",
         "source": "index.ts",
-        "line": 418
+        "line": 419
       },
       {
         "kind": "table",
@@ -2184,7 +2194,7 @@
         "ifNotExists": true,
         "sql": "CREATE TABLE IF NOT EXISTS vaults(id TEXT PRIMARY KEY,name TEXT NOT NULL,root_path TEXT NOT NULL,created_by INTEGER NOT NULL REFERENCES users(id),created_at TEXT NOT NULL DEFAULT(datetime('now')));",
         "source": "index.ts",
-        "line": 424
+        "line": 425
       },
       {
         "kind": "table",
@@ -2194,7 +2204,7 @@
         "ifNotExists": true,
         "sql": "CREATE TABLE IF NOT EXISTS folders(id TEXT PRIMARY KEY,vault_id TEXT NOT NULL REFERENCES vaults(id)ON DELETE CASCADE,parent_id TEXT REFERENCES folders(id)ON DELETE CASCADE,name TEXT NOT NULL,position INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL DEFAULT(datetime('now')));",
         "source": "index.ts",
-        "line": 432
+        "line": 433
       },
       {
         "kind": "table",
@@ -2204,7 +2214,7 @@
         "ifNotExists": true,
         "sql": "CREATE TABLE IF NOT EXISTS notes(id TEXT PRIMARY KEY,vault_id TEXT NOT NULL REFERENCES vaults(id)ON DELETE CASCADE,folder_id TEXT REFERENCES folders(id)ON DELETE SET NULL,title TEXT NOT NULL,content TEXT NOT NULL DEFAULT '',content_preview TEXT NOT NULL DEFAULT '',is_pinned INTEGER NOT NULL DEFAULT 0,is_archived INTEGER NOT NULL DEFAULT 0,is_listed INTEGER NOT NULL DEFAULT 1,position INTEGER NOT NULL DEFAULT 0,word_count INTEGER NOT NULL DEFAULT 0,created_by INTEGER NOT NULL REFERENCES users(id),created_at TEXT NOT NULL DEFAULT(datetime('now')),updated_at TEXT NOT NULL DEFAULT(datetime('now')));",
         "source": "index.ts",
-        "line": 441
+        "line": 442
       },
       {
         "kind": "table",
@@ -2214,7 +2224,7 @@
         "ifNotExists": true,
         "sql": "CREATE TABLE IF NOT EXISTS tags(id TEXT PRIMARY KEY,vault_id TEXT NOT NULL REFERENCES vaults(id)ON DELETE CASCADE,name TEXT NOT NULL,color TEXT,UNIQUE(vault_id,name));",
         "source": "index.ts",
-        "line": 458
+        "line": 459
       },
       {
         "kind": "table",
@@ -2224,7 +2234,7 @@
         "ifNotExists": true,
         "sql": "CREATE TABLE IF NOT EXISTS note_tags(note_id TEXT NOT NULL REFERENCES notes(id)ON DELETE CASCADE,tag_id TEXT NOT NULL REFERENCES tags(id)ON DELETE CASCADE,PRIMARY KEY(note_id,tag_id));",
         "source": "index.ts",
-        "line": 466
+        "line": 467
       },
       {
         "kind": "table",
@@ -2234,7 +2244,7 @@
         "ifNotExists": true,
         "sql": "CREATE TABLE IF NOT EXISTS note_links(source_id TEXT NOT NULL REFERENCES notes(id)ON DELETE CASCADE,target_id TEXT,target_title TEXT NOT NULL,context TEXT,PRIMARY KEY(source_id,target_title));",
         "source": "index.ts",
-        "line": 472
+        "line": 473
       },
       {
         "kind": "table",
@@ -2244,7 +2254,7 @@
         "ifNotExists": true,
         "sql": "CREATE TABLE IF NOT EXISTS note_versions(id TEXT PRIMARY KEY,note_id TEXT NOT NULL REFERENCES notes(id)ON DELETE CASCADE,content TEXT NOT NULL,label TEXT,created_at TEXT NOT NULL DEFAULT(datetime('now')));",
         "source": "index.ts",
-        "line": 480
+        "line": 481
       },
       {
         "kind": "table",
@@ -2254,7 +2264,7 @@
         "ifNotExists": true,
         "sql": "CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(title,content,content='notes',content_rowid='rowid');",
         "source": "index.ts",
-        "line": 530
+        "line": 531
       },
       {
         "kind": "trigger",
@@ -2264,7 +2274,7 @@
         "ifNotExists": true,
         "sql": "CREATE TRIGGER IF NOT EXISTS notes_ai AFTER INSERT ON notes BEGIN INSERT INTO notes_fts(rowid,title,content)VALUES(NEW.rowid,NEW.title,NEW.content);END;",
         "source": "index.ts",
-        "line": 534
+        "line": 535
       },
       {
         "kind": "trigger",
@@ -2274,7 +2284,7 @@
         "ifNotExists": true,
         "sql": "CREATE TRIGGER IF NOT EXISTS notes_ad AFTER DELETE ON notes BEGIN INSERT INTO notes_fts(notes_fts,rowid,title,content)VALUES('delete',OLD.rowid,OLD.title,OLD.content);END;",
         "source": "index.ts",
-        "line": 537
+        "line": 538
       },
       {
         "kind": "trigger",
@@ -2284,7 +2294,7 @@
         "ifNotExists": true,
         "sql": "CREATE TRIGGER IF NOT EXISTS notes_au AFTER UPDATE ON notes BEGIN INSERT INTO notes_fts(notes_fts,rowid,title,content)VALUES('delete',OLD.rowid,OLD.title,OLD.content);INSERT INTO notes_fts(rowid,title,content)VALUES(NEW.rowid,NEW.title,NEW.content);END;",
         "source": "index.ts",
-        "line": 540
+        "line": 541
       },
       {
         "kind": "table",
@@ -2294,7 +2304,7 @@
         "ifNotExists": true,
         "sql": "CREATE TABLE IF NOT EXISTS chat_note_grants(message_id TEXT NOT NULL REFERENCES chat_messages(id)ON DELETE CASCADE,channel_id TEXT NOT NULL REFERENCES notes(id)ON DELETE CASCADE,note_id TEXT NOT NULL REFERENCES notes(id)ON DELETE CASCADE,granted_by INTEGER NOT NULL REFERENCES users(id),created_at TEXT NOT NULL DEFAULT(datetime('now')),PRIMARY KEY(message_id,note_id));",
         "source": "index.ts",
-        "line": 583
+        "line": 584
       },
       {
         "kind": "index",
@@ -2304,7 +2314,7 @@
         "ifNotExists": true,
         "sql": "CREATE INDEX IF NOT EXISTS chat_note_grants_channel_idx ON chat_note_grants(channel_id,message_id);",
         "source": "index.ts",
-        "line": 591
+        "line": 592
       },
       {
         "kind": "table",
@@ -3012,7 +3022,7 @@
         "unique": false,
         "virtual": false,
         "ifNotExists": true,
-        "sql": "CREATE TABLE IF NOT EXISTS runs(id INTEGER PRIMARY KEY AUTOINCREMENT,vault_id TEXT NOT NULL REFERENCES vaults(id)ON DELETE CASCADE,note_id TEXT REFERENCES notes(id)ON DELETE SET NULL,prompt TEXT NOT NULL,agent TEXT NOT NULL DEFAULT 'claude-code',session_id TEXT,conversation_id TEXT NOT NULL DEFAULT '',status TEXT NOT NULL DEFAULT 'queued',started_at TEXT NOT NULL DEFAULT(datetime('now')),finished_at TEXT,summary TEXT,model TEXT,chat_dispatch_id TEXT);",
+        "sql": "CREATE TABLE IF NOT EXISTS runs(id INTEGER PRIMARY KEY AUTOINCREMENT,vault_id TEXT NOT NULL REFERENCES vaults(id)ON DELETE CASCADE,owner_user_id INTEGER REFERENCES users(id),note_id TEXT REFERENCES notes(id)ON DELETE SET NULL,prompt TEXT NOT NULL,agent TEXT NOT NULL DEFAULT 'claude-code',session_id TEXT,conversation_id TEXT NOT NULL DEFAULT '',status TEXT NOT NULL DEFAULT 'queued',started_at TEXT NOT NULL DEFAULT(datetime('now')),finished_at TEXT,summary TEXT,model TEXT,chat_dispatch_id TEXT);",
         "source": "server/runner.ts",
         "line": 99
       },
@@ -3024,7 +3034,7 @@
         "ifNotExists": true,
         "sql": "CREATE TABLE IF NOT EXISTS run_events(id INTEGER PRIMARY KEY AUTOINCREMENT,run_id INTEGER NOT NULL REFERENCES runs(id)ON DELETE CASCADE,seq INTEGER NOT NULL,type TEXT NOT NULL,payload_json TEXT NOT NULL,ts TEXT NOT NULL DEFAULT(datetime('now')),UNIQUE(run_id,seq));",
         "source": "server/runner.ts",
-        "line": 115
+        "line": 116
       },
       {
         "kind": "table",
@@ -3034,7 +3044,7 @@
         "ifNotExists": true,
         "sql": "CREATE TABLE IF NOT EXISTS delegated_runs(run_id INTEGER PRIMARY KEY REFERENCES runs(id)ON DELETE CASCADE,owner_user_id INTEGER NOT NULL,started_at TEXT NOT NULL DEFAULT(datetime('now')));",
         "source": "server/runner.ts",
-        "line": 126
+        "line": 127
       },
       {
         "kind": "index",
@@ -3044,7 +3054,7 @@
         "ifNotExists": true,
         "sql": "CREATE INDEX IF NOT EXISTS delegated_runs_owner_idx ON delegated_runs(owner_user_id);",
         "source": "server/runner.ts",
-        "line": 131
+        "line": 132
       },
       {
         "kind": "index",
@@ -3052,9 +3062,19 @@
         "unique": true,
         "virtual": false,
         "ifNotExists": true,
-        "sql": "CREATE UNIQUE INDEX IF NOT EXISTS runs_chat_dispatch_idx ON runs(chat_dispatch_id)WHERE chat_dispatch_id IS NOT NULL",
+        "sql": "CREATE UNIQUE INDEX IF NOT EXISTS runs_chat_dispatch_idx ON runs(chat_dispatch_id)WHERE chat_dispatch_id IS NOT NULL;",
         "source": "server/runner.ts",
-        "line": 152
+        "line": 167
+      },
+      {
+        "kind": "index",
+        "name": "runs_owner_active_idx",
+        "unique": false,
+        "virtual": false,
+        "ifNotExists": true,
+        "sql": "CREATE INDEX IF NOT EXISTS runs_owner_active_idx ON runs(owner_user_id,status,started_at DESC,id DESC)",
+        "source": "server/runner.ts",
+        "line": 169
       },
       {
         "kind": "table",

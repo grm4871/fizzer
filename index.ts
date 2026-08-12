@@ -143,6 +143,7 @@ import {
   listRuns,
   listActiveSessions,
   getRun,
+  getOwnedRun,
   listRunEvents,
   startRun,
   cancelRun,
@@ -988,16 +989,8 @@ runsNamespace.on('connection', (socket) => {
     const user = socket.data.user as { id: number };
     const id = Number(runId);
     if (!Number.isFinite(id)) return;
-    const run = getRun(db, id);
-    if (!run) return;
-    const chat = db.prepare('SELECT channel_id FROM chat_messages WHERE run_id = ? LIMIT 1').get(id) as { channel_id: string } | undefined;
-    try {
-      if (chat) assertChatChannel(db, chat.channel_id, user.id);
-      else if (!getVault(db, run.vault_id, user.id)) return;
-      await socket.join(`run:${id}`);
-    } catch {
-      // Unauthorized users never join this run room.
-    }
+    if (!getOwnedRun(db, id, user.id)) return;
+    await socket.join(`run:${id}`);
   });
   socket.on('leaveRun', (runId: number) => {
     socket.leave(`run:${runId}`);
@@ -3202,13 +3195,17 @@ app.get('/api/vaults/:id/graph', requireAuth, (req: AuthedRequest, res) => {
 app.get('/api/vaults/:id/runs', requireAuth, (req: AuthedRequest, res) => {
   const vault = getVault(db, req.params.id, req.user!.id);
   if (!vault) return res.status(404).json({ error: 'Vault not found' });
-  res.json({ runs: listRuns(db, vault.id) });
+  res.json({ runs: listRuns(db, vault.id, req.user!.id) });
 });
 
 app.get('/api/vaults/:id/active-sessions', requireAuth, (req: AuthedRequest, res) => {
   const vault = getVault(db, req.params.id, req.user!.id);
   if (!vault) return res.status(404).json({ error: 'Vault not found' });
-  res.json({ sessions: listActiveSessions(db, vault.id) });
+  res.json({ sessions: listActiveSessions(db, req.user!.id, vault.id) });
+});
+
+app.get('/api/me/active-sessions', requireAuth, (req: AuthedRequest, res) => {
+  res.json({ sessions: listActiveSessions(db, req.user!.id) });
 });
 
 app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) => {
@@ -3580,6 +3577,7 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     }
     try {
       run = await startRun(db, runVault, note_id || null, effectivePrompt, selectedAgent, {
+        ownerUserId: runnerUserId,
         conversationId: preliminaryConversationId,
         model: selectedModel,
         sessionId: resumeSessionId,
@@ -3677,21 +3675,15 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
 });
 
 app.get('/api/runs/:id', requireAuth, (req: AuthedRequest, res) => {
-  const run = getRun(db, Number(req.params.id));
+  const run = getOwnedRun(db, Number(req.params.id), req.user!.id);
   if (!run) return res.status(404).json({ error: 'Run not found' });
-
-  const vault = getVault(db, run.vault_id, req.user!.id);
-  if (!vault) return res.status(403).json({ error: 'Access denied' });
 
   res.json({ run });
 });
 
 app.get('/api/runs/:id/events', requireAuth, (req: AuthedRequest, res) => {
-  const run = getRun(db, Number(req.params.id));
+  const run = getOwnedRun(db, Number(req.params.id), req.user!.id);
   if (!run) return res.status(404).json({ error: 'Run not found' });
-
-  const vault = getVault(db, run.vault_id, req.user!.id);
-  if (!vault) return res.status(403).json({ error: 'Access denied' });
 
   res.json({ events: listRunEvents(db, run.id) });
 });
@@ -3702,11 +3694,8 @@ app.get('/api/me/desktop-runner', requireAuth, (req: AuthedRequest, res) => {
 });
 
 app.post('/api/runs/:id/cancel', requireAuth, async (req: AuthedRequest, res) => {
-  const run = getRun(db, Number(req.params.id));
+  const run = getOwnedRun(db, Number(req.params.id), req.user!.id);
   if (!run) return res.status(404).json({ error: 'Run not found' });
-
-  const vault = getWritableVault(db, run.vault_id, req.user!.id);
-  if (!vault) return res.status(403).json({ error: 'Access denied' });
 
   try {
     // An explicit operator stop must settle server state even if the desktop

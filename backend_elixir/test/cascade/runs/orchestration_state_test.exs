@@ -348,6 +348,109 @@ defmodule Cascade.Runs.OrchestrationStateTest do
     assert Store.get(run.id).status == "queued"
   end
 
+  test "session viewer and trace access are owner-only across vaults", context do
+    suffix = System.unique_integer([:positive])
+    second_vault = "session-home-#{suffix}"
+    other_username = "session-other-#{suffix}"
+
+    SQL.exec(
+      "INSERT INTO users (username,password_hash,display_name,avatar_url) VALUES (?,?,?,?)",
+      [other_username, "x", other_username, ""]
+    )
+
+    other_id = SQL.last_insert_id()
+
+    SQL.exec("INSERT INTO vaults (id,name,root_path,created_by) VALUES (?,?,?,?)", [
+      second_vault,
+      "Home",
+      "/tmp/#{second_vault}",
+      context.user_id
+    ])
+
+    SQL.exec(
+      "INSERT INTO vault_members (vault_id,user_id,role,invited_by) VALUES (?,?,?,?)",
+      [second_vault, context.user_id, "owner", context.user_id]
+    )
+
+    SQL.exec(
+      "INSERT INTO vault_members (vault_id,user_id,role,invited_by) VALUES (?,?,?,?)",
+      [context.vault_id, other_id, "editor", context.user_id]
+    )
+
+    on_exit(fn ->
+      SQL.exec("DELETE FROM runs WHERE owner_user_id=?", [other_id])
+      SQL.exec("DELETE FROM vaults WHERE id=?", [second_vault])
+      SQL.exec("DELETE FROM users WHERE id=?", [other_id])
+    end)
+
+    assert {:ok, work} =
+             Store.start(context.vault_id, nil, "my work run", "codex",
+               owner_user_id: context.user_id
+             )
+
+    assert {:ok, home} =
+             Store.start(second_vault, nil, "my home run", "codex",
+               owner_user_id: context.user_id
+             )
+
+    assert {:ok, foreign} =
+             Store.start(context.vault_id, nil, "other person's run", "codex",
+               owner_user_id: other_id
+             )
+
+    assert Enum.map(Store.active_sessions(context.user_id), & &1.id) == [home.id, work.id]
+
+    assert Enum.map(Store.active_sessions(context.user_id), & &1.vault_name) == [
+             "Home",
+             "Orchestration"
+           ]
+
+    assert Store.owned?(work.id, context.user_id)
+    refute Store.owned?(foreign.id, context.user_id)
+
+    assert {:ok, [{:join, room}]} =
+             Cascade.Realtime.DomainAdapter.handle_event(
+               "/runs",
+               "joinRun",
+               [work.id],
+               %{id: context.user_id},
+               %{}
+             )
+
+    assert room == "run:#{work.id}"
+
+    assert {:error, "Run not found"} =
+             Cascade.Realtime.DomainAdapter.handle_event(
+               "/runs",
+               "joinRun",
+               [foreign.id],
+               %{id: context.user_id},
+               %{}
+             )
+
+    token =
+      Token.sign_user(%{id: context.user_id, username: context.username, auth_version: 0})
+
+    sessions =
+      conn(:get, "/api/me/active-sessions")
+      |> put_req_header("authorization", "Bearer #{token}")
+      |> CascadeWeb.Router.call(CascadeWeb.Router.init([]))
+
+    assert sessions.status == 200
+
+    assert Enum.map(Jason.decode!(sessions.resp_body)["sessions"], & &1["id"]) == [
+             home.id,
+             work.id
+           ]
+
+    denied =
+      conn(:get, "/api/runs/#{foreign.id}/events")
+      |> put_req_header("authorization", "Bearer #{token}")
+      |> CascadeWeb.Router.call(CascadeWeb.Router.init([]))
+
+    assert denied.status == 404
+  end
+
   test "catalog dispatch accepts a body already parsed by the main router", context do
     token =
       Token.sign_user(%{

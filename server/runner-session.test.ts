@@ -9,8 +9,12 @@ import {
   ensureRunnerSchema,
   findConversationSession,
   finishDelegatedRun,
+  getOwnedRun,
   getRun,
+  listActiveSessions,
+  listRuns,
   listRunEvents,
+  recordDelegatedRun,
 } from './runner.js';
 
 function insertRun(
@@ -31,7 +35,8 @@ function insertRun(
 function createDb(): Database.Database {
   const db = new Database(':memory:');
   db.exec(`
-    CREATE TABLE vaults (id TEXT PRIMARY KEY);
+    CREATE TABLE users (id INTEGER PRIMARY KEY);
+    CREATE TABLE vaults (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT 'Vault');
     CREATE TABLE notes (id TEXT PRIMARY KEY);
     INSERT INTO vaults (id) VALUES ('vault');
   `);
@@ -56,6 +61,49 @@ test('chat sessions remain continuous by default', () => {
       boundedChat: true,
       nowMs: Date.parse('2026-08-07T12:30:00Z'),
     }), 'session-long');
+  } finally {
+    db.close();
+  }
+});
+
+test('session ownership spans the owner vaults and excludes every other user', () => {
+  const db = new Database(':memory:');
+  try {
+    db.exec(`
+      CREATE TABLE users (id INTEGER PRIMARY KEY);
+      INSERT INTO users (id) VALUES (1), (2);
+      CREATE TABLE vaults (id TEXT PRIMARY KEY, name TEXT NOT NULL);
+      INSERT INTO vaults (id, name) VALUES ('work', 'Work'), ('home', 'Home');
+      CREATE TABLE notes (id TEXT PRIMARY KEY, title TEXT);
+      CREATE TABLE chat_messages (
+        id TEXT PRIMARY KEY,
+        channel_id TEXT,
+        run_id INTEGER,
+        author TEXT,
+        registration_id TEXT,
+        created_at TEXT
+      );
+      CREATE TABLE chat_agent_members (id TEXT PRIMARY KEY, mention TEXT);
+    `);
+    ensureRunnerSchema(db);
+    db.exec(`
+      INSERT INTO runs (id, vault_id, owner_user_id, prompt, agent, status)
+      VALUES
+        (1, 'work', 1, 'alice work', 'codex', 'running'),
+        (2, 'home', 1, 'alice home', 'codex', 'queued'),
+        (3, 'work', 2, 'bob work', 'codex', 'running'),
+        (4, 'home', NULL, 'legacy open', 'codex', 'running');
+    `);
+
+    recordDelegatedRun(db, 4, 1);
+
+    assert.deepEqual(listActiveSessions(db, 1).map((run) => run.id), [4, 2, 1]);
+    assert.deepEqual(listActiveSessions(db, 1).map((run) => run.vault_name), ['Home', 'Home', 'Work']);
+    assert.deepEqual(listActiveSessions(db, 1, 'work').map((run) => run.id), [1]);
+    assert.deepEqual(listRuns(db, 'work', 1).map((run) => run.id), [1]);
+    assert.equal(getOwnedRun(db, 1, 1)?.prompt, 'alice work');
+    assert.equal(getOwnedRun(db, 3, 1), undefined);
+    assert.equal(getOwnedRun(db, 4, 1)?.prompt, 'legacy open');
   } finally {
     db.close();
   }

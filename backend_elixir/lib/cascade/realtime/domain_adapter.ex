@@ -2,7 +2,7 @@ defmodule Cascade.Realtime.DomainAdapter do
   @moduledoc "Native run, runner, vault-room, and workspace Socket.IO domain adapter."
   @behaviour Cascade.Realtime.Domain
 
-  alias Cascade.Accounts.{SQL, VaultMembers}
+  alias Cascade.Accounts.VaultMembers
   alias Cascade.Chat.Channel
   alias Cascade.Realtime.Events
   alias Cascade.Runs.{RunnerLifecycle, Store}
@@ -164,31 +164,7 @@ defmodule Cascade.Realtime.DomainAdapter do
   defp maybe_account_work_item(_run_id, _status), do: :ok
 
   defp run_access?(run_id, user_id) do
-    SQL.one(
-      """
-      SELECT 1 FROM runs r
-      WHERE r.id=? AND (
-        EXISTS (SELECT 1 FROM vault_members vm WHERE vm.vault_id=r.vault_id AND vm.user_id=?)
-        OR EXISTS (
-          SELECT 1 FROM chat_messages cm
-          JOIN notes source ON source.id=cm.channel_id
-          LEFT JOIN chat_channel_links link ON link.source_channel_id=source.id
-          LEFT JOIN vault_members local_member
-            ON local_member.vault_id=link.local_vault_id AND local_member.user_id=?
-          WHERE cm.run_id=r.id AND (source.vault_id IN (
-            SELECT vault_id FROM vault_members WHERE user_id=?
-          ) OR local_member.user_id IS NOT NULL)
-        )
-      ) LIMIT 1
-      """,
-      [run_id, user_id, user_id, user_id]
-    ) != nil
-  rescue
-    _ ->
-      case Store.get(run_id) do
-        nil -> false
-        run -> not is_nil(VaultMembers.accessible_vault(run.vault_id, user_id))
-      end
+    Store.owned?(run_id, user_id)
   end
 
   defp positive_integer(value) when is_integer(value) and value > 0, do: {:ok, value}

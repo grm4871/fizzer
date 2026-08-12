@@ -15,6 +15,7 @@ defmodule Cascade.Runs.Schema do
     CREATE TABLE IF NOT EXISTS runs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
+      owner_user_id INTEGER REFERENCES users(id),
       note_id TEXT REFERENCES notes(id) ON DELETE SET NULL,
       prompt TEXT NOT NULL,
       agent TEXT NOT NULL DEFAULT 'claude-code',
@@ -49,10 +50,20 @@ defmodule Cascade.Runs.Schema do
     SQL.ensure_column("runs", "conversation_id", "TEXT NOT NULL DEFAULT ''")
     SQL.ensure_column("runs", "model", "TEXT")
     SQL.ensure_column("runs", "chat_dispatch_id", "TEXT")
+    SQL.ensure_column("runs", "owner_user_id", "INTEGER REFERENCES users(id)")
+
+    SQL.exec("""
+    UPDATE runs
+    SET owner_user_id=(SELECT d.owner_user_id FROM delegated_runs d WHERE d.run_id=runs.id)
+    WHERE owner_user_id IS NULL
+      AND EXISTS (SELECT 1 FROM delegated_runs d WHERE d.run_id=runs.id)
+    """)
 
     exec_batch("""
     CREATE UNIQUE INDEX IF NOT EXISTS runs_chat_dispatch_idx
-    ON runs(chat_dispatch_id) WHERE chat_dispatch_id IS NOT NULL
+    ON runs(chat_dispatch_id) WHERE chat_dispatch_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS runs_owner_active_idx
+    ON runs(owner_user_id,status,started_at DESC,id DESC)
     """)
   end
 

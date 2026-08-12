@@ -14,19 +14,25 @@ defmodule Cascade.Runs.Store do
   def terminal?(status), do: status in @terminal
   def valid_agent?(agent), do: agent in @agents
 
-  def list(vault_id) do
-    SQL.all("SELECT #{@run_select} FROM runs WHERE vault_id=? ORDER BY started_at DESC,id DESC", [
-      vault_id
-    ])
+  def list(vault_id, owner_id) do
+    SQL.all(
+      "SELECT #{@run_select} FROM runs WHERE vault_id=? AND owner_user_id=? ORDER BY started_at DESC,id DESC",
+      [vault_id, owner_id]
+    )
     |> Enum.map(&run/1)
   end
 
-  def active_sessions(vault_id) do
+  def active_sessions(owner_id, vault_id \\ nil) do
+    {vault_filter, params} =
+      if is_binary(vault_id) and vault_id != "",
+        do: {" AND r.vault_id=?", [owner_id, vault_id]},
+        else: {"", [owner_id]}
+
     if SQL.table_exists?("chat_messages") and SQL.table_exists?("chat_agent_members") do
       SQL.all(
         """
         SELECT #{@run_select |> String.split(",") |> Enum.map_join(",", &("r." <> String.trim(&1)))},
-          cm.id, cm.channel_id, channel.title, cm.author,
+          vault.name, cm.id, cm.channel_id, channel.title, cm.author,
           cm.registration_id, member.mention
         FROM runs r
         LEFT JOIN chat_messages cm ON cm.id=(
@@ -35,18 +41,20 @@ defmodule Cascade.Runs.Store do
         )
         LEFT JOIN notes channel ON channel.id=cm.channel_id
         LEFT JOIN chat_agent_members member ON member.id=cm.registration_id
-        WHERE r.vault_id=? AND r.status IN ('queued','running')
+        JOIN vaults vault ON vault.id=r.vault_id
+        WHERE r.owner_user_id=?#{vault_filter} AND r.status IN ('queued','running')
         ORDER BY r.started_at DESC,r.id DESC
         """,
-        [vault_id]
+        params
       )
       |> Enum.map(fn row ->
-        {base, [message_id, channel_id, title, author, registration_id, mention]} =
+        {base, [vault_name, message_id, channel_id, title, author, registration_id, mention]} =
           Enum.split(row, 13)
 
         base
         |> run()
         |> Map.merge(%{
+          vault_name: vault_name,
           message_id: message_id,
           channel_id: channel_id,
           channel_title: title,
@@ -57,12 +65,16 @@ defmodule Cascade.Runs.Store do
       end)
     else
       SQL.all(
-        "SELECT #{@run_select} FROM runs WHERE vault_id=? AND status IN ('queued','running') ORDER BY started_at DESC,id DESC",
-        [vault_id]
+        "SELECT #{@run_select |> String.split(",") |> Enum.map_join(",", &("r." <> String.trim(&1)))},(SELECT name FROM vaults WHERE id=r.vault_id) FROM runs r WHERE r.owner_user_id=?#{vault_filter} AND r.status IN ('queued','running') ORDER BY r.started_at DESC,r.id DESC",
+        params
       )
-      |> Enum.map(&run/1)
-      |> Enum.map(
-        &Map.merge(&1, %{
+      |> Enum.map(fn row ->
+        {base, [vault_name]} = Enum.split(row, 13)
+
+        base
+        |> run()
+        |> Map.merge(%{
+          vault_name: vault_name,
           message_id: nil,
           channel_id: nil,
           channel_title: nil,
@@ -70,7 +82,7 @@ defmodule Cascade.Runs.Store do
           registration_id: nil,
           mention: nil
         })
-      )
+      end)
     end
   end
 
@@ -80,6 +92,12 @@ defmodule Cascade.Runs.Store do
       row -> run(row)
     end
   end
+
+  def owned?(run_id, owner_id) when is_integer(run_id) and is_integer(owner_id) do
+    not is_nil(SQL.one("SELECT 1 FROM runs WHERE id=? AND owner_user_id=?", [run_id, owner_id]))
+  end
+
+  def owned?(_run_id, _owner_id), do: false
 
   def events(run_id, after_seq \\ 0) do
     SQL.all(
@@ -100,6 +118,7 @@ defmodule Cascade.Runs.Store do
   end
 
   defp insert_run(vault_id, note_id, prompt, agent, opts) do
+    owner_id = Keyword.get(opts, :owner_user_id)
     conversation_id = clean(Keyword.get(opts, :conversation_id), 200)
     conversation_id = if conversation_id == "", do: Ecto.UUID.generate(), else: conversation_id
     session_id = nil_if_blank(Keyword.get(opts, :session_id))
@@ -113,10 +132,20 @@ defmodule Cascade.Runs.Store do
             SQL.exec(
               """
               INSERT INTO runs
-                (vault_id,note_id,prompt,agent,conversation_id,status,model,session_id,chat_dispatch_id)
-              VALUES (?,?,?,?,?,'queued',?,?,?)
+                (vault_id,owner_user_id,note_id,prompt,agent,conversation_id,status,model,session_id,chat_dispatch_id)
+              VALUES (?,?,?,?,?,?,'queued',?,?,?)
               """,
-              [vault_id, note_id, prompt, agent, conversation_id, model, session_id, dispatch]
+              [
+                vault_id,
+                owner_id,
+                note_id,
+                prompt,
+                agent,
+                conversation_id,
+                model,
+                session_id,
+                dispatch
+              ]
             )
 
             id = SQL.last_insert_id()
@@ -156,6 +185,8 @@ defmodule Cascade.Runs.Store do
   end
 
   def record_delegated(run_id, owner_id) do
+    SQL.exec("UPDATE runs SET owner_user_id=? WHERE id=?", [owner_id, run_id])
+
     SQL.exec(
       """
       INSERT INTO delegated_runs (run_id,owner_user_id,started_at)

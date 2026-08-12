@@ -99,6 +99,7 @@ export function ensureRunnerSchema(db: Db) {
     CREATE TABLE IF NOT EXISTS runs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
+      owner_user_id INTEGER REFERENCES users(id),
       note_id TEXT REFERENCES notes(id) ON DELETE SET NULL,
       prompt TEXT NOT NULL,
       agent TEXT NOT NULL DEFAULT 'claude-code',
@@ -148,19 +149,38 @@ export function ensureRunnerSchema(db: Db) {
   if (!runCols.some(col => col.name === 'chat_dispatch_id')) {
     db.exec("ALTER TABLE runs ADD COLUMN chat_dispatch_id TEXT");
   }
+  if (!runCols.some(col => col.name === 'owner_user_id')) {
+    db.exec('ALTER TABLE runs ADD COLUMN owner_user_id INTEGER REFERENCES users(id)');
+  }
+  // Open runs created before durable ownership was introduced still have the
+  // exact desktop owner in delegated_runs. Preserve that attribution before
+  // any terminal settlement removes the delegation row.
+  db.exec(`
+    UPDATE runs
+    SET owner_user_id = (
+      SELECT d.owner_user_id FROM delegated_runs d WHERE d.run_id = runs.id
+    )
+    WHERE owner_user_id IS NULL
+      AND EXISTS (SELECT 1 FROM delegated_runs d WHERE d.run_id = runs.id)
+  `);
   db.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS runs_chat_dispatch_idx
-      ON runs(chat_dispatch_id) WHERE chat_dispatch_id IS NOT NULL
+      ON runs(chat_dispatch_id) WHERE chat_dispatch_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS runs_owner_active_idx
+      ON runs(owner_user_id, status, started_at DESC, id DESC)
   `);
 }
 
 /** Record that a run is actively delegated to a user's desktop runner. */
 export function recordDelegatedRun(db: Db, runId: number, ownerUserId: number): void {
-  db.prepare(`
-    INSERT INTO delegated_runs (run_id, owner_user_id, started_at)
-    VALUES (?, ?, datetime('now'))
-    ON CONFLICT(run_id) DO UPDATE SET owner_user_id = excluded.owner_user_id
-  `).run(runId, ownerUserId);
+  db.transaction(() => {
+    db.prepare('UPDATE runs SET owner_user_id = ? WHERE id = ?').run(ownerUserId, runId);
+    db.prepare(`
+      INSERT INTO delegated_runs (run_id, owner_user_id, started_at)
+      VALUES (?, ?, datetime('now'))
+      ON CONFLICT(run_id) DO UPDATE SET owner_user_id = excluded.owner_user_id
+    `).run(runId, ownerUserId);
+  })();
 }
 
 export function clearDelegatedRunRecord(db: Db, runId: number): void {
@@ -211,11 +231,18 @@ export function setChatSyncSink(sink: ((runId: number, eventType: string) => voi
   chatSyncSink = sink;
 }
 
-export function listRuns(db: Db, vaultId: string) {
-  return db.prepare('SELECT * FROM runs WHERE vault_id = ? ORDER BY started_at DESC, id DESC').all(vaultId) as Run[];
+export function listRuns(db: Db, vaultId: string, ownerUserId: number) {
+  return db.prepare(`
+    SELECT id, vault_id, note_id, prompt, agent, session_id, conversation_id,
+      status, started_at, finished_at, summary, model, chat_dispatch_id
+    FROM runs
+    WHERE vault_id = ? AND owner_user_id = ?
+    ORDER BY started_at DESC, id DESC
+  `).all(vaultId, ownerUserId) as Run[];
 }
 
 export type ActiveSession = Run & {
+  vault_name: string;
   message_id: string | null;
   channel_id: string | null;
   channel_title: string | null;
@@ -224,9 +251,13 @@ export type ActiveSession = Run & {
   mention: string | null;
 };
 
-export function listActiveSessions(db: Db, vaultId: string): ActiveSession[] {
+/** Active runs owned by one user, optionally narrowed to one vault. */
+export function listActiveSessions(db: Db, ownerUserId: number, vaultId?: string): ActiveSession[] {
   return db.prepare(`
-    SELECT r.*,
+    SELECT r.id, r.vault_id, r.note_id, r.prompt, r.agent, r.session_id,
+      r.conversation_id, r.status, r.started_at, r.finished_at, r.summary,
+      r.model, r.chat_dispatch_id,
+      vault.name AS vault_name,
       cm.id AS message_id,
       cm.channel_id AS channel_id,
       channel.title AS channel_title,
@@ -243,13 +274,28 @@ export function listActiveSessions(db: Db, vaultId: string): ActiveSession[] {
     )
     LEFT JOIN notes channel ON channel.id = cm.channel_id
     LEFT JOIN chat_agent_members member ON member.id = cm.registration_id
-    WHERE r.vault_id = ? AND r.status IN ('queued', 'running')
+    JOIN vaults vault ON vault.id = r.vault_id
+    WHERE r.owner_user_id = ?
+      AND (? IS NULL OR r.vault_id = ?)
+      AND r.status IN ('queued', 'running')
     ORDER BY r.started_at DESC, r.id DESC
-  `).all(vaultId) as ActiveSession[];
+  `).all(ownerUserId, vaultId ?? null, vaultId ?? null) as ActiveSession[];
 }
 
 export function getRun(db: Db, id: number) {
-  return db.prepare('SELECT * FROM runs WHERE id = ?').get(id) as Run | undefined;
+  return db.prepare(`
+    SELECT id, vault_id, note_id, prompt, agent, session_id, conversation_id,
+      status, started_at, finished_at, summary, model, chat_dispatch_id
+    FROM runs WHERE id = ?
+  `).get(id) as Run | undefined;
+}
+
+/** Exact run ownership; shared-vault membership never grants trace access. */
+export function getOwnedRun(db: Db, id: number, ownerUserId: number): Run | undefined {
+  const owned = db.prepare(
+    'SELECT 1 AS ok FROM runs WHERE id = ? AND owner_user_id = ?',
+  ).get(id, ownerUserId) as { ok: number } | undefined;
+  return owned ? getRun(db, id) : undefined;
 }
 
 export function listRunEvents(db: Db, runId: number, afterSeq = 0) {
@@ -378,17 +424,25 @@ export async function startRun(
   vault: Vault,
   noteId: string | null,
   prompt: string,
-  agent: AgentId = 'claude-code',
-  opts: { conversationId?: string; model?: string; sessionId?: string; chatDispatchId?: string } = {},
+  agent: AgentId,
+  opts: {
+    ownerUserId: number;
+    conversationId?: string;
+    model?: string;
+    sessionId?: string;
+    chatDispatchId?: string;
+  },
 ) {
   const conversationId = opts.conversationId || crypto.randomUUID();
   const model = opts.model || null;
   const result = db.prepare(`
     INSERT INTO runs (
-      vault_id, note_id, prompt, agent, conversation_id, status, model, session_id, chat_dispatch_id
-    ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?)
+      vault_id, owner_user_id, note_id, prompt, agent, conversation_id, status,
+      model, session_id, chat_dispatch_id
+    ) VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)
   `).run(
     vault.id,
+    opts.ownerUserId,
     noteId,
     prompt,
     agent,
