@@ -29,7 +29,7 @@ defmodule Cascade.Realtime.NativeRunnerIntegrationTest do
     Cascade.Runs.Schema.ensure!()
 
     if is_nil(Process.whereis(RunnerLifecycle)) do
-      start_supervised!({RunnerLifecycle, disconnect_grace_ms: 40, orphan_reclaim_ms: 3_600_000})
+      start_supervised!({RunnerLifecycle, orphan_reclaim_ms: 3_600_000})
     end
 
     port = available_port()

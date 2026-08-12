@@ -11,6 +11,7 @@ import {
   finishDelegatedRun,
   getOwnedRun,
   getRun,
+  isUnreclaimableOpenRun,
   listActiveSessions,
   listRuns,
   listRunEvents,
@@ -195,6 +196,23 @@ test('automatic cancellation records its real reason and suppression intent', as
       steering: false,
       suppressChatBody: true,
     });
+  } finally {
+    db.close();
+  }
+});
+
+test('an offline transport does not make a durably owned run unreclaimable', () => {
+  const db = createDb();
+  try {
+    db.prepare('INSERT INTO users (id) VALUES (42)').run();
+    insertRun(db, 1, 'owned-session');
+    db.prepare("UPDATE runs SET status = 'running', finished_at = NULL WHERE id = 1").run();
+    recordDelegatedRun(db, 1, 42);
+    assert.equal(isUnreclaimableOpenRun(db, 1), false);
+
+    insertRun(db, 2, 'loose-session');
+    db.prepare("UPDATE runs SET status = 'running', finished_at = NULL WHERE id = 2").run();
+    assert.equal(isUnreclaimableOpenRun(db, 2), true);
   } finally {
     db.close();
   }

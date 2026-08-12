@@ -2,7 +2,7 @@ defmodule Cascade.Realtime.RunnerCallbacks do
   @moduledoc """
   Transport lifecycle callbacks for the durable runner coordinator.
 
-  The domain implementation owns the 20-second disconnect grace and 120-second orphan reclaim;
+  The domain implementation owns durable reclaim and restart reconciliation;
   this edge reports registrations, replacements, and disconnects without inventing run outcomes.
   """
 

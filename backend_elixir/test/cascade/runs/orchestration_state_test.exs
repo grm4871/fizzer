@@ -14,7 +14,7 @@ defmodule Cascade.Runs.OrchestrationStateTest do
     Cascade.Runs.Schema.ensure!()
 
     if is_nil(Process.whereis(RunnerLifecycle)) do
-      start_supervised!({RunnerLifecycle, disconnect_grace_ms: 40, orphan_reclaim_ms: 3_600_000})
+      start_supervised!({RunnerLifecycle, orphan_reclaim_ms: 3_600_000})
     end
 
     :ok
@@ -148,7 +148,7 @@ defmodule Cascade.Runs.OrchestrationStateTest do
     assert summary == "Desktop app restarted before this run completed."
   end
 
-  test "runner reconnect storms cancel stale disconnect timers without losing an active run",
+  test "runner reconnect storms preserve an active run",
        context do
     assert {:ok, run} = Store.start(context.vault_id, nil, "survive reconnect storm", "codex")
     :ok = Store.record_delegated(run.id, context.user_id)
@@ -178,31 +178,11 @@ defmodule Cascade.Runs.OrchestrationStateTest do
     Process.sleep(80)
     assert Store.get(run.id).status == "queued"
     state = :sys.get_state(RunnerLifecycle)
-    refute Map.has_key?(state.disconnect_timers, context.user_id)
     assert get_in(state, [:runners, context.user_id, :sid]) == final_sid
   end
 
-  test "an unreclaimed runner disconnect settles its durable run after the grace window",
-       context do
-    previous_state = :sys.get_state(RunnerLifecycle)
-
-    :sys.replace_state(
-      RunnerLifecycle,
-      &%{&1 | disconnect_grace: 40, disconnect_flush_coalesce: 10}
-    )
-
-    on_exit(fn ->
-      :sys.replace_state(
-        RunnerLifecycle,
-        &%{
-          &1
-          | disconnect_grace: previous_state.disconnect_grace,
-            disconnect_flush_coalesce: previous_state.disconnect_flush_coalesce
-        }
-      )
-    end)
-
-    assert {:ok, run} = Store.start(context.vault_id, nil, "fail after disconnect", "codex")
+  test "transport disconnect preserves a durable run for same-instance reclaim", context do
+    assert {:ok, run} = Store.start(context.vault_id, nil, "reclaim after disconnect", "codex")
     :ok = Store.record_delegated(run.id, context.user_id)
 
     assert {:ok, [run_id]} =
@@ -213,46 +193,28 @@ defmodule Cascade.Runs.OrchestrationStateTest do
 
     assert run_id == run.id
     RunnerLifecycle.disconnected(context.user_id, "gone", %{}, :transport_close)
+    Process.sleep(80)
 
-    assert %{status: "failed", summary: "Desktop agent runner disconnected."} =
-             eventually_status(run.id, "failed")
+    assert Store.get(run.id).status == "queued"
+    assert Store.delegated_owner(run.id) == context.user_id
 
-    assert Store.events(run.id) |> List.last() |> Map.fetch!(:payload_json) |> Jason.decode!() ==
-             %{
-               "status" => "failed",
-               "summary" => "Desktop agent runner disconnected."
-             }
+    assert {:ok, [^run_id]} =
+             RunnerLifecycle.register(context.user_id, "back", %{
+               activeRunIds: [run.id],
+               runnerInstanceId: "desktop-gone"
+             })
+
+    assert Store.get(run.id).status == "queued"
   end
 
-  test "mass runner grace expiry uses one delegated snapshot and preserves a reconnected owner",
-       context do
+  test "mass transport disconnects do not scan or settle delegated runs", context do
     previous_state = :sys.get_state(RunnerLifecycle)
-
-    if previous_state.disconnect_flush_timer,
-      do: Process.cancel_timer(previous_state.disconnect_flush_timer)
-
-    :sys.replace_state(RunnerLifecycle, fn state ->
-      %{
-        state
-        | runners: %{},
-          disconnect_timers: %{},
-          disconnect_flush_timer: nil,
-          disconnect_flush_due_at: nil,
-          disconnect_flush_coalesce: 1_000,
-          disconnect_grace: 1_000
-      }
-    end)
-
-    on_exit(fn ->
-      current = :sys.get_state(RunnerLifecycle)
-      if current.disconnect_flush_timer, do: Process.cancel_timer(current.disconnect_flush_timer)
-      :sys.replace_state(RunnerLifecycle, fn _state -> previous_state end)
-    end)
+    :sys.replace_state(RunnerLifecycle, &%{&1 | runners: %{}})
+    on_exit(fn -> :sys.replace_state(RunnerLifecycle, fn _state -> previous_state end) end)
 
     assert {:ok, run} = Store.start(context.vault_id, nil, "batch runner expiry", "codex")
     :ok = Store.record_delegated(run.id, context.user_id)
     owners = [context.user_id | Enum.to_list(-1_000..-2)]
-    reconnect_owner = -2
 
     Enum.each(owners, fn owner_id ->
       sid = "batch-#{owner_id}"
@@ -266,14 +228,7 @@ defmodule Cascade.Runs.OrchestrationStateTest do
       RunnerLifecycle.disconnected(owner_id, sid, %{}, :transport_close)
     end)
 
-    assert {:ok, []} =
-             RunnerLifecycle.register(reconnect_owner, "batch-reconnected", %{
-               activeRunIds: [],
-               runnerInstanceId: "batch"
-             })
-
     handler_id = "runner-batch-query-#{System.unique_integer([:positive])}"
-    flush_handler_id = "runner-batch-flush-#{System.unique_integer([:positive])}"
     test_pid = self()
 
     :ok =
@@ -292,30 +247,13 @@ defmodule Cascade.Runs.OrchestrationStateTest do
 
     on_exit(fn -> :telemetry.detach(handler_id) end)
 
-    :ok =
-      :telemetry.attach(
-        flush_handler_id,
-        [:cascade, :runs, :runner_disconnect_flush],
-        fn _event, measurements, metadata, _config ->
-          send(test_pid, {:runner_disconnect_flush, measurements, metadata})
-        end,
-        nil
-      )
-
-    on_exit(fn -> :telemetry.detach(flush_handler_id) end)
-
-    assert %{status: "failed", summary: "Desktop agent runner disconnected."} =
-             eventually_status(run.id, "failed", 350)
-
-    assert_receive :delegated_snapshot_query, 500
+    Process.sleep(100)
+    assert Store.get(run.id).status == "queued"
     refute_receive :delegated_snapshot_query, 150
-    assert_receive {:runner_disconnect_flush, %{count: 999}, %{outcome: :snapshot}}, 500
-    refute_receive {:runner_disconnect_flush, _, _}, 150
 
     state = :sys.get_state(RunnerLifecycle)
-    assert state.disconnect_timers == %{}
-    assert get_in(state, [:runners, reconnect_owner, :sid]) == "batch-reconnected"
-    refute Map.has_key?(state.last_error, reconnect_owner)
+    assert map_size(state.runners) == length(owners)
+    refute Map.has_key?(state.last_error, context.user_id)
   end
 
   test "startup orphan recovery fails delegated runs that no desktop reclaims", context do

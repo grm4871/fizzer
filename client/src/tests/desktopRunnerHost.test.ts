@@ -1,5 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { LatestRunnerSetup, reconcileCancelAcknowledgement } from '../desktopRunnerHost';
+import {
+  DESKTOP_RUNNER_SOCKET_OPTIONS,
+  LatestRunnerSetup,
+  reconcileCancelAcknowledgement,
+} from '../desktopRunnerHost';
+
+describe('desktop runner transport isolation', () => {
+  it('uses a dedicated polling manager instead of a renderer WebSocket upgrade', () => {
+    expect(DESKTOP_RUNNER_SOCKET_OPTIONS).toEqual({
+      forceNew: true,
+      transports: ['polling'],
+      upgrade: false,
+    });
+  });
+});
 
 describe('desktop runner credential setup', () => {
   it('coalesces repeated setup for the same login', async () => {

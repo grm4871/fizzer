@@ -57,6 +57,12 @@ const TERMINAL_REPLAY_MS = 5 * 60 * 1000;
 const PLAN_USAGE_REFRESH_MS = 5 * 60 * 1000;
 const PLAN_USAGE_MIN_REFRESH_MS = 4 * 60 * 1000;
 
+export const DESKTOP_RUNNER_SOCKET_OPTIONS = {
+  forceNew: true,
+  transports: ['polling'] as const,
+  upgrade: false,
+};
+
 let socket: Socket | null = null;
 let currentToken = '';
 let apiBase = '';
@@ -396,9 +402,12 @@ function connectDesktopRunnerSocket(token: string, nextApiBase: string): void {
 
   socket = io(`${apiBase}/runners`, {
     withCredentials: true,
-    // Polling first: Chromium HTTPS works here even when WS upgrade or Node
-    // TLS is middleboxed. engine.io upgrades to websocket when available.
-    transports: ['polling', 'websocket'],
+    // Keep the runner on its own polling manager. Sharing the renderer's
+    // manager lets a trace-room reconnect take the runner down with it, and
+    // some residential middleboxes accept a WebSocket upgrade only to reap it
+    // at the first idle heartbeat. Polling is the proven Chromium transport on
+    // those networks and is low-volume in the server-to-runner direction.
+    ...DESKTOP_RUNNER_SOCKET_OPTIONS,
     reconnection: true,
     reconnectionAttempts: Infinity,
     reconnectionDelay: 2000,
@@ -414,13 +423,10 @@ function connectDesktopRunnerSocket(token: string, nextApiBase: string): void {
  * Idempotent — safe to call on focus/visibility resync without killing runs.
  * No-op in a plain browser (no electronAPI).
  *
- * @param opts.clearOnStop When true (default), the returned stop() tears the
- *   runner down (logout / unmount). Pass false for resume pings that should
- *   only re-assert the token without ever clearing on cleanup.
  */
-export function startDesktopRunnerHost(opts?: { clearOnStop?: boolean }): () => void {
+export function startDesktopRunnerHost(): void {
   const api = runnerElectronAPI();
-  if (!api?.setRunnerToken && !api?.startAgentRun) return () => {};
+  if (!api?.setRunnerToken && !api?.startAgentRun) return;
 
   // The runner socket uses the HttpOnly browser session. The only readable
   // credential minted here is the short-lived, server-restricted helper token
@@ -465,28 +471,23 @@ export function startDesktopRunnerHost(opts?: { clearOnStop?: boolean }): () => 
     connectDesktopRunnerSocket(token, resolvedBase);
   }
 
-  // Child agents receive a short-lived, server-restricted credential; the
-  // user's full session never becomes renderer-readable.
-  const clearOnStop = opts?.clearOnStop !== false;
-  let stopped = false;
-  return () => {
-    if (!clearOnStop || stopped) return;
-    stopped = true;
-    runnerCredentialSetup.invalidate();
-    // Logout/unmount: cancel in-flight local agents, then drop the socket.
-    const cancel = api.cancelAgentRun;
-    if (cancel) {
-      for (const runId of [...activeRunIds]) {
-        void cancel(runId);
-      }
+}
+
+/** Explicit account logout teardown; never call for renderer unmount/reload. */
+export function stopDesktopRunnerHost(): void {
+  runnerCredentialSetup.invalidate();
+  const api = runnerElectronAPI();
+  if (api?.cancelAgentRun) {
+    for (const runId of [...activeRunIds]) {
+      void api.cancelAgentRun(runId);
     }
-    activeRunIds.clear();
-    disconnectDesktopRunnerSocket();
-    void api.clearRunnerToken?.();
-  };
+  }
+  activeRunIds.clear();
+  disconnectDesktopRunnerSocket();
+  void api?.clearRunnerToken?.();
 }
 
 /** Soft re-assert of the runner connection (no teardown). */
 export function ensureDesktopRunnerHost(): void {
-  startDesktopRunnerHost({ clearOnStop: false })();
+  startDesktopRunnerHost();
 }

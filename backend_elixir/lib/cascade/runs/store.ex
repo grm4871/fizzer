@@ -217,11 +217,6 @@ defmodule Cascade.Runs.Store do
     end
   end
 
-  def delegated_ids(owner_id) do
-    SQL.all("SELECT run_id FROM delegated_runs WHERE owner_user_id=?", [owner_id])
-    |> Enum.map(&hd/1)
-  end
-
   def open_delegated do
     SQL.all("""
     SELECT d.run_id,d.owner_user_id FROM delegated_runs d JOIN runs r ON r.id=d.run_id
@@ -290,27 +285,6 @@ defmodule Cascade.Runs.Store do
   def mark_running(run_id) do
     SQL.exec("UPDATE runs SET status='running' WHERE id=? AND status='queued'", [run_id])
     publish(run_id, "status", %{status: "running"})
-  end
-
-  def settle_open_for_owner(owner_id, reason \\ "Desktop agent runner disconnected.") do
-    delegated_ids(owner_id)
-    |> Enum.reduce([], fn run_id, settled ->
-      case get(run_id) do
-        nil ->
-          clear_delegated(run_id)
-          settled
-
-        %{status: status} when status in @terminal ->
-          clear_delegated(run_id)
-          settled
-
-        _ ->
-          :ok = finish(run_id, "failed", reason)
-          publish(run_id, "status", %{status: "failed", summary: reason})
-          [run_id | settled]
-      end
-    end)
-    |> Enum.reverse()
   end
 
   def cancel(run_id, opts \\ []) do

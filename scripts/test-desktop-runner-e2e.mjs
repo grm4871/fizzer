@@ -43,6 +43,9 @@ function startServer() {
     env: {
       JWT_SECRET: 'e2e-test-secret',
       CASCADE_ALLOW_OPEN_REGISTRATION: 'true',
+      // The former fail-on-disconnect path honored this. Keep it tiny so this
+      // regression proves transport loss is no longer a terminal timer.
+      RUNNER_DISCONNECT_GRACE_MS: '50',
     },
   });
 }
@@ -249,7 +252,7 @@ async function main() {
     }
     console.log('[e2e] OK steering interrupt resumed the early-persisted session');
 
-    // ── Disconnect grace: brief blip must not fail an open run ──────────
+    // ── Disconnect reclaim: transport loss must not fail a local child ──
     let midRunPayload = null;
     runnerSocket.off('run:delegate');
     runnerSocket.on('run:delegate', (payload) => {
@@ -272,9 +275,15 @@ async function main() {
       throw new Error('Expected open run to be delegated');
     }
 
-    // Simulate a transport blip: disconnect, then reconnect as same user.
+    // Stay offline well past the old configured grace, then reconnect as the
+    // same Electron-main instance and reclaim the still-running child.
     runnerSocket.disconnect();
-    await sleep(500);
+    await sleep(200);
+
+    const offlineOpen = await fetchJson(`${API_BASE}/api/runs/${openRun.id}`, { headers: auth });
+    if (offlineOpen.run.status === 'failed') {
+      throw new Error(`Transport loss incorrectly failed local run ${openRun.id}`);
+    }
 
     const reconnected = io(`${API_BASE}/runners`, {
       auth: { token },

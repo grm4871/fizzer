@@ -373,6 +373,46 @@ defmodule CascadeWeb.OrchestrationChatDispatchTest do
     assert Store.find_open_for_chat_registration(ctx.registration.id).id == replacement_id
   end
 
+  test "an offline runner transport leaves its sticky child open for reclaim", ctx do
+    {:ok, prior_message} =
+      Messages.create(ctx.guest, ctx.guest_vault.id, ctx.guest_channel.id, %{
+        id: "offline-prior-message-#{System.unique_integer([:positive])}",
+        body: "@#{ctx.registration.mention} long turn"
+      })
+
+    {:ok, prior_dispatch} =
+      Dispatches.create(ctx.guest.id, ctx.guest_channel.id, prior_message, ctx.registration.id)
+
+    assert {:ok, prior_run} =
+             Store.start(ctx.owner_vault.id, nil, "still running locally", "codex",
+               conversation_id: "offline-sticky-session",
+               chat_dispatch_id: prior_dispatch.id
+             )
+
+    assert :ok = Dispatches.attach_run(prior_dispatch.id, prior_run.id)
+    assert :ok = Store.record_delegated(prior_run.id, ctx.owner.id)
+    assert :ok = Hub.unregister_runner(ctx.owner.id, ctx.sid)
+
+    response =
+      request(ctx, %{
+        prompt: "queued continuation",
+        conversation_id: "offline-sticky-session",
+        chatDispatchId: ctx.dispatch.id,
+        chat: %{channelId: ctx.guest_channel.id, messageId: "offline-replacement-shell"}
+      })
+
+    assert response.status == 503
+
+    assert Jason.decode!(response.resp_body) == %{
+             "error" =>
+               "This agent's owner is offline — their desktop runner isn't connected, so the agent can't run right now."
+           }
+
+    assert Store.get(prior_run.id).status == "queued"
+    assert Store.delegated_owner(prior_run.id) == ctx.owner.id
+    assert is_nil(Store.find_by_chat_dispatch(ctx.dispatch.id))
+  end
+
   defp request(ctx, body) do
     conn(:post, "/api/vaults/#{ctx.guest_vault.id}/runs", Jason.encode!(body))
     |> put_req_header("content-type", "application/json")

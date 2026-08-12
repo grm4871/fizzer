@@ -187,11 +187,6 @@ export function clearDelegatedRunRecord(db: Db, runId: number): void {
   db.prepare('DELETE FROM delegated_runs WHERE run_id = ?').run(runId);
 }
 
-export function listDelegatedRunIdsForOwner(db: Db, ownerUserId: number): number[] {
-  const rows = db.prepare('SELECT run_id FROM delegated_runs WHERE owner_user_id = ?').all(ownerUserId) as Array<{ run_id: number }>;
-  return rows.map((r) => r.run_id);
-}
-
 export function countActiveDelegatedRuns(db: Db, ownerUserId: number): number {
   const row = db.prepare(`
     SELECT COUNT(*) AS n
@@ -363,8 +358,9 @@ export async function cancelRun(
     return true;
   }
 
-  // No live owner (e.g. server restarted, never reclaimed): mark canceled so
-  // stale UI can clear itself.
+  // No durable owner (e.g. a legacy loose row): mark canceled so stale UI can
+  // clear itself. A recorded owner remains reclaimable while its transport is
+  // offline and must not be inferred dead from socket presence alone.
   if (run.status === 'running' || run.status === 'queued') {
     const summary = opts.summary?.trim()
       || (opts.steering ? 'Steered into the continuation below.' : 'Run canceled by user.');
@@ -387,16 +383,15 @@ export async function cancelRun(
 }
 
 /**
- * True when an open sticky-session lease cannot still be running on a desktop:
- * no owner, or the recorded owner is offline. Used to release ghost leases after
- * app restart so the next chat turn is not permanently 409'd.
+ * True when an open sticky-session lease has no durable desktop owner. Offline
+ * transport alone is not terminal: Electron main may still be running the
+ * child and will reclaim the lease when Chromium reconnects.
  */
 export function isUnreclaimableOpenRun(db: Db, runId: number): boolean {
   const run = getRun(db, runId);
   if (!run || isTerminalRunStatus(run.status)) return false;
   const ownerId = getDelegatedRunOwner(runId) ?? getDelegatedRunOwnerFromDb(db, runId);
-  if (ownerId == null) return true;
-  return !isDesktopRunnerOnline(ownerId);
+  return ownerId == null;
 }
 
 /** Force a terminal cancel for a ghost open run that can never ack stop. */
@@ -621,33 +616,4 @@ export function finishDelegatedRun(
     WHERE id = ?
   `).run(opts.status, opts.summary, missingClaudeSession ? 1 : 0, opts.sessionId ?? null, runId);
   clearDelegatedRunRecord(db, runId);
-}
-
-/**
- * Mark open DB-delegated runs for an owner as failed (desktop gone / restart).
- * Does not touch in-memory maps — caller clears those. Returns settled run ids.
- */
-export function failOpenDelegatedRunsForOwner(
-  db: Db,
-  ownerUserId: number,
-  reason = 'Desktop agent runner disconnected.',
-): number[] {
-  const runIds = listDelegatedRunIdsForOwner(db, ownerUserId);
-  const settled: number[] = [];
-  for (const runId of runIds) {
-    const run = getRun(db, runId);
-    if (!run || isTerminalRunStatus(run.status)) {
-      clearDelegatedRunRecord(db, runId);
-      continue;
-    }
-    db.prepare(`
-      UPDATE runs
-      SET status = 'failed', finished_at = datetime('now'), summary = ?
-      WHERE id = ? AND status IN ('queued', 'running')
-    `).run(reason, runId);
-    publishRunEvent(db, runId, 'status', { status: 'failed', summary: reason });
-    clearDelegatedRunRecord(db, runId);
-    settled.push(runId);
-  }
-  return settled;
 }

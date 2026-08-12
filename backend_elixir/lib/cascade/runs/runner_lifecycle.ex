@@ -7,8 +7,6 @@ defmodule Cascade.Runs.RunnerLifecycle do
   alias Cascade.Realtime.Hub
   alias Cascade.Runs.Store
 
-  @disconnect_grace 20_000
-  @disconnect_flush_coalesce 1_000
   @orphan_reclaim 120_000
 
   def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -109,15 +107,9 @@ defmodule Cascade.Runs.RunnerLifecycle do
   def init(opts) do
     state = %{
       runners: %{},
-      disconnect_timers: %{},
-      disconnect_flush_timer: nil,
-      disconnect_flush_due_at: nil,
-      disconnect_flush_coalesce:
-        Keyword.get(opts, :disconnect_flush_coalesce_ms, @disconnect_flush_coalesce),
       last_error: %{},
       plan_usage: %{},
       last_seen: %{},
-      disconnect_grace: Keyword.get(opts, :disconnect_grace_ms, @disconnect_grace),
       orphan_reclaim: Keyword.get(opts, :orphan_reclaim_ms, @orphan_reclaim)
     }
 
@@ -127,7 +119,6 @@ defmodule Cascade.Runs.RunnerLifecycle do
 
   @impl true
   def handle_call({:register, owner_id, sid, metadata}, _from, state) do
-    state = cancel_disconnect_timer(owner_id, state)
     active_ids = Map.get(metadata, :activeRunIds, [])
 
     reclaimed =
@@ -199,75 +190,15 @@ defmodule Cascade.Runs.RunnerLifecycle do
      }}
   end
 
-  def handle_cast({:disconnected, owner_id, sid, _reason}, state) do
-    case state.runners[owner_id] do
-      %{sid: ^sid} ->
-        state = cancel_disconnect_timer(owner_id, state)
-        due_at = System.monotonic_time(:millisecond) + state.disconnect_grace
-
-        state =
-          state
-          |> then(
-            &%{
-              &1
-              | disconnect_timers:
-                  Map.put(&1.disconnect_timers, owner_id, %{sid: sid, due_at: due_at})
-            }
-          )
-          |> schedule_disconnect_flush()
-
-        {:noreply, state}
-
-      _ ->
-        {:noreply, state}
-    end
+  def handle_cast({:disconnected, _owner_id, _sid, _reason}, state) do
+    # A Socket.IO disconnect only proves transport loss. Electron main owns the
+    # child and buffers its events; keep the last instance metadata so a same-
+    # instance reconnect can reclaim, while a changed instance can fail omitted
+    # children authoritatively in register/3.
+    {:noreply, state}
   end
 
   @impl true
-  def handle_info(:disconnect_flush, state) do
-    now = System.monotonic_time(:millisecond)
-
-    {due, pending} =
-      Enum.split_with(state.disconnect_timers, fn {_owner_id, entry} -> entry.due_at <= now end)
-
-    state = %{
-      state
-      | disconnect_timers: Map.new(pending),
-        disconnect_flush_timer: nil,
-        disconnect_flush_due_at: nil
-    }
-
-    eligible =
-      Enum.filter(due, fn {owner_id, %{sid: sid}} ->
-        not online?(owner_id) and get_in(state, [:runners, owner_id, :sid]) == sid
-      end)
-
-    open_by_owner =
-      if eligible == [] do
-        %{}
-      else
-        :telemetry.execute(
-          [:cascade, :runs, :runner_disconnect_flush],
-          %{count: length(eligible)},
-          %{outcome: :snapshot}
-        )
-
-        Store.open_delegated() |> Enum.group_by(& &1.owner_user_id, & &1.run_id)
-      end
-
-    state =
-      Enum.reduce(eligible, state, fn {owner_id, _entry}, state ->
-        failed = Map.get(open_by_owner, owner_id, [])
-        fail_runs(failed, "Desktop agent runner disconnected.")
-
-        state
-        |> then(&%{&1 | runners: Map.delete(&1.runners, owner_id)})
-        |> maybe_disconnect_error(owner_id, failed)
-      end)
-
-    {:noreply, schedule_disconnect_flush(state)}
-  end
-
   def handle_info(:orphan_reclaim, state) do
     summary = "Desktop agent runner did not reclaim this run after server restart."
 
@@ -309,46 +240,8 @@ defmodule Cascade.Runs.RunnerLifecycle do
     end)
   end
 
-  defp maybe_disconnect_error(state, _owner_id, []), do: state
-
-  defp maybe_disconnect_error(state, owner_id, failed),
-    do: put_error(state, owner_id, "Runner disconnected; #{length(failed)} run(s) failed.")
-
   defp put_error(state, owner_id, message) do
     %{state | last_error: Map.put(state.last_error, owner_id, %{message: message, at: iso_now()})}
-  end
-
-  defp cancel_disconnect_timer(owner_id, state) do
-    state = %{state | disconnect_timers: Map.delete(state.disconnect_timers, owner_id)}
-
-    if map_size(state.disconnect_timers) == 0 and state.disconnect_flush_timer do
-      Process.cancel_timer(state.disconnect_flush_timer)
-      %{state | disconnect_flush_timer: nil, disconnect_flush_due_at: nil}
-    else
-      state
-    end
-  end
-
-  defp schedule_disconnect_flush(%{disconnect_timers: timers} = state)
-       when map_size(timers) == 0,
-       do: state
-
-  defp schedule_disconnect_flush(state) do
-    due_at =
-      state.disconnect_timers
-      |> Map.values()
-      |> Enum.map(& &1.due_at)
-      |> Enum.min()
-      |> Kernel.+(state.disconnect_flush_coalesce)
-
-    if state.disconnect_flush_timer && state.disconnect_flush_due_at <= due_at do
-      state
-    else
-      if state.disconnect_flush_timer, do: Process.cancel_timer(state.disconnect_flush_timer)
-      delay = max(due_at - System.monotonic_time(:millisecond), 0)
-      timer = Process.send_after(self(), :disconnect_flush, delay)
-      %{state | disconnect_flush_timer: timer, disconnect_flush_due_at: due_at}
-    end
   end
 
   defp wait_online_until(owner_id, deadline) do

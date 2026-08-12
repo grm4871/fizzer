@@ -153,14 +153,14 @@ import {
   finishDelegatedRun,
   findRunByChatDispatch,
   findOpenRunForChatRegistration,
-  forceCancelUnreclaimableRun,
+  forceCancelUnreclaimableRun, getDelegatedRunOwnerFromDb,
   listOpenDelegatedRuns,
   type AgentId,
 } from './server/runner.js';
 import {
-  delegateRunToDesktop,
+  delegateRunToDesktop, getDelegatedRunOwner,
   getDesktopRunnerStatus,
-  initDesktopRunners,
+  initDesktopRunners, isDesktopRunnerOnline,
   noteDesktopRunnerError,
   prepareDesktopWorkspace,
   scheduleOrphanReclaimAfterRestart,
@@ -3549,13 +3549,21 @@ app.post('/api/vaults/:id/runs', requireAuth, async (req: AuthedRequest, res) =>
     if (chatDispatchId && chatRegistrationId) {
       const occupied = findOpenRunForChatRegistration(db, chatRegistrationId, chatDispatchId);
       if (occupied) {
-        // Ghost lease after app restart / offline desktop: free it so this turn
-        // can claim the sticky session instead of failing as a permanent 409.
+        // A legacy ghost with no durable owner can be released. An offline
+        // transport is still reclaimable and must not cancel its local child.
         if (forceCancelUnreclaimableRun(db, occupied.id)) {
           for (const update of settleChatMessagesForRun(db, occupied.id)) {
             emitChatMessageEvent(update.vaultId, update.channelId, 'vault:chatMessageUpdated', update.message);
           }
         } else {
+          const occupiedOwner = getDelegatedRunOwner(occupied.id)
+            ?? getDelegatedRunOwnerFromDb(db, occupied.id);
+          if (occupiedOwner != null && !isDesktopRunnerOnline(occupiedOwner)) {
+            return res.status(409).json({
+              error: 'Agent session is reconnecting; this turn remains queued.',
+              activeRunId: occupied.id,
+            });
+          }
           // Steering / follow-up turns: try one server-side steering cancel so a
           // hung predecessor cannot permanently 409 the continuation. The cancel
           // path awaits desktop stop then force-settles when steering.

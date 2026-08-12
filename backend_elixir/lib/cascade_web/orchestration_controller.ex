@@ -396,9 +396,14 @@ defmodule CascadeWeb.OrchestrationController do
               JSON.send(conn, 500, %{error: message})
           end
 
-        {:error, active_run_id} ->
+        {:error, active_run_id, reason} ->
+          error =
+            if reason == :reconnecting,
+              do: "Agent session is reconnecting; this turn remains queued.",
+              else: "Agent session is still stopping; this turn remains queued."
+
           JSON.send(conn, 409, %{
-            error: "Agent session is still stopping; this turn remains queued.",
+            error: error,
             activeRunId: active_run_id
           })
       end
@@ -713,20 +718,23 @@ defmodule CascadeWeb.OrchestrationController do
       occupied ->
         owner_id = Store.delegated_owner(occupied.id)
 
-        canceled =
-          if is_nil(owner_id) or not RunnerLifecycle.online?(owner_id) do
-            Store.cancel(occupied.id,
-              force: true,
-              summary: "Run abandoned after desktop disconnect or restart."
-            )
-          else
-            Store.cancel(occupied.id, steering: true)
-          end
+        cond do
+          is_nil(owner_id) ->
+            if Store.cancel(occupied.id,
+                 force: true,
+                 summary: "Run abandoned after desktop disconnect or restart."
+               ),
+               do: :ok,
+               else: {:error, occupied.id, :stopping}
 
-        if canceled do
-          :ok
-        else
-          {:error, occupied.id}
+          not RunnerLifecycle.online?(owner_id) ->
+            {:error, occupied.id, :reconnecting}
+
+          Store.cancel(occupied.id, steering: true) ->
+            :ok
+
+          true ->
+            {:error, occupied.id, :stopping}
         end
     end
   end

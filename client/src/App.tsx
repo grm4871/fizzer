@@ -72,7 +72,7 @@ import type { LayoutNode } from './layout/tree';
 import { api, ApiError, type CommunityUpdateItem, type CommunityUpdates, type User, type Vault, type VaultMember, type Folder, type NoteSummary, type Note } from './api';
 import { connectRunsSocket, connectVaultSocket } from './socket';
 import { isLocalRunId, cancelLocalAgentRun } from './localAgentRunner';
-import { ensureDesktopRunnerHost, respondToAgentPermission, startDesktopRunnerHost } from './desktopRunnerHost';
+import { ensureDesktopRunnerHost, respondToAgentPermission, startDesktopRunnerHost, stopDesktopRunnerHost } from './desktopRunnerHost';
 import {
   agentsAfterLoadFailure,
   agentLabel,
@@ -274,7 +274,6 @@ export default function App() {
   const noteContentsRef = useRef(noteContents); noteContentsRef.current = noteContents;
   const activeVaultIdRef = useRef(activeVaultId); activeVaultIdRef.current = activeVaultId;
   const notesRef = useRef(notes); notesRef.current = notes;
-  const desktopRunnerStopRef = useRef<(() => void) | null>(null);
   const chatStateRef = useRef(chatState); chatStateRef.current = chatState;
   const vaultSocketRef = useRef<ReturnType<typeof connectVaultSocket> | null>(null);
   const joinedChatChannelsRef = useRef<Set<string>>(new Set());
@@ -683,6 +682,7 @@ export default function App() {
           if (cancelled) return;
           if (!data.authenticated || !data.user) {
             unauthorized = true;
+            stopDesktopRunnerHost();
             return;
           }
           succeeded = true;
@@ -696,6 +696,7 @@ export default function App() {
           // retrying so an HttpOnly cookie is not mistaken for a logout.
           if (error instanceof ApiError && error.status === 401) {
             unauthorized = true;
+            stopDesktopRunnerHost();
             return;
           }
           attempt += 1;
@@ -721,13 +722,12 @@ export default function App() {
   }, [loadVaults]);
 
   useEffect(() => {
-    desktopRunnerStopRef.current?.();
-    desktopRunnerStopRef.current = user ? startDesktopRunnerHost() : null;
-    return () => {
-      desktopRunnerStopRef.current?.();
-      desktopRunnerStopRef.current = null;
-    };
-  }, [user]);
+    if (user) {
+      // Renderer reloads are not logout. Main-process agents survive the page,
+      // and the replacement renderer reconnects/reclaims them.
+      startDesktopRunnerHost();
+    }
+  }, [user?.id]);
 
   useEffect(() => {
     const receivePermission = (event: Event) => {
@@ -3579,6 +3579,7 @@ export default function App() {
   const handleLogout = () => {
     runSocketsRef.current.forEach((socket) => socket.disconnect());
     runSocketsRef.current.clear();
+    stopDesktopRunnerHost();
     void api('/api/auth/logout', { method: 'POST' }).catch(() => {});
     localStorage.removeItem('docs_token');
     localStorage.removeItem(SESSION_STORAGE_KEY);
