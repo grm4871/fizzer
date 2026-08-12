@@ -333,7 +333,7 @@ const DEPLOY_SECRET = resolveDeploySecret();
 const DATA_DIR = process.env.CASCADE_DATA_DIR || path.dirname(DB_PATH);
 const DEPLOY_REQUEST_FILE = path.join(DATA_DIR, 'deploy.request');
 const DEPLOY_RESULT_FILE = path.join(DATA_DIR, 'deploy.result');
-const CLIENT_DIST_DIR = path.join(process.cwd(), 'client', 'dist');
+const CLIENT_DIST_DIR = process.env.CASCADE_CLIENT_DIST_DIR || path.join(process.cwd(), 'client', 'dist');
 const CLIENT_APP_HTML = path.join(CLIENT_DIST_DIR, 'app.html');
 const LANDING_HTML = path.join(CLIENT_DIST_DIR, 'landing.html');
 // Sideload "Cascade Dev" APK is NOT baked into the Docker image (30MB+ blobs

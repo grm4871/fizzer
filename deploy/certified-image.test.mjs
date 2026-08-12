@@ -2194,6 +2194,22 @@ test('staging transfers a Docker archive and records the exact loaded image with
   assert.match(stage, /stat -c '%u:%g:%a:%F'/);
 });
 
+test('routine staging transfers only the exact revision-labelled image', () => {
+  const stage = fs.readFileSync(path.join(deployDirectory, 'stage-release-image.sh'), 'utf8');
+  assert.match(stage, /git status --porcelain --untracked-files=all/);
+  assert.match(stage, /IMAGE_TAG="cascade:certified-\$REVISION"/);
+  assert.match(stage, /Descriptor\.Annotations "config\.digest"/);
+  assert.match(stage, /org\.opencontainers\.image\.revision/);
+  assert.match(stage, /docker image save "\$IMAGE_TAG"/);
+  assert.match(stage, /docker image load/);
+  assert.match(stage, /BatchMode=yes/);
+  assert.match(stage, /StrictHostKeyChecking=yes/);
+  assert.match(stage, /REMOTE_ID.*docker image inspect/);
+  assert.match(stage, /REMOTE_REVISION.*docker image inspect/);
+  assert.doesNotMatch(stage, /capacity|waiver|manifest/iu);
+  assert.doesNotMatch(stage, /docker (?:compose )?(?:up|run)/);
+});
+
 test('first-time deployment starts only the verified staged image without rebuilding', () => {
   const deploy = fs.readFileSync(path.join(deployDirectory, 'deploy.sh'), 'utf8');
   assert.match(deploy, /certified-image\.mjs verify --manifest "\$CERTIFIED_MANIFEST"/);

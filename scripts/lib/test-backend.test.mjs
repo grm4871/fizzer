@@ -38,6 +38,7 @@ test('environment maps shared and backend-specific paths into the temp root', ()
   assert.equal(env.API_HOST, '127.0.0.1');
   assert.equal(env.CASCADE_BIND_IP, '127.0.0.1');
   assert.equal(env.DOCS_DB_PATH, '/tmp/safe/data/docs.db');
+  assert.equal(env.CASCADE_CLIENT_DIST_DIR, '/tmp/safe/client-dist');
   assert.equal(env.CASCADE_VAULTS_BASE_DIR, '/tmp/safe/vaults');
   assert.equal(env.JWT_SECRET, 'secret');
 });

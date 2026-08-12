@@ -27,8 +27,6 @@ REVISION_SHORT="${REVISION:0:12}"
 CERTIFIED_RELEASE_DIR="/var/lib/cascade-release"
 CERTIFIED_IMAGE_DIR="$CERTIFIED_RELEASE_DIR/certified-images"
 CERTIFIED_MANIFEST="$CERTIFIED_IMAGE_DIR/$REVISION.json"
-OPERATOR_WAIVER_DIR="$CERTIFIED_RELEASE_DIR/operator-waivers"
-OPERATOR_WAIVER="$OPERATOR_WAIVER_DIR/$REVISION.json"
 CERTIFIED_IMAGE_ID=""
 CANDIDATE_IMAGE=""
 ROLLBACK_IMAGE="cascade:rollback-$REVISION"
@@ -42,7 +40,6 @@ ROLLBACK_IN_PROGRESS=0
 OLD_BACKEND_STOPPED=0
 CANDIDATE_DATA_TOUCHED=0
 DEPLOY_DOMAIN=""
-OPERATOR_WAIVER_USED=0
 
 close_maintenance_gate() {
   # Replace, rather than follow, any unexpected object at the marker path.
@@ -62,70 +59,43 @@ open_maintenance_gate() {
   fi
 }
 
-load_certified_candidate() {
-  echo "==> Verifying staged release authorization for $REVISION"
-  local release_dir
-  for release_dir in "$CERTIFIED_RELEASE_DIR"; do
-    if [[ -L "$release_dir" || ! -d "$release_dir" ]] ||
-       [[ "$(stat -c '%u:%g:%a' "$release_dir")" != "0:0:700" ]]; then
-      echo "Error: certification directories must be canonical root-owned directories, mode 0700." >&2
-      return 1
-    fi
-  done
+load_release_candidate() {
+  echo "==> Verifying staged release image for $REVISION"
+  CANDIDATE_IMAGE="cascade:certified-$REVISION"
 
-  local authorization_file authorization_kind
-  if [[ -f "$CERTIFIED_MANIFEST" && -f "$CERTIFIED_MANIFEST.sha256" ]]; then
-    authorization_file="$CERTIFIED_MANIFEST"
-    authorization_kind="certification"
-  elif [[ -f "$OPERATOR_WAIVER" && -f "$OPERATOR_WAIVER.sha256" ]]; then
-    authorization_file="$OPERATOR_WAIVER"
-    authorization_kind="operator capacity waiver"
-  else
-    echo "Error: no staged certification or explicit operator capacity waiver exists for $REVISION." >&2
-    return 1
-  fi
-
-  if [[ "$authorization_file" == "$CERTIFIED_MANIFEST" ]]; then
-    release_dir="$CERTIFIED_IMAGE_DIR"
-  else
-    release_dir="$OPERATOR_WAIVER_DIR"
-  fi
-  if [[ -L "$release_dir" || ! -d "$release_dir" ]] ||
-     [[ "$(stat -c '%u:%g:%a' "$release_dir")" != "0:0:700" ]]; then
-    echo "Error: release authorization directory must be root-owned and mode 0700." >&2
-    return 1
-  fi
-
-  local authorization_part
-  for authorization_part in "$authorization_file" "$authorization_file.sha256"; do
-    if [[ -L "$authorization_part" || ! -f "$authorization_part" ]] ||
-       [[ "$(stat -c '%u:%g:%a' "$authorization_part")" != "0:0:600" ]]; then
-      echo "Error: release authorization and checksum must be regular root-owned files, mode 0600." >&2
-      return 1
-    fi
-  done
-
-  if [[ "$authorization_kind" == "certification" ]]; then
-    CERTIFIED_IMAGE_ID="$(node deploy/certified-image.mjs verify --manifest "$authorization_file")"
-    CANDIDATE_IMAGE="$(node deploy/certified-image.mjs field --manifest "$authorization_file" --name image.tag)"
-  else
-    CERTIFIED_IMAGE_ID="$(node deploy/operator-capacity-waiver.mjs verify \
-      --waiver "$authorization_file" --expected-revision "$REVISION")"
-    CANDIDATE_IMAGE="cascade:certified-$REVISION"
-    OPERATOR_WAIVER_USED=1
-    echo "==> Applying the explicit 1,000-certified / 10,000-demonstrated operator capacity waiver"
-  fi
-  if [[ "$CANDIDATE_IMAGE" != "cascade:certified-$REVISION" || ! "$CERTIFIED_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-    echo "Error: staged certification has a non-canonical image identity." >&2
-    return 1
-  fi
-
-  local loaded_image_id loaded_revision
-  loaded_image_id="$(docker image inspect --format '{{.Id}}' "$CANDIDATE_IMAGE")"
+  local loaded_revision
+  CERTIFIED_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$CANDIDATE_IMAGE")"
   loaded_revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$CANDIDATE_IMAGE")"
-  if [[ "$loaded_image_id" != "$CERTIFIED_IMAGE_ID" || "$loaded_revision" != "$REVISION" ]]; then
-    echo "Error: staged release image differs from its authorization." >&2
+  if [[ ! "$CERTIFIED_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ || "$loaded_revision" != "$REVISION" ]]; then
+    echo "Error: staged release image has an invalid identity or revision label." >&2
     return 1
+  fi
+
+  # Capacity evidence is optional for routine releases. When it is staged for
+  # a capacity-sensitive change, still bind it to the exact image being run.
+  if [[ -f "$CERTIFIED_MANIFEST" || -f "$CERTIFIED_MANIFEST.sha256" ]]; then
+    local release_dir certification_part certified_image_id certified_image_tag
+    for release_dir in "$CERTIFIED_RELEASE_DIR" "$CERTIFIED_IMAGE_DIR"; do
+      if [[ -L "$release_dir" || ! -d "$release_dir" ]] ||
+         [[ "$(stat -c '%u:%g:%a' "$release_dir")" != "0:0:700" ]]; then
+        echo "Error: certification directories must be canonical root-owned directories, mode 0700." >&2
+        return 1
+      fi
+    done
+    for certification_part in "$CERTIFIED_MANIFEST" "$CERTIFIED_MANIFEST.sha256"; do
+      if [[ -L "$certification_part" || ! -f "$certification_part" ]] ||
+         [[ "$(stat -c '%u:%g:%a' "$certification_part")" != "0:0:600" ]]; then
+        echo "Error: certification and checksum must be regular root-owned files, mode 0600." >&2
+        return 1
+      fi
+    done
+    certified_image_id="$(node deploy/certified-image.mjs verify --manifest "$CERTIFIED_MANIFEST")"
+    certified_image_tag="$(node deploy/certified-image.mjs field --manifest "$CERTIFIED_MANIFEST" --name image.tag)"
+    if [[ "$certified_image_id" != "$CERTIFIED_IMAGE_ID" || "$certified_image_tag" != "$CANDIDATE_IMAGE" ]]; then
+      echo "Error: staged capacity certification differs from the release image." >&2
+      return 1
+    fi
+    echo "==> Capacity certification matches the staged image"
   fi
 
   local embedded_gate
@@ -133,10 +103,10 @@ load_certified_candidate() {
     --entrypoint /app/release/bin/cascade_elixir "$CANDIDATE_IMAGE" eval \
     'if CascadeWeb.RouteCatalog.swap_ready?(), do: IO.puts("swap-ready"), else: System.halt(42)')"
   if [[ "$embedded_gate" != *"swap-ready"* ]]; then
-    echo "Error: certified image does not contain an approved cutover gate." >&2
+    echo "Error: release image does not contain an approved cutover gate." >&2
     return 1
   fi
-  echo "==> Authorized candidate is $CERTIFIED_IMAGE_ID"
+  echo "==> Release candidate is $CERTIFIED_IMAGE_ID"
 }
 
 verify_runtime_shape_json() {
@@ -681,7 +651,7 @@ if [[ "${#STALE_CONTAINERS[@]}" -gt 0 ]]; then
   docker rm "${STALE_CONTAINERS[@]}" >/dev/null
 fi
 
-load_certified_candidate
+load_release_candidate
 verify_compose_runtime_shape
 ensure_cutover_disk_capacity
 secure_production_environment
@@ -733,12 +703,6 @@ docker tag "$CERTIFIED_IMAGE_ID" cascade:latest
 DEPLOY_COMMITTED=1
 open_maintenance_gate
 verify_reopened_production_edge
-
-if [[ "$OPERATOR_WAIVER_USED" == "1" ]]; then
-  mv "$OPERATOR_WAIVER" "$OPERATOR_WAIVER.used"
-  mv "$OPERATOR_WAIVER.sha256" "$OPERATOR_WAIVER.sha256.used"
-  echo "==> Consumed the one-cutover operator capacity waiver"
-fi
 
 docker compose "${COMPOSE_ARGS[@]}" ps
 echo "==> Deployed $REVISION_SHORT ($CERTIFIED_IMAGE_ID); rollback snapshot: $SNAPSHOT_DIR"

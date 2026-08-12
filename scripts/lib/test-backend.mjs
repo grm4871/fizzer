@@ -44,6 +44,7 @@ export function buildBackendEnvironment({
     CASCADE_SERVER: 'true',
     CASCADE_REPO_ROOT: repoRoot,
     CASCADE_DATA_DIR: dataRoot,
+    CASCADE_CLIENT_DIST_DIR: path.join(tempRoot, 'client-dist'),
     CASCADE_VAULTS_BASE_DIR: path.join(tempRoot, 'vaults'),
     CASCADE_QMD_DIR: path.join(tempRoot, 'qmd'),
     CASCADE_DOWNLOADS_DIR: path.join(tempRoot, 'downloads'),
@@ -109,14 +110,19 @@ export async function launchTestBackend(options = {}) {
   const vaultsRoot = path.join(tempRoot, 'vaults');
   const qmdRoot = path.join(tempRoot, 'qmd');
   const downloadsRoot = path.join(tempRoot, 'downloads');
+  const clientDistRoot = path.join(tempRoot, 'client-dist');
 
-  for (const directory of [path.dirname(databasePath), vaultsRoot, qmdRoot, downloadsRoot]) {
+  for (const directory of [path.dirname(databasePath), vaultsRoot, qmdRoot, downloadsRoot, clientDistRoot]) {
     fs.mkdirSync(directory, { recursive: true });
   }
+  fs.writeFileSync(path.join(clientDistRoot, 'landing.html'),
+    '<!doctype html><html><body><main id="download"><a href="/download/linux">Linux</a></main></body></html>');
+  fs.writeFileSync(path.join(clientDistRoot, 'app.html'),
+    '<!doctype html><html><body><div id="root"></div></body></html>');
   if (options.fixtureDatabasePath) fs.copyFileSync(options.fixtureDatabasePath, databasePath);
   copyTree(options.fixtureVaultsRoot, vaultsRoot);
 
-  const context = { backend, repoRoot, port, baseUrl: `http://127.0.0.1:${port}`, tempRoot, databasePath, vaultsRoot, qmdRoot, downloadsRoot };
+  const context = { backend, repoRoot, port, baseUrl: `http://127.0.0.1:${port}`, tempRoot, databasePath, vaultsRoot, qmdRoot, downloadsRoot, clientDistRoot };
   await options.prepare?.(context);
 
   const spec = options.command || backendCommand(backend, repoRoot);

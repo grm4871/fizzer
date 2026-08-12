@@ -86,8 +86,10 @@ npm run make             # build distributables
 Pushes to `master` reach the authenticated host webhook, whose autodeploy
 service fast-forwards the server checkout and runs `deploy/remote-update.sh`.
 The GitHub Actions deploy workflow is `workflow_dispatch` fallback only, so a
-push has one production trigger. Production loads the already-certified image
-without rebuilding it. First-time server setup is still
+push has one production trigger. Production loads the already-staged image
+without rebuilding it. Routine releases use the exact clean, revision-labelled
+image directly; capacity-sensitive changes may additionally stage certification
+evidence for that image. First-time server setup is still
 `deploy/deploy.sh <domain>`.
 
 GitHub Actions secrets (mirror the Simcluster repo values):

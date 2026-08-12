@@ -21,7 +21,7 @@ function assertOrdered(...lines) {
 
 test('cutover stays gated from rollback capture through candidate verification', () => {
   assertOrdered(
-    'load_certified_candidate',
+    'load_release_candidate',
     'verify_compose_runtime_shape',
     'ensure_cutover_disk_capacity',
     'secure_production_environment',
@@ -47,23 +47,22 @@ test('cutover stays gated from rollback capture through candidate verification',
   );
 });
 
-test('production promotes the staged certified image and never rebuilds a candidate', () => {
+test('production promotes an exact staged image without requiring capacity certification', () => {
   assert.match(source, /CERTIFIED_RELEASE_DIR="\/var\/lib\/cascade-release"/);
   assert.match(source, /CERTIFIED_MANIFEST="\$CERTIFIED_IMAGE_DIR\/\$REVISION\.json"/);
+  assert.match(source, /CANDIDATE_IMAGE="cascade:certified-\$REVISION"/);
+  assert.match(source, /CERTIFIED_IMAGE_ID="\$\(docker image inspect/);
+  assert.match(source, /loaded_revision="\$\(docker image inspect/);
+  assert.match(source, /staged release image has an invalid identity or revision label/);
+  assert.match(source, /Capacity evidence is optional for routine releases/);
   assert.match(source, /certification directories must be canonical root-owned directories, mode 0700/);
-  assert.match(source, /OPERATOR_WAIVER_DIR="\$CERTIFIED_RELEASE_DIR\/operator-waivers"/);
-  assert.match(source, /no staged certification or explicit operator capacity waiver exists/);
-  assert.match(source, /for authorization_part in "\$authorization_file" "\$authorization_file\.sha256"/);
-  assert.match(source, /release authorization and checksum must be regular root-owned files, mode 0600/);
+  assert.match(source, /for certification_part in "\$CERTIFIED_MANIFEST" "\$CERTIFIED_MANIFEST\.sha256"/);
+  assert.match(source, /certification and checksum must be regular root-owned files, mode 0600/);
   assert.match(source, /git status --porcelain --untracked-files=no/);
-  assert.match(source, /-L "\$authorization_part"/);
-  assert.match(source, /certified-image\.mjs verify --manifest "\$authorization_file"/);
-  assert.match(source, /CANDIDATE_IMAGE="\$\(node deploy\/certified-image\.mjs field/);
-  assert.match(source, /operator-capacity-waiver\.mjs verify/);
-  assert.match(source, /explicit 1,000-certified \/ 10,000-demonstrated operator capacity waiver/);
-  assert.match(source, /OPERATOR_WAIVER_USED=1/);
-  assert.match(source, /mv "\$OPERATOR_WAIVER" "\$OPERATOR_WAIVER\.used"/);
-  assert.match(source, /loaded_image_id="\$\(docker image inspect/);
+  assert.match(source, /-L "\$certification_part"/);
+  assert.match(source, /certified-image\.mjs verify --manifest "\$CERTIFIED_MANIFEST"/);
+  assert.match(source, /staged capacity certification differs from the release image/);
+  assert.doesNotMatch(source, /operator-capacity-waiver/);
   assert.match(source, /docker run --rm --network none[\s\S]*RouteCatalog\.swap_ready\?\(\)/);
   assert.match(source, /RUNNING_IMAGE_ID="\$\(docker inspect --format '\{\{\.Image\}\}'/);
   assert.match(source, /RUNNING_IMAGE_ID" != "\$CERTIFIED_IMAGE_ID/);
@@ -71,7 +70,7 @@ test('production promotes the staged certified image and never rebuilds a candid
   assert.doesNotMatch(source, /BUILD_ARGS/);
 });
 
-test('preflight, Compose, and the running candidate share the certified resource envelope', () => {
+test('preflight, Compose, and the running candidate share the production resource envelope', () => {
   assert.match(source, /cpus: 2,[\s\S]*cpuset: "0-1"[\s\S]*memory: 3 \* 1024 \*\* 3/);
   assert.match(source, /memorySwap: 3 \* 1024 \*\* 3,[\s\S]*pids: 100_000/);
   assert.match(source, /CASCADE_IMAGE="\$CANDIDATE_IMAGE" docker compose[\s\S]*config --format json/);
@@ -109,7 +108,6 @@ test('the reopened TLS edge serves health, client assets, and Engine.IO', () => 
   assertOrdered(
     'open_maintenance_gate',
     'verify_reopened_production_edge',
-    '  mv "$OPERATOR_WAIVER" "$OPERATOR_WAIVER.used"',
     'docker compose "${COMPOSE_ARGS[@]}" ps',
   );
 });

@@ -46,7 +46,7 @@ WORKDIR /app
 ARG CASCADE_REVISION=uncommitted
 LABEL org.opencontainers.image.revision="${CASCADE_REVISION}" \
       io.cascade.backend="elixir" \
-      io.cascade.release-policy="certify-then-promote"
+      io.cascade.release-policy="verify-then-promote"
 ENV NODE_ENV=production \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \

@@ -3,7 +3,7 @@
 ## Ship hard gate (never skip)
 
 Pushing to `master` is **not** shipping. Production only updates after the host
-has loaded the staged certified image and every cutover check passes.
+has loaded the staged revision-labelled image and every cutover check passes.
 
 **Automatic deploys do not run on GitHub Actions.** `Deploy Production` has no
 `push` trigger; its `workflow_dispatch` entry is retained only as an explicit
@@ -48,7 +48,11 @@ Operating it:
 
 ## Release matrix
 
-Use [docs/release-matrix.md](docs/release-matrix.md) for changes being shipped. Run its baseline for every production release, then the rows matching the affected client, agent, desktop, mobile, persistence, or deployment boundaries. Report any applicable row that could not be exercised.
+Use [docs/release-matrix.md](docs/release-matrix.md) for changes being shipped.
+Frontend, backend, and desktop verification are separate; run only the suites
+matching the changed boundaries. Use `npm run test:release` only when a change
+actually crosses all three. Report any applicable row that could not be
+exercised.
 
 ## Frontend / Electron renderer — mandatory runtime check
 
@@ -84,7 +88,7 @@ So when a UI feature is "missing in prod but works locally", do not stop at "sta
 Production deploys use the authenticated repository webhook and host-side
 autodeploy described above.
 
-1. **Commit, build, certify, and stage** the exact full-SHA image before pushing. Then push to `master`; the webhook starts the host service, which fetches/reset to `origin/master` and runs `deploy/remote-update.sh` with `--no-build`.
+1. **Commit, build, and stage** the exact full-SHA image before pushing (`npm run release:image:build && npm run release:image:stage`). Capacity certification is separate and is required only for changes whose risk is production capacity; use `release:image:certify` and `release:image:stage-certified` for those changes. Then push to `master`; the webhook starts the host service, which fetches/reset to `origin/master` and runs `deploy/remote-update.sh` with `--no-build`.
 2. **Wait for the host deploy** (do not assume push means live) — `journalctl -u cascade-autodeploy -f`, or: `docker compose -f /var/www/cascade-browser/docker-compose.yml ps` and `curl -sf http://127.0.0.1:3000/api/health`. Confirm the expected commit (`git -C /var/www/cascade-browser rev-parse --short HEAD`) before claiming ship. A verified cutover still does not prove a changed UI behaves correctly; also inspect and exercise the served bundle for client changes.
 3. First-time host bootstrap (nginx, certbot, `.env`) remains `deploy/deploy.sh <domain>` — not used for routine releases. If host autodeploy explicitly fails, manually dispatch `.github/workflows/deploy.yml`; never dispatch it concurrently with the webhook path.
 
