@@ -5,6 +5,7 @@ defmodule CascadeWeb.OrchestrationRoutes do
     {"GET", "/api/vaults/:id/runs"},
     {"POST", "/api/vaults/:id/runs"},
     {"GET", "/api/vaults/:id/active-sessions"},
+    {"POST", "/api/local-agents"},
     {"GET", "/api/runs/:id"},
     {"GET", "/api/runs/:id/events"},
     {"POST", "/api/runs/:id/cancel"},

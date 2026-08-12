@@ -40,7 +40,7 @@
     "note": "Static declarations only; runtime status, headers, bodies, ordering, Engine.IO frames, and ACK payloads require differential tests."
   },
   "summary": {
-    "httpRoutes": 163,
+    "httpRoutes": 164,
     "socketIoInboundDeclarations": 14,
     "socketIoOutboundLiteralDeclarations": 59,
     "sqliteDeclarations": 110
@@ -54,6 +54,16 @@
       ],
       "source": "index.ts",
       "line": 1525
+    },
+    {
+      "method": "POST",
+      "path": "/api/local-agents",
+      "handlers": [
+        "requireAuth",
+        "<inline>"
+      ],
+      "source": "index.ts",
+      "line": 1558
     },
     {
       "method": "POST",

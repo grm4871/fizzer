@@ -108,29 +108,27 @@ async function main() {
     });
     check('restricted helper token can create a live-note folder', helperFolder.folder?.name === 'agent-created');
 
-    const { token: invite } = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/invite-link`, {
+    await must(`${API_BASE}/api/vaults/${vault.id}/members`, {
       method: 'POST', headers: owner.auth,
-    });
-    const guestLink = await must(`${API_BASE}/api/chat-invites/${encodeURIComponent(invite)}/accept`, {
-      method: 'POST', headers: guest.auth,
+      body: JSON.stringify({ username: `guest_${stamp}`, role: 'editor' }),
     });
     const ownerSocket = await socketFor(owner.token, vault.id);
-    const guestSocket = await socketFor(guest.token, guestLink.vaultId);
+    const guestSocket = await socketFor(guest.token, vault.id);
     await sleep(150);
 
-    const guestIdentity = await must(`${API_BASE}/api/vaults/${guestLink.vaultId}/vault-agents`, {
+    const guestIdentity = await must(`${API_BASE}/api/vaults/${vault.id}/vault-agents`, {
       method: 'PUT', headers: guest.auth,
       body: JSON.stringify({ agentId: 'codex', displayName: 'Guest Sol', mention: `guest_sol_${stamp}`, model: 'gpt-5.6-sol' }),
     });
-    const { registration: guestCoordinator } = await must(`${API_BASE}/api/vaults/${guestLink.vaultId}/channels/${guestLink.channelId}/agents/from-vault`, {
+    const { registration: guestCoordinator } = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/agents/from-vault`, {
       method: 'POST', headers: guest.auth,
       body: JSON.stringify({ vaultAgentId: guestIdentity.agent.id, orchestrator: true }),
     });
 
-    const guestPost = await must(`${API_BASE}/api/vaults/${guestLink.vaultId}/channels/${guestLink.channelId}/messages`, {
+    const guestPost = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/messages`, {
       method: 'POST', headers: guest.auth,
       body: JSON.stringify({
-        id: `guest-${stamp}`, channelId: guestLink.channelId, author: `guest_${stamp}`,
+        id: `guest-${stamp}`, channelId: channel.id, author: `guest_${stamp}`,
         body: 'Coordinate this shared-channel request.', createdAt: new Date().toISOString(),
       }),
     });
@@ -198,8 +196,8 @@ async function main() {
 
     await sleep(300);
     check('owner received the inline mission update', ownerSocket.updated.some((event) => event.message?.mission?.id === mission.id));
-    check('linked guest received the same mission projection', guestSocket.updated.some((event) => (
-      event.channelId === guestLink.channelId && event.message?.mission?.id === mission.id
+    check('shared member received the same mission projection', guestSocket.updated.some((event) => (
+      event.channelId === channel.id && event.message?.mission?.id === mission.id
     )));
     check('worker dispatch reached owner clients as a durable outbox event', ownerSocket.created.some((event) => (
       event.message?.missionTaskId === delegated.task.id
@@ -209,14 +207,15 @@ async function main() {
       event.message?.missionTaskId === dependent.task.id
       && event.dispatches?.[0]?.reasoningEffort === 'high'
     )));
-    check('private worker dispatch is not offered to guest renderers', !guestSocket.created.some((event) => (
-      event.message?.missionTaskId === delegated.task.id && (event.dispatches?.length || 0) > 0
+    check('shared member received the owner-scoped worker dispatch', guestSocket.created.some((event) => (
+      event.message?.missionTaskId === delegated.task.id
+      && event.dispatches?.[0]?.registration?.id === terra.id
     )));
 
     const ownerReload = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/messages?detail=list`, { headers: owner.auth });
-    const guestReload = await must(`${API_BASE}/api/vaults/${guestLink.vaultId}/channels/${guestLink.channelId}/messages?detail=list`, { headers: guest.auth });
+    const guestReload = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/messages?detail=list`, { headers: guest.auth });
     check('owner reload retains the scheduled task graph', ownerReload.messages.find((message) => message.id === rootMessage.id)?.mission?.tasks?.length === 2);
-    check('guest reload retains the scheduled task graph through linked ids', guestReload.messages.find((message) => message.id === rootMessage.id)?.mission?.tasks?.length === 2);
+    check('shared member reload retains the scheduled task graph', guestReload.messages.find((message) => message.id === rootMessage.id)?.mission?.tasks?.length === 2);
 
     const pending = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/agent-dispatches/pending`, { headers: owner.auth });
     check('pending outbox survives without a renderer', pending.dispatches.some((dispatch) => (

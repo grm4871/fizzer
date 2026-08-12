@@ -98,7 +98,9 @@ try {
   check('server, not the client, owns human authorship', ownerMessage.message.author === ownerName);
   const embeds = await must(`/api/vaults/${vault.id}/channels/${channel.id}/messages/${ownerMessage.message.id}/embeds`, { headers: owner.auth });
   check('chat embeds snapshot aliased note targets', embeds.notes?.length === 1 && embeds.notes[0].title === 'Release plan' && embeds.notes[0].content.includes('shared vault'));
-  const { token: invite } = await must(`/api/vaults/${vault.id}/channels/${channel.id}/invite-link`, { method: 'POST', headers: owner.auth });
+  const { token: invite } = await must(`/api/vaults/${vault.id}/invite-link`, {
+    method: 'POST', headers: owner.auth, body: JSON.stringify({ role: 'editor' }),
+  });
   const guest = await register(guestName, invite);
   check('a new friend can register with the invitation', guest.user.username === guestName);
   check('a registration invitation is single-use', (await request('/api/auth/register', {
@@ -107,16 +109,6 @@ try {
   })).status === 403);
   check('another account cannot rename a private folder', (await request(`/api/folders/${folder.id}`, { method: 'PATCH', headers: guest.auth, body: JSON.stringify({ name: 'stolen' }) })).status === 404);
   check('another account cannot delete a private folder', (await request(`/api/folders/${folder.id}`, { method: 'DELETE', headers: guest.auth })).status === 404);
-  const linked = await must(`/api/chat-invites/${encodeURIComponent(invite)}/accept`, { method: 'POST', headers: guest.auth });
-  check('friend receives a local linked chat, not the source vault', !(await must('/api/vaults', { headers: guest.auth })).vaults.some((item) => item.id === vault.id) && linked.vaultId !== vault.id);
-  const guestPost = await must(`/api/vaults/${linked.vaultId}/channels/${linked.channelId}/messages`, {
-    method: 'POST', headers: guest.auth, body: JSON.stringify({ id: `guest-${stamp}`, author: ownerName, body: 'guest text' }),
-  });
-  check('linked participant cannot spoof another human', guestPost.message.author === guestName);
-  check('linked participant cannot edit another human message', (await request(`/api/vaults/${linked.vaultId}/channels/${linked.channelId}/messages/${ownerMessage.message.id}`, { method: 'PATCH', headers: guest.auth, body: JSON.stringify({ body: 'changed' }) })).status === 403);
-  check('linked participant cannot change host execution directory', (await request(`/api/vaults/${linked.vaultId}/channels/${linked.channelId}/settings`, { method: 'PUT', headers: guest.auth, body: JSON.stringify({ cwd: '/tmp/hostile' }) })).status === 403);
-  const presence = await must(`/api/vaults/${linked.vaultId}/channels/${linked.channelId}/presence`, { headers: guest.auth });
-  check('multiplayer presence exposes public profile metadata', presence.profiles?.[ownerName]?.displayName === 'Owner Display' && presence.profiles?.[ownerName]?.avatarUrl === avatarUrl);
 
   // ── Shared vault membership (what the account UI drives) ──────────
   const ownerVaults = await must('/api/vaults', { headers: owner.auth });

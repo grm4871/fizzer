@@ -371,6 +371,33 @@ defmodule Cascade.Runs.OrchestrationStateTest do
     assert Jason.decode!(response.resp_body)["item"]["title"] == "Preparsed"
   end
 
+  test "local agent graph has an authenticated cloud fallback", context do
+    token =
+      Token.sign_user(%{
+        id: context.user_id,
+        username: context.username,
+        auth_version: 0
+      })
+
+    response =
+      conn(:post, "/api/local-agents", %{template: "Summarize current work"})
+      |> put_req_header("authorization", "Bearer #{token}")
+      |> CascadeWeb.Router.call(CascadeWeb.Router.init([]))
+
+    assert response.status == 200
+
+    assert %{"nodes" => [], "edges" => [], "scannedAt" => scanned_at} =
+             Jason.decode!(response.resp_body)
+
+    assert is_integer(scanned_at)
+
+    unauthorized =
+      conn(:post, "/api/local-agents", %{template: ""})
+      |> CascadeWeb.Router.call(CascadeWeb.Router.init([]))
+
+    assert unauthorized.status == 401
+  end
+
   defp eventually_status(run_id, expected, attempts \\ 50)
 
   defp eventually_status(run_id, expected, 0) do

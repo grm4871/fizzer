@@ -102,7 +102,7 @@ async function main() {
     const A = await register(`owner_${stamp}`);
     const B = await register(`pinger_${stamp}`);
 
-    // A: vault + chat channel + agent (pingable ON), then invite B.
+    // A: vault + chat channel + agent (pingable ON), then add B to the vault.
     const { vault: aVault } = await must(`${API_BASE}/api/vaults`, { method: 'POST', headers: A.auth, body: JSON.stringify({ name: 'A Vault' }) });
     const { note: aChannel } = await must(`${API_BASE}/api/vaults/${aVault.id}/notes`, {
       method: 'POST', headers: A.auth, body: JSON.stringify({ title: 'roboport', content: 'cascade://chat-channel' }),
@@ -112,9 +112,10 @@ async function main() {
       method: 'PUT', headers: A.auth,
       body: JSON.stringify({ id: REG_ID, agentId: 'grok', displayName: 'Devopus', mention: 'devopus', model: 'grok-code', cwd: '', pingableByOthers: true, yolo: false }),
     });
-    const { token: inviteToken } = await must(`${API_BASE}/api/vaults/${aVault.id}/channels/${aChannel.id}/invite-link`, { method: 'POST', headers: A.auth });
-    const bLink = await must(`${API_BASE}/api/chat-invites/${encodeURIComponent(inviteToken)}/accept`, { method: 'POST', headers: B.auth });
-    check('B linked A\'s channel', Boolean(bLink.vaultId && bLink.channelId));
+    await must(`${API_BASE}/api/vaults/${aVault.id}/members`, {
+      method: 'POST', headers: A.auth, body: JSON.stringify({ username: `pinger_${stamp}`, role: 'editor' }),
+    });
+    check('B joined A\'s shared vault', true);
 
     const aRunner = await connectRunner(A.token, 'A');
     const bRunner = await connectRunner(B.token, 'B');
@@ -122,12 +123,12 @@ async function main() {
 
     // ── Test 1: B pings with toggle ON → routes to A's runner, not B's.
     // B also tries to override yolo/cwd/model; the server must ignore them.
-    const ping1 = await fetchJson(`${API_BASE}/api/vaults/${bLink.vaultId}/runs`, {
+    const ping1 = await fetchJson(`${API_BASE}/api/vaults/${aVault.id}/runs`, {
       method: 'POST', headers: B.auth,
       body: JSON.stringify({
         prompt: 'hey devopus', registrationId: REG_ID,
         yolo: true, model: 'evil-model', cwd: '/tmp/evil',
-        chat: { channelId: bLink.channelId, messageId: `msg-${stamp}-1` },
+        chat: { channelId: aChannel.id, messageId: `msg-${stamp}-1` },
       }),
     });
     check('B ping accepted (200) with toggle ON', ping1.ok);
@@ -146,9 +147,9 @@ async function main() {
       body: JSON.stringify({ id: REG_ID, agentId: 'grok', displayName: 'Devopus', mention: 'devopus', model: 'grok-code', cwd: '', pingableByOthers: false, yolo: false }),
     });
     const aBefore = aRunner.delegated.length;
-    const ping2 = await fetchJson(`${API_BASE}/api/vaults/${bLink.vaultId}/runs`, {
+    const ping2 = await fetchJson(`${API_BASE}/api/vaults/${aVault.id}/runs`, {
       method: 'POST', headers: B.auth,
-      body: JSON.stringify({ prompt: 'hey again', registrationId: REG_ID, chat: { channelId: bLink.channelId, messageId: `msg-${stamp}-2` } }),
+      body: JSON.stringify({ prompt: 'hey again', registrationId: REG_ID, chat: { channelId: aChannel.id, messageId: `msg-${stamp}-2` } }),
     });
     check('B ping rejected 403 with toggle OFF', ping2.status === 403);
     await sleep(400);

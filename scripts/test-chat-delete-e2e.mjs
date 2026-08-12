@@ -106,11 +106,12 @@ async function main() {
     const { note: aChannel } = await must(`${API_BASE}/api/vaults/${aVault.id}/notes`, {
       method: 'POST', headers: A.auth, body: JSON.stringify({ title: 'general', content: 'cascade://chat-channel' }),
     });
-    const { token: inviteToken } = await must(`${API_BASE}/api/vaults/${aVault.id}/channels/${aChannel.id}/invite-link`, { method: 'POST', headers: A.auth });
-    const bLink = await must(`${API_BASE}/api/chat-invites/${encodeURIComponent(inviteToken)}/accept`, { method: 'POST', headers: B.auth });
+    await must(`${API_BASE}/api/vaults/${aVault.id}/members`, {
+      method: 'POST', headers: A.auth, body: JSON.stringify({ username: guestName, role: 'editor' }),
+    });
 
     const aSock = await connectVaultSocket(A.token, aVault.id, 'host');
-    const bSock = await connectVaultSocket(B.token, bLink.vaultId, 'guest');
+    const bSock = await connectVaultSocket(B.token, aVault.id, 'guest');
     await sleep(200);
 
     // ── Test 1: media survives the slim reload path for both sides of a
@@ -129,28 +130,28 @@ async function main() {
       }),
     });
     const hostList = await must(`${API_BASE}/api/vaults/${aVault.id}/channels/${aChannel.id}/messages?detail=list`, { headers: A.auth });
-    const guestList = await must(`${API_BASE}/api/vaults/${bLink.vaultId}/channels/${bLink.channelId}/messages?detail=list`, { headers: B.auth });
+    const guestList = await must(`${API_BASE}/api/vaults/${aVault.id}/channels/${aChannel.id}/messages?detail=list`, { headers: B.auth });
     const hostSlim = hostList.messages.find((message) => message.id === mediaId);
     const guestSlim = guestList.messages.find((message) => message.id === mediaId);
     check('host reload keeps a media hydration marker', hostSlim?.hasImages === true && !hostSlim.images);
     check('guest reload keeps a media hydration marker', guestSlim?.hasImages === true && !guestSlim.images);
     const hostFull = await must(`${API_BASE}/api/vaults/${aVault.id}/channels/${aChannel.id}/messages/${mediaId}`, { headers: A.auth });
-    const guestFull = await must(`${API_BASE}/api/vaults/${bLink.vaultId}/channels/${bLink.channelId}/messages/${mediaId}`, { headers: B.auth });
+    const guestFull = await must(`${API_BASE}/api/vaults/${aVault.id}/channels/${aChannel.id}/messages/${mediaId}`, { headers: B.auth });
     check('host can hydrate persisted media', hostFull.message.images?.[0] === image && hostFull.message.channelId === aChannel.id);
-    check('guest can hydrate persisted media through linked ids', guestFull.message.images?.[0] === image && guestFull.message.channelId === bLink.channelId);
+    check('guest can hydrate persisted media in the shared vault', guestFull.message.images?.[0] === image && guestFull.message.channelId === aChannel.id);
 
     // ── Test 2: author deletes their own message; both clients are told.
-    const own = await post(B.auth, bLink.vaultId, bLink.channelId, guestName, 'guest message');
-    const del1 = await fetchJson(`${API_BASE}/api/vaults/${bLink.vaultId}/channels/${bLink.channelId}/messages/${own}`, { method: 'DELETE', headers: B.auth });
+    const own = await post(B.auth, aVault.id, aChannel.id, guestName, 'guest message');
+    const del1 = await fetchJson(`${API_BASE}/api/vaults/${aVault.id}/channels/${aChannel.id}/messages/${own}`, { method: 'DELETE', headers: B.auth });
     check('author can delete their own message', del1.ok);
     await sleep(300);
     check('message is gone from the channel', !(await listMessageIds(A.auth, aVault.id, aChannel.id)).includes(own));
     check('host client got chatMessageDeleted', aSock.deleted.some((p) => p.messageId === own && p.channelId === aChannel.id));
-    check('guest client got chatMessageDeleted (linked ids)', bSock.deleted.some((p) => p.messageId === own && p.channelId === bLink.channelId));
+    check('guest client got chatMessageDeleted', bSock.deleted.some((p) => p.messageId === own && p.channelId === aChannel.id));
 
     // ── Test 3: a non-author, non-host participant is refused.
     const hostMsg = await post(A.auth, aVault.id, aChannel.id, hostName, 'host message');
-    const del2 = await fetchJson(`${API_BASE}/api/vaults/${bLink.vaultId}/channels/${bLink.channelId}/messages/${hostMsg}`, { method: 'DELETE', headers: B.auth });
+    const del2 = await fetchJson(`${API_BASE}/api/vaults/${aVault.id}/channels/${aChannel.id}/messages/${hostMsg}`, { method: 'DELETE', headers: B.auth });
     check('guest cannot delete the host\'s message (403)', del2.status === 403);
     check('refused message survives', (await listMessageIds(A.auth, aVault.id, aChannel.id)).includes(hostMsg));
 

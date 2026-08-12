@@ -30,6 +30,19 @@ defmodule CascadeWeb.OrchestrationController do
     end)
   end
 
+  def local_agents(conn) do
+    authenticated(conn, fn conn, _user ->
+      # The production release does not share a host filesystem with desktop
+      # Claude/Codex sessions. Match the Node route's documented cloud fallback
+      # instead of leaking the request through the parity boundary.
+      JSON.send(conn, 200, %{
+        nodes: [],
+        edges: [],
+        scannedAt: System.system_time(:millisecond)
+      })
+    end)
+  end
+
   def create_run(conn, vault_id) do
     authenticated(conn, fn conn, user ->
       case VaultMembers.accessible_vault(vault_id, user.id) do

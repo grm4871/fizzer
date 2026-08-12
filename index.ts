@@ -1555,7 +1555,7 @@ function resolveCascadeActivity(nodeId: string): { sessionId: string; title: str
   }
 }
 
-app.all('/api/local-agents', (req, res) => {
+app.post('/api/local-agents', requireAuth, (req, res) => {
   try {
     // Caption template comes from the client (the user-editable "prompt" note);
     // fall back to reading that note here if the client didn't send one.

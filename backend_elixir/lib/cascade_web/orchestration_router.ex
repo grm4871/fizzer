@@ -17,6 +17,7 @@ defmodule CascadeWeb.OrchestrationRouter do
   get "/api/vaults/:id/runs", do: OrchestrationController.list_runs(conn, id)
   post "/api/vaults/:id/runs", do: OrchestrationController.create_run(conn, id)
   get "/api/vaults/:id/active-sessions", do: OrchestrationController.active_sessions(conn, id)
+  post "/api/local-agents", do: OrchestrationController.local_agents(conn)
   get "/api/runs/:id", do: OrchestrationController.get_run(conn, id)
   get "/api/runs/:id/events", do: OrchestrationController.run_events(conn, id)
   post "/api/runs/:id/cancel", do: OrchestrationController.cancel_run(conn, id)
