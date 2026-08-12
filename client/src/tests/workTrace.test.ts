@@ -275,6 +275,25 @@ describe('workTrace', () => {
       .toBe('Bash');
   });
 
+  it('derives live chrome from the bounded recent harness tail', () => {
+    const stalePrefix = 'deploying historical release output\n'.repeat(20_000);
+    const current = JSON.stringify({
+      type: 'item.started',
+      item: { type: 'command_execution', command: 'npm test' },
+    });
+    const neutralTail = 'ordinary command output\n'.repeat(1_000);
+    const harness = `${stalePrefix}${neutralTail}${current}`;
+
+    expect(workTraceHarnessPreview(harness)).toBe('Bash npm test');
+    expect(workTracePhase(msg({
+      id: 'long-live',
+      author: 'Sol',
+      body: 'Thinking…',
+      status: 'running',
+      harnessLog: harness,
+    }))).toBe('testing');
+  });
+
   it('builds a collapsed mission peek from the live step', () => {
     const peek = workTracePeek([
       msg({ id: '1', author: 'Sol', body: 'Queued', status: 'sending', missionTaskId: 't1' }),

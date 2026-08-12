@@ -91,12 +91,37 @@ function previewText(value: unknown, max = 90): string {
 }
 
 const TERMINAL_SEQUENCE_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?/g;
+// Harness logs are capped at 512 KiB and grow several times per second. Status
+// chrome only needs recent activity; rescanning the full retained terminal on
+// every chunk consumed most of a frame on long runs.
+const ACTIVITY_SCAN_MAX_CHARS = 16_384;
+const ACTIVITY_SCAN_MAX_LINES = 160;
 
 /** Remove terminal protocol bytes before any text reaches ordinary DOM copy. */
 function stripTerminalNoise(value: unknown): string {
   return String(value ?? '')
     .replace(TERMINAL_SEQUENCE_RE, '')
     .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '');
+}
+
+function recentActivityText(value: unknown, maxChars = ACTIVITY_SCAN_MAX_CHARS): string {
+  const text = String(value ?? '');
+  if (text.length <= maxChars) return text;
+  const tail = text.slice(-maxChars);
+  // Discard only the first partial line. If there is no newline, retaining the
+  // fragment is more useful than blanking one unusually long provider event.
+  const firstBreak = tail.search(/[\r\n]/);
+  return firstBreak >= 0 ? tail.slice(firstBreak + 1) : tail;
+}
+
+function recentActivityLines(value: unknown): string[] {
+  return stripTerminalNoise(recentActivityText(value))
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .split('\n')
+    .slice(-ACTIVITY_SCAN_MAX_LINES)
+    .map((part) => part.trim())
+    .filter(Boolean);
 }
 
 function previewStructuredDetail(value: unknown, max = 60): string {
@@ -210,12 +235,7 @@ export function humanizeActivityLine(line: string): string {
  * into ordinary one-line prose.
  */
 export function workTraceHarnessPreview(harness: string, max = 110): string {
-  const lines = stripTerminalNoise(harness)
-    .replace(/\r\n/g, '\n')
-    .replace(/\r/g, '\n')
-    .split('\n')
-    .map((part) => part.trim())
-    .filter(Boolean);
+  const lines = recentActivityLines(harness);
   const candidates: string[] = [];
   let inReasoning = false;
   let inToolInput = false;
@@ -307,12 +327,7 @@ export function workTraceHarnessPreview(harness: string, max = 110): string {
 
 /** Prefer the latest human-readable activity line (harness tails grow live). */
 export function workTracePreview(body: string, max = 110): string {
-  const lines = stripTerminalNoise(body)
-    .replace(/\r\n/g, '\n')
-    .replace(/\r/g, '\n')
-    .split('\n')
-    .map((part) => part.trim())
-    .filter(Boolean);
+  const lines = recentActivityLines(body);
   if (lines.length === 0) return '';
 
   // Scan newest-first so live harness tails surface the current step, not
@@ -385,7 +400,9 @@ const WORK_TRACE_DECALS: Record<WorkTracePhase, WorkTraceDecal> = {
 export function workTracePhase(
   message: Pick<ChatMessage, 'id' | 'author' | 'body' | 'status' | 'missionTaskId' | 'harnessLog'>,
 ): WorkTracePhase {
-  const text = `${message.body || ''}\n${message.harnessLog || ''}`.toLowerCase();
+  const text = stripTerminalNoise(
+    `${recentActivityText(message.body)}\n${recentActivityText(message.harnessLog)}`,
+  ).toLowerCase();
   // Steering cancel is intentional flow, not a hard block.
   if (isSteeringContinuationMessage(message)) return 'steering';
   if (message.status === 'failed') return 'blocked';

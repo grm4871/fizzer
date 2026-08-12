@@ -31,13 +31,7 @@ defmodule Cascade.Chat.Messages do
 
   def get(channel_id, user_id, message_id) do
     with {:ok, route} <- Channel.assert_channel(channel_id, user_id) do
-      case SQL.one("SELECT #{@full_columns} FROM chat_messages WHERE id=? AND channel_id=?", [
-             message_id,
-             route.sourceChannelId
-           ]) do
-        nil -> {:error, "Message not found"}
-        row -> {:ok, row_to_message(row, :full, route.localChannelId)}
-      end
+      fetch(route, message_id)
     end
   end
 
@@ -55,7 +49,7 @@ defmodule Cascade.Chat.Messages do
           insert_message(route, message)
           refresh_note_grants(user.id, vault_id, route.sourceChannelId, message)
           index_backlinks(route, message)
-          get!(route.localChannelId, user.id, message.id)
+          fetch!(route, message.id)
         end)
 
       {:ok, result}
@@ -68,17 +62,17 @@ defmodule Cascade.Chat.Messages do
     access = Keyword.get(opts, :access, :user)
 
     with {:ok, route} <- Channel.assert_vault_channel(vault_id, channel_id, user.id),
-         {:ok, existing} <- get(channel_id, user.id, message_id),
+         {:ok, existing} <- fetch(route, message_id),
          :ok <- authorize_edit(user, existing, patch, access) do
       next = merge_patch(existing, patch, access)
 
       result =
         SQL.transaction(fn ->
-          persist(route.sourceChannelId, next)
+          updated = persist!(route, next)
           refresh_note_grants(user.id, vault_id, route.sourceChannelId, next)
           Evolution.tombstone_chat_message_backlinks(message_id)
           index_backlinks(route, next)
-          get!(route.localChannelId, user.id, message_id)
+          updated
         end)
 
       {:ok, result}
@@ -87,7 +81,7 @@ defmodule Cascade.Chat.Messages do
 
   def delete(user, vault_id, channel_id, message_id) do
     with {:ok, route} <- Channel.assert_vault_channel(vault_id, channel_id, user.id),
-         {:ok, message} <- get(channel_id, user.id, message_id),
+         {:ok, message} <- fetch(route, message_id),
          :ok <- authorize_delete(user, route, message) do
       deleted =
         SQL.transaction(fn ->
@@ -144,7 +138,7 @@ defmodule Cascade.Chat.Messages do
     agent? = Keyword.get(opts, :access) == :agent
 
     with {:ok, route} <- Channel.assert_channel(channel_id, user_id),
-         {:ok, _message} <- get(channel_id, user_id, message_id) do
+         {:ok, _message} <- fetch(route, message_id) do
       notes =
         SQL.all(
           """
@@ -177,7 +171,7 @@ defmodule Cascade.Chat.Messages do
 
   def approve(user_id, channel_id, message_id) do
     with {:ok, route} <- Channel.assert_channel(channel_id, user_id),
-         {:ok, message} <- get(channel_id, user_id, message_id),
+         {:ok, message} <- fetch(route, message_id),
          request when is_map(request) <- message[:changeRequest],
          [username] <- SQL.one("SELECT username FROM users WHERE id=?", [user_id]) do
       approvals =
@@ -192,8 +186,8 @@ defmodule Cascade.Chat.Messages do
           approvals ++ [%{userId: user_id, username: username}]
         )
 
-      persist(route.sourceChannelId, Map.put(message, :changeRequest, next))
-      get(channel_id, user_id, message_id)
+      updated = Map.put(message, :changeRequest, next)
+      persist(route, updated)
     else
       nil -> {:error, "Message is not a change request"}
       _ -> {:error, "Change request not found"}
@@ -204,7 +198,7 @@ defmodule Cascade.Chat.Messages do
     with {:ok, route} <- Channel.assert_channel(channel_id, user_id),
          [^user_id, root] <-
            SQL.one("SELECT created_by,root_path FROM vaults WHERE id=?", [route.sourceVaultId]),
-         {:ok, message} <- get(channel_id, user_id, message_id),
+         {:ok, message} <- fetch(route, message_id),
          request when is_map(request) <- message[:changeRequest],
          :ok <- merge_available(request),
          {:ok, ref} <- valid_ref(request),
@@ -212,8 +206,8 @@ defmodule Cascade.Chat.Messages do
          :ok <- normalize_merge_result(merger.(cwd, ref)),
          [username] <- SQL.one("SELECT username FROM users WHERE id=?", [user_id]) do
       request = request |> put_flexible("mergedAt", now()) |> put_flexible("mergedBy", username)
-      persist(route.sourceChannelId, Map.put(message, :changeRequest, request))
-      get(channel_id, user_id, message_id)
+      updated = Map.put(message, :changeRequest, request)
+      persist(route, updated)
     else
       [_other, _root] -> {:error, "Only the repository owner can merge"}
       {:error, _} = error -> error
@@ -224,7 +218,7 @@ defmodule Cascade.Chat.Messages do
 
   def answer_clarification(user_id, channel_id, message_id, answers) do
     with {:ok, route} <- Channel.assert_channel(channel_id, user_id),
-         {:ok, message} <- get(channel_id, user_id, message_id),
+         {:ok, message} <- fetch(route, message_id),
          clarification when is_map(clarification) <- message[:clarification],
          "pending" <- map_value(clarification, "status", "pending") do
       by_id =
@@ -249,8 +243,8 @@ defmodule Cascade.Chat.Messages do
         end)
 
       next = put_flexible(clarification, "questions", questions)
-      persist(route.sourceChannelId, Map.put(message, :clarification, next))
-      get(channel_id, user_id, message_id)
+      updated = Map.put(message, :clarification, next)
+      persist(route, updated)
     else
       nil -> {:error, "Message is not a clarification"}
       "accepted" -> {:error, "Clarification is already closed"}
@@ -262,7 +256,7 @@ defmodule Cascade.Chat.Messages do
 
   def accept_clarification(user_id, channel_id, message_id, opts \\ []) do
     with {:ok, route} <- Channel.assert_channel(channel_id, user_id),
-         {:ok, message} <- get(channel_id, user_id, message_id),
+         {:ok, message} <- fetch(route, message_id),
          clarification when is_map(clarification) <- message[:clarification],
          :ok <- clarification_open(clarification),
          {:ok, contract} <- clarification_contract(clarification),
@@ -316,8 +310,7 @@ defmodule Cascade.Chat.Messages do
             ]
           )
 
-          persist(route.sourceChannelId, Map.put(message, :clarification, updated))
-          get!(channel_id, user_id, message_id)
+          persist!(route, Map.put(message, :clarification, updated))
         end)
 
       {:ok,
@@ -409,41 +402,54 @@ defmodule Cascade.Chat.Messages do
     )
   end
 
-  defp persist(source_channel_id, message) do
+  defp persist(route, message) do
     activity = if countable?(message), do: now(), else: nil
 
-    SQL.exec(
-      """
-      UPDATE chat_messages SET author=?,body=?,created_at=?,activity_at=COALESCE(activity_at,?),status=?,agent_id=?,
-        registration_id=?,run_id=?,blocks_json=?,harness_log=?,images_json=?,attachments_json=?,reply_to_json=?,
-        forwarded_from_json=?,change_request_json=?,clarification_json=?,mission_json=?,mission_task_id=?
-      WHERE id=? AND channel_id=?
-      """,
-      [
-        message.author,
-        message.body,
-        message.createdAt,
-        activity,
-        message[:status],
-        message[:agentId],
-        message[:registrationId],
-        message[:runId],
-        encode(message[:blocks]),
-        message[:harnessLog],
-        encode(message[:images]),
-        encode(message[:attachments]),
-        encode(message[:replyTo]),
-        encode(message[:forwardedFrom]),
-        encode(message[:changeRequest]),
-        encode(message[:clarification]),
-        encode(message[:mission]),
-        message[:missionTaskId],
-        message.id,
-        source_channel_id
-      ]
-    )
+    rows =
+      SQL.exec(
+        """
+        UPDATE chat_messages SET author=?,body=?,created_at=?,activity_at=COALESCE(activity_at,?),status=?,agent_id=?,
+          registration_id=?,run_id=?,blocks_json=?,harness_log=?,images_json=?,attachments_json=?,reply_to_json=?,
+          forwarded_from_json=?,change_request_json=?,clarification_json=?,mission_json=?,mission_task_id=?
+        WHERE id=? AND channel_id=?
+        RETURNING #{@full_columns}
+        """,
+        [
+          message.author,
+          message.body,
+          message.createdAt,
+          activity,
+          message[:status],
+          message[:agentId],
+          message[:registrationId],
+          message[:runId],
+          encode(message[:blocks]),
+          message[:harnessLog],
+          encode(message[:images]),
+          encode(message[:attachments]),
+          encode(message[:replyTo]),
+          encode(message[:forwardedFrom]),
+          encode(message[:changeRequest]),
+          encode(message[:clarification]),
+          encode(message[:mission]),
+          message[:missionTaskId],
+          message.id,
+          route.sourceChannelId
+        ]
+      )
+      |> Map.fetch!(:rows)
 
-    message
+    case rows do
+      [row] -> {:ok, row_to_message(row, :full, route.localChannelId)}
+      [] -> {:error, "Message not found"}
+    end
+  end
+
+  defp persist!(route, message) do
+    case persist(route, message) do
+      {:ok, value} -> value
+      {:error, reason} -> raise reason
+    end
   end
 
   defp message_params(route, message, activity) do
@@ -1007,8 +1013,18 @@ defmodule Cascade.Chat.Messages do
       String.trim(message.body || "") != "" or List.wrap(message[:images]) != [] or
         List.wrap(message[:attachments]) != []
 
-  defp get!(channel_id, user_id, message_id) do
-    case get(channel_id, user_id, message_id) do
+  defp fetch(route, message_id) do
+    case SQL.one("SELECT #{@full_columns} FROM chat_messages WHERE id=? AND channel_id=?", [
+           message_id,
+           route.sourceChannelId
+         ]) do
+      nil -> {:error, "Message not found"}
+      row -> {:ok, row_to_message(row, :full, route.localChannelId)}
+    end
+  end
+
+  defp fetch!(route, message_id) do
+    case fetch(route, message_id) do
       {:ok, value} -> value
       {:error, message} -> raise message
     end

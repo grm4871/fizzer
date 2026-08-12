@@ -818,17 +818,19 @@ export function formatRateLimitType(type: string | undefined): string {
   return map[type] || type.replace(/_/g, ' ');
 }
 
+const RESET_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
+  hour: 'numeric',
+  minute: '2-digit',
+  month: 'short',
+  day: 'numeric',
+});
+
 export function formatResetsAt(iso: string | undefined | null): string | null {
   if (!iso) return null;
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return null;
   try {
-    return new Intl.DateTimeFormat(undefined, {
-      hour: 'numeric',
-      minute: '2-digit',
-      month: 'short',
-      day: 'numeric',
-    }).format(d);
+    return RESET_TIME_FORMATTER.format(d);
   } catch {
     return d.toISOString();
   }

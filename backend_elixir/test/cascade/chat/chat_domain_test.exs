@@ -483,6 +483,29 @@ defmodule Cascade.ChatDomainTest do
     assert agent.content =~ "Private block hidden"
   end
 
+  test "message writes authorize and fetch once instead of re-resolving the channel" do
+    {vault, channel} = chat_vault(1, "Fast messages", "Room")
+    user = %{id: 1, username: "alice"}
+
+    {create_result, create_queries} =
+      capture_queries(fn ->
+        Messages.create(user, vault.id, channel.id, %{id: "fast-message", body: "one"})
+      end)
+
+    assert {:ok, %{id: "fast-message"}} = create_result
+    assert Enum.count(create_queries, &route_resolution_query?/1) == 1
+    assert Enum.count(create_queries, &message_fetch_query?/1) == 1
+
+    {update_result, update_queries} =
+      capture_queries(fn ->
+        Messages.update(user, vault.id, channel.id, "fast-message", %{body: "two"})
+      end)
+
+    assert {:ok, %{body: "two"}} = update_result
+    assert Enum.count(update_queries, &route_resolution_query?/1) == 1
+    assert Enum.count(update_queries, &message_fetch_query?/1) == 1
+  end
+
   test "typed ancestry is bounded and natural links point to a specific prior message" do
     input = %{body: "@sol can you review this approach?"}
 
@@ -806,6 +829,44 @@ defmodule Cascade.ChatDomainTest do
     request = if options == [], do: request, else: assign(request, :domain_options, options)
     CascadeWeb.ChatRouter.call(request, CascadeWeb.ChatRouter.init([]))
   end
+
+  defp capture_queries(operation) do
+    parent = self()
+    ref = make_ref()
+    handler_id = "chat-query-count-#{System.unique_integer([:positive])}"
+
+    :ok =
+      :telemetry.attach(
+        handler_id,
+        [:cascade, :db, :repo, :query],
+        fn _event, _measurements, metadata, _config ->
+          send(parent, {ref, IO.iodata_to_binary(metadata.query)})
+        end,
+        nil
+      )
+
+    try do
+      result = operation.()
+      :telemetry.detach(handler_id)
+      {result, collect_queries(ref, [])}
+    after
+      :telemetry.detach(handler_id)
+    end
+  end
+
+  defp collect_queries(ref, queries) do
+    receive do
+      {^ref, query} -> collect_queries(ref, [query | queries])
+    after
+      0 -> Enum.reverse(queries)
+    end
+  end
+
+  defp route_resolution_query?(query),
+    do: String.contains?(query, "SELECT local.id,local.vault_id")
+
+  defp message_fetch_query?(query),
+    do: String.contains?(query, "FROM chat_messages WHERE id=? AND channel_id=?")
 
   defp chat_vault(user_id, name, title) do
     vault = Store.create_vault(user_id, %{name: name})

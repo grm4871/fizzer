@@ -150,6 +150,10 @@ export type CommunityUpdates = {
 /* ─── API Client ─────────────────────────────────────────── */
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
+const DATE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+});
 
 export class ApiError extends Error {
   constructor(
@@ -209,10 +213,7 @@ export async function api<T>(path: string, options: RequestInit = {}) {
  * Example output: "Jun 15, 2026, 3:45 PM"
  */
 export function formatDate(value: string) {
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(new Date(value));
+  return DATE_TIME_FORMATTER.format(new Date(value));
 }
 
 /**

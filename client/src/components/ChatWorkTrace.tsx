@@ -25,13 +25,14 @@ import { SwipeToReply } from './SwipeToReply';
 import type { ChatMessage } from './ChatView';
 
 const MARKDOWN_PLUGINS = [remarkGfm, remarkBreaks];
+const WORK_TRACE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
+  hour: 'numeric',
+  minute: '2-digit',
+});
 
 function formatTime(value: string) {
-  try {
-    return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(new Date(value));
-  } catch {
-    return '';
-  }
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '' : WORK_TRACE_TIME_FORMATTER.format(date);
 }
 
 function statusMark(message: ChatMessage): { mark: string; className: string; live?: boolean } {
