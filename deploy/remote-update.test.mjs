@@ -213,18 +213,23 @@ test('snapshot creation fails closed on a busy checkpoint and records integrity 
   assert.match(source, /git rev-parse HEAD > "\$SNAPSHOT_DIR\/revision\.txt"/);
 });
 
-test('isolated preflight checkpoints the migrated WAL before main-file compatibility inspection', () => {
+test('isolated preflight classifies startup state before its mutating protocol probe', () => {
   assert.match(source, /busy preflight WAL checkpoint/);
   assert.match(source, /preflight SQLite quick_check failed/);
+  assert.match(source, /protocol probe deliberately creates a[\s\S]*disposable user, vault, and run/);
   assertOrderedWithin(
     functionBody('preflight_candidate'),
     "    'case Application.ensure_all_started(:cascade_elixir) do {:ok, _} -> :ok; other -> raise inspect(other) end'",
     '  checkpoint_preflight_clone',
-    '  docker run -d --name "$PREFLIGHT_CONTAINER" --env-file "$ROOT/.env" \\',
+    '  start_preflight_server',
     '  docker rm -f "$PREFLIGHT_CONTAINER" >/dev/null',
     '  checkpoint_preflight_clone',
     '  local checker=(',
+    '  start_preflight_server',
+    '  docker run --rm --network host --entrypoint node \\',
+    '  docker rm -f "$PREFLIGHT_CONTAINER" >/dev/null',
   );
+  assert.match(functionBody('start_preflight_server'), /verify_container_runtime_shape "\$PREFLIGHT_CONTAINER" "isolated candidate preflight"/);
 });
 
 test('preflight and live cutover bind the complete vault and QMD corpus without exemptions', () => {

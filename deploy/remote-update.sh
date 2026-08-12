@@ -34,6 +34,7 @@ CANDIDATE_IMAGE=""
 ROLLBACK_IMAGE="cascade:rollback-$REVISION"
 PREFLIGHT_DIR=""
 PREFLIGHT_CONTAINER="cascade-preflight-$REVISION"
+PREFLIGHT_PORT=""
 SNAPSHOT_DIR=""
 SNAPSHOT_DB=""
 CUTOVER_STARTED=0
@@ -512,6 +513,31 @@ checkpoint_preflight_clone() {
     '
 }
 
+start_preflight_server() {
+  docker run -d --name "$PREFLIGHT_CONTAINER" --env-file "$ROOT/.env" \
+    --cpus 2 --cpuset-cpus 0-1 --memory 3g --memory-swap 3g \
+    --pids-limit 100000 --ulimit nofile=200000:200000 \
+    -e API_PORT=3000 \
+    -e CASCADE_BIND_IP=0.0.0.0 \
+    -e CASCADE_NETWORK_MODE=false \
+    -e CASCADE_QMD_WORKER_ENABLED=false \
+    -e CASCADE_DATA_DIR=/preflight/after-data \
+    -e CASCADE_VAULTS_BASE_DIR=/preflight/after-data/vaults \
+    -e CASCADE_QMD_DIR=/preflight/after-data/qmd \
+    -e DOCS_DB_PATH=/preflight/after.db \
+    -p 127.0.0.1::3000 \
+    -v "$PREFLIGHT_DIR:/preflight" \
+    "$CANDIDATE_IMAGE" >/dev/null
+  verify_container_runtime_shape "$PREFLIGHT_CONTAINER" "isolated candidate preflight"
+
+  PREFLIGHT_PORT="$(docker port "$PREFLIGHT_CONTAINER" 3000/tcp | sed -n 's/.*://p' | head -1)"
+  if [[ ! "$PREFLIGHT_PORT" =~ ^[0-9]+$ ]]; then
+    echo "Error: could not resolve candidate preflight port." >&2
+    return 1
+  fi
+  wait_for_url "http://127.0.0.1:$PREFLIGHT_PORT/api/health" 60 "candidate preflight"
+}
+
 preflight_candidate() {
   echo "==> Running isolated data and protocol preflight"
   PREFLIGHT_DIR="$(mktemp -d "$DATA_DIR/.deploy-preflight.XXXXXX")"
@@ -544,32 +570,11 @@ preflight_candidate() {
 
   checkpoint_preflight_clone
 
-  docker run -d --name "$PREFLIGHT_CONTAINER" --env-file "$ROOT/.env" \
-    --cpus 2 --cpuset-cpus 0-1 --memory 3g --memory-swap 3g \
-    --pids-limit 100000 --ulimit nofile=200000:200000 \
-    -e API_PORT=3000 \
-    -e CASCADE_BIND_IP=0.0.0.0 \
-    -e CASCADE_NETWORK_MODE=false \
-    -e CASCADE_QMD_WORKER_ENABLED=false \
-    -e CASCADE_DATA_DIR=/preflight/after-data \
-    -e CASCADE_VAULTS_BASE_DIR=/preflight/after-data/vaults \
-    -e CASCADE_QMD_DIR=/preflight/after-data/qmd \
-    -e DOCS_DB_PATH=/preflight/after.db \
-    -p 127.0.0.1::3000 \
-    -v "$PREFLIGHT_DIR:/preflight" \
-    "$CANDIDATE_IMAGE" >/dev/null
-  verify_container_runtime_shape "$PREFLIGHT_CONTAINER" "isolated candidate preflight"
-
-  local mapped_port
-  mapped_port="$(docker port "$PREFLIGHT_CONTAINER" 3000/tcp | sed -n 's/.*://p' | head -1)"
-  if [[ ! "$mapped_port" =~ ^[0-9]+$ ]]; then
-    echo "Error: could not resolve candidate preflight port." >&2
-    return 1
-  fi
-  wait_for_url "http://127.0.0.1:$mapped_port/api/health" 60 "candidate preflight"
-  check_engine_io "http://127.0.0.1:$mapped_port"
-  docker run --rm --network host --entrypoint node \
-    "$CANDIDATE_IMAGE" /app/deploy/preflight-client.mjs "http://127.0.0.1:$mapped_port"
+  # Classify only startup effects. The protocol probe deliberately creates a
+  # disposable user, vault, and run, so running it before this comparison made
+  # every routine release look state-changing and forced the 503 fallback.
+  start_preflight_server
+  check_engine_io "http://127.0.0.1:$PREFLIGHT_PORT"
   docker rm -f "$PREFLIGHT_CONTAINER" >/dev/null
   checkpoint_preflight_clone
 
@@ -590,6 +595,13 @@ preflight_candidate() {
     "${checker[@]}"
     ROLLING_SAFE=0
   fi
+
+  # Exercise write/realtime behavior only after the startup identity decision;
+  # all resulting state remains confined to the disposable preflight clone.
+  start_preflight_server
+  docker run --rm --network host --entrypoint node \
+    "$CANDIDATE_IMAGE" /app/deploy/preflight-client.mjs "http://127.0.0.1:$PREFLIGHT_PORT"
+  docker rm -f "$PREFLIGHT_CONTAINER" >/dev/null
 }
 
 checkpoint_and_snapshot() {
