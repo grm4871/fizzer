@@ -20,6 +20,7 @@ defmodule CascadeWeb.ContentRouter do
   post "/api/vaults", do: ContentController.create_vault(conn)
   get "/api/vaults/:id", do: ContentController.get_vault(conn, id)
   patch "/api/vaults/:id", do: ContentController.rename_vault(conn, id)
+  delete "/api/vaults/:id", do: ContentController.delete_vault(conn, id)
 
   get "/api/vaults/:id/folders", do: ContentController.list_folders(conn, id)
   post "/api/vaults/:id/folders", do: ContentController.create_folder(conn, id)

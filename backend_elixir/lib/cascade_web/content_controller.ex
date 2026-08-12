@@ -50,6 +50,18 @@ defmodule CascadeWeb.ContentController do
     end)
   end
 
+  def delete_vault(conn, id) do
+    authenticated(conn, [user_only: true], fn conn, auth ->
+      safely(conn, "Could not delete vault", fn ->
+        if Store.delete_vault(id, auth.user.id) do
+          JSON.send(conn, 200, %{success: true})
+        else
+          JSON.send(conn, 404, %{error: "Vault not found or you are not its owner"})
+        end
+      end)
+    end)
+  end
+
   def list_folders(conn, vault_id) do
     authenticated(conn, fn conn, auth ->
       with_readable_vault(conn, vault_id, auth.user.id, fn ->

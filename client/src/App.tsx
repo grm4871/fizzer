@@ -655,6 +655,22 @@ export default function App() {
     }
   }, []);
 
+  const handleDeleteVault = useCallback(async (id: string): Promise<boolean> => {
+    try {
+      await api(`/api/vaults/${id}`, { method: 'DELETE' });
+      const remaining = vaults.filter((vault) => vault.id !== id);
+      setVaults(remaining);
+      if (activeVaultIdRef.current === id) {
+        switchVaultWorkspace(remaining[0]?.id ?? null);
+      }
+      await loadVaults();
+      return true;
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not delete vault');
+      return false;
+    }
+  }, [loadVaults, switchVaultWorkspace, vaults]);
+
   useEffect(() => {
     let cancelled = false;
     let succeeded = false;
@@ -3838,6 +3854,7 @@ export default function App() {
           onSelectVault={switchVaultWorkspace}
           onCreateVault={handleCreateVault}
           onRenameVault={handleRenameVault}
+          onDeleteVault={handleDeleteVault}
           onManageVault={(vaultId) => {
             switchVaultWorkspace(vaultId);
             setAccountInitialSection('vault');

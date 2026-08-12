@@ -3,7 +3,7 @@ import test from 'node:test';
 import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
-import { createVault, renameVault, listNotes, VAULTS_BASE_DIR } from './vault.js';
+import { createVault, deleteVault, renameVault, listNotes, VAULTS_BASE_DIR } from './vault.js';
 import { ensureVaultMembersSchema } from './vaultMembers.js';
 
 function setup() {
@@ -95,6 +95,40 @@ test('renameVault reports a missing vault instead of silently succeeding', () =>
   try {
     assert.throws(() => renameVault(db, 'no-such-vault', 'Whatever'), /not found/i);
   } finally {
+    cleanup(db);
+  }
+});
+
+test('deleteVault removes an owned vault and its isolated files', () => {
+  const db = setup();
+  try {
+    const vault = createVault(db, 1, { name: 'Disposable' });
+    assert.ok(fs.existsSync(vault.root_path));
+
+    assert.equal(deleteVault(db, vault.id, 2), false);
+    assert.ok(fs.existsSync(vault.root_path));
+    assert.equal(deleteVault(db, vault.id, 1), true);
+    assert.equal(db.prepare('SELECT id FROM vaults WHERE id = ?').get(vault.id), undefined);
+    assert.equal(fs.existsSync(vault.root_path), false);
+  } finally {
+    cleanup(db);
+  }
+});
+
+test('deleteVault refuses to remove files outside managed vault storage', () => {
+  const db = setup();
+  const outside = path.join(path.dirname(VAULTS_BASE_DIR), `outside-${Date.now()}`);
+  try {
+    fs.mkdirSync(outside, { recursive: true });
+    fs.writeFileSync(path.join(outside, 'keep.txt'), 'keep');
+    db.prepare('INSERT INTO vaults (id, name, root_path, created_by) VALUES (?, ?, ?, ?)')
+      .run('unsafe', 'Unsafe', outside, 1);
+
+    assert.throws(() => deleteVault(db, 'unsafe', 1), /outside the managed/i);
+    assert.ok(fs.existsSync(path.join(outside, 'keep.txt')));
+    assert.ok(db.prepare('SELECT id FROM vaults WHERE id = ?').get('unsafe'));
+  } finally {
+    fs.rmSync(outside, { recursive: true, force: true });
     cleanup(db);
   }
 });

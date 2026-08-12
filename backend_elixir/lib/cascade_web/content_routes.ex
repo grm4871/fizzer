@@ -6,6 +6,7 @@ defmodule CascadeWeb.ContentRoutes do
     {"POST", "/api/vaults"},
     {"GET", "/api/vaults/:id"},
     {"PATCH", "/api/vaults/:id"},
+    {"DELETE", "/api/vaults/:id"},
     {"GET", "/api/vaults/:id/folders"},
     {"POST", "/api/vaults/:id/folders"},
     {"PATCH", "/api/folders/:id"},

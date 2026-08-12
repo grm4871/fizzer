@@ -67,6 +67,17 @@ defmodule Cascade.ContentDomainTest do
     end
   end
 
+  test "only the owner can permanently delete a vault and its isolated files" do
+    vault = Store.create_vault(1, %{name: "Disposable"})
+    assert File.dir?(vault.root_path)
+
+    refute Store.delete_vault(vault.id, 2)
+    assert File.dir?(vault.root_path)
+    assert Store.delete_vault(vault.id, 1)
+    refute File.exists?(vault.root_path)
+    assert Query.one("SELECT id FROM vaults WHERE id = ?", [vault.id]) == nil
+  end
+
   test "note CRUD keeps distinct files, dense ordering, unlisted storage, tags, links and graph" do
     vault = Store.create_vault(1, %{name: "Content"})
     folder_a = Store.create_folder(vault.id, %{name: "A"})

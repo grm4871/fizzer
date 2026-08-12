@@ -56,6 +56,7 @@ interface SidebarProps {
   onSelectVault: (id: string) => void;
   onCreateVault: (name: string) => Promise<boolean>;
   onRenameVault: (id: string, name: string) => Promise<boolean>;
+  onDeleteVault: (id: string) => Promise<boolean>;
   onManageVault: (id: string) => void;
   onJoinVault: (inviteLink: string) => Promise<boolean>;
   onOpenPublicVaults: () => void;
@@ -138,6 +139,7 @@ export const Sidebar = memo(function Sidebar({
   onSelectVault,
   onCreateVault,
   onRenameVault,
+  onDeleteVault,
   onManageVault,
   onJoinVault,
   onOpenPublicVaults,
@@ -877,6 +879,23 @@ export const Sidebar = memo(function Sidebar({
                           onClick={(event) => { event.stopPropagation(); startRenameVault(vault); }}
                         >
                           <Pencil size={14} aria-hidden="true" />
+                        </button>
+                      )}
+                      {canRenameVault(vault) && (
+                        <button
+                          type="button"
+                          className="vault-switcher-delete"
+                          title={`Delete ${vault.name}`}
+                          aria-label={`Delete ${vault.name}`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            if (!window.confirm(`Permanently delete “${vault.name}” and all of its notes? This cannot be undone.`)) return;
+                            void onDeleteVault(vault.id).then((deleted) => {
+                              if (deleted) setVaultMenuOpen(false);
+                            });
+                          }}
+                        >
+                          <Trash2 size={14} aria-hidden="true" />
                         </button>
                       )}
                       <button

@@ -25,6 +25,7 @@ import {
   createFolder,
   createNote,
   createVault,
+  deleteVault,
   renameVault,
   enforceVaultStorageIsolation,
   deleteFolder,
@@ -1924,6 +1925,17 @@ app.patch('/api/vaults/:id', requireAuth, (req: AuthedRequest, res) => {
     res.json({ vault: renamed });
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : 'Could not rename vault' });
+  }
+});
+
+app.delete('/api/vaults/:id', requireAuth, requireUserAccess, (req: AuthedRequest, res) => {
+  try {
+    if (!deleteVault(db, req.params.id, req.user!.id)) {
+      return res.status(404).json({ error: 'Vault not found or you are not its owner' });
+    }
+    res.json({ success: true });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not delete vault' });
   }
 });
 

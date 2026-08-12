@@ -240,6 +240,29 @@ defmodule Cascade.Content.Store do
     raw_vault(vault_id)
   end
 
+  def delete_vault(vault_id, user_id) do
+    case Query.map(
+           "SELECT id, name, root_path, created_by, created_at, visibility, public_join_role, public_summary, public_topics, public_guidelines, public_home_note_id, public_join_policy FROM vaults WHERE id = ? AND created_by = ?",
+           [vault_id, user_id],
+           @vault_fields
+         ) do
+      nil ->
+        false
+
+      vault ->
+        root = Path.expand(vault.root_path || "")
+        base = Path.expand(vaults_base_dir())
+
+        unless String.starts_with?(root, base <> "/") do
+          raise ArgumentError, "Vault storage path is outside the managed vault directory"
+        end
+
+        Query.execute("DELETE FROM vaults WHERE id = ? AND created_by = ?", [vault_id, user_id])
+        File.rm_rf!(root)
+        true
+    end
+  end
+
   def enforce_storage_isolation do
     vaults =
       Query.maps(

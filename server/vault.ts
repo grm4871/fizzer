@@ -527,6 +527,22 @@ export function renameVault(db: Db, vaultId: string, name: string): Vault {
   return db.prepare('SELECT * FROM vaults WHERE id = ?').get(vaultId) as Vault;
 }
 
+/** Permanently delete an owned vault and its isolated on-disk workspace. */
+export function deleteVault(db: Db, vaultId: string, userId: number): boolean {
+  const vault = db.prepare('SELECT * FROM vaults WHERE id = ? AND created_by = ?').get(vaultId, userId) as Vault | undefined;
+  if (!vault) return false;
+
+  const root = path.resolve(vault.root_path || '');
+  const base = path.resolve(VAULTS_BASE_DIR);
+  if (root === base || !root.startsWith(`${base}${path.sep}`)) {
+    throw new Error('Vault storage path is outside the managed vault directory');
+  }
+
+  db.prepare('DELETE FROM vaults WHERE id = ? AND created_by = ?').run(vaultId, userId);
+  fs.rmSync(root, { recursive: true, force: true });
+  return true;
+}
+
 // ── Folders ────────────────────────────────────────────────────────
 
 export function listFolders(db: Db, vaultId: string): Folder[] {
