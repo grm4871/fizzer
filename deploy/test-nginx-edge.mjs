@@ -17,6 +17,7 @@ const httpPort = 18080;
 const httpsPort = 18443;
 const backendPort = 3000;
 const backupPort = 3001;
+const webhookPort = 19001;
 const domain = 'edge.test';
 const temp = await mkdtemp(path.join(tmpdir(), 'cascade-nginx-edge-'));
 const containerName = `cascade-nginx-edge-${process.pid}`;
@@ -33,7 +34,7 @@ function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-function request({ secure = true, requestPath = '/', method = 'GET', headers = {} } = {}) {
+function request({ secure = true, requestPath = '/', method = 'GET', headers = {}, body } = {}) {
   const transport = secure ? https : http;
   return new Promise((resolve, reject) => {
     const req = transport.request({
@@ -54,7 +55,7 @@ function request({ secure = true, requestPath = '/', method = 'GET', headers = {
       }));
     });
     req.once('error', reject);
-    req.end();
+    req.end(body);
   });
 }
 
@@ -134,12 +135,22 @@ function createBackend(identity) {
 }
 const backend = createBackend('primary');
 const backupBackend = createBackend('backup');
+const webhookRequests = [];
+const webhookBackend = createServer((req, response) => {
+  webhookRequests.push({ method: req.method, url: req.url, headers: req.headers });
+  const authorized = req.headers['x-hub-signature-256'] === 'sha256=edge-test';
+  response.writeHead(authorized ? 202 : 403, { 'content-type': 'application/json' });
+  response.end(JSON.stringify({ authorized }));
+});
 
 try {
   const template = await readFile(templatePath, 'utf8');
   invariant(template.includes('limit_conn_zone $binary_remote_addr zone=cascade_connections_per_ip:10m;'),
     'connection zone must use the genuine nginx peer address');
   invariant(template.includes('location ^~ /socket.io/ {'), 'Socket.IO edge location is missing');
+  invariant(template.includes('location = /_gh/deploy {'), 'signed webhook edge location is missing');
+  invariant(template.includes('proxy_pass http://127.0.0.1:9001;'),
+    'signed webhook must target the loopback listener');
   invariant(template.includes('limit_conn cascade_connections_per_ip 40;'),
     'Socket.IO per-IP limit must remain exactly 40');
   invariant(template.includes('limit_conn_status 429;'), 'connection overflow must return 429');
@@ -157,6 +168,7 @@ try {
   const rendered = template
     .replaceAll('DOMAIN', domain)
     .replaceAll('CASCADE_PRIMARY_PORT', String(backendPort))
+    .replaceAll('127.0.0.1:9001', `127.0.0.1:${webhookPort}`)
     .replaceAll(
       'CASCADE_BACKUP_SERVER',
       `server 127.0.0.1:${backupPort} backup max_fails=1 fail_timeout=2s;`,
@@ -188,6 +200,10 @@ http {
     backupBackend.once('error', reject);
     backupBackend.listen(backupPort, '127.0.0.1', resolve);
   });
+  await new Promise((resolve, reject) => {
+    webhookBackend.once('error', reject);
+    webhookBackend.listen(webhookPort, '127.0.0.1', resolve);
+  });
 
   nginx = spawn('docker', [
     'run', '--rm', '--network', 'host', '--name', containerName,
@@ -205,6 +221,20 @@ http {
   invariant(observed.host === domain, `upstream Host mismatch: ${observed.host}`);
   invariant(observed['x-real-ip'] === '127.0.0.1', `X-Real-IP mismatch: ${observed['x-real-ip']}`);
   invariant(observed['x-forwarded-proto'] === 'https', 'X-Forwarded-Proto must reflect TLS');
+
+  const unsignedWebhook = await request({ method: 'POST', requestPath: '/_gh/deploy' });
+  invariant(unsignedWebhook.status === 403,
+    `unsigned webhook returned ${unsignedWebhook.status}, expected 403`);
+  const signedWebhook = await request({
+    method: 'POST',
+    requestPath: '/_gh/deploy',
+    headers: { 'X-Hub-Signature-256': 'sha256=edge-test' },
+    body: '{}',
+  });
+  invariant(signedWebhook.status === 202,
+    `signed webhook returned ${signedWebhook.status}, expected 202`);
+  invariant(webhookRequests.length === 2 && webhookRequests.every((entry) => entry.url === '/_gh/deploy'),
+    'webhook edge did not preserve the exact request path');
 
   const spoof = await request({
     requestPath: '/api/health?forwarded=1',
@@ -281,6 +311,8 @@ http {
     maintenanceGateStatus: maintenance.status,
     rollingFailoverStatus: failoverPost.status,
     rollingFailoverBackend: failoverBody.backend,
+    unsignedWebhookStatus: unsignedWebhook.status,
+    signedWebhookStatus: signedWebhook.status,
     hsts: health.headers['strict-transport-security'],
     forwardedForSeenUpstream: spoofHeaders['x-forwarded-for'],
     httpRedirect: redirect.headers.location,
@@ -295,6 +327,7 @@ http {
   websocketServer.close();
   if (!primaryClosed) await new Promise((resolve) => backend.close(resolve));
   await new Promise((resolve) => backupBackend.close(resolve));
+  await new Promise((resolve) => webhookBackend.close(resolve));
   if (nginx && nginx.exitCode === null) {
     spawnSync('docker', ['rm', '-f', containerName], { stdio: 'ignore' });
   }
