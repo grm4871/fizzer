@@ -3,7 +3,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { isMp3Link } from '../components/Sidebar';
 import { ChatMediaEmbed } from '../components/ChatView';
-import { chatMediaLink, youtubeVideoId } from '../mediaLinks';
+import { chatMediaLink, twitterEmbedResizeHeight, youtubeVideoId } from '../mediaLinks';
 
 describe('isMp3Link', () => {
   it('recognizes uploaded note assets by their visible filename', () => {
@@ -50,6 +50,24 @@ describe('chatMediaLink', () => {
     expect(chatMediaLink('https://x.com.example/user/status/123456789')).toBeNull();
     expect(chatMediaLink('https://open.spotify.com/search/test')).toBeNull();
     expect(chatMediaLink('http://vimeo.com/12345678')).toBeNull();
+  });
+});
+
+describe('twitterEmbedResizeHeight', () => {
+  it('accepts the bounded resize message emitted by the X iframe', () => {
+    expect(twitterEmbedResizeHeight({
+      'twttr.embed': {
+        method: 'twttr.private.resize',
+        params: [{ width: 550, height: 321, data: { tweet_id: '123456789' } }],
+      },
+    })).toBe(321);
+  });
+
+  it('rejects unrelated or unsafe provider messages', () => {
+    expect(twitterEmbedResizeHeight({ 'twttr.embed': { method: 'twttr.private.rendered', params: [{}] } })).toBeNull();
+    expect(twitterEmbedResizeHeight({ 'twttr.embed': { method: 'twttr.private.resize', params: [{ height: 99 }] } })).toBeNull();
+    expect(twitterEmbedResizeHeight({ 'twttr.embed': { method: 'twttr.private.resize', params: [{ height: 1601 }] } })).toBeNull();
+    expect(twitterEmbedResizeHeight({ 'twttr.embed': { method: 'twttr.private.resize', params: [{ height: '321' }] } })).toBeNull();
   });
 });
 

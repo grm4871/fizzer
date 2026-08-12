@@ -44,6 +44,7 @@ import {
 } from '../chat/shared';
 import {
   chatMediaLink,
+  twitterEmbedResizeHeight,
   youtubeVideoId,
   YOUTUBE_EMBED_CONTROL_EVENT,
   YOUTUBE_EMBED_STATE_EVENT,
@@ -709,6 +710,7 @@ export function ChatMediaEmbed({ href, label }: { href: string; label: ReactNode
   const media = chatMediaLink(href);
   const frameRef = useRef<HTMLIFrameElement>(null);
   const youtubeInfoRef = useRef({ currentTime: 0, title: 'YouTube video' });
+  const [twitterHeight, setTwitterHeight] = useState<number | null>(null);
   useEffect(() => {
     if (media?.provider !== 'youtube') return;
     const frameWindow = frameRef.current?.contentWindow;
@@ -748,6 +750,17 @@ export function ChatMediaEmbed({ href, label }: { href: string; label: ReactNode
       window.removeEventListener(YOUTUBE_EMBED_CONTROL_EVENT, onControl);
     };
   }, [href, media?.provider]);
+  useEffect(() => {
+    if (media?.provider !== 'twitter') return;
+    setTwitterHeight(null);
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== 'https://platform.twitter.com' || event.source !== frameRef.current?.contentWindow) return;
+      const height = twitterEmbedResizeHeight(event.data);
+      if (height !== null) setTwitterHeight((current) => current === height ? current : height);
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [href, media?.provider]);
   if (!media) return <a href={href} target="_blank" rel="noopener noreferrer">{label}</a>;
   return (
     <span className={`chat-media-embed is-${media.aspect} is-${media.provider}`}>
@@ -757,6 +770,7 @@ export function ChatMediaEmbed({ href, label }: { href: string; label: ReactNode
         src={media.embedUrl}
         title={media.title}
         loading="lazy"
+        style={media.provider === 'twitter' && twitterHeight ? { height: `${twitterHeight}px` } : undefined}
         sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-forms"
         referrerPolicy="strict-origin-when-cross-origin"
         allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"

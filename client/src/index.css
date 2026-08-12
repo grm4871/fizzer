@@ -1339,7 +1339,11 @@ button:focus-visible,
   max-width: 550px;
 }
 .chat-media-embed.is-twitter > iframe {
-  height: min(500px, 62vh);
+  /* A compact fallback while X loads; `twttr.private.resize` replaces this
+     with the post's exact rendered height once its cross-origin frame is ready. */
+  height: 360px;
+  min-height: 120px;
+  max-height: none;
   border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
   border-radius: 14px;
   background: #000;

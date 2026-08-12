@@ -37,6 +37,25 @@ export type ChatMediaLink =
   | { provider: 'vimeo'; embedUrl: string; title: string; aspect: 'video' }
   | { provider: 'tiktok'; embedUrl: string; title: string; aspect: 'social' };
 
+/**
+ * The X embed reports its rendered size to the containing page with this
+ * private widget message. Treat it as untrusted even after its origin/source
+ * have been checked by the caller, so an unexpected provider change cannot
+ * make a chat message consume an arbitrary amount of vertical space.
+ */
+export function twitterEmbedResizeHeight(data: unknown): number | null {
+  if (!data || typeof data !== 'object') return null;
+  const embed = (data as { 'twttr.embed'?: unknown })['twttr.embed'];
+  if (!embed || typeof embed !== 'object') return null;
+  const rpc = embed as { method?: unknown; params?: unknown };
+  if (rpc.method !== 'twttr.private.resize' || !Array.isArray(rpc.params)) return null;
+  const details = rpc.params[0];
+  if (!details || typeof details !== 'object') return null;
+  const height = (details as { height?: unknown }).height;
+  if (typeof height !== 'number' || !Number.isFinite(height) || height < 120 || height > 1600) return null;
+  return Math.ceil(height);
+}
+
 /** Convert an allow-listed public media URL into a sandboxable player URL. */
 export function chatMediaLink(href: string): ChatMediaLink | null {
   const youtubeId = youtubeVideoId(href);
