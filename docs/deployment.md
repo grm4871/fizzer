@@ -90,20 +90,31 @@ checkout and runs:
 bash deploy/remote-update.sh
 ```
 
-That script:
+That script uses two fail-closed cutover modes:
 
 1. acquires the shared deploy lock;
 2. requires the root-owned certification manifest for the exact full commit;
 3. verifies the staged tag, immutable image ID, revision label, checksum, and
    embedded cutover approval;
 4. checks disk space and removes only stale, non-running Compose containers;
-5. runs the isolated database, HTTP, and Socket.IO preflight on that image;
-6. captures the current image and a checked database snapshot for rollback;
-7. swaps the Compose service with `--no-build` behind the nginx maintenance
-   gate;
-8. verifies health, Engine.IO, data compatibility, and the running container's
-   exact image ID before promoting that ID to `cascade:latest` and reopening
-   traffic.
+5. runs the isolated database, HTTP, and Socket.IO preflight on that image and
+   determines whether a complete candidate boot is logically state-identical;
+6. for a state-identical release, warms the image on loopback port `39001`,
+   verifies it against live state, and uses nginx's fixed `3000` primary / `39001`
+   backup pair while the canonical Compose container is replaced;
+7. verifies the canonical image directly, lets nginx's primary failure timer
+   expire, then drains the temporary bridge without ever creating the
+   maintenance marker;
+8. for a release that intentionally changes persistent state, retains the
+   mutation-free maintenance gate, checked snapshot, post-start data comparison,
+   and automatic image/database rollback path;
+9. verifies health, Engine.IO, authenticated reads/realtime, the public TLS edge,
+   and the exact running image ID before promoting it to `cascade:latest`.
+
+The rolling upstream is failover, not load balancing: the warmed candidate does
+not receive public traffic until the previous primary stops accepting a
+connection. Rollback starts the previous image against the same live state, so
+writes accepted during the rolling handoff are preserved rather than rewound.
 
 Always watch host autodeploy and verify the expected commit and image ID. A
 successful push is not proof that production changed. Automatic GitHub Actions

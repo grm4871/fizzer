@@ -176,7 +176,11 @@ else
 fi
 
 echo "==> Enabling HTTPS nginx config"
-sed "s/DOMAIN/$DOMAIN/g" deploy/nginx.conf.template > /tmp/cscd-nginx.conf
+sed \
+  -e "s/DOMAIN/$DOMAIN/g" \
+  -e 's/CASCADE_PRIMARY_PORT/3000/g' \
+  -e 's|CASCADE_BACKUP_SERVER|server 127.0.0.1:39001 backup max_fails=1 fail_timeout=2s;|g' \
+  deploy/nginx.conf.template > /tmp/cscd-nginx.conf
 cp /tmp/cscd-nginx.conf "$NGINX_SITE"
 nginx -t
 systemctl reload nginx

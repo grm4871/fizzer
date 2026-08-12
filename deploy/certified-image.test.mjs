@@ -2212,6 +2212,7 @@ test('routine staging transfers only the exact revision-labelled image', () => {
 
 test('first-time deployment starts only the verified staged image without rebuilding', () => {
   const deploy = fs.readFileSync(path.join(deployDirectory, 'deploy.sh'), 'utf8');
+  const finishHttps = fs.readFileSync(path.join(deployDirectory, 'finish-https.sh'), 'utf8');
   assert.match(deploy, /certified-image\.mjs verify --manifest "\$CERTIFIED_MANIFEST"/);
   assert.match(deploy, /docker compose up -d --no-build/);
   assert.match(deploy, /RUNNING_IMAGE_ID="\$\(docker inspect --format '\{\{\.Image\}\}' cascade\)"/);
@@ -2225,6 +2226,10 @@ test('first-time deployment starts only the verified staged image without rebuil
   assert.match(deploy, /-L "\$CERTIFICATE_FILE"/);
   assert.match(deploy, /RUNNING_SHAPE=.*HostConfig\.NanoCpus/);
   assert.match(deploy, /EXPECTED_SHAPE="2000000000 0-1 3221225472 3221225472 100000 nofile 200000 200000"/);
+  for (const renderer of [deploy, finishHttps]) {
+    assert.match(renderer, /s\/CASCADE_PRIMARY_PORT\/3000\/g/);
+    assert.match(renderer, /server 127\.0\.0\.1:39001 backup max_fails=1 fail_timeout=2s/);
+  }
   assert.doesNotMatch(deploy, /^\s*docker (?:compose )?build(?:\s|$)/mu);
 });
 

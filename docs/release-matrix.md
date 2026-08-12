@@ -16,6 +16,7 @@ Run the scoped suite from the exact commit being shipped: `npm run test:release:
 - [ ] For capacity-sensitive backend or infrastructure changes, separately certify that exact image with the production capacity and soak evidence, then stage the certification.
 - [ ] Push once, watch the webhook-triggered host deploy to completion (`ssh root@66.135.24.172 journalctl -u cascade-autodeploy -f`), and read the failure rather than guessing. The Actions workflow is manual fallback only.
 - [ ] Confirm production health, expected commit, and that `docker inspect cascade` matches the staged image ID.
+- [ ] For deployment-infrastructure changes, continuously sample public health through the entire cutover and prove that no 5xx response occurred.
 - [ ] For client changes, inspect the JavaScript asset actually served by `cscd.online` for the feature and its call site, then exercise the affected flow in production.
 
 ## Checks by change class

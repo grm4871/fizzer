@@ -32,8 +32,8 @@ services:
       CASCADE_REALTIME_HIBERNATE_AFTER_MS: "5000"
       CASCADE_SQLITE_POOL_SIZE: "20"
       CASCADE_SQLITE_BUSY_TIMEOUT_MS: "5000"
-      # The cutover maintenance gate can remain closed for health, protocol,
-      # and full database verification; preserve runner reclaim state throughout.
+      # A routine rolling cutover reconnects runners through a warmed bridge and
+      # then the canonical service; migration cutovers may stay gated longer.
       CASCADE_RUNNER_ORPHAN_RECLAIM_MS: "600000"
       CASCADE_TRUST_PROXY_HOPS: "1"
       CASCADE_PUBLIC_URL: ${CASCADE_PUBLIC_URL:-https://cscd.online}

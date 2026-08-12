@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Production update with an offline Elixir/data preflight, a mutation-free
-# cutover window, and an automatic image+database rollback.
+# Production update with an offline Elixir/data preflight, a zero-503 rolling
+# handoff for state-identical releases, and a gated snapshot rollback fallback
+# for releases that intentionally migrate persistent state.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -24,6 +25,7 @@ if [[ ! "$REVISION" =~ ^[0-9a-f]{40}$ ]] || \
   exit 1
 fi
 REVISION_SHORT="${REVISION:0:12}"
+ROLLING_CONTAINER="cascade-rolling-$REVISION_SHORT"
 CERTIFIED_RELEASE_DIR="/var/lib/cascade-release"
 CERTIFIED_IMAGE_DIR="$CERTIFIED_RELEASE_DIR/certified-images"
 CERTIFIED_MANIFEST="$CERTIFIED_IMAGE_DIR/$REVISION.json"
@@ -40,6 +42,14 @@ ROLLBACK_IN_PROGRESS=0
 OLD_BACKEND_STOPPED=0
 CANDIDATE_DATA_TOUCHED=0
 DEPLOY_DOMAIN=""
+ROLLING_SAFE=0
+ROLLING_STARTED=0
+ROLLING_OLD_STOPPED=0
+ROLLING_OLD_REMOVED=0
+ROLLING_FINAL_STARTED=0
+ROLLING_ROLLBACK_IN_PROGRESS=0
+ROLLING_PORT=39001
+NGINX_CONFIG_CHANGED=0
 
 close_maintenance_gate() {
   # Replace, rather than follow, any unexpected object at the marker path.
@@ -205,6 +215,14 @@ wait_for_url() {
   done
 }
 
+container_exists() {
+  docker inspect "$1" >/dev/null 2>&1
+}
+
+container_running() {
+  [[ "$(docker inspect --format '{{.State.Running}}' "$1" 2>/dev/null)" == "true" ]]
+}
+
 check_engine_io() {
   local origin="${1:?origin is required}"
   local open_packet legacy_code
@@ -253,11 +271,25 @@ verify_maintenance_gate() {
   return 1
 }
 
-sync_nginx_security() {
+configure_nginx_upstreams() {
+  local primary_port="${1:?primary upstream port is required}"
+  local backup_port="${2:-}"
   local domain="${CASCADE_DEPLOY_DOMAIN:-}"
   local site="/etc/nginx/sites-available/cscd"
   if [[ "$EUID" -ne 0 || ! -f "$site" ]]; then
-    echo "Error: a root-managed $site is required for a mutation-free cutover." >&2
+    echo "Error: a root-managed $site is required for a verified cutover." >&2
+    return 1
+  fi
+  if [[ ! "$primary_port" =~ ^[0-9]+$ ]] || (( primary_port < 1 || primary_port > 65535 )); then
+    echo "Error: invalid primary nginx upstream port '$primary_port'." >&2
+    return 1
+  fi
+  if [[ -n "$backup_port" ]] && {
+    [[ ! "$backup_port" =~ ^[0-9]+$ ]] ||
+      (( backup_port < 1 || backup_port > 65535 )) ||
+      [[ "$backup_port" == "$primary_port" ]];
+  }; then
+    echo "Error: invalid backup nginx upstream port '$backup_port'." >&2
     return 1
   fi
   if [[ -z "$domain" && -f "$ROOT/.env" ]]; then
@@ -279,40 +311,96 @@ sync_nginx_security() {
   fi
   DEPLOY_DOMAIN="$domain"
 
-  local rendered backup
+  local rendered backup backup_server=""
   rendered="$(mktemp)"
   backup="$(mktemp)"
   cp "$site" "$backup"
-  sed "s/DOMAIN/$domain/g" deploy/nginx.conf.template > "$rendered"
+  if [[ -n "$backup_port" ]]; then
+    backup_server="server 127.0.0.1:$backup_port backup max_fails=1 fail_timeout=2s;"
+  fi
+  sed \
+    -e "s/DOMAIN/$domain/g" \
+    -e "s/CASCADE_PRIMARY_PORT/$primary_port/g" \
+    -e "s|CASCADE_BACKUP_SERVER|$backup_server|g" \
+    deploy/nginx.conf.template > "$rendered"
   if ! grep -q "www\.$domain" "$site"; then
     sed -i "s/ www\.$domain//g" "$rendered"
   fi
-  install -m 0644 "$rendered" "$site"
-  if ! nginx -t; then
-    install -m 0644 "$backup" "$site"
-    nginx -t
+  local site_changed=0
+  if ! cmp -s "$rendered" "$site"; then
+    site_changed=1
+    install -m 0644 "$rendered" "$site"
+    if ! nginx -t; then
+      install -m 0644 "$backup" "$site"
+      nginx -t
+      find "$rendered" "$backup" -maxdepth 0 -type f -delete
+      echo "Error: restored previous nginx site after validation failed" >&2
+      return 1
+    fi
+    if ! systemctl reload nginx; then
+      install -m 0644 "$backup" "$site"
+      nginx -t
+      systemctl reload nginx
+      find "$rendered" "$backup" -maxdepth 0 -type f -delete
+      echo "Error: restored previous nginx site after reload failed" >&2
+      return 1
+    fi
+  fi
+  local active_config
+  active_config="$(nginx -T 2>&1)"
+  if [[ "$active_config" != *'if (-f /run/cascade-maintenance)'* ||
+        "$active_config" != *'upstream cascade_app {'* ||
+        "$active_config" != *"server 127.0.0.1:$primary_port"* ||
+        ( -n "$backup_port" && "$active_config" != *"server 127.0.0.1:$backup_port backup"* ) ]]; then
+    if [[ "$site_changed" == "1" ]]; then
+      install -m 0644 "$backup" "$site"
+      nginx -t
+      systemctl reload nginx
+    fi
     find "$rendered" "$backup" -maxdepth 0 -type f -delete
-    echo "Error: restored previous nginx site after validation failed" >&2
+    echo "Error: active nginx configuration does not contain the requested cutover upstreams." >&2
     return 1
   fi
-  if ! systemctl reload nginx; then
-    install -m 0644 "$backup" "$site"
-    nginx -t
-    systemctl reload nginx
-    find "$rendered" "$backup" -maxdepth 0 -type f -delete
-    echo "Error: restored previous nginx site after reload failed" >&2
-    return 1
-  fi
-  if ! nginx -T 2>&1 | grep -F 'if (-f /run/cascade-maintenance)' >/dev/null; then
-    install -m 0644 "$backup" "$site"
-    nginx -t
-    systemctl reload nginx
-    find "$rendered" "$backup" -maxdepth 0 -type f -delete
-    echo "Error: active nginx configuration does not contain the maintenance gate." >&2
-    return 1
+  if [[ "$site_changed" == "1" ]]; then
+    NGINX_CONFIG_CHANGED=1
   fi
   find "$rendered" "$backup" -maxdepth 0 -type f -delete
-  echo "==> Nginx security and cutover gate are active"
+  echo "==> Nginx upstream active on $primary_port${backup_port:+ with failover to $backup_port}"
+}
+
+sync_nginx_security() {
+  configure_nginx_upstreams \
+    "${1:?active upstream port is required}" "${2:-}"
+  echo "==> Nginx security and cutover controls are active"
+}
+
+settle_reloaded_nginx() {
+  if [[ "$NGINX_CONFIG_CHANGED" != "1" ]]; then
+    return 0
+  fi
+  if [[ -z "$DEPLOY_DOMAIN" ]]; then
+    echo "Error: deployment domain is unavailable for nginx generation settling." >&2
+    return 1
+  fi
+
+  # The first release that installs the stable primary/backup upstream leaves
+  # a graceful worker generation carrying the previous single-upstream config.
+  # Keep the old backend alive beyond nginx's default 75-second HTTP keepalive
+  # window so those connections drain before either backend is stopped. Future
+  # releases do not rewrite this fixed upstream pair and skip this wait.
+  echo "==> Nginx configuration changed; draining the previous HTTP worker generation"
+  local code="000"
+  for _attempt in $(seq 1 80); do
+    code=$(curl --noproxy '*' -sS -o /dev/null -w '%{http_code}' \
+      --connect-timeout 3 --max-time 10 --resolve "$DEPLOY_DOMAIN:443:127.0.0.1" \
+      "https://$DEPLOY_DOMAIN/api/health" || true)
+    if [[ "$code" != "200" ]]; then
+      echo "Error: production health changed while nginx workers drained (HTTP ${code:-000})." >&2
+      return 1
+    fi
+    sleep 1
+  done
+  echo "==> Previous nginx HTTP worker generation drained"
 }
 
 cleanup_preflight() {
@@ -378,7 +466,9 @@ on_exit() {
   local status=$?
   trap - EXIT INT TERM
   cleanup_preflight
-  if [[ "$CUTOVER_STARTED" == "1" && "$DEPLOY_COMMITTED" != "1" ]]; then
+  if [[ "$ROLLING_STARTED" == "1" && "$DEPLOY_COMMITTED" != "1" ]]; then
+    rollback_rolling_cutover || true
+  elif [[ "$CUTOVER_STARTED" == "1" && "$DEPLOY_COMMITTED" != "1" ]]; then
     rollback_cutover || true
   fi
   exit "$status"
@@ -390,6 +480,7 @@ trap 'exit 143' TERM
 
 backup_running_database() {
   local destination="${1:?destination is required}"
+  local container="${2:-$CONTAINER_NAME}"
   local relative
   relative="${destination#"$DATA_DIR"/}"
   if [[ "$relative" == "$destination" || "$relative" == *".."* ]]; then
@@ -397,11 +488,27 @@ backup_running_database() {
     return 1
   fi
 
-  docker exec -e CASCADE_BACKUP_PATH="/data/$relative" "$CONTAINER_NAME" \
+  docker exec -e CASCADE_BACKUP_PATH="/data/$relative" "$container" \
     node --input-type=module -e '
       import Database from "better-sqlite3";
       const db = new Database("/data/docs.db", { fileMustExist: true });
       try { await db.backup(process.env.CASCADE_BACKUP_PATH); } finally { db.close(); }
+    '
+}
+
+checkpoint_preflight_clone() {
+  # A short-lived release VM may leave its final writes in WAL. The identity
+  # checker deliberately reads an immutable main-file copy, so checkpoint each
+  # complete boot mode after it has stopped.
+  docker run --rm --network none --user 1000:1000 --entrypoint node \
+    -v "$PREFLIGHT_DIR:/preflight" "$CANDIDATE_IMAGE" --input-type=module -e '
+      import Database from "better-sqlite3";
+      const db = new Database("/preflight/after.db", { fileMustExist: true });
+      try {
+        const result = db.pragma("wal_checkpoint(TRUNCATE)");
+        if (result.some((row) => Number(row.busy) !== 0)) throw new Error(`busy preflight WAL checkpoint: ${JSON.stringify(result)}`);
+        if (db.pragma("quick_check", { simple: true }) !== "ok") throw new Error("preflight SQLite quick_check failed");
+      } finally { db.close(); }
     '
 }
 
@@ -435,28 +542,7 @@ preflight_candidate() {
     "$CANDIDATE_IMAGE" eval \
     'case Application.ensure_all_started(:cascade_elixir) do {:ok, _} -> :ok; other -> raise inspect(other) end'
 
-  # `release eval` stops the VM immediately after evaluation. With the source
-  # database in WAL mode, the final schema recreation can therefore still be
-  # present only in after.db-wal. Checkpoint the now-quiescent clone before the
-  # compatibility checker deliberately snapshots the main database file.
-  docker run --rm --network none --user 1000:1000 --entrypoint node \
-    -v "$PREFLIGHT_DIR:/preflight" "$CANDIDATE_IMAGE" --input-type=module -e '
-      import Database from "better-sqlite3";
-      const db = new Database("/preflight/after.db", { fileMustExist: true });
-      try {
-        const result = db.pragma("wal_checkpoint(TRUNCATE)");
-        if (result.some((row) => Number(row.busy) !== 0)) throw new Error(`busy preflight WAL checkpoint: ${JSON.stringify(result)}`);
-        if (db.pragma("quick_check", { simple: true }) !== "ok") throw new Error("preflight SQLite quick_check failed");
-      } finally { db.close(); }
-    '
-
-  docker run --rm --network none --entrypoint node \
-    -e CASCADE_SQLITE_SNAPSHOT_TMPDIR=/sqlite-scratch \
-    -v "$PREFLIGHT_DIR:/preflight:ro" \
-    -v "$PREFLIGHT_DIR/sqlite-scratch:/sqlite-scratch" \
-    "$CANDIDATE_IMAGE" /app/scripts/check-elixir-data-compat.mjs \
-    --before /preflight/before.db --after /preflight/after.db \
-    --before-root /preflight/before-data --after-root /preflight/after-data
+  checkpoint_preflight_clone
 
   docker run -d --name "$PREFLIGHT_CONTAINER" --env-file "$ROOT/.env" \
     --cpus 2 --cpuset-cpus 0-1 --memory 3g --memory-swap 3g \
@@ -485,6 +571,25 @@ preflight_candidate() {
   docker run --rm --network host --entrypoint node \
     "$CANDIDATE_IMAGE" /app/deploy/preflight-client.mjs "http://127.0.0.1:$mapped_port"
   docker rm -f "$PREFLIGHT_CONTAINER" >/dev/null
+  checkpoint_preflight_clone
+
+  local checker=(
+    docker run --rm --network none --entrypoint node
+    -e CASCADE_SQLITE_SNAPSHOT_TMPDIR=/sqlite-scratch
+    -v "$PREFLIGHT_DIR:/preflight:ro"
+    -v "$PREFLIGHT_DIR/sqlite-scratch:/sqlite-scratch"
+    "$CANDIDATE_IMAGE" /app/scripts/check-elixir-data-compat.mjs
+    --before /preflight/before.db --after /preflight/after.db
+    --before-root /preflight/before-data --after-root /preflight/after-data
+  )
+  if "${checker[@]}" --require-identical; then
+    ROLLING_SAFE=1
+    echo "==> Candidate boot is state-identical; rolling cutover is eligible"
+  else
+    echo "==> Candidate boot mutates persistent state; verifying maintenance-cutover compatibility"
+    "${checker[@]}"
+    ROLLING_SAFE=0
+  fi
 }
 
 checkpoint_and_snapshot() {
@@ -546,14 +651,30 @@ verify_live_database() {
     --before-root /snapshot/corpus --after-root /live-corpus
 }
 
+verify_live_schema_identity() {
+  local container="${1:?container is required}"
+  local destination="$PREFLIGHT_DIR/rolling-live-after-$container.db"
+  backup_running_database "$destination" "$container"
+  docker run --rm --network none --user 0:0 --entrypoint node \
+    -e CASCADE_SQLITE_SNAPSHOT_TMPDIR=/sqlite-scratch \
+    -v "$PREFLIGHT_DIR:/preflight:ro" \
+    -v "$PREFLIGHT_DIR/sqlite-scratch:/sqlite-scratch" \
+    "$CANDIDATE_IMAGE" /app/scripts/check-elixir-data-compat.mjs \
+    --before /preflight/before.db --after "/preflight/rolling-live-after-$container.db" \
+    --schema-only
+}
+
 verify_authenticated_live_candidate() {
-  echo "==> Running authenticated production read/realtime smoke behind the maintenance gate"
+  local container="${1:-$CONTAINER_NAME}"
+  local origin="${2:-$HEALTH_URL}"
+  origin="${origin%/api/health}"
+  echo "==> Running authenticated production read/realtime smoke against $container"
   local probe_token
   # `release eval` starts a separate VM, not an RPC session in the running
   # release, so its Repo is intentionally absent. Mint the ephemeral parity
   # token from the same immutable image's pinned Node JWT/SQLite libraries;
   # the live Elixir edge still performs every authorization check below.
-  probe_token="$(docker exec "$CONTAINER_NAME" node --input-type=module -e '
+  probe_token="$(docker exec "$container" node --input-type=module -e '
     import Database from "better-sqlite3";
     import jwt from "jsonwebtoken";
     const db = new Database("/data/docs.db", { readonly: true, fileMustExist: true });
@@ -575,7 +696,7 @@ verify_authenticated_live_candidate() {
     return 1
   fi
   printf '%s' "$probe_token" | docker run --rm -i --network host --entrypoint node \
-    "$CANDIDATE_IMAGE" /app/deploy/authenticated-live-smoke.mjs "http://127.0.0.1:3000"
+    "$CANDIDATE_IMAGE" /app/deploy/authenticated-live-smoke.mjs "$origin"
   unset probe_token
 }
 
@@ -629,6 +750,189 @@ ensure_cutover_disk_capacity() {
   echo "==> Cutover snapshot capacity available (${available_kb} KiB free; ${required_kb} KiB required)"
 }
 
+start_rolling_container() {
+  if container_exists "$ROLLING_CONTAINER"; then
+    if container_running "$ROLLING_CONTAINER"; then
+      echo "Error: rolling candidate $ROLLING_CONTAINER is already running." >&2
+      return 1
+    fi
+    docker rm "$ROLLING_CONTAINER" >/dev/null
+  fi
+
+  echo "==> Starting a warmed rolling candidate"
+  CASCADE_IMAGE="$CANDIDATE_IMAGE" docker compose "${COMPOSE_ARGS[@]}" run \
+    -d -T --no-deps --name "$ROLLING_CONTAINER" \
+    -p "127.0.0.1:$ROLLING_PORT:3000" cascade >/dev/null
+  docker update --restart=no "$ROLLING_CONTAINER" >/dev/null
+  if [[ "$(docker port "$ROLLING_CONTAINER" 3000/tcp)" != "127.0.0.1:$ROLLING_PORT" ]]; then
+    echo "Error: rolling candidate is not bound to the reserved loopback port $ROLLING_PORT." >&2
+    return 1
+  fi
+
+  verify_container_runtime_shape "$ROLLING_CONTAINER" "warmed rolling candidate"
+  wait_for_url "http://127.0.0.1:$ROLLING_PORT/api/health" 60 "warmed rolling candidate"
+  check_engine_io "http://127.0.0.1:$ROLLING_PORT"
+  verify_live_schema_identity "$ROLLING_CONTAINER"
+  verify_authenticated_live_candidate "$ROLLING_CONTAINER" "http://127.0.0.1:$ROLLING_PORT"
+}
+
+rollback_rolling_cutover() {
+  if [[ "$ROLLING_ROLLBACK_IN_PROGRESS" == "1" ]]; then
+    return 1
+  fi
+  ROLLING_ROLLBACK_IN_PROGRESS=1
+  set +e
+  echo "==> Rolling candidate failed; restoring the previous image without rewinding live data" >&2
+
+  # The process may have been interrupted after Docker stopped the canonical
+  # container but before the next shell assignment. Trust observed container
+  # state over the progress flag so that interruption cannot remove the only
+  # healthy bridge and strand a stopped primary.
+  if [[ "$ROLLING_OLD_STOPPED" != "1" ]] && container_running "$CONTAINER_NAME"; then
+    if container_exists "$ROLLING_CONTAINER"; then
+      docker rm -f "$ROLLING_CONTAINER" >/dev/null 2>&1
+    fi
+    set -e
+    return 0
+  fi
+  ROLLING_OLD_STOPPED=1
+
+  # Keep the warmed candidate serving while the canonical port is restored.
+  local bridge_ready=0
+  if container_exists "$ROLLING_CONTAINER" && ! container_running "$ROLLING_CONTAINER"; then
+    docker start "$ROLLING_CONTAINER" >/dev/null
+  fi
+  if container_running "$ROLLING_CONTAINER"; then
+    if wait_for_url "http://127.0.0.1:$ROLLING_PORT/api/health" 60 "rolling rollback bridge"; then
+      bridge_ready=1
+    fi
+  fi
+
+  local canonical_image=""
+  canonical_image="$(docker inspect --format '{{.Image}}' "$CONTAINER_NAME" 2>/dev/null)"
+  if [[ -n "$canonical_image" && "$canonical_image" != "$CURRENT_IMAGE_ID" ]]; then
+    if container_running "$CONTAINER_NAME" && [[ "$bridge_ready" != "1" ]]; then
+      verify_reopened_production_edge
+      echo "CRITICAL: rollback bridge is unavailable; leaving the healthy candidate in service" >&2
+      set -e
+      return 1
+    fi
+    docker stop -t 30 "$CONTAINER_NAME" >/dev/null 2>&1
+    docker rm "$CONTAINER_NAME" >/dev/null 2>&1
+    canonical_image=""
+  fi
+
+  if [[ -z "$canonical_image" ]]; then
+    CASCADE_IMAGE="$ROLLBACK_IMAGE" docker compose "${COMPOSE_ARGS[@]}" \
+      up -d --no-build --force-recreate
+  elif ! container_running "$CONTAINER_NAME"; then
+    docker start "$CONTAINER_NAME" >/dev/null
+  fi
+
+  if wait_for_url "$HEALTH_URL" 60 "rolling rollback"; then
+    sleep 3
+    if [[ "$bridge_ready" == "1" ]] && container_running "$ROLLING_CONTAINER"; then
+      docker stop -t 30 "$ROLLING_CONTAINER" >/dev/null 2>&1
+    fi
+    if verify_reopened_production_edge; then
+      docker tag "$CURRENT_IMAGE_ID" cascade:latest
+      docker rm "$ROLLING_CONTAINER" >/dev/null 2>&1
+      echo "==> Previous image restored with all rolling-window writes preserved" >&2
+    fi
+  else
+    echo "CRITICAL: previous image did not recover; leaving any healthy rolling bridge in service" >&2
+  fi
+  set -e
+}
+
+rolling_cutover() {
+  echo "==> Starting zero-503 rolling cutover"
+  ROLLING_STARTED=1
+  start_rolling_container
+
+  # Every nginx worker generation uses the stable 3000/39001 primary/backup
+  # pair. The candidate receives traffic only after port 3000 stops accepting
+  # a connection, never concurrently by load-balancing policy.
+  verify_reopened_production_edge
+
+  echo "==> Draining the previous backend into the warmed candidate"
+  docker stop -t 120 "$CONTAINER_NAME" >/dev/null
+  ROLLING_OLD_STOPPED=1
+  verify_reopened_production_edge
+
+  docker rm "$CONTAINER_NAME" >/dev/null
+  ROLLING_OLD_REMOVED=1
+
+  # Restore the canonical Compose service and port while the warmed candidate
+  # continues to serve. This keeps established operational checks unchanged.
+  echo "==> Starting the canonical candidate behind the rolling bridge"
+  CASCADE_IMAGE="$CANDIDATE_IMAGE" docker compose "${COMPOSE_ARGS[@]}" \
+    up -d --no-build --force-recreate
+  ROLLING_FINAL_STARTED=1
+  verify_container_runtime_shape "$CONTAINER_NAME" "canonical rolling candidate"
+  wait_for_url "$HEALTH_URL" 90 "canonical rolling candidate"
+  check_engine_io "http://127.0.0.1:3000"
+  verify_live_schema_identity "$CONTAINER_NAME"
+  verify_authenticated_live_candidate "$CONTAINER_NAME" "http://127.0.0.1:3000"
+
+  local running_image_id
+  running_image_id="$(docker inspect --format '{{.Image}}' "$CONTAINER_NAME")"
+  if [[ "$running_image_id" != "$CERTIFIED_IMAGE_ID" ]]; then
+    echo "Error: canonical candidate is $running_image_id, expected certified image $CERTIFIED_IMAGE_ID." >&2
+    return 1
+  fi
+
+  # Let every worker's primary failure timer expire before removing the
+  # bridge. A failed bridge connection can still retry the now-healthy primary.
+  sleep 3
+  verify_reopened_production_edge
+  echo "==> Draining the rolling bridge into the canonical candidate"
+  docker stop -t 120 "$ROLLING_CONTAINER" >/dev/null
+  verify_reopened_production_edge
+
+  docker tag "$CERTIFIED_IMAGE_ID" cascade:latest
+  DEPLOY_COMMITTED=1
+  docker rm "$ROLLING_CONTAINER" >/dev/null 2>&1 || true
+  echo "==> Zero-503 rolling cutover committed"
+}
+
+maintenance_cutover() {
+  echo "==> Persistent-state migration requires the snapshot-backed maintenance cutover"
+  CUTOVER_STARTED=1
+  close_maintenance_gate
+  verify_maintenance_gate
+
+  # Stopping first closes pre-existing WebSockets; the nginx marker prevents
+  # reconnects and mutations until the migration candidate is verified.
+  docker compose "${COMPOSE_ARGS[@]}" stop -t 120 cascade
+  OLD_BACKEND_STOPPED=1
+  checkpoint_and_snapshot
+
+  echo "==> Starting the Elixir candidate"
+  CANDIDATE_DATA_TOUCHED=1
+  CASCADE_IMAGE="$CANDIDATE_IMAGE" docker compose "${COMPOSE_ARGS[@]}" \
+    up -d --no-build --force-recreate
+
+  verify_container_runtime_shape "$CONTAINER_NAME" "running production candidate"
+  wait_for_url "$HEALTH_URL" 90 "Elixir candidate"
+  check_engine_io "http://127.0.0.1:3000"
+  verify_live_database
+  verify_authenticated_live_candidate "$CONTAINER_NAME" "http://127.0.0.1:3000"
+  local running_image_id
+  running_image_id="$(docker inspect --format '{{.Image}}' "$CONTAINER_NAME")"
+  if [[ "$running_image_id" != "$CERTIFIED_IMAGE_ID" ]]; then
+    echo "Error: running candidate is $running_image_id, expected certified image $CERTIFIED_IMAGE_ID." >&2
+    return 1
+  fi
+
+  docker tag "$CERTIFIED_IMAGE_ID" cascade:latest
+  # Once the gate opens, external mutations can reach the candidate and an
+  # automatic database rollback would lose them. Commit first, then open it.
+  DEPLOY_COMMITTED=1
+  open_maintenance_gate
+  verify_reopened_production_edge
+}
+
 AVAIL_KB="$(df -k / | awk 'NR==2 {print $4}')"
 if [[ "$AVAIL_KB" -lt 2097152 ]]; then
   echo "==> Low disk space — pruning unused Docker build cache"
@@ -656,7 +960,8 @@ verify_compose_runtime_shape
 ensure_cutover_disk_capacity
 secure_production_environment
 preflight_candidate
-sync_nginx_security
+sync_nginx_security 3000 "$ROLLING_PORT"
+settle_reloaded_nginx
 
 CURRENT_IMAGE_ID="$(docker inspect --format '{{.Image}}' "$CONTAINER_NAME")"
 if [[ -z "$CURRENT_IMAGE_ID" ]]; then
@@ -665,47 +970,22 @@ if [[ -z "$CURRENT_IMAGE_ID" ]]; then
 fi
 docker tag "$CURRENT_IMAGE_ID" "$ROLLBACK_IMAGE"
 
-echo "==> Entering the mutation-free cutover window"
-CUTOVER_STARTED=1
-close_maintenance_gate
-verify_maintenance_gate
-
 if [[ "${CASCADE_TUNE_HOST_CAPACITY:-1}" == "1" ]]; then
   "$ROOT/deploy/tune-host-capacity.sh"
 fi
 
-# Stopping first closes pre-existing WebSockets; the nginx marker prevents all
-# reconnects and HTTP keep-alive mutations until verification is complete.
-docker compose "${COMPOSE_ARGS[@]}" stop -t 120 cascade
-OLD_BACKEND_STOPPED=1
-checkpoint_and_snapshot
-
-echo "==> Starting the Elixir candidate"
-CANDIDATE_DATA_TOUCHED=1
-CASCADE_IMAGE="$CANDIDATE_IMAGE" docker compose "${COMPOSE_ARGS[@]}" \
-  up -d --no-build --force-recreate
-
-verify_container_runtime_shape "$CONTAINER_NAME" "running production candidate"
-wait_for_url "$HEALTH_URL" 90 "Elixir candidate"
-check_engine_io "http://127.0.0.1:3000"
-verify_live_database
-verify_authenticated_live_candidate
-RUNNING_IMAGE_ID="$(docker inspect --format '{{.Image}}' "$CONTAINER_NAME")"
-if [[ "$RUNNING_IMAGE_ID" != "$CERTIFIED_IMAGE_ID" ]]; then
-  echo "Error: running candidate is $RUNNING_IMAGE_ID, expected certified image $CERTIFIED_IMAGE_ID." >&2
-  exit 1
+if [[ "$ROLLING_SAFE" == "1" ]]; then
+  rolling_cutover
+else
+  maintenance_cutover
 fi
 
-docker tag "$CERTIFIED_IMAGE_ID" cascade:latest
-# Once the gate opens, external mutations can reach the candidate and an
-# automatic database rollback would lose them. Commit first, then open traffic;
-# a marker-removal failure therefore leaves the verified candidate fail-closed.
-DEPLOY_COMMITTED=1
-open_maintenance_gate
-verify_reopened_production_edge
-
 docker compose "${COMPOSE_ARGS[@]}" ps
-echo "==> Deployed $REVISION_SHORT ($CERTIFIED_IMAGE_ID); rollback snapshot: $SNAPSHOT_DIR"
+if [[ -n "$SNAPSHOT_DIR" ]]; then
+  echo "==> Deployed $REVISION_SHORT ($CERTIFIED_IMAGE_ID); rollback snapshot: $SNAPSHOT_DIR"
+else
+  echo "==> Deployed $REVISION_SHORT ($CERTIFIED_IMAGE_ID); rolling rollback preserved live state"
+fi
 
 echo "==> Pruning dangling images and old build cache"
 docker image prune -f >/dev/null || true

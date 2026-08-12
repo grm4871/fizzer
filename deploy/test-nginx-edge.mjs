@@ -16,12 +16,14 @@ const nginxImage = process.env.CASCADE_NGINX_TEST_IMAGE
 const httpPort = 18080;
 const httpsPort = 18443;
 const backendPort = 3000;
+const backupPort = 3001;
 const domain = 'edge.test';
 const temp = await mkdtemp(path.join(tmpdir(), 'cascade-nginx-edge-'));
 const containerName = `cascade-nginx-edge-${process.pid}`;
 const sockets = [];
 let nginx;
 let nginxErrors = '';
+let primaryClosed = false;
 
 function invariant(condition, message) {
   if (!condition) throw new Error(message);
@@ -31,14 +33,14 @@ function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-function request({ secure = true, requestPath = '/', headers = {} } = {}) {
+function request({ secure = true, requestPath = '/', method = 'GET', headers = {} } = {}) {
   const transport = secure ? https : http;
   return new Promise((resolve, reject) => {
     const req = transport.request({
       hostname: '127.0.0.1',
       port: secure ? httpsPort : httpPort,
       path: requestPath,
-      method: 'GET',
+      method,
       rejectUnauthorized: false,
       servername: domain,
       headers: { Host: domain, ...headers },
@@ -117,16 +119,21 @@ async function waitForEdge() {
   throw new Error(`nginx did not become ready: ${lastError?.message || lastError}`);
 }
 
-const backend = createServer((req, response) => {
-  response.writeHead(200, { 'content-type': 'application/json' });
-  response.end(JSON.stringify({ headers: req.headers, url: req.url }));
-});
 const websocketServer = new WebSocketServer({ noServer: true });
-backend.on('upgrade', (req, socket, head) => {
-  websocketServer.handleUpgrade(req, socket, head, (websocket) => {
-    websocketServer.emit('connection', websocket, req);
+function createBackend(identity) {
+  const server = createServer((req, response) => {
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ backend: identity, headers: req.headers, method: req.method, url: req.url }));
   });
-});
+  server.on('upgrade', (req, socket, head) => {
+    websocketServer.handleUpgrade(req, socket, head, (websocket) => {
+      websocketServer.emit('connection', websocket, req);
+    });
+  });
+  return server;
+}
+const backend = createBackend('primary');
+const backupBackend = createBackend('backup');
 
 try {
   const template = await readFile(templatePath, 'utf8');
@@ -149,6 +156,11 @@ try {
 
   const rendered = template
     .replaceAll('DOMAIN', domain)
+    .replaceAll('CASCADE_PRIMARY_PORT', String(backendPort))
+    .replaceAll(
+      'CASCADE_BACKUP_SERVER',
+      `server 127.0.0.1:${backupPort} backup max_fails=1 fail_timeout=2s;`,
+    )
     .replaceAll('listen 80;', `listen ${httpPort};`)
     .replaceAll('listen [::]:80;', `listen [::]:${httpPort};`)
     .replaceAll('listen 443 ssl http2;', `listen ${httpsPort} ssl;`)
@@ -172,6 +184,10 @@ http {
     backend.once('error', reject);
     backend.listen(backendPort, '127.0.0.1', resolve);
   });
+  await new Promise((resolve, reject) => {
+    backupBackend.once('error', reject);
+    backupBackend.listen(backupPort, '127.0.0.1', resolve);
+  });
 
   nginx = spawn('docker', [
     'run', '--rm', '--network', 'host', '--name', containerName,
@@ -183,7 +199,9 @@ http {
   const health = await waitForEdge();
   invariant(health.headers['strict-transport-security'] === 'max-age=31536000; includeSubDomains',
     'HTTPS responses must carry the production HSTS policy');
-  const observed = JSON.parse(health.body).headers;
+  const initial = JSON.parse(health.body);
+  invariant(initial.backend === 'primary', `initial request reached ${initial.backend}`);
+  const observed = initial.headers;
   invariant(observed.host === domain, `upstream Host mismatch: ${observed.host}`);
   invariant(observed['x-real-ip'] === '127.0.0.1', `X-Real-IP mismatch: ${observed['x-real-ip']}`);
   invariant(observed['x-forwarded-proto'] === 'https', 'X-Forwarded-Proto must reflect TLS');
@@ -211,6 +229,16 @@ http {
   invariant(markerOff.status === 0, 'failed to remove the local maintenance marker');
   invariant((await request({ requestPath: '/api/health' })).status === 200,
     'edge did not reopen after the maintenance marker was removed');
+
+  await new Promise((resolve, reject) => {
+    backend.close((error) => (error ? reject(error) : resolve()));
+  });
+  primaryClosed = true;
+  const failoverPost = await request({ method: 'POST', requestPath: '/api/failover' });
+  const failoverBody = JSON.parse(failoverPost.body);
+  invariant(failoverPost.status === 200, `rolling failover POST returned ${failoverPost.status}`);
+  invariant(failoverBody.backend === 'backup', `rolling failover reached ${failoverBody.backend}`);
+  invariant(failoverBody.method === 'POST', `rolling failover changed method to ${failoverBody.method}`);
 
   let authAtSharedLimit;
   for (let index = 0; index < 40; index += 1) {
@@ -251,6 +279,8 @@ http {
     authRequestWith20ActiveSockets: authAtSharedLimit.status,
     apiRequestWith40ActiveSockets: apiAtSharedLimit.status,
     maintenanceGateStatus: maintenance.status,
+    rollingFailoverStatus: failoverPost.status,
+    rollingFailoverBackend: failoverBody.backend,
     hsts: health.headers['strict-transport-security'],
     forwardedForSeenUpstream: spoofHeaders['x-forwarded-for'],
     httpRedirect: redirect.headers.location,
@@ -263,7 +293,8 @@ http {
 } finally {
   for (const socket of sockets) socket.terminate();
   websocketServer.close();
-  await new Promise((resolve) => backend.close(resolve));
+  if (!primaryClosed) await new Promise((resolve) => backend.close(resolve));
+  await new Promise((resolve) => backupBackend.close(resolve));
   if (nginx && nginx.exitCode === null) {
     spawnSync('docker', ['rm', '-f', containerName], { stdio: 'ignore' });
   }

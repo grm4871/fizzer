@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import Database from 'better-sqlite3';
-import { databaseSnapshot, runComparison } from './check-elixir-data-compat.mjs';
+import { databaseSnapshot, parseArgs, runComparison } from './check-elixir-data-compat.mjs';
 
 function fixture() {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-data-compat-'));
@@ -60,6 +60,67 @@ test('permits only the additive Elixir migration ledger', () => {
   } finally {
     fs.rmSync(files.directory, { recursive: true, force: true });
   }
+});
+
+test('rolling eligibility requires exact data and corpus identity', () => {
+  const files = fixture();
+  try {
+    assert.equal(runComparison({ ...files, requireIdentical: true }).ok, true);
+
+    const db = new Database(files.after);
+    db.exec(`
+      CREATE TABLE cascade_elixir_schema_migrations (
+        version INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        checksum TEXT NOT NULL,
+        applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO cascade_elixir_schema_migrations(version,name,checksum)
+      VALUES (
+        1,
+        'core_node_schema_compatibility',
+        'b844b7f41e5377d5ce8ff5dd3c3cc0951cab766773f5bf0816aaec45864d338a'
+      );
+    `);
+    db.close();
+    assert.equal(runComparison(files).ok, true);
+    const rolling = runComparison({ ...files, requireIdentical: true });
+    assert.equal(rolling.ok, false);
+    assert.ok(rolling.failures.includes('table added: cascade_elixir_schema_migrations'));
+  } finally {
+    fs.rmSync(files.directory, { recursive: true, force: true });
+  }
+});
+
+test('rolling live verification permits row churn but rejects schema drift', () => {
+  const files = fixture();
+  try {
+    const db = new Database(files.after);
+    db.prepare('UPDATE notes SET body = ? WHERE id = ?').run('live write', 'note-1');
+    db.close();
+    assert.equal(runComparison({ ...files, schemaOnly: true }).ok, true);
+
+    const changed = new Database(files.after);
+    changed.exec('CREATE INDEX notes_body_idx ON notes(body)');
+    changed.close();
+    const result = runComparison({ ...files, schemaOnly: true });
+    assert.equal(result.ok, false);
+    assert.ok(result.failures.includes('database schema changed'));
+  } finally {
+    fs.rmSync(files.directory, { recursive: true, force: true });
+  }
+});
+
+test('rolling CLI modes are value-free and mutually exclusive', () => {
+  const strict = parseArgs(['--before', 'before.db', '--after', 'after.db', '--require-identical']);
+  assert.equal(strict.requireIdentical, true);
+  assert.equal(strict.schemaOnly, false);
+  assert.throws(
+    () => parseArgs([
+      '--before', 'before.db', '--after', 'after.db', '--require-identical', '--schema-only',
+    ]),
+    /mutually exclusive/,
+  );
 });
 
 test('schema snapshots never create WAL or SHM beside an authoritative database', () => {

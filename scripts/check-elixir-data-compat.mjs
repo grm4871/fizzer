@@ -41,11 +41,19 @@ const MIGRATION_LEDGER_ROW = {
 };
 
 function parseArgs(argv) {
-  const args = { allowTable: [] };
+  const args = { allowTable: [], requireIdentical: false, schemaOnly: false };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (!arg.startsWith('--')) throw new Error(`Unexpected argument: ${arg}`);
     const key = arg.slice(2);
+    if (key === 'require-identical') {
+      args.requireIdentical = true;
+      continue;
+    }
+    if (key === 'schema-only') {
+      args.schemaOnly = true;
+      continue;
+    }
     const value = argv[index + 1];
     if (!value || value.startsWith('--')) throw new Error(`--${key} requires a value`);
     index += 1;
@@ -59,6 +67,9 @@ function parseArgs(argv) {
   if (!args.before || !args.after) throw new Error('--before and --after are required');
   if (Boolean(args.beforeRoot) !== Boolean(args.afterRoot)) {
     throw new Error('--before-root and --after-root must be supplied together');
+  }
+  if (args.requireIdentical && args.schemaOnly) {
+    throw new Error('--require-identical and --schema-only are mutually exclusive');
   }
   return args;
 }
@@ -510,6 +521,34 @@ export function compareDatabaseSnapshots(before, after, allowedAdditions = DEFAU
   return failures;
 }
 
+export function compareIdenticalSnapshots(before, after) {
+  const failures = [];
+  if (!same(before.schema, after.schema)) failures.push('database schema changed');
+
+  const tables = new Set([...Object.keys(before.tables), ...Object.keys(after.tables)]);
+  for (const table of tables) {
+    if (!before.tables[table]) failures.push(`table added: ${table}`);
+    else if (!after.tables[table]) failures.push(`table removed: ${table}`);
+    else if (!same(before.tables[table], after.tables[table])) {
+      failures.push(`table changed during rolling preflight: ${table}`);
+    }
+  }
+  if (!same(before.compatibility, after.compatibility)) {
+    failures.push('compatibility projections changed during rolling preflight');
+  }
+  return failures;
+}
+
+export function compareSchemasExactly(before, after) {
+  const failures = [];
+  if (!same(before.schema, after.schema)) failures.push('database schema changed');
+
+  const beforeLedger = before.tables.cascade_elixir_schema_migrations?.migrationRows || [];
+  const afterLedger = after.tables.cascade_elixir_schema_migrations?.migrationRows || [];
+  if (!same(beforeLedger, afterLedger)) failures.push('migration ledger changed');
+  return failures;
+}
+
 export function validatePinnedElixirSchema(before, after) {
   const failures = [];
   const derivedFtsTables = commonFts5ShadowTables(before, after);
@@ -577,13 +616,17 @@ export function runComparison(options) {
   const allowed = new Set([...DEFAULT_ALLOWED_ADDITIONS, ...(options.allowTable || [])]);
   const before = databaseSnapshot(options.before);
   const after = databaseSnapshot(options.after);
-  const failures = compareDatabaseSnapshots(before, after, allowed);
+  const failures = options.requireIdentical
+    ? compareIdenticalSnapshots(before, after)
+    : options.schemaOnly
+      ? compareSchemasExactly(before, after)
+      : compareDatabaseSnapshots(before, after, allowed);
   try {
     verifyFtsIntegrity(options.after, after);
   } catch (error) {
     failures.push(error.message);
   }
-  if (options.beforeRoot) {
+  if (options.beforeRoot && !options.schemaOnly) {
     const beforeFiles = fileTreeSnapshot(options.beforeRoot);
     const afterFiles = fileTreeSnapshot(options.afterRoot);
     if (!same(beforeFiles, afterFiles)) failures.push('vault file tree changed');
@@ -597,16 +640,27 @@ export function runComparison(options) {
 }
 
 function main() {
-  const result = runComparison(parseArgs(process.argv.slice(2)));
+  const args = parseArgs(process.argv.slice(2));
+  const result = runComparison(args);
   if (!result.ok) {
     console.error('Elixir data compatibility check failed:');
     for (const failure of result.failures) console.error(`  - ${failure}`);
     process.exitCode = 1;
     return;
   }
-  console.log(
-    `Elixir data compatibility check passed: ${result.beforeTables} existing tables unchanged; ${result.afterTables} tables after boot.`,
-  );
+  if (args.requireIdentical) {
+    console.log(
+      `Rolling data identity check passed: ${result.beforeTables} existing tables; ${result.afterTables} tables after boot.`,
+    );
+  } else if (args.schemaOnly) {
+    console.log(
+      `Rolling schema identity check passed: ${result.beforeTables} existing tables; ${result.afterTables} tables after boot.`,
+    );
+  } else {
+    console.log(
+      `Elixir data compatibility check passed: ${result.beforeTables} existing tables unchanged; ${result.afterTables} tables after boot.`,
+    );
+  }
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) main();

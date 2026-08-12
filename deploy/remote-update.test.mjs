@@ -8,6 +8,7 @@ const deployDirectory = path.dirname(fileURLToPath(import.meta.url));
 const source = fs.readFileSync(path.join(deployDirectory, 'remote-update.sh'), 'utf8');
 const compose = fs.readFileSync(path.join(deployDirectory, '../docker-compose.yml'), 'utf8');
 const dockerfile = fs.readFileSync(path.join(deployDirectory, '../Dockerfile'), 'utf8');
+const nginxTemplate = fs.readFileSync(path.join(deployDirectory, 'nginx.conf.template'), 'utf8');
 
 function assertOrdered(...lines) {
   let previous = -1;
@@ -19,31 +20,68 @@ function assertOrdered(...lines) {
   }
 }
 
-test('cutover stays gated from rollback capture through candidate verification', () => {
+function functionBody(name) {
+  const start = source.indexOf(`\n${name}() {\n`);
+  assert.notEqual(start, -1, `missing function: ${name}`);
+  const end = source.indexOf('\n}\n', start);
+  assert.notEqual(end, -1, `unterminated function: ${name}`);
+  return source.slice(start, end + 3);
+}
+
+function assertOrderedWithin(haystack, ...lines) {
+  let previous = -1;
+  for (const line of lines) {
+    const index = haystack.indexOf(`\n${line}\n`, previous + 1);
+    assert.notEqual(index, -1, `missing ordered line: ${line}`);
+    assert.ok(index > previous, `line is out of order: ${line}`);
+    previous = index;
+  }
+}
+
+test('state-identical releases use a warmed backup and never close the maintenance gate', () => {
+  const rolling = functionBody('rolling_cutover');
+  assertOrderedWithin(
+    rolling,
+    '  start_rolling_container',
+    '  verify_reopened_production_edge',
+    '  docker stop -t 120 "$CONTAINER_NAME" >/dev/null',
+    '  ROLLING_OLD_STOPPED=1',
+    '  verify_reopened_production_edge',
+    '  docker rm "$CONTAINER_NAME" >/dev/null',
+    '  CASCADE_IMAGE="$CANDIDATE_IMAGE" docker compose "${COMPOSE_ARGS[@]}" \\',
+    '  verify_container_runtime_shape "$CONTAINER_NAME" "canonical rolling candidate"',
+    '  sleep 3',
+    '  verify_reopened_production_edge',
+    '  docker stop -t 120 "$ROLLING_CONTAINER" >/dev/null',
+    '  verify_reopened_production_edge',
+    '  DEPLOY_COMMITTED=1',
+  );
+  assert.doesNotMatch(rolling, /close_maintenance_gate|verify_maintenance_gate|restore_database_snapshot/);
+  assert.match(source, /if \[\[ "\$ROLLING_SAFE" == "1" \]\]; then\s+rolling_cutover\s+else\s+maintenance_cutover/);
+  assert.match(source, /sync_nginx_security 3000 "\$ROLLING_PORT"/);
   assertOrdered(
-    'load_release_candidate',
-    'verify_compose_runtime_shape',
-    'ensure_cutover_disk_capacity',
-    'secure_production_environment',
-    'preflight_candidate',
-    'sync_nginx_security',
-    'docker tag "$CURRENT_IMAGE_ID" "$ROLLBACK_IMAGE"',
-    'CUTOVER_STARTED=1',
-    'close_maintenance_gate',
-    'verify_maintenance_gate',
-    'docker compose "${COMPOSE_ARGS[@]}" stop -t 120 cascade',
-    'OLD_BACKEND_STOPPED=1',
-    'checkpoint_and_snapshot',
-    'CANDIDATE_DATA_TOUCHED=1',
-    'verify_container_runtime_shape "$CONTAINER_NAME" "running production candidate"',
-    'wait_for_url "$HEALTH_URL" 90 "Elixir candidate"',
-    'check_engine_io "http://127.0.0.1:3000"',
-    'verify_live_database',
-    'verify_authenticated_live_candidate',
-    'docker tag "$CERTIFIED_IMAGE_ID" cascade:latest',
-    'DEPLOY_COMMITTED=1',
-    'open_maintenance_gate',
-    'verify_reopened_production_edge',
+    'sync_nginx_security 3000 "$ROLLING_PORT"',
+    'settle_reloaded_nginx',
+    '  rolling_cutover',
+  );
+});
+
+test('state-changing releases retain the gated snapshot rollback path', () => {
+  const maintenance = functionBody('maintenance_cutover');
+  assertOrderedWithin(
+    maintenance,
+    '  CUTOVER_STARTED=1',
+    '  close_maintenance_gate',
+    '  verify_maintenance_gate',
+    '  docker compose "${COMPOSE_ARGS[@]}" stop -t 120 cascade',
+    '  OLD_BACKEND_STOPPED=1',
+    '  checkpoint_and_snapshot',
+    '  CANDIDATE_DATA_TOUCHED=1',
+    '  verify_live_database',
+    '  verify_authenticated_live_candidate "$CONTAINER_NAME" "http://127.0.0.1:3000"',
+    '  DEPLOY_COMMITTED=1',
+    '  open_maintenance_gate',
+    '  verify_reopened_production_edge',
   );
 });
 
@@ -64,36 +102,36 @@ test('production promotes an exact staged image without requiring capacity certi
   assert.match(source, /staged capacity certification differs from the release image/);
   assert.doesNotMatch(source, /operator-capacity-waiver/);
   assert.match(source, /docker run --rm --network none[\s\S]*RouteCatalog\.swap_ready\?\(\)/);
-  assert.match(source, /RUNNING_IMAGE_ID="\$\(docker inspect --format '\{\{\.Image\}\}'/);
-  assert.match(source, /RUNNING_IMAGE_ID" != "\$CERTIFIED_IMAGE_ID/);
+  assert.match(source, /running_image_id="\$\(docker inspect --format '\{\{\.Image\}\}'/);
+  assert.match(source, /running_image_id" != "\$CERTIFIED_IMAGE_ID/);
   assert.doesNotMatch(source, /^\s*docker (?:compose )?build(?:\s|$)/mu);
   assert.doesNotMatch(source, /BUILD_ARGS/);
 });
 
-test('preflight, Compose, and the running candidate share the production resource envelope', () => {
+test('preflight, rolling bridge, Compose, and the canonical candidate share the resource envelope', () => {
   assert.match(source, /cpus: 2,[\s\S]*cpuset: "0-1"[\s\S]*memory: 3 \* 1024 \*\* 3/);
   assert.match(source, /memorySwap: 3 \* 1024 \*\* 3,[\s\S]*pids: 100_000/);
   assert.match(source, /CASCADE_IMAGE="\$CANDIDATE_IMAGE" docker compose[\s\S]*config --format json/);
   assert.match(source, /--cpus 2 --cpuset-cpus 0-1 --memory 3g --memory-swap 3g/);
   assert.match(source, /--pids-limit 100000 --ulimit nofile=200000:200000/);
   assert.match(source, /verify_container_runtime_shape "\$PREFLIGHT_CONTAINER" "isolated candidate preflight"/);
+  assert.match(source, /verify_container_runtime_shape "\$ROLLING_CONTAINER" "warmed rolling candidate"/);
   assert.match(source, /verify_container_runtime_shape "\$CONTAINER_NAME" "running production candidate"/);
+  assert.match(source, /verify_container_runtime_shape "\$CONTAINER_NAME" "canonical rolling candidate"/);
 });
 
-test('authenticated production smoke stays behind the reversible maintenance gate', () => {
-  assert.match(source, /Running authenticated production read\/realtime smoke behind the maintenance gate/);
+test('authenticated production smoke runs directly against both rolling candidate instances', () => {
+  assert.match(source, /Running authenticated production read\/realtime smoke against \$container/);
   assert.match(source, /release eval` starts a separate VM, not an RPC session/);
   assert.match(source, /new Database\("\/data\/docs\.db", \{ readonly: true, fileMustExist: true \}\)/);
   assert.match(source, /jwt\.sign\(\{ \.\.\.user, access: "user" \}/);
-  assert.match(source, /authenticated-live-smoke\.mjs "http:\/\/127\.0\.0\.1:3000"/);
+  assert.match(source, /authenticated-live-smoke\.mjs "\$origin"/);
   assert.doesNotMatch(source, /runner:register/);
   assert.match(dockerfile, /COPY --chown=node:node deploy\/authenticated-live-smoke\.mjs \.\/deploy\/authenticated-live-smoke\.mjs/);
-  assertOrdered(
-    'close_maintenance_gate',
-    'verify_authenticated_live_candidate',
-    'DEPLOY_COMMITTED=1',
-    'open_maintenance_gate',
-  );
+  const rolling = functionBody('rolling_cutover');
+  assert.match(rolling, /verify_authenticated_live_candidate "\$CONTAINER_NAME" "http:\/\/127\.0\.0\.1:3000"/);
+  const starter = functionBody('start_rolling_container');
+  assert.match(starter, /verify_authenticated_live_candidate "\$ROLLING_CONTAINER" "http:\/\/127\.0\.0\.1:\$ROLLING_PORT"/);
 });
 
 test('the reopened TLS edge serves health, client assets, and Engine.IO', () => {
@@ -105,11 +143,12 @@ test('the reopened TLS edge serves health, client assets, and Engine.IO', () => 
   assert.match(source, /health_code" == "200"[\s\S]*root_html[\s\S]*engine_open/);
   assert.match(source, /"\$consecutive" -ge 3/);
   assert.match(source, /reopened production edge did not stabilize/);
-  assertOrdered(
-    'open_maintenance_gate',
-    'verify_reopened_production_edge',
-    'docker compose "${COMPOSE_ARGS[@]}" ps',
+  assertOrderedWithin(
+    functionBody('maintenance_cutover'),
+    '  open_maintenance_gate',
+    '  verify_reopened_production_edge',
   );
+  assert.match(source, /docker compose "\$\{COMPOSE_ARGS\[@\]\}" ps/);
 });
 
 test('failure handling restores only a verified snapshot after the candidate is stopped', () => {
@@ -125,6 +164,39 @@ test('failure handling restores only a verified snapshot after the candidate is 
   assert.match(source, /rollback cannot prove traffic is gated; refusing to mutate production data/);
   assert.match(source, /if \[\[ "\$OLD_BACKEND_STOPPED" == "1" \|\| "\$backend_running" != "true" \]\]/);
   assert.match(source, /rollback did not become healthy; maintenance gate remains active/);
+});
+
+test('rolling failure keeps a verified bridge online and never rewinds user writes', () => {
+  const rollback = functionBody('rollback_rolling_cutover');
+  assert.match(source, /if \[\[ "\$ROLLING_STARTED" == "1" && "\$DEPLOY_COMMITTED" != "1" \]\]; then\s+rollback_rolling_cutover/);
+  assert.match(rollback, /restoring the previous image without rewinding live data/);
+  assert.match(rollback, /rolling rollback bridge/);
+  assert.match(rollback, /CASCADE_IMAGE="\$ROLLBACK_IMAGE" docker compose/);
+  assert.match(rollback, /Previous image restored with all rolling-window writes preserved/);
+  assert.doesNotMatch(rollback, /restore_database_snapshot|SNAPSHOT_DB/);
+  assert.match(rollback, /leaving the healthy candidate in service/);
+  assert.match(rollback, /ROLLING_OLD_STOPPED" != "1" \]\] && container_running "\$CONTAINER_NAME"/);
+  assert.match(rollback, /ROLLING_OLD_STOPPED=1/);
+});
+
+test('nginx uses a primary/backup upstream with bounded pre-send failover', () => {
+  assert.match(nginxTemplate, /upstream cascade_app \{/);
+  assert.match(nginxTemplate, /server 127\.0\.0\.1:CASCADE_PRIMARY_PORT/);
+  assert.match(nginxTemplate, /CASCADE_BACKUP_SERVER/);
+  assert.match(nginxTemplate, /proxy_next_upstream error timeout http_502 http_503 http_504/);
+  assert.match(nginxTemplate, /proxy_next_upstream_tries 2/);
+  assert.doesNotMatch(nginxTemplate, /proxy_next_upstream[^;]*non_idempotent/);
+  assert.equal((nginxTemplate.match(/proxy_pass http:\/\/cascade_app;/g) || []).length, 4);
+});
+
+test('the one-time upstream bootstrap drains old HTTP keepalive workers before cutover', () => {
+  const configure = functionBody('configure_nginx_upstreams');
+  const settle = functionBody('settle_reloaded_nginx');
+  assert.match(configure, /NGINX_CONFIG_CHANGED=1/);
+  assert.match(settle, /seq 1 80/);
+  assert.match(settle, /production health changed while nginx workers drained/);
+  assert.match(settle, /https:\/\/\$DEPLOY_DOMAIN\/api\/health/);
+  assert.doesNotMatch(settle, /close_maintenance_gate/);
 });
 
 test('snapshot creation fails closed on a busy checkpoint and records integrity evidence', () => {
@@ -144,10 +216,14 @@ test('snapshot creation fails closed on a busy checkpoint and records integrity 
 test('isolated preflight checkpoints the migrated WAL before main-file compatibility inspection', () => {
   assert.match(source, /busy preflight WAL checkpoint/);
   assert.match(source, /preflight SQLite quick_check failed/);
-  assertOrdered(
+  assertOrderedWithin(
+    functionBody('preflight_candidate'),
     "    'case Application.ensure_all_started(:cascade_elixir) do {:ok, _} -> :ok; other -> raise inspect(other) end'",
-    '  docker run --rm --network none --user 1000:1000 --entrypoint node \\',
-    '  docker run --rm --network none --entrypoint node \\',
+    '  checkpoint_preflight_clone',
+    '  docker run -d --name "$PREFLIGHT_CONTAINER" --env-file "$ROOT/.env" \\',
+    '  docker rm -f "$PREFLIGHT_CONTAINER" >/dev/null',
+    '  checkpoint_preflight_clone',
+    '  local checker=(',
   );
 });
 
@@ -164,6 +240,11 @@ test('preflight and live cutover bind the complete vault and QMD corpus without 
   assert.match(source, /CASCADE_SQLITE_SNAPSHOT_TMPDIR=\/sqlite-scratch/);
   assert.match(source, /sqlite-scratch:\/sqlite-scratch/);
   assert.doesNotMatch(source, /allow-derived|ignore.*index\.sqlite/iu);
+  assert.match(source, /"\$\{checker\[@\]\}" --require-identical/);
+  assert.match(source, /Candidate boot is state-identical; rolling cutover is eligible/);
+  assert.match(source, /--schema-only/);
+  assert.match(source, /verify_live_schema_identity "\$ROLLING_CONTAINER"/);
+  assert.match(source, /verify_live_schema_identity "\$CONTAINER_NAME"/);
 });
 
 test('production gives runners ten minutes to reclaim after gated candidate startup', () => {
@@ -174,11 +255,12 @@ test('production gives runners ten minutes to reclaim after gated candidate star
   const healthAttempts = source.match(/wait_for_url "\$HEALTH_URL" (\d+) "Elixir candidate"/);
   assert.ok(healthAttempts, 'candidate health wait is missing');
   assert.ok(Number(configured[1]) > Number(healthAttempts[1]) * 2_000);
-  assertOrdered(
-    'CANDIDATE_DATA_TOUCHED=1',
-    'wait_for_url "$HEALTH_URL" 90 "Elixir candidate"',
-    'verify_live_database',
-    'DEPLOY_COMMITTED=1',
+  assertOrderedWithin(
+    functionBody('maintenance_cutover'),
+    '  CANDIDATE_DATA_TOUCHED=1',
+    '  wait_for_url "$HEALTH_URL" 90 "Elixir candidate"',
+    '  verify_live_database',
+    '  DEPLOY_COMMITTED=1',
   );
   assert.match(source, /DEPLOY_COMMITTED=1\s+open_maintenance_gate/);
 });
@@ -201,6 +283,7 @@ test('production secrets are regular root-owned mode 0600 before candidate start
   assertOrdered(
     'secure_production_environment',
     'preflight_candidate',
-    'CANDIDATE_DATA_TOUCHED=1',
   );
+  assert.match(functionBody('maintenance_cutover'), /CANDIDATE_DATA_TOUCHED=1/);
+  assert.match(functionBody('rolling_cutover'), /start_rolling_container/);
 });

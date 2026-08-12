@@ -92,6 +92,13 @@ autodeploy described above.
 2. **Wait for the host deploy** (do not assume push means live) — `journalctl -u cascade-autodeploy -f`, or: `docker compose -f /var/www/cascade-browser/docker-compose.yml ps` and `curl -sf http://127.0.0.1:3000/api/health`. Confirm the expected commit (`git -C /var/www/cascade-browser rev-parse --short HEAD`) before claiming ship. A verified cutover still does not prove a changed UI behaves correctly; also inspect and exercise the served bundle for client changes.
 3. First-time host bootstrap (nginx, certbot, `.env`) remains `deploy/deploy.sh <domain>` — not used for routine releases. If host autodeploy explicitly fails, manually dispatch `.github/workflows/deploy.yml`; never dispatch it concurrently with the webhook path.
 
+Routine releases whose isolated boot is logically state-identical use nginx's
+fixed `127.0.0.1:3000` primary and `127.0.0.1:39001` rolling backup; they must
+not create `/run/cascade-maintenance`. Releases that intentionally migrate
+persistent state retain the snapshot-backed maintenance cutover. For any change
+to this machinery, continuously probe the public health endpoint throughout the
+deploy and treat even one 5xx response as a failed cutover.
+
 ### When a deployment fails
 
 - Read `journalctl -u cascade-autodeploy` first. For a manually dispatched fallback, read its failing step with `gh run view <id> --log-failed` **before** changing anything.
