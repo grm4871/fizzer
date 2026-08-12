@@ -43,6 +43,11 @@ if (process.platform === 'linux') {
   process.env.GTK_DEBUG = '';
 }
 
+// Packaged builds get the Fizzer gem from the bundle's own icon (.icns/.ico),
+// but Linux windows and unpackaged launches have to be told explicitly or they
+// fall back to the stock Electron logo.
+const APP_ICON = path.join(__dirname, 'assets', 'icon.png');
+
 let mainWindow;
 let desktopUpdateInProgress = false;
 const agentRunState = new AgentRunState();
@@ -349,6 +354,7 @@ async function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
+    icon: APP_ICON,
     // Never show a menu bar on Linux/Windows (Debug used to live here in
     // unpackaged launches). macOS uses the system menu bar via setApplicationMenu.
     autoHideMenuBar: process.platform !== 'darwin',
@@ -394,6 +400,7 @@ function createPaneWindow(descriptor, bounds) {
     height: (bounds && bounds.height) || 680,
     x: bounds && bounds.x,
     y: bounds && bounds.y,
+    icon: APP_ICON,
     autoHideMenuBar: process.platform !== 'darwin',
     backgroundThrottling: false,
     webPreferences: {
@@ -666,6 +673,12 @@ ipcMain.handle('app:updateAndRestart', async () => {
 // ═══════════════════════════════════════════════════════════════
 
 app.whenReady().then(async () => {
+  // `npm start` runs from the generic Electron binary, whose dock tile is the
+  // Electron logo until the running app overrides it.
+  if (process.platform === 'darwin' && !app.isPackaged && app.dock) {
+    try { app.dock.setIcon(APP_ICON); } catch { /* non-fatal: dev cosmetics */ }
+  }
+
   try {
     await reapOrphanedLocalAgentRuns();
   } catch (error) {
