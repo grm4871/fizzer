@@ -8,7 +8,7 @@ import {
   summarizeActivity,
 } from '../chat/harnessActivity';
 import { appendChatRunBlocks, normalizeChatRunBlocks } from '../chat/runBlocks';
-import type { ChatMessage } from '../components/ChatView';
+import type { ChatMessage } from '../chat/types';
 
 function msg(partial: Partial<ChatMessage>): ChatMessage {
   return {

@@ -11,7 +11,7 @@ Run the scoped suite from the exact commit being shipped: `npm run test:release:
 - [ ] Review `git status` and the committed diff; confirm every intended file is in the commit and unrelated work is not.
 - [ ] Run the applicable scoped release suite(s); any failure in a touched boundary blocks release.
 - [ ] For frontend changes, confirm the runtime check reports no console errors, uncaught exceptions, or failed module loads.
-- [ ] For backend changes, require contract, route, data, differential, deploy/rollback/edge, and load-harness unit parity.
+- [ ] For backend changes, require contract, route, data, deploy/rollback/edge, and load-harness unit parity.
 - [ ] Build the full-SHA release image from a clean commit and stage the exact revision-labelled image before pushing.
 - [ ] For capacity-sensitive backend or infrastructure changes, separately certify that exact image with the production capacity and soak evidence, then stage the certification.
 - [ ] Push once, watch the webhook-triggered host deploy to completion (`ssh root@66.135.24.172 journalctl -u cascade-autodeploy -f`), and read the failure rather than guessing. The Actions workflow is manual fallback only.

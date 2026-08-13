@@ -15,7 +15,7 @@
  */
 
 import { useCallback, useSyncExternalStore } from 'react';
-import type { ChatMessage } from '../components/ChatView';
+import type { ChatMessage } from './types';
 
 const EMPTY: ChatMessage[] = Object.freeze([]) as unknown as ChatMessage[];
 

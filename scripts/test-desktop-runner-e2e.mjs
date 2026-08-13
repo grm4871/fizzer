@@ -6,11 +6,10 @@
  * receives run:delegate → desktop emits events → browser polls run status.
  */
 
-import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { io } from 'socket.io-client';
-import { launchTestBackend, resolveTestBackend } from './lib/test-backend.mjs';
+import { launchTestBackend } from './lib/test-backend.mjs';
 import { pickPort } from './lib/test-ports.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -51,14 +50,6 @@ function startServer() {
 }
 
 async function main() {
-  if (resolveTestBackend() === 'node') {
-    console.log('[e2e] Building server...');
-    const build = spawn('npm', ['run', 'build'], { cwd: root, stdio: 'inherit', shell: true });
-    await new Promise((resolve, reject) => {
-      build.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`build failed: ${code}`))));
-    });
-  }
-
   console.log('[e2e] Starting server on', API_BASE);
   const server = await startServer();
 

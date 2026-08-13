@@ -6,21 +6,11 @@
  * TUI-style lines; the last settled non-worker answer stays a full bubble.
  */
 
-import type { ChatMessage } from '../components/ChatView';
+import { canGroupChatMessages } from './shared';
+import type { ChatMessage } from './types';
 
 export interface ChatMessageGroup {
   messages: ChatMessage[];
-}
-
-const CHAT_MESSAGE_GROUP_WINDOW_MS = 90_000;
-
-function canGroup(a: ChatMessage, b: ChatMessage): boolean {
-  if (a.author.trim() !== b.author.trim()) return false;
-  const aKey = a.registrationId ?? a.agentId ?? null;
-  const bKey = b.registrationId ?? b.agentId ?? null;
-  if (aKey !== bKey) return false;
-  const elapsed = Date.parse(b.createdAt) - Date.parse(a.createdAt);
-  return Number.isFinite(elapsed) && elapsed >= 0 && elapsed <= CHAT_MESSAGE_GROUP_WINDOW_MS;
 }
 
 export type TranscriptSegment =
@@ -487,7 +477,7 @@ function groupMessages(messages: ChatMessage[]): ChatMessageGroup[] {
   const groups: ChatMessageGroup[] = [];
   for (const message of messages) {
     const last = groups[groups.length - 1];
-    if (last && canGroup(last.messages[last.messages.length - 1], message)) {
+    if (last && canGroupChatMessages(last.messages[last.messages.length - 1], message)) {
       last.messages.push(message);
     } else {
       groups.push({ messages: [message] });

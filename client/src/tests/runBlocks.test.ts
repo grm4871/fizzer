@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { honestAgentChatBody, mergeRemoteChatMessage } from '../chat/runBlocks';
-import type { ChatMessage } from '../components/ChatView';
+import type { ChatMessage } from '../chat/types';
 
 function chatMessage(id: string, overrides: Partial<ChatMessage> = {}): ChatMessage {
   return {

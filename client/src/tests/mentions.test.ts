@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { addressedMentions, buildQuotedReplyPrompt, hasRegistrationForMention, precedingMessageBatch, precedingMessageBatchText, replyQuoteTargetsAgent, resolveAgentMessageRegistration } from '../chat/mentions';
-import { prepareReplyForSend } from '../components/ChatView';
+import { prepareReplyForSend } from '../components/ChatComposer';
 
 const registrations = [
   { id: 'terra-reg', agentId: 'codex', displayName: 'Terra', mention: 'terra', taggableByAgents: true },

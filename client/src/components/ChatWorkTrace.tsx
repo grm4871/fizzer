@@ -19,10 +19,11 @@ import {
 } from '../chat/workTrace';
 import { hasRunActivity } from '../chat/harnessActivity';
 import { CascadeRunPanel } from './CascadeRunPanel';
+import { shouldRenderRunPanel } from './ChatGroupRow';
 import { ChatQuoteRefs } from './ChatQuoteRefs';
 import { ThinkingSpinner } from './ThinkingSpinner';
 import { SwipeToReply } from './SwipeToReply';
-import type { ChatMessage } from './ChatView';
+import type { ChatMessage } from '../chat/types';
 
 const MARKDOWN_PLUGINS = [remarkGfm, remarkBreaks];
 const WORK_TRACE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
@@ -45,16 +46,6 @@ function statusMark(message: ChatMessage): { mark: string; className: string; li
     return { mark: '#', className: 'sys' };
   }
   return { mark: '·', className: 'ok' };
-}
-
-function shouldRenderRunPanel(
-  message: ChatMessage,
-  selected: boolean,
-  isLatestRunningMessage: boolean,
-): boolean {
-  if (selected) return true;
-  if (message.status === 'failed' || message.status === 'canceled') return true;
-  return message.status === 'running' && isLatestRunningMessage;
 }
 
 function WorkTraceBody({ body }: { body: string }) {

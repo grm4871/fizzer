@@ -7,7 +7,8 @@ import {
   splitDocEmbeds,
   splitWikilinks,
 } from '../docEmbeds';
-import { ChatView, type ChatMessage } from '../components/ChatView';
+import type { ChatMessage } from '../chat/types';
+import { ChatView } from '../components/ChatView';
 import { chatMessageStore } from '../chat/messageStore';
 
 describe('splitDocEmbeds / splitWikilinks', () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { chatMessageStore } from '../chat/messageStore';
-import type { ChatMessage } from '../components/ChatView';
+import type { ChatMessage } from '../chat/types';
 
 function message(id: string, channelId: string): ChatMessage {
   return { id, channelId, author: 'asdfasdf', body: id, createdAt: id };

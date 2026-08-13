@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isMp4Attachment, isVideoMediaType } from '../components/ChatView';
+import { isMp4Attachment, isVideoMediaType } from '../components/ChatComposer';
 
 describe('chat video attachments', () => {
   it('recognizes video/* and mp4 filenames/urls', () => {

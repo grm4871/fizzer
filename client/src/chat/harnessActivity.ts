@@ -6,7 +6,7 @@
  * JSONL shapes) so raw JSON dumps never have to be the primary UI.
  */
 
-import type { ChatBlock, ChatMessage } from '../components/ChatView';
+import type { ChatBlock, ChatMessage } from './types';
 
 export type ActivityKind = 'thinking' | 'tool' | 'text' | 'system' | 'meta';
 

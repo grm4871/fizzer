@@ -2,7 +2,7 @@
  * Pure helpers for turning agent run events into chat message blocks/patches.
  */
 
-import type { ChatBlock, ChatMessage } from '../components/ChatView';
+import type { ChatBlock, ChatMessage } from './types';
 
 export function newId(prefix: string) {
   const uuid = typeof crypto !== 'undefined' && 'randomUUID' in crypto

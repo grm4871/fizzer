@@ -1,5 +1,5 @@
 import { Forward, Reply } from 'lucide-react';
-import type { ChatMessage } from './ChatView';
+import type { ChatMessage } from '../chat/types';
 
 /**
  * Renders the reply/forward provenance quotes for a chat message.

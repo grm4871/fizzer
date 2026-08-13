@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ChatMessage } from '../components/ChatView';
+import type { ChatMessage } from '../chat/types';
 import {
   isForcedWorkTraceLine,
   isSteeringContinuationMessage,

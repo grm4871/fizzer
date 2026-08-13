@@ -5,7 +5,7 @@
 import * as Layout from '../layout/tree';
 import type { LayoutNode } from '../layout/tree';
 import type { Tab } from '../components/TabBar';
-import type { ChatAgentRegistration, ChatMessage } from '../components/ChatView';
+import type { ChatAgentRegistration, ChatMessage } from './types';
 import { agentLabel, normalizeChatCwd, type AgentId } from './agents';
 
 export const SESSION_STORAGE_KEY = 'cascade_session';

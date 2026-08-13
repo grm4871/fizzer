@@ -2,7 +2,7 @@ import type {
   ChatChannelPresence,
   ChatMediaAttachment,
   ChatMessage,
-} from '../components/ChatView';
+} from './types';
 
 export const CHAT_NOTE_MARKER = 'cascade://chat-channel';
 const CHAT_MESSAGE_GROUP_WINDOW_MS = 90_000;

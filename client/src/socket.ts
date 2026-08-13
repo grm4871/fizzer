@@ -16,7 +16,7 @@
  */
 
 import { io, type Socket } from 'socket.io-client';
-import type { ChatMessage, ChatAgentRegistration } from './components/ChatView';
+import type { ChatAgentRegistration, ChatMessage, VaultAgent } from './chat/types';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
@@ -42,7 +42,7 @@ type ServerEvents = {
   /** Online participants for a chat channel (who has Cascade open). */
   'vault:chatPresence': (data: { vaultId: string; channelId: string; participants: string[]; online: string[] }) => void;
   /** A vault-level agent profile was created or updated. */
-  'vault:vaultAgentUpserted': (data: { agent: import('./components/ChatView').VaultAgent }) => void;
+  'vault:vaultAgentUpserted': (data: { agent: VaultAgent }) => void;
   /** A vault-level agent profile was removed. */
   'vault:vaultAgentRemoved': (data: { agentId: string }) => void;
   /** A user's display profile changed. */

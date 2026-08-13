@@ -3,13 +3,13 @@ import { ArrowLeft } from 'lucide-react';
 import { api } from '../api';
 import { chatMessageStore } from '../chat/messageStore';
 import { connectVaultSocket } from '../socket';
-import {
-  ChatView,
-  type ChatChannelPresence,
-  type ChatMediaAttachment,
-  type ChatMessage,
-  type ChatReplyRef,
-} from './ChatView';
+import type {
+  ChatChannelPresence,
+  ChatMediaAttachment,
+  ChatMessage,
+  ChatReplyRef,
+} from '../chat/types';
+import { ChatView } from './ChatView';
 
 export type DirectMessageConversation = {
   user: {

@@ -31,7 +31,7 @@ import {
 const HarnessTerminal = lazy(() =>
   import('./HarnessTerminal').then((m) => ({ default: m.HarnessTerminal })),
 );
-import type { ChatMessage } from './ChatView';
+import type { ChatMessage } from '../chat/types';
 import { ThinkingSpinner } from './ThinkingSpinner';
 import { api } from '../api';
 

@@ -11,9 +11,8 @@ import {
   shouldRenderRunPanel,
   shouldDetachStickyForTouch,
   shouldDetachStickyForWheel,
-  type ChatAgentRegistration,
-  type ChatMessage,
 } from '../components/ChatView';
+import type { ChatAgentRegistration, ChatMessage } from '../chat/types';
 import { chatMessageStore } from '../chat/messageStore';
 import { ChatWorkTrace } from '../components/ChatWorkTrace';
 
