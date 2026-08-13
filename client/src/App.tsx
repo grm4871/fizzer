@@ -78,8 +78,10 @@ import {
 import { normalizeMention } from './chat/mentions';
 import {
   applyRemoteChatMessage,
-  mergeRemoteChatMessage,
+  captureChatMessageSnapshotBaseline,
   newId,
+  reconcileChatMessageSnapshot,
+  type ChatMessageSnapshotBaseline,
 } from './chat/runBlocks';
 import {
   CHAT_STORAGE_KEY,
@@ -122,7 +124,11 @@ function isMobileViewport(): boolean {
 // rapid remount so concurrent loadVaultData / message fetches coalesce to one
 // network round-trip instead of stacking.
 const loadVaultDataInflight = new Map<string, Promise<void>>();
-const loadChatMessagesInflight = new Map<string, Promise<{ channelId: string; messages: ChatMessage[] }>>();
+const loadChatMessagesInflight = new Map<string, Promise<{
+  channelId: string;
+  messages: ChatMessage[];
+  baseline: ChatMessageSnapshotBaseline;
+}>>();
 
 /** Stable empty so ChatView memo doesn't bust when a channel has no agents yet. */
 const EMPTY_CHAT_AGENTS: ChatAgentRegistration[] = [];
@@ -926,7 +932,12 @@ export default function App() {
         const inflightKey = `${vaultId}:${channelId}`;
         let fetchOne = loadChatMessagesInflight.get(inflightKey);
         if (!fetchOne) {
-          fetchOne = (async (): Promise<{ channelId: string; messages: ChatMessage[] }> => {
+          fetchOne = (async (): Promise<{
+            channelId: string;
+            messages: ChatMessage[];
+            baseline: ChatMessageSnapshotBaseline;
+          }> => {
+            const baseline = captureChatMessageSnapshotBaseline(chatMessageStore.getChannel(channelId));
             try {
               // Slim list payload (no harness logs) — mobile cold load stays small.
               const data = await api<{ messages: ChatMessage[] }>(
@@ -947,13 +958,13 @@ export default function App() {
                 );
                 messages = refreshed.messages ?? [];
               }
-              return { channelId, messages };
+              return { channelId, messages, baseline };
             } catch {
               // Keep whatever we already have on soft failure (resume offline).
               const cached = chatMessageStore.hasChannel(channelId)
                 ? chatMessageStore.getChannel(channelId)
                 : undefined;
-              return { channelId, messages: cached ?? legacyMessages[channelId] ?? [] };
+              return { channelId, messages: cached ?? legacyMessages[channelId] ?? [], baseline };
             } finally {
               loadChatMessagesInflight.delete(inflightKey);
             }
@@ -961,17 +972,14 @@ export default function App() {
           loadChatMessagesInflight.set(inflightKey, fetchOne);
         }
 
-        const { messages } = await fetchOne;
+        const { messages, baseline } = await fetchOne;
         chatMessageStore.update(channelId, (existing) => {
           if (existing === messages) return existing;
-          const cachedById = new Map(existing.map((message) => [message.id, message]));
           // Reconnect reconciliation intentionally fetches the slim transcript,
           // where data-URL images are represented only by `hasImages`. Merge it
-          // over the live cache so a refresh cannot erase already hydrated media.
-          return messages.map((message) => {
-            const cached = cachedById.get(message.id);
-            return cached ? mergeRemoteChatMessage(cached, message) : message;
-          });
+          // over the live cache so a refresh cannot erase hydrated media or a
+          // human/agent row that arrived after this request began.
+          return reconcileChatMessageSnapshot(existing, messages, baseline);
         });
         setLoadingChatChannels((prev) => {
           if (!prev[channelId]) return prev;

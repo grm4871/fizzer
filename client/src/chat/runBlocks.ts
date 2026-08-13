@@ -217,6 +217,35 @@ function isRemoteTerminalStatus(status: ChatMessage['status']): boolean {
   return status === 'failed' || status === 'canceled';
 }
 
+export interface ChatMessageSnapshotBaseline {
+  ids: ReadonlySet<string>;
+  optimisticIds: ReadonlySet<string>;
+}
+
+/** Capture what the renderer knew when a transcript request started. */
+export function captureChatMessageSnapshotBaseline(
+  messages: ChatMessage[],
+): ChatMessageSnapshotBaseline {
+  return {
+    ids: new Set(messages.map((message) => message.id)),
+    optimisticIds: new Set(messages
+      .filter((message) => message.seq == null || isLiveAgentStatus(message.status))
+      .map((message) => message.id)),
+  };
+}
+
+function hasVisibleChatMessageContent(message: ChatMessage): boolean {
+  return Boolean(
+    message.body?.trim()
+    || message.images?.length
+    || message.hasImages
+    || message.attachments?.length
+    || message.mission
+    || message.changeRequest
+    || message.clarification,
+  );
+}
+
 /** Prefer the richer of local streaming vs remote socket/DB copy of the same message. */
 export function mergeRemoteChatMessage(local: ChatMessage, remote: ChatMessage): ChatMessage {
   const localScore = chatMessageStreamScore(local);
@@ -323,6 +352,40 @@ export function applyRemoteChatMessage(existing: ChatMessage[], remote: ChatMess
   const next = [...existing];
   next[index] = merged;
   return next;
+}
+
+/**
+ * Reconcile a list response without erasing rows created while that request was
+ * in flight. The HTTP payload is a point-in-time snapshot: a socket event, an
+ * optimistic human prompt, or a locally streaming answer may legitimately be
+ * newer than it and therefore absent. Rows that were already authoritative at
+ * request start are still removed when absent, so reconnect can converge after
+ * a deletion that happened while this renderer was offline.
+ */
+export function reconcileChatMessageSnapshot(
+  existing: ChatMessage[],
+  remote: ChatMessage[],
+  baseline: ChatMessageSnapshotBaseline,
+): ChatMessage[] {
+  const cachedById = new Map(existing.map((message) => [message.id, message]));
+  const remoteIds = new Set(remote.map((message) => message.id));
+  const reconciled = remote.map((message) => {
+    const cached = cachedById.get(message.id);
+    return cached ? mergeRemoteChatMessage(cached, message) : message;
+  });
+
+  for (const local of existing) {
+    if (remoteIds.has(local.id)) continue;
+    const arrivedDuringRequest = !baseline.ids.has(local.id);
+    const wasOptimisticAtRequestStart = baseline.optimisticIds.has(local.id);
+    const isOptimisticNow = local.seq == null || isLiveAgentStatus(local.status);
+    if (
+      (arrivedDuringRequest || wasOptimisticAtRequestStart || isOptimisticNow)
+      && (hasVisibleChatMessageContent(local) || isLiveAgentStatus(local.status))
+    ) reconciled.push(local);
+  }
+
+  return reconciled;
 }
 
 /** JSON patch body with explicit nulls so the server can clear status/blocks. */

@@ -35,6 +35,7 @@ import {
 } from './mentions';
 import type { ChatRelationship } from './relationships';
 import {
+  applyRemoteChatMessage,
   appendChatRunBlocks,
   appendHarnessLog,
   hasChatRunToolBlock,
@@ -133,13 +134,10 @@ export function useChatDispatch({
       });
       if (!data.message) return null;
       const merged = mergeRemoteChatMessage(message, data.message);
-      chatMessageStore.update(channelId, (existing) => {
-        const index = existing.findIndex((item) => item.id === data.message.id);
-        if (index === -1) return existing;
-        const next = [...existing];
-        next[index] = mergeRemoteChatMessage(existing[index], data.message);
-        return next;
-      });
+      // A transcript refresh can race this POST. Even if an older snapshot
+      // removed the optimistic row, the successful authoritative response must
+      // put it back instead of silently accepting a server-only message.
+      chatMessageStore.update(channelId, (existing) => applyRemoteChatMessage(existing, data.message));
       const agents = data.agents ?? chatStateRef.current.registeredAgentsByChannel[channelId] ?? [];
       if (data.agents) {
         setChatState((prev) => ({

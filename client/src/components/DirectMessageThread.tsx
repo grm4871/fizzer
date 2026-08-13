@@ -2,7 +2,11 @@ import { useCallback, useEffect, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { api } from '../api';
 import { chatMessageStore } from '../chat/messageStore';
-import { applyRemoteChatMessage } from '../chat/runBlocks';
+import {
+  applyRemoteChatMessage,
+  captureChatMessageSnapshotBaseline,
+  reconcileChatMessageSnapshot,
+} from '../chat/runBlocks';
 import { connectVaultSocket } from '../socket';
 import type {
   ChatChannelPresence,
@@ -59,6 +63,9 @@ export function DirectMessageThread({
 
   useEffect(() => {
     let alive = true;
+    const baseline = captureChatMessageSnapshotBaseline(
+      chatMessageStore.getChannel(conversation.channelId),
+    );
     setLoading(true);
     setStatus('');
     setPresence({
@@ -73,10 +80,11 @@ export function DirectMessageThread({
       Promise.resolve(onRead(conversation.channelId)),
     ]).then(([data]) => {
       if (!alive) return;
-      chatMessageStore.set(
-        conversation.channelId,
-        (data.messages || []).map((message) => ({ ...message, channelId: conversation.channelId })),
-      );
+      const remote = (data.messages || [])
+        .map((message) => ({ ...message, channelId: conversation.channelId }));
+      chatMessageStore.update(conversation.channelId, (existing) => (
+        reconcileChatMessageSnapshot(existing, remote, baseline)
+      ));
     }).catch((error) => {
       if (alive) setStatus(error instanceof Error ? error.message : 'Could not load messages');
     }).finally(() => {

@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { applyRemoteChatMessage, honestAgentChatBody, mergeRemoteChatMessage } from '../chat/runBlocks';
+import {
+  applyRemoteChatMessage,
+  captureChatMessageSnapshotBaseline,
+  honestAgentChatBody,
+  mergeRemoteChatMessage,
+  reconcileChatMessageSnapshot,
+} from '../chat/runBlocks';
 import type { ChatMessage } from '../chat/types';
 
 function chatMessage(id: string, overrides: Partial<ChatMessage> = {}): ChatMessage {
@@ -101,6 +107,16 @@ describe('mergeRemoteChatMessage media hydration', () => {
 });
 
 describe('mergeRemoteChatMessage local-first live rows', () => {
+  it('inserts an authoritative message when its optimistic row is missing', () => {
+    const remote = chatMessage('saved-after-race', {
+      author: 'alice',
+      body: 'This POST completed after transcript reconciliation.',
+      seq: 12,
+    });
+
+    expect(applyRemoteChatMessage([], remote)).toEqual([remote]);
+  });
+
   it('keeps a live local answer when the fold is still Thinking...', () => {
     const local = chatMessage('m3', {
       body: 'The tests pass.',
@@ -230,5 +246,64 @@ describe('mergeRemoteChatMessage local-first live rows', () => {
       runId: 5,
     });
     expect(applyRemoteChatMessage([local], remote)).toEqual([]);
+  });
+});
+
+describe('reconcileChatMessageSnapshot request races', () => {
+  it('keeps a human prompt inserted while an older list request was in flight', () => {
+    const old = chatMessage('old', { seq: 1, body: 'Earlier.' });
+    const baseline = captureChatMessageSnapshotBaseline([old]);
+    const prompt = chatMessage('new-human', {
+      author: 'alice',
+      body: '@sol fix the disappearing response',
+    });
+
+    expect(reconcileChatMessageSnapshot([old, prompt], [old], baseline)).toEqual([old, prompt]);
+  });
+
+  it('keeps a live agent answer missing from an older list snapshot', () => {
+    const old = chatMessage('old', { seq: 1, body: 'Earlier.' });
+    const live = chatMessage('agent-dispatch-live', {
+      author: 'Sol',
+      body: 'I found the stale snapshot race.',
+      status: 'running',
+      agentId: 'codex',
+      registrationId: 'sol',
+    });
+    const baseline = captureChatMessageSnapshotBaseline([old, live]);
+
+    expect(reconcileChatMessageSnapshot([old, live], [old], baseline)).toEqual([old, live]);
+  });
+
+  it('keeps a response that arrived and settled while the request was in flight', () => {
+    const old = chatMessage('old', { seq: 1, body: 'Earlier.' });
+    const baseline = captureChatMessageSnapshotBaseline([old]);
+    const reply = chatMessage('agent-dispatch-settled', {
+      author: 'Sol',
+      body: 'Fixed and verified.',
+      seq: 3,
+      agentId: 'codex',
+      registrationId: 'sol',
+    });
+
+    expect(reconcileChatMessageSnapshot([old, reply], [old], baseline)).toEqual([old, reply]);
+  });
+
+  it('still removes an authoritative row deleted while the renderer was offline', () => {
+    const deleted = chatMessage('deleted', { seq: 2, body: 'Remove me.' });
+    const baseline = captureChatMessageSnapshotBaseline([deleted]);
+
+    expect(reconcileChatMessageSnapshot([deleted], [], baseline)).toEqual([]);
+  });
+
+  it('does not resurrect a completed empty agent shell', () => {
+    const shell = chatMessage('agent-dispatch-empty', {
+      body: '',
+      agentId: 'codex',
+      registrationId: 'sol',
+    });
+    const baseline = captureChatMessageSnapshotBaseline([shell]);
+
+    expect(reconcileChatMessageSnapshot([shell], [], baseline)).toEqual([]);
   });
 });
