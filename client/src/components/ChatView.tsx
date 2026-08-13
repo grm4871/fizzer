@@ -381,6 +381,17 @@ export const ChatView = memo(function ChatView({
     () => segmentTranscript(sortedMessages, { agentAuthors }),
     [agentAuthors, sortedMessages],
   );
+  const lastStandaloneWorkId = useMemo(() => {
+    let id: string | undefined;
+    for (const segment of transcriptSegments) {
+      if (segment.kind !== 'work') continue;
+      const hasMission = Boolean(segment.carrier?.mission)
+        || segment.fullGroups.some((group) => group.messages.some((message) => message.mission))
+        || segment.updateGroups.some((group) => group.messages.some((message) => message.mission));
+      if (!hasMission) id = segment.id;
+    }
+    return id;
+  }, [transcriptSegments]);
   const registrationById = useMemo(() => {
     const byId = new Map<string, ChatAgentRegistration>();
     const byAgentOrName = new Map<string, ChatAgentRegistration>();
@@ -1014,6 +1025,7 @@ export const ChatView = memo(function ChatView({
                     onHydrateMessage={onHydrateMessage}
                     runningMessageState={runningMessageState}
                     embedded={missionHasTrace}
+                    defaultOpen={!missionHasTrace && segment.id === lastStandaloneWorkId}
                   />
                 );
                 const peek = workTracePeek(segment.trace);

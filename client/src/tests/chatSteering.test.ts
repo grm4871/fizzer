@@ -101,6 +101,24 @@ describe('agent steering presentation', () => {
     expect(markup).toContain('Applying the steering advice now.');
   });
 
+  it('opens the latest settled step so FLOW has a visible body', () => {
+    const done = message('4', {
+      author: 'Sol', agentId: 'codex', registrationId: agent.id,
+      body: 'Passed again — visible in the well.',
+    });
+    const markup = renderToStaticMarkup(createElement(ChatWorkTrace, {
+      trace: [done],
+      selectedMessageId: null,
+      onCancelRun: () => {},
+      onContextMenu: () => {},
+      onReply: () => {},
+      runningMessageState: new Map(),
+      defaultOpen: true,
+    }));
+    expect(markup).toContain('chat-work-trace-body');
+    expect(markup).toContain('Passed again — visible in the well.');
+  });
+
   it('keeps live traces embedded in mission cards collapsed', () => {
     const live = message('3', {
       author: 'Sol', agentId: 'codex', registrationId: agent.id,
