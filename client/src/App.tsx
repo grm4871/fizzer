@@ -77,6 +77,7 @@ import {
 } from './chat/agents';
 import { normalizeMention } from './chat/mentions';
 import {
+  applyRemoteChatMessage,
   mergeRemoteChatMessage,
   newId,
 } from './chat/runBlocks';
@@ -1968,32 +1969,7 @@ export default function App() {
     };
     const handleChatMessageUpdated = (data: { vaultId: string; channelId: string; message: ChatMessage; dispatches?: ChatAgentDispatch[] }) => {
       if (data.vaultId !== activeVaultId) return;
-      // Terminal empty agent shells (dual-post suppress after cascade-chat send)
-      // must not stick around as blank "(message)" bubbles in the live UI.
-      const remoteBody = String(data.message.body || '').trim();
-      const isEmptyAgentShell = Boolean(
-        data.message.agentId
-        && data.message.status !== 'running'
-        && (!remoteBody || remoteBody === 'Thinking...'),
-      );
-      chatMessageStore.update(data.channelId, (existing) => {
-        if (isEmptyAgentShell) {
-          const next = existing.filter((message) => message.id !== data.message.id);
-          if (next.length === existing.length && !existing.some((m) => m.id === data.message.id)) {
-            return existing; // never insert an empty shell
-          }
-          return next;
-        }
-        const index = existing.findIndex((message) => message.id === data.message.id);
-        if (index === -1) return [...existing, data.message];
-        const local = existing[index];
-        if (streamingChatMessageIdsRef.current.has(data.message.id) && data.message.status === 'running') {
-          return existing;
-        }
-        const next = [...existing];
-        next[index] = mergeRemoteChatMessage(local, data.message);
-        return next;
-      });
+      chatMessageStore.update(data.channelId, (existing) => applyRemoteChatMessage(existing, data.message));
       const dispatches = data.dispatches ?? [];
       if (dispatches.length > 0) {
         const cached = chatStateRef.current.registeredAgentsByChannel[data.channelId] ?? [];

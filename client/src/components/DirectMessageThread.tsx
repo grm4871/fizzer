@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { api } from '../api';
 import { chatMessageStore } from '../chat/messageStore';
+import { applyRemoteChatMessage } from '../chat/runBlocks';
 import { connectVaultSocket } from '../socket';
 import type {
   ChatChannelPresence,
@@ -34,14 +35,8 @@ type DirectMessageThreadProps = {
 const NO_AGENTS: [] = [];
 
 function mergeMessage(channelId: string, message: ChatMessage) {
-  const local = { ...message, channelId };
-  chatMessageStore.update(channelId, (messages) => {
-    const index = messages.findIndex((item) => item.id === local.id);
-    if (index === -1) return [...messages, local];
-    const next = [...messages];
-    next[index] = { ...messages[index], ...local };
-    return next;
-  });
+  const remote = { ...message, channelId };
+  chatMessageStore.update(channelId, (messages) => applyRemoteChatMessage(messages, remote));
 }
 
 export function DirectMessageThread({

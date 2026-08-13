@@ -203,6 +203,20 @@ export function isGenericAgentRunSummary(summary: string): boolean {
   return /^(done\.?|completed note operations successfully\.?|agent failed\.?)$/i.test(summary.trim());
 }
 
+/** Optimistic agent shells the originating desktop paints before the fold catches up. */
+export function isLiveAgentPlaceholder(body: string | undefined): boolean {
+  const trimmed = String(body || '').trim();
+  return trimmed === '' || /^(Thinking(?:\.{3}|…)|Queued\.{3})$/i.test(trimmed);
+}
+
+function isLiveAgentStatus(status: ChatMessage['status']): boolean {
+  return status === 'running' || status === 'sending';
+}
+
+function isRemoteTerminalStatus(status: ChatMessage['status']): boolean {
+  return status === 'failed' || status === 'canceled';
+}
+
 /** Prefer the richer of local streaming vs remote socket/DB copy of the same message. */
 export function mergeRemoteChatMessage(local: ChatMessage, remote: ChatMessage): ChatMessage {
   const localScore = chatMessageStreamScore(local);
@@ -226,24 +240,78 @@ export function mergeRemoteChatMessage(local: ChatMessage, remote: ChatMessage):
   };
   // Always keep server seq when either side has it — sort depends on it.
   const seq = remote.seq ?? local.seq;
+  const withSeq = (next: ChatMessage): ChatMessage => (
+    retainHydratedImages(seq != null && next.seq !== seq ? { ...next, seq } : next)
+  );
+
+  const localLive = isLiveAgentStatus(local.status);
+  const remoteLive = isLiveAgentStatus(remote.status);
+  // Owner desktop paints /runs immediately. A lagging fold must not rewind
+  // that row to "Thinking..." or a shorter body. Cancel/fail from another
+  // client is terminal and still wins below.
+  if (localLive && (remoteLive || (isLiveAgentPlaceholder(remote.body) && !isRemoteTerminalStatus(remote.status)))) {
+    const remotePlaceholder = isLiveAgentPlaceholder(remote.body);
+    const localPlaceholder = isLiveAgentPlaceholder(local.body);
+    const localLonger = (local.body?.length ?? 0) > (remote.body?.length ?? 0);
+    const keepLocalBody = !localPlaceholder && (remotePlaceholder || localLonger);
+    if (keepLocalBody || remotePlaceholder) {
+      return withSeq({
+        ...local,
+        runId: remote.runId ?? local.runId,
+        harnessLog: harnessLog || local.harnessLog,
+        blocks: (local.blocks?.length ?? 0) >= (remote.blocks?.length ?? 0) ? local.blocks : remote.blocks,
+      });
+    }
+  }
+
   if (remoteScore >= localScore) {
     const next = harnessLog && harnessLog !== remote.harnessLog
       ? { ...remote, harnessLog }
       : remote;
-    return retainHydratedImages(seq != null && next.seq !== seq ? { ...next, seq } : next);
+    return withSeq(next);
   }
   if (local.status === 'running' && !remote.status && remote.body.length >= local.body.length) {
-    return retainHydratedImages({
+    return withSeq({
       ...remote,
       blocks: remote.blocks?.length ? remote.blocks : local.blocks,
       harnessLog: harnessLog || remote.harnessLog || local.harnessLog,
-      ...(seq != null ? { seq } : {}),
     });
   }
   const next = harnessLog && harnessLog !== local.harnessLog
     ? { ...local, harnessLog }
     : local;
-  return retainHydratedImages(seq != null && next.seq !== seq ? { ...next, seq } : next);
+  return withSeq(next);
+}
+
+/** Apply a vault broadcast or list-API row onto a channel transcript. */
+export function applyRemoteChatMessage(existing: ChatMessage[], remote: ChatMessage): ChatMessage[] {
+  const index = existing.findIndex((message) => message.id === remote.id);
+  const local = index === -1 ? undefined : existing[index];
+  const emptyAgentShell = Boolean(
+    remote.agentId
+    && remote.status !== 'running'
+    && isLiveAgentPlaceholder(remote.body),
+  );
+  if (emptyAgentShell) {
+    // Dual-post suppress: drop a settled empty shell unless this renderer is
+    // still streaming a real answer for that id.
+    if (local && isLiveAgentStatus(local.status) && !isLiveAgentPlaceholder(local.body)) {
+      const merged = mergeRemoteChatMessage(local, remote);
+      if (merged === local) return existing;
+      const next = [...existing];
+      next[index] = merged;
+      return next;
+    }
+    if (index === -1) return existing;
+    const next = existing.filter((message) => message.id !== remote.id);
+    return next.length === existing.length ? existing : next;
+  }
+  if (!local) return [...existing, remote];
+  const merged = mergeRemoteChatMessage(local, remote);
+  if (merged === local) return existing;
+  const next = [...existing];
+  next[index] = merged;
+  return next;
 }
 
 /** JSON patch body with explicit nulls so the server can clear status/blocks. */
