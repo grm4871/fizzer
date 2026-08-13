@@ -154,8 +154,6 @@ export const ChatWorkTrace = memo(function ChatWorkTrace({
   embedded = false,
   /** When true, skip the local collapse toggle and always show the stream. */
   forceOpen = false,
-  /** Open the latest standalone FLOW so the work well is visible. */
-  defaultOpen = false,
 }: {
   trace: ChatMessage[];
   selectedMessageId: string | null;
@@ -167,22 +165,14 @@ export const ChatWorkTrace = memo(function ChatWorkTrace({
   runningMessageState: ReadonlyMap<string, { latestId: string; count: number }>;
   embedded?: boolean;
   forceOpen?: boolean;
-  defaultOpen?: boolean;
 }) {
   const live = trace.some((m) => m.status === 'running' || m.status === 'sending');
   // Mission cards own the durable status surface. Their run stream stays behind
   // explicit progressive disclosure, including while live. Standalone live
   // flows open immediately so a steering continuation shows its actual work
   // instead of collapsing to an ambiguous phase badge such as "route".
-  const [open, setOpen] = useState(Boolean(forceOpen || defaultOpen || (live && !embedded)));
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => {
-    const last = [...trace].reverse().find((message) => (
-      message.status === 'running'
-      || hasRunActivity(message)
-      || Boolean(message.body?.trim())
-    ));
-    return last ? new Set([last.id]) : new Set();
-  });
+  const [open, setOpen] = useState(Boolean(forceOpen || (live && !embedded)));
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const pinBottomRef = useRef(true);
   const summary = useMemo(() => workTraceSummary(trace), [trace]);
@@ -191,26 +181,12 @@ export const ChatWorkTrace = memo(function ChatWorkTrace({
   const streamOpen = forceOpen || open;
 
   useEffect(() => {
-    if (forceOpen || defaultOpen) setOpen(true);
-  }, [defaultOpen, forceOpen]);
+    if (forceOpen) setOpen(true);
+  }, [forceOpen]);
 
   useEffect(() => {
     if (live && !embedded) setOpen(true);
   }, [embedded, live]);
-  const lastVisibleId = useMemo(() => {
-    const last = [...trace].reverse().find((message) => (
-      message.status === 'running'
-      || hasRunActivity(message)
-      || Boolean(message.body?.trim())
-    ));
-    return last?.id;
-  }, [trace]);
-  const pinnedLastId = useRef<string | undefined>(undefined);
-  useEffect(() => {
-    if (!lastVisibleId || pinnedLastId.current === lastVisibleId) return;
-    pinnedLastId.current = lastVisibleId;
-    setExpandedIds((prev) => (prev.has(lastVisibleId) ? prev : new Set(prev).add(lastVisibleId)));
-  }, [lastVisibleId]);
 
   useEffect(() => {
     if (!selectedMessageId) return;

@@ -7840,11 +7840,8 @@ button.chat-avatar.is-clickable:focus-visible {
 .chat-work-trace-body {
   max-height: min(280px, 38vh);
   overflow: auto;
-  margin: 0 8px 8px;
-  padding: 8px 10px 10px;
-  border: 1px solid hsla(224, 8%, 100%, 0.07);
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--bg) 62%, transparent);
+  padding: 2px 8px 8px;
+  border-top: 1px solid hsla(224, 8%, 100%, 0.06);
   scrollbar-width: thin;
   scrollbar-color: hsl(224, 8%, 28%) transparent;
   overscroll-behavior-y: auto;
@@ -8020,11 +8017,7 @@ button.chat-avatar.is-clickable:focus-visible {
 }
 .chat-mission-card .chat-work-trace.is-embedded .chat-work-trace-body {
   max-height: min(320px, 42vh);
-  margin: 0;
   padding: 0 0 4px;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
 }
 /* FLOW / mission already frame the work. An inner harness card is a second box. */
 .chat-work-trace .cascade-run-panel,
