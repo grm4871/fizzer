@@ -5028,6 +5028,45 @@ button.chat-avatar.is-clickable:focus-visible {
 .cascade-run-panel.open > .crp-header .crp-chevron {
   transform: rotate(90deg);
 }
+.cascade-run-panel.open {
+  border: 1px solid hsla(224, 9%, 100%, 0.08);
+  border-radius: 6px;
+  background: hsla(226, 14%, 100%, 0.02);
+  box-shadow: none;
+}
+.cascade-run-panel.open.is-running {
+  border-color: hsla(38, 32%, 42%, 0.28);
+  box-shadow: none;
+}
+.cascade-run-panel.open .crp-header {
+  background: transparent;
+}
+.cascade-run-panel.open .crp-toggle {
+  min-height: 28px;
+  padding: 3px 8px;
+}
+.cascade-run-panel.open .crp-toggle-summary {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.45em;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.cascade-run-panel.open .crp-live-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cascade-run-panel.open .crp-stop {
+  min-height: 24px;
+  margin: 2px 6px 2px 0;
+  padding: 2px 8px;
+}
+.crp-stop.is-stopping,
+.crp-stop:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
 .crp-stop {
   min-height: 30px;
   display: inline-flex;
@@ -7674,15 +7713,15 @@ button.chat-avatar.is-clickable:focus-visible {
 .chat-work-trace {
   margin: 8px 0 10px;
   max-width: 720px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--surface-subtle) 88%, transparent);
+  border: 1px solid hsla(224, 9%, 100%, 0.08);
+  border-radius: 6px;
+  background: hsla(226, 14%, 100%, 0.02);
   overflow: hidden;
   contain: layout style;
 }
 .chat-work-trace.is-live {
-  border-color: color-mix(in srgb, var(--border) 72%, hsl(38, 52%, 48%));
-  box-shadow: inset 2px 0 0 hsla(38, 58%, 52%, 0.5);
+  border-color: hsla(38, 32%, 42%, 0.28);
+  box-shadow: none;
 }
 .chat-work-trace:not(.is-open) {
   width: fit-content;
@@ -7878,8 +7917,8 @@ button.chat-avatar.is-clickable:focus-visible {
 .chat-work-trace-body {
   max-height: min(280px, 38vh);
   overflow: auto;
-  padding: 2px 8px 8px;
-  border-top: 1px solid hsla(224, 8%, 100%, 0.06);
+  padding: 6px 10px 8px;
+  border-top: 1px solid hsla(224, 8%, 100%, 0.05);
   scrollbar-width: thin;
   scrollbar-color: hsl(224, 8%, 28%) transparent;
   overscroll-behavior-y: auto;
@@ -8077,10 +8116,21 @@ button.chat-avatar.is-clickable:focus-visible {
   border-bottom-color: transparent;
 }
 .chat-work-trace .cascade-run-panel .crp-term,
-.chat-mission-card .cascade-run-panel .crp-term {
+.chat-mission-card .cascade-run-panel .crp-term,
+.chat-work-trace .crp-term-pre,
+.chat-mission-card .crp-term-pre,
+.chat-work-trace .crp-raw-wrap,
+.chat-mission-card .crp-raw-wrap,
+.chat-work-trace .harness-terminal,
+.chat-mission-card .harness-terminal {
   max-height: none;
   overflow: visible;
   padding: 2px 0 6px;
+}
+.chat-work-trace .harness-terminal,
+.chat-mission-card .harness-terminal {
+  height: auto;
+  min-height: 0;
 }
 .chat-work-trace .chat-work-line-body:has(.cascade-run-panel) {
   margin-left: 0;

@@ -9,7 +9,10 @@ describe('work-trace surface', () => {
       /\.chat-work-trace \.cascade-run-panel[\s\S]{0,240}border:\s*0/,
     );
     expect(styles).toMatch(
-      /\.chat-work-trace \.cascade-run-panel \.crp-term[\s\S]{0,160}max-height:\s*none/,
+      /\.chat-work-trace \.cascade-run-panel \.crp-term[\s\S]{0,280}overflow:\s*visible/,
+    );
+    expect(styles).toMatch(
+      /\.chat-work-trace \.crp-term-pre[\s\S]{0,200}overflow:\s*visible/,
     );
     expect(styles).toMatch(
       /\.chat-work-line-body:has\(\.cascade-run-panel\)[\s\S]{0,160}border-left:\s*0/,
