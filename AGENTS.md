@@ -66,7 +66,7 @@ Do **not** treat TypeScript or `vite build` success as done. Before finishing an
 
 ## The client bundle is not type-checked — verify the served bundle
 
-`npm run build:client` is plain `vite build` (esbuild transform, **no** typecheck), and the root `tsc` excludes `client/`. Nothing in CI type-checks `client/src`. `npx tsc --noEmit -p client/tsconfig.json` currently reports ~12 pre-existing errors, so it cannot simply be wired into the build yet.
+`npm run build:client` is still plain `vite build` (esbuild transform, **no** typecheck), and the root `tsc` excludes `client/`. Frontend release typechecks the renderer with `npm run typecheck:client` (`tsc --noEmit -p client/tsconfig.json`) before the Vite build.
 
 Consequence: a misplaced JSX attribute compiles and deploys silently. A prop written **inside** a callback body instead of beside its siblings becomes an assignment statement, the component renders without the prop, and the feature is invisible in production while working perfectly on the branch (this is exactly how the Superkanban `+` menu item shipped missing).
 

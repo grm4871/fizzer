@@ -41,6 +41,12 @@ type ServerEvents = {
   'vault:chatAgentMemberRemoved': (data: { vaultId: string; channelId: string; registrationId: string }) => void;
   /** Online participants for a chat channel (who has Cascade open). */
   'vault:chatPresence': (data: { vaultId: string; channelId: string; participants: string[]; online: string[] }) => void;
+  /** A vault-level agent profile was created or updated. */
+  'vault:vaultAgentUpserted': (data: { agent: import('./components/ChatView').VaultAgent }) => void;
+  /** A vault-level agent profile was removed. */
+  'vault:vaultAgentRemoved': (data: { agentId: string }) => void;
+  /** A user's display profile changed. */
+  'vault:userProfileUpdated': (data: import('./api').User) => void;
 };
 
 /**

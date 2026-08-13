@@ -19,6 +19,7 @@ function status(overrides: Partial<WorkspaceStatus> = {}): WorkspaceStatus {
     head: 'abc1234',
     isPrimary: false,
     baseBranch: 'master',
+    baseCommit: '',
     dirty: false,
     changedFiles: [],
     commits: [],

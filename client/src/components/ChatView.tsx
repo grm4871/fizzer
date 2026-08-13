@@ -1,5 +1,5 @@
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { Bot, ChevronRight, ClipboardList, Flag, Forward, Hash, History, ImagePlus, Loader2, MessageCircle, Paperclip, Reply, Send, Smile, Square, Trash2, X } from 'lucide-react';
+import { Bot, ChevronRight, ClipboardList, Flag, Forward, Hash, History, MessageCircle, Paperclip, Reply, Trash2, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
@@ -14,14 +14,30 @@ import {
   splitWikilinks,
 } from '../docEmbeds';
 import { escapeRegExp, normalizeMention } from '../chat/mentions';
-import { createChannelWorkItem, patchWorkItem } from '../chat/workItems';
-import { reportWorkItemGitState, workspaceBridge } from '../chat/workspaces';
+import { createChannelWorkItem } from '../chat/workItems';
+import { formatChatTime } from '../chat/time';
+import type {
+  ChatAgentOption,
+  ChatAgentRegistration,
+  ChatChannelPresence,
+  ChatMediaAttachment,
+  ChatMessage,
+  ChatMission,
+  ChatReplyRef,
+  DesktopRunnerHealth,
+  PlanUsage,
+  PlanUsageWindow,
+  SharedChatNote,
+  VaultAgent,
+} from '../chat/types';
+import { ChatClarificationCard } from './ChatClarificationCard';
+import { ChatComposer, type ChatComposerHandle, isMp4Attachment } from './ChatComposer';
+import { ChatMissionCard } from './ChatMissionCard';
 import { usePopupMenu } from '../ui/popupMenu';
 import { highlightJSON } from './jsonHighlighter';
 import { CascadeRunPanel } from './CascadeRunPanel';
 import { ChatSidebarButtons } from './ChatSidebarButtons';
 import { ChatWorkspacePanel } from './ChatWorkspacePanel';
-import { ChatTaskReview } from './ChatTaskReview';
 import { ChatWorkTrace } from './ChatWorkTrace';
 import { SwipeToReply, swipeGestureActive } from './SwipeToReply';
 import { ChatAgentToggle } from './ChatAgentToggle';
@@ -32,13 +48,11 @@ import {
   CHAT_RELATIONSHIP_LABELS,
   type ChatRelationship,
 } from '../chat/relationships';
-import { ThinkingSpinner } from './ThinkingSpinner';
 import { ReportDialog } from './ReportDialog';
 import { hasRunActivity } from '../chat/harnessActivity';
 import { isSteeringContinuationMessage, segmentTranscript, workTracePeek } from '../chat/workTrace';
 import { useChannelMessages } from '../chat/messageStore';
 import {
-  canGroupChatMessages,
   CHAT_NOTE_MARKER,
   createChatAgentRegistrationId,
 } from '../chat/shared';
@@ -61,9 +75,32 @@ export {
   mediaToRunImages,
   mergeChatPresence,
 } from '../chat/shared';
-export const CHAT_MEDIA_LIMIT = 8;
-export const CHAT_MEDIA_MAX_BYTES = 8 * 1024 * 1024;
-const CHAT_EMOJIS = ['😀', '😂', '😍', '🥳', '😎', '🤔', '👍', '👎', '❤️', '🔥', '🎉', '✅', '👀', '🙏', '💎', '🚀'];
+export type {
+  ChatAgentOption,
+  ChatAgentRegistration,
+  ChatBlock,
+  ChatChannelPresence,
+  ChatForwardRef,
+  ChatMediaAttachment,
+  ChatMessage,
+  ChatMission,
+  ChatMissionEvent,
+  ChatMissionTask,
+  ChatMissionTaskStatus,
+  ChatReplyRef,
+  DesktopRunnerHealth,
+  PlanUsage,
+  PlanUsageWindow,
+  SharedChatNote,
+  VaultAgent,
+} from '../chat/types';
+export {
+  CHAT_MEDIA_LIMIT,
+  CHAT_MEDIA_MAX_BYTES,
+  isMp4Attachment,
+  isVideoMediaType,
+  prepareReplyForSend,
+} from './ChatComposer';
 
 const CUSTOM_MODEL_VALUE = '__custom__';
 
@@ -84,251 +121,6 @@ function resolveModelPicker(
 
 function modelFromPicker(choice: string, custom: string) {
   return (choice === CUSTOM_MODEL_VALUE ? custom : choice).trim();
-}
-
-export interface ChatMediaAttachment {
-  media_type: string;
-  data: string;
-  url: string;
-  name?: string;
-}
-
-type ElectronClipboardAPI = {
-  readClipboardImage?: () => Promise<ChatMediaAttachment | null>;
-};
-
-export interface ChatReplyRef {
-  messageId: string;
-  author: string;
-  mention: string;
-  preview: string;
-  relationship?: ChatRelationship;
-}
-
-/** Provenance stamped on a message forwarded in from another channel. */
-export interface ChatForwardRef {
-  messageId: string;
-  channelId: string;
-  channelName: string;
-  author: string;
-  createdAt: string;
-}
-
-export interface ChatMessage {
-  id: string;
-  channelId: string;
-  author: string;
-  body: string;
-  createdAt: string;
-  /** Server persistence order (DB rowid); tiebreaks same-millisecond messages
-   * so the client orders them exactly as the server does. Absent until the
-   * message is persisted — optimistic messages sort last within a tie. */
-  seq?: number;
-  status?: 'sending' | 'running' | 'failed' | 'canceled';
-  agentId?: string;
-  registrationId?: string;
-  runId?: number;
-  blocks?: ChatBlock[];
-  /** Full harness terminal transcript (raw process I/O / SDK stream). */
-  harnessLog?: string;
-  /** List API omitted harnessLog but server has one — expand fetches full message. */
-  hasHarness?: boolean;
-  /** List API stripped heavy data-URL images — hydrate full message to show them. */
-  hasImages?: boolean;
-  images?: string[];
-  attachments?: Array<{ name: string; media_type: string; url: string }>;
-  replyTo?: ChatReplyRef;
-  forwardedFrom?: ChatForwardRef;
-  changeRequest?: {
-    files: Array<{ path: string; additions: number; deletions: number }>;
-    commit?: string;
-    ref?: string;
-    approvals: Array<{ userId: number; username: string }>;
-    mergedAt?: string;
-    mergedBy?: string;
-  };
-  /** Pre-work Q&A; accept → work-item contract + mission the orchestrator drives. */
-  clarification?: {
-    title: string;
-    questions: Array<{
-      id: string;
-      prompt: string;
-      kind?: 'text' | 'single' | 'multi';
-      options?: string[];
-      answer?: string;
-    }>;
-    status: 'pending' | 'accepted' | 'canceled';
-    tokenBudget?: number;
-    assigneeRegistrationId?: string;
-    workItemId?: string;
-    missionId?: string;
-    acceptedAt?: string;
-    acceptedBy?: string;
-  };
-  mission?: ChatMission;
-  missionTaskId?: string;
-}
-
-export type ChatMissionTaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'blocked' | 'canceled';
-
-export interface ChatMissionTask {
-  id: string;
-  title: string;
-  assignee: string;
-  assigneeMention: string;
-  assigneeModel: string;
-  status: ChatMissionTaskStatus;
-  summary: string;
-  dependsOn: string[];
-  waitingFor: string[];
-  priority: number;
-  reasoningEffort: string;
-  anonymous?: boolean;
-  queueReason: 'dependency' | 'dependency-attention' | 'agent-busy' | 'queued' | '';
-  attempt: number;
-  runId?: number;
-  /** Durable work-item twin (workspace / lease / PR). */
-  workItemId?: string;
-  workItemStatus?: string;
-  workspaceMode?: string;
-  baseCommit?: string;
-  branch?: string;
-  worktreePath?: string;
-  prUrl?: string;
-  prState?: string;
-  verification?: string;
-  reviewState?: 'none' | 'requested' | 'in_review' | 'ready';
-  gitState?: { changedFiles: number; dirty: boolean; behind: number; updatedAt: string };
-  reviewReady?: boolean;
-  reviewBlockers?: string[];
-  updatedAt: string;
-}
-
-export interface ChatMission {
-  id: string;
-  rootMessageId: string;
-  title: string;
-  objective: string;
-  status: 'active' | 'reviewing' | 'attention' | 'blocked' | 'completed' | 'canceled';
-  coordinator: string;
-  coordinatorMention: string;
-  tasks: ChatMissionTask[];
-  summary: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface ChatMissionEvent {
-  id: number;
-  missionId: string;
-  taskId?: string;
-  kind: string;
-  title: string;
-  fromStatus: string;
-  toStatus: string;
-  summary: string;
-  runId?: number;
-  attempt: number;
-  createdAt: string;
-}
-
-/** Desktop runner health from GET /api/me/desktop-runner */
-export interface PlanUsageWindow {
-  label: string;
-  usedPercent: number;
-  windowMinutes?: number;
-  resetsAt?: string | null;
-  resetsLabel?: string | null;
-}
-
-export interface PlanUsage {
-  status: 'ok' | 'unknown' | 'error';
-  usedPercent?: number;
-  windowMinutes?: number;
-  resetsAt?: string | null;
-  resetsLabel?: string | null;
-  windows?: PlanUsageWindow[];
-  planType?: string | null;
-  detail?: string | null;
-  fetchedAt?: string;
-}
-
-export interface DesktopRunnerHealth {
-  online: boolean;
-  activeRuns: number;
-  lastError: string | null;
-  lastErrorAt: string | null;
-  lastSeenAt: string | null;
-  planUsage: Record<string, PlanUsage> | null;
-}
-
-export interface ChatBlock {
-  type: 'text' | 'thinking' | 'tool_use' | 'tool_result';
-  text?: string;
-  redacted?: boolean;
-  /** tool_use */
-  id?: string;
-  name?: string;
-  input?: unknown;
-  /** tool_result */
-  toolUseId?: string;
-  content?: string;
-  isError?: boolean;
-}
-
-export interface ChatAgentRegistration {
-  id: string;
-  /** Persistent vault-level agent id (shared across channels). */
-  vaultAgentId?: string;
-  /** Server-authoritative owner of this personal assistant. */
-  ownerUserId?: number;
-  agentId: string;
-  displayName: string;
-  avatarUrl: string;
-  mention: string;
-  model: string;
-  /** Optional per-channel Codex reasoning effort pin. Empty uses the CLI default. */
-  reasoningEffort: string;
-  /** Codex-only priority processing override for this channel membership. */
-  priorityServiceTier: boolean;
-  cwd: string;
-  contextPrompt: string;
-  taggableByAgents: boolean;
-  replyToEveryMessage: boolean;
-  orchestrator: boolean;
-  /** Allow users other than the owner to @mention/trigger this agent in a
-   * shared channel. The run still executes on the owner's desktop runner. */
-  pingableByOthers: boolean;
-  /** Run this agent with permission prompts bypassed ("yolo"). Scoped to this
-   * registration, applied on the machine that runs it. */
-  yolo: boolean;
-  /** Conversation id linking this member's runs into one resumable session.
-   * Empty for a not-yet-persisted member; the server assigns/preserves it. */
-  conversationId: string;
-}
-
-/** Persistent vault-scoped agent identity (shared across channels). */
-export interface VaultAgent {
-  id: string;
-  vaultId: string;
-  agentId: string;
-  displayName: string;
-  avatarUrl: string;
-  mention: string;
-  model: string;
-  cwd: string;
-  contextPrompt: string;
-  ownerUserId: number;
-  ownerUsername: string;
-  channelIds?: string[];
-  createdAt?: string;
-  updatedAt?: string;
-}
-
-export interface ChatAgentOption {
-  id: string;
-  label: string;
-  models: Array<{ id: string; label: string }>;
 }
 
 export const REASONING_EFFORTS = [
@@ -363,19 +155,6 @@ export function ReasoningEffortSelect({
   );
 }
 
-export interface ChatChannelPresence {
-  participants: string[];
-  online: string[];
-  owner?: string;
-  profiles?: Record<string, { id: number; username: string; displayName: string; avatarUrl: string }>;
-}
-
-export type SharedChatNote = {
-  id: string;
-  title: string;
-  content: string;
-  content_preview: string;
-};
 
 interface ChatViewProps {
   channelId: string;
@@ -433,67 +212,12 @@ interface ChatViewProps {
 // render and defeat the notes-aware memo comparators below.
 const EMPTY_NOTES: NoteSummary[] = [];
 
-function isImageMediaType(mediaType: string) {
-  return mediaType.startsWith('image/');
-}
-
-export function isVideoMediaType(mediaType: string) {
-  return mediaType.startsWith('video/');
-}
-
-export function isMp4Attachment(attachment: { name?: string; media_type?: string; url?: string }) {
-  const type = String(attachment.media_type || '').toLowerCase();
-  if (isVideoMediaType(type) || type === 'video/mp4') return true;
-  const name = String(attachment.name || '').toLowerCase();
-  const url = String(attachment.url || '').toLowerCase();
-  return name.endsWith('.mp4') || url.includes('video/mp4') || /\.mp4(\?|$)/.test(url);
-}
-
-function readMediaFile(file: File): Promise<ChatMediaAttachment | null> {
-  return new Promise((resolve) => {
-    if (file.size > CHAT_MEDIA_MAX_BYTES) {
-      resolve(null);
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      const url = String(reader.result);
-      const data = url.split(',')[1] || '';
-      resolve({
-        media_type: file.type || 'application/octet-stream',
-        data,
-        url,
-        name: file.name,
-      });
-    };
-    reader.onerror = () => resolve(null);
-    reader.readAsDataURL(file);
-  });
-}
-
-function getElectronClipboardAPI(): ElectronClipboardAPI | undefined {
-  return (window as unknown as { electronAPI?: ElectronClipboardAPI }).electronAPI;
-}
-
 // Slightly generous: stream/harness growth often leaves a few px of lag for
 // one frame; 24px was flapping sticky under fast agent output.
 function isAtScrollBottom(element: HTMLElement, threshold = 48) {
   return element.scrollHeight - element.scrollTop - element.clientHeight <= threshold;
 }
 
-// Reuse one formatter — creating Intl.DateTimeFormat per message was scroll noise.
-const CHAT_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
-  month: 'short',
-  day: 'numeric',
-  hour: 'numeric',
-  minute: '2-digit',
-});
-
-function formatTime(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-  return CHAT_TIME_FORMATTER.format(date);
-}
 
 function planUsageProviderId(agentId: string) {
   if (agentId === 'akron-grok') return 'grok';
@@ -520,8 +244,7 @@ function formatPlanUsageTitle(usage?: PlanUsage | null) {
   const lines = planUsageWindows(usage).map((window) => {
     let reset = window.resetsLabel || '';
     if (!reset && window.resetsAt) {
-      const date = new Date(window.resetsAt);
-      if (!Number.isNaN(date.getTime())) reset = CHAT_TIME_FORMATTER.format(date);
+      reset = formatChatTime(window.resetsAt);
     }
     return `${window.label}: ${Math.round(window.usedPercent)}% used${reset ? ` · ${reset}` : ''}`;
   });
@@ -619,11 +342,6 @@ export function buildReplyRef(message: ChatMessage, registeredAgents: ChatAgentR
     mention: resolveReplyMention(message, registeredAgents),
     preview: buildReplyPreview(message),
   };
-}
-
-/** Keep the reply quote while suppressing its implicit agent mention. */
-export function prepareReplyForSend(reply: ChatReplyRef, notifyAgent: boolean): ChatReplyRef {
-  return notifyAgent ? reply : { ...reply, mention: '' };
 }
 
 const CHAT_MARKDOWN_PLUGINS = [remarkGfm, remarkBreaks];
@@ -1146,575 +864,6 @@ function groupHasDocEmbed(group: ChatMessageGroup): boolean {
   return group.messages.some((message) => message.body && bodyHasNoteRefs(message.body));
 }
 
-function ChatClarificationCard({
-  message,
-  vaultId,
-}: {
-  message: ChatMessage;
-  vaultId?: string;
-}) {
-  const clarification = message.clarification!;
-  const [answers, setAnswers] = useState<Record<string, string>>(() => {
-    const init: Record<string, string> = {};
-    for (const q of clarification.questions) init[q.id] = q.answer || '';
-    return init;
-  });
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const [budgetEditing, setBudgetEditing] = useState(false);
-  const [tokenBudget, setTokenBudget] = useState(clarification.tokenBudget || 0);
-  const [budgetDraft, setBudgetDraft] = useState(String(clarification.tokenBudget || ''));
-  const pending = clarification.status === 'pending';
-  const answeredCount = clarification.questions.filter((q) => String(answers[q.id] || '').trim()).length;
-  const allAnswered = answeredCount === clarification.questions.length;
-
-  const clarificationAnswers = () => clarification.questions.map((q) => ({
-    id: q.id,
-    answer: answers[q.id] || '',
-  }));
-
-  const runBusy = async (fallback: string, work: () => Promise<void>) => {
-    setBusy(true);
-    setError('');
-    try {
-      await work();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : fallback);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  async function saveAnswers() {
-    if (!vaultId || !pending) return;
-    await runBusy('Could not save answers', async () => {
-      await api(`/api/vaults/${vaultId}/channels/${message.channelId}/messages/${message.id}/clarification/answer`, {
-        method: 'POST',
-        body: JSON.stringify({
-          answers: clarificationAnswers(),
-        }),
-      });
-    });
-  }
-
-  async function acceptContract() {
-    if (!vaultId || !pending) return;
-    await runBusy('Could not accept contract', async () => {
-      await api(`/api/vaults/${vaultId}/channels/${message.channelId}/messages/${message.id}/clarification/answer`, {
-        method: 'POST',
-        body: JSON.stringify({
-          answers: clarificationAnswers(),
-        }),
-      });
-      await api(`/api/vaults/${vaultId}/channels/${message.channelId}/messages/${message.id}/clarification/accept`, {
-        method: 'POST',
-        body: JSON.stringify({
-          tokenBudget: clarification.tokenBudget || 0,
-        }),
-      });
-    });
-  }
-
-  async function saveBudget(nextValue = budgetDraft) {
-    if (!clarification.workItemId) return;
-    const next = Math.max(0, Math.floor(Number(nextValue) || 0));
-    await runBusy('Could not update token budget', async () => {
-      await patchWorkItem(clarification.workItemId, { tokenBudget: next });
-      setTokenBudget(next);
-      setBudgetDraft(next > 0 ? String(next) : '');
-      setBudgetEditing(false);
-    });
-  }
-
-  return (
-    <div className={`chat-clarification is-${clarification.status}`} role="form" aria-label="Scope questionnaire">
-      <div className="chat-clarification-head">
-        <span className="chat-clarification-kicker">Questionnaire</span>
-        <strong>{clarification.title}</strong>
-        <span className="chat-clarification-status">
-          {clarification.status === 'accepted'
-            ? (clarification.missionId ? 'mission live' : 'contract live')
-            : `${answeredCount}/${clarification.questions.length}`}
-        </span>
-      </div>
-      <p className="chat-clarification-lead">
-        {pending
-          ? (allAnswered
-            ? 'Prefilled — change only disagreements, then Accept → mission.'
-            : 'Answer, then Accept → mission.')
-          : 'Accepted scope is frozen; the mission drives agents from here.'}
-      </p>
-      <div className="chat-clarification-questions">
-        {clarification.questions.map((q, index) => {
-          const options = Array.isArray(q.options) ? q.options.filter(Boolean) : [];
-          const kind = q.kind || (options.length ? 'single' : 'text');
-          const value = answers[q.id] || '';
-          const selected = new Set(
-            value.split(/\s*\|\s*|\n/).map((s) => s.trim()).filter(Boolean),
-          );
-          const toggle = (option: string) => {
-            if (!pending || busy) return;
-            setAnswers((prev) => {
-              if (kind === 'single') return { ...prev, [q.id]: option };
-              const cur = new Set(
-                String(prev[q.id] || '')
-                  .split(/\s*\|\s*|\n/)
-                  .map((s) => s.trim())
-                  .filter(Boolean),
-              );
-              if (cur.has(option)) cur.delete(option);
-              else cur.add(option);
-              return { ...prev, [q.id]: Array.from(cur).join(' | ') };
-            });
-          };
-          return (
-            <fieldset key={q.id} className={`chat-clarification-q is-${kind}`} disabled={!pending || busy}>
-              <legend>
-                <span className="chat-clarification-q-num">{index + 1}</span>
-                <span>{q.prompt}</span>
-              </legend>
-              {!pending ? (
-                <small>{q.answer || '—'}</small>
-              ) : kind !== 'text' && options.length > 0 ? (
-                <div
-                  className="chat-clarification-choices"
-                  role={kind === 'single' ? 'radiogroup' : 'group'}
-                  aria-label={q.prompt}
-                >
-                  {options.map((option) => {
-                    const isOn = selected.has(option);
-                    return (
-                      <button
-                        key={option}
-                        type="button"
-                        role={kind === 'single' ? 'radio' : 'checkbox'}
-                        aria-checked={isOn}
-                        className={`chat-clarification-choice${kind === 'multi' ? ' is-check' : ''}${isOn ? ' is-selected' : ''}`}
-                        onClick={() => toggle(option)}
-                      >
-                        <span className="chat-clarification-choice-mark" aria-hidden="true" />
-                        <span>{option}</span>
-                      </button>
-                    );
-                  })}
-                  {kind === 'single' && (
-                    <label className="chat-clarification-other">
-                      <span>Other</span>
-                      <input
-                        type="text"
-                        value={options.includes(value) ? '' : value}
-                        placeholder="Write your own…"
-                        onChange={(event) => setAnswers((prev) => ({ ...prev, [q.id]: event.target.value }))}
-                      />
-                    </label>
-                  )}
-                </div>
-              ) : (
-                <textarea
-                  value={value}
-                  onChange={(event) => setAnswers((prev) => ({ ...prev, [q.id]: event.target.value }))}
-                  rows={2}
-                  placeholder="Your answer…"
-                />
-              )}
-            </fieldset>
-          );
-        })}
-      </div>
-      {clarification.workItemId ? (
-        <div className="chat-clarification-budget">
-          {budgetEditing ? (
-            <>
-              <label>Token budget <input type="number" min="0" step="1000" autoFocus value={budgetDraft} placeholder="No budget" onChange={(event) => setBudgetDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void saveBudget(); if (event.key === 'Escape') setBudgetEditing(false); }} /></label>
-              <button type="button" disabled={busy} onClick={() => void saveBudget()}>Save</button>
-              <button type="button" disabled={busy} onClick={() => void saveBudget('0')}>No budget</button>
-            </>
-          ) : (
-            <button type="button" className="chat-clarification-budget-value" onClick={() => setBudgetEditing(true)} title="Change token budget">
-              Token budget: {tokenBudget > 0 ? tokenBudget.toLocaleString() : 'No budget'}
-            </button>
-          )}
-        </div>
-      ) : clarification.tokenBudget ? <div className="chat-clarification-budget">Token budget: {clarification.tokenBudget.toLocaleString()}</div> : null}
-      {(clarification.workItemId || clarification.missionId) && (
-        <div className="chat-clarification-contract">
-          {clarification.workItemId ? <>Contract <code>{clarification.workItemId.slice(0, 8)}</code></> : null}
-          {clarification.workItemId && clarification.missionId ? ' · ' : null}
-          {clarification.missionId ? <>Mission <code>{clarification.missionId.slice(0, 8)}</code></> : null}
-          {clarification.acceptedBy ? ` · accepted by ${clarification.acceptedBy}` : ''}
-        </div>
-      )}
-      {error && <div className="chat-clarification-error">{error}</div>}
-      {pending && vaultId && (
-        <div className="chat-clarification-actions">
-          <button type="button" disabled={busy} onClick={() => void saveAnswers()}>Save draft</button>
-          <button
-            type="button"
-            className="is-primary"
-            disabled={busy || !allAnswered}
-            title={allAnswered ? 'Accept scope and open mission' : 'Answer every question first'}
-            onClick={() => void acceptContract()}
-          >
-            Accept → mission
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function missionTaskChangeChips(task: ChatMissionTask, fileCount?: number): Array<{ label: string; tone?: 'ok' | 'warn' | 'idle'; title?: string; href?: string }> {
-  const chips: Array<{ label: string; tone?: 'ok' | 'warn' | 'idle'; title?: string; href?: string }> = [];
-  if (task.branch || task.baseCommit) {
-    const base = task.baseCommit ? task.baseCommit.slice(0, 7) : task.workspaceMode || 'base unknown';
-    chips.push({ label: `${task.branch || 'workspace'} → ${base}`, tone: 'idle', title: task.worktreePath || undefined });
-  }
-  const reportedFiles = task.gitState?.changedFiles;
-  const files = fileCount ?? reportedFiles;
-  if (files != null) chips.push({ label: `${files} file${files === 1 ? '' : 's'}`, tone: files ? 'idle' : 'ok' });
-  if (task.verification) chips.push({ label: 'verified', tone: 'ok', title: task.verification });
-  else if (task.workItemStatus === 'review' || task.workItemStatus === 'done') chips.push({ label: 'unverified', tone: 'warn' });
-  if (task.reviewState === 'in_review') chips.push({ label: task.prState ? `PR ${task.prState}` : 'in review', tone: 'ok', href: task.prUrl });
-  else if (task.reviewState === 'requested') chips.push({ label: 'review requested', tone: 'warn' });
-  else if (task.reviewState === 'ready') chips.push({ label: 'reviewed', tone: 'ok' });
-  if (task.workItemStatus === 'review' || task.workItemStatus === 'done') {
-    chips.push(task.reviewReady
-      ? { label: 'review ready', tone: 'ok' }
-      : { label: 'review blocked', tone: 'warn', title: task.reviewBlockers?.join('\n') });
-  }
-  return chips;
-}
-
-function missionEventLabel(event: ChatMissionEvent) {
-  if (event.kind === 'mission_created') return 'Mission opened';
-  if (event.kind === 'task_added') return 'Task added';
-  if (event.kind === 'task_dispatched') return 'Task dispatched';
-  if (event.kind === 'task_started') return 'Task started';
-  if (event.kind === 'task_retried') return 'Task retried';
-  if (event.kind === 'mission_completed') return 'Mission completed';
-  if (event.kind === 'mission_canceled') return 'Mission canceled';
-  if (event.fromStatus && event.toStatus && event.fromStatus !== event.toStatus) {
-    return `${event.fromStatus} → ${event.toStatus}`;
-  }
-  return event.toStatus || event.kind.replace(/_/g, ' ');
-}
-
-function ChatMissionCard({
-  mission,
-  vaultId,
-  channelId,
-  traceContent,
-  tracePeek,
-  replyMessage,
-  onReply,
-  onContextMenu,
-}: {
-  mission: ChatMission;
-  vaultId?: string;
-  channelId?: string;
-  /** Full work stream, rendered only while the mission is expanded. */
-  traceContent?: ReactNode;
-  /** Always-visible activity strip (collapsed + expanded). */
-  tracePeek?: {
-    live: boolean;
-    summary: string;
-    author: string;
-    label: string;
-    decals: Array<{ phase: string; label: string; mark: string }>;
-    phase: string;
-  } | null;
-  /** Originating message for right-click reply (same as any other chat row). */
-  replyMessage?: ChatMessage;
-  onReply?: (message: ChatMessage) => void;
-  onContextMenu?: (event: React.MouseEvent, message: ChatMessage) => void;
-}) {
-  const needsAttention = mission.status === 'attention' || mission.status === 'blocked';
-  const [open, setOpen] = useState(needsAttention);
-  const [timelineOpen, setTimelineOpen] = useState(false);
-  const [events, setEvents] = useState<ChatMissionEvent[] | null>(null);
-  const [historyError, setHistoryError] = useState('');
-  const [stopping, setStopping] = useState(false);
-  const [fileCounts, setFileCounts] = useState<ReadonlyMap<string, number>>(() => new Map());
-  const bridge = useMemo(workspaceBridge, []);
-  useEffect(() => {
-    if (mission.status === 'attention' || mission.status === 'blocked') setOpen(true);
-  }, [mission.status]);
-  useEffect(() => {
-    setEvents(null);
-    setTimelineOpen(false);
-    setHistoryError('');
-  }, [mission.id]);
-  useEffect(() => {
-    if (!open || !bridge) return;
-    const paths = [...new Set(mission.tasks
-      .map((task) => task.worktreePath)
-      .filter((path): path is string => Boolean(path)))];
-    if (!paths.length) return;
-    let cancelled = false;
-    void Promise.all(paths.map(async (path) => {
-      const result = await bridge.getWorktreeStatus(path);
-      if (!result.ok) return null;
-      const task = mission.tasks.find((candidate) => candidate.worktreePath === path);
-      if (task?.workItemId) void reportWorkItemGitState(task.workItemId, result).catch(() => {});
-      return [path, result.changedFiles.length] as const;
-    })).then((results) => {
-      if (cancelled) return;
-      setFileCounts((previous) => {
-        const next = new Map(previous);
-        for (const result of results) if (result) next.set(result[0], result[1]);
-        return next;
-      });
-    }).catch(() => {});
-    return () => { cancelled = true; };
-  }, [bridge, mission.tasks, open]);
-  const done = mission.tasks.filter((task) => task.status === 'completed' || task.status === 'canceled').length;
-  const total = mission.tasks.length;
-  const terminal = mission.status === 'completed' || mission.status === 'canceled';
-  const live = !terminal && (
-    mission.status === 'active'
-      || mission.status === 'reviewing'
-      || mission.tasks.some((task) => task.status === 'running' || task.status === 'pending')
-      || Boolean(tracePeek?.live)
-  );
-  const statusLabel = mission.status === 'active'
-    ? (total ? `${done}/${total} tasks` : 'planning')
-    : needsAttention ? 'needs review' : mission.status;
-  const lead = mission.coordinatorMention || mission.coordinator;
-  const runningTask = mission.tasks.find((task) => task.status === 'running');
-  const peekLive = Boolean(tracePeek?.live || (live && mission.status === 'active'));
-  const peekAuthor = tracePeek?.author
-    || (runningTask ? (runningTask.assigneeMention || runningTask.assignee) : '')
-    || '';
-  const peekLabel = (terminal ? mission.summary : '')
-    || tracePeek?.label
-    || (runningTask ? runningTask.title : '')
-    || (mission.status === 'active' && total === 0 ? 'deciding approach…' : '')
-    || (mission.status === 'active' ? `${done}/${total} tasks in flight` : '');
-  // Peek is collapsed-only activity exposure. When open, the stream/tasks are the UI.
-  // Settled missions without useful activity text skip the second rail entirely.
-  const showPeek = !open && Boolean(peekLabel) && (terminal || peekLive || Boolean(tracePeek || runningTask));
-  async function toggleTimeline() {
-    const next = !timelineOpen;
-    setTimelineOpen(next);
-    if (!next || events || !vaultId || !channelId) return;
-    setHistoryError('');
-    try {
-      const result = await api<{ events: ChatMissionEvent[] }>(
-        `/api/vaults/${vaultId}/channels/${channelId}/missions/${mission.id}/history`,
-      );
-      setEvents(result.events || []);
-    } catch (error) {
-      setHistoryError(error instanceof Error ? error.message : 'Could not load mission history');
-    }
-  }
-  async function stopMission() {
-    if (!vaultId || !channelId || stopping) return;
-    setStopping(true);
-    setHistoryError('');
-    try {
-      await api(`/api/vaults/${vaultId}/channels/${channelId}/missions/${mission.id}/finish`, {
-        method: 'POST',
-        body: JSON.stringify({
-          coordinatorRegistrationId: mission.coordinatorMention || mission.coordinator,
-          status: 'canceled',
-          summary: 'Stopped by user.',
-        }),
-      });
-    } catch (error) {
-      setHistoryError(error instanceof Error ? error.message : 'Could not stop mission');
-    } finally {
-      setStopping(false);
-    }
-  }
-  // Treat the mission chrome like a normal message: right-click opens the same
-  // context menu (Reply/Forward/…) targeting the originating chat message.
-  // Wire it on buttons too — some browsers only fire contextmenu on the target.
-  const openMissionContextMenu = replyMessage && onContextMenu
-    ? (event: React.MouseEvent) => onContextMenu(event, replyMessage)
-    : undefined;
-  const card = (
-    <div
-      className={`chat-mission-card is-${mission.status}${live ? ' is-live' : ''}${open ? ' is-open' : ''}`}
-      data-open={open ? 'true' : 'false'}
-      data-message-id={replyMessage?.id}
-      role="button"
-      tabIndex={0}
-      aria-expanded={open}
-      onKeyDown={(event) => {
-        if (event.target !== event.currentTarget) return;
-        if (event.key !== 'Enter' && event.key !== ' ') return;
-        event.preventDefault();
-        setOpen((value) => !value);
-      }}
-      onContextMenu={openMissionContextMenu}
-    >
-      <div className="chat-mission-head">
-        <button
-          type="button"
-          className="chat-mission-toggle"
-          tabIndex={-1}
-          onClick={() => setOpen((value) => !value)}
-          onContextMenu={openMissionContextMenu}
-        >
-          {live
-            ? <ThinkingSpinner className="chat-mission-whirl" title="Mission working" />
-            : <span className="chat-mission-state" aria-hidden="true" />}
-          <span className="chat-mission-kicker">Mission</span>
-          <strong>{mission.title}</strong>
-          <span className="chat-mission-status">{statusLabel}</span>
-          <ChevronRight size={13} className={`chat-mission-chevron${open ? ' open' : ''}`} aria-hidden="true" />
-        </button>
-        {live && vaultId && channelId && (
-          <button
-            type="button"
-            className="chat-mission-stop"
-            tabIndex={-1}
-            onClick={(event) => {
-              event.stopPropagation();
-              void stopMission();
-            }}
-            onContextMenu={openMissionContextMenu}
-            disabled={stopping}
-            title="Stop mission"
-          >
-            {stopping ? <Loader2 className="is-spinning" size={11} /> : <Square size={10} fill="currentColor" />}
-            {stopping ? 'Stopping' : 'Stop'}
-          </button>
-        )}
-        {showPeek && (
-          <button
-            type="button"
-            className={`chat-mission-peek${peekLive ? ' is-live' : ''}`}
-            tabIndex={-1}
-            onClick={() => setOpen((value) => !value)}
-            onContextMenu={openMissionContextMenu}
-            aria-label={`Mission activity: ${peekAuthor ? `${peekAuthor} — ` : ''}${peekLabel}`}
-          >
-            {/* Empty gutter matches the status-dot column; header owns the spinner. */}
-            <span className="chat-mission-peek-gutter" aria-hidden="true" />
-            {peekAuthor && <span className="chat-mission-peek-author">{peekAuthor}</span>}
-            <span className="chat-mission-peek-label">{peekLabel}</span>
-          </button>
-        )}
-      </div>
-      {open && (
-        <div className="chat-mission-content" onContextMenu={openMissionContextMenu}>
-          <div className="chat-mission-stream">
-            {traceContent && (
-              <div className="chat-mission-trace">{traceContent}</div>
-            )}
-            <div className="chat-mission-plan">
-              {lead && (
-                <p className="chat-mission-lead">
-                  Led by <strong>@{lead}</strong>
-                  {total > 0 ? ` · ${done}/${total} agent tasks` : ''}
-                </p>
-              )}
-              {mission.objective && <p className="chat-mission-objective">{mission.objective}</p>}
-              {mission.tasks.length > 0 ? (
-                <div className="chat-mission-tasks">
-                  {mission.tasks.map((task) => (
-                    <div className={`chat-mission-task is-${task.status}`} key={task.id}>
-                      <span className="chat-mission-task-state" aria-label={task.status}>
-                        {task.status === 'completed' ? '✓'
-                          : task.status === 'failed' || task.status === 'blocked' ? '!'
-                            : task.status === 'running' ? (
-                              <ThinkingSpinner className="chat-mission-task-whirl" title="Task running" />
-                            ) : '○'}
-                      </span>
-                      <div>
-                        <strong>{task.title}</strong>
-                        <span>
-                          @{task.assigneeMention || task.assignee} · {task.status}
-                          {task.anonymous ? ' · subagent' : ''}
-                          {task.attempt > 0 ? ` · attempt ${task.attempt + 1}` : ''}
-                          {task.queueReason === 'dependency' ? ` · waiting for ${task.waitingFor.length}` : ''}
-                          {task.queueReason === 'dependency-attention' ? ' · waiting on review' : ''}
-                          {task.queueReason === 'agent-busy' ? ' · agent busy' : ''}
-                          {task.queueReason === 'queued' ? ' · queued' : ''}
-                          {task.assigneeModel ? ` · ${task.assigneeModel}` : ''}
-                          {task.reasoningEffort ? ` · ${task.reasoningEffort} effort` : ''}
-                        </span>
-                        {task.workItemId && (
-                          <div className="chat-mission-chips">
-                            {missionTaskChangeChips(task, task.worktreePath ? fileCounts.get(task.worktreePath) : undefined).map((chip, index) => (
-                              chip.href ? (
-                                <a key={`${chip.label}:${index}`} className={`chat-mission-chip is-${chip.tone || 'idle'}`} href={chip.href} target="_blank" rel="noreferrer" title={chip.title}>
-                                  {chip.label}
-                                </a>
-                              ) : (
-                                <span key={`${chip.label}:${index}`} className={`chat-mission-chip is-${chip.tone || 'idle'}`} title={chip.title}>
-                                  {chip.label}
-                                </span>
-                              )
-                            ))}
-                          </div>
-                        )}
-                        {task.summary && <small>{task.summary}</small>}
-                        {task.workItemId && task.worktreePath && (
-                          <ChatTaskReview workItemId={task.workItemId} worktreePath={task.worktreePath} />
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <span className="chat-mission-empty">@{lead || mission.coordinator} is deciding how to handle this.</span>
-              )}
-              {mission.summary && <div className="chat-mission-summary">{mission.summary}</div>}
-            </div>
-          </div>
-          {vaultId && channelId && (
-            <div className="chat-mission-history">
-              <button type="button" onClick={() => void toggleTimeline()}>
-                <History size={12} />
-                {timelineOpen ? 'Hide timeline' : 'Timeline'}
-              </button>
-              {timelineOpen && (
-                <div className="chat-mission-timeline">
-                  {events === null && !historyError && <span>Loading history…</span>}
-                  {historyError && <span className="is-error">{historyError}</span>}
-                  {events?.length === 0 && <span>No recorded events.</span>}
-                  {events?.map((event) => (
-                    <div className="chat-mission-event" key={event.id}>
-                      <i aria-hidden="true" />
-                      <div>
-                        <strong>{missionEventLabel(event)}</strong>
-                        <time dateTime={event.createdAt}>{formatTime(event.createdAt)}</time>
-                        {event.title && event.title !== mission.title && <span>{event.title}</span>}
-                        {event.attempt > 0 && <span>Attempt {event.attempt + 1}</span>}
-                        {event.summary && <small>{event.summary}</small>}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-  if (!replyMessage || !onReply) return card;
-  return (
-    <SwipeToReply
-      className="chat-mission-swipe"
-      onReply={() => onReply(replyMessage)}
-      allowSwipeFrom=".chat-mission-toggle, .chat-mission-peek"
-    >
-      {card}
-    </SwipeToReply>
-  );
-}
-
-/**
- * One author-run of messages. Memoized so keystrokes in the composer, agent
- * panel state, and stream ticks in *other* groups don't re-render the whole
- * transcript — only the group whose message objects actually changed.
- *
- * Offscreen rows collapse to a height placeholder (IntersectionObserver) so
- * scroll doesn't paint/parse markdown + harness for the entire history.
- */
 const ChatGroupRow = memo(function ChatGroupRow({
   group,
   selectedMessageId,
@@ -1863,7 +1012,7 @@ const ChatGroupRow = memo(function ChatGroupRow({
               <strong>{authorLabel || head.author}</strong>
               {avatarKind === 'agent' && planUsage && <PlanUsageMeters usage={planUsage} />}
               {avatarKind === 'agent' && ownerLabel && <span className="chat-agent-owner">{ownerLabel}'s agent</span>}
-              <time dateTime={tail.createdAt}>{formatTime(tail.createdAt)}</time>
+              <time dateTime={tail.createdAt}>{formatChatTime(tail.createdAt)}</time>
               {avatarKind === 'agent' && tail.status === 'running' && latestRunningMessageId === tail.id && runningSiblingCount > 1 && (
                 <span className="chat-message-status is-steering">steering · latest</span>
               )}
@@ -2119,7 +1268,6 @@ export const ChatView = memo(function ChatView({
   // Messages come from an external per-channel store, not props: streaming tokens
   // then re-render only this ChatView, never the App shell. See messageStore.ts.
   const messages = useChannelMessages(channelId);
-  const [draft, setDraft] = useState('');
   const [usersCollapsedLocal, setUsersCollapsedLocal] = useState(() =>
     typeof localStorage !== 'undefined' && localStorage.getItem('cascade_chat_users_collapsed') === '1'
   );
@@ -2224,8 +1372,6 @@ export const ChatView = memo(function ChatView({
   }));
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
   const [jumpHighlightMessageId, setJumpHighlightMessageId] = useState<string | null>(null);
-  const [replyTarget, setReplyTarget] = useState<ChatReplyRef | null>(null);
-  const [replyNotifiesAgent, setReplyNotifiesAgent] = useState(true);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; message: ChatMessage } | null>(null);
   const [collaborationSource, setCollaborationSource] = useState<ChatMessage | null>(null);
   const [collaborationTargetId, setCollaborationTargetId] = useState('');
@@ -2239,9 +1385,6 @@ export const ChatView = memo(function ChatView({
   const participantMenuRef = usePopupMenu<HTMLDivElement>(participantMenu);
   /** Delete is two-step in the context menu rather than a native confirm dialog. */
   const [deleteArmed, setDeleteArmed] = useState(false);
-  const [pendingMedia, setPendingMedia] = useState<ChatMediaAttachment[]>([]);
-  const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
-  const [mediaError, setMediaError] = useState('');
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const [sharedNote, setSharedNote] = useState<SharedChatNote | null>(null);
   const [missionArchiveOpen, setMissionArchiveOpen] = useState(false);
@@ -2303,10 +1446,7 @@ export const ChatView = memo(function ChatView({
   const programmaticScrollRef = useRef(false);
   const programmaticClearRef = useRef<number | null>(null);
   const touchStartYRef = useRef<number | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const emojiPickerRef = useRef<HTMLDivElement | null>(null);
-  const draftRef = useRef<HTMLTextAreaElement | null>(null);
-  const mentionCycleRef = useRef<{ matches: string[]; index: number; start: number } | null>(null);
+  const composerRef = useRef<ChatComposerHandle>(null);
   const sortedMessages = useMemo(() => {
     // Index-stable sort: never invent order for messages missing seq. Treating
     // missing seq as MAX_SAFE_INTEGER put an already-persisted agent shell
@@ -2675,8 +1815,6 @@ export const ChatView = memo(function ChatView({
   }, [channelId, updateBottomStickiness]);
 
   useEffect(() => {
-    setReplyTarget(null);
-    setReplyNotifiesAgent(true);
     setContextMenu(null);
     setParticipantMenu(null);
   }, [channelId]);
@@ -2862,11 +2000,9 @@ export const ChatView = memo(function ChatView({
   }
 
   const startReply = useCallback((message: ChatMessage) => {
-    setReplyTarget(buildReplyRef(message, registeredAgents));
-    setReplyNotifiesAgent(true);
     setContextMenu(null);
     // Focus after paint so the reply bar is mounted first (esp. mobile keyboard).
-    requestAnimationFrame(() => draftRef.current?.focus());
+    composerRef.current?.startReply(buildReplyRef(message, registeredAgents));
   }, [registeredAgents]);
 
   const targetsForCollaboration = useCallback((message: ChatMessage) => (
@@ -3096,223 +2232,6 @@ export const ChatView = memo(function ChatView({
       setInviteBusy(false);
     }
   }
-
-  const addMediaFiles = useCallback(async (files: File[]) => {
-    if (files.length === 0) return;
-    const next: ChatMediaAttachment[] = [];
-    for (const file of files) {
-      const item = await readMediaFile(file);
-      if (!item) {
-        setMediaError(`"${file.name}" is too large (max ${CHAT_MEDIA_MAX_BYTES / (1024 * 1024)}MB).`);
-        continue;
-      }
-      next.push(item);
-    }
-    if (next.length === 0) return;
-    setMediaError('');
-    setPendingMedia((prev) => [...prev, ...next].slice(0, CHAT_MEDIA_LIMIT));
-  }, []);
-
-  const addDesktopClipboardImage = useCallback(async () => {
-    const image = await getElectronClipboardAPI()?.readClipboardImage?.();
-    if (!image?.data || !isImageMediaType(image.media_type)) return false;
-    setMediaError('');
-    setPendingMedia((prev) => [...prev, image].slice(0, CHAT_MEDIA_LIMIT));
-    return true;
-  }, []);
-
-  const handlePaste = useCallback((event: React.ClipboardEvent) => {
-    const files = Array.from(event.clipboardData?.items || [])
-      .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
-      .map((item) => item.getAsFile())
-      .filter((file): file is File => Boolean(file));
-    if (files.length === 0) {
-      const types = Array.from(event.clipboardData?.types || []);
-      if (types.some((type) => type === 'text/plain' || type === 'text/html' || type === 'text/uri-list')) return;
-      void addDesktopClipboardImage();
-      return;
-    }
-    event.preventDefault();
-    void addMediaFiles(files);
-  }, [addDesktopClipboardImage, addMediaFiles]);
-
-  const handleUpload = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files || []);
-    event.target.value = '';
-    void addMediaFiles(files);
-  }, [addMediaFiles]);
-
-  useEffect(() => {
-    if (!emojiPickerOpen) return undefined;
-    const closeOnOutsideClick = (event: MouseEvent) => {
-      if (emojiPickerRef.current && !emojiPickerRef.current.contains(event.target as Node)) {
-        setEmojiPickerOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', closeOnOutsideClick);
-    return () => document.removeEventListener('mousedown', closeOnOutsideClick);
-  }, [emojiPickerOpen]);
-
-  const insertEmoji = useCallback((emoji: string) => {
-    const textarea = draftRef.current;
-    if (!textarea) return;
-    const start = textarea.selectionStart ?? draft.length;
-    const end = textarea.selectionEnd ?? start;
-    setDraft(`${draft.slice(0, start)}${emoji}${draft.slice(end)}`);
-    setEmojiPickerOpen(false);
-    requestAnimationFrame(() => {
-      textarea.focus();
-      const cursor = start + emoji.length;
-      textarea.setSelectionRange(cursor, cursor);
-    });
-  }, [draft]);
-
-  const insertEmbedInDraft = useCallback((noteId: string, textarea: HTMLTextAreaElement) => {
-    const embedded = notes.find((note) => note.id === noteId);
-    if (!embedded) return false;
-    const insert = noteEmbedMarkdown(embedded);
-    const start = textarea.selectionStart ?? draft.length;
-    const end = textarea.selectionEnd ?? start;
-    const needsPrefix = start > 0 && !/\s/.test(draft.slice(start - 1, start)) ? ' ' : '';
-    const needsSuffix = end < draft.length && !/\s/.test(draft.slice(end, end + 1)) ? ' ' : '';
-    const text = `${needsPrefix}${insert}${needsSuffix}`;
-    setDraft(`${draft.slice(0, start)}${text}${draft.slice(end)}`);
-    requestAnimationFrame(() => {
-      textarea.focus();
-      const cursor = start + text.length;
-      textarea.setSelectionRange(cursor, cursor);
-    });
-    return true;
-  }, [draft, notes]);
-
-  function submit() {
-    const body = draft.trim();
-    if (!body && pendingMedia.length === 0) return;
-    const reply = replyTarget
-      ? prepareReplyForSend(replyTarget, replyNotifiesAgent)
-      : undefined;
-    onSendMessage(channelId, body, pendingMedia, reply);
-    setDraft('');
-    resetHistory();
-    setPendingMedia([]);
-    setMediaError('');
-    setReplyTarget(null);
-  }
-
-  // Tab-complete an "@handle" from the mentionable list. Repeated Tab cycles
-  // through the matches for the same partial. Returns true when it handled the key.
-  function completeMention(textarea: HTMLTextAreaElement): boolean {
-    const value = textarea.value;
-    const cursor = textarea.selectionStart ?? value.length;
-    const cycle = mentionCycleRef.current;
-    const cycleToken = cycle ? `@${cycle.matches[cycle.index]} ` : '';
-    const canCycle = Boolean(cycle
-      && cursor === cycle.start + cycleToken.length
-      && value.slice(cycle.start, cursor) === cycleToken);
-    let next: { matches: string[]; index: number; start: number };
-    if (canCycle && cycle) {
-      next = { matches: cycle.matches, index: (cycle.index + 1) % cycle.matches.length, start: cycle.start };
-    } else {
-      const match = /@([\w-]*)$/.exec(value.slice(0, cursor));
-      if (!match) return false;
-      const start = cursor - match[0].length;
-      const partial = match[1].toLowerCase();
-      const matches = mentionableAliases.filter((alias) => alias.toLowerCase().startsWith(partial));
-      if (matches.length === 0) return false;
-      next = { matches, index: 0, start };
-    }
-    mentionCycleRef.current = next;
-    // Append a trailing space so the caret lands ready for the message text.
-    const chosen = `@${next.matches[next.index]} `;
-    const caret = next.start + chosen.length;
-    setDraft(`${value.slice(0, next.start)}${chosen}${value.slice(cursor)}`);
-    requestAnimationFrame(() => {
-      textarea.focus();
-      textarea.setSelectionRange(caret, caret);
-    });
-    return true;
-  }
-
-  function isCompletingMention(textarea: HTMLTextAreaElement): boolean {
-    const cursor = textarea.selectionStart ?? textarea.value.length;
-    const value = textarea.value;
-    if (/@[\w-]*$/.test(value.slice(0, cursor))) return true;
-    // Keep Tab-cycling alive right after we inserted "@handle " (with its space).
-    const cycle = mentionCycleRef.current;
-    if (!cycle) return false;
-    const cycleToken = `@${cycle.matches[cycle.index]} `;
-    return cursor === cycle.start + cycleToken.length
-      && value.slice(cycle.start, cursor) === cycleToken;
-  }
-  const canSend = draft.trim().length > 0 || pendingMedia.length > 0;
-
-  // Undo/redo history for the composer. A controlled textarea loses the browser's
-  // native undo stack, so we keep our own snapshots and coalesce rapid typing into
-  // a single step (commit fires 350ms after the last keystroke).
-  const historyRef = useRef<{ stack: { v: string; s: number; e: number }[]; index: number }>({
-    stack: [{ v: '', s: 0, e: 0 }],
-    index: 0,
-  });
-  const historyTimerRef = useRef<number | null>(null);
-  const historySelRef = useRef<{ s: number; e: number } | null>(null);
-
-  const commitHistory = useCallback(() => {
-    const textarea = draftRef.current;
-    if (!textarea) return;
-    const history = historyRef.current;
-    const top = history.stack[history.index];
-    if (top && top.v === textarea.value) {
-      top.s = textarea.selectionStart;
-      top.e = textarea.selectionEnd;
-      return;
-    }
-    history.stack = history.stack.slice(0, history.index + 1);
-    history.stack.push({ v: textarea.value, s: textarea.selectionStart, e: textarea.selectionEnd });
-    history.index = history.stack.length - 1;
-  }, []);
-
-  const scheduleHistoryCommit = useCallback(() => {
-    if (historyTimerRef.current) window.clearTimeout(historyTimerRef.current);
-    historyTimerRef.current = window.setTimeout(() => {
-      historyTimerRef.current = null;
-      commitHistory();
-    }, 350);
-  }, [commitHistory]);
-
-  const resetHistory = useCallback(() => {
-    if (historyTimerRef.current) { window.clearTimeout(historyTimerRef.current); historyTimerRef.current = null; }
-    historyRef.current = { stack: [{ v: '', s: 0, e: 0 }], index: 0 };
-  }, []);
-
-  const stepHistory = useCallback((dir: -1 | 1) => {
-    if (historyTimerRef.current) { window.clearTimeout(historyTimerRef.current); historyTimerRef.current = null; }
-    commitHistory();
-    const history = historyRef.current;
-    const target = history.index + dir;
-    if (target < 0 || target >= history.stack.length) return;
-    history.index = target;
-    const entry = history.stack[target];
-    historySelRef.current = { s: entry.s, e: entry.e };
-    setDraft(entry.v);
-  }, [commitHistory]);
-
-  // Restore the caret after an undo/redo swap re-renders the textarea.
-  useLayoutEffect(() => {
-    const sel = historySelRef.current;
-    if (!sel) return;
-    historySelRef.current = null;
-    const textarea = draftRef.current;
-    if (textarea) { textarea.focus(); textarea.setSelectionRange(sel.s, sel.e); }
-  }, [draft]);
-
-  useLayoutEffect(() => {
-    const textarea = draftRef.current;
-    if (!textarea) return;
-    textarea.style.height = 'auto';
-    const nextHeight = Math.min(textarea.scrollHeight, 180);
-    textarea.style.height = `${nextHeight}px`;
-    textarea.style.overflowY = textarea.scrollHeight > 180 ? 'auto' : 'hidden';
-  }, [draft]);
 
   return (
     <section className={`chat-view${sidebarMode === 'only' ? ' is-sidebar-only' : ''}${sidebarMode === 'hidden' ? ' is-sidebar-hidden' : ''}${directMessage ? ' is-direct-message' : ''}`}>
@@ -3562,176 +2481,16 @@ export const ChatView = memo(function ChatView({
           </div>
         </div>
 
-        <footer
-          className="chat-composer"
-          onDragOver={(e) => {
-            if (!e.dataTransfer.types.includes(NOTE_DND_TYPE)) return;
-            e.preventDefault();
-            e.dataTransfer.dropEffect = 'copy';
-          }}
-          onDrop={(e) => {
-            const noteId = e.dataTransfer.getData(NOTE_DND_TYPE);
-            const textarea = draftRef.current;
-            if (!noteId || !textarea) return;
-            e.preventDefault();
-            insertEmbedInDraft(noteId, textarea);
-          }}
-        >
-          <input
-            ref={fileInputRef}
-            type="file"
-            className="chat-media-input"
-            accept="image/*,video/*,audio/*,.pdf,.txt,.md"
-            multiple
-            onChange={handleUpload}
-          />
-          <div className="chat-emoji-picker-wrap" ref={emojiPickerRef}>
-            <button
-              type="button"
-              className="btn-icon chat-emoji-btn"
-              aria-label="Choose emoji"
-              aria-expanded={emojiPickerOpen}
-              title="Choose emoji"
-              onClick={() => setEmojiPickerOpen((open) => !open)}
-            >
-              <Smile size={17} />
-            </button>
-            {emojiPickerOpen && (
-              <div className="chat-emoji-picker" role="dialog" aria-label="Emoji picker">
-                {CHAT_EMOJIS.map((emoji) => (
-                  <button key={emoji} type="button" className="chat-emoji-option" onClick={() => insertEmoji(emoji)}>
-                    {emoji}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-          <button
-            type="button"
-            className="btn-icon chat-upload-btn"
-            onClick={() => fileInputRef.current?.click()}
-            title="Upload media"
-          >
-            <ImagePlus size={17} />
-          </button>
-          <div className="chat-composer-main">
-            {replyTarget && (
-              <div className="chat-reply-bar">
-                <div className="chat-reply-bar-copy">
-                  <span className="chat-reply-bar-label">
-                    Replying to <strong>@{replyTarget.mention}</strong>
-                  </span>
-                  <span className="chat-reply-bar-preview">{replyTarget.preview}</span>
-                </div>
-                {registeredAgents.some((agent) => normalizeMention(agent.mention) === normalizeMention(replyTarget.mention)) && (
-                  <button
-                    type="button"
-                    className={`chat-reply-mention-toggle${replyNotifiesAgent ? ' active' : ''}`}
-                    aria-pressed={replyNotifiesAgent}
-                    title={replyNotifiesAgent ? `Turn off notification for @${replyTarget.mention}` : `Notify @${replyTarget.mention}`}
-                    onClick={() => setReplyNotifiesAgent((value) => !value)}
-                  >
-                    @{replyNotifiesAgent ? 'ON' : 'OFF'}
-                  </button>
-                )}
-                <button
-                  type="button"
-                  className="chat-reply-bar-close"
-                  title="Cancel reply"
-                  onClick={() => {
-                    setReplyTarget(null);
-                    setReplyNotifiesAgent(true);
-                  }}
-                >
-                  <X size={12} />
-                </button>
-              </div>
-            )}
-            {pendingMedia.length > 0 && (
-              <div className="chat-paste-previews">
-                {pendingMedia.map((item, index) => (
-                  <div key={`${item.name || 'media'}-${index}`} className="chat-paste-thumb">
-                    {isImageMediaType(item.media_type) ? (
-                      <img src={item.url} alt="" />
-                    ) : isVideoMediaType(item.media_type) || isMp4Attachment(item) ? (
-                      <video className="chat-paste-video" src={item.url} muted playsInline preload="metadata" />
-                    ) : (
-                      <div className="chat-paste-file">
-                        <Paperclip size={14} />
-                        <span>{item.name || 'file'}</span>
-                      </div>
-                    )}
-                    <button
-                      type="button"
-                      className="chat-paste-remove"
-                      title="Remove"
-                      onClick={() => setPendingMedia((prev) => prev.filter((_, itemIndex) => itemIndex !== index))}
-                    >
-                      <X size={10} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-            <textarea
-              ref={draftRef}
-              value={draft}
-              placeholder={replyTarget ? `Reply to @${replyTarget.mention}` : directMessage ? `Message ${channelName}` : `Message #${channelName}`}
-              spellCheck
-              rows={1}
-              onChange={(e) => {
-                setDraft(e.target.value);
-                mentionCycleRef.current = null;
-                scheduleHistoryCommit();
-              }}
-              onPaste={handlePaste}
-              onDragOver={(e) => {
-                if (!e.dataTransfer.types.includes(NOTE_DND_TYPE)) return;
-                e.preventDefault();
-                e.dataTransfer.dropEffect = 'copy';
-              }}
-              onDrop={(e) => {
-                const noteId = e.dataTransfer.getData(NOTE_DND_TYPE);
-                if (!noteId) return;
-                e.preventDefault();
-                e.stopPropagation();
-                insertEmbedInDraft(noteId, e.currentTarget);
-              }}
-              onKeyDown={(e) => {
-                const mod = e.metaKey || e.ctrlKey;
-                if (mod && (e.key === 'z' || e.key === 'Z')) {
-                  e.preventDefault();
-                  stepHistory(e.shiftKey ? 1 : -1);
-                  return;
-                }
-                if (mod && !e.shiftKey && (e.key === 'y' || e.key === 'Y')) {
-                  e.preventDefault();
-                  stepHistory(1);
-                  return;
-                }
-                if (e.key === 'Tab' && !e.shiftKey && isCompletingMention(e.currentTarget)) {
-                  e.preventDefault();
-                  completeMention(e.currentTarget);
-                  return;
-                }
-                if (e.key === 'Escape' && replyTarget) {
-                  e.preventDefault();
-                  setReplyTarget(null);
-                  setReplyNotifiesAgent(true);
-                  return;
-                }
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  submit();
-                }
-              }}
-            />
-          </div>
-          <button className="btn-icon chat-send-btn" onClick={submit} title="Send message" disabled={!canSend}>
-            <Send size={17} />
-          </button>
-          {mediaError && <span className="chat-media-error">{mediaError}</span>}
-        </footer>
+        <ChatComposer
+          ref={composerRef}
+          channelId={channelId}
+          channelName={channelName}
+          directMessage={directMessage}
+          notes={notes}
+          mentionableAliases={mentionableAliases}
+          registeredAgents={registeredAgents}
+          onSendMessage={onSendMessage}
+        />
       </div>}
 
       {contextMenu && (
@@ -3892,10 +2651,10 @@ export const ChatView = memo(function ChatView({
                   const next = event.target.value;
                   setChannelKanbanNoteId(next);
                   if (!vaultId) return;
-                  void api(`/api/vaults/${vaultId}/channels/${channelId}/settings`, {
+                  void api<{ settings?: { kanbanNoteId?: string } }>(`/api/vaults/${vaultId}/channels/${channelId}/settings`, {
                     method: 'PUT',
                     body: JSON.stringify({ kanbanNoteId: next || null }),
-                  }).then((d: { settings?: { kanbanNoteId?: string } }) => {
+                  }).then((d) => {
                     setChannelKanbanNoteId(d.settings?.kanbanNoteId ?? '');
                   }).catch(() => { /* keep local */ });
                 }}
@@ -3921,10 +2680,10 @@ export const ChatView = memo(function ChatView({
                 className="chat-channel-board-link"
                 onClick={() => {
                   if (!vaultId) return;
-                  void api(`/api/vaults/${vaultId}/channels/${channelId}/settings`, {
+                  void api<{ settings?: { kanbanNoteId?: string } }>(`/api/vaults/${vaultId}/channels/${channelId}/settings`, {
                     method: 'PUT',
                     body: JSON.stringify({ createInternalKanban: true }),
-                  }).then((d: { settings?: { kanbanNoteId?: string } }) => {
+                  }).then((d) => {
                     setChannelKanbanNoteId(d.settings?.kanbanNoteId ?? '');
                   }).catch(() => { /* keep local */ });
                 }}

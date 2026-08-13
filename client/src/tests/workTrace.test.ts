@@ -168,7 +168,11 @@ describe('workTrace', () => {
     const acknowledgement = msg({ id: 'a1', author: 'Sol', body: 'I am fixing it.', agentId: 'codex', registrationId: 'sol' });
     const mission = msg({
       id: 'm1', author: 'Cascade', body: 'Fix it durably.',
-      mission: { id: 'mission-1', title: 'Fix it', status: 'active', coordinator: 'sol', tasks: [] },
+      mission: {
+        id: 'mission-1', rootMessageId: 'm1', title: 'Fix it', objective: 'Fix it durably.',
+        status: 'active', coordinator: 'sol', coordinatorMention: 'sol', tasks: [],
+        summary: '', createdAt: '', updatedAt: '',
+      },
     });
     const worker = msg({ id: 'w1', author: 'Sol', body: 'Tests pass.', agentId: 'codex', registrationId: 'sol', missionTaskId: 'task-1' });
     const shipped = msg({ id: 'a2', author: 'Sol', body: 'Shipped.', agentId: 'codex', registrationId: 'sol' });
@@ -190,7 +194,11 @@ describe('workTrace', () => {
     const mission = msg({
       id: 'sys-mission-root-1', author: 'Sol', body: 'Fix it durably.',
       agentId: 'codex', registrationId: 'sol-reg',
-      mission: { id: 'mission-1', title: 'Fix it', status: 'active', coordinator: 'sol', tasks: [] },
+      mission: {
+        id: 'mission-1', rootMessageId: 'sys-mission-root-1', title: 'Fix it', objective: 'Fix it durably.',
+        status: 'active', coordinator: 'sol', coordinatorMention: 'sol', tasks: [],
+        summary: '', createdAt: '', updatedAt: '',
+      },
     });
     const segments = segmentTranscript([acknowledgement, mission]);
     expect(segments).toHaveLength(1);

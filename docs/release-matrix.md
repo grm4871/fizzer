@@ -54,7 +54,7 @@ Still manual, by nature: Electron lifecycle (`Ctrl/Cmd+R` during an active run),
 
 The checkout gate proves behavioral parity and data preservation; it does not certify production capacity. Run the production-shaped 10,000-user capacity test and 5,000-user two-hour durability soak only when changing concurrency, dispatch, realtime/presence, runner lifecycle, database contention, runtime resource limits, or deployment infrastructure. Those gates remain additive and bind to one exact image ID. UI presentation, Electron packaging, documentation, and ordinary contract/route parity fixes use the routine staged-image path. `deploy/remote-update.sh` never rebuilds: it validates the revision label, embedded route gate, production-shaped preflight, snapshot/rollback, authenticated smoke, and reopened edge on every cutover; when capacity certification is present it must match the exact image.
 
-One failure class is invisible to `npm run build:vps`, so never treat a green build as coverage: the client bundle is **not** type-checked (a misplaced JSX attribute compiles and ships). Backend coverage is `mix check` plus the Elixir e2e and contract scripts, not `npm test`.
+`npm run build:vps` still does not type-check the renderer. Frontend release coverage starts with `npm run typecheck:client`. Backend coverage is `mix check` plus the Elixir e2e and contract scripts, not `npm test`.
 
 ## Environment and lifecycle coverage
 

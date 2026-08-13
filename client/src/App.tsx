@@ -1742,7 +1742,7 @@ export default function App() {
     void loadChatAgentMembers(vaultId, notesRef.current);
   }, [loadVaultAgents, loadChatAgentMembers]);
 
-  const handleInviteChatUser = useCallback(async (channelId: string, username: string) => {
+  const handleInviteChatUser = useCallback(async (_channelId: string, username: string) => {
     const vaultId = activeVaultIdRef.current;
     if (!vaultId) throw new Error('No active vault');
     await api(`/api/vaults/${vaultId}/members`, {
@@ -1752,7 +1752,7 @@ export default function App() {
     await loadVaultData(vaultId, { soft: true });
   }, [loadVaultData]);
 
-  const handleRemoveChatParticipant = useCallback(async (channelId: string, username: string) => {
+  const handleRemoveChatParticipant = useCallback(async (_channelId: string, username: string) => {
     const vaultId = activeVaultIdRef.current;
     if (!vaultId) return;
     const data = await api<{ members: VaultMember[] }>(`/api/vaults/${vaultId}/members`);
@@ -1762,7 +1762,7 @@ export default function App() {
     await loadVaultData(vaultId, { soft: true });
   }, [loadVaultData]);
 
-  const handleLeaveChatChannel = useCallback(async (channelId: string) => {
+  const handleLeaveChatChannel = useCallback(async (_channelId: string) => {
     const vaultId = activeVaultIdRef.current;
     if (!vaultId || !user || !window.confirm('Leave this vault?')) return;
     await api(`/api/vaults/${vaultId}/members/${user.id}`, { method: 'DELETE' });
@@ -2341,7 +2341,7 @@ export default function App() {
         let linked = known.get(ref.messageId);
         if (!linked) {
           try {
-            const data = await api<{ message: ChatMessage }>(
+            const data: { message: ChatMessage } = await api(
               `/api/vaults/${vaultId}/channels/${channelId}/messages/${encodeURIComponent(ref.messageId)}`,
             );
             linked = data.message;

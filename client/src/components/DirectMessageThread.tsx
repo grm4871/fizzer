@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { api } from '../api';
 import { chatMessageStore } from '../chat/messageStore';
@@ -191,8 +191,6 @@ export function DirectMessageThread({
     ).then((data) => mergeMessage(conversation.channelId, data.message)).catch(() => undefined);
   }, [conversation.channelId, conversation.vaultId]);
 
-  const noopPromise = useMemo(() => async () => '', []);
-
   return (
     <div className="dm-thread">
       <button type="button" className="dm-thread-back" onClick={onBack} aria-label="Back to conversations">
@@ -208,7 +206,6 @@ export function DirectMessageThread({
         registeredAgents={NO_AGENTS}
         onRegisterAgent={() => undefined}
         onRemoveAgent={() => undefined}
-        onCreateInviteLink={noopPromise}
         onInviteUser={async () => undefined}
         onSendMessage={sendMessage}
         onDeleteMessage={deleteMessage}

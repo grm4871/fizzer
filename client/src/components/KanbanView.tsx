@@ -159,8 +159,9 @@ export function parseKanbanMarkdown(content: string): KanbanBoard {
   });
 
   const settingsStart = lines.findIndex((line) => line.trim() === SETTINGS_START);
-  if (settingsStart >= 0 && activeColumn && activeColumn.endLineIndex === lines.length) {
-    activeColumn.endLineIndex = settingsStart;
+  const lastColumn = columns[columns.length - 1];
+  if (settingsStart >= 0 && lastColumn && lastColumn.endLineIndex === lines.length) {
+    lastColumn.endLineIndex = settingsStart;
   }
 
   return {

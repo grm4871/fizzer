@@ -72,7 +72,7 @@ describe('splitDocEmbeds / splitWikilinks', () => {
       availableAgents: [],
       registeredAgents: [],
       onRegisterAgent: () => {}, onRemoveAgent: () => {},
-      onCreateInviteLink: async () => '', onInviteUser: async () => {},
+      onInviteUser: async () => {},
       onSendMessage: () => {}, onCancelRun: () => {},
       notes: [{
         id: 'plan', vault_id: 'vault', folder_id: null, title: 'Team plan', content_preview: 'Launch checklist',

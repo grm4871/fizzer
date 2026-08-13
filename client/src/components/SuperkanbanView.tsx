@@ -115,6 +115,8 @@ export function workItemsToLiveColumns(items: WorkItem[]): SuperkanbanColumn[] {
     ].filter(Boolean);
     column.cards.push({
       id: `work:${item.id}`,
+      lineIndex: -1,
+      marker: '-',
       text: bits.join(' · ').replace(/ · \n\n/g, '\n\n'),
       checked: item.status === 'done',
       sourceId: item.id,

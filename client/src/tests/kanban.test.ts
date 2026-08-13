@@ -248,7 +248,9 @@ describe('Markdown-backed Kanban helpers', () => {
         assigneeRegistrationId: 'reg-1', leaseHolder: null, leaseExpiresAt: null,
         repository: '', baseCommit: '', branch: 'cascade/abc/ship-isolation',
         workspaceMode: 'isolated', worktreePath: '', prNumber: null, prUrl: '', prState: '',
-        summary: '', verification: '', dependsOn: [], runIds: [], createdBy: 1,
+        summary: '', verification: '', gitState: null, gitStateUpdatedAt: null,
+        reviewReadiness: { ready: true, blockers: [] },
+        dependsOn: [], runIds: [], createdBy: 1,
         createdAt: '', updatedAt: '',
       },
       {
@@ -257,7 +259,9 @@ describe('Markdown-backed Kanban helpers', () => {
         assigneeRegistrationId: null, leaseHolder: null, leaseExpiresAt: null,
         repository: '', baseCommit: '', branch: 'cascade/abc/queued',
         workspaceMode: 'isolated', worktreePath: '', prNumber: null, prUrl: '', prState: '',
-        summary: '', verification: '', dependsOn: [], runIds: [], createdBy: 1,
+        summary: '', verification: '', gitState: null, gitStateUpdatedAt: null,
+        reviewReadiness: { ready: true, blockers: [] },
+        dependsOn: [], runIds: [], createdBy: 1,
         createdAt: '', updatedAt: '',
       },
     ];

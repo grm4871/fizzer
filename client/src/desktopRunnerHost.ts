@@ -59,7 +59,7 @@ const PLAN_USAGE_MIN_REFRESH_MS = 4 * 60 * 1000;
 
 export const DESKTOP_RUNNER_SOCKET_OPTIONS = {
   forceNew: true,
-  transports: ['polling'] as const,
+  transports: ['polling'] as Array<'polling'>,
   upgrade: false,
 };
 
@@ -217,7 +217,8 @@ function emitRunEvent(runId: number, type: string, payload: unknown): void {
       recentTerminalEvents.set(runId, { type, payload, at: Date.now() });
       pruneRecentTerminals();
       activeRunIds.delete(runId);
-      if (socket) window.setTimeout(() => void publishPlanUsage(socket, true), 1_000);
+      const activeSocket = socket;
+      if (activeSocket) window.setTimeout(() => void publishPlanUsage(activeSocket, true), 1_000);
     }
   }
   socket?.emit('runner:runEvent', { runId, type, payload });
