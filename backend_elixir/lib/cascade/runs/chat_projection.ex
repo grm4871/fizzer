@@ -1,5 +1,10 @@
 defmodule Cascade.Runs.ChatProjection do
-  @moduledoc "Folds durable runner events into the authoritative chat reply and mission state."
+  @moduledoc """
+  Folds durable runner events into the authoritative chat reply and mission state.
+
+  Live sync keeps a per-run fold cursor (last seq + accumulator) so each tick
+  applies only new events. A seq gap or missing cursor rebuilds from the log.
+  """
 
   alias Cascade.Accounts.SQL
   alias Cascade.Chat.Messages
@@ -9,34 +14,69 @@ defmodule Cascade.Runs.ChatProjection do
   alias Cascade.Runs.Store
 
   @harness_max 512_000
+  @cursor_table :cascade_chat_projection
 
   def build(events) do
-    state =
-      Enum.reduce(events, empty_state(), fn event, state ->
-        case Jason.decode(event.payload_json || "") do
-          {:ok, payload} -> fold(state, event.type, payload)
-          _ -> state
-        end
-      end)
+    {content, _cursor} = project(events)
+    content
+  end
 
-    content(state)
+  @doc """
+  Fold `events` onto an optional cursor from a previous `project/2` call.
+
+  `build/1` is this from an empty cursor. Live sync keeps the cursor so each
+  tick only applies `seq > last_seq` instead of rereading the whole log.
+  """
+  def project(events, cursor \\ nil) do
+    {state, last_seq} = advance(cursor || new_cursor(), events)
+    {content(state), %{state: state, last_seq: last_seq}}
   end
 
   def sync(run_id, owner_id \\ nil) when is_integer(run_id) do
-    projection = build(Store.events(run_id))
-    target = target(run_id, owner_id)
+    cursor = fetch_cursor(run_id)
+    events = Store.events(run_id, cursor.last_seq)
 
-    if target do
-      persist_target(target, run_id, projection)
-    end
+    {state, last_seq} =
+      cond do
+        gap?(events, cursor.last_seq) ->
+          advance(new_cursor(), Store.events(run_id))
+
+        events == [] and cursor_seq_missing?(run_id, cursor.last_seq) ->
+          advance(new_cursor(), Store.events(run_id))
+
+        true ->
+          advance(cursor, events)
+      end
+
+    projection = content(state)
+    target = target(run_id, owner_id)
+    persisted = cursor.persisted
+    fingerprint = persist_fingerprint(projection)
+
+    persisted =
+      if target && fingerprint != persisted do
+        case persist_target(target, run_id, projection) do
+          :ok -> fingerprint
+          :error -> persisted
+        end
+      else
+        persisted
+      end
 
     if projection.done do
+      drop_cursor(run_id)
       run = Store.get(run_id)
       summary = nonblank(projection.body, if(run, do: run.summary || "", else: ""))
       status = projection.terminal_status || if(run, do: run.status, else: "completed")
 
       if status in ["completed", "failed", "canceled"] do
         _ = Scheduler.settle_run(run_id, status, summary, events: Events)
+      end
+    else
+      # last_seq 0 means events had no seq (or none applied). Caching that
+      # accumulator would double-fold on the next full fetch.
+      if last_seq > 0 do
+        put_cursor(run_id, %{state: state, last_seq: last_seq, persisted: persisted})
       end
     end
 
@@ -56,6 +96,85 @@ defmodule Cascade.Runs.ChatProjection do
       suppress_chat_body: false,
       visible_text: false
     }
+  end
+
+  defp new_cursor, do: %{state: empty_state(), last_seq: 0, persisted: nil}
+
+  defp advance(%{state: state, last_seq: last_seq}, events) do
+    Enum.reduce(events, {state, last_seq}, fn event, {state, last_seq} ->
+      next_state =
+        case Jason.decode(event.payload_json || "") do
+          {:ok, payload} -> fold(state, event.type, payload)
+          _ -> state
+        end
+
+      {next_state, max(last_seq, event_seq(event))}
+    end)
+  end
+
+  defp gap?(_events, 0), do: false
+  defp gap?([], _last_seq), do: false
+  defp gap?([first | _], last_seq), do: event_seq(first) != last_seq + 1
+
+  defp cursor_seq_missing?(_run_id, 0), do: false
+
+  defp cursor_seq_missing?(run_id, last_seq) do
+    is_nil(
+      SQL.one("SELECT 1 FROM run_events WHERE run_id=? AND seq=? LIMIT 1", [run_id, last_seq])
+    )
+  end
+
+  defp event_seq(event) when is_map(event) do
+    case value(event, "seq", 0) do
+      seq when is_integer(seq) and seq > 0 -> seq
+      _ -> 0
+    end
+  end
+
+  defp persist_fingerprint(projection) do
+    {projection.body, projection.status, projection.harnessLog, projection.blocks}
+  end
+
+  defp fetch_cursor(run_id) do
+    case :ets.lookup(ensure_cursor_table(), run_id) do
+      [{^run_id, cursor}] -> cursor
+      _ -> new_cursor()
+    end
+  rescue
+    ArgumentError -> new_cursor()
+  end
+
+  defp put_cursor(run_id, cursor) do
+    :ets.insert(ensure_cursor_table(), {run_id, cursor})
+    :ok
+  rescue
+    ArgumentError -> :ok
+  end
+
+  defp drop_cursor(run_id) do
+    :ets.delete(ensure_cursor_table(), run_id)
+    :ok
+  rescue
+    ArgumentError -> :ok
+  end
+
+  defp ensure_cursor_table do
+    case :ets.whereis(@cursor_table) do
+      :undefined ->
+        try do
+          :ets.new(@cursor_table, [
+            :named_table,
+            :public,
+            :set,
+            read_concurrency: true
+          ])
+        rescue
+          ArgumentError -> @cursor_table
+        end
+
+      _tid ->
+        @cursor_table
+    end
   end
 
   defp fold(state, "text", payload) do
@@ -235,8 +354,10 @@ defmodule Cascade.Runs.ChatProjection do
           })
         end
 
-      _ ->
         :ok
+
+      _ ->
+        :error
     end
   end
 
