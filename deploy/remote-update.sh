@@ -619,16 +619,29 @@ preflight_candidate() {
   # Classify only startup DDL. The protocol probe creates disposable rows, so
   # it must not participate in the rolling-safe decision.
   boot_preflight_database
-  if docker run --rm --network none --entrypoint node \
+  docker run --rm --network none --entrypoint node \
+    -v "$PREFLIGHT_DIR:/preflight" \
+    "$CANDIDATE_IMAGE" /app/scripts/check-elixir-data-compat.mjs \
+    --dump-schema /preflight/after.db > "$PREFLIGHT_DIR/after-schema.json"
+  local schema_output=""
+  local schema_status=0
+  set +e
+  schema_output="$(docker run --rm --network none --entrypoint node \
     -v "$PREFLIGHT_DIR:/preflight:ro" \
     "$CANDIDATE_IMAGE" /app/scripts/check-elixir-data-compat.mjs \
-    --schema-only --before-schema /preflight/before-schema.json --after /preflight/after.db
-  then
+    --schema-only --before-schema /preflight/before-schema.json --after-schema /preflight/after-schema.json 2>&1)"
+  schema_status=$?
+  set -e
+  printf '%s\n' "$schema_output"
+  if [[ "$schema_status" -eq 0 ]]; then
     ROLLING_SAFE=1
     echo "==> Candidate boot is schema-identical; rolling cutover is eligible"
-  else
+  elif [[ "$schema_output" == *"database schema changed"* || "$schema_output" == *"migration ledger changed"* ]]; then
     verify_migration_clone
     ROLLING_SAFE=0
+  else
+    echo "Error: schema preflight failed before a rolling-safe decision could be made." >&2
+    return 1
   fi
 
   start_preflight_server

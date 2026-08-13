@@ -308,11 +308,18 @@ export function readSchemaFingerprintFromDb(db) {
 }
 
 export function readSchemaFingerprint(filename) {
-  const db = new Database(filename, { readonly: true, fileMustExist: true });
+  const directory = databaseScratchDirectory('cascade-schema-fingerprint-');
+  const disposable = path.join(directory, 'database.sqlite');
   try {
-    return readSchemaFingerprintFromDb(db);
+    fs.copyFileSync(path.resolve(filename), disposable, fs.constants.COPYFILE_FICLONE);
+    const db = new Database(disposable, { readonly: true, fileMustExist: true });
+    try {
+      return readSchemaFingerprintFromDb(db);
+    } finally {
+      db.close();
+    }
   } finally {
-    db.close();
+    fs.rmSync(directory, { recursive: true, force: true });
   }
 }
 
