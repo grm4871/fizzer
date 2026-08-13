@@ -46,7 +46,7 @@ Where a row above has a command, run the command instead of reasoning about the 
 | Tabs, panes, menus, Superkanban | `npm run verify:tab-menus` | Every `+`/tab menu item present (catches a prop that never reached the component), menu survives the opening right-click, menu unclipped, Superkanban routes to a populated board, Close tab works |
 | Agent start and run lifecycle | `npm run test:desktop-runner` | Run reclaim, replay, duplicate-process avoidance |
 | Vault switcher, vault settings | `npm run verify:vault-rename-ui` | Rename reaches `PATCH /api/vaults/:id` and updates the switcher, non-owners get neither the control nor the API, and the agent-memory preference lives in account settings |
-| API, persistence, migrations | `npm run test:elixir:mix-check` and `npm run test:elixir:data-parity` | Fresh **and** upgraded databases: every column the writers use exists after migration, legacy rows survive, and writes still work against a migrated table |
+| API, persistence, migrations | `npm run test:elixir:mix-check` and `npm run test:elixir:data-parity` | Fresh **and** upgraded databases: every column the writers use exists after migration, legacy rows survive, and writes still work against a migrated table. Routine deploys classify rolling-safe from `sqlite_master` only; full row/corpus compare runs only when that schema changes. |
 | Elixir backend | `npm run test:release:backend` | Sequential, fail-closed `mix check`; Elixir contract and route inventories; data compatibility; e2es; rollback, nginx edge, load-driver, monitor, and protocol regression suites |
 | Deployment/configuration | `journalctl -u cascade-autodeploy -f` on the host, then grep the served bundle | Deploy completion plus the asset `cscd.online` really serves (see AGENTS.md) |
 

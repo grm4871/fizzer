@@ -62,15 +62,34 @@ function parseArgs(argv) {
     else if (key === 'after') args.after = value;
     else if (key === 'before-root') args.beforeRoot = value;
     else if (key === 'after-root') args.afterRoot = value;
+    else if (key === 'before-schema') args.beforeSchema = value;
+    else if (key === 'after-schema') args.afterSchema = value;
+    else if (key === 'dump-schema') args.dumpSchema = value;
+    else if (key === 'materialize-schema') args.materializeSchema = value;
+    else if (key === 'materialize-dest') args.materializeDest = value;
     else throw new Error(`Unknown option: --${key}`);
   }
-  if (!args.before || !args.after) throw new Error('--before and --after are required');
+  if (args.dumpSchema || args.materializeSchema) {
+    if (args.dumpSchema && (args.before || args.after || args.materializeSchema)) {
+      throw new Error('--dump-schema cannot be combined with comparison or materialize options');
+    }
+    if (args.materializeSchema && !args.materializeDest) {
+      throw new Error('--materialize-schema requires --materialize-dest');
+    }
+    return args;
+  }
+  args.before = args.beforeSchema || args.before;
+  args.after = args.afterSchema || args.after;
+  if (!args.before || !args.after) {
+    throw new Error('provide --before/--after or --before-schema/--after-schema');
+  }
   if (Boolean(args.beforeRoot) !== Boolean(args.afterRoot)) {
     throw new Error('--before-root and --after-root must be supplied together');
   }
   if (args.requireIdentical && args.schemaOnly) {
     throw new Error('--require-identical and --schema-only are mutually exclusive');
   }
+  if ((args.beforeSchema || args.afterSchema) && !args.schemaOnly) args.schemaOnly = true;
   return args;
 }
 
@@ -245,6 +264,84 @@ export function databaseSnapshot(filename) {
     return databaseSnapshotFromCopy(disposable);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+const SCHEMA_OBJECT_ORDER = { table: 0, index: 1, trigger: 2, view: 3 };
+
+export function readSchemaFingerprintFromDb(db) {
+  const objects = db.prepare(`
+    SELECT type, name, tbl_name AS tableName, sql
+    FROM sqlite_master
+    WHERE name NOT LIKE 'sqlite_%'
+    ORDER BY type, name
+  `).all().map((object) => ({
+    type: object.type,
+    name: object.name,
+    tableName: object.tableName,
+    sql: normalizedSql(object.sql),
+  }));
+  let migrations = [];
+  const hasLedger = objects.some((object) => object.type === 'table' && object.name === 'cascade_elixir_schema_migrations');
+  if (hasLedger) {
+    migrations = db.prepare(
+      'SELECT version, name, checksum FROM cascade_elixir_schema_migrations ORDER BY version',
+    ).all();
+  }
+  return { objects, migrations };
+}
+
+export function readSchemaFingerprint(filename) {
+  const db = new Database(filename, { readonly: true, fileMustExist: true });
+  try {
+    return readSchemaFingerprintFromDb(db);
+  } finally {
+    db.close();
+  }
+}
+
+export function loadSchemaFingerprint(source) {
+  if (source && typeof source === 'object' && !Array.isArray(source)) return source;
+  const text = fs.readFileSync(source, 'utf8');
+  if (text.startsWith('{')) return JSON.parse(text);
+  return readSchemaFingerprint(source);
+}
+
+export function compareSchemaFingerprints(before, after) {
+  const failures = [];
+  if (!same(before.objects, after.objects)) failures.push('database schema changed');
+  if (!same(before.migrations, after.migrations)) failures.push('migration ledger changed');
+  return failures;
+}
+
+export function materializeSchemaFingerprint(fingerprint, destination) {
+  if (fs.existsSync(destination)) fs.rmSync(destination);
+  for (const suffix of ['-wal', '-shm']) {
+    try { fs.rmSync(`${destination}${suffix}`); } catch { /* fresh dest */ }
+  }
+  const db = new Database(destination);
+  try {
+    db.exec('PRAGMA foreign_keys = OFF');
+    const objects = [...(fingerprint.objects || [])].sort((left, right) => {
+      const order = (SCHEMA_OBJECT_ORDER[left.type] ?? 9) - (SCHEMA_OBJECT_ORDER[right.type] ?? 9);
+      return order || left.name.localeCompare(right.name);
+    });
+    for (const object of objects) {
+      if (!object.sql) continue;
+      try {
+        db.exec(object.sql);
+      } catch (error) {
+        if (!/already exists/i.test(error.message)) throw error;
+      }
+    }
+    if (fingerprint.migrations?.length) {
+      const insert = db.prepare(
+        'INSERT INTO cascade_elixir_schema_migrations(version, name, checksum) VALUES (?, ?, ?)',
+      );
+      for (const row of fingerprint.migrations) insert.run(row.version, row.name, row.checksum);
+    }
+  } finally {
+    db.close();
   }
 }
 
@@ -618,21 +715,35 @@ export function validatePinnedElixirSchema(before, after) {
   return failures;
 }
 
+function tableCountFromFingerprint(fingerprint) {
+  return (fingerprint.objects || []).filter((object) => object.type === 'table').length;
+}
+
 export function runComparison(options) {
+  if (options.schemaOnly) {
+    const before = options.beforeFingerprint || loadSchemaFingerprint(options.beforeSchema || options.before);
+    const after = options.afterFingerprint || loadSchemaFingerprint(options.afterSchema || options.after);
+    const failures = compareSchemaFingerprints(before, after);
+    return {
+      ok: failures.length === 0,
+      failures,
+      beforeTables: tableCountFromFingerprint(before),
+      afterTables: tableCountFromFingerprint(after),
+    };
+  }
+
   const allowed = new Set([...DEFAULT_ALLOWED_ADDITIONS, ...(options.allowTable || [])]);
   const before = databaseSnapshot(options.before);
   const after = databaseSnapshot(options.after);
   const failures = options.requireIdentical
     ? compareIdenticalSnapshots(before, after)
-    : options.schemaOnly
-      ? compareSchemasExactly(before, after)
-      : compareDatabaseSnapshots(before, after, allowed);
+    : compareDatabaseSnapshots(before, after, allowed);
   try {
     verifyFtsIntegrity(options.after, after);
   } catch (error) {
     failures.push(error.message);
   }
-  if (options.beforeRoot && !options.schemaOnly) {
+  if (options.beforeRoot) {
     const beforeFiles = fileTreeSnapshot(options.beforeRoot);
     const afterFiles = fileTreeSnapshot(options.afterRoot);
     if (!same(beforeFiles, afterFiles)) failures.push('vault file tree changed');
@@ -647,6 +758,16 @@ export function runComparison(options) {
 
 function main() {
   const args = parseArgs(process.argv.slice(2));
+  if (args.dumpSchema) {
+    process.stdout.write(`${JSON.stringify(readSchemaFingerprint(args.dumpSchema))}\n`);
+    return;
+  }
+  if (args.materializeSchema) {
+    const fingerprint = loadSchemaFingerprint(args.materializeSchema);
+    materializeSchemaFingerprint(fingerprint, args.materializeDest);
+    console.log(`Materialized schema into ${args.materializeDest}.`);
+    return;
+  }
   const result = runComparison(args);
   if (!result.ok) {
     console.error('Elixir data compatibility check failed:');

@@ -216,26 +216,25 @@ test('snapshot creation fails closed on a busy checkpoint and records integrity 
 test('isolated preflight classifies startup state before its mutating protocol probe', () => {
   assert.match(source, /busy preflight WAL checkpoint/);
   assert.match(source, /preflight SQLite quick_check failed/);
-  assert.match(source, /protocol probe deliberately creates a[\s\S]*disposable user, vault, and run/);
+  assert.match(source, /Classify only startup DDL/);
   assertOrderedWithin(
     functionBody('preflight_candidate'),
-    "    'case Application.ensure_all_started(:cascade_elixir) do {:ok, _} -> :ok; other -> raise inspect(other) end'",
-    '  checkpoint_preflight_clone',
-    '  start_preflight_server',
-    '  docker rm -f "$PREFLIGHT_CONTAINER" >/dev/null',
-    '  checkpoint_preflight_clone',
-    '  local checker=(',
+    '  dump_live_schema "$PREFLIGHT_DIR/before-schema.json"',
+    '    --materialize-schema /preflight/before-schema.json \\',
+    '  boot_preflight_database',
+    '    --schema-only --before-schema /preflight/before-schema.json --after /preflight/after.db',
     '  start_preflight_server',
     '  docker run --rm --network host --entrypoint node \\',
     '  docker rm -f "$PREFLIGHT_CONTAINER" >/dev/null',
   );
   assert.match(functionBody('start_preflight_server'), /verify_container_runtime_shape "\$PREFLIGHT_CONTAINER" "isolated candidate preflight"/);
+  assert.match(functionBody('verify_migration_clone'), /--before \/preflight\/before\.db --after \/preflight\/after\.db/);
 });
 
 test('preflight and live cutover bind the complete vault and QMD corpus without exemptions', () => {
-  assert.match(source, /before-data\/vaults/);
-  assert.match(source, /before-data\/qmd/);
-  assert.match(source, /--before-root \/preflight\/before-data --after-root \/preflight\/after-data/);
+  assert.match(functionBody('verify_migration_clone'), /before-data\/vaults/);
+  assert.match(functionBody('verify_migration_clone'), /before-data\/qmd/);
+  assert.match(functionBody('verify_migration_clone'), /--before-root \/preflight\/before-data --after-root \/preflight\/after-data/);
   assert.match(source, /"\$SNAPSHOT_DIR\/corpus\/vaults"/);
   assert.match(source, /"\$SNAPSHOT_DIR\/corpus\/qmd"/);
   assert.match(source, /--before-root \/snapshot\/corpus --after-root \/live-corpus/);
@@ -245,11 +244,12 @@ test('preflight and live cutover bind the complete vault and QMD corpus without 
   assert.match(source, /CASCADE_SQLITE_SNAPSHOT_TMPDIR=\/sqlite-scratch/);
   assert.match(source, /sqlite-scratch:\/sqlite-scratch/);
   assert.doesNotMatch(source, /allow-derived|ignore.*index\.sqlite/iu);
-  assert.match(source, /"\$\{checker\[@\]\}" --require-identical/);
-  assert.match(source, /Candidate boot is state-identical; rolling cutover is eligible/);
+  assert.match(source, /Candidate boot is schema-identical; rolling cutover is eligible/);
   assert.match(source, /--schema-only/);
   assert.match(source, /verify_live_schema_identity "\$ROLLING_CONTAINER"/);
-  assert.match(source, /verify_live_schema_identity "\$CONTAINER_NAME"/);
+  assert.doesNotMatch(source, /verify_live_schema_identity "\$CONTAINER_NAME"/);
+  assert.doesNotMatch(functionBody('preflight_candidate'), /--require-identical/);
+  assert.doesNotMatch(functionBody('verify_live_schema_identity'), /backup_running_database/);
 });
 
 test('production gives runners ten minutes to reclaim after gated candidate startup', () => {

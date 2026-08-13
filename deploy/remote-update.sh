@@ -538,25 +538,32 @@ start_preflight_server() {
   wait_for_url "http://127.0.0.1:$PREFLIGHT_PORT/api/health" 60 "candidate preflight"
 }
 
-preflight_candidate() {
-  echo "==> Running isolated data and protocol preflight"
-  PREFLIGHT_DIR="$(mktemp -d "$DATA_DIR/.deploy-preflight.XXXXXX")"
-  chown 1000:1000 "$PREFLIGHT_DIR"
+dump_sqlite_schema() {
+  local source="${1:?schema source database is required}"
+  local destination="${2:?schema dump path is required}"
+  docker run --rm --network none --entrypoint node \
+    -v "$(dirname "$source"):/schema-source:ro" \
+    "$CANDIDATE_IMAGE" /app/scripts/check-elixir-data-compat.mjs \
+    --dump-schema "/schema-source/$(basename "$source")" \
+    > "$destination"
+}
 
-  if docker ps --format '{{.Names}}' | grep -Fxq "$CONTAINER_NAME"; then
-    backup_running_database "$PREFLIGHT_DIR/before.db"
-  else
-    cp --reflink=auto --sparse=always "$LIVE_DB" "$PREFLIGHT_DIR/before.db"
-    chown 1000:1000 "$PREFLIGHT_DIR/before.db"
+dump_live_schema() {
+  local destination="${1:?schema dump path is required}"
+  # The running production image may predate this checker. Read the live
+  # database with the candidate image while sharing the WAL directory.
+  if container_running "$CONTAINER_NAME"; then
+    docker run --rm --network none --volumes-from "$CONTAINER_NAME" --entrypoint node \
+      "$CANDIDATE_IMAGE" /app/scripts/check-elixir-data-compat.mjs \
+      --dump-schema /data/docs.db > "$destination"
+    return
   fi
-  cp --reflink=auto --sparse=always "$PREFLIGHT_DIR/before.db" "$PREFLIGHT_DIR/after.db"
-  mkdir -p "$PREFLIGHT_DIR/before-data" "$PREFLIGHT_DIR/after-data" "$PREFLIGHT_DIR/sqlite-scratch"
-  cp -a --reflink=auto -- "$DATA_DIR/.cascade/vaults" "$PREFLIGHT_DIR/before-data/vaults"
-  cp -a --reflink=auto -- "$DATA_DIR/.cascade/qmd" "$PREFLIGHT_DIR/before-data/qmd"
-  cp -a --reflink=auto -- "$PREFLIGHT_DIR/before-data/vaults" "$PREFLIGHT_DIR/after-data/vaults"
-  cp -a --reflink=auto -- "$PREFLIGHT_DIR/before-data/qmd" "$PREFLIGHT_DIR/after-data/qmd"
-  chown -R 1000:1000 "$PREFLIGHT_DIR"
+  dump_sqlite_schema "$LIVE_DB" "$destination"
+}
 
+boot_preflight_database() {
+  mkdir -p "$PREFLIGHT_DIR/after-data/vaults" "$PREFLIGHT_DIR/after-data/qmd"
+  chown -R 1000:1000 "$PREFLIGHT_DIR"
   docker run --rm --network none --env-file "$ROOT/.env" \
     -e CASCADE_SERVER=false \
     -e CASCADE_QMD_WORKER_ENABLED=false \
@@ -567,38 +574,65 @@ preflight_candidate() {
     -v "$PREFLIGHT_DIR:/preflight" \
     "$CANDIDATE_IMAGE" eval \
     'case Application.ensure_all_started(:cascade_elixir) do {:ok, _} -> :ok; other -> raise inspect(other) end'
-
   checkpoint_preflight_clone
+}
 
-  # Classify only startup effects. The protocol probe deliberately creates a
-  # disposable user, vault, and run, so running it before this comparison made
-  # every routine release look state-changing and forced the 503 fallback.
-  start_preflight_server
-  check_engine_io "http://127.0.0.1:$PREFLIGHT_PORT"
-  docker rm -f "$PREFLIGHT_CONTAINER" >/dev/null
-  checkpoint_preflight_clone
-
-  local checker=(
-    docker run --rm --network none --entrypoint node
-    -e CASCADE_SQLITE_SNAPSHOT_TMPDIR=/sqlite-scratch
-    -v "$PREFLIGHT_DIR:/preflight:ro"
-    -v "$PREFLIGHT_DIR/sqlite-scratch:/sqlite-scratch"
-    "$CANDIDATE_IMAGE" /app/scripts/check-elixir-data-compat.mjs
-    --before /preflight/before.db --after /preflight/after.db
-    --before-root /preflight/before-data --after-root /preflight/after-data
-  )
-  if "${checker[@]}" --require-identical; then
-    ROLLING_SAFE=1
-    echo "==> Candidate boot is state-identical; rolling cutover is eligible"
+verify_migration_clone() {
+  echo "==> Candidate boot mutates schema; verifying maintenance-cutover compatibility"
+  mkdir -p "$PREFLIGHT_DIR/before-data" "$PREFLIGHT_DIR/after-data" "$PREFLIGHT_DIR/sqlite-scratch"
+  if container_running "$CONTAINER_NAME"; then
+    backup_running_database "$PREFLIGHT_DIR/before.db"
   else
-    echo "==> Candidate boot mutates persistent state; verifying maintenance-cutover compatibility"
-    "${checker[@]}"
+    cp --reflink=auto --sparse=always "$LIVE_DB" "$PREFLIGHT_DIR/before.db"
+    chown 1000:1000 "$PREFLIGHT_DIR/before.db"
+  fi
+  cp --reflink=auto --sparse=always "$PREFLIGHT_DIR/before.db" "$PREFLIGHT_DIR/after.db"
+  cp -a --reflink=auto -- "$DATA_DIR/.cascade/vaults" "$PREFLIGHT_DIR/before-data/vaults"
+  cp -a --reflink=auto -- "$DATA_DIR/.cascade/qmd" "$PREFLIGHT_DIR/before-data/qmd"
+  rm -rf "$PREFLIGHT_DIR/after-data/vaults" "$PREFLIGHT_DIR/after-data/qmd"
+  cp -a --reflink=auto -- "$PREFLIGHT_DIR/before-data/vaults" "$PREFLIGHT_DIR/after-data/vaults"
+  cp -a --reflink=auto -- "$PREFLIGHT_DIR/before-data/qmd" "$PREFLIGHT_DIR/after-data/qmd"
+  boot_preflight_database
+  docker run --rm --network none --entrypoint node \
+    -e CASCADE_SQLITE_SNAPSHOT_TMPDIR=/sqlite-scratch \
+    -v "$PREFLIGHT_DIR:/preflight:ro" \
+    -v "$PREFLIGHT_DIR/sqlite-scratch:/sqlite-scratch" \
+    "$CANDIDATE_IMAGE" /app/scripts/check-elixir-data-compat.mjs \
+    --before /preflight/before.db --after /preflight/after.db \
+    --before-root /preflight/before-data --after-root /preflight/after-data
+}
+
+preflight_candidate() {
+  echo "==> Running isolated schema and protocol preflight"
+  PREFLIGHT_DIR="$(mktemp -d "$DATA_DIR/.deploy-preflight.XXXXXX")"
+  chown 1000:1000 "$PREFLIGHT_DIR"
+  mkdir -p "$PREFLIGHT_DIR/after-data" "$PREFLIGHT_DIR/sqlite-scratch"
+
+  dump_live_schema "$PREFLIGHT_DIR/before-schema.json"
+  docker run --rm --network none --entrypoint node \
+    -v "$PREFLIGHT_DIR:/preflight" \
+    "$CANDIDATE_IMAGE" /app/scripts/check-elixir-data-compat.mjs \
+    --materialize-schema /preflight/before-schema.json \
+    --materialize-dest /preflight/after.db
+  chown 1000:1000 "$PREFLIGHT_DIR/after.db"
+
+  # Classify only startup DDL. The protocol probe creates disposable rows, so
+  # it must not participate in the rolling-safe decision.
+  boot_preflight_database
+  if docker run --rm --network none --entrypoint node \
+    -v "$PREFLIGHT_DIR:/preflight:ro" \
+    "$CANDIDATE_IMAGE" /app/scripts/check-elixir-data-compat.mjs \
+    --schema-only --before-schema /preflight/before-schema.json --after /preflight/after.db
+  then
+    ROLLING_SAFE=1
+    echo "==> Candidate boot is schema-identical; rolling cutover is eligible"
+  else
+    verify_migration_clone
     ROLLING_SAFE=0
   fi
 
-  # Exercise write/realtime behavior only after the startup identity decision;
-  # all resulting state remains confined to the disposable preflight clone.
   start_preflight_server
+  check_engine_io "http://127.0.0.1:$PREFLIGHT_PORT"
   docker run --rm --network host --entrypoint node \
     "$CANDIDATE_IMAGE" /app/deploy/preflight-client.mjs "http://127.0.0.1:$PREFLIGHT_PORT"
   docker rm -f "$PREFLIGHT_CONTAINER" >/dev/null
@@ -665,15 +699,14 @@ verify_live_database() {
 
 verify_live_schema_identity() {
   local container="${1:?container is required}"
-  local destination="$PREFLIGHT_DIR/rolling-live-after-$container.db"
-  backup_running_database "$destination" "$container"
-  docker run --rm --network none --user 0:0 --entrypoint node \
-    -e CASCADE_SQLITE_SNAPSHOT_TMPDIR=/sqlite-scratch \
+  docker exec "$container" node /app/scripts/check-elixir-data-compat.mjs \
+    --dump-schema /data/docs.db > "$PREFLIGHT_DIR/live-schema-$container.json"
+  docker run --rm --network none --entrypoint node \
     -v "$PREFLIGHT_DIR:/preflight:ro" \
-    -v "$PREFLIGHT_DIR/sqlite-scratch:/sqlite-scratch" \
     "$CANDIDATE_IMAGE" /app/scripts/check-elixir-data-compat.mjs \
-    --before /preflight/before.db --after "/preflight/rolling-live-after-$container.db" \
-    --schema-only
+    --schema-only \
+    --before-schema /preflight/before-schema.json \
+    --after-schema "/preflight/live-schema-$container.json"
 }
 
 verify_authenticated_live_candidate() {
@@ -887,7 +920,6 @@ rolling_cutover() {
   verify_container_runtime_shape "$CONTAINER_NAME" "canonical rolling candidate"
   wait_for_url "$HEALTH_URL" 90 "canonical rolling candidate"
   check_engine_io "http://127.0.0.1:3000"
-  verify_live_schema_identity "$CONTAINER_NAME"
   verify_authenticated_live_candidate "$CONTAINER_NAME" "http://127.0.0.1:3000"
 
   local running_image_id

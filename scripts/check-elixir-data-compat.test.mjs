@@ -4,7 +4,13 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import Database from 'better-sqlite3';
-import { databaseSnapshot, parseArgs, runComparison } from './check-elixir-data-compat.mjs';
+import {
+  databaseSnapshot,
+  materializeSchemaFingerprint,
+  parseArgs,
+  readSchemaFingerprint,
+  runComparison,
+} from './check-elixir-data-compat.mjs';
 
 function fixture() {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-data-compat-'));
@@ -138,6 +144,45 @@ test('rolling live verification permits row churn but rejects schema drift', () 
     const result = runComparison({ ...files, schemaOnly: true });
     assert.equal(result.ok, false);
     assert.ok(result.failures.includes('database schema changed'));
+  } finally {
+    fs.rmSync(files.directory, { recursive: true, force: true });
+  }
+});
+
+test('schema fingerprints ignore row bodies and rematerialize DDL only', () => {
+  const files = fixture();
+  try {
+    const before = new Database(files.before);
+    before.exec(`
+      CREATE TABLE cascade_elixir_schema_migrations (
+        version INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        checksum TEXT NOT NULL,
+        applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO cascade_elixir_schema_migrations(version,name,checksum)
+      VALUES (1, 'core_node_schema_compatibility', 'b844b7f41e5377d5ce8ff5dd3c3cc0951cab766773f5bf0816aaec45864d338a');
+    `);
+    before.close();
+    const fingerprint = readSchemaFingerprint(files.before);
+    const clone = path.join(files.directory, 'schema-only.db');
+    materializeSchemaFingerprint(fingerprint, clone);
+    const cloneDb = new Database(clone);
+    assert.deepEqual(
+      cloneDb.prepare('SELECT COUNT(*) AS count FROM notes').get(),
+      { count: 0 },
+    );
+    assert.deepEqual(
+      cloneDb.prepare('SELECT version, name, checksum FROM cascade_elixir_schema_migrations').all(),
+      fingerprint.migrations,
+    );
+    cloneDb.close();
+    assert.equal(runComparison({ beforeSchema: files.before, after: clone, schemaOnly: true }).ok, true);
+
+    const writer = new Database(files.before);
+    writer.prepare('INSERT INTO notes VALUES (?, ?, ?)').run('note-2', 1, 'more');
+    writer.close();
+    assert.equal(runComparison({ before: files.before, after: clone, schemaOnly: true }).ok, true);
   } finally {
     fs.rmSync(files.directory, { recursive: true, force: true });
   }
