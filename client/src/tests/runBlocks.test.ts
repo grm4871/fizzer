@@ -181,6 +181,43 @@ describe('mergeRemoteChatMessage local-first live rows', () => {
     expect(next[0].seq).toBe(20);
   });
 
+  it('does not delete a human prompt when an empty agent shell reuses its id', () => {
+    const local = chatMessage('m-human', {
+      author: 'alice',
+      body: '@sol please ship the fix',
+    });
+    const remote = chatMessage('m-human', {
+      author: 'Sol',
+      body: 'Thinking...',
+      agentId: 'codex',
+      runId: 4,
+    });
+    const next = applyRemoteChatMessage([local], remote);
+    expect(next).toHaveLength(1);
+    expect(next[0].body).toBe('@sol please ship the fix');
+    expect(next[0].agentId).toBeUndefined();
+    expect(next[0].author).toBe('alice');
+  });
+
+  it('does not turn a human prompt into an agent row', () => {
+    const local = chatMessage('m-human-2', {
+      author: 'alice',
+      body: 'look at this',
+    });
+    const remote = chatMessage('m-human-2', {
+      author: 'Sol',
+      body: 'I looked at this.',
+      agentId: 'codex',
+      registrationId: 'reg-sol',
+      seq: 9,
+    });
+    const merged = mergeRemoteChatMessage(local, remote);
+    expect(merged.body).toBe('look at this');
+    expect(merged.author).toBe('alice');
+    expect(merged.agentId).toBeUndefined();
+    expect(merged.seq).toBe(9);
+  });
+
   it('still removes a settled empty agent shell when the local row is not live', () => {
     const local = chatMessage('m7', {
       body: 'Thinking...',

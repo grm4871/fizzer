@@ -246,6 +246,14 @@ export function mergeRemoteChatMessage(local: ChatMessage, remote: ChatMessage):
 
   const localLive = isLiveAgentStatus(local.status);
   const remoteLive = isLiveAgentStatus(remote.status);
+  const localIsHuman = !local.agentId && !local.registrationId;
+  const remoteIsAgent = Boolean(remote.agentId || remote.registrationId);
+  // A fold/update for an agent shell must never rewrite a human prompt that
+  // happens to share the id, or the user's message vanishes when the agent
+  // starts (work-trace treats agentId rows as agent traffic).
+  if (localIsHuman && remoteIsAgent) {
+    return withSeq(local);
+  }
   // Owner desktop paints /runs immediately. A lagging fold must not rewind
   // that row to "Thinking..." or a shorter body. Cancel/fail from another
   // client is terminal and still wins below.
@@ -293,6 +301,9 @@ export function applyRemoteChatMessage(existing: ChatMessage[], remote: ChatMess
     && isLiveAgentPlaceholder(remote.body),
   );
   if (emptyAgentShell) {
+    const localIsHuman = Boolean(local && !local.agentId && !local.registrationId);
+    // Never drop a human prompt. Dual-post suppress only applies to agent shells.
+    if (localIsHuman) return existing;
     // Dual-post suppress: drop a settled empty shell unless this renderer is
     // still streaming a real answer for that id.
     if (local && isLiveAgentStatus(local.status) && !isLiveAgentPlaceholder(local.body)) {
