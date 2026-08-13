@@ -124,7 +124,7 @@ test('authenticated production smoke runs directly against both rolling candidat
   assert.match(source, /Running authenticated production read\/realtime smoke against \$container/);
   assert.match(source, /release eval` starts a separate VM, not an RPC session/);
   assert.match(source, /new Database\("\/data\/docs\.db", \{ readonly: true, fileMustExist: true \}\)/);
-  assert.match(source, /jwt\.sign\(\{ \.\.\.user, access: "user" \}/);
+  assert.match(source, /createHmac\("sha256", process\.env\.JWT_SECRET\)/);
   assert.match(source, /authenticated-live-smoke\.mjs "\$origin"/);
   assert.doesNotMatch(source, /runner:register/);
   assert.match(dockerfile, /COPY --chown=node:node deploy\/authenticated-live-smoke\.mjs \.\/deploy\/authenticated-live-smoke\.mjs/);

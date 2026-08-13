@@ -684,11 +684,11 @@ verify_authenticated_live_candidate() {
   local probe_token
   # `release eval` starts a separate VM, not an RPC session in the running
   # release, so its Repo is intentionally absent. Mint the ephemeral parity
-  # token from the same immutable image's pinned Node JWT/SQLite libraries;
-  # the live Elixir edge still performs every authorization check below.
+  # token from the image's pinned SQLite library and Node's HMAC; the live
+  # Elixir edge still performs every authorization check below.
   probe_token="$(docker exec "$container" node --input-type=module -e '
+    import crypto from "node:crypto";
     import Database from "better-sqlite3";
-    import jwt from "jsonwebtoken";
     const db = new Database("/data/docs.db", { readonly: true, fileMustExist: true });
     try {
       const user = db.prepare(`
@@ -700,7 +700,10 @@ verify_authenticated_live_candidate() {
         ORDER BY u.id ASC LIMIT 1
       `).get("cascade://chat-channel%", "cascade://chat-channel%");
       if (!user) throw new Error("production has no owner account with an accessible chat channel");
-      process.stdout.write(jwt.sign({ ...user, access: "user" }, process.env.JWT_SECRET, { expiresIn: "7d" }));
+      const now = Math.floor(Date.now() / 1000);
+      const encode = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
+      const body = `${encode({ alg: "HS256", typ: "JWT" })}.${encode({ ...user, access: "user", iat: now, exp: now + 7 * 24 * 60 * 60 })}`;
+      process.stdout.write(`${body}.${crypto.createHmac("sha256", process.env.JWT_SECRET).update(body).digest("base64url")}`);
     } finally { db.close(); }
   ')"
   if [[ -z "$probe_token" ]]; then
