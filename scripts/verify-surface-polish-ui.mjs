@@ -329,12 +329,16 @@ try {
   await page.keyboard.press('Escape');
 
   await page.getByTitle('Messages').click();
-  const connect = page.getByRole('dialog', { name: 'Connect' });
+  const connect = page.getByRole('dialog', { name: 'Messages' });
   await auditSurface(page, 'connect-messages', connect, {
-    bodyCopy: '.discovery-dms-header p', control: '.discovery-dms-tabs button', minControlHeight: 44,
+    bodyCopy: '.discovery-dms-header p', control: '.discovery-dms-header .btn-icon', minControlHeight: 38,
   });
-  await connect.getByRole('tab', { name: /Explore vaults/ }).click();
-  await auditSurface(page, 'connect-explore', connect, {
+  await page.keyboard.press('Escape');
+
+  await page.getByRole('button', { name: /Vault switcher; current vault/ }).click();
+  await page.getByRole('menuitem', { name: /Browse public vaults/ }).click();
+  const explore = page.getByRole('dialog', { name: 'Explore vaults' });
+  await auditSurface(page, 'connect-explore', explore, {
     bodyCopy: '.public-vault-purpose', control: '.discovery-search', minControlHeight: 44,
   });
   await page.keyboard.press('Escape');
@@ -372,7 +376,7 @@ try {
   await guestPage.goto(appUrl, { waitUntil: 'networkidle' });
   await guestPage.getByRole('button', { name: /Vault switcher/ }).click();
   await guestPage.getByRole('menuitem', { name: 'Browse public vaults' }).click();
-  const guestConnect = guestPage.getByRole('dialog', { name: 'Connect' });
+  const guestConnect = guestPage.getByRole('dialog', { name: 'Explore vaults' });
   await guestConnect.getByRole('button', { name: 'View Northstar Studio details' }).click();
   await guestConnect.getByRole('button', { name: 'Report vault' }).click();
   await auditSurface(guestPage, 'report', guestPage.getByRole('dialog', { name: 'Report Northstar Studio' }), {
@@ -403,8 +407,8 @@ try {
   await auditSettingsTabs(mobile, 'mobile-settings');
   await mobile.keyboard.press('Escape');
   await mobile.getByTitle('Messages').click();
-  await auditSurface(mobile, 'mobile-connect', mobile.getByRole('dialog', { name: 'Connect' }), {
-    bodyCopy: '.discovery-dms-header p', control: '.discovery-dms-tabs button', minControlHeight: 42,
+  await auditSurface(mobile, 'mobile-connect', mobile.getByRole('dialog', { name: 'Messages' }), {
+    bodyCopy: '.discovery-dms-header p', control: '.discovery-dms-header .btn-icon', minControlHeight: 38,
   });
   await mobile.keyboard.press('Escape');
   await mobile.evaluate(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'F', ctrlKey: true, shiftKey: true })));
