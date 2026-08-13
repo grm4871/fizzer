@@ -2,7 +2,7 @@
 /**
  * Rebuild native Node modules for the current runtime.
  *
- * Cascade uses better-sqlite3 and bcrypt in the API process. After a Node
+ * Cascade uses better-sqlite3 in helper scripts and the QMD worker. After a Node
  * upgrade, or when prebuilds do not match, a native binary can fail with:
  *
  *   was compiled against a different Node.js version using NODE_MODULE_VERSION N
@@ -30,7 +30,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const ROOT = path.resolve(__dirname, '..');
-const ROOT_NATIVE_PACKAGES = ['better-sqlite3', 'bcrypt'];
+const ROOT_NATIVE_PACKAGES = ['better-sqlite3'];
 
 function log(msg) {
   console.log(`[rebuild-natives] ${msg}`);
@@ -145,7 +145,7 @@ function printRecoveryHint(err) {
   if (err && err.message) warn(err.message);
   warn('Recovery:');
   warn('  1) npm run rebuild:native');
-  warn('  2) or: npm rebuild better-sqlite3 bcrypt');
+  warn('  2) or: npm rebuild better-sqlite3');
   if (process.platform === 'darwin') {
     warn('  macOS node-gyp tip: npm_config_python=/usr/bin/python3 npm run rebuild:native');
   }

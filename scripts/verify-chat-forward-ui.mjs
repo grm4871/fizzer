@@ -11,6 +11,7 @@
 import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pickPort } from './lib/test-ports.mjs';
+import { spawnElixirApi } from './lib/elixir-api.mjs';
 
 // Ports come from the OS by default: a leftover dev server on a hardcoded
 // port used to surface as an unexplained startup timeout.
@@ -41,17 +42,13 @@ async function must(url, options = {}) {
 }
 
 function startServer() {
-  const child = spawn('node', ['dist/index.js'], {
-    cwd: root,
-    env: {
-      ...process.env,
-      API_PORT: String(API_PORT),
-      API_HOST: '127.0.0.1',
-      DOCS_DB_PATH: DB_PATH,
+  const child = spawnElixirApi(root, {
+    port: API_PORT,
+    dbPath: DB_PATH,
+    extraEnv: {
       JWT_SECRET: 'chatforward-ui-secret',
       CASCADE_ALLOW_OPEN_REGISTRATION: '1',
     },
-    stdio: ['ignore', 'pipe', 'pipe'],
   });
   child.stderr.on('data', (c) => process.stderr.write(`[server-err] ${c}`));
   return child;

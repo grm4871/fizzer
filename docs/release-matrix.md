@@ -46,15 +46,15 @@ Where a row above has a command, run the command instead of reasoning about the 
 | Tabs, panes, menus, Superkanban | `npm run verify:tab-menus` | Every `+`/tab menu item present (catches a prop that never reached the component), menu survives the opening right-click, menu unclipped, Superkanban routes to a populated board, Close tab works |
 | Agent start and run lifecycle | `npm run test:desktop-runner` | Run reclaim, replay, duplicate-process avoidance |
 | Vault switcher, vault settings | `npm run verify:vault-rename-ui` | Rename reaches `PATCH /api/vaults/:id` and updates the switcher, non-owners get neither the control nor the API, and the agent-memory preference lives in account settings |
-| API, persistence, migrations | `npm run test:server` | Fresh **and** upgraded databases: every column the writers use exists after migration, legacy rows survive, and writes still work against a migrated table |
-| Elixir backend cutover | `npm run test:release:backend` | Sequential, fail-closed `mix check`; Node contract and Elixir route inventories; data compatibility; six unchanged Elixir e2es; Node-vs-Elixir differential; rollback, nginx edge, load-driver, monitor, and protocol regression suites |
+| API, persistence, migrations | `npm run test:elixir:mix-check` and `npm run test:elixir:data-parity` | Fresh **and** upgraded databases: every column the writers use exists after migration, legacy rows survive, and writes still work against a migrated table |
+| Elixir backend | `npm run test:release:backend` | Sequential, fail-closed `mix check`; Elixir contract and route inventories; data compatibility; e2es; rollback, nginx edge, load-driver, monitor, and protocol regression suites |
 | Deployment/configuration | `journalctl -u cascade-autodeploy -f` on the host, then grep the served bundle | Deploy completion plus the asset `cscd.online` really serves (see AGENTS.md) |
 
 Still manual, by nature: Electron lifecycle (`Ctrl/Cmd+R` during an active run), Android/foldable layouts, background/resume and offline behavior, and any production exercise requiring a real account.
 
 The checkout gate proves behavioral parity and data preservation; it does not certify production capacity. Run the production-shaped 10,000-user capacity test and 5,000-user two-hour durability soak only when changing concurrency, dispatch, realtime/presence, runner lifecycle, database contention, runtime resource limits, or deployment infrastructure. Those gates remain additive and bind to one exact image ID. UI presentation, Electron packaging, documentation, and ordinary contract/route parity fixes use the routine staged-image path. `deploy/remote-update.sh` never rebuilds: it validates the revision label, embedded route gate, production-shaped preflight, snapshot/rollback, authenticated smoke, and reopened edge on every cutover; when capacity certification is present it must match the exact image.
 
-Two failure classes are invisible to `npm run build:vps`, so never treat a green build as coverage: the client bundle is **not** type-checked (a misplaced JSX attribute compiles and ships), and `server/*.test.ts` is not part of `npm test` — it needs `npm run test:server`.
+One failure class is invisible to `npm run build:vps`, so never treat a green build as coverage: the client bundle is **not** type-checked (a misplaced JSX attribute compiles and ships). Backend coverage is `mix check` plus the Elixir e2e and contract scripts, not `npm test`.
 
 ## Environment and lifecycle coverage
 

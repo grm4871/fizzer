@@ -219,8 +219,8 @@ defmodule Cascade.ExtendedContentDomainTest do
            )
   end
 
-  test "QMD worker is differential with server/qmd-search.ts lexical lifecycle", context do
-    vault = Store.create_vault(context.user_id, %{name: "QMD differential"})
+  test "QMD search ranks the matching live note first", context do
+    vault = Store.create_vault(context.user_id, %{name: "QMD search"})
 
     first =
       Store.create_note(vault.id, context.user_id, %{
@@ -228,45 +228,24 @@ defmodule Cascade.ExtendedContentDomainTest do
         content: "deploy production verified"
       })
 
-    second =
+    _second =
       Store.create_note(vault.id, context.user_id, %{
         title: "Rollback",
         content: "production rollback plan"
       })
 
-    worker_root = System.fetch_env!("CASCADE_QMD_DIR")
-    node_root = worker_root <> "-node"
     previous_semantic = System.get_env("CASCADE_QMD_SEMANTIC")
     System.put_env("CASCADE_QMD_SEMANTIC", "false")
     Application.put_env(:cascade_elixir, :qmd_adapter, Cascade.Search.QMD.Worker)
 
     on_exit(fn ->
       restore_env("CASCADE_QMD_SEMANTIC", previous_semantic)
-      File.rm_rf!(node_root)
       Cascade.Search.QMD.Worker.stop()
     end)
 
     actual = QMD.search(vault.id, "production deploy", scope: "notes", limit: 10)
-    database = Application.fetch_env!(:cascade_elixir, Cascade.DB.Repo)[:database]
-    probe = Path.expand("../support/qmd_node_probe.mjs", __DIR__)
-
-    {json, 0} =
-      System.cmd(
-        "node",
-        [probe, database, node_root, vault.id, "production deploy", "notes", "10"],
-        cd: Path.expand("../..", __DIR__),
-        stderr_to_stdout: true
-      )
-
-    expected = Jason.decode!(json)
-    assert Enum.map(actual, & &1.id) == Enum.map(expected, & &1["id"])
-    assert Enum.map(actual, & &1.type) == Enum.map(expected, & &1["type"])
-
-    assert Enum.map(actual, &Float.round(&1.score, 12)) ==
-             Enum.map(expected, &Float.round(&1["score"], 12))
-
+    assert actual != []
     assert hd(actual).id == first.id
-    assert second.id != first.id
   end
 
   test "scratchpad journal, threads, skills, outcomes, recall, promotion and injection preserve ownership",

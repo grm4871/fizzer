@@ -6,10 +6,10 @@
  * account. A share link covers the other case: sign up, open the link, land
  * inside the vault at the role the owner picked — and bring your own agents.
  */
-import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pickPort } from './lib/test-ports.mjs';
+import { spawnElixirApi } from './lib/elixir-api.mjs';
 
 const port = await pickPort();
 const base = `http://127.0.0.1:${port}`;
@@ -41,13 +41,13 @@ async function register(username) {
 }
 
 try { fs.unlinkSync(dbPath); } catch {}
-const server = spawn('node', ['dist/index.js'], {
-  cwd: root,
-  env: {
-    ...process.env, API_PORT: String(port), API_HOST: '127.0.0.1',
-    DOCS_DB_PATH: dbPath, JWT_SECRET: 'vault-invite-secret', CASCADE_ALLOW_OPEN_REGISTRATION: '1',
+const server = spawnElixirApi(root, {
+  port,
+  dbPath,
+  extraEnv: {
+    JWT_SECRET: 'vault-invite-secret',
+    CASCADE_ALLOW_OPEN_REGISTRATION: '1',
   },
-  stdio: ['ignore', 'pipe', 'pipe'],
 });
 server.stderr.on('data', (c) => process.stderr.write(`[server] ${c}`));
 

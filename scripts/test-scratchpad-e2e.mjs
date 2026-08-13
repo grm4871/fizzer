@@ -16,14 +16,14 @@
  *      record after outcomes are reported;
  *   7. promotion: a promoted skill becomes visible to a different agent key.
  *
- * Requires a built server (npm run build); pass --build to build first.
+ * Starts the Elixir API with mix.
  */
 
-import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { io } from 'socket.io-client';
+import { spawnElixirApi } from './lib/elixir-api.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, '..');
@@ -48,7 +48,7 @@ async function fetchJson(url, options = {}) {
   return data;
 }
 
-async function waitForHealth(timeoutMs = 15000) {
+async function waitForHealth(timeoutMs = 45000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {
@@ -71,35 +71,20 @@ async function waitFor(predicate, label, timeoutMs = 10000) {
 }
 
 async function main() {
-  if (process.argv.includes('--build')) {
-    console.log('[e2e] Building server...');
-    const build = spawn('npm', ['run', 'build'], { cwd: root, stdio: 'inherit', shell: true });
-    await new Promise((resolve, reject) => {
-      build.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`build failed: ${code}`))));
-    });
-  }
-  if (!fs.existsSync(path.join(root, 'dist', 'index.js'))) {
-    throw new Error('dist/index.js missing — run with --build or npm run build first');
-  }
-
   // Remove WAL/SHM too — a stale -wal beside a fresh .db resurrects the
   // previous run's data on open.
   for (const suffix of ['', '-wal', '-shm']) {
     try { fs.unlinkSync(`${DB_PATH}${suffix}`); } catch { /* fresh anyway */ }
   }
   console.log('[e2e] Starting server on', API_BASE);
-  const server = spawn('node', ['dist/index.js'], {
-    cwd: root,
-    env: {
-      ...process.env,
-      API_PORT: String(API_PORT),
-      API_HOST: '127.0.0.1',
-      DOCS_DB_PATH: DB_PATH,
+  const server = spawnElixirApi(root, {
+    port: API_PORT,
+    dbPath: DB_PATH,
+    extraEnv: {
       JWT_SECRET: 'e2e-test-secret',
       // Low threshold so the due-nudge fires within the test window.
       SCRATCHPAD_DUE_ENTRIES: '5',
     },
-    stdio: ['ignore', 'pipe', 'pipe'],
   });
   server.stdout.on('data', (chunk) => process.stdout.write(`[server] ${chunk}`));
   server.stderr.on('data', (chunk) => process.stderr.write(`[server-err] ${chunk}`));

@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pickPort } from './lib/test-ports.mjs';
+import { spawnElixirApi } from './lib/elixir-api.mjs';
 
 const apiPort = await pickPort();
 const root = new URL('..', import.meta.url).pathname;
@@ -34,19 +35,14 @@ for (const target of [dbPath, vaultRoot]) {
   try { fs.rmSync(target, { recursive: true, force: true }); } catch {}
 }
 
-const server = spawn('node', ['dist/index.js'], {
-  cwd: root,
-  env: {
-    ...process.env,
-    API_PORT: String(apiPort),
-    API_HOST: '127.0.0.1',
-    DOCS_DB_PATH: dbPath,
-    CASCADE_VAULTS_BASE_DIR: vaultRoot,
-    JWT_SECRET: 'updates-ui-secret',
-    CASCADE_ALLOW_OPEN_REGISTRATION: '1',
-  },
-  stdio: ['ignore', 'pipe', 'pipe'],
-});
+const server = spawnElixirApi(root, {
+    port: apiPort,
+    dbPath: dbPath,
+    extraEnv: {
+      JWT_SECRET: 'updates-ui-secret',
+      CASCADE_ALLOW_OPEN_REGISTRATION: '1',
+    },
+  });
 server.stderr.on('data', (chunk) => process.stderr.write(`[server] ${chunk}`));
 
 let browser;

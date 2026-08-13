@@ -6,8 +6,7 @@
  * broadcast into the target channel, access control on the target, and the
  * refusals (same channel, unknown message).
  *
- * Uses the real backend selected by CASCADE_TEST_BACKEND (node by default).
- * Build Node first with `npm run build`.
+ * Uses the Elixir API via `scripts/lib/test-backend.mjs`.
  */
 
 import path from 'node:path';

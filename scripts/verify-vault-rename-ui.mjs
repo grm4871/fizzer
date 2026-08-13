@@ -14,6 +14,7 @@
 import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pickPort } from './lib/test-ports.mjs';
+import { spawnElixirApi } from './lib/elixir-api.mjs';
 
 const API_PORT = Number(process.env.TEST_API_PORT) || await pickPort();
 const PREVIEW_PORT = Number(process.env.TEST_PREVIEW_PORT) || await pickPort();
@@ -44,18 +45,14 @@ function check(name, cond, detail = '') {
   else { console.error(`[vault-rename-ui] FAIL ${name}${detail ? ` — ${detail}` : ''}`); failures++; }
 }
 
-const server = spawn('node', ['dist/index.js'], {
-  cwd: root,
-  env: {
-    ...process.env,
-    API_PORT: String(API_PORT),
-    API_HOST: '127.0.0.1',
-    DOCS_DB_PATH: DB_PATH,
-    JWT_SECRET: 'vault-rename-secret',
-    CASCADE_ALLOW_OPEN_REGISTRATION: '1',
-  },
-  stdio: ['ignore', 'pipe', 'pipe'],
-});
+const server = spawnElixirApi(root, {
+    port: API_PORT,
+    dbPath: DB_PATH,
+    extraEnv: {
+      JWT_SECRET: 'vault-rename-secret',
+      CASCADE_ALLOW_OPEN_REGISTRATION: '1',
+    },
+  });
 server.stderr.on('data', (c) => process.stderr.write(`[server-err] ${c}`));
 
 const preview = spawn('npm', ['--workspace=client', 'run', 'preview', '--', '--host', '127.0.0.1', '--port', String(PREVIEW_PORT)], {

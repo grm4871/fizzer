@@ -8,7 +8,7 @@ Survey of Cascade multi-tenant, auth, and performance design gaps. **Prefer rede
 
 | ID | Surface | Problem | Architectural direction | Status |
 | --- | --- | --- | --- | --- |
-| H1 | Vault FS paths (`server/vault.ts`) | Folder names were not path-safe; `..` / separators could escape `root_path` | Path segments sanitized; resolve always assert-under-root | **shipped** |
+| H1 | Vault FS paths (`Cascade.Content.Store`) | Folder names were not path-safe; `..` / separators could escape `root_path` | Path segments sanitized; resolve always assert-under-root | **shipped** |
 | H2 | Chat `![[note]]` grants | Auto full-note capability from title mention into channel | Snapshot content at grant time; embeds serve snapshot not live join | **shipped** (snapshot grants) |
 | H3 | Agent JWT | 12h user-shaped token; broad allowlist; agent message patch skips author | Run/vault/channel capability tokens; server-owned authorship | **partial** (agents cannot edit human msgs / reassign author) |
 

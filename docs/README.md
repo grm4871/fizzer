@@ -23,8 +23,7 @@ reviewed with the code they describe.
 | Path | Responsibility |
 | --- | --- |
 | `client/src/` | React renderer, chat and note UI, layout, sockets, and tests |
-| `server/` | Vault, chat, runner, search, privacy, publishing, and memory modules |
-| `index.ts` | Express/Socket.IO composition root and HTTP routes |
+| `backend_elixir/` | OTP HTTP and Socket.IO backend, SQLite, and realtime |
 | `cascade-electron/` | Electron main process, preload bridge, and local runner |
 | `cli-agents/` | Agent adapters and the `cascade-*` helper commands |
 | `android/` | Capacitor Android wrapper |

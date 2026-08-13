@@ -3,6 +3,7 @@
 ## Prerequisites
 
 - Node.js 20 or newer
+- Elixir 1.17+ and Erlang/OTP (for the local API)
 - npm
 - Git
 - Electron-capable desktop session for the full desktop app
@@ -23,17 +24,17 @@ npm install --prefix cascade-electron
 The root package is an npm workspace that includes `client/`. `cascade-electron/`
 is a separate package (desktop shell) and needs its own install.
 
-### Native modules (`better-sqlite3`, `bcrypt`)
+### Native modules (`better-sqlite3`)
 
-These API dependencies compile against the current Node ABI. After a Node
-upgrade, or when Vite shows `ECONNREFUSED` to `localhost:3000` while the backend
-fails with `NODE_MODULE_VERSION`, rebuild:
+Helper scripts and the QMD worker compile `better-sqlite3` against the current
+Node ABI. After a Node upgrade, if those tools fail with
+`NODE_MODULE_VERSION`, rebuild:
 
 ```bash
 npm run rebuild:native
 ```
 
-Root `postinstall` rebuilds these API natives only when a load-time ABI mismatch
+Root `postinstall` rebuilds `better-sqlite3` only when a load-time ABI mismatch
 is detected.
 
 On macOS, if node-gyp fails because Homebrew Python is broken (e.g. `pyexpat`),

@@ -6,8 +6,7 @@
  * channel's source vault), the socket broadcast that removes it from every
  * linked participant's client, and that restricted agent tokens can't delete.
  *
- * Uses the real backend selected by CASCADE_TEST_BACKEND (node by default).
- * Build Node first with `npm run build`.
+ * Uses the Elixir API via `scripts/lib/test-backend.mjs`.
  */
 
 import path from 'node:path';

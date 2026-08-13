@@ -6,7 +6,7 @@ Cascade is one product with four cooperating runtime surfaces:
 React renderer
   |  HTTP + Socket.IO
   v
-Express server  <---->  SQLite + vault files
+Elixir backend  <---->  SQLite + vault files
   ^
   |  /runners relay
   |
@@ -32,30 +32,33 @@ small viewports.
 
 ## Server
 
-`index.ts` is the composition root. It initializes the database, Express,
-Socket.IO namespaces, authentication, routes, publishing, chat streaming, and
-desktop-runner hooks.
+The production and local API is the Elixir OTP application in
+`backend_elixir/`. `Cascade.Application` starts SQLite, domain schema
+bootstrap, Socket.IO-compatible namespaces (`/runs`, `/vault`, `/runners`),
+and the Bandit HTTP listener.
 
-Domain behavior is split across `server/`:
+Domain behavior lives under `backend_elixir/lib/cascade/`:
 
-- `vault.ts` — folders, notes, files, graph data, and vault access;
-- `chat.ts` — channels, messages, members, agent registrations, and run folding;
-- `runner.ts` — run records, events, session lookup, and cancellation;
-- `desktop-runner.ts` — authenticated relay to a user's desktop;
-- `privacy.ts` — private-block redaction and preservation;
-- `scratchpad.ts` — durable agent memory and consolidation;
-- `qmd-search.ts` — hybrid semantic and lexical search;
-- `publish.ts` — public note publishing;
-- `versions.ts` and `noteAssets.ts` — supporting product domains.
+- `content/` — vaults, folders, notes, files, graph data, and access;
+- `chat/` — channels, messages, members, agent registrations, and run folding;
+- `runs/` — run records, events, session lookup, and cancellation;
+- `missions/` — durable chat missions and task projection;
+- `realtime/` — Socket.IO compatibility, presence, and runner relay;
+- `privacy.ex` — private-block redaction and preservation;
+- `scratchpad.ex` — durable agent memory and consolidation;
+- `search/` — hybrid semantic and lexical search via the QMD worker;
+- `publishing/` — public note publishing.
 
-Most API routes are declared in `index.ts`. Treat the route handler and its
-domain module as the source of truth instead of maintaining a duplicated route
-catalog here.
+HTTP routes are declared under `backend_elixir/lib/cascade_web/`. Treat the
+router catalog and its domain module as the source of truth.
+
+A Node QMD worker (`backend_elixir/priv/qmd_worker.mjs`) remains a supervised
+specialization for semantic search. It is not an HTTP backend.
 
 ## Persistence
 
-Cascade uses SQLite through `better-sqlite3`. The server creates and migrates
-its tables at startup in the relevant domain modules.
+Cascade uses SQLite. The Elixir service creates and migrates tables at startup
+through domain schema modules and a checksummed raw-SQL ledger.
 
 Vault notes also have filesystem representations. The database owns product
 metadata and realtime chat state; vault files make note content portable and
@@ -86,7 +89,7 @@ credentials on the user's machine.
 6. Clients render the same server-authoritative state.
 
 Run ownership is durable enough to allow a desktop to reclaim in-flight runs
-after a model-server restart. See `server/desktop-runner.ts` and
+after a model-server restart. See `backend_elixir/lib/cascade/runs/` and
 `client/src/desktopRunnerHost.ts`.
 
 ## Security boundaries

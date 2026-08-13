@@ -5,24 +5,25 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 
+import { elixirApiCommand } from './elixir-api.mjs';
 import { pickPort } from './test-ports.mjs';
 
 const DEFAULT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const VALID_BACKENDS = new Set(['node', 'elixir']);
 
 export function resolveTestBackend(value = process.env.CASCADE_TEST_BACKEND) {
-  const backend = String(value || 'node').trim().toLowerCase();
-  if (!VALID_BACKENDS.has(backend)) {
-    throw new Error(`CASCADE_TEST_BACKEND must be node or elixir, got ${JSON.stringify(value)}`);
+  const backend = String(value || 'elixir').trim().toLowerCase();
+  if (backend === 'node') {
+    throw new Error('The Node/Express backend has been removed. CASCADE_TEST_BACKEND must be elixir.');
+  }
+  if (backend !== 'elixir') {
+    throw new Error(`CASCADE_TEST_BACKEND must be elixir, got ${JSON.stringify(value)}`);
   }
   return backend;
 }
 
 export function backendCommand(backend, repoRoot = DEFAULT_ROOT) {
-  if (resolveTestBackend(backend) === 'elixir') {
-    return { command: 'mix', args: ['run', '--no-halt'], cwd: path.join(repoRoot, 'backend_elixir') };
-  }
-  return { command: process.execPath, args: ['dist/index.js'], cwd: repoRoot };
+  resolveTestBackend(backend);
+  return elixirApiCommand(repoRoot);
 }
 
 export function buildBackendEnvironment({
@@ -33,7 +34,7 @@ export function buildBackendEnvironment({
   tempRoot,
   env = {},
 }) {
-  const kind = resolveTestBackend(backend);
+  resolveTestBackend(backend);
   const dataRoot = path.join(tempRoot, 'data');
   const result = {
     ...process.env,
@@ -49,17 +50,13 @@ export function buildBackendEnvironment({
     CASCADE_QMD_DIR: path.join(tempRoot, 'qmd'),
     CASCADE_DOWNLOADS_DIR: path.join(tempRoot, 'downloads'),
     DOCS_DB_PATH: databasePath,
-    MIX_ENV: kind === 'elixir' ? (env.MIX_ENV || 'dev') : (env.MIX_ENV || process.env.MIX_ENV),
+    MIX_ENV: env.MIX_ENV || 'dev',
   };
-  // Node exposes a testable invite override. Elixir currently ties the same
-  // registration gate to network mode, so translate only when the caller made
-  // the Node override explicit and did not set Elixir's broader mode itself.
-  if (kind === 'elixir' && env.CASCADE_NETWORK_MODE == null && env.CASCADE_REQUIRE_INVITE_REGISTRATION != null) {
+  if (env.CASCADE_NETWORK_MODE == null && env.CASCADE_REQUIRE_INVITE_REGISTRATION != null) {
     result.CASCADE_NETWORK_MODE = /^(1|true|yes|on)$/i.test(env.CASCADE_REQUIRE_INVITE_REGISTRATION)
       ? 'true'
       : 'false';
   }
-  if (result.MIX_ENV == null) delete result.MIX_ENV;
   return result;
 }
 
@@ -91,11 +88,9 @@ function signalProcessGroup(child, signal) {
 }
 
 /**
- * Start either Cascade backend in a throwaway filesystem sandbox.
+ * Start the Elixir backend in a throwaway filesystem sandbox.
  *
- * `prepare` runs after fixture copies and before the process starts, which lets
- * an existing e2e create a legacy Node-compatible database without owning any
- * lifecycle or cleanup code.
+ * `prepare` runs after fixture copies and before the process starts.
  */
 export async function launchTestBackend(options = {}) {
   const backend = resolveTestBackend(options.backend);
@@ -166,7 +161,7 @@ export async function launchTestBackend(options = {}) {
     if (cleanup && ownedTempRoot) fs.rmSync(tempRoot, { recursive: true, force: true });
   }
 
-  const readinessTimeoutMs = options.readinessTimeoutMs || (backend === 'elixir' ? 45_000 : 15_000);
+  const readinessTimeoutMs = options.readinessTimeoutMs || 45_000;
   const deadline = Date.now() + readinessTimeoutMs;
   try {
     while (Date.now() < deadline) {

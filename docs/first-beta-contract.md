@@ -47,7 +47,7 @@ Managed, server-executed agents are **not part of this beta**. The app is
 bring-your-own-agent: no server provider credentials, checkout, pooled model
 access, or managed execution path is available.
 
-`server/managedAgents.ts` and its owner-only entitlement endpoints are a
+`backend_elixir/lib/cascade/managed_agents.ex` and its owner-only entitlement endpoints are a
 non-executing billing-control-plane prototype. They reserve and ledger bounded
 amounts but are not connected to a provider or the run route; changing an
 entitlement cannot start an agent or incur provider spend. Do not market or

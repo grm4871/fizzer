@@ -39,7 +39,7 @@ if config_env() != :test do
   config :cascade_elixir,
     server: parse_bool.(System.get_env("CASCADE_SERVER"), true),
     bind_ip: parse_ip.(System.get_env("CASCADE_BIND_IP") || "127.0.0.1"),
-    port: parse_integer.("API_PORT", 3001, 1..65_535),
+    port: parse_integer.("API_PORT", 3000, 1..65_535),
     http_acceptors:
       parse_integer.("CASCADE_HTTP_ACCEPTORS", max(System.schedulers_online(), 4), 1..1_024),
     http_max_connections:

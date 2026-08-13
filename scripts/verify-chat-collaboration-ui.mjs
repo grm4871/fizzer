@@ -3,6 +3,7 @@
 import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pickPort } from './lib/test-ports.mjs';
+import { spawnElixirApi } from './lib/elixir-api.mjs';
 
 const API_PORT = await pickPort();
 const PREVIEW_PORT = await pickPort();
@@ -30,18 +31,14 @@ async function must(url, options = {}) {
   return data;
 }
 
-const server = spawn('node', ['dist/index.js'], {
-  cwd: root,
-  env: {
-    ...process.env,
-    API_PORT: String(API_PORT),
-    API_HOST: '127.0.0.1',
-    DOCS_DB_PATH: DB_PATH,
-    JWT_SECRET: 'chat-collaboration-ui-secret',
-    CASCADE_ALLOW_OPEN_REGISTRATION: '1',
-  },
-  stdio: ['ignore', 'pipe', 'pipe'],
-});
+const server = spawnElixirApi(root, {
+    port: API_PORT,
+    dbPath: DB_PATH,
+    extraEnv: {
+      JWT_SECRET: 'chat-collaboration-ui-secret',
+      CASCADE_ALLOW_OPEN_REGISTRATION: '1',
+    },
+  });
 server.stderr.on('data', (chunk) => process.stderr.write(`[server-err] ${chunk}`));
 const preview = spawn('npm', ['--workspace=client', 'run', 'preview', '--', '--host', '127.0.0.1', '--port', String(PREVIEW_PORT)], {
   cwd: root,

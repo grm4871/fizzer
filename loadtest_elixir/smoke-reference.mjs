@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawnElixirApi } from '../scripts/lib/elixir-api.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
@@ -27,7 +28,7 @@ async function json(url, options = {}) {
 }
 
 async function waitForHealth() {
-  const deadline = Date.now() + 20_000;
+  const deadline = Date.now() + 45_000;
   while (Date.now() < deadline) {
     try {
       if ((await json(`${target}/api/health`)).status === 'ok') return;
@@ -38,17 +39,13 @@ async function waitForHealth() {
 }
 
 async function main() {
-  const server = spawn(process.execPath, ['dist/index.js'], {
-    cwd: root,
-    env: {
-      ...process.env,
-      API_PORT: String(port),
-      API_HOST: '127.0.0.1',
-      DOCS_DB_PATH: dbPath,
+  const server = spawnElixirApi(root, {
+    port,
+    dbPath,
+    extraEnv: {
       JWT_SECRET: 'capacity-reference-secret',
       CASCADE_REQUIRE_INVITE_REGISTRATION: '0',
     },
-    stdio: ['ignore', 'pipe', 'pipe'],
   });
   let serverExit = null;
   server.once('exit', (code, signal) => { serverExit = { code, signal }; });

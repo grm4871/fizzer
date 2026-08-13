@@ -6,11 +6,11 @@
 npm run dev                 # API + Vite + Electron
 npm run dev-headless        # API + Vite
 npm run dev-debug           # full stack with backend debug mode
-npm run build               # TypeScript server/agent build
+npm run build               # TypeScript CLI helper/agent build
 npm run build:client        # production renderer bundle
 npm test                    # client unit tests
 npm run test:native         # API native rebuild helper tests
-npm run rebuild:native      # rebuild API better-sqlite3 and bcrypt
+npm run rebuild:native      # rebuild helper better-sqlite3 if the ABI drifted
 npm run test:desktop-runner # desktop runner integration test
 ```
 
@@ -53,7 +53,7 @@ both source and `client/dist` for stale references after rebuilding.
 
 - `client/src/tests/` — renderer feature and regression tests;
 - `client/src/layout/*.test.ts` — layout behavior;
-- `server/*.test.ts` — server domain tests;
+- `backend_elixir/test/` — Elixir backend domain and HTTP tests;
 - `cascade-electron/*.test.cjs` — Electron runner and usage tests;
 - `cli-agents/*.test.mjs` — helper command tests;
 - `scripts/test-*.mjs` — integration and cross-boundary checks.
@@ -79,8 +79,8 @@ Do not commit:
 | Chat UI | `client/src/components/ChatView.tsx` |
 | Note editor | `client/src/components/NoteEditor.tsx` |
 | Agent prompt/model catalog | `client/src/chat/agents.ts` |
-| Run stream folding | `client/src/chat/runBlocks.ts`, `server/chat.ts` |
-| HTTP route | `index.ts` and the matching `server/` module |
+| Run stream folding | `client/src/chat/runBlocks.ts`, `backend_elixir/lib/cascade/chat/` |
+| HTTP route | `backend_elixir/lib/cascade_web/` and the matching domain module |
 | Provider adapter | `cli-agents/cli-agent.ts` |
 | Electron IPC or desktop lifecycle | `cascade-electron/main.cjs`, `preload.cjs` |
 | Desktop agent execution | `cascade-electron/agent-runner.cjs` |

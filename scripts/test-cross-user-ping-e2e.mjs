@@ -7,14 +7,14 @@
  * the pinger's ("don't confuse my desktop runner for theirs"). Also checks that
  * the pinger's request body can't override the agent's yolo/cwd/model.
  *
- * Reuses the real server (dist/index.js) with two simulated desktop runner
- * sockets (owner A + pinger B). Build first: `npm run build`.
+ * Reuses the Elixir API with two simulated desktop runner sockets
+ * (owner A + pinger B).
  */
 
-import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { io } from 'socket.io-client';
+import { spawnElixirApi } from './lib/elixir-api.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, '..');
@@ -39,7 +39,7 @@ async function must(url, options) {
   return data;
 }
 
-async function waitForHealth(timeoutMs = 15000) {
+async function waitForHealth(timeoutMs = 45000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {
@@ -54,10 +54,10 @@ async function waitForHealth(timeoutMs = 15000) {
 }
 
 function startServer() {
-  return spawn('node', ['dist/index.js'], {
-    cwd: root,
-    env: { ...process.env, API_PORT: String(API_PORT), API_HOST: '127.0.0.1', DOCS_DB_PATH: DB_PATH, JWT_SECRET: 'crossping-e2e-secret' },
-    stdio: ['ignore', 'pipe', 'pipe'],
+  return spawnElixirApi(root, {
+    port: API_PORT,
+    dbPath: DB_PATH,
+    extraEnv: { JWT_SECRET: 'crossping-e2e-secret' },
   });
 }
 

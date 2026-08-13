@@ -237,11 +237,8 @@ pinned-base build, and embedded cutover gate. Stage that manifest/image with
 and promotes the staged ID with `--no-build`; a missing, different, corrupted,
 or incomplete certification fails before maintenance.
 
-1. **Golden parity:** every existing server/e2e test passes unchanged against
-   Elixir. Record and replay HTTP requests and Socket.IO packets from Node and
-   compare status, headers, canonical JSON, event names/payloads, namespace
-   errors, acknowledgements, and ordering. Ignore only nondeterministic IDs and
-   timestamps. Cookie auth, bearer auth, polling-only, and WebSocket upgrade are
+1. **Golden parity:** every existing e2e test passes against the Elixir API.
+   Cookie auth, bearer auth, polling-only, and WebSocket upgrade are
    separate cases.
 2. **10,000-user soak:** ramp for 300 seconds, then keep 10,000 authenticated
    users concurrently connected for 1,860 seconds, including a literal

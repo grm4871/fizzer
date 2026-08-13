@@ -14,9 +14,8 @@ npm install
 npm install --prefix cascade-electron
 ```
 
-If the API fails to start after a Node upgrade (`NODE_MODULE_VERSION` /
-`better-sqlite3` ABI mismatch, often looking like Vite `ECONNREFUSED` on
-`/api/*`), rebuild the API's native modules:
+If helper scripts fail after a Node upgrade (`NODE_MODULE_VERSION` /
+`better-sqlite3` ABI mismatch), rebuild the native module:
 
 ```bash
 npm run rebuild:native
@@ -33,7 +32,7 @@ Start the API, Vite client, and Electron shell:
 npm run dev
 ```
 
-The backend defaults to `http://localhost:3000`, and the Vite client defaults to `http://localhost:5173`.
+The Elixir API defaults to `http://localhost:3000`, and the Vite client defaults to `http://localhost:5173`.
 
 ## Run Without Electron
 

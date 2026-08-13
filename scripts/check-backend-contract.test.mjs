@@ -14,7 +14,7 @@ function runChecker(args = []) {
   return spawnSync(process.execPath, [CHECKER, ...args], { cwd: path.resolve(SCRIPT_DIR, '..'), encoding: 'utf8' });
 }
 
-test('checked-in backend contract matches production TypeScript sources', () => {
+test('checked-in backend contract matches production Elixir sources', () => {
   const result = runChecker(['--check']);
   assert.equal(result.status, 0, result.stderr || result.stdout);
   assert.match(result.stdout, /Backend contract matches:/);

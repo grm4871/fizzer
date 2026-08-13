@@ -1,8 +1,8 @@
 # Cascade Elixir backend
 
-This is the isolated OTP replacement for Cascade's Express service. It opens
-the same SQLite database and preserves the existing table, bcrypt, JWT, cookie,
-security-header, health-response, Vite cache, and SPA fallback contracts.
+This is Cascade's production HTTP and Socket.IO backend. It opens the SQLite
+database and preserves the existing table, bcrypt, JWT, cookie, security-header,
+health-response, Vite cache, and SPA fallback contracts.
 
 The 167-route HTTP inventory and Socket.IO 4.x namespaces (`/runs`, `/vault`,
 and `/runners`) have native implementations. Unsupported `/api/*` requests
@@ -15,13 +15,12 @@ staged, and verified against the exact release image.
 ```sh
 mix deps.get
 mix check
-API_PORT=3001 DOCS_DB_PATH=/path/to/copy.db mix run --no-halt
+API_PORT=3000 DOCS_DB_PATH=/path/to/copy.db mix run --no-halt
 ```
 
 Use a copy of production data until the full shadow-read and migration suite is
 green. The raw-SQL migration runner has its own checksum ledger and does not use
-Ecto schemas, preserving compatibility with `better-sqlite3` and the existing
-database.
+Ecto schemas, preserving compatibility with the existing database.
 
 ## Capacity controls
 

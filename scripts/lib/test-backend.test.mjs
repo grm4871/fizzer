@@ -9,18 +9,14 @@ import {
   resolveTestBackend,
 } from './test-backend.mjs';
 
-test('backend selection defaults to node and rejects unknown values', () => {
-  assert.equal(resolveTestBackend(undefined), 'node');
+test('backend selection defaults to elixir and rejects the removed Node backend', () => {
+  assert.equal(resolveTestBackend(undefined), 'elixir');
   assert.equal(resolveTestBackend(' ELIXIR '), 'elixir');
-  assert.throws(() => resolveTestBackend('proxy'), /must be node or elixir/);
+  assert.throws(() => resolveTestBackend('node'), /has been removed/);
+  assert.throws(() => resolveTestBackend('proxy'), /must be elixir/);
 });
 
-test('commands launch each backend directly', () => {
-  assert.deepEqual(backendCommand('node', '/repo'), {
-    command: process.execPath,
-    args: ['dist/index.js'],
-    cwd: '/repo',
-  });
+test('commands launch the Elixir backend directly', () => {
   assert.deepEqual(backendCommand('elixir', '/repo'), {
     command: 'mix',
     args: ['run', '--no-halt'],
@@ -28,7 +24,7 @@ test('commands launch each backend directly', () => {
   });
 });
 
-test('environment maps shared and backend-specific paths into the temp root', () => {
+test('environment maps shared paths into the temp root', () => {
   const env = buildBackendEnvironment({
     backend: 'elixir', repoRoot: '/repo', port: 4321,
     databasePath: '/tmp/safe/data/docs.db', tempRoot: '/tmp/safe',
@@ -43,7 +39,7 @@ test('environment maps shared and backend-specific paths into the temp root', ()
   assert.equal(env.JWT_SECRET, 'secret');
 });
 
-test('explicit Node invite gating maps to Elixir network registration gating', () => {
+test('explicit invite gating maps to Elixir network registration gating', () => {
   const env = buildBackendEnvironment({
     backend: 'elixir', repoRoot: '/repo', port: 4321,
     databasePath: '/tmp/safe/data/docs.db', tempRoot: '/tmp/safe',
@@ -63,7 +59,7 @@ test('launcher waits for health and terminates the whole fixture cleanly', async
     process.on('SIGTERM', () => server.close(() => process.exit(0)));
   `;
   const backend = await launchTestBackend({
-    backend: 'node', name: 'launcher-unit', pipeOutput: false, keepTemp: false,
+    backend: 'elixir', name: 'launcher-unit', pipeOutput: false, keepTemp: false,
     command: { command: process.execPath, args: ['-e', script] },
   });
   assert.equal((await fetch(`${backend.baseUrl}/api/health`).then((response) => response.json())).status, 'ok');
@@ -76,7 +72,7 @@ test('launcher waits for health and terminates the whole fixture cleanly', async
 test('early process exit fails readiness and cleans its temporary root', async () => {
   await assert.rejects(
     launchTestBackend({
-      backend: 'node', name: 'launcher-exit', pipeOutput: false, keepTemp: false,
+      backend: 'elixir', name: 'launcher-exit', pipeOutput: false, keepTemp: false,
       command: { command: process.execPath, args: ['-e', 'process.exit(23)'] },
       readinessTimeoutMs: 2_000,
     }),

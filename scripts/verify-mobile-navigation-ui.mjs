@@ -10,6 +10,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pickPort } from './lib/test-ports.mjs';
+import { spawnElixirApi } from './lib/elixir-api.mjs';
 
 const apiPort = await pickPort();
 const previewPort = await pickPort();
@@ -50,11 +51,14 @@ async function touchSwipe(cdp, from, to, steps = 6) {
 }
 
 try { fs.unlinkSync(dbPath); } catch { /* fresh temporary database */ }
-const server = spawn('node', ['dist/index.js'], {
-  cwd: root,
-  env: { ...process.env, API_PORT: String(apiPort), API_HOST: '127.0.0.1', DOCS_DB_PATH: dbPath, JWT_SECRET: 'mobile-navigation-secret', CASCADE_ALLOW_OPEN_REGISTRATION: '1' },
-  stdio: ['ignore', 'pipe', 'pipe'],
-});
+const server = spawnElixirApi(root, {
+    port: apiPort,
+    dbPath: dbPath,
+    extraEnv: {
+      JWT_SECRET: 'mobile-navigation-secret',
+      CASCADE_ALLOW_OPEN_REGISTRATION: '1',
+    },
+  });
 const preview = spawn('npm', ['--workspace=client', 'run', 'preview', '--', '--host', '127.0.0.1', '--port', String(previewPort)], {
   cwd: root,
   // The production bundle intentionally uses same-origin API paths. Vite's

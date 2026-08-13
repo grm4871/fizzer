@@ -11,6 +11,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pickPort } from './lib/test-ports.mjs';
+import { spawnElixirApi } from './lib/elixir-api.mjs';
 
 const apiPort = await pickPort();
 const previewPort = await pickPort();
@@ -37,11 +38,14 @@ async function json(path, options = {}) {
 }
 
 try { fs.unlinkSync(dbPath); } catch {}
-const server = spawn('node', ['dist/index.js'], {
-  cwd: root,
-  env: { ...process.env, API_PORT: String(apiPort), API_HOST: '127.0.0.1', DOCS_DB_PATH: dbPath, JWT_SECRET: 'notes-ui-secret', CASCADE_ALLOW_OPEN_REGISTRATION: '1' },
-  stdio: ['ignore', 'pipe', 'pipe'],
-});
+const server = spawnElixirApi(root, {
+    port: apiPort,
+    dbPath: dbPath,
+    extraEnv: {
+      JWT_SECRET: 'notes-ui-secret',
+      CASCADE_ALLOW_OPEN_REGISTRATION: '1',
+    },
+  });
 const preview = spawn('npm', ['--workspace=client', 'run', 'preview', '--', '--host', '127.0.0.1', '--port', String(previewPort)], {
   cwd: root, env: { ...process.env, API_PORT: String(apiPort), VITE_API_URL: apiBase }, stdio: ['ignore', 'pipe', 'pipe'],
 });

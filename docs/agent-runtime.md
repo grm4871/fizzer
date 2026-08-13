@@ -47,7 +47,8 @@ Providers normalize their output into run events such as:
 - `cascade-stats` — model, token, context, turn, and rate-limit telemetry.
 
 `client/src/chat/runBlocks.ts` and the server-side folding helpers in
-`server/chat.ts` convert this event stream into persisted chat content. The
+`backend_elixir/lib/cascade/chat/` convert this event stream into persisted
+chat content. The
 session manager exposes readable activity and a separate raw console view.
 
 ## Agent helpers

@@ -3,185 +3,38 @@
 /**
  * Generate or check the source-derived, static backend contract manifest.
  *
- * This deliberately records declarations, not inferred runtime responses. The
- * differential HTTP/Socket.IO suite is responsible for status codes, headers,
- * response payloads, ordering, and wire-level behavior.
+ * The production backend is Elixir. This records declarations from
+ * backend_elixir/lib, not inferred runtime responses.
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
-import process from 'node:process';
 import { fileURLToPath } from 'node:url';
-import ts from 'typescript';
+
+import { extractElixirRoutes } from './check-elixir-route-parity.mjs';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(SCRIPT_DIR, '..');
+const ELIXIR_LIB = path.join(REPO_ROOT, 'backend_elixir/lib');
+const ELIXIR_WEB = path.join(ELIXIR_LIB, 'cascade_web');
 const DEFAULT_MANIFEST = path.join(SCRIPT_DIR, 'backend-contract.v1.json');
-const HTTP_METHODS = new Set(['delete', 'get', 'head', 'options', 'patch', 'post', 'put']);
-const SOCKET_HELPER_EVENT_ARGUMENTS = new Map([
-  ['emitVaultEvent', 1],
-  ['emitChatMessageEvent', 2],
-  ['emitChatAgentEvent', 2],
-]);
 
 function relativeSource(filePath) {
   return path.relative(REPO_ROOT, filePath).split(path.sep).join('/');
 }
 
-function listProductionSources() {
-  const sources = [path.join(REPO_ROOT, 'index.ts')];
-  const serverDir = path.join(REPO_ROOT, 'server');
-  const pending = [serverDir];
-  while (pending.length > 0) {
-    const current = pending.pop();
-    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
-      const entryPath = path.join(current, entry.name);
-      if (entry.isDirectory()) pending.push(entryPath);
-      else if (entry.isFile() && entry.name.endsWith('.ts') && !entry.name.endsWith('.test.ts') && !entry.name.endsWith('.d.ts')) {
-        sources.push(entryPath);
-      }
-    }
+function walk(directory, suffix = '.ex') {
+  const files = [];
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    const absolute = path.join(directory, entry.name);
+    if (entry.isDirectory()) files.push(...walk(absolute, suffix));
+    else if (entry.isFile() && entry.name.endsWith(suffix)) files.push(absolute);
   }
-  return sources.sort((left, right) => relativeSource(left).localeCompare(relativeSource(right)));
+  return files.sort();
 }
 
-function sourceLine(sourceFile, position) {
-  return sourceFile.getLineAndCharacterOfPosition(position).line + 1;
-}
-
-function stringValue(node) {
-  if (ts.isStringLiteralLike(node)) return node.text;
-  return null;
-}
-
-function compactExpression(node, sourceFile) {
-  if (ts.isIdentifier(node)) return node.text;
-  if (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) return '<inline>';
-  if (ts.isCallExpression(node)) {
-    const callee = node.expression.getText(sourceFile).replace(/\s+/g, ' ');
-    return `${callee}(...)`;
-  }
-  return node.getText(sourceFile).replace(/\s+/g, ' ').slice(0, 160);
-}
-
-function routePaths(node) {
-  const direct = stringValue(node);
-  if (direct !== null) return [direct];
-  if (!ts.isArrayLiteralExpression(node)) return [];
-  const aliases = [];
-  for (const element of node.elements) {
-    const alias = stringValue(element);
-    if (alias !== null) aliases.push(alias);
-  }
-  return aliases;
-}
-
-function namespaceDeclarations(sourceFile) {
-  const namespaces = new Map();
-  function visit(node) {
-    if (ts.isVariableDeclaration(node)
-      && ts.isIdentifier(node.name)
-      && node.initializer
-      && ts.isCallExpression(node.initializer)
-      && ts.isPropertyAccessExpression(node.initializer.expression)
-      && node.initializer.expression.name.text === 'of') {
-      const namespace = stringValue(node.initializer.arguments[0]);
-      if (namespace !== null) namespaces.set(node.name.text, namespace);
-    }
-    ts.forEachChild(node, visit);
-  }
-  visit(sourceFile);
-  return namespaces;
-}
-
-function namespaceForNode(node, sourceFile, declarations) {
-  for (let current = node; current; current = current.parent) {
-    if (!ts.isCallExpression(current)
-      || !ts.isPropertyAccessExpression(current.expression)
-      || current.expression.name.text !== 'on'
-      || stringValue(current.arguments[0]) !== 'connection') continue;
-    const receiver = current.expression.expression.getText(sourceFile);
-    if (declarations.has(receiver)) return declarations.get(receiver);
-  }
-
-  const callText = node.getText(sourceFile);
-  for (const [identifier, namespace] of declarations) {
-    if (callText.includes(identifier)) return namespace;
-  }
-
-  const source = relativeSource(sourceFile.fileName);
-  if (source === 'server/desktop-runner.ts') return '/runners';
-  return '<unknown>';
-}
-
-function extractTypeScriptSurface(sourceFile) {
-  const routes = [];
-  const inbound = [];
-  const outbound = [];
-  const namespaces = namespaceDeclarations(sourceFile);
-
-  function recordInbound(node, event) {
-    inbound.push({
-      namespace: namespaceForNode(node, sourceFile, namespaces),
-      event,
-      source: relativeSource(sourceFile.fileName),
-      line: sourceLine(sourceFile, node.getStart(sourceFile)),
-    });
-  }
-
-  function recordOutbound(node, event, namespace = namespaceForNode(node, sourceFile, namespaces)) {
-    outbound.push({
-      namespace,
-      event,
-      source: relativeSource(sourceFile.fileName),
-      line: sourceLine(sourceFile, node.getStart(sourceFile)),
-    });
-  }
-
-  function visit(node) {
-    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
-      const member = node.expression.name.text;
-      const receiver = node.expression.expression.getText(sourceFile);
-
-      if (HTTP_METHODS.has(member) && receiver === 'app') {
-        const paths = node.arguments.length > 0 ? routePaths(node.arguments[0]) : [];
-        const chain = node.arguments.slice(1).map((argument) => compactExpression(argument, sourceFile));
-        for (const routePath of paths) {
-          routes.push({
-            method: member.toUpperCase(),
-            path: routePath,
-            handlers: chain,
-            source: relativeSource(sourceFile.fileName),
-            line: sourceLine(sourceFile, node.getStart(sourceFile)),
-          });
-        }
-      }
-
-      if ((member === 'on' || member === 'once') && node.arguments.length > 0) {
-        const event = stringValue(node.arguments[0]);
-        const receiverIsSocket = receiver === 'socket';
-        const receiverIsNamespace = namespaces.has(receiver);
-        if (event !== null && (receiverIsSocket || receiverIsNamespace)) recordInbound(node, event);
-      }
-
-      if (member === 'emit' && node.arguments.length > 0) {
-        const event = stringValue(node.arguments[0]);
-        if (event !== null) recordOutbound(node, event);
-      }
-    }
-
-    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
-      const eventArgument = SOCKET_HELPER_EVENT_ARGUMENTS.get(node.expression.text);
-      if (eventArgument !== undefined) {
-        const event = stringValue(node.arguments[eventArgument]);
-        if (event !== null) recordOutbound(node, event, '/vault');
-      }
-    }
-
-    ts.forEachChild(node, visit);
-  }
-  visit(sourceFile);
-  return { routes, inbound, outbound };
+function sourceLine(text, index) {
+  return text.slice(0, index).split('\n').length;
 }
 
 function normalizeSql(sql) {
@@ -221,72 +74,110 @@ function endOfSqlDeclaration(text, start, kind) {
     else if (character === ')') depth = Math.max(0, depth - 1);
     else if (character === ';' && depth === 0) return index + 1;
   }
-  return /[`'"]$/.test(text) ? text.length - 1 : text.length;
+  return text.length;
 }
 
-function extractSqlDeclarations(sourceFile) {
+function extractSqlDeclarations(sourcePath, text) {
   const declarations = [];
   const declarationStart = /\bCREATE\s+(UNIQUE\s+)?(VIRTUAL\s+)?(TABLE|INDEX|TRIGGER)\s+(IF\s+NOT\s+EXISTS\s+)?([^\s(]+)/gi;
-
-  function dynamicNameValues(node, rawName) {
-    const placeholder = /^\$\{([A-Za-z_$][\w$]*)\}$/.exec(rawName);
-    if (!placeholder) return undefined;
-    let owner = node.parent;
-    while (owner && !ts.isFunctionDeclaration(owner)) owner = owner.parent;
-    if (!owner?.name) return undefined;
-    const parameterIndex = owner.parameters.findIndex(
-      (parameter) => ts.isIdentifier(parameter.name) && parameter.name.text === placeholder[1],
-    );
-    if (parameterIndex < 0) return undefined;
-
-    const values = new Set();
-    function visitCalls(candidate) {
-      if (ts.isCallExpression(candidate)
-        && ts.isIdentifier(candidate.expression)
-        && candidate.expression.text === owner.name.text) {
-        const value = stringValue(candidate.arguments[parameterIndex]);
-        if (value !== null) values.add(value);
-      }
-      ts.forEachChild(candidate, visitCalls);
-    }
-    visitCalls(sourceFile);
-    return values.size > 0 ? [...values].sort() : undefined;
+  for (let match = declarationStart.exec(text); match; match = declarationStart.exec(text)) {
+    const kind = match[3].toLowerCase();
+    const end = endOfSqlDeclaration(text, match.index, kind);
+    declarations.push({
+      kind,
+      name: match[5].replace(/^[`'"]|[`'"]$/g, ''),
+      unique: Boolean(match[1]),
+      virtual: Boolean(match[2]),
+      ifNotExists: Boolean(match[4]),
+      sql: normalizeSql(text.slice(match.index, end)),
+      source: relativeSource(sourcePath),
+      line: sourceLine(text, match.index),
+    });
+    declarationStart.lastIndex = Math.max(declarationStart.lastIndex, end);
   }
-
-  function inspectLiteral(node) {
-    const raw = node.getText(sourceFile);
-    declarationStart.lastIndex = 0;
-    for (let match = declarationStart.exec(raw); match; match = declarationStart.exec(raw)) {
-      const kind = match[3].toLowerCase();
-      const end = endOfSqlDeclaration(raw, match.index, kind);
-      const name = match[5].replace(/^[`'"\[]|[`'"\]]$/g, '');
-      const declaration = {
-        kind,
-        name,
-        unique: Boolean(match[1]),
-        virtual: Boolean(match[2]),
-        ifNotExists: Boolean(match[4]),
-        sql: normalizeSql(raw.slice(match.index, end)),
-        source: relativeSource(sourceFile.fileName),
-        line: sourceLine(sourceFile, node.getStart(sourceFile) + match.index),
-      };
-      const resolvedNames = dynamicNameValues(node, name);
-      if (resolvedNames) declaration.resolvedNames = resolvedNames;
-      declarations.push(declaration);
-      declarationStart.lastIndex = Math.max(declarationStart.lastIndex, end);
-    }
-  }
-
-  function visit(node) {
-    if (ts.isTemplateExpression(node)) {
-      inspectLiteral(node);
-      return;
-    }
-    if (ts.isStringLiteralLike(node)) inspectLiteral(node);
-    ts.forEachChild(node, visit);
-  }
-  visit(sourceFile);
   return declarations;
+}
+
+function extractSocketSurface(sourcePath, text) {
+  const inbound = [];
+  const outbound = [];
+  const source = relativeSource(sourcePath);
+
+  for (const match of text.matchAll(/def handle_event\("([^"]+)",\s*"([^"]+)"/g)) {
+    inbound.push({
+      namespace: match[1],
+      event: match[2],
+      source,
+      line: sourceLine(text, match.index),
+    });
+  }
+  for (const match of text.matchAll(/def namespace_connected\("([^"]+)"/g)) {
+    inbound.push({
+      namespace: match[1],
+      event: 'connection',
+      source,
+      line: sourceLine(text, match.index),
+    });
+  }
+  for (const match of text.matchAll(/def namespace_disconnected\("([^"]+)"/g)) {
+    inbound.push({
+      namespace: match[1],
+      event: 'disconnect',
+      source,
+      line: sourceLine(text, match.index),
+    });
+  }
+
+  const outboundPatterns = [
+    /Hub\.broadcast\([^,]+,\s*(?:@vault_namespace|"(\/[^"]+)")\s*,\s*(?:"([^"]+)"|@([A-Za-z0-9_]+))/g,
+    /\{:emit,\s*"([^"]+)"/g,
+    /broadcast\("run:[^"]+",\s*"(\/[^"]+)",\s*"([^"]+)"/g,
+  ];
+  for (const pattern of outboundPatterns) {
+    for (const match of text.matchAll(pattern)) {
+      if (match[0].startsWith('{:emit')) {
+        outbound.push({
+          namespace: '/vault',
+          event: match[1],
+          source,
+          line: sourceLine(text, match.index),
+        });
+      } else if (match[0].startsWith('broadcast("run:')) {
+        outbound.push({
+          namespace: match[1],
+          event: match[2],
+          source,
+          line: sourceLine(text, match.index),
+        });
+      } else {
+        outbound.push({
+          namespace: match[1] || '/vault',
+          event: match[2] || match[3],
+          source,
+          line: sourceLine(text, match.index),
+        });
+      }
+    }
+  }
+
+  for (const match of text.matchAll(/@(?:chat_[a-z_]+|[a-z_]+)\s+"((?:vault|community|runner):[^"]+)"/g)) {
+    outbound.push({
+      namespace: '/vault',
+      event: match[1],
+      source,
+      line: sourceLine(text, match.index),
+    });
+  }
+  for (const match of text.matchAll(/"((?:vault|community|runner):[A-Za-z0-9:]+)"/g)) {
+    outbound.push({
+      namespace: match[1].startsWith('runner:') ? '/runners' : '/vault',
+      event: match[1],
+      source,
+      line: sourceLine(text, match.index),
+    });
+  }
+
+  return { inbound, outbound };
 }
 
 function compareLocation(left, right) {
@@ -295,50 +186,65 @@ function compareLocation(left, right) {
     || JSON.stringify(left).localeCompare(JSON.stringify(right));
 }
 
+function uniqueBy(items, keyFn) {
+  const seen = new Set();
+  const unique = [];
+  for (const item of items) {
+    const key = keyFn(item);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(item);
+  }
+  return unique;
+}
+
 export function buildBackendContractManifest() {
-  const sourcePaths = listProductionSources();
-  const httpRoutes = [];
+  const webSources = walk(ELIXIR_WEB);
+  const libSources = walk(ELIXIR_LIB);
+  const httpRoutes = extractElixirRoutes(ELIXIR_WEB)
+    .map((route) => ({
+      method: route.method,
+      path: route.path,
+      source: path.posix.join('backend_elixir/lib/cascade_web', route.source.split(path.sep).join('/')),
+      line: route.line,
+    }))
+    .sort(compareLocation);
+
   const inbound = [];
   const outbound = [];
   const sqliteDeclarations = [];
 
-  for (const sourcePath of sourcePaths) {
+  for (const sourcePath of libSources) {
     const text = fs.readFileSync(sourcePath, 'utf8');
-    const sourceFile = ts.createSourceFile(sourcePath, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
-    const surface = extractTypeScriptSurface(sourceFile);
-    httpRoutes.push(...surface.routes);
-    inbound.push(...surface.inbound);
-    outbound.push(...surface.outbound);
-    sqliteDeclarations.push(...extractSqlDeclarations(sourceFile));
+    const sockets = extractSocketSurface(sourcePath, text);
+    inbound.push(...sockets.inbound);
+    outbound.push(...sockets.outbound);
+    sqliteDeclarations.push(...extractSqlDeclarations(sourcePath, text));
   }
 
-  httpRoutes.sort(compareLocation);
   inbound.sort(compareLocation);
-  outbound.sort(compareLocation);
+  const uniqueOutbound = uniqueBy(
+    outbound.sort(compareLocation),
+    (entry) => `${entry.namespace} ${entry.event} ${entry.source}:${entry.line}`,
+  );
   sqliteDeclarations.sort(compareLocation);
-
-  const unknownSocketNamespaces = [...inbound, ...outbound].filter((entry) => entry.namespace === '<unknown>');
-  if (unknownSocketNamespaces.length > 0) {
-    const locations = unknownSocketNamespaces.map((entry) => `${entry.source}:${entry.line} ${entry.event}`).join(', ');
-    throw new Error(`Could not infer Socket.IO namespace for: ${locations}`);
-  }
 
   return {
     manifestVersion: 1,
     generator: 'scripts/check-backend-contract.mjs',
     scope: {
-      sources: sourcePaths.map(relativeSource),
-      excludes: ['**/*.test.ts', '**/*.d.ts', 'client/**'],
-      note: 'Static declarations only; runtime status, headers, bodies, ordering, Engine.IO frames, and ACK payloads require differential tests.',
+      sources: [...new Set([...webSources, ...libSources].map(relativeSource))].sort(),
+      excludes: ['**/*_test.exs', 'client/**'],
+      note: 'Static Elixir declarations only; runtime status, headers, bodies, ordering, Engine.IO frames, and ACK payloads require the Elixir e2e and mix suites.',
     },
     summary: {
       httpRoutes: httpRoutes.length,
       socketIoInboundDeclarations: inbound.length,
-      socketIoOutboundLiteralDeclarations: outbound.length,
+      socketIoOutboundLiteralDeclarations: uniqueOutbound.length,
       sqliteDeclarations: sqliteDeclarations.length,
     },
     httpRoutes,
-    socketIo: { inbound, outbound },
+    socketIo: { inbound, outbound: uniqueOutbound },
     sqlite: { declarations: sqliteDeclarations },
   };
 }
