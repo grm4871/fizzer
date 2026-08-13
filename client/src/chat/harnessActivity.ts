@@ -904,16 +904,52 @@ export function formatRateLimitWindowLines(stats: RunStats): string[] {
     });
 }
 
+function compactLiveDetail(text: string | undefined, max = 88): string {
+  const collapsed = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!collapsed) return '';
+  if (collapsed.length <= max) return collapsed;
+  return `${collapsed.slice(0, max - 1)}…`;
+}
+
+function recentLiveSnippet(text: string | undefined, max = 88): string {
+  const collapsed = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!collapsed) return '';
+  if (collapsed.length <= max) return collapsed;
+  return `…${collapsed.slice(-(max - 1))}`;
+}
+
+export type LiveActivityHeadline = {
+  verb: string;
+  detail: string;
+};
+
+/** Compact live header: current tool/thought plus the argument or latest snippet. */
+export function liveActivityHeadline(activity: HarnessActivity): LiveActivityHeadline {
+  const items = [...activity.items].reverse();
+  const runningTool = items.find((item) => item.kind === 'tool' && item.tool?.status === 'running');
+  const lastToolOrThought = items.find((item) => item.kind === 'tool' || item.kind === 'thinking');
+  const last = runningTool || lastToolOrThought;
+  if (last?.kind === 'tool') {
+    return { verb: last.title, detail: compactLiveDetail(last.text) };
+  }
+  if (last?.kind === 'thinking') {
+    return { verb: 'thinking', detail: recentLiveSnippet(last.text) };
+  }
+  const lastSystem = items.find((item) => item.kind === 'system' && item.text);
+  if (lastSystem?.text) {
+    return { verb: 'Harness', detail: compactLiveDetail(lastSystem.text) };
+  }
+  if (activity.stats.command) {
+    return { verb: 'Bash', detail: compactLiveDetail(activity.stats.command) };
+  }
+  return { verb: 'working', detail: '' };
+}
+
 export function summarizeActivity(activity: HarnessActivity, isRunning: boolean): string {
   const parts: string[] = [];
   if (isRunning) {
-    const last = [...activity.items].reverse().find((item) => item.kind === 'tool' || item.kind === 'thinking');
-    if (last?.kind === 'tool') parts.push(last.title);
-    else if (last?.kind === 'thinking') parts.push('thinking');
-    else parts.push('working');
-    // Match Codex's compact live row. Detailed usage, limits, model, and reset
-    // times remain available as chips / inside the expanded run panel.
-    return parts[0];
+    const live = liveActivityHeadline(activity);
+    return live.detail ? `${live.verb} ${live.detail}` : live.verb;
   } else if (activity.stats.toolCount > 0) {
     parts.push(`${activity.stats.toolCount} tool${activity.stats.toolCount === 1 ? '' : 's'}`);
   }

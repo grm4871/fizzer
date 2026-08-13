@@ -4849,12 +4849,31 @@ button.chat-avatar.is-clickable:focus-visible {
   display: none;
 }
 .cascade-run-panel:not(.open) .crp-toggle-summary {
-  flex: 0 1 auto;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.5em;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: min(56vw, 40rem);
   color: hsl(222, 12%, 74%);
   font-family: var(--font-sans, inherit);
   font-size: 0.8125rem;
   font-weight: 560;
   letter-spacing: 0.005em;
+}
+.crp-live-verb {
+  flex-shrink: 0;
+}
+.crp-live-detail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: hsl(222, 9%, 58%);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 450;
+  letter-spacing: 0;
 }
 .cascade-run-panel.is-running:not(.open) .crp-toggle-icon,
 .cascade-run-panel.is-running:not(.open) .crp-toggle-summary {

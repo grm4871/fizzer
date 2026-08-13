@@ -5,6 +5,7 @@ import { CascadeRunPanel } from '../components/CascadeRunPanel';
 import {
   buildHarnessActivity,
   hasRunActivity,
+  liveActivityHeadline,
   summarizeActivity,
 } from '../chat/harnessActivity';
 import { appendChatRunBlocks, normalizeChatRunBlocks } from '../chat/runBlocks';
@@ -117,12 +118,36 @@ describe('buildHarnessActivity', () => {
     expect(chips.some((c) => c.id === 'cost' && c.label.startsWith('$'))).toBe(true);
   });
 
-  it('keeps the live Claude summary as compact as Codex', () => {
+  it('shows the live tool argument in the compact header', () => {
     const activity = buildHarnessActivity(msg({
       blocks: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'npm test' } }],
       harnessLog: '# cascade-stats {"model":"claude-opus-4-8","rateLimitType":"five_hour","rateLimitUtilization":1,"rateLimitResetsAt":"2026-08-09T07:50:00.000Z","rateLimitStatus":"allowed_warning","overageInUse":true}\n',
     }));
-    expect(summarizeActivity(activity, true)).toBe('Bash');
+    expect(liveActivityHeadline(activity)).toEqual({ verb: 'Bash', detail: 'npm test' });
+    expect(summarizeActivity(activity, true)).toBe('Bash npm test');
+  });
+
+  it('prefers a running tool over an earlier thought', () => {
+    const activity = buildHarnessActivity(msg({
+      blocks: [
+        { type: 'thinking', text: 'I should inspect the collapsed header next.' },
+        { type: 'tool_use', id: 't1', name: 'Read', input: { file_path: 'client/src/index.css' } },
+      ],
+    }));
+    expect(liveActivityHeadline(activity)).toEqual({
+      verb: 'Read',
+      detail: 'client/src/index.css',
+    });
+  });
+
+  it('surfaces the latest thinking snippet while the model is reasoning', () => {
+    const activity = buildHarnessActivity(msg({
+      blocks: [{ type: 'thinking', text: 'Checking whether the live header still only says Bash.' }],
+    }));
+    expect(liveActivityHeadline(activity)).toEqual({
+      verb: 'thinking',
+      detail: 'Checking whether the live header still only says Bash.',
+    });
   });
 
   it('falls back to codex JSONL tools when blocks are empty', () => {
@@ -179,10 +204,26 @@ describe('CascadeRunPanel raw fallback', () => {
       onCancelRun: () => {},
       forceOpen: true,
     }));
-    expect(markup).toContain('crp-toggle-summary">working');
+    expect(markup).toContain('crp-live-verb');
+    expect(markup).toContain('Akron --grok still working');
     expect(markup).toContain('$ akron --grok -z task --yolo');
     expect(markup).toContain('Akron --grok still working');
     expect(markup).not.toContain('waiting for harness stream…');
+  });
+
+  it('shows the current command on the collapsed live header', () => {
+    const markup = renderToStaticMarkup(createElement(CascadeRunPanel, {
+      message: msg({
+        status: 'running',
+        runId: 1,
+        blocks: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'npm test --filter harnessActivity' } }],
+      }),
+      onCancelRun: () => {},
+    }));
+    expect(markup).toContain('crp-live-verb');
+    expect(markup).toContain('Bash');
+    expect(markup).toContain('npm test --filter harnessActivity');
+    expect(markup).toContain('Stop');
   });
 
   it('hides a live unstructured protocol preamble until harness activity arrives', () => {

@@ -20,6 +20,7 @@ import {
   formatTurnsLine,
   hasRunActivity,
   hasUsageStats,
+  liveActivityHeadline,
   summarizeActivity,
   toolResultPreview,
   type ActivityItem,
@@ -529,6 +530,10 @@ export const CascadeRunPanel = memo(function CascadeRunPanel({
       : (isRunning ? 'waiting for harness stream…' : 'trace')),
     [activity, hasStructuredActivity, isRunning],
   );
+  const live = useMemo(
+    () => (activity && isRunning && hasStructuredActivity ? liveActivityHeadline(activity) : null),
+    [activity, hasStructuredActivity, isRunning],
+  );
   const statChips = useMemo(
     () => (activity ? buildHeaderStatChips(activity.stats) : []),
     [activity],
@@ -598,7 +603,14 @@ export const CascadeRunPanel = memo(function CascadeRunPanel({
         >
           <TerminalSquare size={13} className="crp-toggle-icon" />
           <span className="crp-toggle-label">Harness</span>
-          <span className="crp-toggle-summary">{hydrating ? 'loading…' : summary}</span>
+          <span className="crp-toggle-summary">
+            {hydrating ? 'loading…' : live?.detail ? (
+              <>
+                <span className="crp-live-verb">{live.verb}</span>
+                <span className="crp-live-detail">{live.detail}</span>
+              </>
+            ) : summary}
+          </span>
           {statChips.length > 0 && (
             <span className="crp-stat-chips" aria-label="Run usage stats">
               {statChips.map((chip) => (
