@@ -269,6 +269,20 @@ export function databaseSnapshot(filename) {
 
 const SCHEMA_OBJECT_ORDER = { table: 0, index: 1, trigger: 2, view: 3 };
 
+function fts5ShadowNames(objects) {
+  const virtual = objects
+    .filter((object) => /\bUSING\s+fts5\s*\(/iu.test(object.sql || ''))
+    .map((object) => object.name);
+  const shadows = new Set();
+  for (const table of virtual) {
+    for (const suffix of [...FTS5_SHADOW_SUFFIXES, 'content']) shadows.add(`${table}_${suffix}`);
+    for (const object of objects) {
+      if (object.name.startsWith(`${table}_`)) shadows.add(object.name);
+    }
+  }
+  return shadows;
+}
+
 export function readSchemaFingerprintFromDb(db) {
   const objects = db.prepare(`
     SELECT type, name, tbl_name AS tableName, sql
@@ -281,14 +295,16 @@ export function readSchemaFingerprintFromDb(db) {
     tableName: object.tableName,
     sql: normalizedSql(object.sql),
   }));
+  const shadows = fts5ShadowNames(objects);
+  const visible = objects.filter((object) => !shadows.has(object.name));
   let migrations = [];
-  const hasLedger = objects.some((object) => object.type === 'table' && object.name === 'cascade_elixir_schema_migrations');
+  const hasLedger = visible.some((object) => object.type === 'table' && object.name === 'cascade_elixir_schema_migrations');
   if (hasLedger) {
     migrations = db.prepare(
       'SELECT version, name, checksum FROM cascade_elixir_schema_migrations ORDER BY version',
     ).all();
   }
-  return { objects, migrations };
+  return { objects: visible, migrations };
 }
 
 export function readSchemaFingerprint(filename) {
@@ -326,7 +342,9 @@ export function materializeSchemaFingerprint(fingerprint, destination) {
       const order = (SCHEMA_OBJECT_ORDER[left.type] ?? 9) - (SCHEMA_OBJECT_ORDER[right.type] ?? 9);
       return order || left.name.localeCompare(right.name);
     });
+    const shadows = fts5ShadowNames(objects);
     for (const object of objects) {
+      if (shadows.has(object.name)) continue;
       if (!object.sql) continue;
       try {
         db.exec(object.sql);

@@ -183,6 +183,16 @@ test('schema fingerprints ignore row bodies and rematerialize DDL only', () => {
     writer.prepare('INSERT INTO notes VALUES (?, ?, ?)').run('note-2', 1, 'more');
     writer.close();
     assert.equal(runComparison({ before: files.before, after: clone, schemaOnly: true }).ok, true);
+
+    const fts = new Database(files.before);
+    fts.exec(`CREATE VIRTUAL TABLE notes_fts USING fts5(body); INSERT INTO notes_fts(rowid,body) VALUES (1,'hello');`);
+    fts.close();
+    const ftsFingerprint = readSchemaFingerprint(files.before);
+    assert.equal(ftsFingerprint.objects.some((object) => object.name === 'notes_fts'), true);
+    assert.equal(ftsFingerprint.objects.some((object) => object.name.endsWith('_config')), false);
+    const ftsClone = path.join(files.directory, 'fts-schema.db');
+    materializeSchemaFingerprint(ftsFingerprint, ftsClone);
+    assert.equal(runComparison({ before: files.before, after: ftsClone, schemaOnly: true }).ok, true);
   } finally {
     fs.rmSync(files.directory, { recursive: true, force: true });
   }
