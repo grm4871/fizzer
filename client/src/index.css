@@ -8019,6 +8019,36 @@ button.chat-avatar.is-clickable:focus-visible {
   max-height: min(320px, 42vh);
   padding: 0 0 4px;
 }
+/* FLOW / mission already frame the work. An inner harness card is a second box. */
+.chat-work-trace .cascade-run-panel,
+.chat-mission-card .cascade-run-panel {
+  margin-top: 2px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.chat-work-trace .cascade-run-panel.is-running,
+.chat-mission-card .cascade-run-panel.is-running {
+  border: 0;
+  box-shadow: none;
+}
+.chat-work-trace .cascade-run-panel.open .crp-header,
+.chat-mission-card .cascade-run-panel.open .crp-header {
+  background: transparent;
+  border-bottom-color: transparent;
+}
+.chat-work-trace .cascade-run-panel .crp-term,
+.chat-mission-card .cascade-run-panel .crp-term {
+  max-height: none;
+  overflow: visible;
+  padding: 2px 0 6px;
+}
+.chat-work-trace .chat-work-line-body:has(.cascade-run-panel) {
+  margin-left: 0;
+  padding: 0 0 4px;
+  border-left: 0;
+}
 .chat-mission-trace {
   margin: 0;
   padding: 0;
