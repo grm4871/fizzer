@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
-import { ArrowLeft, Ban, BookOpen, ChevronDown, Clock3, Compass, Flag, LoaderCircle, MessageCircle, Search, ShieldCheck, UserPlus, X } from 'lucide-react';
+import { ArrowLeft, Ban, BookOpen, ChevronDown, Clock3, Flag, LoaderCircle, Search, ShieldCheck, UserPlus, X } from 'lucide-react';
 import { FizzerMark } from './FizzerMark';
 import { api, formatRelativeDate, type CommunityUpdates } from '../api';
 import { ReportDialog } from './ReportDialog';
 import { ModalShell } from './ModalShell';
+import { DirectMessageThread, type DirectMessageConversation } from './DirectMessageThread';
 
 export type DiscoveryTab = 'public' | 'dms';
 
@@ -27,19 +28,6 @@ type PublicVaultDetail = PublicVault & {
   homeNote: { title: string; preview: string; updatedAt: string } | null;
 };
 
-type DirectMessage = {
-  user: {
-    id: number;
-    username: string;
-    displayName: string;
-    avatarUrl: string;
-  };
-  vaultId: string;
-  channelId: string;
-  title: string;
-  createdAt: string;
-};
-
 type BlockedUser = {
   id: number;
   username: string;
@@ -53,6 +41,8 @@ type DiscoveryDmsModalProps = {
   onClose: () => void;
   onOpenLocation: (vaultId: string, channelId?: string, title?: string) => void | Promise<void>;
   onVaultsChanged: () => void | Promise<void>;
+  currentUsername: string;
+  onMarkRead: (channelId: string) => void | Promise<void>;
   updateCounts: CommunityUpdates['counts'];
 };
 
@@ -69,13 +59,15 @@ export function DiscoveryDmsModal({
   onClose,
   onOpenLocation,
   onVaultsChanged,
+  currentUsername,
+  onMarkRead,
   updateCounts,
 }: DiscoveryDmsModalProps) {
-  const [activeTab, setActiveTab] = useState<DiscoveryTab>(initialTab);
   const [publicVaults, setPublicVaults] = useState<PublicVault[]>([]);
   const [publicVaultDetail, setPublicVaultDetail] = useState<PublicVaultDetail | null>(null);
   const [reportVault, setReportVault] = useState<PublicVaultDetail | null>(null);
-  const [dms, setDms] = useState<DirectMessage[]>([]);
+  const [dms, setDms] = useState<DirectMessageConversation[]>([]);
+  const [selectedDm, setSelectedDm] = useState<DirectMessageConversation | null>(null);
   const [blockedUsers, setBlockedUsers] = useState<BlockedUser[]>([]);
   const [allowStrangerDms, setAllowStrangerDms] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -117,11 +109,17 @@ export function DiscoveryDmsModal({
     setStatus('');
     try {
       const [dmData, privacyData, blocksData] = await Promise.all([
-        api<{ conversations: DirectMessage[] }>('/api/me/direct-messages'),
+        api<{ conversations: DirectMessageConversation[] }>('/api/me/direct-messages'),
         api<{ allowDirectMessages: boolean }>('/api/me/dm-settings'),
         api<{ blocks: BlockedUser[] }>('/api/me/blocks'),
       ]);
-      setDms(dmData.conversations);
+      const conversations = dmData.conversations || [];
+      setDms(conversations);
+      setSelectedDm((current) => (
+        (current && conversations.some((conversation) => conversation.channelId === current.channelId) ? current : null)
+        || conversations[0]
+        || null
+      ));
       setAllowStrangerDms(privacyData.allowDirectMessages);
       setBlockedUsers(blocksData.blocks);
     } catch (error) {
@@ -132,19 +130,13 @@ export function DiscoveryDmsModal({
   }, []);
 
   useEffect(() => {
-    if (activeTab !== 'public') {
+    if (initialTab !== 'public') {
       void loadDms();
       return;
     }
     const timer = window.setTimeout(() => void loadPublicVaults(searchQuery), 180);
     return () => window.clearTimeout(timer);
-  }, [activeTab, loadDms, loadPublicVaults, searchQuery]);
-
-  const switchTab = (tab: DiscoveryTab) => {
-    setActiveTab(tab);
-    setPublicVaultDetail(null);
-    setStatus('');
-  };
+  }, [initialTab, loadDms, loadPublicVaults, searchQuery]);
 
   const openPublicVaultDetail = async (vault: PublicVault) => {
     await runAction(`detail:${vault.id}`, `Could not open ${vault.name}`, async () => {
@@ -193,13 +185,13 @@ export function DiscoveryDmsModal({
     const username = dmUsername.trim().replace(/^@/, '');
     if (!username) return;
     await runAction('create-dm', `Could not message @${username}`, async () => {
-      const created = await api<DirectMessage>('/api/direct-messages', {
+      const created = await api<DirectMessageConversation>('/api/direct-messages', {
         method: 'POST',
         body: JSON.stringify({ username }),
       });
-      await onVaultsChanged();
-      await onOpenLocation(created.vaultId, created.channelId, created.title);
-      onClose();
+      setDms((current) => [created, ...current.filter((dm) => dm.channelId !== created.channelId)]);
+      setSelectedDm(created);
+      setDmUsername('');
     });
   };
 
@@ -242,8 +234,8 @@ export function DiscoveryDmsModal({
 
   return (
     <ModalShell
-      backdropClassName={`overlay-backdrop discovery-dms-backdrop ${activeTab === 'dms' ? 'is-messages' : ''}`}
-      dialogClassName={`discovery-dms-modal ${activeTab === 'dms' ? 'is-messages' : ''}`}
+      backdropClassName={`overlay-backdrop discovery-dms-backdrop ${initialTab === 'dms' ? 'is-messages' : ''}`}
+      dialogClassName={`discovery-dms-modal ${initialTab === 'dms' ? 'is-messages' : ''}`}
       ariaLabelledby="discovery-dms-title"
       onClose={onClose}
       closeOnEscape={!reportVault}
@@ -259,25 +251,15 @@ export function DiscoveryDmsModal({
     >
         <header className="discovery-dms-header">
           <div>
-            <span className="surface-kicker">Community</span>
-            <h2 id="discovery-dms-title">Connect</h2>
-            <p>{activeTab === 'public' ? 'Find a workspace built around an idea.' : 'Private conversations, kept separate from notebook vaults.'}</p>
+            <span className="surface-kicker">{initialTab === 'public' ? 'Community' : 'Private'}</span>
+            <h2 id="discovery-dms-title">{initialTab === 'public' ? 'Explore vaults' : 'Messages'}</h2>
+            <p>{initialTab === 'public' ? 'Find a workspace built around an idea.' : 'Your conversations, in one inbox.'}</p>
           </div>
-          <button type="button" className="btn-icon" onClick={onClose} aria-label="Close connect"><X size={17} /></button>
+          <button type="button" className="btn-icon" onClick={onClose} aria-label={`Close ${initialTab === 'public' ? 'explore vaults' : 'messages'}`}><X size={17} /></button>
         </header>
 
-        <div className="discovery-dms-tabs" role="tablist" aria-label="Connect views">
-          <button type="button" role="tab" aria-selected={activeTab === 'public'} className={activeTab === 'public' ? 'is-active' : ''} onClick={() => switchTab('public')}>
-            <Compass size={15} /><span>Explore vaults</span>
-          </button>
-          <button type="button" role="tab" aria-selected={activeTab === 'dms'} className={activeTab === 'dms' ? 'is-active' : ''} onClick={() => switchTab('dms')}>
-            <MessageCircle size={15} /><span>Messages</span>
-            {updateCounts.directMessages > 0 && <em>{updateCounts.directMessages >= 99 ? '99+' : updateCounts.directMessages}</em>}
-          </button>
-        </div>
-
         <div className="discovery-dms-body">
-          {activeTab === 'public' ? (
+          {initialTab === 'public' ? (
             <div className="discovery-panel" role="tabpanel">
               {publicVaultDetail ? (
                 <div className="public-vault-detail">
@@ -336,73 +318,92 @@ export function DiscoveryDmsModal({
               )}
             </div>
           ) : (
-            <div className="discovery-panel dm-panel">
-              <form className="dm-compose" onSubmit={createDm}>
-                <label htmlFor="dm-username">New message</label>
-                <div>
-                  <span aria-hidden="true">@</span>
-                  <input id="dm-username" autoFocus value={dmUsername} onChange={(event) => setDmUsername(event.target.value)} placeholder="Enter a username" autoComplete="off" />
-                  <button type="submit" disabled={!dmUsername.trim() || busyAction === 'create-dm'}><UserPlus size={14} />{busyAction === 'create-dm' ? 'Opening…' : 'Start DM'}</button>
-                </div>
-              </form>
-
-              <section className="dm-section" aria-labelledby="dm-conversations-title">
-                <h3 id="dm-conversations-title">Inbox</h3>
-                <div className="discovery-list">
-                  {loading && <div className="discovery-empty"><LoaderCircle className="spin" size={17} /> Loading messages…</div>}
-                  {!loading && dms.map((dm) => {
-                    const unreadCount = updateCounts.byTarget[dm.channelId] || 0;
-                    return (
-                      <article className={`discovery-row dm-conversation-row ${unreadCount > 0 ? 'is-unread' : ''}`} key={`${dm.vaultId}:${dm.user.username}`}>
-                        <span className="discovery-avatar" aria-hidden="true">{dm.user.avatarUrl ? <img src={dm.user.avatarUrl} alt="" /> : personInitial(dm.user.displayName, dm.user.username)}</span>
-                        <button type="button" className="discovery-row-copy dm-open" onClick={() => { void onOpenLocation(dm.vaultId, dm.channelId, dm.title); onClose(); }}>
-                          <strong>{dm.user.displayName || dm.user.username}</strong><span>@{dm.user.username}</span>
-                        </button>
-                        {unreadCount > 0 && (
-                          <span className="dm-conversation-unread" aria-label={`${unreadCount} unread message${unreadCount === 1 ? '' : 's'}`}>
-                            {unreadCount >= 99 ? '99+' : unreadCount}
-                          </span>
-                        )}
-                        <button type="button" className="dm-block-button" disabled={busyAction === `block:${dm.user.username}`} onClick={() => void blockUser(dm.user.username)} aria-label={`Block @${dm.user.username}`} title={`Block @${dm.user.username}`}><Ban size={14} /></button>
-                      </article>
-                    );
-                  })}
-                  {!loading && !dms.length && <div className="discovery-empty">No direct messages yet.</div>}
-                </div>
-              </section>
-
-              <details className="dm-settings-details">
-                <summary>
-                  <ShieldCheck size={15} aria-hidden="true" />
-                  <span>Privacy &amp; blocking</span>
-                  <small>{allowStrangerDms ? 'New messages allowed' : 'New messages off'}</small>
-                  <ChevronDown size={14} aria-hidden="true" />
-                </summary>
-                <div className="dm-settings-body">
-                  <div className="dm-privacy-row">
-                    <ShieldCheck size={16} aria-hidden="true" />
-                    <div><strong>New direct messages</strong><span>Choose whether other people may start a DM with you.</span></div>
-                    <button type="button" role="switch" aria-checked={allowStrangerDms} aria-label="Allow messages from strangers" className={`dm-toggle ${allowStrangerDms ? 'is-on' : ''}`} disabled={busyAction === 'privacy'} onClick={() => void updatePrivacy()}><span /></button>
+            <div className={`dm-inbox ${selectedDm ? 'has-selection' : ''}`}>
+              <aside className="dm-inbox-sidebar" aria-label="Direct message conversations">
+                <form className="dm-compose" onSubmit={createDm}>
+                  <label htmlFor="dm-username">New message</label>
+                  <div>
+                    <span aria-hidden="true">@</span>
+                    <input id="dm-username" autoFocus value={dmUsername} onChange={(event) => setDmUsername(event.target.value)} placeholder="Username" autoComplete="off" />
+                    <button type="submit" disabled={!dmUsername.trim() || busyAction === 'create-dm'} aria-label="Start direct message">
+                      <UserPlus size={15} />
+                    </button>
                   </div>
-                  <section className="dm-section" aria-labelledby="blocked-users-title">
-                    <h3 id="blocked-users-title">Blocked users</h3>
-                    <form className="dm-block-form" onSubmit={(event) => { event.preventDefault(); void blockUser(blockUsername); }}>
-                      <input value={blockUsername} onChange={(event) => setBlockUsername(event.target.value)} placeholder="Username to block" aria-label="Username to block" autoComplete="off" />
-                      <button type="submit" disabled={!blockUsername.trim() || busyAction.startsWith('block:')}>Block</button>
-                    </form>
-                    <div className="discovery-list dm-block-list">
-                      {blockedUsers.map((blocked) => (
-                        <article className="discovery-row" key={blocked.username}>
-                          <span className="discovery-avatar" aria-hidden="true">{blocked.avatarUrl ? <img src={blocked.avatarUrl} alt="" /> : personInitial(blocked.displayName, blocked.username)}</span>
-                          <div className="discovery-row-copy"><strong>{blocked.displayName || blocked.username}</strong><span>@{blocked.username}</span></div>
-                          <button type="button" disabled={busyAction === `unblock:${blocked.username}`} onClick={() => void unblockUser(blocked.username)}>Unblock</button>
+                </form>
+
+                <section className="dm-section dm-conversations" aria-labelledby="dm-conversations-title">
+                  <h3 id="dm-conversations-title">Conversations</h3>
+                  <div className="discovery-list">
+                    {loading && <div className="discovery-empty"><LoaderCircle className="spin" size={17} /> Loading messages…</div>}
+                    {!loading && dms.map((dm) => {
+                      const unreadCount = updateCounts.byTarget[dm.channelId] || 0;
+                      const selected = selectedDm?.channelId === dm.channelId;
+                      return (
+                        <article className={`discovery-row dm-conversation-row ${selected ? 'is-selected' : ''} ${unreadCount > 0 ? 'is-unread' : ''}`} key={dm.channelId}>
+                          <span className="discovery-avatar" aria-hidden="true">{dm.user.avatarUrl ? <img src={dm.user.avatarUrl} alt="" /> : personInitial(dm.user.displayName, dm.user.username)}</span>
+                          <button type="button" className="discovery-row-copy dm-open" aria-pressed={selected} onClick={() => setSelectedDm(dm)}>
+                            <strong>{dm.user.displayName || dm.user.username}</strong><span>@{dm.user.username}</span>
+                          </button>
+                          {unreadCount > 0 && (
+                            <span className="dm-conversation-unread" aria-label={`${unreadCount} unread message${unreadCount === 1 ? '' : 's'}`}>
+                              {unreadCount >= 99 ? '99+' : unreadCount}
+                            </span>
+                          )}
+                          <button type="button" className="dm-block-button" disabled={busyAction === `block:${dm.user.username}`} onClick={() => void blockUser(dm.user.username)} aria-label={`Block @${dm.user.username}`} title={`Block @${dm.user.username}`}><Ban size={14} /></button>
                         </article>
-                      ))}
-                      {!blockedUsers.length && <div className="discovery-empty compact">Nobody is blocked.</div>}
+                      );
+                    })}
+                    {!loading && !dms.length && <div className="discovery-empty">Start a conversation above.</div>}
+                  </div>
+                </section>
+
+                <details className="dm-settings-details">
+                  <summary>
+                    <ShieldCheck size={15} aria-hidden="true" />
+                    <span>Privacy &amp; blocking</span>
+                    <small>{allowStrangerDms ? 'On' : 'Off'}</small>
+                    <ChevronDown size={14} aria-hidden="true" />
+                  </summary>
+                  <div className="dm-settings-body">
+                    <div className="dm-privacy-row">
+                      <div><strong>New messages</strong><span>Allow people to start a conversation.</span></div>
+                      <button type="button" role="switch" aria-checked={allowStrangerDms} aria-label="Allow messages from strangers" className={`dm-toggle ${allowStrangerDms ? 'is-on' : ''}`} disabled={busyAction === 'privacy'} onClick={() => void updatePrivacy()}><span /></button>
                     </div>
-                  </section>
-                </div>
-              </details>
+                    <section className="dm-section" aria-labelledby="blocked-users-title">
+                      <h3 id="blocked-users-title">Blocked users</h3>
+                      <form className="dm-block-form" onSubmit={(event) => { event.preventDefault(); void blockUser(blockUsername); }}>
+                        <input value={blockUsername} onChange={(event) => setBlockUsername(event.target.value)} placeholder="Username to block" aria-label="Username to block" autoComplete="off" />
+                        <button type="submit" disabled={!blockUsername.trim() || busyAction.startsWith('block:')}>Block</button>
+                      </form>
+                      <div className="discovery-list dm-block-list">
+                        {blockedUsers.map((blocked) => (
+                          <article className="discovery-row" key={blocked.username}>
+                            <div className="discovery-row-copy"><strong>{blocked.displayName || blocked.username}</strong><span>@{blocked.username}</span></div>
+                            <button type="button" disabled={busyAction === `unblock:${blocked.username}`} onClick={() => void unblockUser(blocked.username)}>Unblock</button>
+                          </article>
+                        ))}
+                        {!blockedUsers.length && <div className="discovery-empty compact">Nobody is blocked.</div>}
+                      </div>
+                    </section>
+                  </div>
+                </details>
+              </aside>
+
+              <main className="dm-inbox-thread">
+                {selectedDm ? (
+                  <DirectMessageThread
+                    conversation={selectedDm}
+                    currentUsername={currentUsername}
+                    onBack={() => setSelectedDm(null)}
+                    onRead={onMarkRead}
+                  />
+                ) : (
+                  <div className="dm-thread-empty">
+                    <strong>Your messages</strong>
+                    <span>Choose a conversation or start a new one.</span>
+                  </div>
+                )}
+              </main>
             </div>
           )}
         </div>

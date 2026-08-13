@@ -95,6 +95,13 @@ defmodule Cascade.Content.Store do
   end
 
   def list_vaults(user_id) do
+    hide_direct_messages =
+      if Query.one(
+           "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'user_dm_vaults'"
+         ),
+         do: "AND NOT EXISTS (SELECT 1 FROM user_dm_vaults dm WHERE dm.vault_id = v.id)",
+         else: ""
+
     try do
       Query.maps(
         """
@@ -106,6 +113,7 @@ defmodule Cascade.Content.Store do
         FROM vaults v
         JOIN vault_members m ON m.vault_id = v.id
         WHERE m.user_id = ?
+          #{hide_direct_messages}
         ORDER BY v.created_at DESC
         """,
         [user_id],
@@ -114,7 +122,7 @@ defmodule Cascade.Content.Store do
     rescue
       _ ->
         Query.maps(
-          "SELECT id, name, root_path, created_by, created_at, visibility, public_join_role, public_summary, public_topics, public_guidelines, public_home_note_id, public_join_policy FROM vaults WHERE created_by = ? ORDER BY created_at DESC",
+          "SELECT v.id, v.name, v.root_path, v.created_by, v.created_at, v.visibility, v.public_join_role, v.public_summary, v.public_topics, v.public_guidelines, v.public_home_note_id, v.public_join_policy FROM vaults v WHERE v.created_by = ? #{hide_direct_messages} ORDER BY v.created_at DESC",
           [user_id],
           @vault_fields
         )

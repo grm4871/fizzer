@@ -1,5 +1,5 @@
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { Bot, ChevronRight, ClipboardList, Flag, Forward, Hash, History, ImagePlus, Loader2, Paperclip, Reply, Send, Smile, Square, Trash2, X } from 'lucide-react';
+import { Bot, ChevronRight, ClipboardList, Flag, Forward, Hash, History, ImagePlus, Loader2, MessageCircle, Paperclip, Reply, Send, Smile, Square, Trash2, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
@@ -425,6 +425,8 @@ interface ChatViewProps {
   onJumpHandled?: () => void;
   /** Mount the shared vault rail outside the channel content, or suppress the inline copy. */
   sidebarMode?: 'inline' | 'only' | 'hidden';
+  /** Present the chat as a person-to-person thread, without channel/workspace chrome. */
+  directMessage?: boolean;
 }
 
 // Stable fallback: an inline `= []` default would mint a new identity every
@@ -552,9 +554,6 @@ function PlanUsageMeters({
     >
       {windows.map((window, index) => {
         const percent = Math.round(window.usedPercent);
-        const shortLabel = window.label.length > 5
-          ? window.label.replace(/session/i, 'sess').replace(/week/i, 'wk').slice(0, 4)
-          : window.label;
         return (
           <span
             className="chat-plan-meter"
@@ -565,7 +564,7 @@ function PlanUsageMeters({
             aria-valuemax={100}
             aria-valuenow={percent}
           >
-            <span className="chat-plan-meter-label">{decal ? shortLabel : window.label}</span>
+            <span className="chat-plan-meter-label">{decal ? `${percent}%` : window.label}</span>
             <span className="chat-plan-meter-track" aria-hidden="true">
               <span className="chat-plan-meter-fill" style={{ width: `${percent}%` }} />
             </span>
@@ -2115,6 +2114,7 @@ export const ChatView = memo(function ChatView({
   jumpToMessageId,
   onJumpHandled,
   sidebarMode = 'inline',
+  directMessage = false,
 }: ChatViewProps) {
   // Messages come from an external per-channel store, not props: streaming tokens
   // then re-render only this ChatView, never the App shell. See messageStore.ts.
@@ -3315,14 +3315,14 @@ export const ChatView = memo(function ChatView({
   }, [draft]);
 
   return (
-    <section className={`chat-view${sidebarMode === 'only' ? ' is-sidebar-only' : ''}${sidebarMode === 'hidden' ? ' is-sidebar-hidden' : ''}`}>
+    <section className={`chat-view${sidebarMode === 'only' ? ' is-sidebar-only' : ''}${sidebarMode === 'hidden' ? ' is-sidebar-hidden' : ''}${directMessage ? ' is-direct-message' : ''}`}>
       {sidebarMode !== 'only' && <div className="chat-main">
         <header className="chat-header">
           <div className="chat-header-copy">
             <h2>{channelName}</h2>
             <span>{sortedMessages.length} messages</span>
           </div>
-          {vaultId && (
+          {vaultId && !directMessage && (
             <button
               type="button"
               className="chat-mission-archive-button"
@@ -3378,9 +3378,13 @@ export const ChatView = memo(function ChatView({
             </div>
           ) : sortedMessages.length === 0 ? (
             <div className="chat-empty">
-              <Hash size={28} className="chat-empty-icon" />
-              <strong>#{channelName}</strong>
-              <span className="chat-empty-hint">No messages yet — say hello or @mention an agent to start.</span>
+              {directMessage
+                ? <MessageCircle size={28} className="chat-empty-icon" />
+                : <Hash size={28} className="chat-empty-icon" />}
+              <strong>{directMessage ? channelName : `#${channelName}`}</strong>
+              <span className="chat-empty-hint">
+                {directMessage ? 'No messages yet — say hello.' : 'No messages yet — say hello or @mention an agent to start.'}
+              </span>
             </div>
           ) : (
             transcriptSegments.flatMap((segment) => {
@@ -3672,7 +3676,7 @@ export const ChatView = memo(function ChatView({
             <textarea
               ref={draftRef}
               value={draft}
-              placeholder={replyTarget ? `Reply to @${replyTarget.mention}` : `Message #${channelName}`}
+              placeholder={replyTarget ? `Reply to @${replyTarget.mention}` : directMessage ? `Message ${channelName}` : `Message #${channelName}`}
               spellCheck
               rows={1}
               onChange={(e) => {
@@ -3757,7 +3761,7 @@ export const ChatView = memo(function ChatView({
               Forward
             </button>
           )}
-          {vaultId && (
+          {vaultId && !directMessage && (
             <button
               type="button"
               role="menuitem"
@@ -3781,7 +3785,7 @@ export const ChatView = memo(function ChatView({
               Add to kanban
             </button>
           )}
-          {vaultId && (
+          {vaultId && !directMessage && (
             <button
               type="button"
               role="menuitem"

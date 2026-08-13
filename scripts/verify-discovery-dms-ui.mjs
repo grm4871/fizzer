@@ -111,13 +111,19 @@ try {
       requestedDesignVault = true;
       return json({ vaultId: 'v-design', name: 'Design Commons', role: null, alreadyMember: false, requestStatus: 'pending' }, 201);
     }
-    if (path === '/api/me/direct-messages' && method === 'GET') return json({ conversations: [{
-      user: { id: 2, username: 'alice', displayName: 'Alice Example', avatarUrl: '' },
-      vaultId: 'v-home', channelId: 'dm-alice', title: 'DM — @alice', createdAt: '2026-08-08 05:00:00',
-    }] });
+    if (path === '/api/me/direct-messages' && method === 'GET') return json({ conversations: [
+      ...(dmCreated ? [{
+        user: { id: 5, username: 'dana', displayName: 'Dana', avatarUrl: '' },
+        vaultId: 'v-dm-dana', channelId: 'dm-dana', title: 'DM — @dana', createdAt: '2026-08-08 06:00:00',
+      }] : []),
+      {
+        user: { id: 2, username: 'alice', displayName: 'Alice Example', avatarUrl: '' },
+        vaultId: 'v-dm-alice', channelId: 'dm-alice', title: 'DM — @alice', createdAt: '2026-08-08 05:00:00',
+      },
+    ] });
     if (path === '/api/direct-messages' && method === 'POST') {
       dmCreated = true;
-      return json({ user: { id: 5, username: 'dana', displayName: 'Dana', avatarUrl: '' }, vaultId: 'v-home', channelId: 'dm-dana', title: 'DM — @dana', createdAt: '2026-08-08 06:00:00', created: true }, 201);
+      return json({ user: { id: 5, username: 'dana', displayName: 'Dana', avatarUrl: '' }, vaultId: 'v-dm-dana', channelId: 'dm-dana', title: 'DM — @dana', createdAt: '2026-08-08 06:00:00', created: true }, 201);
     }
     if (path === '/api/me/dm-settings' && method === 'GET') return json({ allowDirectMessages });
     if (path === '/api/me/dm-settings' && method === 'PUT') {
@@ -140,7 +146,12 @@ try {
       id: 'dm-dana', vault_id: 'v-home', folder_id: null, title: 'DM — @dana', content_preview: '<!-- cascade:chat-channel -->', is_pinned: 0, is_archived: 0, is_listed: 1, position: 0, word_count: 0, created_at: '2026-08-08 06:00:00', updated_at: '2026-08-08 06:00:00', tags: [],
     }] : [] });
     if (/\/vault-agents$/.test(path)) return json({ agents: [] });
-    if (/\/messages$/.test(path)) return json({ messages: [] });
+    if (path === '/api/community/updates/read' && method === 'POST') return json({ ok: true });
+    if (/\/messages$/.test(path) && method === 'GET') return json({ messages: [] });
+    if (/\/messages$/.test(path) && method === 'POST') {
+      const message = request.postDataJSON();
+      return json({ message: { ...message, seq: 1 }, agents: [], dispatches: [] }, 201);
+    }
     if (/\/agents$/.test(path)) return json({ agents: [] });
     if (/\/presence$/.test(path)) return json({ participants: [], online: [], owner: '', profiles: {} });
     return json({});
@@ -156,7 +167,7 @@ try {
 
   await page.getByRole('button', { name: /Vault switcher/ }).click();
   await page.getByRole('menuitem', { name: 'Browse public vaults' }).click();
-  const dialog = page.getByRole('dialog', { name: 'Connect' });
+  const dialog = page.getByRole('dialog', { name: 'Explore vaults' });
   await dialog.getByText('Community Lab').waitFor();
   await dialog.getByLabel('Search public vaults').fill('design');
   await dialog.getByText('Community Lab').waitFor({ state: 'detached' });
@@ -195,13 +206,14 @@ try {
   if ((await messagesButton.getAttribute('aria-label')) !== '2 unread direct messages') throw new Error('mailbox did not announce unread DMs');
   await messagesButton.locator('.sidebar-dm-dot').waitFor();
   await messagesButton.click();
-  const messagesDialog = page.getByRole('dialog', { name: 'Connect' });
+  const messagesDialog = page.getByRole('dialog', { name: 'Messages' });
   await messagesDialog.getByText('Alice Example').waitFor();
   const messagesBox = await messagesDialog.boundingBox();
-  if (!messagesBox || messagesBox.x < 24 || messagesBox.y < 16 || messagesBox.width > 920 || messagesBox.height > 730) {
+  if (!messagesBox || messagesBox.x < 24 || messagesBox.y < 16 || messagesBox.width > 1100 || messagesBox.height > 730) {
     throw new Error(`messages menu is not a centered, bounded surface: ${JSON.stringify(messagesBox)}`);
   }
   await messagesDialog.getByLabel('2 unread messages').waitFor();
+  await messagesDialog.getByRole('heading', { name: '@alice' }).waitFor();
   await messagesDialog.getByText('Privacy & blocking').click();
   const privacy = messagesDialog.getByRole('switch', { name: 'Allow messages from strangers' });
   if ((await privacy.getAttribute('aria-checked')) !== 'true') throw new Error('DM privacy did not load as enabled');
@@ -214,9 +226,14 @@ try {
   await messagesDialog.getByRole('button', { name: 'Block', exact: true }).click();
   await messagesDialog.getByText('@charlie', { exact: true }).waitFor();
   await messagesDialog.getByLabel('New message').fill('dana');
-  await messagesDialog.getByRole('button', { name: 'Start DM' }).click();
-  await messagesDialog.waitFor({ state: 'detached' });
-  await page.locator('.tab-title', { hasText: 'DM — @dana' }).waitFor();
+  await messagesDialog.getByRole('button', { name: 'Start direct message' }).click();
+  await messagesDialog.getByRole('heading', { name: '@dana' }).waitFor();
+  await messagesDialog.getByPlaceholder('Message @dana').fill('hello from the standalone inbox');
+  await messagesDialog.getByRole('button', { name: 'Send message' }).click();
+  await messagesDialog.getByText('hello from the standalone inbox').waitFor();
+  if (!(await page.getByRole('button', { name: /current vault Community Lab/ }).count())) {
+    throw new Error('opening a DM changed the active vault workspace');
+  }
 
   const expectedCalls = [
     ['GET', '/api/public-vaults/v-design'],
@@ -228,6 +245,8 @@ try {
     ['DELETE', '/api/me/blocks/bob'],
     ['POST', '/api/me/blocks'],
     ['POST', '/api/direct-messages'],
+    ['POST', '/api/vaults/v-dm-dana/channels/dm-dana/messages'],
+    ['POST', '/api/community/updates/read'],
   ];
   for (const [method, path] of expectedCalls) {
     if (!requests.some((request) => request.method === method && request.path === path)) throw new Error(`missing ${method} ${path}`);
@@ -236,7 +255,7 @@ try {
   if (!requests.some((request) => request.method === 'GET' && request.path === '/api/public-vaults' && request.search === '?q=design')) {
     throw new Error('public directory search was not sent to the server');
   }
-  console.log('[discovery-dms-ui] OK — unified discovery and messages surface, unread state, DM privacy, blocks, and conversation navigation');
+  console.log('[discovery-dms-ui] OK — standalone messages inbox, inline thread/send, unread state, DM privacy, blocks, and unchanged vault workspace');
 } finally {
   if (browser) await browser.close();
   preview.kill('SIGTERM');

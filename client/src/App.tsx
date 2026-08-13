@@ -3923,7 +3923,9 @@ export default function App() {
         <Suspense fallback={null}>
           <DiscoveryDmsModal
             initialTab={discoveryDmsOpen}
+            currentUsername={currentUsername}
             updateCounts={communityUpdates.counts}
+            onMarkRead={markCommunityTargetRead}
             onClose={() => setDiscoveryDmsOpen(null)}
             onVaultsChanged={loadVaults}
             onOpenLocation={async (vaultId, channelId, title) => {

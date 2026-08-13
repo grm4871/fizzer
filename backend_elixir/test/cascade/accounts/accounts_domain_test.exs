@@ -126,6 +126,8 @@ defmodule Cascade.AccountsDomainTest do
     assert DirectMessages.direct_message_vault?(first.vaultId)
     assert DirectMessages.vault_holds_direct_messages?(first.vaultId)
     assert DirectMessages.direct_message_channel?(first.channelId)
+    assert Store.list_vaults(1) == []
+    assert Store.list_vaults(2) == []
 
     assert {:ok, reverse} = DirectMessages.open(2, "alice")
     refute reverse.created

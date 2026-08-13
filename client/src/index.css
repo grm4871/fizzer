@@ -9165,7 +9165,7 @@ a.chat-mission-chip:hover { color: var(--text-primary); border-color: var(--acce
 .account-join-requests button,
 .account-banned-users button { min-height: 34px; padding: 6px 10px; font-size: 0.72rem; }
 
-/* Community surfaces share one bounded shell and a clear two-view switcher. */
+/* Community surfaces share one bounded shell. */
 .discovery-dms-backdrop,
 .discovery-dms-backdrop.is-messages,
 .updates-backdrop,
@@ -9192,48 +9192,6 @@ a.chat-mission-chip:hover { color: var(--text-primary); border-color: var(--acce
 .updates-header h2 { font-size: 1.35rem; letter-spacing: 0.025em; }
 .discovery-dms-header p,
 .updates-header p { margin-top: 5px; font-size: 0.78rem; }
-.discovery-dms-tabs {
-  min-height: 54px;
-  display: flex;
-  align-items: stretch;
-  gap: 4px;
-  padding: 7px 18px 0;
-  border-bottom: 1px solid var(--border);
-  background: color-mix(in srgb, var(--bg-base) 45%, var(--bg-surface));
-}
-.discovery-dms-tabs button {
-  position: relative;
-  min-width: 150px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 0 16px;
-  border-radius: 8px 8px 0 0;
-  color: var(--text-tertiary);
-  font-size: 0.78rem;
-  font-weight: 620;
-  cursor: pointer;
-}
-.discovery-dms-tabs button:hover { color: var(--text-primary); background: var(--bg-raised); }
-.discovery-dms-tabs button.is-active { color: var(--text-primary); background: var(--bg-surface); }
-.discovery-dms-tabs button.is-active::after {
-  content: '';
-  position: absolute;
-  inset: auto 12px -1px;
-  height: 2px;
-  background: var(--decal-stripe-h);
-}
-.discovery-dms-tabs em {
-  min-width: 19px;
-  padding: 2px 5px;
-  border-radius: 999px;
-  background: var(--accent);
-  color: var(--bg-base);
-  font: 700 0.6rem/1 var(--font-mono);
-  font-style: normal;
-  text-align: center;
-}
 .discovery-dms-body { flex: 1; min-height: 0; }
 .discovery-panel { gap: 18px; padding: 24px 28px 28px; }
 .discovery-search { min-height: 46px; padding: 0 14px; border-radius: 9px; }
@@ -9466,8 +9424,6 @@ a.chat-mission-chip:hover { color: var(--text-primary); border-color: var(--acce
   .updates-header { min-height: 88px; padding: calc(16px + env(safe-area-inset-top)) 16px 14px; }
   .discovery-dms-header p,
   .updates-header p { font-size: 0.82rem; }
-  .discovery-dms-tabs { min-height: 52px; padding-inline: 8px; }
-  .discovery-dms-tabs button { min-width: 0; flex: 1; padding-inline: 8px; font-size: 0.8rem; }
   .discovery-panel,
   .discovery-dms-modal.is-messages .dm-panel { padding: 18px 14px calc(20px + env(safe-area-inset-bottom)); }
   .discovery-row { min-height: 58px; }
@@ -9496,4 +9452,118 @@ a.chat-mission-chip:hover { color: var(--text-primary); border-color: var(--acce
   .vault-switcher-row > button:first-child { min-height: 168px; grid-template-rows: 96px auto; }
   .vault-switcher-art { min-height: 96px; }
   .vault-switcher-action { min-height: 96px; }
+}
+
+/* Direct messages are a first-class inbox. The vault-backed transport remains
+   private implementation detail and never appears as workspace navigation. */
+.discovery-dms-modal.is-messages { width: min(1080px, calc(100vw - 48px)); }
+.discovery-dms-modal.is-messages .discovery-dms-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+.dm-inbox {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  display: grid;
+  grid-template-columns: 310px minmax(0, 1fr);
+  background: var(--bg-base);
+}
+.dm-inbox-sidebar {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 14px;
+  padding: 16px 14px;
+  border-right: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-surface) 86%, var(--bg-base));
+}
+.dm-inbox-sidebar .dm-compose > div { min-height: 40px; }
+.dm-inbox-sidebar .dm-compose button {
+  width: 42px;
+  justify-content: center;
+  padding: 0;
+}
+.dm-conversations { min-height: 0; grid-template-rows: auto minmax(0, 1fr); }
+.dm-conversations > .discovery-list { min-height: 0; align-content: start; overflow-y: auto; }
+.dm-inbox-sidebar .discovery-row { min-height: 54px; padding: 8px; border-color: transparent; }
+.dm-inbox-sidebar .discovery-avatar { width: 34px; height: 34px; }
+.dm-conversation-row:hover { border-color: var(--border); background: var(--bg-raised); }
+.dm-conversation-row.is-selected {
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--border));
+  background: color-mix(in srgb, var(--accent-subtle) 72%, var(--bg-base));
+}
+.dm-conversation-row.is-selected .dm-open strong { color: var(--accent-hover); }
+.dm-inbox-sidebar .dm-block-button { opacity: 0; transition: opacity var(--transition-fast); }
+.dm-conversation-row:hover .dm-block-button,
+.dm-conversation-row:focus-within .dm-block-button { opacity: 1; }
+.dm-inbox-sidebar .dm-settings-details { max-height: min(330px, 52vh); overflow-y: auto; }
+.dm-inbox-sidebar .dm-settings-details > summary { min-height: 40px; padding: 8px 10px; font-size: 0.7rem; }
+.dm-inbox-sidebar .dm-settings-body { gap: 10px; padding-inline: 8px; }
+.dm-inbox-sidebar .dm-privacy-row { min-height: 48px; padding: 8px; }
+.dm-inbox-sidebar .dm-privacy-row span { white-space: normal; }
+.dm-inbox-sidebar .dm-block-list { max-height: 112px; }
+.dm-inbox-sidebar .dm-block-list .discovery-row { min-height: 42px; }
+.dm-inbox-thread { min-width: 0; min-height: 0; display: flex; }
+.dm-thread { position: relative; min-width: 0; min-height: 0; flex: 1; display: flex; }
+.dm-thread > .chat-view { min-width: 0; min-height: 0; }
+.dm-thread .chat-header { min-height: 58px; padding-inline: 20px; background: var(--bg-surface); }
+.dm-thread .chat-header-copy h2 { font-size: 1rem; font-style: normal; letter-spacing: 0; }
+.dm-thread .chat-messages { padding-top: 20px; }
+.dm-thread .chat-composer { padding: 12px 18px 16px; border-top: 1px solid var(--border-subtle); }
+.dm-thread-back { display: none; }
+.dm-thread-status,
+.discovery-dms-status {
+  z-index: 4;
+  padding: 8px 14px;
+  border-top: 1px solid color-mix(in srgb, var(--danger) 24%, var(--border));
+  background: color-mix(in srgb, var(--danger-subtle) 80%, var(--bg-surface));
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+}
+.dm-thread-status { position: absolute; inset: auto 0 0; }
+.dm-thread-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--text-tertiary);
+  font-size: 0.78rem;
+  text-align: center;
+}
+.dm-thread-empty strong { color: var(--text-secondary); font: italic 700 1rem var(--font-display); }
+
+@media (max-width: 760px) {
+  .discovery-dms-modal.is-messages { width: 100%; }
+  .dm-inbox { grid-template-columns: minmax(0, 1fr); }
+  .dm-inbox-sidebar,
+  .dm-inbox-thread { grid-column: 1; grid-row: 1; }
+  .dm-inbox-sidebar { border-right: 0; padding: 14px 12px calc(14px + env(safe-area-inset-bottom)); }
+  .dm-inbox:not(.has-selection) .dm-inbox-thread,
+  .dm-inbox.has-selection .dm-inbox-sidebar { display: none; }
+  .dm-thread-back {
+    position: absolute;
+    z-index: 4;
+    top: 12px;
+    left: 10px;
+    width: 34px;
+    height: 34px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-raised);
+    color: var(--text-secondary);
+    font-size: 0;
+  }
+  .dm-thread .chat-header { padding-left: 54px; }
+  .dm-thread .chat-message-group { padding-inline: 14px; }
+  .dm-thread .chat-composer { padding-inline: 10px; padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
+  .dm-inbox-sidebar .dm-block-button { opacity: 1; }
 }
