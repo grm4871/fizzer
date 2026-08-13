@@ -20,6 +20,7 @@ import {
   formatTurnsLine,
   hasRunActivity,
   hasUsageStats,
+  isHarnessPromptDump,
   liveActivityHeadline,
   summarizeActivity,
   toolResultPreview,
@@ -179,10 +180,7 @@ function ThinkingBlock({
   const more = lines.length > 1 ? ` (+${lines.length - 1} lines)` : '';
 
   useEffect(() => {
-    if (live) {
-      setOpen(true);
-      pinRef.current = true;
-    }
+    if (live) pinRef.current = true;
   }, [live]);
 
   // Thinking body is its own scroll container (max-height). Follow the tail
@@ -407,11 +405,18 @@ function StructuredTranscript({
 
       {renderItems.map((item, index) => {
         if (item.kind === 'thinking') {
+          const dump = isHarnessPromptDump(item.text);
+          if (dump && !(isRunning && index === lastIdx)) return null;
+          if (dump) {
+            return (
+              <div key={item.id} className="crp-term-line dim">thinking…</div>
+            );
+          }
           return (
             <ThinkingBlock
               key={item.id}
               text={item.text || ''}
-              defaultOpen={isRunning && index === lastIdx}
+              defaultOpen={false}
               live={isRunning && index === lastIdx}
             />
           );
@@ -449,6 +454,33 @@ function StructuredTranscript({
         </div>
       )}
     </div>
+  );
+}
+
+function StopRunButton({
+  runId,
+  onCancelRun,
+}: {
+  runId: number;
+  onCancelRun: (runId: number) => void;
+}) {
+  const [stopping, setStopping] = useState(false);
+  return (
+    <button
+      type="button"
+      className={`crp-stop${stopping ? ' is-stopping' : ''}`}
+      disabled={stopping}
+      onClick={(event) => {
+        event.stopPropagation();
+        if (stopping) return;
+        setStopping(true);
+        onCancelRun(runId);
+      }}
+      title="Stop run"
+    >
+      <Square size={11} fill="currentColor" />
+      {stopping ? 'Stopping' : 'Stop'}
+    </button>
   );
 }
 
@@ -628,18 +660,7 @@ export const CascadeRunPanel = memo(function CascadeRunPanel({
           {canExpand && <ChevronRight size={13} className="crp-chevron" />}
         </button>
         {isRunning && message.runId != null && (
-          <button
-            type="button"
-            className="crp-stop"
-            onClick={(event) => {
-              event.stopPropagation();
-              onCancelRun(message.runId!);
-            }}
-            title="Stop run"
-          >
-            <Square size={11} fill="currentColor" />
-            Stop
-          </button>
+          <StopRunButton runId={message.runId} onCancelRun={onCancelRun} />
         )}
       </div>
 

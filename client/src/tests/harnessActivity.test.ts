@@ -140,14 +140,15 @@ describe('buildHarnessActivity', () => {
     });
   });
 
-  it('surfaces the latest thinking snippet while the model is reasoning', () => {
+  it('keeps prompt dumps out of the live thinking header', () => {
     const activity = buildHarnessActivity(msg({
-      blocks: [{ type: 'thinking', text: 'Checking whether the live header still only says Bash.' }],
+      blocks: [{
+        type: 'thinking',
+        text: 'You are grok (@grok) in #devspam\n[Context: Shared room delta]\nnevermind',
+      }],
     }));
-    expect(liveActivityHeadline(activity)).toEqual({
-      verb: 'thinking',
-      detail: 'Checking whether the live header still only says Bash.',
-    });
+    expect(liveActivityHeadline(activity)).toEqual({ verb: 'thinking', detail: '' });
+    expect(summarizeActivity(activity, true)).toBe('thinking');
   });
 
   it('falls back to codex JSONL tools when blocks are empty', () => {
@@ -209,6 +210,24 @@ describe('CascadeRunPanel raw fallback', () => {
     expect(markup).toContain('$ akron --grok -z task --yolo');
     expect(markup).toContain('Akron --grok still working');
     expect(markup).not.toContain('waiting for harness stream…');
+  });
+
+  it('hides prompt-context thinking from the expanded harness', () => {
+    const markup = renderToStaticMarkup(createElement(CascadeRunPanel, {
+      message: msg({
+        status: 'running',
+        runId: 1,
+        blocks: [{
+          type: 'thinking',
+          text: 'You are grok (@grok) in #devspam\n[Context: Shared room delta]\nAgent memory (vault)',
+        }],
+      }),
+      onCancelRun: () => {},
+      forceOpen: true,
+    }));
+    expect(markup).toContain('thinking…');
+    expect(markup).not.toContain('Agent memory (vault)');
+    expect(markup).not.toContain('Shared room delta');
   });
 
   it('shows the current command on the collapsed live header', () => {

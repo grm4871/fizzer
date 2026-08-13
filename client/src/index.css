@@ -4794,6 +4794,39 @@ button.chat-avatar.is-clickable:focus-visible {
   border-color: color-mix(in srgb, var(--border) 72%, hsl(38, 52%, 48%));
   box-shadow: inset 2px 0 0 hsla(38, 58%, 52%, 0.5);
 }
+.cascade-run-panel.open {
+  border: 1px solid hsla(224, 9%, 100%, 0.08);
+  border-radius: 6px;
+  background: hsla(226, 14%, 100%, 0.018);
+  box-shadow: none;
+}
+.cascade-run-panel.open.is-running {
+  border-color: hsla(38, 32%, 42%, 0.3);
+  box-shadow: none;
+}
+.cascade-run-panel.open .crp-header {
+  min-height: 28px;
+  background: transparent;
+}
+.cascade-run-panel.open .crp-toggle {
+  min-height: 28px;
+  padding: 3px 8px;
+}
+.cascade-run-panel.open .crp-toggle-summary {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.45em;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.cascade-run-panel.open .crp-live-detail {
+  max-width: min(42vw, 28rem);
+}
+.cascade-run-panel.open .crp-stop {
+  min-height: 24px;
+  margin: 2px 6px 2px 0;
+  padding: 2px 8px;
+}
 .crp-header {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -5018,6 +5051,11 @@ button.chat-avatar.is-clickable:focus-visible {
   border-color: hsla(357, 70%, 62%, 0.56);
   background: hsla(357, 62%, 58%, 0.16);
   color: hsl(357, 88%, 76%);
+}
+.crp-stop.is-stopping,
+.crp-stop:disabled {
+  opacity: 0.7;
+  cursor: wait;
 }
 .cascade-run-panel.is-running:not(.open) .crp-stop {
   min-height: 24px;

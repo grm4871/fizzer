@@ -68,6 +68,18 @@ defmodule Cascade.Runs.RunnerLifecycle do
     end
   end
 
+  # User Stop must not wait for the runner ACK (up to 15s). Steering still uses cancel/3.
+  def request_cancel(owner_id, run_id) do
+    case Hub.runner(owner_id) do
+      {:ok, %{sid: sid}} ->
+        Cascade.Realtime.emit(sid, "/runners", "run:cancel", [%{runId: run_id}])
+        true
+
+      _ ->
+        false
+    end
+  end
+
   def prepare_workspace(owner_id, payload, timeout \\ 30_000) do
     with {:ok, %{sid: sid}} <- Hub.runner(owner_id),
          {:ok, replies} <-

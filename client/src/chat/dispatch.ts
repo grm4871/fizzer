@@ -989,7 +989,26 @@ export function useChatDispatch({
     }
   }, [dispatchChatAgentIntents]);
 
+  const markChatRunCanceled = useCallback((runId: number) => {
+    chatMessageStore.updateAll((messages) => {
+      let changed = false;
+      const next = messages.map((message) => {
+        if (message.runId === runId && message.status === 'running') {
+          changed = true;
+          return {
+            ...message,
+            body: message.body === 'Thinking...' ? 'Run canceled by user.' : message.body,
+            status: 'canceled' as const,
+          };
+        }
+        return message;
+      });
+      return changed ? next : messages;
+    });
+  }, []);
+
   const handleCancelChatRun = useCallback(async (runId: number): Promise<boolean> => {
+    markChatRunCanceled(runId);
     try {
       if (isLocalRunId(runId)) {
         // Negative run ids are legacy client-local runs (no longer started here).
@@ -999,38 +1018,23 @@ export function useChatDispatch({
           return false;
         }
       } else {
-        const res = await api<{ success: boolean }>(`/api/runs/${runId}/cancel`, { method: 'POST' });
         const socket = runSocketsRef.current.get(runId);
         if (socket) {
           socket.disconnect();
           runSocketsRef.current.delete(runId);
         }
+        const res = await api<{ success: boolean }>(`/api/runs/${runId}/cancel`, { method: 'POST' });
         if (!res.success) {
           setNotice('Could not cancel run');
           return false;
         }
       }
-      chatMessageStore.updateAll((messages) => {
-        let changed = false;
-        const next = messages.map((message) => {
-          if (message.runId === runId && message.status === 'running') {
-            changed = true;
-            return {
-              ...message,
-              body: message.body === 'Thinking...' ? 'Run canceled by user.' : message.body,
-              status: 'canceled' as const,
-            };
-          }
-          return message;
-        });
-        return changed ? next : messages;
-      });
       return true;
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Could not cancel run');
       return false;
     }
-  }, []);
+  }, [markChatRunCanceled]);
 
   const handleCollaborateChatMessage = useCallback(async (
     channelId: string,

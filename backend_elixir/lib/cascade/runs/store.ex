@@ -301,10 +301,10 @@ defmodule Cascade.Runs.Store do
     force? = Keyword.get(opts, :force, false)
 
     stopped? =
-      if owner_id do
-        Cascade.Runs.RunnerLifecycle.cancel(owner_id, run_id)
-      else
-        false
+      cond do
+        is_nil(owner_id) -> false
+        force? -> Cascade.Runs.RunnerLifecycle.request_cancel(owner_id, run_id)
+        true -> Cascade.Runs.RunnerLifecycle.cancel(owner_id, run_id)
       end
 
     if owner_id && not stopped? && Cascade.Runs.RunnerLifecycle.online?(owner_id) &&

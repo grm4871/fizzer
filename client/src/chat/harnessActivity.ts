@@ -911,11 +911,10 @@ function compactLiveDetail(text: string | undefined, max = 88): string {
   return `${collapsed.slice(0, max - 1)}…`;
 }
 
-function recentLiveSnippet(text: string | undefined, max = 88): string {
-  const collapsed = String(text || '').replace(/\s+/g, ' ').trim();
-  if (!collapsed) return '';
-  if (collapsed.length <= max) return collapsed;
-  return `…${collapsed.slice(-(max - 1))}`;
+/** System/user prompt blobs must not leak into the live header or thinking well. */
+export function isHarnessPromptDump(text: string | undefined): boolean {
+  const sample = String(text || '').slice(0, 4000);
+  return /You are grok\b|\[Context:|Agent memory \(vault\)|Your POLICIES note:|Shared room (?:delta|state)|cascade-chat history --around-message-id/i.test(sample);
 }
 
 export type LiveActivityHeadline = {
@@ -933,7 +932,8 @@ export function liveActivityHeadline(activity: HarnessActivity): LiveActivityHea
     return { verb: last.title, detail: compactLiveDetail(last.text) };
   }
   if (last?.kind === 'thinking') {
-    return { verb: 'thinking', detail: recentLiveSnippet(last.text) };
+    if (isHarnessPromptDump(last.text)) return { verb: 'thinking', detail: '' };
+    return { verb: 'thinking', detail: compactLiveDetail(last.text, 56) };
   }
   const lastSystem = items.find((item) => item.kind === 'system' && item.text);
   if (lastSystem?.text) {
