@@ -775,7 +775,7 @@ verify_reopened_production_edge() {
     engine_open="$(curl --noproxy '*' -fsS --connect-timeout 3 --max-time 10 \
       --resolve "$DEPLOY_DOMAIN:443:127.0.0.1" \
       "https://$DEPLOY_DOMAIN/socket.io/?EIO=4&transport=polling&t=$RANDOM" || true)"
-    if [[ "$health_code" == "200" && "$root_html" == *'<div id="root"></div>'* && "$engine_open" == 0* ]]; then
+    if [[ "$health_code" == "200" && "$root_html" == *'<div id="root"'* && "$root_html" == *'assets/main-'* && "$engine_open" == 0* ]]; then
       consecutive=$((consecutive + 1))
       if [[ "$consecutive" -ge 3 ]]; then
         echo "==> Reopened production health, client, TLS edge, and Engine.IO are verified"
@@ -786,7 +786,7 @@ verify_reopened_production_edge() {
     fi
     sleep 1
   done
-  echo "Error: reopened production edge did not stabilize (health HTTP ${health_code:-000}, client=$([[ "$root_html" == *'<div id="root"></div>'* ]] && echo ok || echo failed), Engine.IO=$([[ "$engine_open" == 0* ]] && echo ok || echo failed))." >&2
+  echo "Error: reopened production edge did not stabilize (health HTTP ${health_code:-000}, client=$([[ "$root_html" == *'<div id="root"'* && "$root_html" == *'assets/main-'* ]] && echo ok || echo failed), Engine.IO=$([[ "$engine_open" == 0* ]] && echo ok || echo failed))." >&2
   return 1
 }
 
