@@ -158,6 +158,14 @@ defmodule Cascade.Missions.Dispatches do
       |> Enum.filter(&mentions?(source, &1))
       |> MapSet.new(& &1.id)
 
+    if compact_command?(direct_source, registrations) do
+      compact_targets(user_id, channel_id, registrations, explicit_ids, from_agent)
+    else
+      normal_targets(user_id, message, registrations, explicit_ids, from_agent)
+    end
+  end
+
+  defp normal_targets(user_id, message, registrations, explicit_ids, from_agent) do
     calls_specialist =
       Enum.any?(registrations, &(not &1.orchestrator and MapSet.member?(explicit_ids, &1.id)))
 
@@ -185,6 +193,69 @@ defmodule Cascade.Missions.Dispatches do
         else: {selected, seen}
     end)
     |> elem(0)
+  end
+
+  defp compact_command?(text, registrations) do
+    stripped =
+      Enum.reduce(registrations, to_string(text), fn registration, acc ->
+        mention = Schema.normalize_mention(registration.mention, registration.agentId)
+
+        if mention == "" do
+          acc
+        else
+          Regex.replace(
+            Regex.compile!("@\\s*" <> Regex.escape(mention) <> "(?=$|[\\s.,:;!?\\])}])", "i"),
+            acc,
+            " "
+          )
+        end
+      end)
+
+    Regex.match?(~r/^\s*\/compact\s*$/iu, stripped)
+  end
+
+  defp compact_targets(user_id, channel_id, registrations, explicit_ids, from_agent) do
+    candidates =
+      if MapSet.size(explicit_ids) > 0 do
+        Enum.filter(registrations, &MapSet.member?(explicit_ids, &1.id))
+      else
+        latest_agent =
+          case Messages.list(channel_id, user_id, limit: 48) do
+            {:ok, messages} ->
+              messages
+              |> Enum.reverse()
+              |> Enum.find(
+                &(present?(field(&1, :registrationId)) or present?(field(&1, :agentId)))
+              )
+
+            _ ->
+              nil
+          end
+
+        case latest_agent do
+          nil ->
+            []
+
+          message ->
+            Enum.filter(registrations, fn registration ->
+              registration.id == field(message, :registrationId) or
+                (registration.agentId == field(message, :agentId) and
+                   String.downcase(registration.displayName) ==
+                     String.downcase(to_string(field(message, :author, ""))))
+            end)
+        end
+      end
+
+    candidates
+    |> Enum.filter(fn registration ->
+      registration.agentId == "claude-code" and
+        registration.id != nil and
+        if(from_agent,
+          do: registration.taggableByAgents,
+          else: registration.ownerUserId == user_id or registration.pingableByOthers
+        )
+    end)
+    |> Enum.uniq_by(&(&1.vaultAgentId || &1.id))
   end
 
   defp remove_stale_coordinator_wakes(source_channel_id, message, targets) do

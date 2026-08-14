@@ -27,6 +27,7 @@ import {
 import {
   buildQuotedReplyPrompt,
   getMentionedRegistrations,
+  isCompactCommand,
   normalizeMention,
   precedingMessageBatch,
   precedingMessageBatchText,
@@ -571,7 +572,9 @@ export function useChatDispatch({
       const steeredPrompt = steeringTurn
         ? `Mid-session steering from ${triggeringMessage.author}:\n${prompt}`
         : prompt;
-      const runPrompt = formatAgentChatPrompt(channelName, registration, steeredPrompt, triggeringMessage.author, continuation);
+      const runPrompt = agentId === 'claude-code' && isCompactCommand(prompt, [registration])
+        ? '/compact'
+        : formatAgentChatPrompt(channelName, registration, steeredPrompt, triggeringMessage.author, continuation);
       // Conversation id groups runs for backend session resume (findPriorSession).
       // The actual CLI session_id is resolved server-side — not this value.
       const conversationId = conversation.conversationId;
@@ -1137,6 +1140,7 @@ export function useChatDispatch({
     const typedSource = [trimmed, attachments.map((item) => item.name).join(' ')].filter(Boolean).join(' ');
     const replyTargetIsAgent = replyQuoteTargetsAgent(replyTo, messages);
     const hasAgentIntent = Boolean(replyTo)
+      || isCompactCommand(trimmed, channelRegistrations)
       || getMentionedRegistrations(typedSource, channelRegistrations, false).length > 0
       || channelRegistrations.some((registration) => registration.replyToEveryMessage);
     let outgoingMessage = candidate;

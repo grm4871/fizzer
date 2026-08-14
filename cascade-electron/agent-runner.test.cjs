@@ -18,11 +18,36 @@ const {
   helperAllowedTools,
   isMissingClaudeSession,
   formatToolHarnessPreview,
+  renderInlineSvgAttachments,
   normalizeClaudeEffort,
   resolveClaudePermission,
   requestClaudePermission,
   startLocalAgentRun,
 } = require('./agent-runner.cjs');
+
+test('inline SVG prompt markup becomes a PNG attachment plus a temporary source note', (t) => {
+  const source = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="8"><rect width="12" height="8" fill="red"/></svg>';
+  const prepared = renderInlineSvgAttachments('before [[FIZZER_INLINE_SVG:1]] after', [source]);
+  t.after(prepared.cleanup);
+
+  assert.equal(prepared.images.length, 1);
+  assert.equal(prepared.images[0].media_type, 'image/png');
+  assert.deepEqual(Buffer.from(prepared.images[0].data, 'base64').subarray(1, 4), Buffer.from('PNG'));
+  assert.doesNotMatch(prepared.prompt, /<svg\b/i);
+  const note = prepared.prompt.match(/\[FIZZER HARNESS NOTE TO AGENT:[\s\S]*?SEE <([^>]+)>\]/);
+  assert.ok(note);
+  assert.equal(fs.readFileSync(note[1], 'utf8'), source);
+
+  prepared.cleanup();
+  assert.equal(fs.existsSync(note[1]), false);
+});
+
+test('invalid inline SVG remains in the prompt instead of being discarded', () => {
+  const source = '<svg><not-valid></svg>';
+  const prepared = renderInlineSvgAttachments('[[FIZZER_INLINE_SVG:1]]', [source]);
+  assert.equal(prepared.prompt, source);
+  assert.deepEqual(prepared.images, []);
+});
 
 test('recognizes a Claude session that belongs to another machine', () => {
   assert.equal(isMissingClaudeSession(new Error('No conversation found with session ID: abc')), true);

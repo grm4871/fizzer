@@ -1778,7 +1778,7 @@ button:focus-visible,
   align-items: center;
   gap: 5px;
   width: max-content;
-  max-width: 240px;
+  max-width: none;
   padding: 8px;
   cursor: grab;
   user-select: none;
@@ -1798,10 +1798,10 @@ button:focus-visible,
 .orbit-node.is-child { opacity: 0.92; }
 .orbit-node.is-child .orbit-claude-art { font-size: 8px; }
 .orbit-node.is-child .orbit-codex-mark { width: 24px; height: 24px; }
-.orbit-node-meta { display: flex; flex-direction: column; gap: 1px; max-width: 240px; }
-/* Label stays a single tidy line; the status caption wraps fully (no truncation). */
+.orbit-node-meta { display: flex; flex-direction: column; gap: 1px; width: max-content; max-width: none; }
+/* Keep both title and generated caption intact on one line. */
 .orbit-node-label { color: var(--text-primary); font-size: 0.74rem; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.orbit-node-status { color: var(--text-secondary); font-size: 0.66rem; white-space: normal; overflow-wrap: anywhere; line-height: 1.25; }
+.orbit-node-status { color: var(--text-secondary); font-size: 0.66rem; white-space: nowrap; line-height: 1.25; }
 /* Secondary heuristic action line, shown under the qwen caption. */
 .orbit-node-action { color: var(--text-tertiary); font-size: 0.58rem; letter-spacing: 0.03em; text-transform: uppercase; margin-top: 2px; }
 /* Idle agents dim out and desaturate. */

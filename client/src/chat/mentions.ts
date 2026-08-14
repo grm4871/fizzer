@@ -109,6 +109,13 @@ export function stripRegisteredAgentMentions(
   return next.replace(/\s+/g, ' ').trim();
 }
 
+export function isCompactCommand(
+  text: string,
+  registrations: Array<{ agentId: string; mention: string }>,
+) {
+  return /^\/compact$/i.test(stripRegisteredAgentMentions(text, registrations).trim());
+}
+
 type QuotableReplyRef = {
   messageId: string;
   author?: string;

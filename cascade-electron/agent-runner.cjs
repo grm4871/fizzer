@@ -9,6 +9,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { pathToFileURL } = require('url');
+const { Resvg } = require('@resvg/resvg-js');
 
 let cliAgentModulePromise = null;
 let cliAgentModuleMtimeMs = -1;
@@ -59,6 +60,50 @@ const USER_EXEC_DIRS = [
   path.join(os.homedir(), 'node_modules', '.bin'),
 ];
 const HELPER_NAMES = ['cascade-note', 'cascade-chat', 'cascade-scratchpad'];
+const INLINE_SVG_NOTE = (sourcePath) => `[FIZZER HARNESS NOTE TO AGENT: THIS INLINE SVG WAS REPLACED BY AN IMAGE. TO SEE THE SOURCE CODE FOR THE SVG, SEE <${sourcePath}>]`;
+
+/** Render inline SVG prompt fragments into image attachments while retaining source access. */
+function renderInlineSvgAttachments(prompt, inlineSvgs) {
+  const input = String(prompt || '');
+  const sources = Array.isArray(inlineSvgs) ? inlineSvgs.filter((svg) => typeof svg === 'string') : [];
+  if (!sources.length) return { prompt: input, images: [], cleanup: () => {} };
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fizzer-inline-svg-'));
+  const images = [];
+  let rewritten = input;
+  sources.forEach((svg, offset) => {
+    const index = offset + 1;
+    const marker = `[[FIZZER_INLINE_SVG:${index}]]`;
+    if (!rewritten.includes(marker)) return;
+    const sourcePath = path.join(dir, `inline-${index}.svg`);
+    try {
+      fs.writeFileSync(sourcePath, svg, { mode: 0o600 });
+      const png = new Resvg(svg).render().asPng();
+      images.push({ media_type: 'image/png', data: Buffer.from(png).toString('base64') });
+      rewritten = rewritten.replace(marker, INLINE_SVG_NOTE(sourcePath));
+    } catch (error) {
+      console.warn('[agent-runner] failed to render inline SVG:', error?.message || error);
+      try { fs.rmSync(sourcePath, { force: true }); } catch { /* ignore */ }
+      rewritten = rewritten.replace(marker, svg);
+    }
+  });
+
+  if (!images.length) {
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+    return { prompt: rewritten, images: [], cleanup: () => {} };
+  }
+
+  let cleaned = false;
+  return {
+    prompt: rewritten,
+    images,
+    cleanup: () => {
+      if (cleaned) return;
+      cleaned = true;
+      try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+    },
+  };
+}
 
 /** Directory holding the agent helper CLIs; prefer source, fall back to dist. */
 function resolveWrapperDir() {
@@ -978,9 +1023,16 @@ async function startLocalAgentRun(opts, sendEvent) {
   if (!Number.isFinite(runId)) throw new Error('Invalid run id');
 
   const agent = String(opts.agent || '').trim();
-  const prompt = String(opts.prompt || '').trim();
+  const rawPrompt = String(opts.prompt || '').trim();
   if (!agent) throw new Error('Agent is required');
-  if (!prompt) throw new Error('Prompt is required');
+  if (!rawPrompt) throw new Error('Prompt is required');
+
+  const preparedPrompt = renderInlineSvgAttachments(rawPrompt, opts.inlineSvgs);
+  const prompt = preparedPrompt.prompt;
+  const images = [
+    ...(Array.isArray(opts.images) ? opts.images : []),
+    ...preparedPrompt.images,
+  ];
 
   let seq = 0;
   const emit = (type, payload) => {
@@ -1012,7 +1064,7 @@ async function startLocalAgentRun(opts, sendEvent) {
       // eslint-disable-next-line no-constant-condition
       while (true) {
         try {
-          const result = await runClaudeLocally({ ...opts, prompt: runPrompt, resumeSessionId: resume }, emit);
+          const result = await runClaudeLocally({ ...opts, prompt: runPrompt, images, resumeSessionId: resume }, emit);
           emitTerminalStatus(emit, runId, 'completed', result.summary, result.sessionId);
           return { sessionId: result.sessionId };
         } catch (error) {
@@ -1056,6 +1108,7 @@ async function startLocalAgentRun(opts, sendEvent) {
       rejectClaudePermissionsForRun(runId);
       canceledClaudeRuns.delete(runId);
       cleanupRunHelperConfig(runId);
+      preparedPrompt.cleanup();
     }
   }
 
@@ -1073,7 +1126,7 @@ async function startLocalAgentRun(opts, sendEvent) {
       userPrompt: prompt,
       cwd,
       resumeSessionId: typeof opts.resumeSessionId === 'string' ? opts.resumeSessionId : undefined,
-      images: Array.isArray(opts.images) ? opts.images : [],
+      images,
       model: typeof opts.model === 'string' ? opts.model : undefined,
       reasoningEffort: typeof opts.reasoningEffort === 'string' ? opts.reasoningEffort : undefined,
       priorityServiceTier: opts.priorityServiceTier === true,
@@ -1091,6 +1144,7 @@ async function startLocalAgentRun(opts, sendEvent) {
   } finally {
     clearRunHelperEnv(runId);
     cleanupRunHelperConfig(runId);
+    preparedPrompt.cleanup();
   }
 }
 
@@ -1144,6 +1198,7 @@ module.exports = {
   helperAllowedTools,
   normalizeClaudeEffort,
   formatToolHarnessPreview,
+  renderInlineSvgAttachments,
   isMissingClaudeSession,
   resolveAgentCwd,
   setNoteApiConfig,

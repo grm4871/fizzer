@@ -6,6 +6,7 @@ defmodule Cascade.Runs.PromptContext do
   alias Cascade.Scratchpad
 
   @removed_model_presets ~w(codex-flash codex-pro grok-2 grok-beta gpt-4o claude-3.5-sonnet o1-mini)
+  @inline_svg ~r/<svg\b[\s\S]*?<\/svg\s*>/iu
 
   @app_context "Cascade is a user-facing, Obsidian-style workspace for AI-native project management. " <>
                  "Its vault folders, project docs, notes, and chats are live app data, not a mirror of the agent process cwd. " <>
@@ -65,6 +66,7 @@ defmodule Cascade.Runs.PromptContext do
 
   def delegate_payload(run, vault_root, agent, prompt, params, resume_session_id, runtime \\ %{}) do
     memory_key = field(runtime, :agent_memory_key, agent_memory_key(agent))
+    {prompt, inline_svgs} = extract_inline_svgs(prompt)
 
     %{
       runId: run.id,
@@ -80,6 +82,7 @@ defmodule Cascade.Runs.PromptContext do
       agentMemoryKey: memory_key,
       chatRegistrationId: field(runtime, :chat_registration_id, ""),
       images: clean_images(params["images"]),
+      inlineSvgs: inline_svgs,
       yolo: field(runtime, :yolo, params["yolo"] == true) == true
     }
     |> maybe_put(:cwd, normalize_cwd(field(runtime, :cwd, params["cwd"])))
@@ -96,6 +99,24 @@ defmodule Cascade.Runs.PromptContext do
       do: Privacy.redact_blocks(prompt),
       else: Privacy.redact_blocks(prompt <> "\n\n[Context: " <> context <> "]")
   end
+
+  def extract_inline_svgs(prompt) when is_binary(prompt) do
+    @inline_svg
+    |> Regex.split(prompt, include_captures: true, trim: false)
+    |> Enum.reduce({[], [], 0}, fn part, {prompt_parts, sources, count} ->
+      if Regex.match?(@inline_svg, part) do
+        next = count + 1
+        {["[[FIZZER_INLINE_SVG:#{next}]]" | prompt_parts], [part | sources], next}
+      else
+        {[part | prompt_parts], sources, count}
+      end
+    end)
+    |> then(fn {prompt_parts, sources, _count} ->
+      {prompt_parts |> Enum.reverse() |> IO.iodata_to_binary(), Enum.reverse(sources)}
+    end)
+  end
+
+  def extract_inline_svgs(prompt), do: {to_string(prompt || ""), []}
 
   defp memory_context(vault_id, user_id, prompt, key) do
     try do

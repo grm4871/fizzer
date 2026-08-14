@@ -820,6 +820,89 @@ defmodule Cascade.ChatDomainTest do
            ) == [["guest-root", guest_coordinator.id], ["owner-root", sol.id]]
   end
 
+  test "/compact targets the last Claude or the explicitly tagged Claude sessions" do
+    {vault, channel} = chat_vault(1, "Compact", "Compact room")
+    user = %{id: 1, username: "alice"}
+
+    add_agent = fn agent_id, display_name, mention ->
+      {:ok, identity} =
+        Agents.upsert_identity(1, vault.id, %{
+          agentId: agent_id,
+          displayName: display_name,
+          mention: mention
+        })
+
+      {:ok, registration} =
+        Agents.add_to_channel(1, vault.id, channel.id, identity.id, %{pingableByOthers: true})
+
+      registration
+    end
+
+    claude_one = add_agent.("claude-code", "Claude One", "claude-one")
+    claude_two = add_agent.("claude-code", "Claude Two", "claude-two")
+    codex = add_agent.("codex", "Codex", "codex")
+
+    {:ok, _} =
+      Messages.create(
+        user,
+        vault.id,
+        channel.id,
+        %{
+          id: "claude-last",
+          body: "Finished the prior turn.",
+          createdAt: "2026-08-14T18:00:00.000Z",
+          registrationId: claude_one.id
+        },
+        access: :agent
+      )
+
+    {:ok, bare} =
+      Messages.create(user, vault.id, channel.id, %{
+        id: "compact-bare",
+        body: "/compact",
+        createdAt: "2026-08-14T18:01:00.000Z"
+      })
+
+    assert {:ok, [bare_dispatch]} = Dispatches.create_for_message(user.id, channel.id, bare)
+    assert bare_dispatch.registration.id == claude_one.id
+
+    {:ok, _} =
+      Messages.create(
+        user,
+        vault.id,
+        channel.id,
+        %{
+          id: "codex-last",
+          body: "I am the newest agent now.",
+          createdAt: "2026-08-14T18:02:00.000Z",
+          registrationId: codex.id
+        },
+        access: :agent
+      )
+
+    {:ok, wrong_provider} =
+      Messages.create(user, vault.id, channel.id, %{
+        id: "compact-after-codex",
+        body: "/compact",
+        createdAt: "2026-08-14T18:03:00.000Z"
+      })
+
+    assert {:ok, []} = Dispatches.create_for_message(user.id, channel.id, wrong_provider)
+
+    {:ok, explicit} =
+      Messages.create(user, vault.id, channel.id, %{
+        id: "compact-explicit",
+        body: "/compact @claude-one @claude-two @codex",
+        createdAt: "2026-08-14T18:04:00.000Z"
+      })
+
+    assert {:ok, explicit_dispatches} =
+             Dispatches.create_for_message(user.id, channel.id, explicit)
+
+    assert explicit_dispatches |> Enum.map(& &1.registration.id) |> Enum.sort() ==
+             Enum.sort([claude_one.id, claude_two.id])
+  end
+
   defp chat_request(method, path, token, body, options \\ []) do
     request =
       conn(method, path, Jason.encode!(body))

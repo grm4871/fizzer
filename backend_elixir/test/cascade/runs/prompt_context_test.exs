@@ -174,6 +174,7 @@ defmodule Cascade.Runs.PromptContextTest do
                :chatRegistrationId,
                :chatTriggeringMessageId,
                :images,
+               :inlineSvgs,
                :priorityServiceTier,
                :prompt,
                :runId,
@@ -201,5 +202,29 @@ defmodule Cascade.Runs.PromptContextTest do
     assert resumed.model == "custom-model"
     assert resumed.resumeSessionId == "provider-session"
     assert resumed.yolo
+  end
+
+  test "delegate payload extracts inline SVGs for local rasterization" do
+    run = %{id: 43, vault_id: "vault"}
+
+    first =
+      ~s(<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><rect width="4" height="4"/></svg>)
+
+    second = ~s(<SVG viewBox="0 0 2 2"><circle cx="1" cy="1" r="1"/></SVG>)
+
+    payload =
+      PromptContext.delegate_payload(
+        run,
+        "/vault/root",
+        "claude-code",
+        "before #{first} between #{second} after",
+        %{},
+        nil
+      )
+
+    assert payload.prompt ==
+             "before [[FIZZER_INLINE_SVG:1]] between [[FIZZER_INLINE_SVG:2]] after"
+
+    assert payload.inlineSvgs == [first, second]
   end
 end

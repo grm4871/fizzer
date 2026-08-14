@@ -1,11 +1,24 @@
 import { describe, expect, it } from 'vitest';
-import { addressedMentions, buildQuotedReplyPrompt, hasRegistrationForMention, precedingMessageBatch, precedingMessageBatchText, replyQuoteTargetsAgent, resolveAgentMessageRegistration } from '../chat/mentions';
+import { addressedMentions, buildQuotedReplyPrompt, hasRegistrationForMention, isCompactCommand, precedingMessageBatch, precedingMessageBatchText, replyQuoteTargetsAgent, resolveAgentMessageRegistration } from '../chat/mentions';
 import { prepareReplyForSend } from '../components/ChatComposer';
 
 const registrations = [
   { id: 'terra-reg', agentId: 'codex', displayName: 'Terra', mention: 'terra', taggableByAgents: true },
   { id: 'sol-reg', agentId: 'codex', displayName: 'Sol', mention: 'sol', taggableByAgents: true },
 ];
+
+describe('compact command', () => {
+  it('recognizes bare and explicitly targeted compact commands', () => {
+    expect(isCompactCommand('/compact', registrations)).toBe(true);
+    expect(isCompactCommand('/compact @terra @sol', registrations)).toBe(true);
+    expect(isCompactCommand('@terra /COMPACT', registrations)).toBe(true);
+  });
+
+  it('does not swallow ordinary messages that merely mention compacting', () => {
+    expect(isCompactCommand('/compact now', registrations)).toBe(false);
+    expect(isCompactCommand('please /compact @terra', registrations)).toBe(false);
+  });
+});
 
 describe('reply agent notification', () => {
   const reply = { messageId: 'msg-agent', author: 'Sol', mention: 'sol', preview: 'Original answer' };
