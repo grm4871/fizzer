@@ -9287,6 +9287,25 @@ a.chat-mission-chip:hover { color: var(--text-primary); border-color: var(--acce
 .account-settings select { min-height: 42px; padding: 9px 11px; border-radius: 8px; font-size: 0.8rem; }
 .account-settings small,
 .account-settings-hint { font-size: 0.71rem; line-height: 1.5; }
+.account-local-codex-output {
+  margin: 0.4rem 0 0;
+  max-height: 13rem;
+  overflow: auto;
+  padding: 0.75rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.65rem;
+  background: color-mix(in srgb, var(--bg-secondary) 88%, black);
+  color: var(--text-secondary);
+  font: 0.72rem/1.5 var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.account-local-codex-login {
+  align-self: flex-start;
+  color: var(--accent);
+  font-size: 0.78rem;
+  font-weight: 650;
+}
 .account-section-title { gap: 9px; font-size: 0.92rem; }
 .account-settings-actions button,
 .account-avatar-actions button { min-height: 38px; padding: 8px 13px; border-radius: 8px; font-size: 0.76rem; cursor: pointer; }

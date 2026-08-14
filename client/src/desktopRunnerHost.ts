@@ -8,6 +8,7 @@
  */
 
 import { io, type Socket } from 'socket.io-client';
+import { androidRunnerAPI } from './androidLocalCodex';
 
 type RunnerElectronAPI = {
   setRunnerToken?: (opts: { token: string; apiUrl?: string }) => Promise<{ success: boolean; error?: string }>;
@@ -191,7 +192,8 @@ async function restoreMainProcessRuns(): Promise<void> {
 }
 
 function runnerElectronAPI(): RunnerElectronAPI | undefined {
-  return (window as unknown as { electronAPI?: RunnerElectronAPI }).electronAPI;
+  return (window as unknown as { electronAPI?: RunnerElectronAPI }).electronAPI
+    || androidRunnerAPI();
 }
 
 function resolveApiBase(): string {
@@ -422,7 +424,7 @@ function connectDesktopRunnerSocket(token: string, nextApiBase: string): void {
 /**
  * Ensure the desktop runner relay is connected (after login).
  * Idempotent — safe to call on focus/visibility resync without killing runs.
- * No-op in a plain browser (no electronAPI).
+ * No-op in a plain browser (no Electron or Android-native runner API).
  *
  */
 export function startDesktopRunnerHost(): void {

@@ -1,10 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
-import { Ban, Camera, Flag, Globe2, KeyRound, Link as LinkIcon, LogOut, SlidersHorizontal, Trash2, Users, X } from 'lucide-react';
+import { Ban, Bot, Camera, Flag, Globe2, KeyRound, Link as LinkIcon, LogOut, SlidersHorizontal, Trash2, Users, X } from 'lucide-react';
 import { api, type User, type VaultMember, type VaultRole } from '../api';
+import {
+  getAndroidLocalCodexStatus,
+  isAndroidLocalCodexAvailable,
+  setAndroidLocalCodexEnabled,
+  startAndroidLocalCodexLogin,
+  type LocalCodexStatus,
+} from '../androidLocalCodex';
+import { ensureDesktopRunnerHost, stopDesktopRunnerHost } from '../desktopRunnerHost';
 import { ModalShell } from './ModalShell';
 
 type AssignableRole = Exclude<VaultRole, 'owner'>;
-export type AccountSettingsSection = 'profile' | 'preferences' | 'security' | 'vault';
+export type AccountSettingsSection = 'profile' | 'preferences' | 'security' | 'local-agent' | 'vault';
 type PublicJoinPolicy = 'open' | 'request' | 'invite';
 type PublicVaultSettings = {
   visibility: 'private' | 'public';
@@ -71,7 +79,52 @@ export function AccountSettings({ user, vaultId, vaultName, initialSection = 'pr
   const [profileState, setProfileState] = useState('');
   const [passwordState, setPasswordState] = useState('');
   const [busy, setBusy] = useState(false);
+  const localCodexAvailable = isAndroidLocalCodexAvailable();
+  const [localCodexStatus, setLocalCodexStatus] = useState<LocalCodexStatus | null>(null);
+  const [localCodexOutput, setLocalCodexOutput] = useState('');
+  const [localCodexBusy, setLocalCodexBusy] = useState(false);
+  const localCodexLoginUrl = localCodexOutput.match(/https?:\/\/[^\s]+/)?.[0];
   const fileRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!localCodexAvailable) return;
+    void getAndroidLocalCodexStatus().then(setLocalCodexStatus).catch((error) => {
+      setLocalCodexStatus({ supported: false, authenticated: false, error: String(error) });
+    });
+  }, [localCodexAvailable]);
+
+  const authenticateLocalCodex = async () => {
+    setLocalCodexBusy(true);
+    setLocalCodexOutput('Starting secure device login…');
+    let unsubscribe: (() => void) | undefined;
+    try {
+      unsubscribe = await startAndroidLocalCodexLogin((event) => {
+        if (event.line) setLocalCodexOutput((existing) => `${existing}\n${event.line}`.trim());
+        if (event.kind === 'login-completed' || event.kind === 'login-failed') {
+          setLocalCodexBusy(false);
+          void getAndroidLocalCodexStatus().then(setLocalCodexStatus);
+          unsubscribe?.();
+        }
+      });
+    } catch (error) {
+      setLocalCodexBusy(false);
+      setLocalCodexOutput(error instanceof Error ? error.message : 'Could not start Codex login.');
+      unsubscribe?.();
+    }
+  };
+
+  const toggleLocalCodex = async () => {
+    if (!localCodexStatus) return;
+    setLocalCodexBusy(true);
+    try {
+      const next = await setAndroidLocalCodexEnabled(!localCodexStatus.enabled);
+      setLocalCodexStatus(next);
+      if (next.enabled) ensureDesktopRunnerHost();
+      else stopDesktopRunnerHost();
+    } finally {
+      setLocalCodexBusy(false);
+    }
+  };
 
   const [members, setMembers] = useState<VaultMember[]>([]);
   const [myRole, setMyRole] = useState<VaultRole | null>(null);
@@ -415,6 +468,9 @@ export function AccountSettings({ user, vaultId, vaultName, initialSection = 'pr
           <button type="button" role="tab" aria-selected={activeSection === 'security'} aria-controls="account-security" onClick={() => setActiveSection('security')}>
             <KeyRound size={15} /><span><strong>Security</strong><small>Password</small></span>
           </button>
+          {localCodexAvailable && <button type="button" role="tab" aria-selected={activeSection === 'local-agent'} aria-controls="account-local-agent" onClick={() => setActiveSection('local-agent')}>
+            <Bot size={15} /><span><strong>Local Codex</strong><small>Run on this phone</small></span>
+          </button>}
           {vaultId && <button type="button" role="tab" aria-selected={activeSection === 'vault'} aria-controls="account-vault" onClick={() => setActiveSection('vault')}>
             <Users size={15} /><span><strong>Current vault</strong><small>{vaultName || 'Sharing'}</small></span>
           </button>}
@@ -471,6 +527,45 @@ export function AccountSettings({ user, vaultId, vaultName, initialSection = 'pr
           {passwordState && <div className="account-settings-status" role="status">{passwordState}</div>}
           <div className="account-settings-actions"><button type="button" disabled={busy || !currentPassword || newPassword.length < 8 || !confirmPassword} onClick={() => void changePassword()}>Change password</button></div>
         </div>
+
+        {localCodexAvailable && (
+          <div className="account-settings-section" id="account-local-agent" role="tabpanel" hidden={activeSection !== 'local-agent'}>
+            <div className="account-section-title"><Bot size={15} /><strong>Local Codex preview</strong></div>
+            <p className="account-settings-lede">
+              Codex runs inside Fizzer's private Android workspace while the app is open. The screen stays awake during a run.
+            </p>
+            <div className="account-settings-status" role="status">
+              {!localCodexStatus
+                ? 'Checking bundled runtime…'
+                : localCodexStatus.error
+                  ? localCodexStatus.error
+                  : `${localCodexStatus.version || 'Bundled Codex'} · ${localCodexStatus.authenticated ? 'ready' : 'login required'}`}
+            </div>
+            {!localCodexStatus?.authenticated && (
+              <div className="account-settings-actions">
+                <button type="button" disabled={localCodexBusy || localCodexStatus?.supported === false} onClick={() => void authenticateLocalCodex()}>
+                  {localCodexBusy ? 'Waiting for login…' : 'Connect Codex account'}
+                </button>
+              </div>
+            )}
+            {localCodexStatus?.authenticated && (
+              <>
+                <div className="account-settings-actions">
+                  <button type="button" disabled={localCodexBusy} onClick={() => void toggleLocalCodex()}>
+                  {localCodexStatus.enabled ? 'Stop using this phone' : 'Switch runner to this phone'}
+                  </button>
+                </div>
+                <small className="account-settings-hint">
+                  {localCodexStatus.enabled
+                    ? 'Online. Codex agent mentions execute locally while Fizzer is open.'
+                    : 'Ready but offline. Enabling replaces your desktop runner until it reconnects.'}
+                </small>
+              </>
+            )}
+            {localCodexLoginUrl && <a className="account-local-codex-login" href={localCodexLoginUrl} target="_blank" rel="noreferrer">Open secure login</a>}
+            {localCodexOutput && <pre className="account-local-codex-output">{localCodexOutput}</pre>}
+          </div>
+        )}
 
         {vaultId && (
           <div className="account-settings-section" id="account-vault" role="tabpanel" hidden={activeSection !== 'vault'}>

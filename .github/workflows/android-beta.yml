@@ -39,6 +39,23 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Configure stable beta signing
+        env:
+          ANDROID_BETA_KEYSTORE_B64: ${{ secrets.ANDROID_BETA_KEYSTORE_B64 }}
+          ANDROID_BETA_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_BETA_KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$ANDROID_BETA_KEYSTORE_B64"
+          test -n "$ANDROID_BETA_KEYSTORE_PASSWORD"
+          printf '%s' "$ANDROID_BETA_KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/fizzer-beta.jks"
+          chmod 600 "$RUNNER_TEMP/fizzer-beta.jks"
+          {
+            echo "FIZZER_ANDROID_KEYSTORE=$RUNNER_TEMP/fizzer-beta.jks"
+            echo "FIZZER_ANDROID_KEYSTORE_PASSWORD=$ANDROID_BETA_KEYSTORE_PASSWORD"
+            echo "FIZZER_ANDROID_KEY_ALIAS=fizzer-beta"
+            echo "FIZZER_ANDROID_KEY_PASSWORD=$ANDROID_BETA_KEYSTORE_PASSWORD"
+          } >> "$GITHUB_ENV"
+
       - name: Install dependencies
         run: npm ci
 

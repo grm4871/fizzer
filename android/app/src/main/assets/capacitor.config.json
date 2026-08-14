@@ -1,6 +1,6 @@
 {
 	"appId": "com.cascade.browser",
-	"appName": "Cascade Dev",
+	"appName": "Fizzer Dev",
 	"webDir": "client/dist",
 	"android": {
 		"allowMixedContent": true

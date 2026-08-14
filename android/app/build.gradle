@@ -9,8 +9,8 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         // Sideload dev shell — versionCode only needs bumps when the *native*
         // wrapper changes. UI ships via https://cscd.online/app.html.
-        versionCode 7
-        versionName "dev-2026.08.09"
+        versionCode 8
+        versionName "dev-2026.08.13-local-codex"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -18,10 +18,32 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        if (System.getenv('FIZZER_ANDROID_KEYSTORE')) {
+            beta {
+                storeFile file(System.getenv('FIZZER_ANDROID_KEYSTORE'))
+                storePassword System.getenv('FIZZER_ANDROID_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('FIZZER_ANDROID_KEY_ALIAS') ?: 'fizzer-beta'
+                keyPassword System.getenv('FIZZER_ANDROID_KEY_PASSWORD') ?: System.getenv('FIZZER_ANDROID_KEYSTORE_PASSWORD')
+            }
+        }
+    }
     buildTypes {
+        debug {
+            if (signingConfigs.findByName('beta')) signingConfig signingConfigs.beta
+        }
         release {
             minifyEnabled false
+            if (signingConfigs.findByName('beta')) signingConfig signingConfigs.beta
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+    packagingOptions {
+        jniLibs {
+            // Package the static Codex executable in Android's executable
+            // native-library directory instead of writable app storage.
+            useLegacyPackaging = true
+            keepDebugSymbols += ['**/libcodex.so']
         }
     }
 }

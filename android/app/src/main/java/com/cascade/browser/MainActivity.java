@@ -21,6 +21,7 @@ public class MainActivity extends BridgeActivity {
     // the splash window can stick forever on API 31+ (white Cascade banner).
     SplashScreen.installSplashScreen(this);
     registerPlugin(BatteryMonitorPlugin.class);
+    registerPlugin(LocalCodexPlugin.class);
     super.onCreate(savedInstanceState);
 
     // After content view exists: draw under system bars (no light letterbox).
