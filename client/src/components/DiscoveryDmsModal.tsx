@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { ArrowLeft, Ban, BookOpen, ChevronDown, Clock3, Flag, LoaderCircle, Search, ShieldCheck, UserPlus, X } from 'lucide-react';
 import { FizzerMark } from './FizzerMark';
-import { api, formatRelativeDate, type CommunityUpdates } from '../api';
+import { api, formatRelativeDate, type CommunityUpdates, type User } from '../api';
 import { ReportDialog } from './ReportDialog';
 import { ModalShell } from './ModalShell';
 import { DirectMessageThread, type DirectMessageConversation } from './DirectMessageThread';
@@ -42,6 +42,7 @@ type DiscoveryDmsModalProps = {
   onOpenLocation: (vaultId: string, channelId?: string, title?: string) => void | Promise<void>;
   onVaultsChanged: () => void | Promise<void>;
   currentUsername: string;
+  currentUser?: User | null;
   onMarkRead: (channelId: string) => void | Promise<void>;
   updateCounts: CommunityUpdates['counts'];
 };
@@ -60,6 +61,7 @@ export function DiscoveryDmsModal({
   onOpenLocation,
   onVaultsChanged,
   currentUsername,
+  currentUser,
   onMarkRead,
   updateCounts,
 }: DiscoveryDmsModalProps) {
@@ -394,6 +396,7 @@ export function DiscoveryDmsModal({
                   <DirectMessageThread
                     conversation={selectedDm}
                     currentUsername={currentUsername}
+                    currentUser={currentUser}
                     onBack={() => setSelectedDm(null)}
                     onRead={onMarkRead}
                   />

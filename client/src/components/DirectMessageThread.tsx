@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
-import { api } from '../api';
+import { api, type User } from '../api';
+import { applyLocalUserProfile } from '../chat/shared';
 import { chatMessageStore } from '../chat/messageStore';
 import {
   applyRemoteChatMessage,
@@ -32,6 +33,7 @@ export type DirectMessageConversation = {
 type DirectMessageThreadProps = {
   conversation: DirectMessageConversation;
   currentUsername: string;
+  currentUser?: User | null;
   onBack: () => void;
   onRead: (channelId: string) => void | Promise<void>;
 };
@@ -46,6 +48,7 @@ function mergeMessage(channelId: string, message: ChatMessage) {
 export function DirectMessageThread({
   conversation,
   currentUsername,
+  currentUser,
   onBack,
   onRead,
 }: DirectMessageThreadProps) {
@@ -204,7 +207,7 @@ export function DirectMessageThread({
         channelName={threadLabel}
         isLoadingMessages={loading}
         currentUser={currentUsername}
-        presence={presence}
+        presence={applyLocalUserProfile(presence, currentUser)}
         availableAgents={NO_AGENTS}
         registeredAgents={NO_AGENTS}
         onRegisterAgent={() => undefined}

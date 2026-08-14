@@ -12,6 +12,7 @@ import {
   shouldDetachStickyForTouch,
   shouldDetachStickyForWheel,
 } from '../components/ChatView';
+import { applyLocalUserProfile } from '../chat/shared';
 import type { ChatAgentRegistration, ChatMessage } from '../chat/types';
 import { chatMessageStore } from '../chat/messageStore';
 import { ChatWorkTrace } from '../components/ChatWorkTrace';
@@ -245,5 +246,22 @@ describe('mergeChatPresence', () => {
   it('starts from the incoming payload when there is no cache yet', () => {
     const merged = mergeChatPresence(undefined, { participants: ['alice'], online: ['alice'], owner: 'alice', profiles: { alice } });
     expect(merged).toEqual({ participants: ['alice'], online: ['alice'], owner: 'alice', profiles: { alice } });
+  });
+
+  it('paints the signed-in user photo that presence deliberately omits', () => {
+    const presence = mergeChatPresence(undefined, {
+      participants: ['alice'],
+      online: ['alice'],
+      owner: 'alice',
+      profiles: { alice: { id: 1, username: 'alice', displayName: 'Alice' } },
+    });
+    const painted = applyLocalUserProfile(presence, {
+      id: 1,
+      username: 'alice',
+      displayName: 'Alice',
+      avatarUrl: 'data:image/jpeg;base64,abc',
+    });
+    expect(painted.profiles?.alice.avatarUrl).toBe('data:image/jpeg;base64,abc');
+    expect(presence.profiles?.alice.avatarUrl).toBeUndefined();
   });
 });

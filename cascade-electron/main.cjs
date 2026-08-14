@@ -19,8 +19,6 @@
 const { app, BrowserWindow, ipcMain, session, Menu, shell, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const http = require('http');
-const https = require('https');
 const { spawn } = require('child_process');
 
 const explicitUserDataDir = process.env.CASCADE_USER_DATA_DIR || process.env.CASCADE_ELECTRON_DATA_DIR;
@@ -37,6 +35,9 @@ const { AgentRunState, settleCancelAcknowledgement } = require('./agent-run-stat
 const { collectLocalAgents } = require('./local-agents.cjs');
 const worktrees = require('./worktrees.cjs');
 const APP_NAME = 'Fizzer';
+// Same as client `--bg-base` (hsl(225, 12%, 7%)). Set on every window so the
+// shell is never Chromium's default white while the hosted page is loading.
+const APP_BACKGROUND = '#101014';
 app.setName(APP_NAME);
 
 // Suppress GLib-GObject and GTK warnings on Linux.
@@ -90,13 +91,6 @@ function buildApplicationMenu() {
   ]);
 }
 
-/**
- * Creates the main application window with security-hardened webPreferences.
- * Sets up navigation guards, keyboard shortcuts, and window lifecycle
- * handlers. In production the window loads https://cscd.online; in development
- * it loads the app route for the URL specified by the `--APP_URL=` CLI flag
- * (defaults to http://localhost:5173/app).
- */
 /** Resolve the base URL the app loads from (prod vs dev `--APP_URL=`). */
 function getAppBaseUrl() {
   let configuredUrl;
@@ -206,46 +200,6 @@ function isAllowedNavHost(hostname) {
   );
 }
 
-function canReachUrl(url) {
-  return new Promise((resolve) => {
-    let parsed;
-    try {
-      parsed = new URL(url);
-    } catch {
-      resolve(false);
-      return;
-    }
-
-    const transport = parsed.protocol === 'https:' ? https : http;
-    const req = transport.request(
-      parsed,
-      { method: 'HEAD', timeout: 1000 },
-      (res) => {
-        res.resume();
-        resolve(true);
-      }
-    );
-    req.on('timeout', () => {
-      req.destroy();
-      resolve(false);
-    });
-    req.on('error', () => resolve(false));
-    req.end();
-  });
-}
-
-async function waitForAppUrl(url, timeoutMs = 30000) {
-  if (app.isPackaged) return;
-
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < timeoutMs) {
-    if (await canReachUrl(url)) return;
-    await new Promise((resolve) => setTimeout(resolve, 500));
-  }
-
-  console.error(`[Main] Timed out waiting for app URL: ${url}`);
-}
-
 /**
  * Shared per-window wiring: navigation guards, external-window blocking, and
  * keyboard shortcuts. Applied to the main window and every popped-out pane
@@ -349,7 +303,7 @@ function configureWindow(win) {
  * In production it loads https://cscd.online/app; in development the app route
  * for the configured `--APP_URL=` URL.
  */
-async function createWindow() {
+function createWindow() {
   // Always install (or clear) the app menu before windows open.
   Menu.setApplicationMenu(buildApplicationMenu());
 
@@ -357,6 +311,7 @@ async function createWindow() {
     width: 1200,
     height: 800,
     icon: APP_ICON,
+    backgroundColor: APP_BACKGROUND,
     // Never show a menu bar on Linux/Windows (Debug used to live here in
     // unpackaged launches). macOS uses the system menu bar via setApplicationMenu.
     autoHideMenuBar: process.platform !== 'darwin',
@@ -372,8 +327,10 @@ async function createWindow() {
 
   configureWindow(mainWindow);
 
+  // Load immediately. A Node HEAD probe used to sit on a blank window for up
+  // to 30s, and Node TLS to cscd.online fails on some networks that Chromium
+  // can still reach. did-fail-load already retries the local Vite URL.
   const baseUrl = getAppBaseUrl();
-  await waitForAppUrl(baseUrl);
   console.log('[Main] Loading app URL:', baseUrl);
   mainWindow.loadURL(baseUrl);
 
@@ -403,6 +360,7 @@ function createPaneWindow(descriptor, bounds) {
     x: bounds && bounds.x,
     y: bounds && bounds.y,
     icon: APP_ICON,
+    backgroundColor: APP_BACKGROUND,
     autoHideMenuBar: process.platform !== 'darwin',
     backgroundThrottling: false,
     webPreferences: {
@@ -674,34 +632,11 @@ ipcMain.handle('app:updateAndRestart', async () => {
 // APP LIFECYCLE
 // ═══════════════════════════════════════════════════════════════
 
-app.whenReady().then(async () => {
+app.whenReady().then(() => {
   // `npm start` runs from the generic Electron binary, whose dock tile is the
   // Electron logo until the running app overrides it.
   if (process.platform === 'darwin' && !app.isPackaged && app.dock) {
     try { app.dock.setIcon(APP_ICON); } catch { /* non-fatal: dev cosmetics */ }
-  }
-
-  try {
-    await reapOrphanedLocalAgentRuns();
-  } catch (error) {
-    console.error('[Main] Failed to reap orphaned agent processes:', error);
-  }
-
-  // Task workspaces used to accumulate forever: nothing called removeWorkspace
-  // except a human clicking Remove, and each one is a full checkout. Sweep the
-  // finished ones on launch. Anything dirty, unpushed or recently touched is
-  // refused by removeWorkspace and simply reported.
-  try {
-    const pruned = await worktrees.pruneWorkspaces();
-    if (pruned.removed.length || pruned.forgotten.length) {
-      console.log(
-        `[Main] Pruned ${pruned.removed.length} finished task workspace(s)`
-        + `${pruned.forgotten.length ? `, forgot ${pruned.forgotten.length} missing row(s)` : ''}`
-        + `${pruned.kept.length ? `, kept ${pruned.kept.length}` : ''}`,
-      );
-    }
-  } catch (error) {
-    console.error('[Main] Failed to prune task workspaces:', error);
   }
 
   // Allow app-shell permissions needed by the hosted app.
@@ -710,7 +645,24 @@ app.whenReady().then(async () => {
     callback(true);
   });
 
-  void createWindow();
+  createWindow();
+
+  // Housekeeping after first paint. Reaping imports the CLI agent module and
+  // prune walks every registered worktree — neither should hold the window.
+  void reapOrphanedLocalAgentRuns().catch((error) => {
+    console.error('[Main] Failed to reap orphaned agent processes:', error);
+  });
+  void worktrees.pruneWorkspaces().then((pruned) => {
+    if (pruned.removed.length || pruned.forgotten.length) {
+      console.log(
+        `[Main] Pruned ${pruned.removed.length} finished task workspace(s)`
+        + `${pruned.forgotten.length ? `, forgot ${pruned.forgotten.length} missing row(s)` : ''}`
+        + `${pruned.kept.length ? `, kept ${pruned.kept.length}` : ''}`,
+      );
+    }
+  }).catch((error) => {
+    console.error('[Main] Failed to prune task workspaces:', error);
+  });
 });
 
 app.on('window-all-closed', () => {
