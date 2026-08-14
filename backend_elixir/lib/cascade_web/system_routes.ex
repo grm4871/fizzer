@@ -6,6 +6,7 @@ defmodule CascadeWeb.SystemRoutes do
     {"POST", "/api/admin/deploy"},
     {"GET", "/api/deploy/status"},
     {"GET", "/api/admin/deploy/status"},
+    {"GET", "/api/system/android-update"},
     {"GET", "/download/android"},
     {"GET", "/download/mac"},
     {"GET", "/download/linux"},

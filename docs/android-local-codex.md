@@ -24,3 +24,15 @@ checked into Git. This preview currently supports ARM64 Android only, a single
 private workspace, plain prompt execution, streamed agent messages, and
 cancellation. Images, durable event replay across WebView death, Git tooling,
 and native workspace import/export remain outside the proof of concept.
+
+## Native beta updates
+
+The Android wrapper checks `/api/system/android-update` after launch. When the
+server advertises a higher `versionCode`, Fizzer offers to download the APK,
+verifies that its package name, version, and signing certificate match the
+installed app, and then opens Android's package installer. Android retains the
+final confirmation; on Android 8 and newer the user must also grant Fizzer the
+one-time **Install unknown apps** permission.
+
+Every published APK must use the same release signing key and increment
+`versionCode`. A signing mismatch fails closed before the installer opens.

@@ -115,7 +115,7 @@
     "note": "Static Elixir declarations only; runtime status, headers, bodies, ordering, Engine.IO frames, and ACK payloads require the Elixir e2e and mix suites."
   },
   "summary": {
-    "httpRoutes": 166,
+    "httpRoutes": 167,
     "socketIoInboundDeclarations": 11,
     "socketIoOutboundLiteralDeclarations": 60,
     "sqliteDeclarations": 37
@@ -1073,49 +1073,55 @@
       "method": "POST",
       "path": "/api/deploy",
       "source": "backend_elixir/lib/cascade_web/system_router.ex",
-      "line": 28
+      "line": 30
     },
     {
       "method": "POST",
       "path": "/api/admin/deploy",
       "source": "backend_elixir/lib/cascade_web/system_router.ex",
-      "line": 30
+      "line": 32
     },
     {
       "method": "GET",
       "path": "/api/deploy/status",
       "source": "backend_elixir/lib/cascade_web/system_router.ex",
-      "line": 31
+      "line": 33
     },
     {
       "method": "GET",
       "path": "/api/admin/deploy/status",
       "source": "backend_elixir/lib/cascade_web/system_router.ex",
-      "line": 32
+      "line": 34
     },
     {
       "method": "GET",
       "path": "/download/android",
       "source": "backend_elixir/lib/cascade_web/system_router.ex",
-      "line": 33
+      "line": 35
+    },
+    {
+      "method": "GET",
+      "path": "/api/system/android-update",
+      "source": "backend_elixir/lib/cascade_web/system_router.ex",
+      "line": 37
     },
     {
       "method": "GET",
       "path": "/download/mac",
       "source": "backend_elixir/lib/cascade_web/system_router.ex",
-      "line": 35
+      "line": 38
     },
     {
       "method": "GET",
       "path": "/download/linux",
       "source": "backend_elixir/lib/cascade_web/system_router.ex",
-      "line": 36
+      "line": 39
     },
     {
       "method": "GET",
       "path": "/download/:platform",
       "source": "backend_elixir/lib/cascade_web/system_router.ex",
-      "line": 37
+      "line": 40
     }
   ],
   "socketIo": {
@@ -1540,13 +1546,13 @@
         "namespace": "/vault",
         "event": "vault:chatMessageDeleted",
         "source": "backend_elixir/lib/cascade/runs/chat_projection.ex",
-        "line": 231
+        "line": 350
       },
       {
         "namespace": "/vault",
         "event": "vault:chatMessageUpdated",
         "source": "backend_elixir/lib/cascade/runs/chat_projection.ex",
-        "line": 245
+        "line": 366
       }
     ]
   },

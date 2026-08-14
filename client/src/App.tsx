@@ -41,6 +41,9 @@ const DiscoveryDmsModal = lazy(() =>
 const UpdatesModal = lazy(() =>
   import('./components/UpdatesModal').then((m) => ({ default: m.UpdatesModal })),
 );
+const AndroidUpdatePrompt = lazy(() =>
+  import('./components/AndroidUpdatePrompt').then((m) => ({ default: m.AndroidUpdatePrompt })),
+);
 import type {
   ChatAgentRegistration,
   ChatChannelPresence,
@@ -3089,6 +3092,7 @@ export default function App() {
           <AdminPanel onClose={() => setAdminOpen(false)} />
         </Suspense>
       )}
+      <Suspense fallback={null}><AndroidUpdatePrompt /></Suspense>
 
       {agentPermissions[0] && (
         <section className="agent-permission-card" role="dialog" aria-modal="false" aria-labelledby="agent-permission-title" onClick={(event) => event.stopPropagation()}>

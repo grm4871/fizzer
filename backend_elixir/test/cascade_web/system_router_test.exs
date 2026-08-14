@@ -75,6 +75,20 @@ defmodule CascadeWeb.SystemRouterTest do
     assert chooser.resp_body =~ "/download/mac-x64"
   end
 
+  test "Android update metadata is public and versioned", context do
+    missing = request(context, :get, "/api/system/android-update")
+    assert Jason.decode!(missing.resp_body) == %{
+             "available" => false,
+             "url" => "/download/android",
+             "versionCode" => 10,
+             "versionName" => "dev-2026.08.13-native-updater"
+           }
+
+    File.write!(Path.join(context.data, "cascade-android.apk"), "apk")
+    available = request(context, :get, "/api/system/android-update")
+    assert Jason.decode!(available.resp_body)["available"] == true
+  end
+
   defp request(context, method, path, body \\ nil, token \\ nil) do
     conn =
       if is_nil(body) do

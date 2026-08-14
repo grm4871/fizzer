@@ -14,6 +14,8 @@ defmodule CascadeWeb.SystemRouter do
     "linux-deb" => "Fizzer-linux-x64.deb",
     "linux-rpm" => "Fizzer-linux-x64.rpm"
   }
+  @android_version_code 10
+  @android_version_name "dev-2026.08.13-native-updater"
 
   plug :put_domain_options
   plug :match
@@ -32,6 +34,7 @@ defmodule CascadeWeb.SystemRouter do
   get "/api/admin/deploy/status", do: deploy_status(conn)
 
   get "/download/android", do: android_download(conn)
+  get "/api/system/android-update", do: android_update(conn)
   get "/download/mac", do: chooser(conn, "Download Fizzer for macOS", mac_choices())
   get "/download/linux", do: chooser(conn, "Download Fizzer for Linux", linux_choices())
   get "/download/:platform", do: desktop_download(conn, platform)
@@ -86,6 +89,17 @@ defmodule CascadeWeb.SystemRouter do
       filename ->
         send_download(conn, filename, "cascade-android.apk")
     end
+  end
+
+  defp android_update(conn) do
+    available = Enum.any?(android_candidates(conn), &File.regular?/1)
+
+    JSON.send(conn, 200, %{
+      available: available,
+      versionCode: @android_version_code,
+      versionName: @android_version_name,
+      url: "/download/android"
+    })
   end
 
   defp desktop_download(conn, platform) do

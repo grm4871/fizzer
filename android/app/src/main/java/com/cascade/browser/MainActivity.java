@@ -22,6 +22,7 @@ public class MainActivity extends BridgeActivity {
     SplashScreen.installSplashScreen(this);
     registerPlugin(BatteryMonitorPlugin.class);
     registerPlugin(LocalCodexPlugin.class);
+    registerPlugin(AppUpdaterPlugin.class);
     super.onCreate(savedInstanceState);
 
     // After content view exists: draw under system bars (no light letterbox).
