@@ -6,7 +6,7 @@ Record pass, fail, or not applicable in the commit, run trace, or release notes.
 
 ## Baseline for every production release
 
-Run the scoped suite from the exact commit being shipped: `npm run test:release:frontend` for hosted/client UI, `npm run test:release:backend` for API/Elixir/agent-server changes, and `npm run test:release:desktop` for Electron main-process or packaging changes. Run `npm run test:release` only for a change that crosses all three boundaries. The human items below still need doing.
+Run the scoped suite from the exact commit being shipped: `npm run test:release:frontend` for every hosted/client UI change, `npm run test:release:backend` for API/Elixir/agent-server changes, and `npm run test:release:desktop` for Electron main-process or packaging changes. Add only the UI verifier(s) from the table below that cover the changed flow. `npm run test:release:frontend:full` retains the exhaustive browser sweep for periodic or cross-cutting UI work; it is not the routine frontend gate. Run `npm run test:release` only for a change that crosses all three runtime boundaries. The human items below still need doing.
 
 - [ ] Review `git status` and the committed diff; confirm every intended file is in the commit and unrelated work is not.
 - [ ] Run the applicable scoped release suite(s); any failure in a touched boundary blocks release.

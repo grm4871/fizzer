@@ -382,8 +382,9 @@ try {
     if (line.includes('[VersionCheck]')) return false;
     // The mission fixture has no desktop runner. Its optimistic dispatch shell
     // can be hydrated after the synthetic settle and return one expected 404;
-    // the runner-backed dispatch itself is expected to shed with 503.
+    // runner-backed dispatch is rejected when no desktop runner is connected.
     if (line.includes('Failed to load resource: the server responded with a status of 404')) return false;
+    if (line.includes('Failed to load resource: the server responded with a status of 400')) return false;
     if (line.includes('Failed to load resource: the server responded with a status of 503')) return false;
     return true;
   });
@@ -397,3 +398,5 @@ try {
   preview.kill('SIGTERM');
   server.kill('SIGTERM');
 }
+
+process.exit(process.exitCode || 0);

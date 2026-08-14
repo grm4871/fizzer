@@ -1,5 +1,22 @@
 # Agent Instructions
 
+## Prefer less code
+
+Before adding code, quietly consider whether the task can be solved by deleting,
+simplifying, reusing, or combining existing code instead. Prefer the smallest
+coherent implementation with the fewest files, concepts, dependencies, wrappers,
+compatibility layers, and special cases.
+
+Treat existing code, tests, abstractions, and infrastructure as candidates for
+removal when they no longer earn their complexity. When consolidating or
+refactoring, complete the consolidation by removing the superseded paths rather
+than leaving both old and new mechanisms in place.
+
+Do not force every change to be net-negative: features and correctness fixes may
+genuinely require new code. Do not routinely explain or justify code growth to
+the user. Apply this preference as an internal design check, and mention it only
+when it materially affects a decision or tradeoff.
+
 ## Ship hard gate (never skip)
 
 Pushing to `master` is **not** shipping. Production only updates after the host
