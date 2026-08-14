@@ -126,12 +126,14 @@ function scanClaude(now, template, homeDir, captionService) {
       // not a running agent and gives the captioner nothing meaningful.
       if (!excerpt) continue;
       if (!claudeTurnIsActive(events)) continue;
+      const caption = captionService.getCaption(id, template, excerpt);
       nodes.push({
         id,
         kind: 'claude',
         role: 'parent',
         label: claudeProjectLabel(dir, cwd),
-        status: captionService.getCaption(id, template, excerpt) || claudeFallback(lastTool),
+        status: caption || claudeFallback(lastTool),
+        captioned: Boolean(caption),
         updatedAt: stat.mtimeMs,
       });
       for (const [taskId, task] of openTasks) {
@@ -234,12 +236,14 @@ function scanCodex(now, template, homeDir, captionService) {
       const nodeId = `codex:${id}`;
       const excerpt = codexExcerpt(thread.rollout_path);
       const fallback = codexFallback(excerpt);
+      const caption = captionService.getCaption(nodeId, template, excerpt);
       nodes.push({
         id: nodeId,
         kind: 'codex',
         role: children.has(id) ? 'child' : 'parent',
         label: oneLine(thread.agent_nickname || thread.agent_role || path.basename(thread.cwd || '') || 'Codex', 40),
-        status: captionService.getCaption(nodeId, template, excerpt) || fallback,
+        status: caption || fallback,
+        captioned: Boolean(caption),
         updatedAt: Number(thread.updated_at_ms || Number(thread.updated_at || 0) * 1000 || now),
       });
     }

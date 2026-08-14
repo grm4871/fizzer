@@ -15,6 +15,7 @@ defmodule CascadeWeb.ContentRoutes do
     {"POST", "/api/vaults/:id/notes"},
     {"GET", "/api/notes/:id"},
     {"PUT", "/api/notes/:id"},
+    {"POST", "/api/notes/:id/orbit-caption"},
     {"POST", "/api/notes/:id/rename"},
     {"DELETE", "/api/notes/:id"},
     {"POST", "/api/notes/:id/move"},

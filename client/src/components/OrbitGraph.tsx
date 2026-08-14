@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   api,
+  appendOrbitCaption,
   fetchLocalAgents,
   type LocalAgentGraph,
   type LocalAgentNode,
@@ -38,7 +39,7 @@ function CodexMark() {
 
 type ActivityRef = { sessionId: string; title: string };
 
-export function OrbitGraph({ promptNoteId, onOpenActivity }: { promptNoteId?: string; onOpenActivity?: (activity: ActivityRef) => void }) {
+export function OrbitGraph({ promptNoteId, captionLogNoteId, onOpenActivity }: { promptNoteId?: string; captionLogNoteId?: string; onOpenActivity?: (activity: ActivityRef) => void }) {
   const [template, setTemplate] = useState('');
   const [promptReady, setPromptReady] = useState(false);
   const [graph, setGraph] = useState<LocalAgentGraph | null>(null);
@@ -49,6 +50,7 @@ export function OrbitGraph({ promptNoteId, onOpenActivity }: { promptNoteId?: st
   const nodeMovedRef = useRef(false); // true once a node drag actually moved, so a trailing click is a real click
   const positionsRef = useRef(positions);
   const panRef = useRef(pan);
+  const loggedCaptionsRef = useRef(new Map<string, string>());
   positionsRef.current = positions;
   panRef.current = pan;
 
@@ -85,6 +87,16 @@ export function OrbitGraph({ promptNoteId, onOpenActivity }: { promptNoteId?: st
         if (!alive) return;
         setGraph(next);
         setError('');
+        if (captionLogNoteId) {
+          for (const node of next.nodes) {
+            if (!node.captioned || !node.status.trim()) continue;
+            if (loggedCaptionsRef.current.get(node.id) === node.status) continue;
+            loggedCaptionsRef.current.set(node.id, node.status);
+            void appendOrbitCaption(captionLogNoteId, node).catch(() => {
+              loggedCaptionsRef.current.delete(node.id);
+            });
+          }
+        }
         setPositions((previous) => {
           const merged = { ...previous };
           next.nodes.forEach((node, index) => {
@@ -104,7 +116,7 @@ export function OrbitGraph({ promptNoteId, onOpenActivity }: { promptNoteId?: st
       alive = false;
       window.clearInterval(timer);
     };
-  }, [promptReady, template]);
+  }, [captionLogNoteId, promptReady, template]);
 
   const onPointerMove = useCallback((event: PointerEvent) => {
     const drag = dragRef.current;

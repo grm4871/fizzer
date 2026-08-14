@@ -115,7 +115,7 @@
     "note": "Static Elixir declarations only; runtime status, headers, bodies, ordering, Engine.IO frames, and ACK payloads require the Elixir e2e and mix suites."
   },
   "summary": {
-    "httpRoutes": 167,
+    "httpRoutes": 168,
     "socketIoInboundDeclarations": 11,
     "socketIoOutboundLiteralDeclarations": 60,
     "sqliteDeclarations": 37
@@ -615,9 +615,15 @@
     },
     {
       "method": "POST",
-      "path": "/api/notes/:id/rename",
+      "path": "/api/notes/:id/orbit-caption",
       "source": "backend_elixir/lib/cascade_web/content_router.ex",
       "line": 34
+    },
+    {
+      "method": "POST",
+      "path": "/api/notes/:id/rename",
+      "source": "backend_elixir/lib/cascade_web/content_router.ex",
+      "line": 35
     },
     {
       "method": "DELETE",

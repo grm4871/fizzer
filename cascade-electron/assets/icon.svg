@@ -15,11 +15,11 @@
     </linearGradient>
   </defs>
 
-  <rect width="1024" height="1024" rx="224" fill="url(#bg)"/>
-  <rect width="1024" height="1024" rx="224" fill="url(#halo)"/>
-  <rect x="6" y="6" width="1012" height="1012" rx="220" fill="none" stroke="#c77b25" stroke-opacity="0.35" stroke-width="6"/>
+  <rect x="96" y="96" width="832" height="832" rx="184" fill="url(#bg)"/>
+  <rect x="96" y="96" width="832" height="832" rx="184" fill="url(#halo)"/>
+  <rect x="101" y="101" width="822" height="822" rx="180" fill="none" stroke="#c77b25" stroke-opacity="0.35" stroke-width="6"/>
 
-  <g transform="translate(512 512) scale(11.4) translate(-32 -32)">
+  <g transform="translate(512 512) scale(8.8) translate(-32 -32)">
     <path d="M32 3 59 32 32 61 5 32 32 3Z" fill="#0d0b0a" stroke="url(#g)" stroke-width="2"/>
     <path d="M32 9v46M9 32h46M14 14l36 36M50 14 14 50" stroke="#df9d3b" stroke-width="1" opacity=".36"/>
     <path d="M18 15h28l6 10-20 31L12 25l6-10Z" fill="#12100e" stroke="url(#g)" stroke-width="2"/>

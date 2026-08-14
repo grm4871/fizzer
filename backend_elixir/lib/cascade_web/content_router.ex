@@ -31,6 +31,7 @@ defmodule CascadeWeb.ContentRouter do
   post "/api/vaults/:id/notes", do: ContentController.create_note(conn, id)
   get "/api/notes/:id", do: ContentController.get_note(conn, id)
   put "/api/notes/:id", do: ContentController.update_note(conn, id)
+  post "/api/notes/:id/orbit-caption", do: ContentController.append_orbit_caption(conn, id)
   post "/api/notes/:id/rename", do: ContentController.rename_note(conn, id)
   delete "/api/notes/:id", do: ContentController.delete_note(conn, id)
   post "/api/notes/:id/move", do: ContentController.move_note(conn, id)

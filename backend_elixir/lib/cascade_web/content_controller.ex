@@ -522,6 +522,39 @@ defmodule CascadeWeb.ContentController do
     end
   end
 
+  @doc "Append one newly generated local-agent caption to a writable note."
+  def append_orbit_caption(conn, note_id) do
+    authenticated(conn, fn conn, auth ->
+      with_writable_note(
+        conn,
+        note_id,
+        auth.user.id,
+        "Viewer role cannot edit this vault",
+        fn existing ->
+          label = caption_value(body_value(conn, "label", "Agent"), 120)
+          status = caption_value(body_value(conn, "status", ""), 240)
+
+          if status == "" do
+            JSON.send(conn, 422, %{error: "Caption status is required"})
+          else
+            entry = "- #{label} — #{status}"
+            lines = String.split(existing.content, "\n")
+
+            if Enum.member?(lines, entry) do
+              JSON.send(conn, 200, %{logged: false})
+            else
+              content = String.trim_trailing(existing.content) <> "\n" <> entry <> "\n"
+              note = Store.update_note(note_id, content, auth.user.id)
+              Versions.create(note.id, content, "orbit-caption")
+              emit_note_changed(conn, note)
+              JSON.send(conn, 200, %{logged: true})
+            end
+          end
+        end
+      )
+    end)
+  end
+
   defp with_readable_vault(conn, vault_id, user_id, callback) do
     if Store.get_vault(vault_id, user_id),
       do: callback.(),
@@ -605,6 +638,14 @@ defmodule CascadeWeb.ContentController do
   defp body(conn) when is_map(conn.body_params), do: conn.body_params
   defp body(_conn), do: %{}
   defp body_value(conn, key, default), do: Map.get(body(conn), key, default)
+
+  defp caption_value(value, max_length) do
+    value
+    |> to_string()
+    |> String.replace(~r/\s+/, " ")
+    |> String.trim()
+    |> String.slice(0, max_length)
+  end
 
   defp emit_note_changed(conn, %{id: id, vault_id: vault_id, title: title}),
     do: emit(conn, %{event: "vault:noteChanged", noteId: id, vaultId: vault_id, title: title})

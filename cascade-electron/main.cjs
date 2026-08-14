@@ -36,6 +36,8 @@ const { collectPlanUsage } = require('./plan-usage.cjs');
 const { AgentRunState, settleCancelAcknowledgement } = require('./agent-run-state.cjs');
 const { collectLocalAgents } = require('./local-agents.cjs');
 const worktrees = require('./worktrees.cjs');
+const APP_NAME = 'Fizzer';
+app.setName(APP_NAME);
 
 // Suppress GLib-GObject and GTK warnings on Linux.
 if (process.platform === 'linux') {

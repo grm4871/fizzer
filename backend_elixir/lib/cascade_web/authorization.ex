@@ -23,7 +23,7 @@ defmodule CascadeWeb.Authorization do
     {~w(POST), ~r<^/api/vaults/[^/]+/channels/[^/]+/distill$>},
     {~w(PUT), ~r<^/api/vaults/[^/]+/channels/[^/]+/agents/[^/]+/avatar$>},
     {~w(GET PUT DELETE), ~r<^/api/notes/[^/]+$>},
-    {~w(POST), ~r<^/api/notes/[^/]+/(?:rename|move|unlist|pin|archive)$>},
+    {~w(POST), ~r<^/api/notes/[^/]+/(?:rename|move|unlist|pin|archive|orbit-caption)$>},
     {~w(POST DELETE), ~r<^/api/notes/[^/]+/tags(?:/[^/]+)?$>},
     {~w(GET), ~r<^/api/notes/[^/]+/backlinks$>},
     {~w(GET), ~r<^/api/notes/[^/]+/assets/[^/]+$>}

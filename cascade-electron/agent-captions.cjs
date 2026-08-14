@@ -10,7 +10,7 @@
  */
 const crypto = require('node:crypto');
 
-const DEFAULT_MODEL = process.env.ORBIT_CAPTION_MODEL || 'qwen3.5:9b-q4_K_M';
+const DEFAULT_MODEL = process.env.ORBIT_CAPTION_MODEL || 'qwen3.5:4b';
 const DEFAULT_OLLAMA_URL = process.env.OLLAMA_URL || 'http://127.0.0.1:11434';
 
 function fingerprint(template, excerpt) {

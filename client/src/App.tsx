@@ -3065,6 +3065,7 @@ export default function App() {
         >
           <OrbitGraph
             promptNoteId={notes.find((note) => note.title.toLowerCase() === 'prompt')?.id}
+            captionLogNoteId={notes.find((note) => note.title.toLowerCase() === 'orbit caption log')?.id}
             onOpenActivity={(activity) => {
               setOrbitOpen(false);
               setFocusSessionId(activity.sessionId);

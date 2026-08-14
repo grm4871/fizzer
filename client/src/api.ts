@@ -246,6 +246,8 @@ export type LocalAgentNode = {
   action: string;
   state: LocalAgentState;
   updatedAt: number;
+  /** True when status came from the local caption model rather than a fallback. */
+  captioned?: boolean;
   /** Present only for Cascade-spawned sessions: opens the Agent Sessions panel focused on this run. */
   activity?: { sessionId: string; title: string };
 };
@@ -262,8 +264,19 @@ export type LocalAgentGraph = {
  * template is sent along so the caption wording stays user-controlled.
  */
 export async function fetchLocalAgents(template: string): Promise<LocalAgentGraph> {
+  const electronAPI = (window as unknown as {
+    electronAPI?: { getLocalAgents?: (input: { template: string }) => Promise<LocalAgentGraph> };
+  }).electronAPI;
+  if (electronAPI?.getLocalAgents) return electronAPI.getLocalAgents({ template });
   return api<LocalAgentGraph>('/api/local-agents', {
     method: 'POST',
     body: JSON.stringify({ template }),
+  });
+}
+
+export async function appendOrbitCaption(noteId: string, node: Pick<LocalAgentNode, 'id' | 'label' | 'status'>): Promise<void> {
+  await api(`/api/notes/${encodeURIComponent(noteId)}/orbit-caption`, {
+    method: 'POST',
+    body: JSON.stringify({ agentId: node.id, label: node.label, status: node.status }),
   });
 }

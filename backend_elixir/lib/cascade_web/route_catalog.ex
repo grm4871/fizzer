@@ -34,8 +34,8 @@ defmodule CascadeWeb.RouteCatalog do
     CascadeWeb.ContentRoutes
   ]
 
-  @required_http_count 167
-  @required_http_fingerprint "b7671b9d76b57f7d869516a3e05ecd29ec9dffd312b17e9ff379fedc38be7481"
+  @required_http_count 168
+  @required_http_fingerprint "fcadb4188c516d0aa677932645fa86e4a833ef29db5f0af9f63f32231fa4f4fd"
   @required_realtime ["/runs (Socket.IO)", "/vault (Socket.IO)", "/runners (Socket.IO)"]
 
   def implemented do
