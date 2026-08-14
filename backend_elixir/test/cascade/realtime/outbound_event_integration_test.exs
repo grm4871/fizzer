@@ -128,6 +128,17 @@ defmodule Cascade.Realtime.OutboundEventIntegrationTest do
     refute Enum.any?(queries, &String.contains?(&1, "sqlite_master"))
   end
 
+  test "presence omits an avatar that would overflow the realtime outbound queue" do
+    {source, source_channel, _local, _local_channel} = linked_chat()
+    oversized_avatar = "data:image/jpeg;base64," <> String.duplicate("A", 300_000)
+    SQL.exec("UPDATE users SET avatar_url=? WHERE username='alice'", [oversized_avatar])
+
+    snapshot = Channel.participant_snapshot(source.id, source_channel.id)
+
+    assert snapshot.profiles["alice"].avatarUrl == ""
+    assert Enum.find(snapshot.users, &(&1.username == "alice")).avatarUrl == oversized_avatar
+  end
+
   test "presence snapshots and route reads emit exact reason telemetry" do
     {source, source_channel, _local, _local_channel} = linked_chat()
     handler_id = "presence-reason-count-#{System.unique_integer([:positive])}"

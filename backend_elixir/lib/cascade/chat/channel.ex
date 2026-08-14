@@ -6,6 +6,11 @@ defmodule Cascade.Chat.Channel do
   alias Cascade.Content.{Assets, Store}
 
   @marker "cascade://chat-channel"
+  # A realtime session's entire outbound queue is capped at 1 MB. Profile
+  # pictures may be stored as multi-megabyte data URLs, so embedding one in a
+  # presence event disconnects every recipient with :outbound_backpressure.
+  # Presence is liveness metadata; keep its optional avatar hints bounded.
+  @presence_avatar_budget_bytes 256_000
 
   def assert_channel(channel_id, user_id) do
     row =
@@ -204,20 +209,32 @@ defmodule Cascade.Chat.Channel do
     %{
       participants: Enum.map(rows, &Enum.at(&1, 1)),
       owner: rows |> List.first() |> then(&if(&1, do: Enum.at(&1, 5), else: "")),
-      profiles:
-        Map.new(users, fn user ->
-          {user.username,
-           %{
-             id: user.id,
-             username: user.username,
-             displayName: user.displayName,
-             avatarUrl: user.avatarUrl
-           }}
-        end),
+      profiles: presence_profiles(users),
       users: users
     }
   rescue
     _ -> %{participants: [], owner: "", profiles: %{}, users: []}
+  end
+
+  defp presence_profiles(users) do
+    {profiles, _used} =
+      Enum.reduce(users, {%{}, 0}, fn user, {profiles, used} ->
+        avatar = user.avatarUrl || ""
+        avatar_bytes = byte_size(avatar)
+        include_avatar? = used + avatar_bytes <= @presence_avatar_budget_bytes
+
+        profile = %{
+          id: user.id,
+          username: user.username,
+          displayName: user.displayName,
+          avatarUrl: if(include_avatar?, do: avatar, else: "")
+        }
+
+        {Map.put(profiles, user.username, profile),
+         used + if(include_avatar?, do: avatar_bytes, else: 0)}
+      end)
+
+    profiles
   end
 
   def presence(channel_id, user_id, callback \\ Cascade.Chat.Events.Noop) do
