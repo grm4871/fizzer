@@ -68,6 +68,50 @@ root-only `/var/lib/cascade-release` trust root. The application-writable
 `/var/lib/cascade` volume has no path to replace release attestations. Staging
 does not start or replace the production container.
 
+### Shared Docker build cache
+
+The Dockerfile uses BuildKit caches for npm, Hex/Rebar, and Elixir's `_build`
+directory. Those caches persist across sessions on the same Docker builder, but
+they are not automatically shared with another contributor or host. To share
+them, point the release build at a registry-backed cache. The release helper
+targets `linux/amd64` by default because that is the production artifact. Each
+target platform must use its own cache ref:
+
+The example address is GitHub Container Registry (GHCR). Replace
+`YOUR_GITHUB_USERNAME` with the GitHub account that owns the cache package. It
+is storage for a Docker cache image, not a running service. The first successful
+cache export creates the package; publishing requires a GitHub token with
+package write permission, and every builder that imports or exports it must
+have appropriate registry access. Keep the package private unless exposing
+intermediate build layers is acceptable.
+
+```bash
+echo "$GITHUB_TOKEN" | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
+
+# Set this in the shell so every agent and build command in that shell uses
+# the shared AMD64 cache. It is a registry reference, not a password or token.
+export CASCADE_BUILD_CACHE_REF=ghcr.io/YOUR_GITHUB_USERNAME/cascade-browser:buildcache-amd64
+
+# An ARM64 Mac uses emulation but produces the server-compatible AMD64 image.
+npm run release:image:build
+
+# An AMD64 builder uses the same command and cache ref natively.
+# For an intentional ARM64 artifact, set CASCADE_TARGET_PLATFORM=linux/arm64
+# and export CASCADE_BUILD_CACHE_REF=...:buildcache-arm64 instead.
+```
+
+The registry cache is separate from the certified runtime image and uses
+`mode=max`, so later Linux builders can reuse matching dependency and
+compilation layers. The `RUN --mount=type=cache` directories themselves remain
+local to each BuildKit builder; they provide incremental compiler reuse when a
+builder handles successive source changes. The release image is still built in
+a Linux environment because its bundled OTP runtime and native NIFs must match
+the target OS and architecture.
+Production normally consumes the already-certified image with `--no-build`; a
+CI or release builder should populate this shared cache rather than making
+autodeploy compile on the production host. If a builder is pruned, the registry
+cache remains available to the next build.
+
 Run `npm run test:elixir:release-safety` before certification. It is already
 included once by `npm run test:elixir-release`; the component scripts are
 available for focused work:

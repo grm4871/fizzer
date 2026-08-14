@@ -39,3 +39,5 @@ client/dist/cascade-android.apk
 **/*.apk
 !android/**/gradle-wrapper.jar
 android/app/src/main/jniLibs/arm64-v8a/libcodex.so
+
+*.svg

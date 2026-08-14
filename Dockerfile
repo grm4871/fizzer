@@ -21,26 +21,32 @@ RUN --mount=type=cache,target=/root/.npm npm ci --omit=dev
 
 # Compile an OTP release with ERTS included so the runtime image does not need
 # Mix, Hex, source code, or a host Elixir installation.
-FROM elixir:1.17.3-slim@sha256:7531e5b6ee74fa49546960f4fa3cb24d85b3476d799f1787e81addd03bc16917 AS elixir-build
+FROM elixir:1.20.2-slim@sha256:e500da1777164f9be05f7ffc0fe06cdb692f453bf7d651755e72310ec8a92eed AS elixir-build
+ARG TARGETARCH
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
       build-essential ca-certificates git
-ENV MIX_ENV=prod
+ENV MIX_ENV=prod \
+    ERL_FLAGS="+JMsingle true"
 WORKDIR /build/backend_elixir
 RUN mix local.hex --force && mix local.rebar --force
 COPY backend_elixir/mix.exs backend_elixir/mix.lock ./
-RUN --mount=type=cache,target=/root/.hex \
+RUN --mount=type=cache,id=cascade-elixir-build-1.20.2-${TARGETARCH},target=/build/backend_elixir/_build,sharing=locked \
+    --mount=type=cache,target=/root/.hex \
     --mount=type=cache,target=/root/.cache/rebar3 \
     mix deps.get --only prod && mix deps.compile
 COPY backend_elixir/ ./
-RUN mix compile --warnings-as-errors && mix release
+RUN --mount=type=cache,id=cascade-elixir-build-1.20.2-${TARGETARCH},target=/build/backend_elixir/_build,sharing=locked \
+    mix compile --warnings-as-errors && mix release && \
+    rm -rf /build/release-artifact && \
+    cp -a _build/prod/rel/cascade_elixir /build/release-artifact
 
-FROM node:22-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436 AS runner
+FROM node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c AS runner
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates libstdc++6 libssl3 libncurses6
+      ca-certificates libstdc++6 libssl3 libncurses6 lksctp-tools
 
 WORKDIR /app
 ARG CASCADE_REVISION=uncommitted
@@ -60,7 +66,7 @@ ENV NODE_ENV=production \
 
 COPY --chown=node:node package.json package-lock.json ./
 COPY --chown=node:node --from=qmd-deps /app/node_modules ./node_modules
-COPY --chown=node:node --from=elixir-build /build/backend_elixir/_build/prod/rel/cascade_elixir ./release
+COPY --chown=node:node --from=elixir-build /build/release-artifact ./release
 COPY --chown=node:node --from=client-build /client/dist ./client/dist
 COPY --chown=node:node scripts/check-elixir-data-compat.mjs ./scripts/check-elixir-data-compat.mjs
 COPY --chown=node:node loadtest_elixir ./loadtest_elixir
