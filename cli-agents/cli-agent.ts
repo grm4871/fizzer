@@ -55,7 +55,7 @@
  * @module cli-agents/cli-agent
  */
 
-import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -65,6 +65,7 @@ import type Database from 'better-sqlite3';
 type Db = Database.Database;
 
 export const activeCliProcesses = new Map<number, ChildProcess>();
+const activePersistentCancels = new Map<number, () => void>();
 const groupedCliProcesses = new Set<number>();
 const runHelperEnvByRunId = new Map<number, NodeJS.ProcessEnv>();
 const agentProcessLeaseDir = process.env.CASCADE_AGENT_PROCESS_DIR
@@ -292,6 +293,12 @@ function cancelCliAgentRunFromLease(runId: number): boolean {
 
 /** Cancel one CLI run, including descendants of launchers such as Akron. */
 export function cancelCliAgentRun(runId: number): boolean {
+  const persistentCancel = activePersistentCancels.get(runId);
+  if (persistentCancel) {
+    persistentCancel();
+    activePersistentCancels.delete(runId);
+    return true;
+  }
   const child = activeCliProcesses.get(runId);
   if (!child) return cancelCliAgentRunFromLease(runId);
   const processGroup = groupedCliProcesses.has(runId);
@@ -840,6 +847,260 @@ function extractGrokDiagnostic(debugFile: string): string | undefined {
 // CODEX CLI
 // ═══════════════════════════════════════════════════════════════
 
+type JsonObject = Record<string, any>;
+type CodexAppTurn = {
+  threadId: string; turnId: string; runId?: number; emit: AgentEmit;
+  resolve: (result: CliAgentResult) => void; reject: (error: Error) => void;
+  summary: string; emittedText: boolean; emittedTools: Set<string>;
+  idle: ReturnType<typeof createIdleTimer>;
+};
+
+/** Long-lived protocol peer; avoids rebuilding Codex's app-server every turn. */
+class CodexAppServerClient {
+  private child?: ChildProcessWithoutNullStreams;
+  private stdout = '';
+  private stderr = '';
+  private nextId = 1;
+  private initialized?: Promise<void>;
+  private pending = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }>();
+  private turns = new Map<string, CodexAppTurn>();
+  private earlyNotifications = new Map<string, JsonObject[]>();
+
+  async run(options: {
+    prompt: string; cwd: string; emit: AgentEmit; resumeId?: string; imagePaths: string[];
+    runId?: number; model?: string; reasoningEffort?: string;
+    priorityServiceTier?: boolean; yolo?: boolean; env?: NodeJS.ProcessEnv;
+  }): Promise<CliAgentResult> {
+    await this.ensureStarted();
+    const common: JsonObject = {
+      cwd: options.cwd,
+      model: options.model || null,
+      serviceTier: options.priorityServiceTier ? 'priority' : null,
+      approvalPolicy: 'never',
+      sandbox: options.yolo ? 'danger-full-access' : 'workspace-write',
+      config: {
+        sandbox_workspace_write: { network_access: true },
+        shell_environment_policy: { inherit: 'all', set: this.environmentOverrides(options.env) },
+      },
+    };
+    let response: JsonObject;
+    try {
+      response = options.resumeId
+        ? await this.request('thread/resume', { threadId: options.resumeId, excludeTurns: true, ...common })
+        : await this.request('thread/start', common);
+    } catch (error) {
+      if (!options.resumeId || !isDeadCodexSession(String(error))) throw error;
+      emitHarness(options.emit, '\x1b[33m# that session is gone from Codex\'s store — starting a fresh one\x1b[0m\r\n');
+      response = await this.request('thread/start', common);
+    }
+    const threadId = String(response?.thread?.id || options.resumeId || '');
+    if (!threadId) throw new Error('Codex app-server did not return a thread id.');
+    options.emit('session', { sessionId: threadId });
+    emitHarness(options.emit, `\x1b[2m# codex app-server · ${options.cwd}\x1b[0m\r\n`);
+    if (options.model) emitCascadeStats(options.emit, { model: options.model });
+    const started = await this.request('turn/start', {
+      threadId,
+      input: [
+        { type: 'text', text: options.prompt, text_elements: [] },
+        ...options.imagePaths.map((imagePath) => ({ type: 'localImage', path: imagePath })),
+      ],
+      cwd: options.cwd,
+      model: options.model || null,
+      serviceTier: options.priorityServiceTier ? 'priority' : null,
+      effort: normalizeCodexEffort(options.reasoningEffort),
+      approvalPolicy: 'never',
+    });
+    const turnId = String(started?.turn?.id || '');
+    if (!turnId) throw new Error('Codex app-server did not return a turn id.');
+    return new Promise<CliAgentResult>((resolve, reject) => {
+      const idle = createIdleTimer(() => {
+        void this.request('turn/interrupt', { threadId, turnId }).catch(() => {});
+        this.finishTurn(turnId, new Error(`Codex produced no output for ${CLI_IDLE_TIMEOUT_MS}ms and was stopped.`));
+      });
+      this.turns.set(turnId, {
+        threadId, turnId, runId: options.runId, emit: options.emit, resolve, reject,
+        summary: '', emittedText: false, emittedTools: new Set(), idle,
+      });
+      if (options.runId !== undefined) activePersistentCancels.set(options.runId, () => {
+        void this.request('turn/interrupt', { threadId, turnId }).catch(() => {});
+      });
+      const buffered = this.earlyNotifications.get(turnId) || [];
+      this.earlyNotifications.delete(turnId);
+      for (const message of buffered) this.onMessage(message);
+    });
+  }
+
+  private environmentOverrides(env?: NodeJS.ProcessEnv): Record<string, string> {
+    const clean: Record<string, string> = {};
+    for (const [key, value] of Object.entries(env || {})) {
+      if (typeof value === 'string' && process.env[key] !== value) clean[key] = value;
+    }
+    return clean;
+  }
+
+  private async ensureStarted(): Promise<void> {
+    if (this.initialized) return this.initialized;
+    this.initialized = new Promise<void>((resolve, reject) => {
+      let child: ChildProcessWithoutNullStreams;
+      try {
+        child = spawn(CODEX_BIN, ['app-server', '--stdio'], {
+          cwd: os.homedir(), env: spawnEnv(), stdio: ['pipe', 'pipe', 'pipe'],
+        });
+      } catch (error) {
+        reject(new Error(`Failed to launch Codex app-server: ${error instanceof Error ? error.message : String(error)}`));
+        return;
+      }
+      this.child = child;
+      child.stdout.on('data', (chunk) => this.onStdout(chunk.toString()));
+      child.stderr.on('data', (chunk) => { this.stderr = (this.stderr + chunk.toString()).slice(-16_000); });
+      child.on('error', (error) => this.onExit(new Error(`Codex app-server error: ${error.message}`)));
+      child.on('exit', (code, signal) => this.onExit(new Error(`Codex app-server exited (${signal || code || 'unknown'}). ${this.stderr.trim()}`)));
+      this.request('initialize', {
+        clientInfo: { name: 'cascade-desktop', title: 'Cascade', version: '0.2.0' },
+        capabilities: { experimentalApi: true, requestAttestation: false },
+      }).then(() => { this.notify('initialized'); resolve(); }, reject);
+    });
+    try { await this.initialized; } catch (error) { this.initialized = undefined; throw error; }
+  }
+
+  private request(method: string, params?: JsonObject): Promise<any> {
+    const id = this.nextId++;
+    return new Promise((resolve, reject) => {
+      if (!this.child?.stdin.writable) return reject(new Error('Codex app-server is not running.'));
+      this.pending.set(id, { resolve, reject });
+      this.child.stdin.write(`${JSON.stringify({ method, id, params })}\n`);
+    });
+  }
+
+  private notify(method: string): void {
+    if (this.child?.stdin.writable) this.child.stdin.write(`${JSON.stringify({ method })}\n`);
+  }
+
+  private onStdout(chunk: string): void {
+    this.stdout += chunk;
+    let newline = this.stdout.indexOf('\n');
+    while (newline >= 0) {
+      const line = this.stdout.slice(0, newline).trim();
+      this.stdout = this.stdout.slice(newline + 1);
+      if (line) try { this.onMessage(JSON.parse(line)); } catch { /* ignore non-protocol output */ }
+      newline = this.stdout.indexOf('\n');
+    }
+  }
+
+  private onMessage(message: JsonObject): void {
+    if (message.id !== undefined && (message.result !== undefined || message.error !== undefined)) {
+      const pending = this.pending.get(message.id);
+      if (!pending) return;
+      this.pending.delete(message.id);
+      return message.error
+        ? pending.reject(new Error(message.error.message || JSON.stringify(message.error)))
+        : pending.resolve(message.result);
+    }
+    if (message.id !== undefined && message.method) {
+      const response = /requestApproval$/.test(message.method)
+        ? { id: message.id, result: { decision: 'decline' } }
+        : { id: message.id, error: { code: -32601, message: `Unsupported server request: ${message.method}` } };
+      this.child?.stdin.write(`${JSON.stringify(response)}\n`);
+      return;
+    }
+    const params = message.params || {};
+    const turnId = String(params.turnId || params.turn?.id || '');
+    const turn = this.turns.get(turnId)
+      || [...this.turns.values()].find((candidate) => candidate.threadId === params.threadId);
+    if (!turn) {
+      if (turnId && ['item/started', 'item/completed', 'turn/completed', 'error'].includes(message.method)) {
+        const buffered = this.earlyNotifications.get(turnId) || [];
+        buffered.push(message);
+        this.earlyNotifications.set(turnId, buffered.slice(-100));
+      }
+      return;
+    }
+    turn.idle.bump();
+    if (message.method === 'item/started') this.emitItem(turn, params.item, false);
+    else if (message.method === 'item/completed') this.emitItem(turn, params.item, true);
+    else if (message.method === 'thread/tokenUsage/updated') emitCascadeStats(turn.emit, statsFromUsageBlob(params.tokenUsage || params.usage));
+    else if (message.method === 'turn/completed') {
+      const status = params.turn?.status;
+      this.finishTurn(turnId, status === 'completed' ? undefined : new Error(params.turn?.error?.message || `Codex turn ${status || 'failed'}.`));
+    } else if (message.method === 'error') {
+      this.finishTurn(turnId, new Error(params.error?.message || params.message || 'Codex app-server error.'));
+    }
+  }
+
+  private emitItem(turn: CodexAppTurn, item: JsonObject | undefined, completed: boolean): void {
+    if (!item?.type) return;
+    if (item.type === 'agentMessage' && completed) {
+      const text = String(item.text || '');
+      if (text) {
+        turn.summary = text;
+        turn.emit('text', { chatVisible: true, message: { content: [{ type: 'text', text: `${turn.emittedText ? '\n\n' : ''}${text}` }] } });
+        turn.emittedText = true;
+      }
+      return;
+    }
+    if (item.type === 'reasoning' && completed) {
+      const text = [...(item.summary || []), ...(item.content || [])].filter(Boolean).join('\n');
+      if (text) turn.emit('text', { message: { content: [{ type: 'thinking', text }] } });
+      return;
+    }
+    if (['userMessage', 'plan', 'contextCompaction'].includes(item.type) || !item.id) return;
+    if (!turn.emittedTools.has(item.id)) {
+      turn.emittedTools.add(item.id);
+      turn.emit('text', { message: { content: [codexAppToolUseBlock(item)] } });
+    }
+    if (completed) {
+      const output = item.aggregatedOutput ?? item.result ?? item.error ?? '';
+      const isError = item.status === 'failed' || (typeof item.exitCode === 'number' && item.exitCode !== 0);
+      turn.emit('user', { message: { content: [{ type: 'tool_result', tool_use_id: item.id, content: truncate(typeof output === 'string' ? output : JSON.stringify(output), 8000), is_error: isError }] } });
+    }
+  }
+
+  private finishTurn(turnId: string, error?: Error): void {
+    const turn = this.turns.get(turnId);
+    if (!turn) return;
+    this.turns.delete(turnId);
+    turn.idle.clear();
+    if (turn.runId !== undefined) activePersistentCancels.delete(turn.runId);
+    if (error) turn.reject(error); else turn.resolve({ summary: turn.summary, sessionId: turn.threadId });
+  }
+
+  private onExit(error: Error): void {
+    for (const pending of this.pending.values()) pending.reject(error);
+    this.pending.clear();
+    for (const id of [...this.turns.keys()]) this.finishTurn(id, error);
+    this.child = undefined; this.initialized = undefined; this.stdout = ''; this.stderr = ''; this.earlyNotifications.clear();
+  }
+
+  shutdown(): void {
+    this.child?.kill('SIGTERM');
+    this.child = undefined;
+    this.initialized = undefined;
+  }
+}
+
+const codexAppServer = new CodexAppServerClient();
+
+/** Used by desktop shutdown and protocol tests; normal turns share one server. */
+export function shutdownPersistentCliAgents(): void {
+  codexAppServer.shutdown();
+}
+
+function normalizeCodexEffort(value?: string): string | null {
+  const effort = String(value || '').trim().toLowerCase();
+  return ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'].includes(effort) ? effort : null;
+}
+
+function codexAppToolUseBlock(item: JsonObject): JsonObject {
+  if (item.type === 'commandExecution') return { type: 'tool_use', id: item.id, name: 'Bash', input: { command: item.command || '' } };
+  if (item.type === 'fileChange') return { type: 'tool_use', id: item.id, name: 'Edit', input: { file_path: item.changes?.[0]?.path || '(files)' } };
+  if (item.type === 'mcpToolCall') return { type: 'tool_use', id: item.id, name: `${item.server || 'mcp'}.${item.tool || 'tool'}`, input: item.arguments || {} };
+  return { type: 'tool_use', id: item.id, name: String(item.tool || item.type), input: item.arguments || {} };
+}
+
+function persistentCodexEnabled(): boolean {
+  return process.env.RUNNER_CODEX_PERSISTENT !== '0' && path.basename(CODEX_BIN) === 'codex';
+}
+
 /**
  * Runs the Codex CLI (`codex exec --json`) and translates its rich JSONL
  * event stream into Anthropic-style content blocks.
@@ -872,6 +1133,25 @@ async function runCodex(
   env?: NodeJS.ProcessEnv,
 ): Promise<CliAgentResult> {
   const { paths: imagePaths, cleanup } = writeTempImages(images);
+  if (persistentCodexEnabled()) {
+    try {
+      return await codexAppServer.run({
+        prompt,
+        cwd,
+        emit,
+        resumeId,
+        imagePaths,
+        runId,
+        model,
+        reasoningEffort,
+        priorityServiceTier,
+        yolo,
+        env: env ? { ...spawnEnv(runId), ...env } : spawnEnv(runId),
+      });
+    } finally {
+      cleanup();
+    }
+  }
   // `-i/--image` is variadic, so it must come AFTER the positional prompt (and
   // session id on resume) or it swallows them. `codex exec resume` rejects
   // --sandbox, so the sandbox mode is set via -c instead.
