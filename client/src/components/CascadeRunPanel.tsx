@@ -557,10 +557,14 @@ export const CascadeRunPanel = memo(function CascadeRunPanel({
     || activity.stats.cwd
   ));
   const summary = useMemo(
-    () => (activity
-      ? (isRunning && !hasStructuredActivity ? 'waiting for harness stream…' : summarizeActivity(activity, isRunning))
-      : (isRunning ? 'waiting for harness stream…' : 'trace')),
-    [activity, hasStructuredActivity, isRunning],
+    () => {
+      if (message.status === 'failed') return message.body?.trim() || 'Agent failed.';
+      if (message.status === 'canceled') return message.body?.trim() || 'Run canceled.';
+      return activity
+        ? (isRunning && !hasStructuredActivity ? 'waiting for harness stream…' : summarizeActivity(activity, isRunning))
+        : (isRunning ? 'waiting for harness stream…' : 'trace');
+    },
+    [activity, hasStructuredActivity, isRunning, message.body, message.status],
   );
   const live = useMemo(
     () => (activity && isRunning && hasStructuredActivity ? liveActivityHeadline(activity) : null),

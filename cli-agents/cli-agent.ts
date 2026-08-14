@@ -865,8 +865,32 @@ class CodexAppServerClient {
   private pending = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }>();
   private turns = new Map<string, CodexAppTurn>();
   private earlyNotifications = new Map<string, JsonObject[]>();
+  private threadQueues = new Map<string, Promise<void>>();
 
   async run(options: {
+    prompt: string; cwd: string; emit: AgentEmit; resumeId?: string; imagePaths: string[];
+    runId?: number; model?: string; reasoningEffort?: string;
+    priorityServiceTier?: boolean; yolo?: boolean; env?: NodeJS.ProcessEnv;
+  }): Promise<CliAgentResult> {
+    const threadId = typeof options.resumeId === 'string' ? options.resumeId.trim() : '';
+    if (!threadId) return this.runUnlocked(options);
+
+    // Codex permits only one writer per resumed thread. Keep retries and
+    // rapid cancel/restart actions serialized until the prior turn settles.
+    const previous = this.threadQueues.get(threadId) || Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => { release = resolve; });
+    this.threadQueues.set(threadId, current);
+    await previous;
+    try {
+      return await this.runUnlocked(options);
+    } finally {
+      release();
+      if (this.threadQueues.get(threadId) === current) this.threadQueues.delete(threadId);
+    }
+  }
+
+  private async runUnlocked(options: {
     prompt: string; cwd: string; emit: AgentEmit; resumeId?: string; imagePaths: string[];
     runId?: number; model?: string; reasoningEffort?: string;
     priorityServiceTier?: boolean; yolo?: boolean; env?: NodeJS.ProcessEnv;
@@ -886,7 +910,7 @@ class CodexAppServerClient {
     let response: JsonObject;
     try {
       response = options.resumeId
-        ? await this.request('thread/resume', { threadId: options.resumeId, excludeTurns: true, ...common })
+        ? await this.requestWithActiveWriterRetry('thread/resume', { threadId: options.resumeId, excludeTurns: true, ...common })
         : await this.request('thread/start', common);
     } catch (error) {
       if (!options.resumeId || !isDeadCodexSession(String(error))) throw error;
@@ -898,7 +922,7 @@ class CodexAppServerClient {
     options.emit('session', { sessionId: threadId });
     emitHarness(options.emit, `\x1b[2m# codex app-server · ${options.cwd}\x1b[0m\r\n`);
     if (options.model) emitCascadeStats(options.emit, { model: options.model });
-    const started = await this.request('turn/start', {
+    const started = await this.requestWithActiveWriterRetry('turn/start', {
       threadId,
       input: [
         { type: 'text', text: options.prompt, text_elements: [] },
@@ -928,6 +952,20 @@ class CodexAppServerClient {
       this.earlyNotifications.delete(turnId);
       for (const message of buffered) this.onMessage(message);
     });
+  }
+
+  private async requestWithActiveWriterRetry(method: string, params: JsonObject): Promise<any> {
+    let delayMs = 250;
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      try {
+        return await this.request(method, params);
+      } catch (error) {
+        if (!/active writer/i.test(String(error)) || attempt === 7) throw error;
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        delayMs = Math.min(delayMs * 2, 2_000);
+      }
+    }
+    throw new Error(`Codex ${method} did not become available.`);
   }
 
   private environmentOverrides(env?: NodeJS.ProcessEnv): Record<string, string> {
