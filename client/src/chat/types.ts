@@ -245,7 +245,7 @@ export interface ChatChannelPresence {
   participants: string[];
   online: string[];
   owner?: string;
-  profiles?: Record<string, { id: number; username: string; displayName: string; avatarUrl: string }>;
+  profiles?: Record<string, { id: number; username: string; displayName: string; avatarUrl?: string }>;
 }
 
 export type SharedChatNote = {

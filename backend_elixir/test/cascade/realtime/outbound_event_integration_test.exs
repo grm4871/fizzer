@@ -128,15 +128,15 @@ defmodule Cascade.Realtime.OutboundEventIntegrationTest do
     refute Enum.any?(queries, &String.contains?(&1, "sqlite_master"))
   end
 
-  test "presence omits an avatar that would overflow the realtime outbound queue" do
+  test "presence never embeds profile avatars" do
     {source, source_channel, _local, _local_channel} = linked_chat()
-    oversized_avatar = "data:image/jpeg;base64," <> String.duplicate("A", 300_000)
-    SQL.exec("UPDATE users SET avatar_url=? WHERE username='alice'", [oversized_avatar])
+    inline_avatar = "data:image/jpeg;base64," <> String.duplicate("A", 300_000)
+    SQL.exec("UPDATE users SET avatar_url=? WHERE username='alice'", [inline_avatar])
 
     snapshot = Channel.participant_snapshot(source.id, source_channel.id)
 
-    assert snapshot.profiles["alice"].avatarUrl == ""
-    assert Enum.find(snapshot.users, &(&1.username == "alice")).avatarUrl == oversized_avatar
+    refute Map.has_key?(snapshot.profiles["alice"], :avatarUrl)
+    refute Map.has_key?(Enum.find(snapshot.users, &(&1.username == "alice")), :avatarUrl)
   end
 
   test "presence snapshots and route reads emit exact reason telemetry" do
@@ -350,8 +350,7 @@ defmodule Cascade.Realtime.OutboundEventIntegrationTest do
     assert get_in(initial, ["args", Access.at(0), "profiles", "alice"]) == %{
              "id" => 1,
              "username" => "alice",
-             "displayName" => "Alice",
-             "avatarUrl" => "alice.png"
+             "displayName" => "Alice"
            }
 
     disconnect_namespace(alice_one, "vault")
