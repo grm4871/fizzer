@@ -3,6 +3,7 @@ import {
   DESKTOP_RUNNER_SOCKET_OPTIONS,
   LatestRunnerSetup,
   reconcileCancelAcknowledgement,
+  registerThenReplayBufferedEvents,
 } from '../desktopRunnerHost';
 
 describe('desktop runner transport isolation', () => {
@@ -12,6 +13,18 @@ describe('desktop runner transport isolation', () => {
       transports: ['polling'],
       upgrade: false,
     });
+  });
+});
+
+describe('desktop runner server-restart recovery', () => {
+  it('registers ownership before replaying a buffered terminal event', () => {
+    const sent: string[] = [];
+    registerThenReplayBufferedEvents(
+      () => sent.push('runner:register'),
+      ['completed'],
+      (event) => sent.push(`runner:runEvent:${event}`),
+    );
+    expect(sent).toEqual(['runner:register', 'runner:runEvent:completed']);
   });
 });
 

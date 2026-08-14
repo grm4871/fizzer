@@ -128,6 +128,15 @@ export async function reconcileCancelAcknowledgement(
   return false;
 }
 
+export function registerThenReplayBufferedEvents<T>(
+  register: () => void,
+  bufferedEvents: T[],
+  replay: (event: T) => void,
+): void {
+  register();
+  for (const event of bufferedEvents) replay(event);
+}
+
 function loadBridgeCursor(instanceId: string): number {
   try {
     const saved = JSON.parse(localStorage.getItem(BRIDGE_CURSOR_KEY) || '{}') as { instanceId?: string; cursor?: number };
@@ -175,9 +184,9 @@ export async function respondToAgentPermission(requestId: string, decision: 'all
   return result?.success === true;
 }
 
-async function restoreMainProcessRuns(): Promise<void> {
+async function restoreMainProcessRuns(): Promise<AgentEventPayload[]> {
   const api = runnerElectronAPI();
-  if (!api?.getAgentRunState) return;
+  if (!api?.getAgentRunState) return [];
   const initial = await api.getAgentRunState(0);
   const instanceId = String(initial?.instanceId || '');
   if (instanceId !== bridgeInstanceId) {
@@ -188,7 +197,11 @@ async function restoreMainProcessRuns(): Promise<void> {
   for (const runId of state?.activeRunIds || []) {
     if (Number.isFinite(Number(runId))) activeRunIds.add(Number(runId));
   }
-  for (const event of state?.events || []) processAgentEvent(event);
+  // Do not publish buffered events yet. After a server restart this socket is
+  // connected but is not registered as the run owner until runner:register is
+  // processed. Replaying a completion first makes the server reject it, then
+  // orphan the already-finished local run when activeRunIds is empty.
+  return state?.events || [];
 }
 
 function runnerElectronAPI(): RunnerElectronAPI | undefined {
@@ -251,12 +264,16 @@ async function publishPlanUsage(activeSocket: Socket, force = false): Promise<vo
 }
 
 async function registerWithServer(activeSocket: Socket): Promise<void> {
-  await restoreMainProcessRuns();
+  const bufferedEvents = await restoreMainProcessRuns();
   const ids = [...activeRunIds].filter((id) => Number.isFinite(id));
-  activeSocket.emit('runner:register', {
-    activeRunIds: ids,
-    runnerInstanceId: bridgeInstanceId || undefined,
-  });
+  registerThenReplayBufferedEvents(
+    () => activeSocket.emit('runner:register', {
+      activeRunIds: ids,
+      runnerInstanceId: bridgeInstanceId || undefined,
+    }),
+    bufferedEvents,
+    processAgentEvent,
+  );
   void publishPlanUsage(activeSocket);
   pruneRecentTerminals();
   for (const [runId, entry] of recentTerminalEvents.entries()) {
