@@ -40,6 +40,12 @@ public class LocalCodexPlugin extends Plugin {
     return directory;
   }
 
+  private File codexConfigHome() {
+    File directory = new File(codexHome(), ".codex");
+    directory.mkdirs();
+    return directory;
+  }
+
   private String binaryPath() {
     ApplicationInfo info = getContext().getApplicationInfo();
     return new File(info.nativeLibraryDir, "libcodex.so").getAbsolutePath();
@@ -54,7 +60,7 @@ public class LocalCodexPlugin extends Plugin {
     builder.redirectErrorStream(true);
     Map<String, String> environment = builder.environment();
     environment.put("HOME", codexHome().getAbsolutePath());
-    environment.put("CODEX_HOME", new File(codexHome(), ".codex").getAbsolutePath());
+    environment.put("CODEX_HOME", codexConfigHome().getAbsolutePath());
     environment.put("TMPDIR", getContext().getCacheDir().getAbsolutePath());
     environment.put("PATH", "/system/bin:/system/xbin");
     environment.put("TERM", "dumb");
@@ -83,7 +89,7 @@ public class LocalCodexPlugin extends Plugin {
     executor.execute(() -> {
       JSObject result = new JSObject();
       result.put("supported", new File(binaryPath()).canExecute());
-      result.put("authenticated", new File(new File(codexHome(), ".codex"), "auth.json").isFile());
+      result.put("authenticated", new File(codexConfigHome(), "auth.json").isFile());
       result.put("enabled", getContext().getSharedPreferences("local-codex", 0).getBoolean("enabled", false));
       result.put("workspace", workspace().getAbsolutePath());
       try {

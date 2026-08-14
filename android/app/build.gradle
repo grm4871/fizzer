@@ -9,8 +9,8 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         // Sideload dev shell — versionCode only needs bumps when the *native*
         // wrapper changes. UI ships via https://cscd.online/app.html.
-        versionCode 8
-        versionName "dev-2026.08.13-local-codex"
+        versionCode 9
+        versionName "dev-2026.08.13-local-codex.1"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
