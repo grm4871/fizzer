@@ -227,151 +227,151 @@
       "method": "GET",
       "path": "/api/vaults/:id/join-requests",
       "source": "backend_elixir/lib/cascade_web/account_router.ex",
-      "line": 239
+      "line": 232
     },
     {
       "method": "PATCH",
       "path": "/api/vaults/:id/join-requests/:request_id",
       "source": "backend_elixir/lib/cascade_web/account_router.ex",
-      "line": 250
+      "line": 236
     },
     {
       "method": "GET",
       "path": "/api/public-vaults",
       "source": "backend_elixir/lib/cascade_web/account_router.ex",
-      "line": 258
+      "line": 244
     },
     {
       "method": "GET",
       "path": "/api/public-vaults/:id",
       "source": "backend_elixir/lib/cascade_web/account_router.ex",
-      "line": 270
+      "line": 256
     },
     {
       "method": "POST",
       "path": "/api/public-vaults/:id/join",
       "source": "backend_elixir/lib/cascade_web/account_router.ex",
-      "line": 279
+      "line": 265
     },
     {
       "method": "GET",
       "path": "/api/vaults/:id/bans",
       "source": "backend_elixir/lib/cascade_web/account_router.ex",
-      "line": 292
+      "line": 278
     },
     {
       "method": "POST",
       "path": "/api/vaults/:id/bans",
       "source": "backend_elixir/lib/cascade_web/account_router.ex",
-      "line": 303
+      "line": 282
     },
     {
       "method": "DELETE",
       "path": "/api/vaults/:id/bans/:user_id",
       "source": "backend_elixir/lib/cascade_web/account_router.ex",
-      "line": 318
+      "line": 297
     },
     {
       "method": "POST",
       "path": "/api/vaults/:id/reports",
       "source": "backend_elixir/lib/cascade_web/account_router.ex",
-      "line": 329
+      "line": 308
     },
     {
       "method": "GET",
       "path": "/api/vaults/:id/reports",
       "source": "backend_elixir/lib/cascade_web/account_router.ex",
-      "line": 333
+      "line": 312
     },
     {
       "method": "PATCH",
       "path": "/api/vaults/:id/reports/:report_id",
       "source": "backend_elixir/lib/cascade_web/account_router.ex",
-      "line": 337
+      "line": 316
     },
     {
       "method": "GET",
       "path": "/api/admin/reports",
       "source": "backend_elixir/lib/cascade_web/account_router.ex",
-      "line": 343
+      "line": 322
     },
     {
       "method": "PATCH",
       "path": "/api/admin/reports/:report_id",
       "source": "backend_elixir/lib/cascade_web/account_router.ex",
-      "line": 347
+      "line": 326
     },
     {
       "method": "GET",
       "path": "/api/me/dm-settings",
       "source": "backend_elixir/lib/cascade_web/account_router.ex",
-      "line": 353
+      "line": 332
     },
     {
       "method": "PUT",
       "path": "/api/me/dm-settings",
       "source": "backend_elixir/lib/cascade_web/account_router.ex",
-      "line": 359
+      "line": 338
     },
     {
       "method": "GET",
       "path": "/api/me/blocks",
       "source": "backend_elixir/lib/cascade_web/account_router.ex",
-      "line": 371
+      "line": 350
     },
     {
       "method": "POST",
       "path": "/api/me/blocks",
       "source": "backend_elixir/lib/cascade_web/account_router.ex",
-      "line": 377
+      "line": 356
     },
     {
       "method": "DELETE",
       "path": "/api/me/blocks/:username",
       "source": "backend_elixir/lib/cascade_web/account_router.ex",
-      "line": 383
+      "line": 362
     },
     {
       "method": "GET",
       "path": "/api/me/direct-messages",
       "source": "backend_elixir/lib/cascade_web/account_router.ex",
-      "line": 394
+      "line": 373
     },
     {
       "method": "POST",
       "path": "/api/direct-messages",
       "source": "backend_elixir/lib/cascade_web/account_router.ex",
-      "line": 400
+      "line": 379
     },
     {
       "method": "GET",
       "path": "/api/community/updates",
       "source": "backend_elixir/lib/cascade_web/account_router.ex",
-      "line": 406
+      "line": 385
     },
     {
       "method": "POST",
       "path": "/api/community/updates/read",
       "source": "backend_elixir/lib/cascade_web/account_router.ex",
-      "line": 420
+      "line": 399
     },
     {
       "method": "POST",
       "path": "/api/community/updates/read-all",
       "source": "backend_elixir/lib/cascade_web/account_router.ex",
-      "line": 438
+      "line": 417
     },
     {
       "method": "POST",
       "path": "/api/diagnostics/android-battery",
       "source": "backend_elixir/lib/cascade_web/account_router.ex",
-      "line": 446
+      "line": 425
     },
     {
       "method": "GET",
       "path": "/api/diagnostics/android-battery",
       "source": "backend_elixir/lib/cascade_web/account_router.ex",
-      "line": 457
+      "line": 436
     },
     {
       "method": "GET",
@@ -629,85 +629,85 @@
       "method": "DELETE",
       "path": "/api/notes/:id",
       "source": "backend_elixir/lib/cascade_web/content_router.ex",
-      "line": 35
+      "line": 36
     },
     {
       "method": "POST",
       "path": "/api/notes/:id/move",
       "source": "backend_elixir/lib/cascade_web/content_router.ex",
-      "line": 36
+      "line": 37
     },
     {
       "method": "POST",
       "path": "/api/notes/:id/unlist",
       "source": "backend_elixir/lib/cascade_web/content_router.ex",
-      "line": 37
+      "line": 38
     },
     {
       "method": "POST",
       "path": "/api/notes/:id/pin",
       "source": "backend_elixir/lib/cascade_web/content_router.ex",
-      "line": 38
+      "line": 39
     },
     {
       "method": "POST",
       "path": "/api/notes/:id/archive",
       "source": "backend_elixir/lib/cascade_web/content_router.ex",
-      "line": 39
+      "line": 40
     },
     {
       "method": "POST",
       "path": "/api/notes/:id/assets",
       "source": "backend_elixir/lib/cascade_web/content_router.ex",
-      "line": 40
+      "line": 41
     },
     {
       "method": "GET",
       "path": "/api/notes/:id/assets/:assetId",
       "source": "backend_elixir/lib/cascade_web/content_router.ex",
-      "line": 42
+      "line": 43
     },
     {
       "method": "GET",
       "path": "/api/notes/:id/backlinks",
       "source": "backend_elixir/lib/cascade_web/content_router.ex",
-      "line": 43
+      "line": 44
     },
     {
       "method": "GET",
       "path": "/api/vaults/:id/tags",
       "source": "backend_elixir/lib/cascade_web/content_router.ex",
-      "line": 45
+      "line": 46
     },
     {
       "method": "POST",
       "path": "/api/notes/:id/tags",
       "source": "backend_elixir/lib/cascade_web/content_router.ex",
-      "line": 46
+      "line": 47
     },
     {
       "method": "DELETE",
       "path": "/api/notes/:id/tags/:tagId",
       "source": "backend_elixir/lib/cascade_web/content_router.ex",
-      "line": 47
+      "line": 48
     },
     {
       "method": "GET",
       "path": "/api/notes/:id/versions",
       "source": "backend_elixir/lib/cascade_web/content_router.ex",
-      "line": 48
+      "line": 49
     },
     {
       "method": "GET",
       "path": "/api/notes/:id/diff",
       "source": "backend_elixir/lib/cascade_web/content_router.ex",
-      "line": 49
+      "line": 50
     },
     {
       "method": "GET",
       "path": "/api/vaults/:id/graph",
       "source": "backend_elixir/lib/cascade_web/content_router.ex",
-      "line": 50
+      "line": 51
     },
     {
       "method": "GET",
@@ -1324,7 +1324,7 @@
         "namespace": "/vault",
         "event": "vault:noteChanged",
         "source": "backend_elixir/lib/cascade_web/content_controller.ex",
-        "line": 610
+        "line": 651
       },
       {
         "namespace": "/vault",
@@ -1336,19 +1336,19 @@
         "namespace": "/vault",
         "event": "vault:chatMessageDeleted",
         "source": "backend_elixir/lib/cascade_web/orchestration_controller.ex",
-        "line": 462
+        "line": 464
       },
       {
         "namespace": "/vault",
         "event": "vault:chatMessageCreated",
         "source": "backend_elixir/lib/cascade_web/orchestration_controller.ex",
-        "line": 767
+        "line": 769
       },
       {
         "namespace": "/vault",
         "event": "vault:chatMessageUpdated",
         "source": "backend_elixir/lib/cascade_web/orchestration_controller.ex",
-        "line": 767
+        "line": 769
       },
       {
         "namespace": "/vault",

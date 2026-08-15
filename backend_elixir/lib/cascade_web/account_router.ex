@@ -227,25 +227,11 @@ defmodule CascadeWeb.AccountRouter do
   end
 
   get "/api/vaults/:id/public-home-notes" do
-    authenticated(conn, nil, fn conn, user ->
-      with_vault(conn, id, user.id, fn conn, _vault ->
-        case PublicVaults.home_note_choices(id, user.id) do
-          {:ok, notes} -> JSON.send(conn, 200, %{notes: notes})
-          {:error, message} -> domain_error(conn, message)
-        end
-      end)
-    end)
+    vault_read(conn, id, :notes, &PublicVaults.home_note_choices/2)
   end
 
   get "/api/vaults/:id/join-requests" do
-    authenticated(conn, nil, fn conn, user ->
-      with_vault(conn, id, user.id, fn conn, _vault ->
-        case PublicVaults.join_requests(id, user.id) do
-          {:ok, requests} -> JSON.send(conn, 200, %{requests: requests})
-          {:error, message} -> domain_error(conn, message)
-        end
-      end)
-    end)
+    vault_read(conn, id, :requests, &PublicVaults.join_requests/2)
   end
 
   patch "/api/vaults/:id/join-requests/:request_id" do
@@ -291,14 +277,7 @@ defmodule CascadeWeb.AccountRouter do
   end
 
   get "/api/vaults/:id/bans" do
-    authenticated(conn, nil, fn conn, user ->
-      with_vault(conn, id, user.id, fn conn, _vault ->
-        case Moderation.list_bans(id, user.id) do
-          {:ok, bans} -> JSON.send(conn, 200, %{bans: bans})
-          {:error, message} -> domain_error(conn, message)
-        end
-      end)
-    end)
+    vault_read(conn, id, :bans, &Moderation.list_bans/2)
   end
 
   post "/api/vaults/:id/bans" do
@@ -492,6 +471,17 @@ defmodule CascadeWeb.AccountRouter do
       nil -> JSON.send(conn, 404, %{error: "Vault not found"})
       vault -> fun.(conn, vault)
     end
+  end
+
+  defp vault_read(conn, vault_id, key, fun) do
+    authenticated(conn, nil, fn conn, user ->
+      with_vault(conn, vault_id, user.id, fn conn, _vault ->
+        case fun.(vault_id, user.id) do
+          {:ok, value} -> JSON.send(conn, 200, %{key => value})
+          {:error, message} -> domain_error(conn, message)
+        end
+      end)
+    end)
   end
 
   defp add_member(conn, vault_id, actor_id) do

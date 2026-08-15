@@ -11,18 +11,13 @@ defmodule CascadeWeb.ExtendedContentController do
   alias CascadeWeb.JSON
 
   def append_journal(conn, vault_id) do
-    authenticated(conn, fn conn, auth ->
-      safely(conn, "Could not append journal entry", fn ->
-        entry =
-          Scratchpad.append_journal_entry(auth.user.id, vault_id, %{
-            body: body_value(conn, "body", ""),
-            kind: body_value(conn, "kind"),
-            agent_key: body_value(conn, "agentKey"),
-            run_id: body_value(conn, "runId")
-          })
-
-        JSON.send(conn, 201, %{entry: entry})
-      end)
+    scratchpad_action(conn, "Could not append journal entry", 201, :entry, fn user_id ->
+      Scratchpad.append_journal_entry(user_id, vault_id, %{
+        body: body_value(conn, "body", ""),
+        kind: body_value(conn, "kind"),
+        agent_key: body_value(conn, "agentKey"),
+        run_id: body_value(conn, "runId")
+      })
     end)
   end
 
@@ -89,50 +84,38 @@ defmodule CascadeWeb.ExtendedContentController do
   end
 
   def open_thread(conn, vault_id) do
-    authenticated(conn, fn conn, auth ->
-      safely(conn, "Could not open thread", fn ->
-        thread =
-          Scratchpad.open_thread(auth.user.id, vault_id, %{
-            intent: body_value(conn, "intent", ""),
-            blocked_on: body_value(conn, "blockedOn"),
-            next_try: body_value(conn, "nextTry"),
-            pointer: body_value(conn, "pointer"),
-            agent_key: body_value(conn, "agentKey"),
-            run_id: body_value(conn, "runId")
-          })
-
-        JSON.send(conn, 201, %{thread: thread})
-      end)
+    scratchpad_action(conn, "Could not open thread", 201, :thread, fn user_id ->
+      Scratchpad.open_thread(user_id, vault_id, %{
+        intent: body_value(conn, "intent", ""),
+        blocked_on: body_value(conn, "blockedOn"),
+        next_try: body_value(conn, "nextTry"),
+        pointer: body_value(conn, "pointer"),
+        agent_key: body_value(conn, "agentKey"),
+        run_id: body_value(conn, "runId")
+      })
     end)
   end
 
   def close_thread(conn, vault_id, thread_id) do
-    authenticated(conn, fn conn, auth ->
-      safely(conn, "Could not close thread", fn ->
-        thread =
-          Scratchpad.close_open_thread(auth.user.id, vault_id,
-            thread_id: thread_id,
-            agent_key: body_value(conn, "agentKey"),
-            reason: body_value(conn, "reason")
-          )
-
-        JSON.send(conn, 200, %{thread: thread})
-      end)
+    scratchpad_action(conn, "Could not close thread", 200, :thread, fn user_id ->
+      Scratchpad.close_open_thread(user_id, vault_id,
+        thread_id: thread_id,
+        agent_key: body_value(conn, "agentKey"),
+        reason: body_value(conn, "reason")
+      )
     end)
   end
 
   def create_skill(conn, vault_id) do
-    authenticated(conn, fn conn, auth ->
-      safely(conn, "Could not save skill", fn ->
-        note =
-          Scratchpad.create_skill_note(auth.user.id, vault_id, %{
-            title: body_value(conn, "title", ""),
-            body: body_value(conn, "body", ""),
-            agent_key: body_value(conn, "agentKey")
-          })
+    scratchpad_action(conn, "Could not save skill", 201, :note, fn user_id ->
+      note =
+        Scratchpad.create_skill_note(user_id, vault_id, %{
+          title: body_value(conn, "title", ""),
+          body: body_value(conn, "body", ""),
+          agent_key: body_value(conn, "agentKey")
+        })
 
-        JSON.send(conn, 201, %{note: %{id: note.id, title: note.title}})
-      end)
+      %{id: note.id, title: note.title}
     end)
   end
 
@@ -149,17 +132,12 @@ defmodule CascadeWeb.ExtendedContentController do
   end
 
   def outcome(conn, vault_id) do
-    authenticated(conn, fn conn, auth ->
-      safely(conn, "Could not record outcome", fn ->
-        outcome =
-          Scratchpad.record_note_outcome(auth.user.id, vault_id, %{
-            note_ref: body_value(conn, "noteRef", ""),
-            result: body_value(conn, "result"),
-            agent_key: body_value(conn, "agentKey")
-          })
-
-        JSON.send(conn, 200, %{outcome: outcome})
-      end)
+    scratchpad_action(conn, "Could not record outcome", 200, :outcome, fn user_id ->
+      Scratchpad.record_note_outcome(user_id, vault_id, %{
+        note_ref: body_value(conn, "noteRef", ""),
+        result: body_value(conn, "result"),
+        agent_key: body_value(conn, "agentKey")
+      })
     end)
   end
 
@@ -532,6 +510,14 @@ defmodule CascadeWeb.ExtendedContentController do
             end)
           end
       end
+    end)
+  end
+
+  defp scratchpad_action(conn, error_message, status, key, fun) do
+    authenticated(conn, fn conn, auth ->
+      safely(conn, error_message, fn ->
+        JSON.send(conn, status, %{key => fun.(auth.user.id)})
+      end)
     end)
   end
 

@@ -77,6 +77,7 @@ defmodule CascadeWeb.SystemRouterTest do
 
   test "Android update metadata is public and versioned", context do
     missing = request(context, :get, "/api/system/android-update")
+
     assert Jason.decode!(missing.resp_body) == %{
              "available" => false,
              "url" => "/download/android",
