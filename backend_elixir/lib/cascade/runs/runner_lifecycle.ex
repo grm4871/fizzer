@@ -17,6 +17,8 @@ defmodule Cascade.Runs.RunnerLifecycle do
   def report_plan_usage(owner_id, usage),
     do: GenServer.cast(__MODULE__, {:plan_usage, owner_id, clean_usage(usage)})
 
+  def plan_usage(owner_id), do: GenServer.call(__MODULE__, {:plan_usage, owner_id})
+
   def health(owner_id) do
     base = GenServer.call(__MODULE__, {:health, owner_id})
     %{base | online: online?(owner_id), activeRuns: Store.active_delegated_count(owner_id)}
@@ -203,8 +205,13 @@ defmodule Cascade.Runs.RunnerLifecycle do
      }, state}
   end
 
+  def handle_call({:plan_usage, owner_id}, _from, state),
+    do: {:reply, state.plan_usage[owner_id] || %{}, state}
+
   @impl true
   def handle_cast({:plan_usage, owner_id, usage}, state) do
+    usage = merge_plan_usage(state.plan_usage[owner_id] || %{}, usage)
+
     {:noreply,
      %{
        state
@@ -315,6 +322,12 @@ defmodule Cascade.Runs.RunnerLifecycle do
 
   defp clean_usage(_), do: %{}
 
+  defp merge_plan_usage(previous, incoming) do
+    Map.merge(previous, incoming, fn _provider, old, new ->
+      if field(new, :status) == "ok" or field(old, :status) != "ok", do: new, else: old
+    end)
+  end
+
   defp clean_plan(raw) do
     status = if field(raw, :status) in ["ok", "error"], do: field(raw, :status), else: "unknown"
     percent = number(field(raw, :usedPercent))
@@ -332,6 +345,7 @@ defmodule Cascade.Runs.RunnerLifecycle do
     |> maybe_put(:resetsLabel, string_or_nil(field(raw, :resetsLabel), 100))
     |> maybe_put(:planType, string_or_nil(field(raw, :planType), 100))
     |> maybe_put(:detail, string_or_nil(field(raw, :detail), 300))
+    |> maybe_put(:extraUsageAvailable, boolean_or_nil(field(raw, :extraUsageAvailable)))
   end
 
   defp complete_workspace(response) do
@@ -350,6 +364,8 @@ defmodule Cascade.Runs.RunnerLifecycle do
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
   defp number(value) when is_number(value), do: value * 1.0
   defp number(_), do: nil
+  defp boolean_or_nil(value) when is_boolean(value), do: value
+  defp boolean_or_nil(_), do: nil
   defp clamp(value, min, max), do: value |> Kernel.max(min) |> Kernel.min(max)
 
   defp string_or_nil(value, max),

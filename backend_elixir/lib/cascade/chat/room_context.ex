@@ -4,6 +4,8 @@ defmodule Cascade.Chat.RoomContext do
   alias Cascade.Chat.{Messages, Schema}
 
   @max_hops 4
+  @inline_svg ~r/<svg\b[\s\S]*?<\/svg\s*>/iu
+  @inline_svg_marker_prefix "FIZZER_ROOM_INLINE_SVG"
   def max_hops, do: @max_hops
 
   def infer_relationship(text) do
@@ -77,6 +79,23 @@ defmodule Cascade.Chat.RoomContext do
   end
 
   def build_context(opts) do
+    build_context_payload(opts).text
+  end
+
+  def build_context_payload(opts) do
+    {messages, inline_svgs} =
+      opts
+      |> value("messages", [])
+      |> extract_inline_svgs()
+
+    opts = put_flexible(opts, "messages", messages)
+    text = build_context_text(opts)
+    {text, inline_svgs} = retain_referenced_inline_svgs(text, inline_svgs)
+
+    %{text: text, inlineSvgs: inline_svgs}
+  end
+
+  defp build_context_text(opts) do
     messages = value(opts, "messages", [])
     registrations = value(opts, "registrations", [])
     target_id = value(opts, "targetRegistrationId", "")
@@ -97,20 +116,26 @@ defmodule Cascade.Chat.RoomContext do
              List.wrap(value(message, "attachments")) != [])
       end)
 
-    last_own_index =
+    last_own =
       visible
       |> Enum.with_index()
       |> Enum.filter(fn {message, _index} -> value(message, "registrationId") == target_id end)
       |> List.last()
-      |> case do
-        nil -> -1
-        {_message, index} -> index
-      end
+
+    last_own_index = if last_own, do: elem(last_own, 1), else: -1
+    last_own_started_at = if last_own, do: value(elem(last_own, 0), "createdAt", ""), else: ""
 
     delta =
-      if last_own_index >= 0,
-        do: Enum.drop(visible, last_own_index + 1),
-        else: Enum.take(visible, -8)
+      if last_own_index >= 0 do
+        visible
+        |> Enum.with_index()
+        |> Enum.filter(fn {message, index} ->
+          index > last_own_index or late_visible_message?(message, last_own_started_at)
+        end)
+        |> Enum.map(&elem(&1, 0))
+      else
+        Enum.take(visible, -8)
+      end
 
     delta = Enum.reject(delta, &(value(&1, "registrationId") == target_id)) |> Enum.take(-10)
     target = Enum.find(registrations, &(value(&1, "id") == target_id))
@@ -156,6 +181,56 @@ defmodule Cascade.Chat.RoomContext do
       "The focused request is authoritative. For lossless context around the cursor, use `cascade-chat history --around-message-id #{if cursor == "", do: "<id>", else: cursor} --include-reply-context`; use `cascade-chat search <query>` for older topics."
 
     compact("#{header}\n#{body}\n\n#{footer}", max_chars)
+  end
+
+  defp extract_inline_svgs(messages) do
+    messages
+    |> List.wrap()
+    |> Enum.map_reduce([], fn message, sources ->
+      body = value(message, "body", "") |> to_string()
+
+      {parts, sources} =
+        @inline_svg
+        |> Regex.split(body, include_captures: true, trim: false)
+        |> Enum.map_reduce(sources, fn part, acc ->
+          if Regex.match?(@inline_svg, part) do
+            index = length(acc) + 1
+            {inline_svg_marker(index), acc ++ [part]}
+          else
+            {part, acc}
+          end
+        end)
+
+      {put_flexible(message, "body", IO.iodata_to_binary(parts)), sources}
+    end)
+  end
+
+  defp retain_referenced_inline_svgs(text, inline_svgs) do
+    inline_svgs
+    |> Enum.with_index(1)
+    |> Enum.reduce({text, [], 0}, fn {svg, old_index}, {text, sources, kept} ->
+      old_marker = inline_svg_marker(old_index)
+
+      if String.contains?(text, old_marker) do
+        new_index = kept + 1
+        new_marker = inline_svg_marker(new_index)
+        {String.replace(text, old_marker, new_marker), sources ++ [svg], new_index}
+      else
+        {text, sources, kept}
+      end
+    end)
+    |> then(fn {text, sources, _kept} -> {text, sources} end)
+  end
+
+  defp inline_svg_marker(index), do: "[[@#{@inline_svg_marker_prefix}:#{index}]]"
+
+  # A peer response can finish after this agent's next turn has already taken
+  # its room snapshot. Its created_at stays before the agent response, so the
+  # normal append-only index would otherwise hide the completed message forever.
+  defp late_visible_message?(message, last_own_started_at) do
+    activity_at = value(message, "activityAt", "")
+
+    activity_at != "" and last_own_started_at != "" and activity_at > last_own_started_at
   end
 
   defp do_depth(_user_id, _channel_id, _source, _seen, depth) when depth > @max_hops, do: depth

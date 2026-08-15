@@ -18,7 +18,7 @@ function fingerprint(template, excerpt) {
 }
 
 /** Enforce the prompt contract even when the model ignores it. */
-function normalizeCaption(value, maxWords = 6) {
+function normalizeCaption(value, maxWords = 16) {
   const withoutThinking = String(value || '')
     .replace(/<think>[\s\S]*?<\/think>/gi, ' ')
     .replace(/<[^>]+>/g, ' ');

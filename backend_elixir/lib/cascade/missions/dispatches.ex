@@ -3,6 +3,7 @@ defmodule Cascade.Missions.Dispatches do
 
   alias Cascade.Accounts.SQL
   alias Cascade.Chat.{Agents, Channel, Messages, RoomContext, Schema}
+  alias Cascade.Runs.RunnerLifecycle
 
   def create_for_message(user_id, channel_id, message) do
     if String.starts_with?(to_string(field(message, :id, "")), "sys-") do
@@ -176,7 +177,8 @@ defmodule Cascade.Missions.Dispatches do
       always =
         not from_agent and registration.ownerUserId == user_id and
           registration.replyToEveryMessage and
-          not (registration.orchestrator and calls_specialist)
+          not (registration.orchestrator and calls_specialist) and
+          reply_to_all_available?(registration)
 
       identity = registration.vaultAgentId || registration.id
 
@@ -194,6 +196,20 @@ defmodule Cascade.Missions.Dispatches do
     end)
     |> elem(0)
   end
+
+  # Explicit mentions remain authoritative. This only suppresses the automatic
+  # reply-to-every-human-message path when the local provider account cannot run.
+  defp reply_to_all_available?(%{agentId: agent_id, ownerUserId: owner_id})
+       when agent_id in ["claude-code", "codex"] do
+    usage = RunnerLifecycle.plan_usage(owner_id)[agent_id] || %{}
+
+    not (field(usage, :usedPercent, 0) >= 100 and
+           field(usage, :extraUsageAvailable) == false)
+  rescue
+    _ -> true
+  end
+
+  defp reply_to_all_available?(_registration), do: true
 
   defp compact_command?(text, registrations) do
     stripped =

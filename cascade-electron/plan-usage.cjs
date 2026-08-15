@@ -1,13 +1,15 @@
 /**
  * Read subscription usage from the locally authenticated agent CLIs.
  *
- * Credentials never leave the user's machine. Claude and Codex expose clean
- * non-interactive paths. Grok currently exposes plan usage only in its TUI, so
- * the Linux desktop drives `/usage` inside a short-lived pseudo-terminal and
- * parses the two labels Grok itself renders.
+ * Credentials never leave the user's machine except for the provider's own
+ * authenticated usage endpoint. Grok currently exposes plan usage only in its
+ * TUI, so the Linux desktop drives `/usage` inside a short-lived pseudo-terminal
+ * and parses the two labels Grok itself renders.
  */
 
 const { spawn } = require('child_process');
+const fs = require('fs/promises');
+const os = require('os');
 const path = require('path');
 
 const CLAUDE_BIN = process.env.CLAUDE_BIN || 'claude';
@@ -15,6 +17,8 @@ const CODEX_BIN = process.env.CODEX_BIN || 'codex';
 const GROK_BIN = process.env.GROK_BIN || 'grok';
 const HERMES_BIN = process.env.HERMES_BIN || 'hermes';
 const COMMAND_TIMEOUT_MS = 15_000;
+const CLAUDE_USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
+const CLAUDE_OAUTH_BETA = 'oauth-2025-04-20';
 
 let grokProbeHasSession = false;
 
@@ -119,13 +123,140 @@ function parseClaudeUsageText(text) {
   return usageFromWindows(windows);
 }
 
+function parseClaudeUsageJson(payload, extras = {}) {
+  const windows = [
+    ['five_hour', '5h', 300],
+    ['seven_day', '7d', 10_080],
+  ].flatMap(([key, label, windowMinutes]) => {
+    const window = payload?.[key];
+    if (!window || clampPercent(window.utilization) == null) return [];
+    return [{
+      label,
+      windowMinutes,
+      usedPercent: Number(window.utilization),
+      ...(typeof window.resets_at === 'string' ? { resetsAt: window.resets_at } : {}),
+    }];
+  });
+
+  // Newer Claude builds also expose the normalized limits array. Keep it as a
+  // fallback so monitoring survives another response-field migration.
+  if (windows.length === 0 && Array.isArray(payload?.limits)) {
+    for (const limit of payload.limits) {
+      const labels = {
+        session: ['5h', 300],
+        weekly_all: ['7d', 10_080],
+      };
+      const [label, windowMinutes] = labels[limit?.kind] || [];
+      if (!label || clampPercent(limit?.percent) == null) continue;
+      windows.push({
+        label,
+        windowMinutes,
+        usedPercent: Number(limit.percent),
+        ...(typeof limit.resets_at === 'string' ? { resetsAt: limit.resets_at } : {}),
+      });
+    }
+  }
+
+  const extraUsage = payload?.extra_usage;
+  const extraUsageAvailable = extraUsage && typeof extraUsage === 'object'
+    ? extraUsage.is_enabled === true
+      && extraUsage.spend_limit_reached !== true
+      && !extraUsage.disabled_reason
+    : undefined;
+
+  return usageFromWindows(windows, {
+    ...extras,
+    ...(typeof extraUsageAvailable === 'boolean' ? { extraUsageAvailable } : {}),
+  });
+}
+
+async function readClaudeOAuthCredentials() {
+  if (process.env.CLAUDE_CODE_OAUTH_TOKEN) {
+    return { accessToken: process.env.CLAUDE_CODE_OAUTH_TOKEN };
+  }
+
+  const configDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
+  for (const credentialPath of [
+    path.join(configDir, '.credentials.json'),
+    path.join(configDir, 'credentials.json'),
+  ]) {
+    try {
+      const stored = JSON.parse(await fs.readFile(credentialPath, 'utf8'));
+      const oauth = stored?.claudeAiOauth || stored;
+      if (oauth?.accessToken) return oauth;
+    } catch {
+      // Claude stores credentials in the OS keychain when one is available.
+    }
+  }
+
+  if (process.platform === 'darwin') {
+    const { stdout } = await runCommand(
+      'security',
+      ['find-generic-password', '-s', 'Claude Code-credentials', '-w'],
+      5_000,
+    );
+    const stored = JSON.parse(stdout.trim());
+    const oauth = stored?.claudeAiOauth || stored;
+    if (oauth?.accessToken) return oauth;
+  }
+
+  throw new Error('Claude OAuth credentials unavailable');
+}
+
+async function requestClaudeUsage(accessToken) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5_000);
+  try {
+    const response = await fetch(CLAUDE_USAGE_URL, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'anthropic-beta': CLAUDE_OAUTH_BETA,
+        'User-Agent': 'Fizzer usage monitor',
+      },
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      const error = new Error(`Claude usage endpoint returned ${response.status}`);
+      error.status = response.status;
+      throw error;
+    }
+    return response.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function collectClaudeUsage() {
-  const { stdout } = await runCommand(
-    CLAUDE_BIN,
-    ['-p', '/usage', '--output-format', 'json'],
-  );
-  const payload = JSON.parse(stdout.trim());
-  return parseClaudeUsageText(payload?.result);
+  try {
+    let credentials = await readClaudeOAuthCredentials();
+    let payload;
+    try {
+      payload = await requestClaudeUsage(credentials.accessToken);
+    } catch (error) {
+      if (error?.status !== 401) throw error;
+      // Let Claude refresh an expired key, then reload the keychain entry.
+      await runCommand(CLAUDE_BIN, ['-p', '/usage', '--output-format', 'json']);
+      credentials = await readClaudeOAuthCredentials();
+      payload = await requestClaudeUsage(credentials.accessToken);
+    }
+    return parseClaudeUsageJson(payload, {
+      ...(typeof credentials.subscriptionType === 'string'
+        ? { planType: credentials.subscriptionType }
+        : {}),
+    });
+  } catch (oauthError) {
+    // Older Claude versions rendered the windows directly in headless output.
+    try {
+      const { stdout } = await runCommand(
+        CLAUDE_BIN,
+        ['-p', '/usage', '--output-format', 'json'],
+      );
+      const payload = JSON.parse(stdout.trim());
+      return parseClaudeUsageText(payload?.result);
+    } catch {
+      throw oauthError;
+    }
+  }
 }
 
 function parseCodexRateLimits(payload) {
@@ -142,8 +273,15 @@ function parseCodexRateLimits(payload) {
       ...(isoFromUnixSeconds(window.resetsAt) ? { resetsAt: isoFromUnixSeconds(window.resetsAt) } : {}),
     });
   }
+  const credits = snapshot?.credits;
+  const extraUsageAvailable = credits && typeof credits === 'object'
+    ? snapshot.spendControlReached !== true
+      && (credits.unlimited === true || credits.hasCredits === true)
+    : undefined;
+
   return usageFromWindows(windows, {
     ...(typeof snapshot?.planType === 'string' ? { planType: snapshot.planType } : {}),
+    ...(typeof extraUsageAvailable === 'boolean' ? { extraUsageAvailable } : {}),
   });
 }
 
@@ -475,6 +613,7 @@ async function collectPlanUsage({ grokCwd } = {}) {
 module.exports = {
   collectPlanUsage,
   collectGrokUsage,
+  parseClaudeUsageJson,
   parseClaudeUsageText,
   parseCodexRateLimits,
   parseGrokUsageScreen,

@@ -338,6 +338,15 @@ defmodule CascadeWeb.OrchestrationController do
           })
         end
 
+      {chat_context, context_inline_svgs} =
+        chat_context(
+          execution,
+          registration_id,
+          message_id,
+          triggering_message_id,
+          resume_session_id
+        )
+
       effective_prompt =
         PromptContext.enrich_prompt(
           execution.vault.id,
@@ -346,15 +355,7 @@ defmodule CascadeWeb.OrchestrationController do
           execution.agent,
           resume_session_id
         )
-        |> PromptContext.append_context(
-          chat_context(
-            execution,
-            registration_id,
-            message_id,
-            triggering_message_id,
-            resume_session_id
-          )
-        )
+        |> PromptContext.append_context(chat_context)
 
       case release_sticky_registration(execution.registration_id, dispatch_id) do
         :ok ->
@@ -389,7 +390,8 @@ defmodule CascadeWeb.OrchestrationController do
                 resume_session_id,
                 params,
                 message_id,
-                triggering_message_id
+                triggering_message_id,
+                context_inline_svgs
               )
 
             {:error, message} ->
@@ -651,7 +653,7 @@ defmodule CascadeWeb.OrchestrationController do
 
   defp chat_context(execution, registration_id, message_id, triggering_message_id, resume) do
     if execution.target_channel_id == "" do
-      []
+      {[], []}
     else
       room =
         with {:ok, messages} <-
@@ -660,7 +662,7 @@ defmodule CascadeWeb.OrchestrationController do
                Agents.list_members(execution.target_channel_id, execution.runner_user_id),
              {:ok, missions} <-
                MissionStore.list_active(execution.runner_user_id, execution.target_channel_id, 3) do
-          RoomContext.build_context(%{
+          RoomContext.build_context_payload(%{
             messages: messages,
             registrations: registrations,
             missions: missions,
@@ -671,7 +673,7 @@ defmodule CascadeWeb.OrchestrationController do
             maxChars: if(resume, do: 1_200, else: 2_800)
           })
         else
-          _ -> ""
+          _ -> %{text: "", inlineSvgs: []}
         end
 
       mission_context =
@@ -681,10 +683,10 @@ defmodule CascadeWeb.OrchestrationController do
           ""
         end
 
-      [mission_context, room]
+      {[mission_context, room.text], room.inlineSvgs}
     end
   rescue
-    _ -> []
+    _ -> {[], []}
   end
 
   defp start_chat_run(execution, note_id, prompt, conversation_id, resume, dispatch_id) do
@@ -831,7 +833,8 @@ defmodule CascadeWeb.OrchestrationController do
          resume,
          params,
          message_id,
-         triggering_message_id
+         triggering_message_id,
+         context_inline_svgs
        ) do
     payload =
       PromptContext.delegate_payload(
@@ -853,6 +856,7 @@ defmodule CascadeWeb.OrchestrationController do
           agent_memory_key: execution.memory_key,
           chat_registration_id: execution.registration_id,
           work_item_id: execution.work_item_id,
+          inline_svgs: context_inline_svgs,
           yolo: execution.yolo
         }
       )

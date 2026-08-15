@@ -19,10 +19,11 @@ fi
 
 IMAGE="cascade:certified-$REVISION"
 TARGET_PLATFORM="${CASCADE_TARGET_PLATFORM:-linux/amd64}"
+CACHE_REF="${CASCADE_BUILD_CACHE_REF:-}"
 echo "==> Building immutable release candidate $IMAGE"
-# The local BuildKit cache is persistent on one builder only. When a shared
-# registry ref is supplied, import and export the complete multi-stage cache so
-# other Linux builders can reuse dependency and compilation work too. Keep
+# The local BuildKit cache is persistent on one builder only. Import and export
+# the complete multi-stage registry cache so other Linux builders can reuse
+# dependency and compilation work too. Keep
 # refs must match TARGET_PLATFORM; native NIFs and the bundled OTP runtime are
 # not interchangeable between ARM64 and AMD64.
 BUILD_ARGS=(
@@ -30,14 +31,14 @@ BUILD_ARGS=(
   --provenance=false
   --build-arg "CASCADE_REVISION=$REVISION"
 )
-if [[ -n "${CASCADE_BUILD_CACHE_REF:-}" ]]; then
+if [[ -n "$CACHE_REF" ]]; then
   BUILD_ARGS+=(
-    --cache-from "type=registry,ref=${CASCADE_BUILD_CACHE_REF}"
-    --cache-to "type=registry,ref=${CASCADE_BUILD_CACHE_REF},mode=max,compression=zstd"
+    --cache-from "type=registry,ref=${CACHE_REF}"
+    --cache-to "type=registry,ref=${CACHE_REF},mode=max,compression=zstd"
   )
-  echo "==> Using shared BuildKit cache ${CASCADE_BUILD_CACHE_REF}"
+  echo "==> Using shared BuildKit cache ${CACHE_REF}"
 else
-  echo "==> Using the local BuildKit cache (set CASCADE_BUILD_CACHE_REF to share it)"
+  echo "==> No registry cache configured; using the local BuildKit cache"
 fi
 echo "==> Target platform: $TARGET_PLATFORM"
 # Build from the committed Git object, not the mutable working directory. The

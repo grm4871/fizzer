@@ -4,10 +4,10 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const { createCaptioner, normalizeCaption } = require('./agent-captions.cjs');
 
-test('normalizes model chatter into a six-word plain caption', () => {
+test('normalizes model chatter without cutting a valid 10–16 word caption', () => {
   assert.equal(
-    normalizeCaption('<think>secret</think>\nStatus: Reading AGENTS.md and inspecting Electron IPC now.'),
-    'Reading AGENTS md and inspecting Electron',
+    normalizeCaption('<think>secret</think>\nStatus: Reading AGENTS.md and inspecting Electron IPC now to repair the Orbit caption display.'),
+    'Reading AGENTS md and inspecting Electron IPC now to repair the Orbit caption display',
   );
 });
 

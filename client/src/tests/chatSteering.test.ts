@@ -7,10 +7,12 @@ import {
   dataUrlsToRunImages,
   getRunningMessageState,
   getSteeringPromptLabels,
+  isPendingAgentRunShell,
   mergeChatPresence,
   shouldRenderRunPanel,
   shouldDetachStickyForTouch,
   shouldDetachStickyForWheel,
+  shouldSnapToRecentOnSend,
 } from '../components/ChatView';
 import type { ChatAgentRegistration, ChatMessage } from '../chat/types';
 import { chatMessageStore } from '../chat/messageStore';
@@ -46,6 +48,35 @@ describe('chat sticky bottom intent', () => {
     expect(shouldDetachStickyForWheel(12)).toBe(false);
     expect(shouldDetachStickyForTouch(100, 112)).toBe(true);
     expect(shouldDetachStickyForTouch(100, 88)).toBe(false);
+  });
+
+  it('snaps after send only when the pre-send viewport is within 600px of recent', () => {
+    const viewport = (distance: number) => ({
+      scrollHeight: 2_000,
+      clientHeight: 500,
+      scrollTop: 1_500 - distance,
+    } as HTMLElement);
+
+    expect(shouldSnapToRecentOnSend(viewport(0))).toBe(true);
+    expect(shouldSnapToRecentOnSend(viewport(600))).toBe(true);
+    expect(shouldSnapToRecentOnSend(viewport(601))).toBe(false);
+  });
+
+  it('recognizes the delayed runner shell that completes a send snap', () => {
+    expect(isPendingAgentRunShell(message('agent', {
+      agentId: 'codex',
+      status: 'running',
+      body: 'Thinking...',
+    }))).toBe(true);
+    expect(isPendingAgentRunShell(message('human', {
+      status: 'sending',
+      body: 'hello',
+    }))).toBe(false);
+    expect(isPendingAgentRunShell(message('done', {
+      agentId: 'codex',
+      status: undefined,
+      body: 'Finished.',
+    }))).toBe(false);
   });
 });
 

@@ -9,6 +9,7 @@ defmodule Cascade.ChatDomainTest do
   alias Cascade.Chat.{Agents, Channel, Messages, RoomContext, Schema}
   alias Cascade.Content.Store
   alias Cascade.Missions.Dispatches
+  alias Cascade.Runs.RunnerLifecycle
 
   @node_column_signatures %{
     "chat_messages" => [
@@ -818,6 +819,71 @@ defmodule Cascade.ChatDomainTest do
              "SELECT message_id,registration_id FROM chat_agent_dispatches WHERE message_id IN ('owner-root','guest-root') ORDER BY message_id",
              []
            ) == [["guest-root", guest_coordinator.id], ["owner-root", sol.id]]
+  end
+
+  test "exhausted Claude and Codex skip reply-to-all without blocking explicit mentions" do
+    {vault, channel} = chat_vault(1, "Usage gate", "Usage gated room")
+    user = %{id: 1, username: "alice"}
+
+    add_reply_to_all = fn agent_id, display_name, mention ->
+      {:ok, identity} =
+        Agents.upsert_identity(1, vault.id, %{
+          agentId: agent_id,
+          displayName: display_name,
+          mention: mention
+        })
+
+      {:ok, registration} =
+        Agents.add_to_channel(1, vault.id, channel.id, identity.id, %{
+          replyToEveryMessage: true
+        })
+
+      registration
+    end
+
+    claude = add_reply_to_all.("claude-code", "Claude", "claude")
+    codex = add_reply_to_all.("codex", "Codex", "codex")
+
+    RunnerLifecycle.report_plan_usage(1, %{
+      "claude-code" => %{
+        status: "ok",
+        usedPercent: 100,
+        extraUsageAvailable: false
+      },
+      "codex" => %{
+        status: "ok",
+        usedPercent: 100,
+        extraUsageAvailable: false
+      }
+    })
+
+    {:ok, ordinary} =
+      Messages.create(user, vault.id, channel.id, %{
+        id: "usage-gated-ordinary",
+        body: "This should not wake exhausted reply-to-all agents.",
+        createdAt: "2026-08-14T18:00:00.000Z"
+      })
+
+    assert {:ok, []} = Dispatches.create_for_message(user.id, channel.id, ordinary)
+
+    {:ok, explicit} =
+      Messages.create(user, vault.id, channel.id, %{
+        id: "usage-gated-explicit",
+        body: "@claude @codex answer explicitly",
+        createdAt: "2026-08-14T18:01:00.000Z"
+      })
+
+    assert {:ok, dispatches} = Dispatches.create_for_message(user.id, channel.id, explicit)
+
+    assert dispatches |> Enum.map(& &1.registration.id) |> Enum.sort() ==
+             Enum.sort([claude.id, codex.id])
+
+    RunnerLifecycle.report_plan_usage(1, %{
+      "claude-code" => %{status: "ok", usedPercent: 0, extraUsageAvailable: true},
+      "codex" => %{status: "ok", usedPercent: 0, extraUsageAvailable: true}
+    })
+
+    _ = RunnerLifecycle.plan_usage(1)
   end
 
   test "/compact targets the last Claude or the explicitly tagged Claude sessions" do

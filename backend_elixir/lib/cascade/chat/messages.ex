@@ -757,6 +757,7 @@ defmodule Cascade.Chat.Messages do
       author: row.author,
       body: row.body,
       createdAt: row.created_at,
+      activityAt: row.activity_at,
       status: row.status,
       agentId: row.agent_id,
       registrationId: row.registration_id,

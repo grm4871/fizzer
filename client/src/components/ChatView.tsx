@@ -147,6 +147,16 @@ function isAtScrollBottom(element: HTMLElement, threshold = 48) {
   return element.scrollHeight - element.scrollTop - element.clientHeight <= threshold;
 }
 
+export function shouldSnapToRecentOnSend(element: HTMLElement, threshold = 600) {
+  return isAtScrollBottom(element, threshold);
+}
+
+export function isPendingAgentRunShell(message: ChatMessage | undefined) {
+  if (!message) return false;
+  const belongsToAgent = Boolean(message.agentId || message.registrationId || message.runId != null);
+  return belongsToAgent && (message.status === 'sending' || message.status === 'running');
+}
+
 export function shouldDetachStickyForWheel(deltaY: number) {
   return deltaY < 0;
 }
@@ -308,6 +318,9 @@ export const ChatView = memo(function ChatView({
   const programmaticScrollRef = useRef(false);
   const programmaticClearRef = useRef<number | null>(null);
   const touchStartYRef = useRef<number | null>(null);
+  // Armed only by a send made near the live edge. It bridges the separate
+  // optimistic-human-message and agent-run-shell layout commits.
+  const pendingSendFollowRef = useRef(false);
   const composerRef = useRef<ChatComposerHandle>(null);
   const agentPanelRef = useRef<ChatAgentPanelHandle>(null);
   const sortedMessages = useMemo(() => {
@@ -525,12 +538,40 @@ export const ChatView = memo(function ChatView({
     });
   }, [scrollToBottom]);
 
+  const sendMessage = useCallback((
+    targetChannelId: string,
+    body: string,
+    media?: ChatMediaAttachment[],
+    replyTo?: ChatReplyRef,
+  ) => {
+    const scroller = messagesRef.current;
+    const shouldSnap = !scroller || shouldSnapToRecentOnSend(scroller);
+
+    // Decide from the pre-send viewport. The optimistic message changes the
+    // scroll height immediately afterward and would otherwise make a nearby
+    // reader look too far away to follow their own message.
+    wasAtBottomRef.current = shouldSnap;
+    pendingSendFollowRef.current = shouldSnap;
+    if (shouldSnap) {
+      userScrollQuietUntilRef.current = 0;
+      userScrollIntentUntilRef.current = 0;
+    }
+
+    onSendMessage(targetChannelId, body, media, replyTo);
+
+    if (shouldSnap) {
+      scrollToBottom();
+      requestAnimationFrame(scrollToBottom);
+    }
+  }, [onSendMessage, scrollToBottom]);
+
   useLayoutEffect(() => {
     if (previousChannelIdRef.current !== channelId) {
       // New channel (or first mount): force the view to the bottom, re-pinning
       // across a few frames because markdown/images/widgets settle after paint.
       previousChannelIdRef.current = channelId;
       wasAtBottomRef.current = true;
+      pendingSendFollowRef.current = false;
       userScrollQuietUntilRef.current = 0;
       scrollToBottom();
       requestAnimationFrame(scrollToBottom);
@@ -538,8 +579,23 @@ export const ChatView = memo(function ChatView({
       const t2 = window.setTimeout(scrollToBottom, 200);
       return () => { clearTimeout(t1); clearTimeout(t2); };
     }
+
+    const latest = sortedMessages.at(-1);
+    if (pendingSendFollowRef.current && isPendingAgentRunShell(latest)) {
+      // The runner card (status + Stop button) arrives after the user's row.
+      // Reassert the live edge for that second commit, then ordinary sticky
+      // tracking owns subsequent harness growth.
+      pendingSendFollowRef.current = false;
+      wasAtBottomRef.current = true;
+      userScrollQuietUntilRef.current = 0;
+      userScrollIntentUntilRef.current = 0;
+      scrollToBottom();
+      requestAnimationFrame(scrollToBottom);
+      const settle = window.setTimeout(scrollToBottom, 80);
+      return () => clearTimeout(settle);
+    }
     scrollToBottomIfSticky();
-  }, [sortedMessages.length, channelId, scrollToBottom, scrollToBottomIfSticky]);
+  }, [sortedMessages, channelId, scrollToBottom, scrollToBottomIfSticky]);
 
   // Jump to a specific message (e.g. clicked from search). Waits until the
   // target is in this channel's list, force-mounts + highlights its group via
@@ -560,6 +616,7 @@ export const ChatView = memo(function ChatView({
       setJumpHighlightMessageId((current) => current === targetId ? null : current);
     }, 1300);
     wasAtBottomRef.current = false;
+    pendingSendFollowRef.current = false;
     userScrollQuietUntilRef.current = performance.now() + 1200;
     const scrollToTarget = () => {
       const scroller = messagesRef.current;
@@ -878,6 +935,7 @@ export const ChatView = memo(function ChatView({
             // at the bottom or an upward swipe must not disarm sticky-follow
             // just before a new agent row changes the layout.
             if (shouldDetachStickyForTouch(startY, currentY)) {
+              pendingSendFollowRef.current = false;
               programmaticScrollRef.current = false;
               userScrollIntentUntilRef.current = performance.now() + 500;
             }
@@ -888,6 +946,7 @@ export const ChatView = memo(function ChatView({
             // detaches from the live edge. Downward wheel noise at the bottom
             // previously caused intermittent missed agent auto-scrolls.
             if (shouldDetachStickyForWheel(event.deltaY)) {
+              pendingSendFollowRef.current = false;
               programmaticScrollRef.current = false;
               userScrollIntentUntilRef.current = performance.now() + 180;
             }
@@ -1094,7 +1153,7 @@ export const ChatView = memo(function ChatView({
           notes={notes}
           mentionableAliases={mentionableAliases}
           registeredAgents={registeredAgents}
-          onSendMessage={onSendMessage}
+          onSendMessage={sendMessage}
         />
       </div>}
 

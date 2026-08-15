@@ -13,6 +13,7 @@ const { Resvg } = require('@resvg/resvg-js');
 
 let cliAgentModulePromise = null;
 let cliAgentModuleMtimeMs = -1;
+const activeCliAgentModules = new Map();
 let claudeSdkPromise = null;
 
 // Claude (claude-code) runs locally via the Anthropic Agent SDK, authenticated
@@ -646,10 +647,22 @@ async function loadCliAgentModule() {
   let mtimeMs = 0;
   try { mtimeMs = fs.statSync(modPath).mtimeMs; } catch { /* ignore */ }
   warnIfCliAgentBuildIsStale(modPath, mtimeMs);
-  if (!cliAgentModulePromise || cliAgentModuleMtimeMs !== mtimeMs) {
+  if (!cliAgentModulePromise) {
     cliAgentModuleMtimeMs = mtimeMs;
     const href = pathToFileURL(modPath).href + `?t=${mtimeMs || Date.now()}`;
     cliAgentModulePromise = import(href);
+  } else if (cliAgentModuleMtimeMs !== mtimeMs && activeCliAgentModules.size === 0) {
+    // A cache-busted ESM import creates a second module singleton. Shut down
+    // the idle warm app-server before replacing it; otherwise both children
+    // retain writer leases for different copies of the same session.
+    const previousModule = cliAgentModulePromise;
+    cliAgentModuleMtimeMs = mtimeMs;
+    const href = pathToFileURL(modPath).href + `?t=${mtimeMs || Date.now()}`;
+    cliAgentModulePromise = (async () => {
+      const previous = await previousModule;
+      previous.shutdownPersistentCliAgents?.();
+      return import(href);
+    })();
   }
   const mod = await cliAgentModulePromise;
   // Run before every CLI launch, not just module import. That makes recovery
@@ -1112,7 +1125,9 @@ async function startLocalAgentRun(opts, sendEvent) {
     }
   }
 
-  const { runCliAgent, setRunHelperEnv, clearRunHelperEnv } = await loadCliAgentModule();
+  const cliModule = await loadCliAgentModule();
+  const { runCliAgent, setRunHelperEnv, clearRunHelperEnv } = cliModule;
+  activeCliAgentModules.set(runId, cliModule);
   const helperEnv = buildRunHelperEnv(opts);
   setRunHelperEnv(runId, helperEnv);
   const cwd = resolveAgentCwd(opts.cwd, opts.vaultRoot);
@@ -1142,6 +1157,7 @@ async function startLocalAgentRun(opts, sendEvent) {
     emitTerminalStatus(emit, runId, 'failed', message);
     throw error;
   } finally {
+    if (activeCliAgentModules.get(runId) === cliModule) activeCliAgentModules.delete(runId);
     clearRunHelperEnv(runId);
     cleanupRunHelperConfig(runId);
     preparedPrompt.cleanup();
@@ -1161,7 +1177,7 @@ async function cancelLocalAgentRun(runId) {
     return true;
   }
 
-  const mod = await loadCliAgentModule();
+  const mod = activeCliAgentModules.get(id) || await loadCliAgentModule();
   // Antigravity keeps polling transcript.jsonl after agentapi exits — flag it.
   let flagged = false;
   if (typeof mod.cancelAntigravityRun === 'function') {

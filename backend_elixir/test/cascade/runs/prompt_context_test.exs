@@ -227,4 +227,26 @@ defmodule Cascade.Runs.PromptContextTest do
 
     assert payload.inlineSvgs == [first, second]
   end
+
+  test "delegate payload merges room SVG sources after direct prompt SVGs" do
+    run = %{id: 44, vault_id: "vault"}
+    direct = ~s(<svg width="3" height="3"><rect width="3" height="3"/></svg>)
+    room = ~s(<svg width="4" height="4"><circle cx="2" cy="2" r="2"/></svg>)
+
+    payload =
+      PromptContext.delegate_payload(
+        run,
+        "/vault/root",
+        "codex",
+        "direct #{direct} room [[@FIZZER_ROOM_INLINE_SVG:1]]",
+        %{},
+        "session",
+        %{inline_svgs: [room]}
+      )
+
+    assert payload.prompt ==
+             "direct [[FIZZER_INLINE_SVG:1]] room [[FIZZER_INLINE_SVG:2]]"
+
+    assert payload.inlineSvgs == [direct, room]
+  end
 end

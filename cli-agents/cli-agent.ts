@@ -907,22 +907,10 @@ class CodexAppServerClient {
         shell_environment_policy: { inherit: 'all', set: this.environmentOverrides(options.env) },
       },
     };
-    let response: JsonObject;
-    try {
-      response = options.resumeId
-        ? await this.requestWithActiveWriterRetry('thread/resume', { threadId: options.resumeId, excludeTurns: true, ...common })
-        : await this.request('thread/start', common);
-    } catch (error) {
-      if (!options.resumeId || !isDeadCodexSession(String(error))) throw error;
-      emitHarness(options.emit, '\x1b[33m# that session is gone from Codex\'s store — starting a fresh one\x1b[0m\r\n');
-      response = await this.request('thread/start', common);
-    }
-    const threadId = String(response?.thread?.id || options.resumeId || '');
+    let response = await this.openThread(options, common);
+    let threadId = String(response?.thread?.id || options.resumeId || '');
     if (!threadId) throw new Error('Codex app-server did not return a thread id.');
-    options.emit('session', { sessionId: threadId });
-    emitHarness(options.emit, `\x1b[2m# codex app-server · ${options.cwd}\x1b[0m\r\n`);
-    if (options.model) emitCascadeStats(options.emit, { model: options.model });
-    const started = await this.requestWithActiveWriterRetry('turn/start', {
+    const turnParams = {
       threadId,
       input: [
         { type: 'text', text: options.prompt, text_elements: [] },
@@ -933,7 +921,30 @@ class CodexAppServerClient {
       serviceTier: options.priorityServiceTier ? 'priority' : null,
       effort: normalizeCodexEffort(options.reasoningEffort),
       approvalPolicy: 'never',
-    });
+    };
+    let started: JsonObject;
+    try {
+      started = await this.request('turn/start', turnParams);
+    } catch (error) {
+      if (!this.isActiveWriterError(error)) throw error;
+      emitHarness(options.emit, '\x1b[33m# Codex left this thread busy — interrupting its unfinished turn\x1b[0m\r\n');
+      const interrupted = await this.interruptActiveTurn(threadId);
+      try {
+        if (!interrupted) throw error;
+        started = await this.requestWithActiveWriterRetry('turn/start', turnParams);
+      } catch (retryError) {
+        if (!this.isActiveWriterError(retryError)) throw retryError;
+        void this.request('thread/unsubscribe', { threadId }).catch(() => {});
+        emitHarness(options.emit, '\x1b[33m# Codex did not release that thread — continuing in a fresh session\x1b[0m\r\n');
+        response = await this.request('thread/start', common);
+        threadId = String(response?.thread?.id || '');
+        if (!threadId) throw new Error('Codex app-server did not return a replacement thread id.');
+        started = await this.request('turn/start', { ...turnParams, threadId });
+      }
+    }
+    options.emit('session', { sessionId: threadId });
+    emitHarness(options.emit, `\x1b[2m# codex app-server · ${options.cwd}\x1b[0m\r\n`);
+    if (options.model) emitCascadeStats(options.emit, { model: options.model });
     const turnId = String(started?.turn?.id || '');
     if (!turnId) throw new Error('Codex app-server did not return a turn id.');
     return new Promise<CliAgentResult>((resolve, reject) => {
@@ -954,13 +965,57 @@ class CodexAppServerClient {
     });
   }
 
+  private async openThread(options: {
+    resumeId?: string; emit: AgentEmit;
+  }, common: JsonObject): Promise<JsonObject> {
+    if (!options.resumeId) return this.request('thread/start', common);
+    const resumeParams = { threadId: options.resumeId, excludeTurns: true, ...common };
+    try {
+      return await this.request('thread/resume', resumeParams);
+    } catch (error) {
+      if (isDeadCodexSession(String(error))) {
+        emitHarness(options.emit, '\x1b[33m# that session is gone from Codex\'s store — starting a fresh one\x1b[0m\r\n');
+        return this.request('thread/start', common);
+      }
+      if (!this.isActiveWriterError(error)) throw error;
+      emitHarness(options.emit, '\x1b[33m# Codex left this thread busy — interrupting its unfinished turn\x1b[0m\r\n');
+      const interrupted = await this.interruptActiveTurn(options.resumeId);
+      if (interrupted) {
+        try {
+          return await this.requestWithActiveWriterRetry('thread/resume', resumeParams);
+        } catch (retryError) {
+          if (!this.isActiveWriterError(retryError)) throw retryError;
+        }
+      }
+      emitHarness(options.emit, '\x1b[33m# Codex did not release that thread — continuing in a fresh session\x1b[0m\r\n');
+      return this.request('thread/start', common);
+    }
+  }
+
+  private async interruptActiveTurn(threadId: string): Promise<boolean> {
+    try {
+      const response = await this.request('thread/read', { threadId, includeTurns: true });
+      const turns = Array.isArray(response?.thread?.turns) ? response.thread.turns : [];
+      const active = [...turns].reverse().find((turn) => turn?.status === 'inProgress' && turn?.id);
+      if (!active) return false;
+      await this.request('turn/interrupt', { threadId, turnId: active.id });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private isActiveWriterError(error: unknown): boolean {
+    return /active writer/i.test(String(error));
+  }
+
   private async requestWithActiveWriterRetry(method: string, params: JsonObject): Promise<any> {
     let delayMs = 250;
     for (let attempt = 0; attempt < 8; attempt += 1) {
       try {
         return await this.request(method, params);
       } catch (error) {
-        if (!/active writer/i.test(String(error)) || attempt === 7) throw error;
+        if (!this.isActiveWriterError(error) || attempt === 7) throw error;
         await new Promise((resolve) => setTimeout(resolve, delayMs));
         delayMs = Math.min(delayMs * 2, 2_000);
       }
@@ -991,8 +1046,8 @@ class CodexAppServerClient {
       this.child = child;
       child.stdout.on('data', (chunk) => this.onStdout(chunk.toString()));
       child.stderr.on('data', (chunk) => { this.stderr = (this.stderr + chunk.toString()).slice(-16_000); });
-      child.on('error', (error) => this.onExit(new Error(`Codex app-server error: ${error.message}`)));
-      child.on('exit', (code, signal) => this.onExit(new Error(`Codex app-server exited (${signal || code || 'unknown'}). ${this.stderr.trim()}`)));
+      child.on('error', (error) => this.onExit(child, new Error(`Codex app-server error: ${error.message}`)));
+      child.on('exit', (code, signal) => this.onExit(child, new Error(`Codex app-server exited (${signal || code || 'unknown'}). ${this.stderr.trim()}`)));
       this.request('initialize', {
         clientInfo: { name: 'cascade-desktop', title: 'Cascade', version: '0.2.0' },
         capabilities: { experimentalApi: true, requestAttestation: false },
@@ -1099,10 +1154,18 @@ class CodexAppServerClient {
     this.turns.delete(turnId);
     turn.idle.clear();
     if (turn.runId !== undefined) activePersistentCancels.delete(turn.runId);
+    // A loaded app-server thread owns an exclusive writer lease even while it
+    // is idle. Release it after every turn so a rebuilt desktop module or a
+    // second Cascade window can resume the conversation later.
+    void this.request('thread/unsubscribe', { threadId: turn.threadId }).catch(() => {});
     if (error) turn.reject(error); else turn.resolve({ summary: turn.summary, sessionId: turn.threadId });
   }
 
-  private onExit(error: Error): void {
+  private onExit(child: ChildProcessWithoutNullStreams, error: Error): void {
+    // A deliberate shutdown can be followed immediately by a replacement.
+    // Ignore the old child's late exit event instead of tearing down the new
+    // app-server that now occupies this client.
+    if (this.child !== child) return;
     for (const pending of this.pending.values()) pending.reject(error);
     this.pending.clear();
     for (const id of [...this.turns.keys()]) this.finishTurn(id, error);

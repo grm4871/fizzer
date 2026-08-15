@@ -68,6 +68,9 @@ defmodule Cascade.Runs.PromptContext do
     memory_key = field(runtime, :agent_memory_key, agent_memory_key(agent))
     {prompt, inline_svgs} = extract_inline_svgs(prompt)
 
+    {prompt, inline_svgs} =
+      merge_context_inline_svgs(prompt, inline_svgs, field(runtime, :inline_svgs, []))
+
     %{
       runId: run.id,
       vaultId: run.vault_id,
@@ -117,6 +120,26 @@ defmodule Cascade.Runs.PromptContext do
   end
 
   def extract_inline_svgs(prompt), do: {to_string(prompt || ""), []}
+
+  defp merge_context_inline_svgs(prompt, inline_svgs, context_inline_svgs) do
+    context_inline_svgs
+    |> List.wrap()
+    |> Enum.with_index(1)
+    |> Enum.reduce({prompt, inline_svgs}, fn {svg, context_index}, {prompt, sources} ->
+      marker = "[[@FIZZER_ROOM_INLINE_SVG:#{context_index}]]"
+
+      if is_binary(svg) and String.contains?(prompt, marker) do
+        next = length(sources) + 1
+
+        {
+          String.replace(prompt, marker, "[[FIZZER_INLINE_SVG:#{next}]]", global: false),
+          sources ++ [svg]
+        }
+      else
+        {prompt, sources}
+      end
+    end)
+  end
 
   defp memory_context(vault_id, user_id, prompt, key) do
     try do

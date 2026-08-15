@@ -71,11 +71,9 @@ does not start or replace the production container.
 ### Shared Docker build cache
 
 The Dockerfile uses BuildKit caches for npm, Hex/Rebar, and Elixir's `_build`
-directory. Those caches persist across sessions on the same Docker builder, but
-they are not automatically shared with another contributor or host. To share
-them, point the release build at a registry-backed cache. The release helper
-targets `linux/amd64` by default because that is the production artifact. Each
-target platform must use its own cache ref:
+directory. The release helper uses the local BuildKit cache by default. Set
+`CASCADE_BUILD_CACHE_REF` to share dependency and compilation layers through a
+registry. The cache is separate for each target platform.
 
 The example address is GitHub Container Registry (GHCR). Replace
 `YOUR_GITHUB_USERNAME` with the GitHub account that owns the cache package. It
@@ -88,9 +86,8 @@ intermediate build layers is acceptable.
 ```bash
 echo "$GITHUB_TOKEN" | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
 
-# Set this in the shell so every agent and build command in that shell uses
-# the shared AMD64 cache. It is a registry reference, not a password or token.
-export CASCADE_BUILD_CACHE_REF=ghcr.io/YOUR_GITHUB_USERNAME/cascade-browser:buildcache-amd64
+# The repository's shared cache is:
+export CASCADE_BUILD_CACHE_REF=ghcr.io/grm4871/cascade-browser:buildcache-amd64
 
 # An ARM64 Mac uses emulation but produces the server-compatible AMD64 image.
 npm run release:image:build
