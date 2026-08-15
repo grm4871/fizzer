@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { restorePersistedSession } from '../chat/session';
+import { bootNeedsContentHydration, focusedSessionTab, restorePersistedSession } from '../chat/session';
 import * as Layout from '../layout/tree';
 
 const noteTab = (id: string, title: string) => ({ id, title, type: 'note' as const, dirty: true });
@@ -83,5 +83,20 @@ describe('vault workspace session restore', () => {
     expect(Layout.getActiveTabIds(restored.layout)).toEqual(['valid-a']);
     expect(restored.focusedPaneId).toBe('pane-a');
     expect(Layout.getActiveTabIds(restored.workspacesByVault['vault-b'].layout)).toEqual(['valid-b']);
+  });
+
+  it('knows which restored tab must hydrate before the workspace paints', () => {
+    const withChat = restorePersistedSession({
+      activeVaultId: 'vault-a',
+      openTabs: [{ id: 'chan', title: 'general', type: 'chat' }],
+      layout: { type: 'pane', id: 'pane-a', tabIds: ['chan'], activeTabId: 'chan' },
+      focusedPaneId: 'pane-a',
+    });
+    expect(focusedSessionTab(withChat)?.id).toBe('chan');
+    expect(bootNeedsContentHydration(withChat)).toBe(true);
+
+    const empty = restorePersistedSession({ activeVaultId: 'vault-a' });
+    expect(focusedSessionTab(empty)).toBeNull();
+    expect(bootNeedsContentHydration(empty)).toBe(false);
   });
 });

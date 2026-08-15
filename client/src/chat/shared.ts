@@ -27,6 +27,37 @@ export function mergeChatPresence(
   };
 }
 
+type LocalUserProfile = {
+  id: number;
+  username: string;
+  displayName: string;
+  avatarUrl: string;
+};
+
+/**
+ * Presence snapshots omit avatarUrl on purpose (inline photos are huge).
+ * Paint the signed-in user's session photo onto every channel profile map.
+ */
+export function applyLocalUserProfile(
+  presence: ChatChannelPresence,
+  user: LocalUserProfile | null | undefined,
+): ChatChannelPresence {
+  if (!user?.username) return presence;
+  const existing = presence.profiles?.[user.username];
+  return {
+    ...presence,
+    profiles: {
+      ...presence.profiles,
+      [user.username]: {
+        id: user.id,
+        username: user.username,
+        displayName: user.displayName || existing?.displayName || user.username,
+        avatarUrl: user.avatarUrl || existing?.avatarUrl || '',
+      },
+    },
+  };
+}
+
 /** Keep a burst compact, but never fold a later conversational turn into it. */
 export function canGroupChatMessages(a: ChatMessage, b: ChatMessage) {
   if (a.author.trim() !== b.author.trim()) return false;

@@ -42,7 +42,7 @@ if (stylesGzip > targets.stylesGzip) {
     `[verify-client-performance] WARN — styles ${stylesGzip} gzip bytes exceed the ${targets.stylesGzip}-byte target`,
   );
 }
-for (const lazyBoundary of ['ChatView-', 'SessionManager-', 'AccountSettings-', 'androidBatteryMonitor-']) {
+for (const lazyBoundary of ['ChatView-', 'SessionManager-', 'AccountSettings-', 'androidBatteryMonitor-', 'OrbitGraph-']) {
   if (!assetNames.some((name) => name.startsWith(lazyBoundary) && name.endsWith('.js'))) {
     throw new Error(`Expected a separate lazy chunk for ${lazyBoundary.slice(0, -1)}`);
   }

@@ -44,6 +44,9 @@ const UpdatesModal = lazy(() =>
 const AndroidUpdatePrompt = lazy(() =>
   import('./components/AndroidUpdatePrompt').then((m) => ({ default: m.AndroidUpdatePrompt })),
 );
+const OrbitGraph = lazy(() =>
+  import('./components/OrbitGraph').then((m) => ({ default: m.OrbitGraph })),
+);
 import type {
   ChatAgentRegistration,
   ChatChannelPresence,
@@ -55,12 +58,12 @@ import type {
 import {
   CHAT_NOTE_MARKER,
   createChatAgentRegistrationId,
+  applyLocalUserProfile,
   mergeChatPresence,
 } from './chat/shared';
 import { useChatDispatch, type ChatAgentDispatch } from './chat/dispatch';
 import { NewsTicker } from './components/NewsTicker';
 import { ModalShell } from './components/ModalShell';
-import { OrbitGraph } from './components/OrbitGraph';
 import { PaneGrid, type TabDragPayload } from './components/PaneGrid';
 import type { WorkItem } from './chat/workItems';
 import type { DiscoveryTab } from './components/DiscoveryDmsModal';
@@ -89,6 +92,7 @@ import {
 import {
   CHAT_STORAGE_KEY,
   emptyWorkspace,
+  bootNeedsContentHydration,
   loadChatState,
   loadPersistedSession,
   readLegacyLocalChatAgentMembers,
@@ -121,6 +125,20 @@ type NoteEntry = { note: Note; draft: string };
 
 function isMobileViewport(): boolean {
   return typeof window !== 'undefined' && window.matchMedia('(max-width: 900px)').matches;
+}
+
+function BootSplash() {
+  return (
+    <main className="auth-shell" id="boot-splash" aria-busy="true" aria-live="polite">
+      <div className="auth-panel">
+        <div className="auth-brand" aria-label="Fizzer">
+          <FizzerMark size={28} />
+          <h1>Fizzer</h1>
+        </div>
+        <div className="auth-decal" aria-hidden="true" />
+      </div>
+    </main>
+  );
 }
 
 // Module-level (not useRef): survives StrictMode remount and shares across any
@@ -162,7 +180,11 @@ export default function App() {
 
   const persistedSessionRef = useRef<PersistedSession>(loadPersistedSession());
 
-  // Auth state
+  // Auth state. `user` starts null, so we must not treat "not yet checked"
+  // as logged out or the desktop shell flashes the login form on every boot.
+  const [authReady, setAuthReady] = useState(false);
+  const [vaultsReady, setVaultsReady] = useState(false);
+  const [contentReady, setContentReady] = useState(() => !bootNeedsContentHydration(persistedSessionRef.current));
   const [user, setUser] = useState<User | null>(null);
   const [isOwner, setIsOwner] = useState(false);
   const [adminOpen, setAdminOpen] = useState(false);
@@ -657,12 +679,16 @@ export default function App() {
           if (!data.authenticated || !data.user) {
             unauthorized = true;
             stopDesktopRunnerHost();
+            setAuthReady(true);
             return;
           }
           succeeded = true;
           setUser(data.user);
           setIsOwner(Boolean(data.owner));
-          void loadVaults();
+          setAuthReady(true);
+          void loadVaults().finally(() => {
+            if (!cancelled) setVaultsReady(true);
+          });
         })
         .catch((error) => {
           if (cancelled) return;
@@ -671,6 +697,7 @@ export default function App() {
           if (error instanceof ApiError && error.status === 401) {
             unauthorized = true;
             stopDesktopRunnerHost();
+            setAuthReady(true);
             return;
           }
           attempt += 1;
@@ -2445,6 +2472,44 @@ export default function App() {
     });
   }, [activeVaultId, loadNoteContent]);
 
+  // Stay on the splash until the focused restored tab has its body, so the
+  // first workspace paint is the cached view rather than empty/loading shells.
+  useEffect(() => {
+    if (!user || !vaultsReady || contentReady) return;
+    const tab = openTabsRef.current.find((item) => item.id === focusedPaneRef.current.activeTabId) ?? null;
+    if (!tab || tab.type === 'new') {
+      setContentReady(true);
+      return;
+    }
+
+    let cancelled = false;
+    const finish = () => {
+      if (!cancelled) setContentReady(true);
+    };
+    const timeout = window.setTimeout(finish, 8000);
+    const vaultId = activeVaultIdRef.current;
+
+    void (async () => {
+      try {
+        if (tab.type === 'chat' && vaultId) {
+          await loadChatMessages(vaultId, notesRef.current, { channelIds: [tab.id] });
+        } else if (tab.type === 'note') {
+          await loadNoteContent(tab.id);
+        } else if (tab.type === 'superkanban') {
+          await loadSuperkanban();
+        }
+      } finally {
+        window.clearTimeout(timeout);
+        finish();
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+    };
+  }, [user, vaultsReady, contentReady, loadChatMessages, loadNoteContent, loadSuperkanban]);
+
   // ═══════════════════════════════════════════════════════════════
   // AUTH
   // ═══════════════════════════════════════════════════════════════
@@ -2464,11 +2529,15 @@ export default function App() {
         localStorage.removeItem(SESSION_STORAGE_KEY);
         resetVaultWorkspaces();
         localStorage.removeItem('docs_token');
+        setContentReady(true);
+        setVaultsReady(false);
         setUser(data.user);
         setIsOwner(Boolean(data.owner));
         setPassword('');
         setResetToken('');
         await loadVaults();
+        setVaultsReady(true);
+        setAuthReady(true);
         return;
       }
       const inviteMatch = window.location.pathname.match(/^\/(?:invite|vault-invite)\/([^/]+)$/);
@@ -2481,10 +2550,14 @@ export default function App() {
       localStorage.removeItem(SESSION_STORAGE_KEY);
       resetVaultWorkspaces();
       localStorage.removeItem('docs_token');
+      setContentReady(true);
+      setVaultsReady(false);
       setUser(data.user);
       setIsOwner(Boolean(data.owner));
       setPassword('');
       await loadVaults();
+      setVaultsReady(true);
+      setAuthReady(true);
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : 'Authentication failed');
     }
@@ -2501,6 +2574,8 @@ export default function App() {
     setIsOwner(false);
     setAdminOpen(false);
     setVaults([]);
+    setVaultsReady(false);
+    setContentReady(true);
     resetVaultWorkspaces();
   };
 
@@ -2575,30 +2650,20 @@ export default function App() {
     }
     if (tab.type === 'chat') {
       const channel = notes.find((note) => note.id === tab.id && note.content_preview.trim().startsWith(CHAT_NOTE_MARKER));
-      if (!channel) {
-        // Cold start: vault notes not hydrated yet — avoid a flash of "not found".
-        const vaultLoading = activeVaultId
-          && (loadVaultDataInflight.has(`${activeVaultId}:hard`)
-            || loadVaultDataInflight.has(`${activeVaultId}:soft`));
-        if (notes.length === 0 || vaultLoading || loadingChatChannels[tab.id]) {
-          return (
-            <div className="pane-empty chat-loading-empty">
-              <strong>Loading messages…</strong>
-            </div>
-          );
-        }
+      const channelGone = notes.length > 0 && !channel && !loadingChatChannels[tab.id];
+      if (channelGone) {
         return <div className="pane-empty">Channel not found</div>;
       }
       return (
         <Suspense fallback={<div className="pane-empty chat-loading-empty"><strong>Loading chat…</strong></div>}>
           <ChatView
-            channelId={channel.id}
-            channelName={channel.title}
-            isLoadingMessages={loadingChatChannels[channel.id] === true}
+            channelId={tab.id}
+            channelName={channel?.title || tab.title}
+            isLoadingMessages={loadingChatChannels[tab.id] === true}
             currentUser={currentUsername}
-            presence={chatPresenceByChannel[channel.id] ?? EMPTY_CHAT_PRESENCE}
+            presence={applyLocalUserProfile(chatPresenceByChannel[tab.id] ?? EMPTY_CHAT_PRESENCE, user)}
             availableAgents={AVAILABLE_CHAT_AGENTS}
-            registeredAgents={chatState.registeredAgentsByChannel[channel.id] ?? EMPTY_CHAT_AGENTS}
+            registeredAgents={chatState.registeredAgentsByChannel[tab.id] ?? EMPTY_CHAT_AGENTS}
             vaultAgents={vaultAgents}
             runnerHealth={runnerHealth}
             onRegisterAgent={handleRegisterChatAgent}
@@ -2622,7 +2687,7 @@ export default function App() {
             onMembersOpenChange={setChatMembersOpen}
             vaultId={activeVaultId || undefined}
             onHydrateMessage={handleHydrateChatMessage}
-            jumpToMessageId={chatJumpTarget?.channelId === channel.id ? chatJumpTarget.messageId : undefined}
+            jumpToMessageId={chatJumpTarget?.channelId === tab.id ? chatJumpTarget.messageId : undefined}
             onJumpHandled={handleChatJumpHandled}
             sidebarMode="hidden"
           />
@@ -2647,7 +2712,9 @@ export default function App() {
         </Suspense>
       </ErrorBoundary>
     );
-  }, [chatState.registeredAgentsByChannel, chatPresenceByChannel, currentUsername, loadingChatChannels, runnerHealth, vaultAgents, handleCancelChatRun, handleInviteChatUser, handleRemoveChatParticipant, handleLeaveChatChannel, handleRegisterChatAgent, handleRemoveChatAgent, handleUpsertVaultAgent, handleDeleteVaultAgent, handleDeleteAgentProfile, handleAddVaultAgentToChannel, handleSendChatMessage, handleCollaborateChatMessage, handleForwardChatMessage, noteContents, notes, getNoteChangeHandler, getNoteSaveHandler, getNoteRenameHandler, handleExecuteDirective, handleOpenWikilink, openNote, chatMembersOpen, activeVaultId, handleHydrateChatMessage, handleOpenSharedChatNote, superkanbanNotes, superkanbanLiveWork, superkanbanLoading, superkanbanError, chatJumpTarget, handleChatJumpHandled]);
+  }, [chatState.registeredAgentsByChannel, chatPresenceByChannel, currentUsername, user, loadingChatChannels, runnerHealth, vaultAgents, handleCancelChatRun, handleInviteChatUser, handleRemoveChatParticipant, handleLeaveChatChannel, handleRegisterChatAgent, handleRemoveChatAgent, handleUpsertVaultAgent, handleDeleteVaultAgent, handleDeleteAgentProfile, handleAddVaultAgentToChannel, handleSendChatMessage, handleCollaborateChatMessage, handleForwardChatMessage, noteContents, notes, getNoteChangeHandler, getNoteSaveHandler, getNoteRenameHandler, handleExecuteDirective, handleOpenWikilink, openNote, chatMembersOpen, activeVaultId, handleHydrateChatMessage, handleOpenSharedChatNote, superkanbanNotes, superkanbanLiveWork, superkanbanLoading, superkanbanError, chatJumpTarget, handleChatJumpHandled]);
+
+  if (!authReady || (user && (!vaultsReady || !contentReady))) return <BootSplash />;
 
   if (!user) {
     const hasInvite = /^\/invite\/[^/]+$/.test(window.location.pathname);
@@ -2838,6 +2905,7 @@ export default function App() {
           <DiscoveryDmsModal
             initialTab={discoveryDmsOpen}
             currentUsername={currentUsername}
+            currentUser={user}
             updateCounts={communityUpdates.counts}
             onMarkRead={markCommunityTargetRead}
             onClose={() => setDiscoveryDmsOpen(null)}
@@ -2982,7 +3050,7 @@ export default function App() {
                 channelId={vaultSidebarChannel}
                 channelName={notes.find((note) => note.id === vaultSidebarChannel)?.title || 'Vault'}
                 currentUser={currentUsername}
-                presence={chatPresenceByChannel[vaultSidebarChannel] ?? EMPTY_CHAT_PRESENCE}
+                presence={applyLocalUserProfile(chatPresenceByChannel[vaultSidebarChannel] ?? EMPTY_CHAT_PRESENCE, user)}
                 availableAgents={AVAILABLE_CHAT_AGENTS}
                 registeredAgents={chatState.registeredAgentsByChannel[vaultSidebarChannel] ?? EMPTY_CHAT_AGENTS}
                 vaultAgents={vaultAgents}
@@ -3057,22 +3125,24 @@ export default function App() {
         </Suspense>
       )}
       {orbitOpen && (
-        <ModalShell
-          backdropClassName="overlay-backdrop orbit-backdrop"
-          dialogClassName="orbit-modal"
-          ariaLabel="Orbit"
-          onClose={() => setOrbitOpen(false)}
-        >
-          <OrbitGraph
-            promptNoteId={notes.find((note) => note.title.toLowerCase() === 'prompt')?.id}
-            captionLogNoteId={notes.find((note) => note.title.toLowerCase() === 'orbit caption log')?.id}
-            onOpenActivity={(activity) => {
-              setOrbitOpen(false);
-              setFocusSessionId(activity.sessionId);
-              setSessionManagerOpen(true);
-            }}
-          />
-        </ModalShell>
+        <Suspense fallback={null}>
+          <ModalShell
+            backdropClassName="overlay-backdrop orbit-backdrop"
+            dialogClassName="orbit-modal"
+            ariaLabel="Orbit"
+            onClose={() => setOrbitOpen(false)}
+          >
+            <OrbitGraph
+              promptNoteId={notes.find((note) => note.title.toLowerCase() === 'prompt')?.id}
+              captionLogNoteId={notes.find((note) => note.title.toLowerCase() === 'orbit caption log')?.id}
+              onOpenActivity={(activity) => {
+                setOrbitOpen(false);
+                setFocusSessionId(activity.sessionId);
+                setSessionManagerOpen(true);
+              }}
+            />
+          </ModalShell>
+        </Suspense>
       )}
       {updatesOpen && (
         <Suspense fallback={null}>
