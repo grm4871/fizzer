@@ -72,7 +72,7 @@ import * as Layout from './layout/tree';
 import type { LayoutNode } from './layout/tree';
 import { api, ApiError, type CommunityUpdateItem, type CommunityUpdates, type User, type Vault, type VaultMember, type Folder, type NoteSummary, type Note } from './api';
 import { connectRunsSocket, connectVaultSocket } from './socket';
-import { ensureDesktopRunnerHost, respondToAgentPermission, startDesktopRunnerHost, stopDesktopRunnerHost } from './desktopRunnerHost';
+import { ensureDesktopRunnerHost, startDesktopRunnerHost, stopDesktopRunnerHost } from './desktopRunnerHost';
 import {
   agentsAfterLoadFailure,
   agentLabel,
@@ -92,7 +92,6 @@ import {
 import {
   CHAT_STORAGE_KEY,
   emptyWorkspace,
-  bootNeedsContentHydration,
   loadChatState,
   loadPersistedSession,
   readLegacyLocalChatAgentMembers,
@@ -127,20 +126,6 @@ function isMobileViewport(): boolean {
   return typeof window !== 'undefined' && window.matchMedia('(max-width: 900px)').matches;
 }
 
-function BootSplash() {
-  return (
-    <main className="auth-shell" id="boot-splash" aria-busy="true" aria-live="polite">
-      <div className="auth-panel">
-        <div className="auth-brand" aria-label="Fizzer">
-          <FizzerMark size={28} />
-          <h1>Fizzer</h1>
-        </div>
-        <div className="auth-decal" aria-hidden="true" />
-      </div>
-    </main>
-  );
-}
-
 // Module-level (not useRef): survives StrictMode remount and shares across any
 // rapid remount so concurrent loadVaultData / message fetches coalesce to one
 // network round-trip instead of stacking.
@@ -164,15 +149,6 @@ const EMPTY_COMMUNITY_UPDATES: CommunityUpdates = {
   truncated: false,
 };
 
-type AgentPermissionRequest = {
-  runId: number;
-  requestId: string;
-  toolName: string;
-  title: string;
-  description?: string;
-  blockedPath?: string;
-};
-
 export default function App() {
   // ═══════════════════════════════════════════════════════════════
   // STATE
@@ -183,8 +159,6 @@ export default function App() {
   // Auth state. `user` starts null, so we must not treat "not yet checked"
   // as logged out or the desktop shell flashes the login form on every boot.
   const [authReady, setAuthReady] = useState(false);
-  const [vaultsReady, setVaultsReady] = useState(false);
-  const [contentReady, setContentReady] = useState(() => !bootNeedsContentHydration(persistedSessionRef.current));
   const [user, setUser] = useState<User | null>(null);
   const [isOwner, setIsOwner] = useState(false);
   const [adminOpen, setAdminOpen] = useState(false);
@@ -251,7 +225,6 @@ export default function App() {
   const [runnerHealth, setRunnerHealth] = useState<DesktopRunnerHealth | null>(null);
   const [sessionManagerOpen, setSessionManagerOpen] = useState(false);
   const [focusSessionId, setFocusSessionId] = useState<string | null>(null);
-  const [agentPermissions, setAgentPermissions] = useState<AgentPermissionRequest[]>([]);
   const [vaultAgents, setVaultAgents] = useState<VaultAgent[]>([]);
   // ─── Derived focus state ────────────────────────────────────────
   const focusedPane = Layout.findPane(layout, focusedPaneId) ?? Layout.getFirstPane(layout);
@@ -686,9 +659,7 @@ export default function App() {
           setUser(data.user);
           setIsOwner(Boolean(data.owner));
           setAuthReady(true);
-          void loadVaults().finally(() => {
-            if (!cancelled) setVaultsReady(true);
-          });
+          void loadVaults();
         })
         .catch((error) => {
           if (cancelled) return;
@@ -729,24 +700,6 @@ export default function App() {
       startDesktopRunnerHost();
     }
   }, [user?.id]);
-
-  useEffect(() => {
-    const receivePermission = (event: Event) => {
-      const request = (event as CustomEvent<AgentPermissionRequest>).detail;
-      if (!request?.requestId) return;
-      setAgentPermissions((current) => current.some((item) => item.requestId === request.requestId)
-        ? current
-        : [...current, request]);
-    };
-    window.addEventListener('cascade:agent-permission', receivePermission);
-    return () => window.removeEventListener('cascade:agent-permission', receivePermission);
-  }, []);
-
-  const answerAgentPermission = useCallback(async (requestId: string, decision: 'allow' | 'deny') => {
-    const answered = await respondToAgentPermission(requestId, decision).catch(() => false);
-    if (!answered) setNotice('That permission request is no longer active.');
-    setAgentPermissions((current) => current.filter((item) => item.requestId !== requestId));
-  }, []);
 
   // Poll desktop runner health for the chat agent sidebar.
   // Only commit setState when the payload actually changes — identical JSON
@@ -2472,44 +2425,6 @@ export default function App() {
     });
   }, [activeVaultId, loadNoteContent]);
 
-  // Stay on the splash until the focused restored tab has its body, so the
-  // first workspace paint is the cached view rather than empty/loading shells.
-  useEffect(() => {
-    if (!user || !vaultsReady || contentReady) return;
-    const tab = openTabsRef.current.find((item) => item.id === focusedPaneRef.current.activeTabId) ?? null;
-    if (!tab || tab.type === 'new') {
-      setContentReady(true);
-      return;
-    }
-
-    let cancelled = false;
-    const finish = () => {
-      if (!cancelled) setContentReady(true);
-    };
-    const timeout = window.setTimeout(finish, 8000);
-    const vaultId = activeVaultIdRef.current;
-
-    void (async () => {
-      try {
-        if (tab.type === 'chat' && vaultId) {
-          await loadChatMessages(vaultId, notesRef.current, { channelIds: [tab.id] });
-        } else if (tab.type === 'note') {
-          await loadNoteContent(tab.id);
-        } else if (tab.type === 'superkanban') {
-          await loadSuperkanban();
-        }
-      } finally {
-        window.clearTimeout(timeout);
-        finish();
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timeout);
-    };
-  }, [user, vaultsReady, contentReady, loadChatMessages, loadNoteContent, loadSuperkanban]);
-
   // ═══════════════════════════════════════════════════════════════
   // AUTH
   // ═══════════════════════════════════════════════════════════════
@@ -2529,14 +2444,11 @@ export default function App() {
         localStorage.removeItem(SESSION_STORAGE_KEY);
         resetVaultWorkspaces();
         localStorage.removeItem('docs_token');
-        setContentReady(true);
-        setVaultsReady(false);
         setUser(data.user);
         setIsOwner(Boolean(data.owner));
         setPassword('');
         setResetToken('');
         await loadVaults();
-        setVaultsReady(true);
         setAuthReady(true);
         return;
       }
@@ -2550,13 +2462,10 @@ export default function App() {
       localStorage.removeItem(SESSION_STORAGE_KEY);
       resetVaultWorkspaces();
       localStorage.removeItem('docs_token');
-      setContentReady(true);
-      setVaultsReady(false);
       setUser(data.user);
       setIsOwner(Boolean(data.owner));
       setPassword('');
       await loadVaults();
-      setVaultsReady(true);
       setAuthReady(true);
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : 'Authentication failed');
@@ -2574,8 +2483,6 @@ export default function App() {
     setIsOwner(false);
     setAdminOpen(false);
     setVaults([]);
-    setVaultsReady(false);
-    setContentReady(true);
     resetVaultWorkspaces();
   };
 
@@ -2714,7 +2621,7 @@ export default function App() {
     );
   }, [chatState.registeredAgentsByChannel, chatPresenceByChannel, currentUsername, user, loadingChatChannels, runnerHealth, vaultAgents, handleCancelChatRun, handleInviteChatUser, handleRemoveChatParticipant, handleLeaveChatChannel, handleRegisterChatAgent, handleRemoveChatAgent, handleUpsertVaultAgent, handleDeleteVaultAgent, handleDeleteAgentProfile, handleAddVaultAgentToChannel, handleSendChatMessage, handleCollaborateChatMessage, handleForwardChatMessage, noteContents, notes, getNoteChangeHandler, getNoteSaveHandler, getNoteRenameHandler, handleExecuteDirective, handleOpenWikilink, openNote, chatMembersOpen, activeVaultId, handleHydrateChatMessage, handleOpenSharedChatNote, superkanbanNotes, superkanbanLiveWork, superkanbanLoading, superkanbanError, chatJumpTarget, handleChatJumpHandled]);
 
-  if (!authReady || (user && (!vaultsReady || !contentReady))) return <BootSplash />;
+  if (!authReady) return <main className="auth-shell" id="auth-pending" />;
 
   if (!user) {
     const hasInvite = /^\/invite\/[^/]+$/.test(window.location.pathname);
@@ -3164,20 +3071,6 @@ export default function App() {
         </Suspense>
       )}
       <Suspense fallback={null}><AndroidUpdatePrompt /></Suspense>
-
-      {agentPermissions[0] && (
-        <section className="agent-permission-card" role="dialog" aria-modal="false" aria-labelledby="agent-permission-title" onClick={(event) => event.stopPropagation()}>
-          <div className="agent-permission-eyebrow">Agent permission</div>
-          <strong id="agent-permission-title">{agentPermissions[0].title}</strong>
-          {agentPermissions[0].description && <p>{agentPermissions[0].description}</p>}
-          {agentPermissions[0].blockedPath && <code>{agentPermissions[0].blockedPath}</code>}
-          <div className="agent-permission-actions">
-            <button className="btn btn-ghost" type="button" onClick={() => void answerAgentPermission(agentPermissions[0].requestId, 'deny')}>Deny</button>
-            <button className="btn btn-primary" type="button" onClick={() => void answerAgentPermission(agentPermissions[0].requestId, 'allow')}>Allow once</button>
-          </div>
-          {agentPermissions.length > 1 && <span className="agent-permission-queue">{agentPermissions.length - 1} more request{agentPermissions.length === 2 ? '' : 's'} waiting</span>}
-        </section>
-      )}
 
       {notice && <div className="toast" role="status">{notice}</div>}
     </main>

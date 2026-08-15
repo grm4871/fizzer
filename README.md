@@ -1,108 +1,103 @@
-# Cascade Browser
+# Fizzer
 
-Electron + React desktop app for browsing, notes, and agent-assisted editing.
+**A multiplayer-first workspace where people and AI agents work together.**
 
-## Requirements
+Fizzer gives humans and locally authenticated coding agents the same shared
+project space: persistent chat, notes, files, agent identities, durable
+missions, and an auditable record of what happened. Bring the agents you
+already use—Claude Code, Codex, Grok, Copilot, Hermes, Antigravity, Akron, or
+OMP—without handing their credentials to the Fizzer server.
 
-- Node.js 20+
-- npm
+Fizzer is early beta software. Expect rough edges and rapid changes.
 
-## Install
+## What makes Fizzer different
+
+- **Multiplayer first.** People and opted-in agents share channels, context,
+  mentions, attachments, and realtime updates.
+- **Work survives the chat.** Missions, decisions, notes, tool activity, and
+  provider sessions remain attached to the project.
+- **Bring your own agents.** Agent processes and credentials stay on the
+  owner's computer; Fizzer normalizes their output into one workspace.
+- **Local and self-hostable.** Project files remain accessible on disk, and the
+  complete application can run on infrastructure you control.
+- **Agent-native tools.** Scoped helpers let agents work with live notes,
+  channel history, attachments, missions, and durable memory.
+
+## Quickstart
+
+### Try the hosted beta
+
+1. [Download the latest Fizzer desktop beta](https://github.com/grm4871/cascade-browser/releases/tag/desktop-beta).
+2. Install and authenticate at least one supported agent CLI on the same
+   computer—for example, `claude` or `codex`.
+3. Open Fizzer, create an account and vault, then use **Add agent** in a chat.
+4. Mention the agent and give it a task. Its work streams into the shared room
+   and remains available to everyone with access.
+
+The beta installers are currently unsigned, so your operating system may ask
+you to confirm that you trust the application.
+
+### Run from source
+
+Prerequisites: Node.js 20+, npm, Git, Elixir 1.17+, Erlang/OTP, and an
+Electron-capable desktop session.
 
 ```bash
+git clone https://github.com/grm4871/cascade-browser.git fizzer
+cd fizzer
+cp .env.example .env
 npm install
 npm install --prefix cascade-electron
-```
-
-If helper scripts fail after a Node upgrade (`NODE_MODULE_VERSION` /
-`better-sqlite3` ABI mismatch), rebuild the native module:
-
-```bash
-npm run rebuild:native
-```
-
-macOS tip if node-gyp fails on a broken Homebrew Python:
-`npm_config_python=/usr/bin/python3 npm run rebuild:native`.
-
-## Run In Development
-
-Start the API, Vite client, and Electron shell:
-
-```bash
 npm run dev
 ```
 
-The Elixir API defaults to `http://localhost:3000`, and the Vite client defaults to `http://localhost:5173`.
+This starts the Elixir API on `http://localhost:3000`, the Vite client on
+`http://localhost:5173`, and the Electron desktop app. Create an account in the
+app; no seed data or invitation is required.
 
-## Run Without Electron
-
-Start only the API and Vite client:
+To run without Electron:
 
 ```bash
 npm run dev-headless
 ```
 
-Then open the Vite URL in a browser.
+Agent execution still requires the desktop app (or another compatible runner)
+and a locally installed, authenticated agent CLI.
 
-## Build And Test
+## Development
+
+The main runtime surfaces are:
+
+| Path | Responsibility |
+| --- | --- |
+| `client/` | React workspace shared by web, desktop, and Android |
+| `backend_elixir/` | HTTP, realtime, SQLite persistence, and domain logic |
+| `cascade-electron/` | Desktop shell and local agent runner |
+| `cli-agents/` | Agent adapters and scoped `cascade-*` helper commands |
+
+Useful checks:
 
 ```bash
 npm run build
 npm test
+npm run test:cli-agents
+npm run test:electron
 ```
 
-## Documentation
+See [the documentation index](docs/README.md) for architecture, agent runtime,
+development, testing, and self-hosting details. See
+[CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request and
+[SECURITY.md](SECURITY.md) for vulnerability reports.
 
-The maintained project documentation starts at
-[`docs/README.md`](docs/README.md). It covers local setup, architecture, the
-agent runtime, development and testing, and production operations.
+## Data and trust boundaries
 
-## Data Locations
+By default, local application data lives under `~/.cascade/` (the internal
+directory name is retained for compatibility). Provider credentials remain in
+their native local CLI stores. The Fizzer server records workspace and
+run events but does not need those provider credentials.
 
-Local app data is stored outside the repo:
+## License
 
-- SQLite database: `~/.cascade/docs.db`
-- Vault markdown files: `~/.cascade/vaults/`
-
-You can override the database path with:
-
-```bash
-DOCS_DB_PATH=/path/to/docs.db npm run dev
-```
-
-## Useful Scripts
-
-```bash
-npm run dev-debug        # debug backend + client + Electron
-npm run dev-backend      # API only
-npm run dev-client       # Vite client only
-npm run package          # package the Electron app
-npm run make             # build distributables
-```
-
-## Production deploy (CI/CD)
-
-Pushes to `master` reach the authenticated host webhook, whose autodeploy
-service fast-forwards the server checkout and runs `deploy/remote-update.sh`.
-The GitHub Actions deploy workflow is `workflow_dispatch` fallback only, so a
-push has one production trigger. Production loads the already-staged image
-without rebuilding it. Routine releases use the exact clean, revision-labelled
-image directly; capacity-sensitive changes may additionally stage certification
-evidence for that image. First-time server setup is still
-`deploy/deploy.sh <domain>`.
-
-GitHub Actions secrets (mirror the Simcluster repo values):
-
-| Secret | Purpose |
-|--------|---------|
-| `DEPLOY_SSH_KEY` | Private key authorized on the host for deploy SSH |
-| `DEPLOY_HOST` | Server hostname or IP |
-| `DEPLOY_USER` | SSH user (typically `root`) |
-| `DEPLOY_PORT` | SSH port (optional; default 22) |
-| `DEPLOY_KNOWN_HOSTS` | Pinned SSH host-key line used by the manual fallback |
-
-Desktop Electron installers are built separately by `.github/workflows/desktop-build.yml` on `v*` tags.
-
-## Git Notes
-
-Do not commit generated or local runtime files such as `node_modules/`, `dist/`, `client/dist/`, `*.db`, or logs. They are ignored by `.gitignore`.
+Fizzer's project-authored source is available under the [MIT License](LICENSE).
+Dependencies and bundled assets may have separate terms; see the
+[redistribution guide](REDISTRIBUTION.md) before publishing source or binaries.

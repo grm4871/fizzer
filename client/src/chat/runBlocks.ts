@@ -198,7 +198,7 @@ export function honestAgentChatBody(
   return '';
 }
 
-/** Runner/SDK placeholders — not a real assistant answer. Never surface these. */
+/** Runner/protocol placeholders — not a real assistant answer. Never surface these. */
 export function isGenericAgentRunSummary(summary: string): boolean {
   return /^(done\.?|completed note operations successfully\.?|agent failed\.?)$/i.test(summary.trim());
 }

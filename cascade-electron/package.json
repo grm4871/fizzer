@@ -1,10 +1,10 @@
 {
-  "name": "cascade",
+  "name": "fizzer-desktop",
   "version": "0.1.0",
   "productName": "Fizzer",
   "description": "Fizzer Desktop App",
   "author": "Fizzer",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "main": "main.cjs",
   "type": "module",
   "scripts": {
@@ -15,7 +15,6 @@
     "make": "electron-forge make"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.175",
     "@resvg/resvg-js": "^2.6.2"
   },
   "devDependencies": {

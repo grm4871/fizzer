@@ -295,7 +295,7 @@ export function workTraceHarnessPreview(harness: string, max = 110): string {
           const detail = previewStructuredDetail(parsed, 70);
           if (detail) candidates.push(`${lastTool || 'Tool'} ${detail}`);
         } catch {
-          // A live SDK chunk can end mid-JSON. Keep the tool name until the
+          // A live protocol chunk can end mid-JSON. Keep the tool name until the
           // completed structured input arrives; never paint the fragment.
         }
       }

@@ -74,7 +74,8 @@ See `node scripts/dev-instance.cjs --help` for instance options.
 
 ## Local data
 
-By default Cascade stores runtime data outside the checkout:
+By default Fizzer stores runtime data outside the checkout (using the legacy
+`.cascade` directory name for compatibility):
 
 - SQLite database: `~/.cascade/docs.db`
 - Vault files and assets: `~/.cascade/vaults/`

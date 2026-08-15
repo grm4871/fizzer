@@ -12,7 +12,7 @@ import { loadPersistedSession } from './chat/session';
 const popout = getPopoutDescriptor();
 
 // Start the focused tab's chunk while auth/session are still in flight so the
-// workspace does not paint a Suspense placeholder after the splash.
+// first workspace paint is not a Suspense placeholder.
 if (!popout) {
   const tabs = loadPersistedSession().openTabs;
   if (tabs.some((tab) => tab.type === 'chat')) void import('./components/ChatView');

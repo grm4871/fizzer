@@ -1,7 +1,7 @@
 /**
  * Read-only xterm.js terminal for agent harness output in chat.
  *
- * Renders raw process stdout/stderr (or Claude SDK stream transcript) with
+ * Renders raw process stdout/stderr (or Claude CLI stream transcript) with
  * full ANSI/VT support. Not an interactive PTY — stdin is disabled because
  * agents run headless over pipes.
  */

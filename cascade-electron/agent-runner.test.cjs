@@ -20,8 +20,6 @@ const {
   formatToolHarnessPreview,
   renderInlineSvgAttachments,
   normalizeClaudeEffort,
-  resolveClaudePermission,
-  requestClaudePermission,
   startLocalAgentRun,
 } = require('./agent-runner.cjs');
 
@@ -54,27 +52,6 @@ test('recognizes a Claude session that belongs to another machine', () => {
   assert.equal(isMissingClaudeSession(new Error('Claude rate limited')), false);
 });
 
-test('stale Claude permission responses are rejected', () => {
-  assert.equal(resolveClaudePermission('missing-request', 'allow'), false);
-});
-
-test('Claude permission requests pause until the desktop answers', async () => {
-  const events = [];
-  const decision = requestClaudePermission(17, 'Bash', { command: 'systemctl status demo' }, {
-    toolUseID: 'tool-1',
-    title: 'Run a system command?',
-    description: 'Reads service state outside the workspace.',
-  }, (type, payload) => events.push({ type, payload }));
-  assert.equal(events[0].type, 'permission');
-  assert.equal(events[0].payload.title, 'Run a system command?');
-  assert.equal(resolveClaudePermission(events[0].payload.requestId, 'allow'), true);
-  assert.deepEqual(await decision, {
-    behavior: 'allow',
-    toolUseID: 'tool-1',
-    decisionClassification: 'user_temporary',
-  });
-});
-
 test('chat triggering message id follows the mission root through runner payload shapes', () => {
   assert.equal(chatTriggeringMessageId({ chatTriggeringMessageId: 'root-top' }), 'root-top');
   assert.equal(chatTriggeringMessageId({ chat: { triggeringMessageId: 'root-nested' } }), 'root-nested');
@@ -105,7 +82,7 @@ test('Cascade helpers are pre-authorized by command name and discovered paths', 
   assert.ok(rules.includes(`Bash(${path.join(runnerBinDir, 'cascade-note')} *)`));
 });
 
-test('Claude effort overrides support every Agent SDK level and reject ultra', () => {
+test('Claude effort overrides support every Claude CLI level and reject ultra', () => {
   for (const effort of ['low', 'medium', 'high', 'xhigh', 'max']) {
     assert.equal(normalizeClaudeEffort(effort), effort);
   }
@@ -115,7 +92,7 @@ test('Claude effort overrides support every Agent SDK level and reject ultra', (
 test('Claude chat uses adaptive effort with no fixed thinking budget', () => {
   const source = fs.readFileSync(path.join(__dirname, 'agent-runner.cjs'), 'utf8');
   assert.match(source, /const CLAUDE_CHAT_EFFORT = process\.env\.RUNNER_CHAT_EFFORT \|\| CLAUDE_EFFORT/);
-  assert.match(source, /\n\s+effort,\n/);
+  assert.match(source, /'--effort', effort/);
   assert.doesNotMatch(source, /CLAUDE_CHAT_THINKING_TOKENS/);
   assert.doesNotMatch(source, /budgetTokens: thinkingTokens/);
 });
@@ -123,8 +100,50 @@ test('Claude chat uses adaptive effort with no fixed thinking budget', () => {
 test('Claude keeps the append-only chat cursor tool in its stable system prompt', () => {
   const source = fs.readFileSync(path.join(__dirname, 'agent-runner.cjs'), 'utf8');
   assert.match(source, /const CHAT_CONTEXT_TOOL_CONTEXT = 'Your channel transcript is append-only\./);
-  assert.match(source, /append: chatRun \? `\$\{CHAT_BREVITY_CONTEXT\} \$\{CHAT_CONTEXT_TOOL_CONTEXT\}`/);
+  assert.match(source, /'--append-system-prompt', chatRun[\s\S]*?CHAT_CONTEXT_TOOL_CONTEXT/);
   assert.match(source, /cascade-chat history --around-message-id <id> --include-reply-context/);
+});
+
+test('Claude runs through a separately installed CLI and streams its result', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-fake-claude-'));
+  const bin = path.join(dir, 'claude');
+  const argsFile = path.join(dir, 'args.json');
+  fs.writeFileSync(bin, `#!/usr/bin/env node
+const fs = require('fs');
+fs.writeFileSync(process.env.FAKE_CLAUDE_ARGS, JSON.stringify(process.argv.slice(2)));
+const send = (value) => process.stdout.write(JSON.stringify(value) + '\\n');
+send({ type: 'system', subtype: 'init', session_id: 'claude-session-1' });
+send({ type: 'stream_event', event: { type: 'message_start' } });
+send({ type: 'stream_event', event: { type: 'content_block_start', content_block: { type: 'text' } } });
+send({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'CLI answer' } } });
+send({ type: 'stream_event', event: { type: 'content_block_stop' } });
+send({ type: 'result', subtype: 'success', result: 'CLI answer', session_id: 'claude-session-1' });
+`, { mode: 0o755 });
+  const priorBin = process.env.CLAUDE_BIN;
+  const priorArgs = process.env.FAKE_CLAUDE_ARGS;
+  process.env.CLAUDE_BIN = bin;
+  process.env.FAKE_CLAUDE_ARGS = argsFile;
+  t.after(() => {
+    if (priorBin === undefined) delete process.env.CLAUDE_BIN; else process.env.CLAUDE_BIN = priorBin;
+    if (priorArgs === undefined) delete process.env.FAKE_CLAUDE_ARGS; else process.env.FAKE_CLAUDE_ARGS = priorArgs;
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  const events = [];
+  const result = await startLocalAgentRun({
+    runId: 91992,
+    agent: 'claude-code',
+    prompt: 'Say hello',
+    cwd: dir,
+    model: 'claude-test',
+  }, (event) => events.push(event));
+
+  assert.equal(result.sessionId, 'claude-session-1');
+  const args = JSON.parse(fs.readFileSync(argsFile, 'utf8'));
+  assert.ok(args.includes('--output-format'));
+  assert.ok(args.includes('stream-json'));
+  assert.equal(args.at(-1), 'Say hello');
+  assert.ok(events.some((event) => event.type === 'text' && event.payload_json.includes('CLI answer')));
 });
 
 test('Claude keeps reasoning structured and tool JSON out of the harness trace', () => {

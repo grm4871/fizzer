@@ -1,6 +1,6 @@
 # Architecture
 
-Cascade is one product with four cooperating runtime surfaces:
+Fizzer is one product with four cooperating runtime surfaces:
 
 ```text
 React renderer

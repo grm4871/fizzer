@@ -8,25 +8,19 @@
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const readline = require('readline');
+const { spawn } = require('child_process');
 const { pathToFileURL } = require('url');
 const { Resvg } = require('@resvg/resvg-js');
 
 let cliAgentModulePromise = null;
 let cliAgentModuleMtimeMs = -1;
 const activeCliAgentModules = new Map();
-let claudeSdkPromise = null;
 
-// Claude (claude-code) runs locally via the Anthropic Agent SDK, authenticated
-// by THIS machine's `claude` login / ANTHROPIC_API_KEY — never the server's.
+// Claude runs through THIS machine's separately installed `claude` CLI and its
+// login / ANTHROPIC_API_KEY — never the server's credentials.
 // Mirrors the run options the server used to apply in server/runner.ts.
 const CLAUDE_DEFAULT_MODEL = process.env.RUNNER_MODEL || 'claude-sonnet-5';
-// Turn caps are off by default (0 = unlimited). Either surface can still be
-// bounded explicitly through its environment override.
-const CLAUDE_MAX_TURNS = Number(process.env.RUNNER_MAX_TURNS || 0);
-const CLAUDE_CHAT_MAX_TURNS = Number(process.env.RUNNER_CHAT_MAX_TURNS || 0);
-// Extra turn windows a chat run may auto-continue into after hitting a cap
-// (each resumes the same session). Only relevant when a cap is set above.
-const CLAUDE_CHAT_MAX_CONTINUES = Number(process.env.RUNNER_CHAT_MAX_CONTINUES || 0);
 // Match Claude Code's adaptive reasoning instead of imposing a small fixed
 // thinking budget. The local CLI currently defaults to medium effort; callers
 // can override either surface without introducing a hard token ceiling.
@@ -384,74 +378,12 @@ function helperAllowedTools() {
 
 
 
-// Live Claude SDK query streams, keyed by runId, so cancellation can close them.
-const activeClaudeQueries = new Map();
-const pendingClaudePermissions = new Map();
-
-function resolveClaudePermission(requestId, decision) {
-  const pending = pendingClaudePermissions.get(String(requestId));
-  if (!pending) return false;
-  pendingClaudePermissions.delete(String(requestId));
-  pending.cleanup();
-  pending.resolve(decision === 'allow'
-    ? { behavior: 'allow', toolUseID: pending.toolUseID, decisionClassification: 'user_temporary' }
-    : { behavior: 'deny', message: 'Denied by the user in Cascade.', toolUseID: pending.toolUseID, decisionClassification: 'user_reject' });
-  return true;
-}
-
-function rejectClaudePermissionsForRun(runId, message = 'The run ended before permission was decided.') {
-  for (const [requestId, pending] of pendingClaudePermissions) {
-    if (pending.runId !== Number(runId)) continue;
-    pendingClaudePermissions.delete(requestId);
-    pending.cleanup();
-    pending.resolve({ behavior: 'deny', message, toolUseID: pending.toolUseID, decisionClassification: 'user_reject' });
-  }
-}
-
-function requestClaudePermission(runId, toolName, input, context, emit) {
-  return new Promise((resolve) => {
-    const requestId = `${runId}:${context.toolUseID}:${Date.now()}`;
-    const onAbort = () => {
-      const pending = pendingClaudePermissions.get(requestId);
-      if (!pending) return;
-      pendingClaudePermissions.delete(requestId);
-      pending.cleanup();
-      resolve({ behavior: 'deny', message: 'Permission request canceled.', toolUseID: context.toolUseID });
-    };
-    const cleanup = () => context.signal?.removeEventListener('abort', onAbort);
-    pendingClaudePermissions.set(requestId, { runId, toolUseID: context.toolUseID, resolve, cleanup });
-    context.signal?.addEventListener('abort', onAbort, { once: true });
-    emit('permission', {
-      requestId,
-      toolName,
-      title: context.title || `${toolName} needs permission`,
-      description: context.description || context.decisionReason || '',
-      blockedPath: context.blockedPath || '',
-      input,
-    });
-  });
-}
-// `stream.close()` is also how the SDK cooperatively stops. Keep that intent
-// separate from an ordinary empty stream so cancellation never looks like a
-// successful note operation.
+// Live Claude CLI processes, keyed by runId, so cancellation can stop them.
+const activeClaudeProcesses = new Map();
 const canceledClaudeRuns = new Set();
 const CLAUDE_STARTUP_TIMEOUT_MS = 45_000;
 
-async function loadClaudeSdk() {
-  if (!claudeSdkPromise) {
-    claudeSdkPromise = (async () => {
-      try {
-        return await import('@anthropic-ai/claude-agent-sdk');
-      } catch {
-        const p = path.join(__dirname, '..', 'node_modules', '@anthropic-ai', 'claude-agent-sdk', 'sdk.mjs');
-        return import(pathToFileURL(p).href);
-      }
-    })();
-  }
-  return claudeSdkPromise;
-}
-
-// Same mapping the server applied: SDK message type → run_event type expected
+// Map Claude CLI stream message types to the run_event types expected
 // by the chat renderer.
 function classifySdkMessage(message) {
   if (message.type === 'assistant') return 'text';
@@ -476,7 +408,7 @@ function formatToolInput(input) {
   }
 }
 
-/** One-line tool detail for the ordinary run trace (never raw SDK JSON). */
+/** One-line tool detail for the ordinary run trace (never raw protocol JSON). */
 function formatToolHarnessPreview(input) {
   if (input == null) return '';
   let detail = '';
@@ -515,8 +447,8 @@ function emitCascadeStats(emit, stats) {
   } catch { /* ignore */ }
 }
 
-/** Pull context-window / turn / cost fields off a Claude SDK result message. */
-function statsFromClaudeResult(message, model, maxTurns) {
+/** Pull context-window / turn / cost fields off a Claude CLI result message. */
+function statsFromClaudeResult(message, model) {
   const usage = message.usage || {};
   const modelUsage = message.modelUsage && typeof message.modelUsage === 'object'
     ? message.modelUsage
@@ -528,7 +460,7 @@ function statsFromClaudeResult(message, model, maxTurns) {
     mu = keys.length ? modelUsage[keys[0]] : null;
   }
   const contextWindow = numOrUndef(mu?.contextWindow);
-  // Approximate filled context from last-turn API usage when SDK doesn't
+  // Approximate filled context from last-turn API usage when the CLI doesn't
   // give an explicit total. Cache-read + input ≈ tokens in the window.
   const inputTokens = numOrUndef(usage.input_tokens) ?? numOrUndef(mu?.inputTokens);
   const outputTokens = numOrUndef(usage.output_tokens) ?? numOrUndef(mu?.outputTokens);
@@ -546,7 +478,6 @@ function statsFromClaudeResult(message, model, maxTurns) {
     cacheWriteTokens: cacheWrite,
     totalCostUsd: numOrUndef(message.total_cost_usd) ?? numOrUndef(mu?.costUSD),
     numTurns: numOrUndef(message.num_turns),
-    maxTurns: numOrUndef(maxTurns),
     durationMs: numOrUndef(message.duration_ms),
     durationApiMs: numOrUndef(message.duration_api_ms),
     contextWindow,
@@ -678,18 +609,16 @@ async function loadCliAgentModule() {
 }
 
 /**
- * Run Claude locally via the Agent SDK, translating the SDK message stream into
+ * Run Claude locally via the installed CLI, translating its JSON message stream into
  * the same run_events the renderer already understands. Auth comes from this
  * machine's `claude` login / ANTHROPIC_API_KEY.
  */
 async function runClaudeLocally(opts, emit) {
-  const { query } = await loadClaudeSdk();
   const runId = Number(opts.runId);
   const helperEnv = buildRunHelperEnv(opts);
   const cwd = resolveAgentCwd(opts.cwd, opts.vaultRoot);
   const model = (typeof opts.model === 'string' && opts.model.trim()) ? opts.model.trim() : CLAUDE_DEFAULT_MODEL;
   const chatRun = isChatRun(opts);
-  const maxTurns = chatRun ? CLAUDE_CHAT_MAX_TURNS : CLAUDE_MAX_TURNS;
   const effort = normalizeClaudeEffort(
     opts.reasoningEffort,
     normalizeClaudeEffort(chatRun ? CLAUDE_CHAT_EFFORT : CLAUDE_EFFORT),
@@ -698,73 +627,65 @@ async function runClaudeLocally(opts, emit) {
   const images = Array.isArray(opts.images)
     ? opts.images.filter((im) => im && typeof im.media_type === 'string' && typeof im.data === 'string')
     : [];
-  const canUseTool = (toolName, input, context) => requestClaudePermission(runId, toolName, input, context, emit);
 
   // With images, send a structured user message (text + image blocks);
   // otherwise a plain string prompt.
   const claudePrompt = images.length
-    ? (async function* () {
-        yield {
-          type: 'user',
-          message: {
-            role: 'user',
-            content: [
-              { type: 'text', text: opts.prompt },
-              ...images.map((img) => ({ type: 'image', source: { type: 'base64', media_type: img.media_type, data: img.data } })),
-            ],
-          },
-          parent_tool_use_id: null,
-          session_id: '',
-        };
-      })()
+    ? [
+        { type: 'text', text: opts.prompt },
+        ...images.map((img) => ({ type: 'image', source: { type: 'base64', media_type: img.media_type, data: img.data } })),
+      ]
     : opts.prompt;
 
-  const stream = query({
-    prompt: claudePrompt,
-    options: {
-      cwd,
-      model,
-      // Omit maxTurns entirely when unlimited (0) so the SDK imposes no cap.
-      ...(maxTurns > 0 ? { maxTurns } : {}),
-      env: { ...process.env, ...helperEnv },
-      // "Yolo" bypasses all permission prompts (requires the explicit
-      // allowDangerouslySkipPermissions acknowledgement); otherwise auto-accept
-      // only file edits.
-      permissionMode: opts.yolo ? 'bypassPermissions' : 'acceptEdits',
-      ...(opts.yolo ? { allowDangerouslySkipPermissions: true } : {}),
-      ...(!opts.yolo ? { canUseTool } : {}),
-      // Even without yolo, let agents run the wrapper commands unprompted so
-      // they can pull channel history/notes, use memory, and send chat messages.
-      // Everything else still respects acceptEdits.
-      allowedTools: helperAllowedTools(),
-      // Electron's main process is not a Node runtime, so spawn a real `node`
-      // from PATH to host the bundled Claude Code CLI.
-      executable: 'node',
-      // Pass env explicitly. The SDK REPLACES the subprocess env when `env` is
-      // set, so include process.env + our helper additions so the child (and
-      // the Bash tool inside it) can find `cascade-note` / `cascade-chat` on
-      // PATH and pick up the auth token / vault / channel context.
-      env: { ...process.env, ...helperEnv },
-      ...(resumeSessionId ? { resume: resumeSessionId } : {}),
-      // Stream token-level deltas so thinking renders live in its block rather
-      // than arriving all at once as a finished assistant message.
-      includePartialMessages: true,
-      effort,
-      systemPrompt: {
-        type: 'preset',
-        preset: 'claude_code',
-        append: chatRun ? `${CHAT_BREVITY_CONTEXT} ${CHAT_CONTEXT_TOOL_CONTEXT}` : `${CLAUDE_AGENT_CONTEXT} ${noteCapabilityContext(opts)}`,
-      },
-    },
-  });
+  const args = [
+    '--print',
+    '--verbose',
+    '--output-format', 'stream-json',
+    '--include-partial-messages',
+    '--model', model,
+    '--effort', effort,
+    '--permission-mode', opts.yolo ? 'bypassPermissions' : 'acceptEdits',
+    '--allowedTools', helperAllowedTools().join(','),
+    '--append-system-prompt', chatRun
+      ? `${CHAT_BREVITY_CONTEXT} ${CHAT_CONTEXT_TOOL_CONTEXT}`
+      : `${CLAUDE_AGENT_CONTEXT} ${noteCapabilityContext(opts)}`,
+    ...(opts.yolo ? ['--allow-dangerously-skip-permissions'] : []),
+    ...(resumeSessionId ? ['--resume', resumeSessionId] : []),
+  ];
+  if (images.length) args.push('--input-format', 'stream-json');
+  else args.push(String(claudePrompt));
 
-  activeClaudeQueries.set(runId, stream);
-  let sawSdkMessage = false;
+  const child = spawn(process.env.CLAUDE_BIN || 'claude', args, {
+    cwd,
+    env: { ...process.env, ...helperEnv },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  activeClaudeProcesses.set(runId, child);
+  let stderr = '';
+  child.stderr.setEncoding('utf8');
+  child.stderr.on('data', (chunk) => { stderr += chunk; });
+  const exited = new Promise((resolve) => {
+    child.once('error', (error) => resolve({ error }));
+    child.once('close', (code, signal) => resolve({ code, signal }));
+  });
+  if (images.length) {
+    child.stdin.end(`${JSON.stringify({
+      type: 'user',
+      message: { role: 'user', content: claudePrompt },
+      parent_tool_use_id: null,
+      session_id: resumeSessionId || '',
+    })}\n`);
+  } else {
+    child.stdin.end();
+  }
+  const stream = readline.createInterface({ input: child.stdout, crlfDelay: Infinity });
+
+  let sawClaudeMessage = false;
   let startupTimedOut = false;
   const startupTimer = setTimeout(() => {
-    if (sawSdkMessage || canceledClaudeRuns.has(runId)) return;
+    if (sawClaudeMessage || canceledClaudeRuns.has(runId)) return;
     startupTimedOut = true;
-    try { stream.close?.(); } catch { /* cooperative close best effort */ }
+    try { child.kill('SIGTERM'); } catch { /* best effort */ }
   }, CLAUDE_STARTUP_TIMEOUT_MS);
   let summary = '';
   let streamedText = '';
@@ -780,11 +701,14 @@ async function runClaudeLocally(opts, emit) {
   /** @type {{ id: string, name: string, json: string } | null} */
   let pendingTool = null;
   emitHarness(emit, `\x1b[2m# claude-code ${model} · ${cwd}\x1b[0m\r\n`);
-  // Advertise configured turn cap up front so the panel can show turns N/max mid-run.
-  emitCascadeStats(emit, { model, maxTurns: maxTurns > 0 ? maxTurns : undefined });
+  emitCascadeStats(emit, { model });
   try {
-    for await (const message of stream) {
-      sawSdkMessage = true;
+    for await (const line of stream) {
+      if (!line.trim()) continue;
+      let message;
+      try { message = JSON.parse(line); }
+      catch { continue; }
+      sawClaudeMessage = true;
       clearTimeout(startupTimer);
       if (message.session_id && message.session_id !== sessionId) {
         sessionId = message.session_id;
@@ -926,68 +850,7 @@ async function runClaudeLocally(opts, emit) {
         }
       } else if (message.type === 'result') {
         emitHarness(emit, `\x1b[2m# result ${message.subtype || message.result || 'done'}\x1b[0m\r\n`);
-        emitCascadeStats(emit, statsFromClaudeResult(message, model, maxTurns > 0 ? maxTurns : undefined));
-        // Best-effort: ask the live query for context-window breakdown + plan
-        // rate limits. Methods may no-op once the stream is closing.
-        try {
-          if (typeof stream.getContextUsage === 'function') {
-            const ctx = await stream.getContextUsage();
-            if (ctx && typeof ctx === 'object') {
-              emitCascadeStats(emit, {
-                contextUsed: numOrUndef(ctx.totalTokens),
-                contextWindow: numOrUndef(ctx.maxTokens) ?? numOrUndef(ctx.rawMaxTokens),
-                contextPct: numOrUndef(ctx.percentage),
-                model: typeof ctx.model === 'string' ? ctx.model : undefined,
-                autoCompactThreshold: numOrUndef(ctx.autoCompactThreshold),
-              });
-            }
-          }
-        } catch { /* control channel may already be closed */ }
-        try {
-          const usageFn = stream.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET;
-          if (typeof usageFn === 'function') {
-            const plan = await usageFn.call(stream);
-            if (plan && plan.rate_limits_available && plan.rate_limits) {
-              const rl = plan.rate_limits;
-              // Prefer the most-constrained window for a single summary line.
-              const windows = [
-                ['five_hour', rl.five_hour],
-                ['seven_day', rl.seven_day],
-                ['seven_day_opus', rl.seven_day_opus],
-                ['seven_day_sonnet', rl.seven_day_sonnet],
-              ];
-              let best = null;
-              for (const [type, win] of windows) {
-                if (!win || win.utilization == null) continue;
-                if (!best || win.utilization > best.utilization) {
-                  best = { type, utilization: win.utilization, resets_at: win.resets_at };
-                }
-              }
-              if (best) {
-                emitCascadeStats(emit, {
-                  rateLimitType: best.type,
-                  rateLimitUtilization: best.utilization,
-                  rateLimitResetsAt: best.resets_at || undefined,
-                  rateLimitStatus: best.utilization >= 100 ? 'rejected'
-                    : best.utilization >= 80 ? 'allowed_warning' : 'allowed',
-                  subscriptionType: plan.subscription_type || undefined,
-                });
-              }
-              // Keep a fuller snapshot for the UI if multiple windows exist.
-              const rateLimitWindows = {};
-              for (const [type, win] of windows) {
-                if (!win || win.utilization == null) continue;
-                rateLimitWindows[type] = {
-                  utilization: win.utilization,
-                  resetsAt: win.resets_at || null,
-                };
-              }
-              if (Object.keys(rateLimitWindows).length) {
-                emitCascadeStats(emit, { rateLimitWindows, subscriptionType: plan.subscription_type || undefined });
-              }
-            }
-          }
-        } catch { /* experimental / unavailable */ }
+        emitCascadeStats(emit, statsFromClaudeResult(message, model));
       } else if (message.type === 'system') {
         emitHarness(emit, `\x1b[2m# system ${message.subtype || ''}\x1b[0m\r\n`);
       }
@@ -995,19 +858,16 @@ async function runClaudeLocally(opts, emit) {
       emit(classifySdkMessage(message), message);
       if (message.type === 'result') summary = message.result || message.subtype || summary;
     }
-  } catch (error) {
-    // The SDK throws when the per-query turn cap is hit. Tag it with the live
-    // session id + partial text so the caller can auto-continue (resume the
-    // same session for another turn window) instead of hard-failing.
-    if (error && /maximum number of turns/i.test(error.message || '')) {
-      error.cascadeMaxTurns = true;
-      error.cascadeSessionId = sessionId;
-      error.cascadePartialText = streamedText;
+    const { code, signal, error: launchError } = await exited;
+    if (launchError) throw launchError;
+    if (code !== 0 && !canceledClaudeRuns.has(runId) && !startupTimedOut) {
+      throw new Error(stderr.trim() || `Claude CLI exited with ${signal || `code ${code}`}.`);
     }
+  } catch (error) {
     throw error;
   } finally {
     clearTimeout(startupTimer);
-    activeClaudeQueries.delete(runId);
+    activeClaudeProcesses.delete(runId);
   }
   if (canceledClaudeRuns.has(runId)) {
     const error = new Error('Run canceled.');
@@ -1019,8 +879,8 @@ async function runClaudeLocally(opts, emit) {
     error.cascadeStartupTimeout = true;
     throw error;
   }
-  // Chat runs: prefer the streamed assistant text over a generic SDK result.
-  // Non-chat note runs keep the SDK result as the summary for the run list.
+  // Chat runs prefer streamed assistant text over the CLI's generic result.
+  // Non-chat note runs keep the CLI result as the summary for the run list.
   if (chatRun && (latestAssistantText.trim() || streamedText.trim())) {
     return { summary: latestAssistantText.trim() || streamedText.trim(), sessionId };
   }
@@ -1060,16 +920,8 @@ async function startLocalAgentRun(opts, sendEvent) {
   emit('status', { status: 'running' });
 
   if (agent === 'claude-code') {
-    // Auto-continue past the per-query turn cap: hitting maxTurns isn't a
-    // context-window problem (the SDK autocompacts that on its own) — it's a
-    // guardrail on agentic loop length. Rather than hard-fail a long task, we
-    // resume the same session for another turn window, bounded so a runaway
-    // still stops. Only for chat runs; note-pane runs keep the single window.
-    const chatRun = isChatRun(opts);
-    const maxContinues = chatRun ? CLAUDE_CHAT_MAX_CONTINUES : 0;
     let resume = typeof opts.resumeSessionId === 'string' ? opts.resumeSessionId : undefined;
     let runPrompt = prompt;
-    let attempt = 0;
     let startupRetries = 0;
     let staleSessionRetried = false;
     canceledClaudeRuns.delete(runId);
@@ -1100,25 +952,12 @@ async function startLocalAgentRun(opts, sendEvent) {
             emitHarness(emit, '\x1b[2m# Claude session is not present on this machine — starting fresh\x1b[0m\r\n');
             continue;
           }
-          if (error && error.cascadeMaxTurns && error.cascadeSessionId && attempt < maxContinues) {
-            attempt += 1;
-            resume = error.cascadeSessionId;
-            runPrompt = 'Continue where you left off.';
-            emitHarness(emit, `\x1b[2m# turn limit reached — auto-continuing (${attempt}/${maxContinues})\x1b[0m\r\n`);
-            continue;
-          }
           const message = error instanceof Error ? error.message : String(error);
-          // Friendlier, actionable message when we truly cap out — the session
-          // persists, so a follow-up ping resumes from here.
-          const friendly = error && error.cascadeMaxTurns
-            ? `Reached the turn limit after ${maxContinues + 1} windows — reply to continue where I left off.`
-            : message;
-          emitTerminalStatus(emit, runId, 'failed', friendly, error?.cascadeSessionId);
+          emitTerminalStatus(emit, runId, 'failed', message, error?.cascadeSessionId);
           throw error;
         }
       }
     } finally {
-      rejectClaudePermissionsForRun(runId);
       canceledClaudeRuns.delete(runId);
       cleanupRunHelperConfig(runId);
       preparedPrompt.cleanup();
@@ -1167,13 +1006,12 @@ async function startLocalAgentRun(opts, sendEvent) {
 async function cancelLocalAgentRun(runId) {
   const id = Number(runId);
 
-  // Claude SDK runs: close the live query stream.
-  const claudeStream = activeClaudeQueries.get(id);
-  if (claudeStream) {
-    rejectClaudePermissionsForRun(id, 'The run was canceled.');
+  // Claude CLI runs: terminate the live child process.
+  const claudeProcess = activeClaudeProcesses.get(id);
+  if (claudeProcess) {
     canceledClaudeRuns.add(id);
-    try { claudeStream.close?.(); } catch { /* ignore */ }
-    activeClaudeQueries.delete(id);
+    try { claudeProcess.kill('SIGTERM'); } catch { /* ignore */ }
+    activeClaudeProcesses.delete(id);
     return true;
   }
 
@@ -1206,8 +1044,6 @@ module.exports = {
   startLocalAgentRun,
   cancelLocalAgentRun,
   reapOrphanedLocalAgentRuns,
-  resolveClaudePermission,
-  requestClaudePermission,
   buildRunHelperEnv,
   cleanupRunHelperConfig,
   chatTriggeringMessageId,

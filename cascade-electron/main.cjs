@@ -28,7 +28,7 @@ if (explicitUserDataDir) {
   app.setPath('userData', userDataDir);
 }
 
-const { startLocalAgentRun, cancelLocalAgentRun, reapOrphanedLocalAgentRuns, resolveClaudePermission } = require('./agent-runner.cjs');
+const { startLocalAgentRun, cancelLocalAgentRun, reapOrphanedLocalAgentRuns } = require('./agent-runner.cjs');
 const { connectDesktopRunner, disconnectDesktopRunner, isDesktopRunnerConnected } = require('./desktop-runner-host.cjs');
 const { collectPlanUsage } = require('./plan-usage.cjs');
 const { AgentRunState, settleCancelAcknowledgement } = require('./agent-run-state.cjs');
@@ -504,11 +504,6 @@ ipcMain.handle('agent:cancel', async (_event, runId) => {
     return { success: false, error: error.message };
   }
 });
-
-/** Resolve a Claude tool request that is paused in the main process. */
-ipcMain.handle('agent:permission', async (_event, { requestId, decision } = {}) => ({
-  success: resolveClaudePermission(requestId, decision === 'allow' ? 'allow' : 'deny'),
-}));
 
 /** Restore main-owned runs and missed events after renderer reload/freeze. */
 ipcMain.handle('agent:getState', async (_event, afterSeq = 0) => agentRunState.snapshot(afterSeq));

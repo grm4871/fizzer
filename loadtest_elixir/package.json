@@ -1,6 +1,7 @@
 {
   "name": "cascade-elixir-capacity-proof",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "test": "node --test capacity-run.test.mjs certification-runner.test.mjs edge-limit-proof.test.mjs fault-recovery.test.mjs load.test.mjs monitor.test.mjs protocol-codec.test.mjs protocol-probe.test.mjs reconcile-capacity.test.mjs soak-invariants.test.mjs write-workload-marker.test.mjs",

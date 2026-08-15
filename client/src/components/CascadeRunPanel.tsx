@@ -3,7 +3,7 @@
  *
  * Renders parsed thinking / tools / meta as sequential harness lines
  * (not raw JSONL, not a product "timeline" UI). Optional Raw tab shows
- * the true process/SDK buffer in xterm when needed.
+ * the true process/protocol buffer in xterm when needed.
  */
 
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, lazy, Suspense, type RefObject } from 'react';

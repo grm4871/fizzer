@@ -47,8 +47,8 @@ try {
   // detected from JavaScript, so the app intentionally probes /api/session;
   // model the anonymous server response instead of treating proxy failure as
   // a renderer failure. Production --no-preview checks still hit the real API.
-  // Hold the session response until the boot splash has been observed so we
-  // can prove the login form is not the first React paint.
+  // Hold the session response until React has mounted so we can prove the
+  // login form is not the first paint.
   let releaseSession = () => {};
   const sessionHeld = new Promise((resolve) => {
     releaseSession = resolve;
@@ -78,10 +78,8 @@ try {
     throw new Error(`Failed to load ${targetUrl}: ${response?.status()}`);
   }
 
-  await page.waitForSelector('#boot-splash', { timeout: 10000 });
   if (preview) {
-    // HTML splash uses .boot-brand; React's boot screen uses .auth-brand.
-    await page.waitForSelector('#boot-splash .auth-brand', { timeout: 10000 });
+    await page.waitForSelector('#auth-pending', { timeout: 10000 });
     if (await page.$('#auth-panel')) {
       throw new Error('Login form rendered before /api/session resolved');
     }

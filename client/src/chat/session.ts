@@ -148,19 +148,6 @@ export function restorePersistedSession(value: unknown): PersistedSession {
   return { activeVaultId, workspacesByVault, ...activeWorkspace };
 }
 
-/** The tab that will paint first when this session is restored. */
-export function focusedSessionTab(session: PersistedSession): Tab | null {
-  const pane = Layout.findPane(session.layout, session.focusedPaneId) ?? Layout.getFirstPane(session.layout);
-  if (!pane.activeTabId) return null;
-  return session.openTabs.find((tab) => tab.id === pane.activeTabId) ?? null;
-}
-
-/** True when cold start should stay on the splash until that tab's body is fetched. */
-export function bootNeedsContentHydration(session: PersistedSession): boolean {
-  const tab = focusedSessionTab(session);
-  return Boolean(tab && (tab.type === 'chat' || tab.type === 'note' || tab.type === 'superkanban'));
-}
-
 export function loadPersistedSession(): PersistedSession {
   try {
     const raw = localStorage.getItem(SESSION_STORAGE_KEY);

@@ -32,6 +32,9 @@ const executable = platform === 'darwin'
 const requiredFiles = [
   executable,
   path.join(resources, 'app.asar'),
+  path.join(resources, 'FIZZER-LICENSE.txt'),
+  path.join(resources, 'THIRD_PARTY_NOTICES.md'),
+  path.join(resources, 'LICENSE'),
   path.join(resources, 'dist', 'package.json'),
   path.join(resources, 'dist', 'cli-agents', 'cli-agent.js'),
   path.join(resources, 'dist', 'cli-agents', 'cascade-note'),
@@ -44,6 +47,12 @@ if (missing.length) {
   throw new Error(`Packaged runtime is incomplete:\n${missing.map((file) => `- ${file}`).join('\n')}`);
 }
 
+const thirdPartyNotices = fs.readFileSync(path.join(resources, 'THIRD_PARTY_NOTICES.md'), 'utf8');
+const mplLicense = fs.readFileSync(path.join(resources, 'LICENSE'), 'utf8');
+if (!thirdPartyNotices.includes('@resvg/resvg-js') || !mplLicense.includes('Mozilla Public License Version 2.0')) {
+  throw new Error('Packaged third-party notices are incomplete');
+}
+
 // @electron/asar follows the host path separator when listing entries. Keep
 // archive assertions identical on Windows, macOS, and Linux.
 const asarEntries = new Set(
@@ -52,11 +61,17 @@ const asarEntries = new Set(
 const requiredAsarEntries = [
   '/agent-runner.cjs',
   '/desktop-runner-host.cjs',
-  '/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs',
 ];
 const absentFromAsar = requiredAsarEntries.filter((entry) => !asarEntries.has(entry));
 if (absentFromAsar.length) {
   throw new Error(`Packaged app.asar is incomplete:\n${absentFromAsar.map((entry) => `- ${entry}`).join('\n')}`);
 }
 
-console.log(`[verify-desktop-package] OK - ${platform}/${arch} includes the desktop shell, agent runtime, helpers, and Claude SDK`);
+const forbiddenAsarEntries = [...asarEntries].filter((entry) =>
+  entry.includes('/node_modules/@anthropic-ai') || /\/(?:claude|claude\.exe)$/.test(entry),
+);
+if (forbiddenAsarEntries.length) {
+  throw new Error(`Packaged app.asar redistributes Claude runtime files:\n${forbiddenAsarEntries.map((entry) => `- ${entry}`).join('\n')}`);
+}
+
+console.log(`[verify-desktop-package] OK - ${platform}/${arch} includes the desktop shell, agent runtime, and helpers without a bundled Claude runtime`);

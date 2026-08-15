@@ -39,7 +39,7 @@ export interface ChatMessage {
   registrationId?: string;
   runId?: number;
   blocks?: ChatBlock[];
-  /** Full harness terminal transcript (raw process I/O / SDK stream). */
+  /** Full harness terminal transcript (raw process I/O / provider stream). */
   harnessLog?: string;
   /** List API omitted harnessLog but server has one — expand fetches full message. */
   hasHarness?: boolean;

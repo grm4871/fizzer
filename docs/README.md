@@ -1,19 +1,17 @@
-# Cascade documentation
+# Fizzer documentation
 
-This directory is the maintained technical documentation for Cascade Browser.
+This directory is the maintained technical documentation for Fizzer.
 It lives inside the application repository so documentation changes can be
 reviewed with the code they describe.
 
 ## Start here
 
-- [Getting started](getting-started.md) — install dependencies and run Cascade
+- [Getting started](getting-started.md) — install dependencies and run Fizzer
   locally.
 - [Architecture](architecture.md) — understand the client, server, desktop
   shell, persistence, and realtime boundaries.
 - [Agent runtime](agent-runtime.md) — understand local agent execution,
   sessions, streaming, helpers, and security boundaries.
-- [First beta contract](first-beta-contract.md) — the supported friend,
-  desktop, and managed-path boundaries for the current beta.
 - [Development and testing](development.md) — make and verify changes.
 - [Deployment and operations](deployment.md) — build, deploy, verify, and
   refresh production safely.
