@@ -1306,25 +1306,25 @@
         "namespace": "/vault",
         "event": "vault:noteChanged",
         "source": "backend_elixir/lib/cascade_web/content_controller.ex",
-        "line": 194
+        "line": 187
       },
       {
         "namespace": "/vault",
         "event": "vault:noteChanged",
         "source": "backend_elixir/lib/cascade_web/content_controller.ex",
-        "line": 218
+        "line": 201
       },
       {
         "namespace": "/vault",
         "event": "vault:noteDeleted",
         "source": "backend_elixir/lib/cascade_web/content_controller.ex",
-        "line": 239
+        "line": 212
       },
       {
         "namespace": "/vault",
         "event": "vault:noteChanged",
         "source": "backend_elixir/lib/cascade_web/content_controller.ex",
-        "line": 651
+        "line": 620
       },
       {
         "namespace": "/vault",

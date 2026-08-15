@@ -172,113 +172,73 @@ defmodule CascadeWeb.ContentController do
   end
 
   def update_note(conn, note_id) do
-    authenticated(conn, fn conn, auth ->
-      with_writable_note(
-        conn,
-        note_id,
-        auth.user.id,
-        "Viewer role cannot edit this vault",
-        fn existing ->
-          safely(conn, "Could not update note", fn ->
-            proposed = body_value(conn, "content", existing.content) |> to_string()
+    writable_note_action(conn, note_id, "Could not update note", fn conn, auth, existing ->
+      proposed = body_value(conn, "content", existing.content) |> to_string()
 
-            content =
-              if agent?(auth),
-                do: Privacy.restore_blocks(existing.content, proposed),
-                else: proposed
+      content =
+        if agent?(auth),
+          do: Privacy.restore_blocks(existing.content, proposed),
+          else: proposed
 
-            note = Store.update_note(note_id, content, auth.user.id)
-            Versions.create(note.id, content, "auto")
+      note = Store.update_note(note_id, content, auth.user.id)
+      Versions.create(note.id, content, "auto")
 
-            emit(conn, %{
-              event: "vault:noteChanged",
-              noteId: note.id,
-              vaultId: note.vault_id,
-              title: note.title
-            })
+      emit(conn, %{
+        event: "vault:noteChanged",
+        noteId: note.id,
+        vaultId: note.vault_id,
+        title: note.title
+      })
 
-            JSON.send(conn, 200, %{note: Privacy.redact_note(note, agent?(auth))})
-          end)
-        end
-      )
+      JSON.send(conn, 200, %{note: Privacy.redact_note(note, agent?(auth))})
     end)
   end
 
   def rename_note(conn, note_id) do
-    authenticated(conn, fn conn, auth ->
-      with_writable_note(
-        conn,
-        note_id,
-        auth.user.id,
-        "Viewer role cannot edit this vault",
-        fn _existing ->
-          safely(conn, "Could not rename note", fn ->
-            note = Store.rename_note(note_id, body_value(conn, "title", ""), auth.user.id)
-            Store.reresolve_chat_backlinks(note.vault_id, note.id, note.title)
-            emit(conn, %{event: "vault:noteChanged", noteId: note.id, vaultId: note.vault_id})
-            JSON.send(conn, 200, %{note: Privacy.redact_note(note, agent?(auth))})
-          end)
-        end
-      )
+    writable_note_action(conn, note_id, "Could not rename note", fn conn, auth, _existing ->
+      note = Store.rename_note(note_id, body_value(conn, "title", ""), auth.user.id)
+      Store.reresolve_chat_backlinks(note.vault_id, note.id, note.title)
+      emit(conn, %{event: "vault:noteChanged", noteId: note.id, vaultId: note.vault_id})
+      JSON.send(conn, 200, %{note: Privacy.redact_note(note, agent?(auth))})
     end)
   end
 
   def delete_note(conn, note_id) do
-    authenticated(conn, fn conn, auth ->
-      with_writable_note(
-        conn,
-        note_id,
-        auth.user.id,
-        "Viewer role cannot edit this vault",
-        fn existing ->
-          safely(conn, "Could not delete note", fn ->
-            Assets.delete_all(note_id)
-            Store.delete_note(note_id)
+    writable_note_action(conn, note_id, "Could not delete note", fn conn, _auth, existing ->
+      Assets.delete_all(note_id)
+      Store.delete_note(note_id)
 
-            emit(conn, %{
-              event: "vault:noteDeleted",
-              noteId: note_id,
-              vaultId: existing.vault_id,
-              title: existing.title
-            })
+      emit(conn, %{
+        event: "vault:noteDeleted",
+        noteId: note_id,
+        vaultId: existing.vault_id,
+        title: existing.title
+      })
 
-            JSON.send(conn, 200, %{ok: true})
-          end)
-        end
-      )
+      JSON.send(conn, 200, %{ok: true})
     end)
   end
 
   def move_note(conn, note_id) do
-    authenticated(conn, fn conn, auth ->
-      with_writable_note(
-        conn,
-        note_id,
-        auth.user.id,
-        "Viewer role cannot edit this vault",
-        fn _existing ->
-          safely(conn, "Could not move note", fn ->
-            folder_id =
-              if Map.has_key?(body(conn), "folder_id"),
-                do: blank_nil(body_value(conn, "folder_id", nil)),
-                else: nil
+    writable_note_action(conn, note_id, "Could not move note", fn conn, auth, _existing ->
+      folder_id =
+        if Map.has_key?(body(conn), "folder_id"),
+          do: blank_nil(body_value(conn, "folder_id", nil)),
+          else: nil
 
-            position =
-              case body_value(conn, "position", nil) do
-                value when is_integer(value) -> value
-                _ -> nil
-              end
-
-            Store.move_note(note_id, folder_id, position, auth.user.id)
-            note = Store.get_note(note_id)
-            emit_note_changed(conn, note)
-
-            JSON.send(conn, 200, %{
-              note: Privacy.redact_note(note, agent?(auth))
-            })
-          end)
+      position =
+        case body_value(conn, "position", nil) do
+          value when is_integer(value) -> value
+          _ -> nil
         end
-      )
+
+      Store.move_note(note_id, folder_id, position, auth.user.id)
+      note = Store.get_note(note_id)
+      emit_note_changed(conn, note)
+
+      JSON.send(conn, 200, %{
+        note: Privacy.redact_note(note, agent?(auth))
+      })
     end)
   end
 
@@ -588,6 +548,15 @@ defmodule CascadeWeb.ContentController do
       Store.get_vault(note.vault_id, user_id) -> JSON.send(conn, 403, %{error: viewer_error})
       true -> JSON.send(conn, 404, %{error: "Note not found"})
     end
+  end
+
+  defp writable_note_action(conn, note_id, error_message, callback) do
+    authenticated(conn, fn conn, auth ->
+      with_writable_note(conn, note_id, auth.user.id, "Viewer role cannot edit this vault", fn
+        existing ->
+          safely(conn, error_message, fn -> callback.(conn, auth, existing) end)
+      end)
+    end)
   end
 
   defp with_writable_folder(conn, folder_id, user_id, callback) do
