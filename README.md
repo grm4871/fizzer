@@ -27,7 +27,7 @@ Fizzer is early beta software. Expect rough edges and rapid changes.
 
 ### Try the hosted beta
 
-1. [Download the latest Fizzer desktop beta](https://github.com/grm4871/cascade-browser/releases/tag/desktop-beta).
+1. [Download the latest Fizzer desktop beta](https://github.com/grm4871/fizzer/releases/tag/desktop-beta).
 2. Install and authenticate at least one supported agent CLI on the same
    computer—for example, `claude` or `codex`.
 3. Open Fizzer, create an account and vault, then use **Add agent** in a chat.
@@ -43,7 +43,7 @@ Prerequisites: Node.js 20+, npm, Git, Elixir 1.17+, Erlang/OTP, and an
 Electron-capable desktop session.
 
 ```bash
-git clone https://github.com/grm4871/cascade-browser.git fizzer
+git clone https://github.com/grm4871/fizzer.git
 cd fizzer
 cp .env.example .env
 npm install
