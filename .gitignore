@@ -25,6 +25,7 @@ debug.log
 .env
 .env.*
 !.env.example
+!.env.selfhost.example
 
 # Local-only operational scripts and secrets.
 .private/

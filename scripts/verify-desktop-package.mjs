@@ -63,6 +63,7 @@ const asarEntries = new Set(
 const requiredAsarEntries = [
   '/agent-runner.cjs',
   '/desktop-runner-host.cjs',
+  '/instance-origin.cjs',
 ];
 const absentFromAsar = requiredAsarEntries.filter((entry) => !asarEntries.has(entry));
 if (absentFromAsar.length) {

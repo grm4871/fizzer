@@ -3,8 +3,8 @@
  *
  * Creates the main BrowserWindow, handles desktop IPC and keyboard shortcuts,
  * and manages the application lifecycle. Provides
- * navigation security guards that restrict loading to the Cascade domains and local
- * dev origins. Keyboard shortcuts are intercepted at the main-process level
+ * navigation security guards that restrict loading to the operator-selected Fizzer
+ * instance. Keyboard shortcuts are intercepted at the main-process level
  * and forwarded to the renderer via IPC when Chromium would otherwise
  * swallow them. In production, loads https://cscd.online; in development,
  * loads the Vite dev server.
@@ -20,6 +20,11 @@ const { app, BrowserWindow, ipcMain, session, Menu, shell, clipboard } = require
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
+const {
+  isSameOrigin,
+  rendererUrlForOrigin,
+  resolveInstanceOrigin,
+} = require('./instance-origin.cjs');
 
 const explicitUserDataDir = process.env.CASCADE_USER_DATA_DIR || process.env.CASCADE_ELECTRON_DATA_DIR;
 if (explicitUserDataDir) {
@@ -35,6 +40,8 @@ const { AgentRunState, settleCancelAcknowledgement } = require('./agent-run-stat
 const { collectLocalAgents } = require('./local-agents.cjs');
 const worktrees = require('./worktrees.cjs');
 const APP_NAME = 'Fizzer';
+const INSTANCE_ORIGIN = resolveInstanceOrigin({ packaged: app.isPackaged });
+const APP_URL = rendererUrlForOrigin(INSTANCE_ORIGIN);
 // Same as client `--bg-base` (hsl(225, 12%, 7%)). Set on every window so the
 // shell is never Chromium's default white while the hosted page is loading.
 const APP_BACKGROUND = '#101014';
@@ -91,27 +98,9 @@ function buildApplicationMenu() {
   ]);
 }
 
-/** Resolve the base URL the app loads from (prod vs dev `--APP_URL=`). */
+/** Resolve the renderer URL pinned to the main-process-selected instance. */
 function getAppBaseUrl() {
-  let configuredUrl;
-  if (app.isPackaged) configuredUrl = 'https://cscd.online';
-  else if (process.env.APP_URL || process.env.CASCADE_APP_URL) {
-    configuredUrl = process.env.APP_URL || process.env.CASCADE_APP_URL;
-  }
-  const parsedArgs = {};
-  if (!configuredUrl) {
-    process.argv.slice(2).forEach((arg) => {
-      if (arg.startsWith('--')) {
-        const [key, value] = arg.slice(2).split('=');
-        parsedArgs[key] = value || true;
-      }
-    });
-    configuredUrl = parsedArgs['APP_URL'] || 'http://localhost:5173';
-  }
-
-  const appUrl = new URL(configuredUrl);
-  if (appUrl.pathname === '/') appUrl.pathname = '/app';
-  return appUrl.toString();
+  return APP_URL;
 }
 
 function getProjectRoot() {
@@ -191,13 +180,8 @@ function broadcastToWindows(channel, payload) {
   }
 }
 
-function isAllowedNavHost(hostname) {
-  return (
-    hostname === 'cscd.online' ||
-    hostname.endsWith('.cscd.online') ||
-    hostname === 'localhost' ||
-    hostname === '127.0.0.1'
-  );
+function isAllowedNavigation(url) {
+  return isSameOrigin(url, INSTANCE_ORIGIN);
 }
 
 /**
@@ -229,21 +213,22 @@ function configureWindow(win) {
     }, 250);
   });
 
-  // Block navigation to sites outside cscd.online / local dev.
-  win.webContents.on('will-navigate', (event, url) => {
+  const guardNavigation = (event, url) => {
     try {
-      if (!isAllowedNavHost(new URL(url).hostname)) {
+      if (!isAllowedNavigation(url)) {
         event.preventDefault();
         console.log('[Main] Blocked navigation to:', url);
       }
     } catch {
       event.preventDefault();
     }
-  });
+  };
+  win.webContents.on('will-navigate', guardNavigation);
+  win.webContents.on('will-redirect', guardNavigation);
 
   win.webContents.setWindowOpenHandler(({ url }) => {
     try {
-      if (!isAllowedNavHost(new URL(url).hostname)) {
+      if (!isAllowedNavigation(url)) {
         console.log('[Main] Blocked window open to:', url);
         return { action: 'deny' };
       }
@@ -511,7 +496,10 @@ ipcMain.handle('agent:getState', async (_event, afterSeq = 0) => agentRunState.s
 /** Configure helper env for local agent children (renderer owns /runners socket). */
 ipcMain.handle('runner:setToken', async (_event, { token, apiUrl } = {}) => {
   try {
-    return connectDesktopRunner(token, apiUrl);
+    if (!isSameOrigin(apiUrl, INSTANCE_ORIGIN)) {
+      throw new Error('Runner origin does not match the desktop instance selected at startup');
+    }
+    return connectDesktopRunner(token, INSTANCE_ORIGIN);
   } catch (error) {
     console.error('[IPC] Failed to configure desktop runner:', error);
     return { success: false, error: error.message };
