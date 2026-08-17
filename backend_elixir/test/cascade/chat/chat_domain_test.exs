@@ -460,6 +460,33 @@ defmodule Cascade.ChatDomainTest do
              nil
   end
 
+  test "concurrent identity adds preserve a single channel registration" do
+    {vault, channel} = chat_vault(1, "One", "A")
+
+    assert {:ok, identity} =
+             Agents.upsert_identity(1, vault.id, %{
+               agentId: "codex",
+               displayName: "Codex",
+               mention: "codex"
+             })
+
+    registrations =
+      1..8
+      |> Task.async_stream(
+        fn _ -> Agents.add_to_channel(1, vault.id, channel.id, identity.id) end,
+        max_concurrency: 8,
+        ordered: false
+      )
+      |> Enum.map(fn {:ok, {:ok, registration}} -> registration.id end)
+
+    assert length(Enum.uniq(registrations)) == 1
+
+    assert SQL.one(
+             "SELECT COUNT(*) FROM chat_agent_members WHERE channel_id=? AND vault_agent_id=?",
+             [channel.id, identity.id]
+           ) == [1]
+  end
+
   test "message list strips heavy images while detail hydrates and embeds stay frozen and redact for agents" do
     {vault, channel} = chat_vault(1, "Notes", "Room")
     Store.create_note(vault.id, 1, %{title: "Plan", content: "public\n:::private\nsecret\n:::"})

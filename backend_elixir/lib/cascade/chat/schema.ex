@@ -427,6 +427,7 @@ defmodule Cascade.Chat.Schema do
       "CREATE INDEX IF NOT EXISTS chat_messages_activity_idx ON chat_messages(channel_id,activity_at)",
       "CREATE INDEX IF NOT EXISTS chat_messages_run_idx ON chat_messages(run_id)",
       "CREATE INDEX IF NOT EXISTS chat_agent_members_channel_idx ON chat_agent_members(channel_id)",
+      "CREATE UNIQUE INDEX IF NOT EXISTS chat_agent_members_identity_idx ON chat_agent_members(channel_id,vault_agent_id)",
       "CREATE INDEX IF NOT EXISTS vault_agents_vault_idx ON vault_agents(vault_id)",
       "CREATE INDEX IF NOT EXISTS vault_agents_owner_idx ON vault_agents(owner_user_id)",
       "CREATE INDEX IF NOT EXISTS chat_channel_links_source_idx ON chat_channel_links(source_channel_id)",

@@ -164,7 +164,7 @@ defmodule Cascade.Chat.Agents do
          :ok <- member_handle_available(route.sourceChannelId, identity_id, mention) do
       existing =
         SQL.one(
-          "SELECT id,reasoning_effort,priority_service_tier,taggable_by_agents,reply_to_every_message,orchestrator,pingable_by_others,yolo,conversation_id FROM chat_agent_members WHERE vault_agent_id=? AND channel_id=?",
+          "SELECT id,reasoning_effort,priority_service_tier,taggable_by_agents,reply_to_every_message,orchestrator,pingable_by_others,yolo,conversation_id FROM chat_agent_members WHERE vault_agent_id=? AND channel_id=? ORDER BY rowid LIMIT 1",
           [identity_id, route.sourceChannelId]
         )
 
@@ -209,7 +209,7 @@ defmodule Cascade.Chat.Agents do
               mention,model,reasoning_effort,priority_service_tier,cwd,context_prompt,taggable_by_agents,
               reply_to_every_message,orchestrator,pingable_by_others,yolo,conversation_id)
             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            ON CONFLICT(id) DO UPDATE SET
+            ON CONFLICT(channel_id,vault_agent_id) DO UPDATE SET
               agent_id=excluded.agent_id,display_name=excluded.display_name,avatar_url=excluded.avatar_url,
               mention=excluded.mention,model=excluded.model,reasoning_effort=excluded.reasoning_effort,
               priority_service_tier=excluded.priority_service_tier,cwd=excluded.cwd,
@@ -242,7 +242,13 @@ defmodule Cascade.Chat.Agents do
           )
         end)
 
-        list_members(channel_id, user_id) |> map_ok_find(registration_id)
+        [saved_registration_id] =
+          SQL.one(
+            "SELECT id FROM chat_agent_members WHERE vault_agent_id=? AND channel_id=?",
+            [identity_id, route.sourceChannelId]
+          )
+
+        list_members(channel_id, user_id) |> map_ok_find(saved_registration_id)
       end
     else
       nil -> {:error, "Vault agent not found"}
