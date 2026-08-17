@@ -11,7 +11,9 @@ const requireFromElectron = createRequire(path.join(electronRoot, 'package.json'
 const { listPackage } = requireFromElectron('@electron/asar');
 const electronManifest = JSON.parse(fs.readFileSync(path.join(electronRoot, 'package.json'), 'utf8'));
 const productName = String(electronManifest.productName || electronManifest.name || '').trim();
+const executableName = String(electronManifest.name || '').trim();
 if (!productName) throw new Error('Desktop package manifest has no product name');
+if (!executableName) throw new Error('Desktop package manifest has no executable name');
 const valueAfter = (flag) => {
   const index = process.argv.indexOf(flag);
   return index >= 0 ? process.argv[index + 1] : '';
@@ -26,8 +28,8 @@ const resources = platform === 'darwin'
   ? path.join(packageRoot, `${productName}.app`, 'Contents', 'Resources')
   : path.join(packageRoot, 'resources');
 const executable = platform === 'darwin'
-  ? path.join(packageRoot, `${productName}.app`, 'Contents', 'MacOS', 'cascade')
-  : path.join(packageRoot, platform === 'win32' ? 'cascade.exe' : 'cascade');
+  ? path.join(packageRoot, `${productName}.app`, 'Contents', 'MacOS', executableName)
+  : path.join(packageRoot, platform === 'win32' ? `${executableName}.exe` : executableName);
 
 const requiredFiles = [
   executable,
