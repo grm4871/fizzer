@@ -3,11 +3,11 @@
 # install-deploy-watcher.sh — install the systemd units that run deploy-watcher.sh
 # whenever the server drops /var/lib/cascade/deploy.request.
 #
-# Run once on the HOST as root:  sudo ./deploy/install-deploy-watcher.sh cscd.online
+# Run once on the HOST as root:  sudo ./deploy/install-deploy-watcher.sh fizzer.example.com
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-DOMAIN="${1:-cscd.online}"
+DOMAIN="${1:-fizzer.example.com}"
 
 if [[ "$(id -u)" -ne 0 ]]; then
   echo "Error: run as root (sudo)."

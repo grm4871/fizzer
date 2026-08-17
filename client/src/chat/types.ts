@@ -212,6 +212,10 @@ export interface ChatAgentRegistration {
   /** Run this agent with permission prompts bypassed ("yolo"). Scoped to this
    * registration, applied on the machine that runs it. */
   yolo: boolean;
+  /** Hermes profile selected from the owner's local Hermes installation. */
+  hermesProfile: string;
+  /** Start Hermes without user config, memory, plugins, or MCP integrations. */
+  hermesSafeMode: boolean;
   /** Conversation id linking this member's runs into one resumable session.
    * Empty for a not-yet-persisted member; the server assigns/preserves it. */
   conversationId: string;
@@ -228,6 +232,8 @@ export interface VaultAgent {
   model: string;
   cwd: string;
   contextPrompt: string;
+  hermesProfile: string;
+  hermesSafeMode: boolean;
   ownerUserId: number;
   ownerUsername: string;
   channelIds?: string[];

@@ -72,9 +72,8 @@ export const CHAT_AGENT_MODEL_PRESETS: Record<AgentId, { id: string; label: stri
     { id: 'claude-haiku-4.5', label: 'Claude Haiku 4.5' },
     { id: 'gpt-5.2', label: 'GPT-5.2' },
   ],
-  // Nous-hosted ids from Hermes' own model catalog. Cascade runs Hermes with
-  // `--safe-mode`, which ignores ~/.hermes/config.yaml, so the picked id is
-  // passed through explicitly as `-m` rather than inherited from that config.
+  // Nous-hosted ids from Hermes' model catalog. An explicit selection is passed
+  // through as `-m`; otherwise Hermes may inherit its selected local profile.
   hermes: [
     { id: 'z-ai/glm-5.2', label: 'GLM 5.2 (Hermes default)' },
     { id: 'deepseek/deepseek-v4-flash-0731', label: 'DeepSeek V4 Flash 0731' },

@@ -198,6 +198,8 @@ export function readLegacyLocalChatAgentMembers(): Record<string, ChatAgentRegis
             orchestrator: typeof registration.orchestrator === 'boolean' ? registration.orchestrator : false,
             pingableByOthers: typeof registration.pingableByOthers === 'boolean' ? registration.pingableByOthers : false,
             yolo: typeof registration.yolo === 'boolean' ? registration.yolo : false,
+            hermesProfile: typeof registration.hermesProfile === 'string' ? registration.hermesProfile : '',
+            hermesSafeMode: registration.hermesSafeMode === true,
             conversationId: typeof registration.conversationId === 'string' ? registration.conversationId : '',
           };
         });

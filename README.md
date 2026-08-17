@@ -40,7 +40,7 @@ you to confirm that you trust the application.
 
 ### Run from source
 
-Prerequisites: Node.js 20+, npm, Git, Elixir 1.17+, Erlang/OTP, and an
+Prerequisites: Node.js 24+, npm, Git, Elixir 1.17+, Erlang/OTP, and an
 Electron-capable desktop session.
 
 ```bash
@@ -96,6 +96,11 @@ By default, local application data lives under `~/.cascade/` (the internal
 directory name is retained for compatibility). Provider credentials remain in
 their native local CLI stores. The Fizzer server records workspace and
 run events but does not need those provider credentials.
+
+The `CASCADE_*` environment variables, `~/.cascade` data directory, Elixir
+`Cascade` modules, and `cascade-*` helper commands are compatibility interfaces.
+They remain intentionally named and should not be interpreted as separate
+products or stale user-facing branding.
 
 ## License
 

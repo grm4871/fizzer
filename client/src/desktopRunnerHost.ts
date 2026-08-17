@@ -43,6 +43,8 @@ type DelegatedRunPayload = {
   reasoningEffort?: string;
   priorityServiceTier?: boolean;
   yolo?: boolean;
+  hermesProfile?: string;
+  hermesSafeMode?: boolean;
   resumeSessionId?: string;
   images?: unknown[];
   conversationId?: string;

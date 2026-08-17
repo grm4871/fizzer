@@ -457,7 +457,38 @@ test('a fresh Hermes turn reports a session id, so the next turn is not amnesiac
   assert.ok(!args.includes('-z'), 'fresh runs must not use the session-less oneshot path');
   assert.deepEqual(args.slice(0, 2), ['chat', '-Q']);
   assert.equal(args[args.indexOf('-q') + 1], 'first turn');
+  assert.ok(!args.includes('--safe-mode'));
+  assert.ok(!args.includes('--yolo'));
   assert.equal(result.sessionId, '20260806_140649_084b24', 'fresh run must hand back a resumable session');
+});
+
+test('Hermes profile, safe mode, and approval bypass are independent', async () => {
+  fs.writeFileSync(hermesArgLog, '');
+  await runCliAgent({
+    agent: 'hermes', context: '', userPrompt: 'configured turn', cwd: scratch, emit,
+    hermesProfile: 'greenhouse-codex', hermesSafeMode: true, yolo: false,
+  });
+  const [safeArgs] = readHermesArgs();
+  assert.equal(safeArgs[safeArgs.indexOf('-p') + 1], 'greenhouse-codex');
+  assert.equal(safeArgs[safeArgs.indexOf('-p') + 2], 'chat');
+  assert.ok(safeArgs.includes('--safe-mode'));
+  assert.ok(!safeArgs.includes('--yolo'));
+
+  fs.writeFileSync(hermesArgLog, '');
+  await runCliAgent({
+    agent: 'hermes', context: '', userPrompt: 'approved turn', cwd: scratch, emit,
+    hermesSafeMode: false, yolo: true,
+  });
+  const [yoloArgs] = readHermesArgs();
+  assert.ok(!yoloArgs.includes('--safe-mode'));
+  assert.ok(yoloArgs.includes('--yolo'));
+});
+
+test('Hermes rejects profile values that could become CLI options', async () => {
+  await assert.rejects(
+    runCliAgent({ agent: 'hermes', context: '', userPrompt: 'turn', cwd: scratch, emit, hermesProfile: '--safe-mode' }),
+    /Hermes profile must use/,
+  );
 });
 
 test('Hermes reasoning is kept out of the answer instead of rendered as the reply', async () => {
@@ -496,15 +527,13 @@ test('Hermes retries when the provider hands back a transient 503 instead of an 
   assert.ok(!/503|upstream capacity/.test(result.summary), 'the capacity error must not surface as the reply');
 });
 
-test('the picked model reaches Hermes, which --safe-mode would otherwise drop', async () => {
+test('an explicit model selection reaches Hermes', async () => {
   fs.writeFileSync(hermesArgLog, '');
   await runCliAgent({
     agent: 'hermes', context: '', userPrompt: 'which model?', cwd: scratch, emit,
     model: 'deepseek/deepseek-v4-pro',
   });
   const [args] = readHermesArgs();
-  // --safe-mode implies --ignore-user-config, so without an explicit -m the
-  // selection is silently discarded and Hermes uses its built-in default.
   assert.equal(args[args.indexOf('-m') + 1], 'deepseek/deepseek-v4-pro');
 
   fs.writeFileSync(hermesArgLog, '');

@@ -5,7 +5,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-DEPLOY_HOST="${1:-${CASCADE_DEPLOY_SSH_HOST:-root@66.135.24.172}}"
+DEPLOY_HOST="${1:-${CASCADE_DEPLOY_SSH_HOST:-}}"
+if [[ -z "$DEPLOY_HOST" ]]; then
+  echo "usage: $0 <ssh-host> (or set CASCADE_DEPLOY_SSH_HOST)" >&2
+  exit 2
+fi
 SSH_ARGS=(
   -F /dev/null
   -o BatchMode=yes

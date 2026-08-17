@@ -985,6 +985,8 @@ async function startLocalAgentRun(opts, sendEvent) {
       reasoningEffort: typeof opts.reasoningEffort === 'string' ? opts.reasoningEffort : undefined,
       priorityServiceTier: opts.priorityServiceTier === true,
       yolo: opts.yolo === true,
+      hermesProfile: typeof opts.hermesProfile === 'string' ? opts.hermesProfile : undefined,
+      hermesSafeMode: opts.hermesSafeMode === true,
       runId,
       emit,
       env,

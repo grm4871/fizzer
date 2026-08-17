@@ -594,6 +594,10 @@ interface CliAgentOpts {
   /** Run with permission prompts bypassed ("yolo"). For Codex this widens the
    * sandbox from workspace-write to danger-full-access. */
   yolo?: boolean;
+  /** Hermes profile from the owner's local Hermes installation. */
+  hermesProfile?: string;
+  /** Ignore Hermes user configuration for this identity. */
+  hermesSafeMode?: boolean;
   /** Explicit child-process environment from the desktop runner. */
   env?: NodeJS.ProcessEnv;
 }
@@ -639,7 +643,7 @@ export async function runCliAgent(opts: CliAgentOpts): Promise<CliAgentResult> {
   } else if (opts.agent === 'copilot') {
     return runCopilot(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.runId, opts.model, opts.env);
   } else if (opts.agent === 'hermes') {
-    return runHermes(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.runId, opts.env, opts.model);
+    return runHermes(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.runId, opts.env, opts.model, opts.hermesProfile, opts.hermesSafeMode, opts.yolo);
   } else if (opts.agent === 'akron-grok') {
     return runAkronGrok(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.runId, opts.env);
   } else if (opts.agent === 'omp') {
@@ -2384,13 +2388,17 @@ async function runCopilot(prompt: string, cwd: string, emit: AgentEmit, resumeId
  *
  * With `HERMES_CASCADE_EVENTS=1` it also streams reasoning deltas as NDJSON on stderr.
  */
-async function runHermes(prompt: string, cwd: string, emit: AgentEmit, resumeId?: string, runId?: number, env?: NodeJS.ProcessEnv, model?: string): Promise<CliAgentResult> {
-  // `--safe-mode` ignores ~/.hermes/config.yaml, so without an explicit `-m`
-  // the picked model is silently dropped and Hermes falls back to its default.
+async function runHermes(prompt: string, cwd: string, emit: AgentEmit, resumeId?: string, runId?: number, env?: NodeJS.ProcessEnv, model?: string, profile?: string, safeMode = false, yolo = false): Promise<CliAgentResult> {
   const modelArgs = model?.trim() ? ['-m', model.trim()] : [];
+  const profileName = profile?.trim() || '';
+  if (profileName && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(profileName)) {
+    throw new Error('Hermes profile must use letters, numbers, dots, underscores, or dashes.');
+  }
+  const profileArgs = profileName ? ['-p', profileName] : [];
+  const postureArgs = [...(yolo ? ['--yolo'] : []), ...(safeMode ? ['--safe-mode'] : [])];
   const args = resumeId
-    ? ['chat', '-Q', '--resume', resumeId, '-q', prompt, ...modelArgs, '--yolo', '--safe-mode']
-    : ['chat', '-Q', '-q', prompt, ...modelArgs, '--yolo', '--safe-mode'];
+    ? [...profileArgs, 'chat', '-Q', '--resume', resumeId, '-q', prompt, ...modelArgs, ...postureArgs]
+    : [...profileArgs, 'chat', '-Q', '-q', prompt, ...modelArgs, ...postureArgs];
 
   let text = '';
   let sessionId: string | undefined = resumeId;
