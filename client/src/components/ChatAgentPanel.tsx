@@ -214,14 +214,13 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
   const [modelChoice, setModelChoice] = useState('');
   const [customModel, setCustomModel] = useState('');
   const createDefaultAgentForm = useCallback((): ChatAgentRegistration => {
-    const agent = availableAgents[0];
     return {
       id: createChatAgentRegistrationId(),
-      agentId: agent?.id ?? '',
-      displayName: agent?.label ?? '',
+      agentId: '',
+      displayName: '',
       avatarUrl: '',
-      mention: agent?.label.toLowerCase().replace(/\s+/g, '-') ?? '',
-      model: agent?.models[0]?.id ?? '',
+      mention: '',
+      model: '',
       reasoningEffort: '',
       priorityServiceTier: false,
       cwd: '',
@@ -235,14 +234,14 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
       hermesSafeMode: false,
       conversationId: '',
     };
-  }, [availableAgents]);
+  }, []);
   const [agentForm, setAgentForm] = useState<ChatAgentRegistration>(() => ({
     id: createChatAgentRegistrationId(),
-    agentId: availableAgents[0]?.id ?? '',
-    displayName: availableAgents[0]?.label ?? '',
+    agentId: '',
+    displayName: '',
     avatarUrl: '',
-    mention: availableAgents[0]?.label.toLowerCase().replace(/\s+/g, '-') ?? '',
-    model: availableAgents[0]?.models[0]?.id ?? '',
+    mention: '',
+    model: '',
     reasoningEffort: '',
     priorityServiceTier: false,
     cwd: '',
@@ -346,6 +345,26 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
 
   function editVaultIdentity(event: React.MouseEvent, registration: ChatAgentRegistration) {
     event.stopPropagation();
+    setAgentPanelMode('edit-identity');
+    openAgentEditor(registration);
+  }
+
+  function openVaultIdentity(event: React.MouseEvent, identity: VaultAgent) {
+    event.stopPropagation();
+    const member = registeredAgents.find((registration) => registration.vaultAgentId === identity.id);
+    const registration: ChatAgentRegistration = {
+      ...(member || createDefaultAgentForm()),
+      vaultAgentId: identity.id,
+      agentId: identity.agentId,
+      displayName: identity.displayName,
+      avatarUrl: identity.avatarUrl,
+      mention: identity.mention,
+      model: identity.model,
+      cwd: identity.cwd,
+      contextPrompt: identity.contextPrompt,
+      hermesProfile: identity.hermesProfile || '',
+      hermesSafeMode: identity.hermesSafeMode === true,
+    };
     setAgentPanelMode('edit-identity');
     openAgentEditor(registration);
   }
@@ -461,7 +480,9 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
           hermesProfile: agentForm.hermesProfile.trim(),
           hermesSafeMode: agentForm.hermesSafeMode,
         });
-        persistMembership();
+        if (registeredAgents.some((registration) => registration.id === agentForm.id)) {
+          persistMembership();
+        }
       } else if (agentPanelMode === 'create' && onUpsertVaultAgent) {
         const va = await onUpsertVaultAgent({
           agentId: agentForm.agentId,
@@ -636,6 +657,16 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
                         </span>
                       </span>
                     </button>
+                    {canManage && (
+                      <button
+                        type="button"
+                        className="chat-vault-edit-agent"
+                        title={`Edit @${va.mention} vault identity`}
+                        onClick={(event) => openVaultIdentity(event, va)}
+                      >
+                        Edit identity
+                      </button>
+                    )}
                     {onDeleteAgentProfile && canManage && (
                       <button
                         type="button"
@@ -735,6 +766,7 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
                   }));
                 }}
               >
+                <option value="" disabled>Choose a backend…</option>
                 {availableAgents.map((agent) => (
                   <option key={agent.id} value={agent.id}>{agent.label}</option>
                 ))}
