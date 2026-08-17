@@ -13,6 +13,8 @@ reviewed with the code they describe.
 - [Agent runtime](agent-runtime.md) — understand local agent execution,
   sessions, streaming, helpers, and security boundaries.
 - [Development and testing](development.md) — make and verify changes.
+- [Self-hosting](self-hosting.md) — run a loopback-only private instance and
+  connect a pinned desktop identity.
 - [Deployment and operations](deployment.md) — build, deploy, verify, and
   refresh production safely.
 

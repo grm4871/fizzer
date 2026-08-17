@@ -14,3 +14,11 @@ test('desktop startup paints a window before housekeeping and does not HEAD the 
   const pruneAt = source.indexOf('void worktrees.pruneWorkspaces()');
   assert.ok(createAt > 0 && reapAt > createAt && pruneAt > createAt);
 });
+
+test('desktop navigation and runner helpers are pinned to the main-process instance', () => {
+  assert.match(source, /win\.webContents\.on\('will-navigate', guardNavigation\)/);
+  assert.match(source, /win\.webContents\.on\('will-redirect', guardNavigation\)/);
+  assert.match(source, /isSameOrigin\(apiUrl, INSTANCE_ORIGIN\)/);
+  assert.match(source, /connectDesktopRunner\(token, INSTANCE_ORIGIN\)/);
+  assert.doesNotMatch(source, /hostname\.endsWith\('\.cscd\.online'\)/);
+});

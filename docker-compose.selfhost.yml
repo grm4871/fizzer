@@ -1,0 +1,30 @@
+services:
+  fizzer:
+    build:
+      context: .
+      args:
+        CASCADE_REVISION: ${FIZZER_REVISION:-selfhost}
+    image: ${FIZZER_IMAGE:-fizzer:selfhost}
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 2m
+    ports:
+      - "127.0.0.1:${FIZZER_PORT:-3000}:3000"
+    env_file:
+      - ${FIZZER_ENV_FILE:-.env.selfhost}
+    environment:
+      NODE_ENV: production
+      CASCADE_NETWORK_MODE: "true"
+      CASCADE_BIND_IP: "0.0.0.0"
+      API_PORT: "3000"
+      DOCS_DB_PATH: /data/docs.db
+      CASCADE_DATA_DIR: /data
+      CASCADE_CLIENT_DIST_DIR: /app/client/dist
+      CASCADE_NODE_ROOT: /app
+      CASCADE_VAULTS_BASE_DIR: /data/.cascade/vaults
+      CASCADE_QMD_DIR: /data/.cascade/qmd
+      CASCADE_PUBLIC_URL: ${CASCADE_PUBLIC_URL:?set CASCADE_PUBLIC_URL in .env.selfhost}
+      CASCADE_ALLOWED_ORIGINS: ${CASCADE_ALLOWED_ORIGINS:?set CASCADE_ALLOWED_ORIGINS in .env.selfhost}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env.selfhost}
+    volumes:
+      - ${FIZZER_DATA_DIR:?set FIZZER_DATA_DIR in .env.selfhost}:/data

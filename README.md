@@ -65,6 +65,14 @@ npm run dev-headless
 Agent execution still requires the desktop app (or another compatible runner)
 and a locally installed, authenticated agent CLI.
 
+### Self-host a private instance
+
+Use the dedicated [self-hosting guide](docs/self-hosting.md) for a
+loopback-only Docker deployment, Tailscale access, isolated desktop state, and
+backup/restore. The released desktop accepts a trusted local
+`CASCADE_APP_URL` or `--instance-url=` override; the selected origin remains
+pinned by Electron main for navigation and local-agent traffic.
+
 ## Development
 
 The main runtime surfaces are:
