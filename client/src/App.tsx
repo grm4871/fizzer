@@ -751,6 +751,10 @@ export default function App() {
     const tick = async () => {
       // Skip network work while the tab is hidden; resume on visibilitychange.
       if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      // Credential setup can race a self-host server boot/restart before the
+      // runner socket exists. The setup helper is idempotent, so let this
+      // existing health cadence recover that cold-start failure too.
+      ensureDesktopRunnerHost();
       try {
         const data = await api<DesktopRunnerHealth>('/api/me/desktop-runner');
         if (!cancelled) apply(data);
