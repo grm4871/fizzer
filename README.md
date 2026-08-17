@@ -27,7 +27,8 @@ Fizzer is early beta software. Expect rough edges and rapid changes.
 
 ### Try the hosted beta
 
-1. [Download the latest Fizzer desktop beta](https://github.com/grm4871/fizzer/releases/tag/desktop-beta).
+1. Download a desktop beta from [Fizzer Releases](https://github.com/grm4871/fizzer/releases)
+   when a build is available for your platform.
 2. Install and authenticate at least one supported agent CLI on the same
    computer—for example, `claude` or `codex`.
 3. Open Fizzer, create an account and vault, then use **Add agent** in a chat.
