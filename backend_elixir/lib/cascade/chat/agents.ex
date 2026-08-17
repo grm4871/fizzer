@@ -13,7 +13,8 @@ defmodule Cascade.Chat.Agents do
         SQL.all(
           """
           SELECT va.id,va.vault_id,va.agent_id,va.display_name,va.avatar_url,va.mention,
-            va.model,va.cwd,va.context_prompt,va.owner_user_id,u.username,va.created_at,va.updated_at
+            va.model,va.cwd,va.context_prompt,va.hermes_profile,va.hermes_safe_mode,
+            va.owner_user_id,u.username,va.created_at,va.updated_at
           FROM vault_agents va LEFT JOIN users u ON u.id=va.owner_user_id
           WHERE (va.owner_user_id=? OR va.vault_id=? OR EXISTS(
             SELECT 1 FROM chat_agent_members m WHERE m.vault_agent_id=va.id AND m.vault_id=?
@@ -129,7 +130,7 @@ defmodule Cascade.Chat.Agents do
             SELECT m.id,m.vault_agent_id,va.owner_user_id,m.agent_id,m.display_name,m.avatar_url,
               m.mention,m.model,m.reasoning_effort,m.priority_service_tier,m.cwd,m.context_prompt,
               m.taggable_by_agents,m.reply_to_every_message,m.orchestrator,m.pingable_by_others,
-              m.yolo,m.conversation_id FROM chat_agent_members m
+              m.yolo,m.conversation_id,va.hermes_profile,va.hermes_safe_mode FROM chat_agent_members m
             LEFT JOIN vault_agents va ON va.id=m.vault_agent_id
             WHERE m.channel_id=? ORDER BY m.created_at,m.rowid
           """,
@@ -380,17 +381,34 @@ defmodule Cascade.Chat.Agents do
     model = value(input, "model", "") |> to_string()
     cwd = value(input, "cwd", "") |> to_string()
     prompt = value(input, "contextPrompt", "") |> to_string()
+    hermes_profile = value(input, "hermesProfile", "") |> to_string() |> String.trim()
+    hermes_safe_mode = boolean(input, "hermesSafeMode", false)
 
     SQL.transaction(fn ->
       SQL.exec(
         """
-        INSERT INTO vault_agents(id,vault_id,agent_id,display_name,avatar_url,mention,model,cwd,context_prompt,owner_user_id)
-        VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
+        INSERT INTO vault_agents(id,vault_id,agent_id,display_name,avatar_url,mention,model,cwd,context_prompt,
+          hermes_profile,hermes_safe_mode,owner_user_id)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
           agent_id=excluded.agent_id,display_name=excluded.display_name,avatar_url=excluded.avatar_url,
           mention=excluded.mention,model=excluded.model,cwd=excluded.cwd,context_prompt=excluded.context_prompt,
+          hermes_profile=excluded.hermes_profile,hermes_safe_mode=excluded.hermes_safe_mode,
           updated_at=datetime('now')
         """,
-        [id, vault_id, agent_id, display_name, avatar, mention, model, cwd, prompt, user_id]
+        [
+          id,
+          vault_id,
+          agent_id,
+          display_name,
+          avatar,
+          mention,
+          model,
+          cwd,
+          prompt,
+          hermes_profile,
+          bool_int(hermes_safe_mode),
+          user_id
+        ]
       )
 
       SQL.exec(
@@ -420,6 +438,8 @@ defmodule Cascade.Chat.Agents do
          model,
          cwd,
          prompt,
+         hermes_profile,
+         hermes_safe_mode,
          owner_id,
          owner_username,
          created_at,
@@ -435,6 +455,8 @@ defmodule Cascade.Chat.Agents do
       model: model || "",
       cwd: cwd || "",
       contextPrompt: prompt || "",
+      hermesProfile: hermes_profile || "",
+      hermesSafeMode: hermes_safe_mode != 0,
       ownerUserId: owner_id,
       ownerUsername: owner_username || "",
       createdAt: created_at,
@@ -460,7 +482,9 @@ defmodule Cascade.Chat.Agents do
          orchestrator,
          pingable,
          yolo,
-         conversation_id
+         conversation_id,
+         hermes_profile,
+         hermes_safe_mode
        ]) do
     %{
       id: id,
@@ -480,6 +504,8 @@ defmodule Cascade.Chat.Agents do
       orchestrator: orchestrator != 0,
       pingableByOthers: pingable != 0,
       yolo: yolo != 0,
+      hermesProfile: hermes_profile || "",
+      hermesSafeMode: hermes_safe_mode != 0,
       conversationId: conversation_id || ""
     }
   end

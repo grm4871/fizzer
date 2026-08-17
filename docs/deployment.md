@@ -87,7 +87,7 @@ intermediate build layers is acceptable.
 echo "$GITHUB_TOKEN" | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
 
 # The repository's shared cache is:
-export CASCADE_BUILD_CACHE_REF=ghcr.io/grm4871/cascade-browser:buildcache-amd64
+export CASCADE_BUILD_CACHE_REF=ghcr.io/grm4871/fizzer:buildcache-amd64
 
 # An ARM64 Mac uses emulation but produces the server-compatible AMD64 image.
 npm run release:image:build
@@ -104,9 +104,9 @@ local to each BuildKit builder; they provide incremental compiler reuse when a
 builder handles successive source changes. The release image is still built in
 a Linux environment because its bundled OTP runtime and native NIFs must match
 the target OS and architecture.
-Production normally consumes the already-certified image with `--no-build`; a
-CI or release builder should populate this shared cache rather than making
-autodeploy compile on the production host. If a builder is pruned, the registry
+Production should consume the already-certified image with `--no-build`; a CI
+or release builder should populate this shared cache rather than compiling on
+the production host. If a builder is pruned, the registry
 cache remains available to the next build.
 
 Run `npm run test:elixir:release-safety` before certification. It is already
@@ -123,9 +123,8 @@ available for focused work:
 
 ## Routine release
 
-Pushing the already-staged commit to `master` triggers the authenticated
-repository webhook and host-side autodeploy service. The host synchronizes the
-checkout and runs:
+Fizzer does not include or operate a production deployment workflow. After
+staging a certified image, run the update on infrastructure you control:
 
 ```bash
 bash deploy/remote-update.sh
@@ -157,10 +156,8 @@ not receive public traffic until the previous primary stops accepting a
 connection. Rollback starts the previous image against the same live state, so
 writes accepted during the rolling handoff are preserved rather than rewound.
 
-Always watch host autodeploy and verify the expected commit and image ID. A
-successful push is not proof that production changed. Automatic GitHub Actions
-deployment is disabled; the retained `workflow_dispatch` job is an explicit
-manual fallback and is never an artifact transport or build path.
+Always watch the host update and verify the expected commit and image ID. A
+successful push is not proof that a self-hosted production instance changed.
 
 ## Infrastructure security boundary
 
@@ -183,18 +180,18 @@ a key stored beside the data would not protect a stolen volume.
 At minimum, verify:
 
 ```bash
-curl -fsS https://cscd.online/api/health
+curl -fsS "https://$FIZZER_DOMAIN/api/health"
 ```
 
 On the host, also verify the container and checkout:
 
 ```bash
-docker compose -f /var/www/cascade-browser/docker-compose.yml ps
-git -C /var/www/cascade-browser rev-parse --short HEAD
+docker compose -f "$FIZZER_CHECKOUT/docker-compose.yml" ps
+git -C "$FIZZER_CHECKOUT" rev-parse --short HEAD
 curl -fsS http://127.0.0.1:3000/api/health
 docker inspect --format '{{.Image}}' cascade
-node /var/www/cascade-browser/deploy/certified-image.mjs field \
-  --manifest "/var/lib/cascade-release/certified-images/$(git -C /var/www/cascade-browser rev-parse HEAD).json" \
+node "$FIZZER_CHECKOUT/deploy/certified-image.mjs" field \
+  --manifest "/var/lib/cascade-release/certified-images/$(git -C "$FIZZER_CHECKOUT" rev-parse HEAD).json" \
   --name image.id
 ```
 
@@ -202,23 +199,8 @@ For a renderer release, load the production client and check for runtime
 errors. The repository helper accepts a production URL:
 
 ```bash
-node scripts/verify-client-runtime.mjs --no-preview https://cscd.online/app.html
+node scripts/verify-client-runtime.mjs --no-preview "https://$FIZZER_DOMAIN/app.html"
 ```
-
-## Manual fallback
-
-Use a manual deploy only after host autodeploy has explicitly failed. Do not
-start a fallback while the webhook-triggered deploy is queued or active.
-All production paths share a lock, but duplicate deployments still waste time
-and create misleading status.
-
-The `.github/workflows/deploy.yml` `workflow_dispatch` action is the remote
-manual fallback. It syncs the already-staged revision and calls the same
-`deploy/remote-update.sh`; it has no automatic `push` trigger.
-
-The private local helper and the host-side watcher use the same
-`deploy/remote-update.sh` path. `.private/` is machine-local and must never be
-committed or documented with secret contents.
 
 ## First-time host setup
 

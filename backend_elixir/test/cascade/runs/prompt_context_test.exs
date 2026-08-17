@@ -173,6 +173,8 @@ defmodule Cascade.Runs.PromptContextTest do
                :chatMessageId,
                :chatRegistrationId,
                :chatTriggeringMessageId,
+               :hermesProfile,
+               :hermesSafeMode,
                :images,
                :inlineSvgs,
                :priorityServiceTier,

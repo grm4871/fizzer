@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-DOMAIN="${1:-cscd.online}"
+DOMAIN="${1:-fizzer.example.com}"
 SERVER_IP="$(curl -4 -s --max-time 5 ifconfig.me || curl -4 -s --max-time 5 icanhazip.com)"
 NGINX_SITE="/etc/nginx/sites-available/cscd"
 NGINX_ENABLED="/etc/nginx/sites-enabled/cscd"

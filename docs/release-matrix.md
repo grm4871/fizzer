@@ -1,4 +1,4 @@
-# Cascade release matrix
+# Fizzer release matrix
 
 Use this matrix to choose release checks from the boundaries touched by a change. Frontend and backend verification are intentionally independent; do not run one merely because the other changed.
 
@@ -12,12 +12,9 @@ Run the scoped suite from the exact commit being shipped: `npm run test:release:
 - [ ] Run the applicable scoped release suite(s); any failure in a touched boundary blocks release.
 - [ ] For frontend changes, confirm the runtime check reports no console errors, uncaught exceptions, or failed module loads.
 - [ ] For backend changes, require contract, route, data, deploy/rollback/edge, and load-harness unit parity.
-- [ ] Build the full-SHA release image from a clean commit and stage the exact revision-labelled image before pushing.
-- [ ] For capacity-sensitive backend or infrastructure changes, separately certify that exact image with the production capacity and soak evidence, then stage the certification.
-- [ ] Push once, watch the webhook-triggered host deploy to completion (`ssh root@66.135.24.172 journalctl -u cascade-autodeploy -f`), and read the failure rather than guessing. The Actions workflow is manual fallback only.
-- [ ] Confirm production health, expected commit, and that `docker inspect cascade` matches the staged image ID.
-- [ ] For deployment-infrastructure changes, continuously sample public health through the entire cutover and prove that no 5xx response occurred.
-- [ ] For client changes, inspect the JavaScript asset actually served by `cscd.online` for the feature and its call site, then exercise the affected flow in production.
+- [ ] For a source release, confirm the GitHub workflow passes on the exact commit.
+- [ ] For an installer release, verify each native package and its published SHA-256 checksum.
+- [ ] Self-hosted deployments must define and verify their own health, rollback, and served-bundle checks.
 
 ## Checks by change class
 
@@ -48,7 +45,7 @@ Where a row above has a command, run the command instead of reasoning about the 
 | Vault switcher, vault settings | `npm run verify:vault-rename-ui` | Rename reaches `PATCH /api/vaults/:id` and updates the switcher, non-owners get neither the control nor the API, and the agent-memory preference lives in account settings |
 | API, persistence, migrations | `npm run test:elixir:mix-check` and `npm run test:elixir:data-parity` | Fresh **and** upgraded databases: every column the writers use exists after migration, legacy rows survive, and writes still work against a migrated table. Routine deploys classify rolling-safe from `sqlite_master` only; full row/corpus compare runs only when that schema changes. |
 | Elixir backend | `npm run test:release:backend` | Sequential, fail-closed `mix check`; Elixir contract and route inventories; data compatibility; e2es; rollback, nginx edge, load-driver, monitor, and protocol regression suites |
-| Deployment/configuration | `journalctl -u cascade-autodeploy -f` on the host, then grep the served bundle | Deploy completion plus the asset `cscd.online` really serves (see AGENTS.md) |
+| Deployment/configuration | Watch the update process on your host, then inspect the served bundle | Deploy completion plus the asset your configured domain really serves |
 
 Still manual, by nature: Electron lifecycle (`Ctrl/Cmd+R` during an active run), Android/foldable layouts, background/resume and offline behavior, and any production exercise requiring a real account.
 

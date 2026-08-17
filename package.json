@@ -5,6 +5,7 @@
   "license": "MIT",
   "main": "cascade-electron/main.cjs",
   "version": "0.2.0",
+  "engines": { "node": ">=24" },
   "private": true,
   "type": "module",
   "workspaces": [

@@ -543,6 +543,8 @@ defmodule CascadeWeb.OrchestrationController do
            priority_service_tier: agent == "codex" and registration.priorityServiceTier,
            cwd: cwd,
            yolo: requester_is_owner and registration.yolo,
+           hermes_profile: registration.hermesProfile,
+           hermes_safe_mode: registration.hermesSafeMode,
            chat_author: nonblank(registration.displayName, registration.agentId),
            memory_key: memory_key,
            work_item_id: work_item_id
@@ -568,6 +570,8 @@ defmodule CascadeWeb.OrchestrationController do
          priority_service_tier: false,
          cwd: PromptContext.normalize_cwd(params["cwd"]),
          yolo: params["yolo"] == true,
+         hermes_profile: clean_string(params["hermesProfile"]),
+         hermes_safe_mode: params["hermesSafeMode"] == true,
          chat_author: clean_string(chat_value(params, "author")),
          memory_key: PromptContext.agent_memory_key(agent),
          work_item_id: nil
@@ -857,7 +861,9 @@ defmodule CascadeWeb.OrchestrationController do
           chat_registration_id: execution.registration_id,
           work_item_id: execution.work_item_id,
           inline_svgs: context_inline_svgs,
-          yolo: execution.yolo
+          yolo: execution.yolo,
+          hermes_profile: execution.hermes_profile,
+          hermes_safe_mode: execution.hermes_safe_mode
         }
       )
 

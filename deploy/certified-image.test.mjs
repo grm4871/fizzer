@@ -2233,12 +2233,9 @@ test('first-time deployment starts only the verified staged image without rebuil
   assert.doesNotMatch(deploy, /^\s*docker (?:compose )?build(?:\s|$)/mu);
 });
 
-test('one push has only the authenticated host webhook as an automatic deploy trigger', () => {
-  const workflow = fs.readFileSync(path.join(root, '.github/workflows/deploy.yml'), 'utf8');
-  assert.match(workflow, /^\s{2}workflow_dispatch:\s*$/mu);
-  assert.doesNotMatch(workflow, /^\s{2}push:\s*$/mu);
+test('public source does not contain a production deployment workflow', () => {
+  assert.equal(fs.existsSync(path.join(root, '.github/workflows/deploy.yml')), false);
 
-  const deploymentDocs = fs.readFileSync(path.join(root, 'docs/deployment.md'), 'utf8');
-  assert.match(deploymentDocs, /authenticated\s+repository webhook and host-side autodeploy service/u);
-  assert.match(deploymentDocs, /workflow_dispatch.*explicit\s+manual fallback/su);
+  const contributorDocs = fs.readFileSync(path.join(root, 'AGENTS.md'), 'utf8');
+  assert.match(contributorDocs, /does not contain or operate a production deployment/u);
 });

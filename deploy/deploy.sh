@@ -16,7 +16,7 @@ if [[ -z "$DOMAIN" ]]; then
   echo "Usage: $0 <your-domain.com>"
   echo ""
   echo "Example:"
-  echo "  $0 cscd.online"
+  echo "  $0 fizzer.example.com"
   exit 1
 fi
 

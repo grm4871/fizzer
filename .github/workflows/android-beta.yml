@@ -1,8 +1,6 @@
 name: Android Beta APK
 
-# Rebuild + publish Cascade Dev sideload APK on every master push so
-# https://cscd.online/download/android always tracks the latest web shell.
-# Deploy Production then places the android-dev release asset on the host.
+# Build and publish a Fizzer sideload APK when repository signing is configured.
 
 on:
   push:
@@ -27,7 +25,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '24'
           cache: npm
 
       - name: Setup Java
@@ -40,13 +38,18 @@ jobs:
         uses: android-actions/setup-android@v3
 
       - name: Configure stable beta signing
+        id: signing
         env:
           ANDROID_BETA_KEYSTORE_B64: ${{ secrets.ANDROID_BETA_KEYSTORE_B64 }}
           ANDROID_BETA_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_BETA_KEYSTORE_PASSWORD }}
         run: |
           set -euo pipefail
-          test -n "$ANDROID_BETA_KEYSTORE_B64"
-          test -n "$ANDROID_BETA_KEYSTORE_PASSWORD"
+          if [[ -z "$ANDROID_BETA_KEYSTORE_B64" || -z "$ANDROID_BETA_KEYSTORE_PASSWORD" ]]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "Android signing is not configured; skipping the APK build."
+            exit 0
+          fi
+          echo "configured=true" >> "$GITHUB_OUTPUT"
           printf '%s' "$ANDROID_BETA_KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/fizzer-beta.jks"
           chmod 600 "$RUNNER_TEMP/fizzer-beta.jks"
           {
@@ -57,9 +60,11 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Install dependencies
+        if: steps.signing.outputs.configured == 'true'
         run: npm ci
 
       - name: Build debug APK
+        if: steps.signing.outputs.configured == 'true'
         env:
           ANDROID_HOME: ${{ env.ANDROID_HOME }}
           ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
@@ -67,6 +72,7 @@ jobs:
         run: npm run android:apk
 
       - name: Publish to android-dev release
+        if: steps.signing.outputs.configured == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -75,39 +81,8 @@ jobs:
           ls -la client/public/cascade-android.apk
           if ! gh release view android-dev >/dev/null 2>&1; then
             gh release create android-dev \
-              --title "Cascade Dev (sideload)" \
-              --notes "Auto-built Cascade Dev shell. WebView loads live https://cscd.online/app.html."
+              --title "Fizzer Android Beta" \
+              --notes "Signed Fizzer sideload beta."
           fi
           gh release upload android-dev client/public/cascade-android.apk --clobber
           echo "Published cascade-android.apk to release android-dev"
-
-      - name: Place APK on production host
-        env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
-          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
-          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
-        run: |
-          set -euo pipefail
-          if [[ -z "${DEPLOY_HOST:-}" || -z "${DEPLOY_USER:-}" || -z "${DEPLOY_SSH_KEY:-}" || -z "${DEPLOY_KNOWN_HOSTS:-}" ]]; then
-            echo "Deploy SSH secrets missing — release asset published; host place skipped."
-            exit 0
-          fi
-          PORT="${DEPLOY_PORT:-22}"
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/known_hosts
-          LOOKUP="$DEPLOY_HOST"
-          [[ "$PORT" == "22" ]] || LOOKUP="[$DEPLOY_HOST]:$PORT"
-          ssh-keygen -F "$LOOKUP" -f ~/.ssh/known_hosts >/dev/null
-          ssh -i ~/.ssh/deploy_key -p "$PORT" \
-            "${DEPLOY_USER}@${DEPLOY_HOST}" 'mkdir -p /var/lib/cascade'
-          scp -i ~/.ssh/deploy_key -P "$PORT" \
-            client/public/cascade-android.apk \
-            "${DEPLOY_USER}@${DEPLOY_HOST}:/var/lib/cascade/cascade-android.apk"
-          ssh -i ~/.ssh/deploy_key -p "$PORT" "${DEPLOY_USER}@${DEPLOY_HOST}" \
-            'ls -la /var/lib/cascade/cascade-android.apk'

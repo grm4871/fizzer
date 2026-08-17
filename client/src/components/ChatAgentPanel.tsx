@@ -231,6 +231,8 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
       orchestrator: false,
       pingableByOthers: false,
       yolo: false,
+      hermesProfile: '',
+      hermesSafeMode: false,
       conversationId: '',
     };
   }, [availableAgents]);
@@ -250,6 +252,8 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
     orchestrator: false,
     pingableByOthers: false,
     yolo: false,
+    hermesProfile: '',
+    hermesSafeMode: false,
     conversationId: '',
   }));
   const activeFormAgent = availableAgents.find((agent) => agent.id === agentForm.agentId);
@@ -386,6 +390,8 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
           orchestrator: false,
           pingableByOthers: false,
           yolo: false,
+          hermesProfile: va.hermesProfile || '',
+          hermesSafeMode: va.hermesSafeMode === true,
           conversationId: '',
         });
       }
@@ -452,6 +458,8 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
           model,
           cwd: agentForm.cwd.trim(),
           contextPrompt: agentForm.contextPrompt.trim(),
+          hermesProfile: agentForm.hermesProfile.trim(),
+          hermesSafeMode: agentForm.hermesSafeMode,
         });
         persistMembership();
       } else if (agentPanelMode === 'create' && onUpsertVaultAgent) {
@@ -462,6 +470,8 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
           model,
           cwd: agentForm.cwd.trim(),
           contextPrompt: agentForm.contextPrompt.trim(),
+          hermesProfile: agentForm.hermesProfile.trim(),
+          hermesSafeMode: agentForm.hermesSafeMode,
         });
         const vaultAgentId = va?.id || agentForm.vaultAgentId || '';
         if (vaultAgentId && onAddVaultAgentToChannel) {
@@ -469,7 +479,7 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
         }
         persistMembership({ vaultAgentId });
       } else {
-        if (agentForm.vaultAgentId && onUpsertVaultAgent && model) {
+        if (agentForm.vaultAgentId && onUpsertVaultAgent) {
           await onUpsertVaultAgent({
             id: agentForm.vaultAgentId,
             agentId: agentForm.agentId,
@@ -478,6 +488,8 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
             model,
             cwd: agentForm.cwd.trim(),
             contextPrompt: agentForm.contextPrompt.trim(),
+            hermesProfile: agentForm.hermesProfile.trim(),
+            hermesSafeMode: agentForm.hermesSafeMode,
           });
         }
         persistMembership({
@@ -878,6 +890,26 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
             </div>
             <div className="chat-agent-group">
               <div className="chat-agent-group-title">Execution</div>
+              {agentForm.agentId === 'hermes' && (
+                <>
+                  <label>
+                    Hermes profile
+                    <input
+                      value={agentForm.hermesProfile}
+                      placeholder="Default local profile"
+                      spellCheck={false}
+                      onChange={(event) => setAgentForm((value) => ({ ...value, hermesProfile: event.target.value }))}
+                    />
+                    <span className="chat-agent-field-hint">Uses this named profile from the agent owner's local Hermes installation.</span>
+                  </label>
+                  <ChatAgentToggle
+                    checked={agentForm.hermesSafeMode}
+                    onChange={(event) => setAgentForm((value) => ({ ...value, hermesSafeMode: event.target.checked }))}
+                    name="Hermes safe mode"
+                    hint="Disables user configuration, memory, plugins, AGENTS.md, and MCP integrations."
+                  />
+                </>
+              )}
               <div className="chat-agent-mode-summary">
                 <span>Auto</span>
                 <span>Recommended</span>

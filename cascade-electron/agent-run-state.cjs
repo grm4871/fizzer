@@ -75,7 +75,6 @@ async function settleCancelAcknowledgement(cancelled, running, timeoutMs = 1000)
       Promise.resolve(running).then(() => true, () => true),
       new Promise((resolve) => {
         timer = setTimeout(() => resolve(false), timeoutMs);
-        timer.unref?.();
       }),
     ]);
   } finally {

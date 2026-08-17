@@ -17,6 +17,10 @@
   "dependencies": {
     "@resvg/resvg-js": "^2.6.2"
   },
+  "overrides": {
+    "tar": "7.5.22",
+    "tmp": "0.2.7"
+  },
   "devDependencies": {
     "@electron-forge/cli": "^7.2.0",
     "@electron-forge/maker-deb": "^7.2.0",
@@ -24,7 +28,7 @@
     "@electron-forge/maker-rpm": "^7.2.0",
     "@electron-forge/maker-squirrel": "^7.2.0",
     "@electron-forge/maker-zip": "^7.2.0",
-    "electron": "39.8.10",
+    "electron": "^43.4.0",
     "nodemon": "^3.1.10"
   }
 }

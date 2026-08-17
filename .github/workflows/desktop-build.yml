@@ -1,11 +1,10 @@
 name: Desktop builds
 
-# Builds the Cascade desktop app (a thin Electron shell that loads cscd.online)
+# Builds the Fizzer desktop app
 # on each target OS. Native installer formats still require their target OS,
 # which is why this runs a matrix on native runners.
 #
-# Each master build refreshes the technical-beta installers. They are published
-# to both the rolling GitHub release and the production download volume.
+# Each master build refreshes the technical-beta installers on GitHub Releases.
 
 on:
   push:
@@ -69,7 +68,7 @@ jobs:
         run: node ../scripts/verify-desktop-package.mjs --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
 
       # These artifacts only hand the installers to the publish job; the
-      # durable copies live on the rolling release and the production host.
+      # durable copies live on the rolling release.
       # ~2GB per run against a 500MB account quota, so expire them fast.
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -113,6 +112,7 @@ jobs:
           copy_asset artifacts/cascade-win32-x64 '*Setup*.exe' Fizzer-Setup.exe
           copy_asset artifacts/cascade-linux-x64 '*.deb' Fizzer-linux-x64.deb
           copy_asset artifacts/cascade-linux-x64 '*.rpm' Fizzer-linux-x64.rpm
+          (cd release && sha256sum Fizzer-* > SHA256SUMS)
           ls -lh release
 
       - name: Publish rolling GitHub release
@@ -135,33 +135,3 @@ jobs:
             gh release create "${GITHUB_REF_NAME}" --generate-notes
           fi
           gh release upload "${GITHUB_REF_NAME}" release/* --clobber
-
-      - name: Place installers on production host
-        env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
-          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
-          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
-        run: |
-          set -euo pipefail
-          test -n "${DEPLOY_HOST:-}"
-          test -n "${DEPLOY_USER:-}"
-          test -n "${DEPLOY_SSH_KEY:-}"
-          test -n "${DEPLOY_KNOWN_HOSTS:-}"
-          PORT="${DEPLOY_PORT:-22}"
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/known_hosts
-          LOOKUP="$DEPLOY_HOST"
-          [[ "$PORT" == "22" ]] || LOOKUP="[$DEPLOY_HOST]:$PORT"
-          ssh-keygen -F "$LOOKUP" -f ~/.ssh/known_hosts >/dev/null
-          ssh -i ~/.ssh/deploy_key -p "$PORT" \
-            "${DEPLOY_USER}@${DEPLOY_HOST}" 'mkdir -p /var/lib/cascade/downloads'
-          scp -i ~/.ssh/deploy_key -P "$PORT" release/* \
-            "${DEPLOY_USER}@${DEPLOY_HOST}:/var/lib/cascade/downloads/"
-          ssh -i ~/.ssh/deploy_key -p "$PORT" "${DEPLOY_USER}@${DEPLOY_HOST}" \
-            'test -s /var/lib/cascade/downloads/Fizzer-mac-arm64.dmg && test -s /var/lib/cascade/downloads/Fizzer-mac-x64.dmg && test -s /var/lib/cascade/downloads/Fizzer-Setup.exe && test -s /var/lib/cascade/downloads/Fizzer-linux-x64.deb && test -s /var/lib/cascade/downloads/Fizzer-linux-x64.rpm'

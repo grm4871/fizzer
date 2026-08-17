@@ -86,7 +86,9 @@ defmodule Cascade.Runs.PromptContext do
       chatRegistrationId: field(runtime, :chat_registration_id, ""),
       images: clean_images(params["images"]),
       inlineSvgs: inline_svgs,
-      yolo: field(runtime, :yolo, params["yolo"] == true) == true
+      yolo: field(runtime, :yolo, params["yolo"] == true) == true,
+      hermesProfile: field(runtime, :hermes_profile, ""),
+      hermesSafeMode: field(runtime, :hermes_safe_mode, false) == true
     }
     |> maybe_put(:cwd, normalize_cwd(field(runtime, :cwd, params["cwd"])))
     |> maybe_put(:model, normalize_model(field(runtime, :model, params["model"])))

@@ -7,7 +7,7 @@
 # (/var/lib/cascade/deploy.request). This script — run on the HOST, as root, by the
 # cascade-deploy.path systemd unit — picks that request up, fast-forwards the repo
 # to the latest remote commit, and runs deploy/remote-update.sh (same path as the
-# GitHub Actions deploy workflow).
+# configured host deployment path).
 #
 # It can also be run by hand to process a pending request.
 set -euo pipefail
@@ -20,7 +20,7 @@ cd "$ROOT"
 # repository", which silently kills every automated deploy.
 git config --global --add safe.directory "$ROOT" 2>/dev/null || true
 
-DOMAIN="${CASCADE_DEPLOY_DOMAIN:-cscd.online}"
+DOMAIN="${CASCADE_DEPLOY_DOMAIN:-fizzer.example.com}"
 DATA_DIR="${CASCADE_DATA_DIR:-/var/lib/cascade}"
 REQUEST_FILE="$DATA_DIR/deploy.request"
 RESULT_FILE="$DATA_DIR/deploy.result"

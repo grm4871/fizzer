@@ -36,6 +36,8 @@ const agent: ChatAgentRegistration = {
   orchestrator: false,
   pingableByOthers: true,
   yolo: false,
+  hermesProfile: '',
+  hermesSafeMode: false,
   conversationId: 'conversation-1',
 };
 
