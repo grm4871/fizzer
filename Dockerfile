@@ -38,7 +38,8 @@ RUN --mount=type=cache,id=cascade-elixir-build-1.20.2-${TARGETARCH},target=/buil
     mix deps.get --only prod && mix deps.compile
 COPY backend_elixir/ ./
 RUN --mount=type=cache,id=cascade-elixir-build-1.20.2-${TARGETARCH},target=/build/backend_elixir/_build,sharing=locked \
-    mix compile --warnings-as-errors && mix release && \
+    mix compile --warnings-as-errors && \
+    rm -rf _build/prod/rel/cascade_elixir && mix release && \
     rm -rf /build/release-artifact && \
     cp -a _build/prod/rel/cascade_elixir /build/release-artifact
 
