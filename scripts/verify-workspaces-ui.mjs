@@ -123,6 +123,22 @@ try {
   const { chromium } = await import('playwright');
   browser = await chromium.launch({ headless: true });
 
+  // Exercise the viewport lifecycle on its own page so responsive mode changes
+  // cannot leak state into the feature-flow assertions below.
+  const viewportPage = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  await viewportPage.goto(APP_URL, { waitUntil: 'domcontentloaded' });
+  await viewportPage.evaluate((t) => localStorage.setItem('docs_token', t), token);
+  await viewportPage.goto(APP_URL, { waitUntil: 'networkidle' });
+  const shell = viewportPage.locator('.app-shell');
+  for (const height of [650, 1000, 900]) {
+    await viewportPage.setViewportSize({ width: 1400, height });
+    const shellBox = await shell.boundingBox();
+    check(`workspace shell follows a ${height}px viewport resize`,
+      Boolean(shellBox) && shellBox.y <= 1 && shellBox.height >= height - 2,
+      JSON.stringify(shellBox));
+  }
+  await viewportPage.close();
+
   // ── Browser tab (no desktop bridge): the panel must not appear at all.
   const plain = await browser.newPage({ viewport: { width: 1400, height: 900 } });
   await plain.goto(APP_URL, { waitUntil: 'domcontentloaded' });
@@ -184,10 +200,10 @@ try {
       && mobileActionTileBoxes[1].y < mobileActionTileBoxes[2].y);
   await plain.setViewportSize({ width: 1400, height: 900 });
   await vaultWorkspace.getByRole('menuitem', { name: 'Browse public vaults' }).click();
-  const publicVaultsDialog = plain.getByRole('dialog', { name: 'Connect' });
+  const publicVaultsDialog = plain.getByRole('dialog', { name: 'Explore vaults' });
   await publicVaultsDialog.waitFor({ timeout: 10_000 });
   check('public vault browsing is reachable from the vault workspace', await publicVaultsDialog.isVisible());
-  await publicVaultsDialog.getByRole('button', { name: 'Close connect' }).click();
+  await publicVaultsDialog.getByRole('button', { name: 'Close explore vaults' }).click();
   await plain.getByText('ws-chan', { exact: false }).first().click();
   await plain.getByRole('button', { name: 'Project setup' }).first().click();
   await plain.locator('.chat-channel-settings-panel').waitFor({ timeout: 15000 });

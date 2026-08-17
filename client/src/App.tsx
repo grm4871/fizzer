@@ -2702,7 +2702,6 @@ export default function App() {
         display: 'grid',
         '--sidebar-width': `${sidebarWidth}px`,
         overflow: 'hidden',
-        position: 'relative',
         transition: isResizing ? 'none' : undefined,
       } as CSSProperties}
     >

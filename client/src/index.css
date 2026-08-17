@@ -443,8 +443,12 @@ button:focus-visible,
   border: 1px solid hsla(357, 62%, 58%, 0.2);
 }
 .app-shell {
-  height: 100vh;
-  height: 100dvh;
+  /* Chromium can occasionally retain an obsolete dynamic-viewport height
+     after an Electron/Sway maximize or output-scale transition. Anchoring the
+     shell to the layout viewport avoids the resulting dead strip below the
+     workspace while still following mobile keyboard viewport resizes. */
+  position: fixed;
+  inset: 0;
   display: grid;
   grid-template-columns: var(--sidebar-width, var(--rail-width)) minmax(0, 1fr);
   transition: grid-template-columns var(--transition-normal);
