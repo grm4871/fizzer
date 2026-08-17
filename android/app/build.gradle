@@ -1,0 +1,78 @@
+apply plugin: 'com.android.application'
+
+android {
+    namespace = "com.cascade.browser"
+    compileSdk = rootProject.ext.compileSdkVersion
+    defaultConfig {
+        applicationId "com.cascade.browser"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        // Sideload dev shell — versionCode only needs bumps when the *native*
+        // wrapper changes. UI ships via https://cscd.online/app.html.
+        versionCode 10
+        versionName "dev-2026.08.13-native-updater"
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        aaptOptions {
+             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
+            ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+    signingConfigs {
+        if (System.getenv('FIZZER_ANDROID_KEYSTORE')) {
+            beta {
+                storeFile file(System.getenv('FIZZER_ANDROID_KEYSTORE'))
+                storePassword System.getenv('FIZZER_ANDROID_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('FIZZER_ANDROID_KEY_ALIAS') ?: 'fizzer-beta'
+                keyPassword System.getenv('FIZZER_ANDROID_KEY_PASSWORD') ?: System.getenv('FIZZER_ANDROID_KEYSTORE_PASSWORD')
+            }
+        }
+    }
+    buildTypes {
+        debug {
+            if (signingConfigs.findByName('beta')) signingConfig signingConfigs.beta
+        }
+        release {
+            minifyEnabled false
+            if (signingConfigs.findByName('beta')) signingConfig signingConfigs.beta
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+    packagingOptions {
+        jniLibs {
+            // Package the static Codex executable in Android's executable
+            // native-library directory instead of writable app storage.
+            useLegacyPackaging = true
+            keepDebugSymbols += ['**/libcodex.so']
+        }
+    }
+}
+
+repositories {
+    flatDir{
+        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
+    }
+}
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
+    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation project(':capacitor-android')
+    testImplementation "junit:junit:$junitVersion"
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
+    implementation project(':capacitor-cordova-android-plugins')
+}
+
+apply from: 'capacitor.build.gradle'
+
+try {
+    def servicesJSON = file('google-services.json')
+    if (servicesJSON.text) {
+        apply plugin: 'com.google.gms.google-services'
+    }
+} catch(Exception e) {
+    logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
+}

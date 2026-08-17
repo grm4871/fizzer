@@ -1,0 +1,298 @@
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { describe, expect, it } from 'vitest';
+import {
+  ChatView,
+  ReasoningEffortSelect,
+  dataUrlsToRunImages,
+  getRunningMessageState,
+  getSteeringPromptLabels,
+  isPendingAgentRunShell,
+  mergeChatPresence,
+  shouldRenderRunPanel,
+  shouldDetachStickyForTouch,
+  shouldDetachStickyForWheel,
+  shouldSnapToRecentOnSend,
+} from '../components/ChatView';
+import { applyLocalUserProfile } from '../chat/shared';
+import type { ChatAgentRegistration, ChatMessage } from '../chat/types';
+import { chatMessageStore } from '../chat/messageStore';
+import { ChatWorkTrace } from '../components/ChatWorkTrace';
+
+const agent: ChatAgentRegistration = {
+  id: 'reg-sol',
+  vaultAgentId: 'agent-sol',
+  agentId: 'codex',
+  displayName: 'Sol',
+  avatarUrl: '',
+  mention: 'sol',
+  model: 'gpt-test',
+  reasoningEffort: '',
+  priorityServiceTier: false,
+  cwd: '',
+  contextPrompt: '',
+  taggableByAgents: true,
+  replyToEveryMessage: false,
+  orchestrator: false,
+  pingableByOthers: true,
+  yolo: false,
+  conversationId: 'conversation-1',
+};
+
+function message(id: string, partial: Partial<ChatMessage>): ChatMessage {
+  return { id, channelId: 'channel', author: 'asdfasdf', body: '', createdAt: id, ...partial };
+}
+
+describe('chat sticky bottom intent', () => {
+  it('only detaches for upward history scrolling', () => {
+    expect(shouldDetachStickyForWheel(-1)).toBe(true);
+    expect(shouldDetachStickyForWheel(12)).toBe(false);
+    expect(shouldDetachStickyForTouch(100, 112)).toBe(true);
+    expect(shouldDetachStickyForTouch(100, 88)).toBe(false);
+  });
+
+  it('snaps after send only when the pre-send viewport is within 600px of recent', () => {
+    const viewport = (distance: number) => ({
+      scrollHeight: 2_000,
+      clientHeight: 500,
+      scrollTop: 1_500 - distance,
+    } as HTMLElement);
+
+    expect(shouldSnapToRecentOnSend(viewport(0))).toBe(true);
+    expect(shouldSnapToRecentOnSend(viewport(600))).toBe(true);
+    expect(shouldSnapToRecentOnSend(viewport(601))).toBe(false);
+  });
+
+  it('recognizes the delayed runner shell that completes a send snap', () => {
+    expect(isPendingAgentRunShell(message('agent', {
+      agentId: 'codex',
+      status: 'running',
+      body: 'Thinking...',
+    }))).toBe(true);
+    expect(isPendingAgentRunShell(message('human', {
+      status: 'sending',
+      body: 'hello',
+    }))).toBe(false);
+    expect(isPendingAgentRunShell(message('done', {
+      agentId: 'codex',
+      status: undefined,
+      body: 'Finished.',
+    }))).toBe(false);
+  });
+});
+
+describe('agent steering presentation', () => {
+  it('marks the newest active response and its triggering follow-up', () => {
+    const messages = [
+      message('1', { author: 'Sol', agentId: 'codex', registrationId: agent.id, status: 'running', body: 'Thinking…' }),
+      message('2', { body: '@sol also check mobile' }),
+      message('3', { author: 'Sol', agentId: 'codex', registrationId: agent.id, status: 'running', body: 'Thinking…' }),
+    ];
+    const state = getRunningMessageState(messages);
+    expect(state.get(agent.id)).toEqual({ latestId: '3', count: 2 });
+    expect(getSteeringPromptLabels(messages, [agent], state).get('2')).toBe('sol');
+  });
+
+  it('does not call the first prompt steering', () => {
+    const messages = [
+      message('1', { body: '@sol start' }),
+      message('2', { author: 'Sol', agentId: 'codex', registrationId: agent.id, status: 'running' }),
+    ];
+    expect(getSteeringPromptLabels(messages, [agent]).size).toBe(0);
+  });
+
+  it('keeps the steering decal after the interrupted response settles', () => {
+    const messages = [
+      message('1', {
+        author: 'Sol', agentId: 'codex', registrationId: agent.id,
+        status: 'canceled', body: 'Steered into the continuation below.',
+      }),
+      message('2', { body: 'also answer the subscription question' }),
+      message('3', {
+        author: 'Sol', agentId: 'codex', registrationId: agent.id,
+        body: 'It is low risk for personal CLI use.',
+      }),
+    ];
+    expect(getSteeringPromptLabels(messages, [agent]).get('2')).toBe('sol');
+  });
+
+  it('opens a standalone live continuation instead of showing only its route badge', () => {
+    const live = message('3', {
+      author: 'Sol', agentId: 'codex', registrationId: agent.id,
+      status: 'running', body: 'Applying the steering advice now.',
+    });
+    const markup = renderToStaticMarkup(createElement(ChatWorkTrace, {
+      trace: [live],
+      selectedMessageId: null,
+      onCancelRun: () => {},
+      onContextMenu: () => {},
+      onReply: () => {},
+      runningMessageState: new Map([[agent.id, { latestId: live.id, count: 1 }]]),
+    }));
+    expect(markup).toMatch(/chat-work-trace phase-\w+ is-open is-live/);
+    expect(markup).toContain('Applying the steering advice now.');
+  });
+
+  it('keeps live traces embedded in mission cards collapsed', () => {
+    const live = message('3', {
+      author: 'Sol', agentId: 'codex', registrationId: agent.id,
+      status: 'running', body: 'Working inside the mission.',
+    });
+    const markup = renderToStaticMarkup(createElement(ChatWorkTrace, {
+      trace: [live],
+      selectedMessageId: null,
+      onCancelRun: () => {},
+      onContextMenu: () => {},
+      onReply: () => {},
+      runningMessageState: new Map([[agent.id, { latestId: live.id, count: 1 }]]),
+      embedded: true,
+    }));
+    expect(markup).toContain('is-live is-embedded');
+    expect(markup).not.toContain('is-open');
+    expect(markup).not.toContain('Working inside the mission.');
+  });
+});
+
+describe('reasoning effort settings', () => {
+  it('offers every supported Codex override including max and ultra', () => {
+    const markup = renderToStaticMarkup(createElement(ReasoningEffortSelect, {
+      agentId: 'codex',
+      value: '',
+      onChange: () => {},
+    }));
+    expect(markup).toContain('Use Codex CLI default');
+    expect(markup).toContain('Low');
+    expect(markup).toContain('Medium');
+    expect(markup).toContain('High');
+    expect(markup).toContain('Extra high');
+    expect(markup).toContain('Max');
+    expect(markup).toContain('Ultra');
+  });
+
+  it('offers Claude Code efforts through max without unsupported ultra', () => {
+    const markup = renderToStaticMarkup(createElement(ReasoningEffortSelect, {
+      agentId: 'claude-code',
+      value: '',
+      onChange: () => {},
+    }));
+    expect(markup).toContain('Use Claude Code default');
+    expect(markup).toContain('Extra high');
+    expect(markup).toContain('Max');
+    expect(markup).not.toContain('Ultra');
+  });
+});
+
+describe('chat run panel lifecycle', () => {
+  it('hides a successful completed harness without discarding its trace', () => {
+    const completed = message('1', {
+      author: 'Sol',
+      agentId: 'codex',
+      runId: 42,
+      body: 'A complete final answer.',
+      blocks: [{ type: 'text', text: 'A complete final answer.' }],
+      harnessLog: '# complete run trace\n',
+      hasHarness: true,
+    });
+
+    expect(shouldRenderRunPanel(completed, false, true)).toBe(false);
+    expect(shouldRenderRunPanel(completed, true, true)).toBe(true);
+    expect(completed.harnessLog).toBe('# complete run trace\n');
+    expect(completed.blocks).toEqual([{ type: 'text', text: 'A complete final answer.' }]);
+  });
+
+  it('keeps live and failed run diagnostics visible', () => {
+    expect(shouldRenderRunPanel(message('1', { status: 'running' }), false, true)).toBe(true);
+    expect(shouldRenderRunPanel(message('2', { status: 'running' }), false, false)).toBe(false);
+    expect(shouldRenderRunPanel(message('3', { status: 'failed' }), false, true)).toBe(true);
+    expect(shouldRenderRunPanel(message('4', { status: 'canceled' }), false, true)).toBe(true);
+    expect(shouldRenderRunPanel(message('5', { status: 'sending', body: 'Queued...' }), false, true)).toBe(false);
+  });
+
+  it('renders a successful final reply without an automatic Harness view', () => {
+    // Messages now live in the external store; seed the channel ChatView reads.
+    chatMessageStore.set('channel', [message('1', {
+      author: 'Sol',
+      agentId: 'codex',
+      runId: 42,
+      body: 'A complete final answer with nuance.',
+      harnessLog: '# complete run trace\n',
+      hasHarness: true,
+    })]);
+    const markup = renderToStaticMarkup(createElement(ChatView, {
+      channelId: 'channel',
+      channelName: 'cascade-dev',
+      currentUser: 'asdfasdf',
+      presence: { participants: [], online: [] },
+      availableAgents: [],
+      registeredAgents: [],
+      onRegisterAgent: () => {},
+      onRemoveAgent: () => {},
+      onInviteUser: async () => {},
+      onSendMessage: () => {},
+      onCancelRun: () => {},
+    }));
+
+    expect(markup).toContain('A complete final answer with nuance.');
+    expect(markup).not.toContain('cascade-run-panel');
+    expect(markup).not.toContain('Harness');
+  });
+});
+
+describe('dataUrlsToRunImages', () => {
+  it('decodes stored data URLs into run image parts', () => {
+    expect(dataUrlsToRunImages(['data:image/png;base64,AAAA', 'data:image/jpeg;base64,BBBB'])).toEqual([
+      { media_type: 'image/png', data: 'AAAA' },
+      { media_type: 'image/jpeg', data: 'BBBB' },
+    ]);
+  });
+
+  it('skips non-image and non-data sources', () => {
+    expect(dataUrlsToRunImages(['https://example.com/a.png', 'data:text/plain;base64,AAAA'])).toEqual([]);
+    expect(dataUrlsToRunImages(undefined)).toEqual([]);
+  });
+});
+
+describe('mergeChatPresence', () => {
+  const alice = { id: 1, username: 'alice', displayName: 'Alice', avatarUrl: 'https://a/alice.png' };
+
+  it('keeps cached profiles when an emit omits them', () => {
+    const prior = { participants: ['alice'], online: ['alice'], owner: 'alice', profiles: { alice } };
+    const merged = mergeChatPresence(prior, { participants: ['alice'], online: [] });
+    expect(merged.profiles).toEqual({ alice });
+  });
+
+  it('does not wipe cached profiles with an explicit empty object', () => {
+    const prior = { participants: ['alice'], online: ['alice'], owner: 'alice', profiles: { alice } };
+    const merged = mergeChatPresence(prior, { participants: ['alice'], online: [], profiles: {} });
+    expect(merged.profiles).toEqual({ alice });
+  });
+
+  it('merges in newly reported profiles alongside cached ones', () => {
+    const bob = { id: 2, username: 'bob', displayName: 'Bob', avatarUrl: '' };
+    const prior = { participants: ['alice'], online: ['alice'], owner: 'alice', profiles: { alice } };
+    const merged = mergeChatPresence(prior, { participants: ['alice', 'bob'], online: ['bob'], profiles: { bob } });
+    expect(merged.profiles).toEqual({ alice, bob });
+  });
+
+  it('starts from the incoming payload when there is no cache yet', () => {
+    const merged = mergeChatPresence(undefined, { participants: ['alice'], online: ['alice'], owner: 'alice', profiles: { alice } });
+    expect(merged).toEqual({ participants: ['alice'], online: ['alice'], owner: 'alice', profiles: { alice } });
+  });
+
+  it('paints the signed-in user photo that presence deliberately omits', () => {
+    const presence = mergeChatPresence(undefined, {
+      participants: ['alice'],
+      online: ['alice'],
+      owner: 'alice',
+      profiles: { alice: { id: 1, username: 'alice', displayName: 'Alice' } },
+    });
+    const painted = applyLocalUserProfile(presence, {
+      id: 1,
+      username: 'alice',
+      displayName: 'Alice',
+      avatarUrl: 'data:image/jpeg;base64,abc',
+    });
+    expect(painted.profiles?.alice.avatarUrl).toBe('data:image/jpeg;base64,abc');
+    expect(presence.profiles?.alice.avatarUrl).toBeUndefined();
+  });
+});

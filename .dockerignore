@@ -1,0 +1,34 @@
+.git
+.gitignore
+.private
+.agents
+.codex
+node_modules
+client/node_modules
+client/dist
+dist
+cascade-electron
+android
+experiments
+coverage
+.vite
+build
+out
+backend_elixir/_build
+backend_elixir/deps
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.log
+.env
+.env.*
+!deploy/.env.example
+docs
+scripts/*
+!scripts/copy-cli-agent-wrappers.cjs
+!scripts/check-elixir-data-compat.mjs
+# Sideload APKs live on GitHub Releases — do not COPY into the Docker client
+# build (32MB+ blobs break SSH deploys mid-npm-ci).
+**/*.apk
+client/public/cascade-android.apk

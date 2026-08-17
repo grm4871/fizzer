@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <link rel="icon" type="image/svg+xml" href="/gem.svg" />
+  <!-- interactive-widget=resizes-content: without this, edge-to-edge Android
+       leaves a huge empty band between the composer and the soft keyboard. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content" />
+  <title>Fizzer</title>
+
+  <!-- Dark first paint so Electron is not Chromium-white while JS loads. -->
+  <style>
+    html, body, #root { background: #101014; color: #e4e6eb; margin: 0; min-height: 100%; }
+  </style>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:ital,wght@0,400;0,500;0,600;0,700;1,500;1,600;1,700&family=Saira:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap">
+
+  <!-- Version check script - always loaded fresh from server -->
+  <script src="/version-check.js" defer></script>
+
+</head>
+
+<body>
+<div id="root"></div>
+  <!-- Fonts after first paint. A render-blocking Google stylesheet used to
+       hold the window on Chromium's default white for several seconds. -->
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:ital,wght@0,400;0,500;0,600;0,700;1,500;1,600;1,700&family=Saira:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap">
+  <!-- No perpetual rAF / mouse spotlight: dead --mx/--my writes forced
+       style recalc every frame and made idle hover feel lagged. -->
+  <script type="module" src="/src/main.tsx"></script>
+</body>
+
+</html>

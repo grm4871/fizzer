@@ -1,0 +1,202 @@
+#!/usr/bin/env node
+/** Browser regression: every vault owns and restores its own tab/pane workspace. */
+import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import { setTimeout as delay } from 'node:timers/promises';
+import { pickPort } from './lib/test-ports.mjs';
+import { spawnElixirApi } from './lib/elixir-api.mjs';
+
+const API_PORT = Number(process.env.TEST_API_PORT) || await pickPort();
+const PREVIEW_PORT = Number(process.env.TEST_PREVIEW_PORT) || await pickPort();
+const API_BASE = `http://127.0.0.1:${API_PORT}`;
+const APP_URL = `http://127.0.0.1:${PREVIEW_PORT}/app.html`;
+const DB_PATH = `/tmp/cascade-vault-workspaces-${API_PORT}.db`;
+const root = new URL('..', import.meta.url).pathname;
+
+async function waitForUrl(url, timeoutMs = 30_000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    try { if ((await fetch(url, { redirect: 'follow' })).ok) return; } catch { /* retry */ }
+    await delay(400);
+  }
+  throw new Error(`Timed out waiting for ${url}`);
+}
+
+async function must(url, options = {}) {
+  const response = await fetch(url, {
+    ...options,
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(`${response.status} ${url}: ${data.error || 'request failed'}`);
+  return data;
+}
+
+let failures = 0;
+function check(name, condition, detail = '') {
+  if (condition) console.log(`[vault-workspaces-ui] OK  ${name}`);
+  else {
+    console.error(`[vault-workspaces-ui] FAIL ${name}${detail ? ` — ${detail}` : ''}`);
+    failures += 1;
+  }
+}
+
+const server = spawnElixirApi(root, {
+    port: API_PORT,
+    dbPath: DB_PATH,
+    extraEnv: {
+      JWT_SECRET: 'vault-workspaces-secret',
+      CASCADE_ALLOW_OPEN_REGISTRATION: '1',
+    },
+  });
+server.stderr.on('data', (chunk) => process.stderr.write(`[server-err] ${chunk}`));
+
+const preview = spawn(
+  'npm',
+  ['--workspace=client', 'run', 'preview', '--', '--host', '127.0.0.1', '--port', String(PREVIEW_PORT)],
+  { cwd: root, env: { ...process.env, API_PORT: String(API_PORT) }, stdio: ['ignore', 'pipe', 'pipe'] },
+);
+preview.stderr.on('data', (chunk) => process.stderr.write(`[preview] ${chunk}`));
+
+let browser;
+try {
+  await waitForUrl(`${API_BASE}/api/health`);
+  await waitForUrl(APP_URL);
+
+  const stamp = Date.now();
+  const { token } = await must(`${API_BASE}/api/auth/register`, {
+    method: 'POST',
+    body: JSON.stringify({ username: `vault_ws_${stamp}`, password: 'testpass12345' }),
+  });
+  const auth = { Authorization: `Bearer ${token}` };
+  const createVault = async (name) => (await must(`${API_BASE}/api/vaults`, {
+    method: 'POST', headers: auth, body: JSON.stringify({ name }),
+  })).vault;
+  const createNote = async (vaultId, title) => (await must(`${API_BASE}/api/vaults/${vaultId}/notes`, {
+    method: 'POST', headers: auth, body: JSON.stringify({ title, content: `# ${title}\n` }),
+  })).note;
+
+  const vaultA = await createVault(`Workspace Alpha ${stamp}`);
+  const vaultB = await createVault(`Workspace Beta ${stamp}`);
+  const a1 = await createNote(vaultA.id, 'Alpha one');
+  const a2 = await createNote(vaultA.id, 'Alpha two');
+  const b1 = await createNote(vaultB.id, 'Beta one');
+  const b2 = await createNote(vaultB.id, 'Beta two');
+
+  const { chromium } = await import('playwright');
+  browser = await chromium.launch({ headless: true });
+  const page = await browser.newPage({ viewport: { width: 1360, height: 860 } });
+  const errors = [];
+  page.on('pageerror', (error) => errors.push(`pageerror: ${error.message}`));
+  page.on('console', (message) => {
+    if (message.type() === 'error') errors.push(`console.error: ${message.text()}`);
+  });
+
+  const selectVault = async (vault) => {
+    await page.getByRole('button', { name: /Vault switcher; current vault/ }).click();
+    const choice = page.getByRole('menuitemradio', { name: new RegExp(vault.name) });
+    await choice.waitFor({ timeout: 10_000 });
+    await choice.click();
+    await page.waitForFunction(
+      (name) => document.querySelector('.vault-name-text')?.textContent?.trim() === name,
+      vault.name,
+      { timeout: 10_000 },
+    );
+  };
+  const openNote = async (note, inNewTab = false) => {
+    const item = page.locator(`#note-${note.id}`);
+    await item.waitFor({ timeout: 15_000 });
+    await item.click(inNewTab ? { modifiers: ['Control'] } : undefined);
+    await page.locator('.tab-item', { hasText: note.title }).waitFor({ timeout: 15_000 });
+  };
+  const tabTitles = () => page.locator('.tab-item .tab-title').allInnerTexts();
+
+  await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
+  await page.evaluate((value) => localStorage.setItem('docs_token', value), token);
+  await page.goto(APP_URL, { waitUntil: 'networkidle' });
+
+  await selectVault(vaultA);
+  await openNote(a1);
+  await openNote(a2, true);
+
+  // Give Alpha a distinct two-pane layout with Alpha two focused.
+  const alphaTwoTab = page.locator('.tab-item', { hasText: a2.title });
+  const alphaPaneContent = page.locator('.pane-content').first();
+  const paneBox = await alphaPaneContent.boundingBox();
+  if (!paneBox) throw new Error('Alpha pane content has no bounding box');
+  await alphaTwoTab.dragTo(alphaPaneContent, {
+    targetPosition: { x: paneBox.width - 4, y: paneBox.height / 2 },
+  });
+  await page.waitForFunction(() => document.querySelectorAll('.editor-pane').length === 2, undefined, { timeout: 10_000 });
+  check('Alpha workspace can hold a split layout', await page.locator('.editor-pane').count() === 2);
+  check('Alpha two is the focused pane', (await page.locator('.editor-pane.is-focused .tab-title').allInnerTexts()).includes(a2.title));
+
+  await selectVault(vaultB);
+  check('switching to Beta does not carry Alpha tabs',
+    !(await tabTitles()).some((title) => title.startsWith('Alpha')), JSON.stringify(await tabTitles()));
+  check('new Beta workspace starts with one empty pane',
+    await page.locator('.editor-pane').count() === 1 && await page.locator('.tab-item').count() === 0);
+
+  await openNote(b1);
+  await openNote(b2, true);
+  await page.locator('.tab-item', { hasText: b1.title }).click();
+  check('Beta keeps an independent tab list',
+    JSON.stringify((await tabTitles()).sort()) === JSON.stringify([b1.title, b2.title].sort()));
+
+  await selectVault(vaultA);
+  const restoredAlphaTitles = await tabTitles();
+  check('returning to Alpha restores its tabs only',
+    [a1.title, a2.title].every((title) => restoredAlphaTitles.includes(title))
+      && !restoredAlphaTitles.some((title) => title.startsWith('Beta')),
+    JSON.stringify(restoredAlphaTitles));
+  check('returning to Alpha restores its pane layout', await page.locator('.editor-pane').count() === 2);
+  check('returning to Alpha restores its focused pane',
+    (await page.locator('.editor-pane.is-focused .tab-title').allInnerTexts()).includes(a2.title));
+
+  await selectVault(vaultB);
+  const restoredBetaTitles = await tabTitles();
+  check('returning to Beta restores its tabs only',
+    [b1.title, b2.title].every((title) => restoredBetaTitles.includes(title))
+      && !restoredBetaTitles.some((title) => title.startsWith('Alpha')),
+    JSON.stringify(restoredBetaTitles));
+  check('returning to Beta restores its active tab',
+    (await page.locator('.editor-pane.is-focused .tab-item.active .tab-title').innerText()) === b1.title);
+
+  await delay(400);
+  const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('cascade_session') || '{}'));
+  check('localStorage saves both vault workspaces',
+    Boolean(stored.workspacesByVault?.[vaultA.id]) && Boolean(stored.workspacesByVault?.[vaultB.id]));
+  check('localStorage keeps Alpha split and Beta unsplit',
+    stored.workspacesByVault?.[vaultA.id]?.layout?.type === 'split'
+      && stored.workspacesByVault?.[vaultB.id]?.layout?.type === 'pane');
+
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.locator('.tab-item', { hasText: b1.title }).waitFor({ timeout: 15_000 });
+  check('reload restores the active vault workspace',
+    (await tabTitles()).includes(b1.title)
+      && (await tabTitles()).includes(b2.title)
+      && !(await tabTitles()).some((title) => title.startsWith('Alpha')));
+  await selectVault(vaultA);
+  check('reload retains inactive vault workspaces too',
+    await page.locator('.editor-pane').count() === 2
+      && (await tabTitles()).includes(a1.title)
+      && (await tabTitles()).includes(a2.title));
+
+  const fatal = errors.filter((line) => !line.includes('[VersionCheck]'));
+  if (fatal.length > 0) {
+    console.error('[vault-workspaces-ui] Runtime errors:');
+    for (const line of fatal) console.error(`  - ${line}`);
+    failures += 1;
+  }
+  if (failures > 0) throw new Error(`${failures} check(s) failed`);
+  console.log('[vault-workspaces-ui] OK — vault tabs, layout, focus, and reload state stay isolated');
+} catch (error) {
+  console.error('[vault-workspaces-ui] FAILED:', error.message || error);
+  process.exitCode = 1;
+} finally {
+  if (browser) await browser.close();
+  preview.kill('SIGTERM');
+  server.kill('SIGTERM');
+  await delay(300);
+  try { fs.unlinkSync(DB_PATH); } catch { /* clean */ }
+}

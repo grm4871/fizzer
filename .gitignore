@@ -1,0 +1,43 @@
+node_modules/
+client/node_modules/
+cascade-electron/node_modules/
+
+dist/
+client/dist/
+build/
+out/
+coverage/
+.vite/
+
+# Generated training environments, model outputs, and logs.
+experiments/**/.venv/
+experiments/**/adapter/
+experiments/**/*.log
+
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+debug.log
+
+.env
+.env.*
+!.env.example
+
+# Local-only operational scripts and secrets.
+.private/
+.cascade/
+.cascade-release/
+deploy-secret
+*.secret
+
+# Android sideload APK — published via `gh release`, not git/Docker.
+client/public/cascade-android.apk
+client/dist/cascade-android.apk
+**/*.apk
+!android/**/gradle-wrapper.jar
+android/app/src/main/jniLibs/arm64-v8a/libcodex.so
+
+*.svg

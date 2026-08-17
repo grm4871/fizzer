@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1c1713"/>
+      <stop offset="55%" stop-color="#100d0b"/>
+      <stop offset="100%" stop-color="#0a0808"/>
+    </linearGradient>
+    <radialGradient id="halo" cx="50%" cy="46%" r="52%">
+      <stop offset="0%" stop-color="#f5c06c" stop-opacity="0.22"/>
+      <stop offset="60%" stop-color="#c77b25" stop-opacity="0.06"/>
+      <stop offset="100%" stop-color="#c77b25" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="g" x1="10" y1="8" x2="54" y2="56" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#f5c06c"/><stop offset="1" stop-color="#c77b25"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="96" y="96" width="832" height="832" rx="184" fill="url(#bg)"/>
+  <rect x="96" y="96" width="832" height="832" rx="184" fill="url(#halo)"/>
+  <rect x="101" y="101" width="822" height="822" rx="180" fill="none" stroke="#c77b25" stroke-opacity="0.35" stroke-width="6"/>
+
+  <g transform="translate(512 512) scale(8.8) translate(-32 -32)">
+    <path d="M32 3 59 32 32 61 5 32 32 3Z" fill="#0d0b0a" stroke="url(#g)" stroke-width="2"/>
+    <path d="M32 9v46M9 32h46M14 14l36 36M50 14 14 50" stroke="#df9d3b" stroke-width="1" opacity=".36"/>
+    <path d="M18 15h28l6 10-20 31L12 25l6-10Z" fill="#12100e" stroke="url(#g)" stroke-width="2"/>
+    <path d="M18 15 32 56 46 15M12 25h40M22 25l10-10 10 10" fill="none" stroke="#e5aa50" stroke-width="1.5"/>
+    <circle cx="32" cy="25" r="3.2" fill="#f5c06c"/>
+  </g>
+</svg>

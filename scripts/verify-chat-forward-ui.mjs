@@ -1,0 +1,232 @@
+#!/usr/bin/env node
+/**
+ * Drives the built client in headless Chromium to confirm the chat forward
+ * affordance works end to end: right-click a message → Forward → pick a channel
+ * → the copy shows up in that channel with its "Forwarded from" banner and
+ * survives a reload. It also verifies that a renderer reconciles messages
+ * missed during a server/socket disconnect.
+ *
+ * Build first: `npm run build && npm run build:client`.
+ */
+import { spawn } from 'node:child_process';
+import { setTimeout as delay } from 'node:timers/promises';
+import { pickPort } from './lib/test-ports.mjs';
+import { spawnElixirApi } from './lib/elixir-api.mjs';
+
+// Ports come from the OS by default: a leftover dev server on a hardcoded
+// port used to surface as an unexplained startup timeout.
+const API_PORT = Number(process.env.TEST_API_PORT) || await pickPort();
+const PREVIEW_PORT = Number(process.env.TEST_PREVIEW_PORT) || await pickPort();
+const API_BASE = `http://127.0.0.1:${API_PORT}`;
+const APP_URL = `http://127.0.0.1:${PREVIEW_PORT}/app.html`;
+const DB_PATH = `/tmp/cascade-chatforward-ui-${API_PORT}.db`;
+const root = new URL('..', import.meta.url).pathname;
+
+async function waitForUrl(url, timeoutMs = 30000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const res = await fetch(url, { redirect: 'follow' });
+      if (res.ok) return;
+    } catch { /* retry */ }
+    await delay(400);
+  }
+  throw new Error(`Timed out waiting for ${url}`);
+}
+
+async function must(url, options = {}) {
+  const res = await fetch(url, { ...options, headers: { 'Content-Type': 'application/json', ...(options.headers || {}) } });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(`${res.status} ${url}: ${data.error || 'request failed'}`);
+  return data;
+}
+
+function startServer() {
+  const child = spawnElixirApi(root, {
+    port: API_PORT,
+    dbPath: DB_PATH,
+    extraEnv: {
+      JWT_SECRET: 'chatforward-ui-secret',
+      CASCADE_ALLOW_OPEN_REGISTRATION: '1',
+    },
+  });
+  child.stderr.on('data', (c) => process.stderr.write(`[server-err] ${c}`));
+  return child;
+}
+
+let server = startServer();
+
+const preview = spawn('npm', ['--workspace=client', 'run', 'preview', '--', '--host', '127.0.0.1', '--port', String(PREVIEW_PORT)], {
+  cwd: root,
+  stdio: ['ignore', 'pipe', 'pipe'],
+  env: { ...process.env, API_PORT: String(API_PORT) },
+});
+preview.stderr.on('data', (c) => process.stderr.write(`[preview] ${c}`));
+
+let browser;
+try {
+  await waitForUrl(`${API_BASE}/api/health`);
+  await waitForUrl(APP_URL);
+
+  const stamp = Date.now();
+  const username = `uitest_${stamp}`;
+  const { token } = await must(`${API_BASE}/api/auth/register`, {
+    method: 'POST',
+    body: JSON.stringify({ username, password: 'testpass12345' }),
+  });
+  const auth = { Authorization: `Bearer ${token}` };
+  const { token: agentToken } = await must(`${API_BASE}/api/auth/agent-token`, { method: 'POST', headers: auth });
+  const agentAuth = { Authorization: `Bearer ${agentToken}` };
+  const { vault } = await must(`${API_BASE}/api/vaults`, { method: 'POST', headers: auth, body: JSON.stringify({ name: `QA Vault ${stamp}` }) });
+  const channels = {};
+  for (const title of ['qa-source', 'qa-target']) {
+    const { note } = await must(`${API_BASE}/api/vaults/${vault.id}/notes`, {
+      method: 'POST', headers: auth, body: JSON.stringify({ title, content: 'cascade://chat-channel' }),
+    });
+    channels[title] = note;
+  }
+
+  await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channels['qa-source'].id}/messages`, {
+    method: 'POST', headers: agentAuth,
+    body: JSON.stringify({
+      id: `msg-${stamp}-fwd`,
+      channelId: channels['qa-source'].id,
+      author: 'Claude',
+      body: 'forward this one',
+      createdAt: new Date().toISOString(),
+    }),
+  });
+  const persistedImage = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XwFJAAAAAElFTkSuQmCC';
+  await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channels['qa-source'].id}/messages`, {
+    method: 'POST', headers: auth,
+    body: JSON.stringify({
+      id: `msg-${stamp}-media`,
+      channelId: channels['qa-source'].id,
+      author: username,
+      body: 'persisted-media-reload-check',
+      images: [persistedImage],
+      createdAt: new Date().toISOString(),
+    }),
+  });
+
+  const { chromium } = await import('playwright');
+  browser = await chromium.launch({ headless: true });
+  const page = await browser.newPage();
+  const errors = [];
+  page.on('pageerror', (error) => errors.push(`pageerror: ${error.message}`));
+  page.on('console', (msg) => { if (msg.type() === 'error') errors.push(`console.error: ${msg.text()}`); });
+
+  await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
+  await page.evaluate((t) => localStorage.setItem('docs_token', t), token);
+  await page.goto(APP_URL, { waitUntil: 'networkidle' });
+
+  async function openChannel(title) {
+    const entry = page.locator(`#note-${channels[title].id}`);
+    await entry.waitFor({ timeout: 20000 });
+    await entry.click();
+    await page.locator('.chat-header h2', { hasText: title }).waitFor({ timeout: 20000 });
+  }
+
+  await openChannel('qa-source');
+  const target = page.getByText('forward this one', { exact: false }).first();
+  await target.waitFor({ timeout: 20000 });
+  await page.locator('img.chat-msg-image').first().waitFor({ timeout: 20000 });
+
+  await target.click({ button: 'right' });
+  await page.locator('.chat-context-menu button', { hasText: 'Report' }).click();
+  const reportDialog = page.getByRole('dialog', { name: 'Report message from Claude' });
+  await reportDialog.getByLabel('Reason').selectOption('spam');
+  await reportDialog.getByLabel('Details optional').fill('Runtime moderation check');
+  await reportDialog.getByRole('button', { name: 'Send report' }).click();
+  await reportDialog.getByText('Your report was sent.').waitFor();
+  await reportDialog.getByRole('button', { name: 'Done' }).click();
+  const moderation = await must(`${API_BASE}/api/vaults/${vault.id}/reports`, { headers: auth });
+  if (moderation.reports.length !== 1 || moderation.reports[0].targetId !== `msg-${stamp}-fwd`
+    || 'reporterUsername' in moderation.reports[0]) {
+    throw new Error('message report was not queued anonymously for the vault owner');
+  }
+
+  await target.click({ button: 'right' });
+  const forwardItem = page.locator('.chat-context-menu button', { hasText: 'Forward' });
+  await forwardItem.waitFor({ timeout: 5000 });
+  await forwardItem.click();
+
+  const picker = page.locator('.chat-forward-panel');
+  await picker.waitFor({ timeout: 5000 });
+  if (await picker.locator('.chat-forward-target', { hasText: 'qa-source' }).count()) {
+    throw new Error('the picker offered the channel we are already in');
+  }
+  await picker.locator('.chat-forward-target', { hasText: 'qa-target' }).click();
+  await picker.waitFor({ state: 'detached', timeout: 10000 });
+
+  await openChannel('qa-target');
+  await page.getByText('forward this one', { exact: false }).first().waitFor({ timeout: 20000 });
+  await page.locator('.chat-forward-quote', { hasText: 'qa-source' }).first().waitFor({ timeout: 10000 });
+
+  // Server-side: the copy is really persisted, not just a local echo.
+  await page.reload({ waitUntil: 'networkidle' });
+  await openChannel('qa-target');
+  await page.getByText('forward this one', { exact: false }).first().waitFor({ timeout: 20000 });
+  const banner = page.locator('.chat-forward-quote', { hasText: 'qa-source' }).first();
+  await banner.waitFor({ timeout: 10000 });
+  // innerText applies the banner's text-transform, so compare case-insensitively.
+  if (!(await banner.innerText()).toLowerCase().includes('claude')) {
+    throw new Error('forwarded banner lost the original author');
+  }
+
+  const preOutageFatal = errors.filter((line) => !line.includes('[VersionCheck]'));
+  if (preOutageFatal.length > 0) {
+    throw new Error(`runtime errors before reconnect test:\n${preOutageFatal.join('\n')}`);
+  }
+  errors.length = 0;
+
+  // Socket.IO rooms do not replay broadcasts missed while disconnected. Keep
+  // the chat open, restart the server, persist a message before the renderer's
+  // reconnect delay elapses, and prove reconnect reconciliation backfills it.
+  await openChannel('qa-source');
+  const stopped = new Promise((resolve) => server.once('exit', resolve));
+  server.kill('SIGTERM');
+  await stopped;
+  await delay(300);
+  server = startServer();
+  await waitForUrl(`${API_BASE}/api/health`);
+  const missedBody = `missed-while-disconnected-${stamp}`;
+  await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channels['qa-source'].id}/messages`, {
+    method: 'POST', headers: auth,
+    body: JSON.stringify({
+      id: `msg-${stamp}-reconnect`,
+      channelId: channels['qa-source'].id,
+      author: 'Phone',
+      body: missedBody,
+      createdAt: new Date().toISOString(),
+    }),
+  });
+  await page.getByText(missedBody, { exact: true }).waitFor({ timeout: 20000 });
+  // Reconnect reconciliation fetches the intentionally slim transcript again.
+  // It must not replace an already hydrated image with the `hasImages` marker.
+  const imageAfterReconnect = page.locator('img.chat-msg-image').first();
+  await imageAfterReconnect.waitFor({ timeout: 10000 });
+  if ((await imageAfterReconnect.getAttribute('src')) !== persistedImage) {
+    throw new Error('persisted chat media disappeared after reconnect reconciliation');
+  }
+  // The proxy/socket errors recorded during the intentional server outage are
+  // expected. From this recovered point onward, runtime errors are real again.
+  errors.length = 0;
+  await delay(500);
+
+  const fatal = errors.filter((line) => !line.includes('[VersionCheck]'));
+  if (fatal.length > 0) {
+    console.error('[verify-chat-forward-ui] Runtime errors:');
+    for (const line of fatal) console.error(`  - ${line}`);
+    process.exit(1);
+  }
+  console.log('[verify-chat-forward-ui] OK — message reporting, forwarding persistence, and reconnect backfill');
+} catch (error) {
+  console.error('[verify-chat-forward-ui] FAILED:', error.message || error);
+  process.exitCode = 1;
+} finally {
+  if (browser) await browser.close();
+  preview.kill('SIGTERM');
+  server.kill('SIGTERM');
+  await delay(300);
+}

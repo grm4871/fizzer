@@ -1,0 +1,326 @@
+import { describe, expect, it } from 'vitest';
+import type { ChatMessage } from '../chat/types';
+import {
+  isForcedWorkTraceLine,
+  isSteeringContinuationMessage,
+  isWorkTraceMessage,
+  partitionWorkRun,
+  segmentTranscript,
+  humanizeActivityLine,
+  workTraceHarnessPreview,
+  workTracePreview,
+  workTraceDecals,
+  workTracePhase,
+  workTracePeek,
+  workTraceStatusLabel,
+  workTraceSummary,
+} from '../chat/workTrace';
+
+function msg(partial: Partial<ChatMessage> & Pick<ChatMessage, 'id' | 'author' | 'body'>): ChatMessage {
+  return {
+    channelId: 'ch',
+    createdAt: '2026-08-03T00:00:00.000Z',
+    ...partial,
+  };
+}
+
+describe('workTrace', () => {
+  it('recognizes the durable steering sentinel without exposing it as prose', () => {
+    expect(isSteeringContinuationMessage(msg({
+      id: 'steered', author: 'Sol', body: 'Steered into the continuation below.', status: 'canceled',
+    }))).toBe(true);
+    expect(isSteeringContinuationMessage(msg({
+      id: 'cancel', author: 'Sol', body: 'Run canceled by user.', status: 'canceled',
+    }))).toBe(false);
+  });
+
+  it('labels steering cancels as steer, not blocked', () => {
+    const steered = msg({
+      id: 'steered', author: 'Sol', body: 'Steered into the continuation below.', status: 'canceled', agentId: 'codex',
+    });
+    expect(workTracePhase(steered)).toBe('steering');
+    expect(workTraceStatusLabel(steered)).toBe('steered');
+    expect(workTracePhase(msg({
+      id: 'hard-cancel', author: 'Sol', body: 'Run canceled by user.', status: 'canceled', agentId: 'codex',
+    }))).toBe('blocked');
+  });
+  it('classifies agents, mission wakes, and humans', () => {
+    expect(isWorkTraceMessage(msg({ id: '1', author: 'jt', body: 'hi' }))).toBe(false);
+    expect(isWorkTraceMessage(msg({ id: '2', author: 'Sol', body: 'ok', agentId: 'codex' }))).toBe(true);
+    expect(isWorkTraceMessage(msg({ id: 'sys-mission-abc-wake', author: 'Cascade', body: 'review' }))).toBe(true);
+    expect(isWorkTraceMessage(msg({ id: '3', author: 'Sol', body: 'x' }), new Set(['Sol']))).toBe(true);
+    expect(isForcedWorkTraceLine(msg({ id: 't', author: 'Sol', body: 'x', missionTaskId: 'task-1' }))).toBe(true);
+  });
+
+  it('keeps a single ordinary agent reply as a full bubble', () => {
+    const reply = msg({ id: 'a1', author: 'Sol', body: 'Done.', agentId: 'codex' });
+    expect(partitionWorkRun([reply])).toEqual({ trace: [], full: [reply] });
+  });
+
+  it('does not fold a later same-author turn into an earlier conversation burst', () => {
+    const first = msg({ id: 'h1', author: 'diego', body: 'It is duplicated.' });
+    const later = msg({
+      id: 'h2', author: 'diego', body: 'On the frontend.',
+      createdAt: '2026-08-03T00:02:00.000Z',
+    });
+    const segments = segmentTranscript([first, later]);
+    expect(segments).toHaveLength(2);
+  });
+
+  it('hides a lone long delegated response behind the work dot', () => {
+    const workerEssay = msg({
+      id: 'worker-essay',
+      author: 'Sonnet',
+      body: '# Audit\n\n' + 'Detailed evidence for the coordinator. '.repeat(80),
+      agentId: 'claude',
+      missionTaskId: 'task-essay',
+    });
+    expect(partitionWorkRun([workerEssay])).toEqual({ trace: [workerEssay], full: [] });
+  });
+
+  it('collapses intermediates and keeps the final non-worker answer full', () => {
+    const mid = msg({ id: 'a1', author: 'Sol', body: 'Checking…', agentId: 'codex' });
+    const final = msg({ id: 'a2', author: 'Sol', body: 'Fixed root cause.', agentId: 'codex' });
+    const { trace, full } = partitionWorkRun([mid, final]);
+    expect(trace).toEqual([mid]);
+    expect(full).toEqual([final]);
+  });
+
+  it('keeps worker and system messages in the compact stream', () => {
+    const wake = msg({ id: 'sys-mission-1-wake', author: 'Cascade', body: '@sol review' });
+    const worker = msg({
+      id: 'a1',
+      author: 'Terra',
+      body: 'Deploy green.',
+      agentId: 'codex',
+      missionTaskId: 'task-1',
+    });
+    const final = msg({ id: 'a2', author: 'Sol', body: 'All clear.', agentId: 'codex' });
+    const { trace, full } = partitionWorkRun([wake, worker, final]);
+    expect(trace.map((m) => m.id)).toEqual(['sys-mission-1-wake', 'a1']);
+    expect(full.map((m) => m.id)).toEqual(['a2']);
+  });
+
+  it('keeps live running shells inside the compact trace', () => {
+    const mid = msg({ id: 'a1', author: 'Sol', body: 'Thinking…', agentId: 'codex' });
+    const live = msg({ id: 'a2', author: 'Terra', body: 'Thinking…', agentId: 'codex', status: 'running' });
+    const { trace, full } = partitionWorkRun([mid, live]);
+    expect(trace).toEqual([mid, live]);
+    expect(full).toEqual([]);
+  });
+
+  it('never hides media inside the compact trace', () => {
+    const progress = msg({ id: 'a1', author: 'Sol', body: 'Checking…', agentId: 'codex' });
+    const artifact = msg({
+      id: 'a2', author: 'Terra', body: 'Screenshot evidence.', agentId: 'codex',
+      attachments: [{ name: 'proof.png', media_type: 'image/png', url: '/proof.png' }],
+    });
+    const { trace, full } = partitionWorkRun([progress, artifact]);
+    expect(trace).toEqual([progress]);
+    expect(full).toEqual([artifact]);
+  });
+
+  it('segments human turns around work runs', () => {
+    const human = msg({ id: 'h1', author: 'jt', body: 'fix this' });
+    const mid = msg({ id: 'a1', author: 'Sol', body: 'Looking…', agentId: 'codex' });
+    const final = msg({ id: 'a2', author: 'Sol', body: 'Done.', agentId: 'codex' });
+    const segments = segmentTranscript([human, mid, final]);
+    expect(segments).toHaveLength(2);
+    expect(segments[0]).toMatchObject({ kind: 'group' });
+    expect(segments[1]).toMatchObject({
+      kind: 'work',
+      id: 'a1',
+      trace: [mid],
+    });
+    if (segments[1].kind === 'work') expect(segments[1].fullGroups).toHaveLength(0);
+    if (segments[1].kind === 'work') expect(segments[1].updateGroups).toEqual([{ messages: [final] }]);
+  });
+
+  it('nests a system wake in its persisted empty agent carrier', () => {
+    const carrier = msg({
+      id: 'agent-trace-mission-1-wake', author: 'Terra', body: '', agentId: 'codex', registrationId: 'terra-reg',
+    });
+    const wake = msg({ id: 'sys-mission-mission-1-wake', author: 'Cascade', body: '@terra review' });
+    const segments = segmentTranscript([carrier, wake]);
+    expect(segments).toHaveLength(1);
+    expect(segments[0]).toMatchObject({ kind: 'work', carrier, trace: [wake] });
+  });
+
+  it('keeps different agents and artifacts in chronological rows', () => {
+    const before = msg({ id: 'a1', author: 'Sol', body: 'Before', agentId: 'codex' });
+    const artifact = msg({
+      id: 'a2', author: 'Terra', body: 'Evidence', agentId: 'codex',
+      attachments: [{ name: 'proof.png', media_type: 'image/png', url: '/proof.png' }],
+    });
+    const after = msg({
+      id: 'a3', author: 'Terra', body: 'After', agentId: 'codex', missionTaskId: 'task-1',
+    });
+    const final = msg({ id: 'a4', author: 'Sol', body: 'Done', agentId: 'codex' });
+    const segments = segmentTranscript([before, artifact, after, final]);
+    expect(segments.map((segment) => segment.kind)).toEqual(['group', 'group', 'work', 'group']);
+    expect(segments.map((segment) => segment.kind === 'group'
+      ? segment.group.messages.map((message) => message.id)
+      : [...segment.trace, ...segment.updateGroups.flatMap((group) => group.messages)].map((message) => message.id)))
+      .toEqual([['a1'], ['a2'], ['a3'], ['a4']]);
+  });
+
+  it('keeps mission artifacts separate from agent responses', () => {
+    const acknowledgement = msg({ id: 'a1', author: 'Sol', body: 'I am fixing it.', agentId: 'codex', registrationId: 'sol' });
+    const mission = msg({
+      id: 'm1', author: 'Cascade', body: 'Fix it durably.',
+      mission: {
+        id: 'mission-1', rootMessageId: 'm1', title: 'Fix it', objective: 'Fix it durably.',
+        status: 'active', coordinator: 'sol', coordinatorMention: 'sol', tasks: [],
+        summary: '', createdAt: '', updatedAt: '',
+      },
+    });
+    const worker = msg({ id: 'w1', author: 'Sol', body: 'Tests pass.', agentId: 'codex', registrationId: 'sol', missionTaskId: 'task-1' });
+    const shipped = msg({ id: 'a2', author: 'Sol', body: 'Shipped.', agentId: 'codex', registrationId: 'sol' });
+    const segments = segmentTranscript([acknowledgement, mission, worker, shipped]);
+    expect(segments.map((segment) => segment.kind)).toEqual(['group', 'group', 'work']);
+    expect(segments[0]).toMatchObject({ kind: 'group', group: { messages: [acknowledgement] } });
+    expect(segments[1]).toMatchObject({ kind: 'group', group: { messages: [mission] } });
+    if (segments[2].kind === 'work') {
+      expect(segments[2].trace).toEqual([worker]);
+      expect(segments[2].updateGroups).toEqual([{ messages: [shipped] }]);
+    }
+  });
+
+  it('nests a coordinator mission root in the live run that created it', () => {
+    const acknowledgement = msg({
+      id: 'a1', author: 'Sol', body: 'I am fixing it.', status: 'running',
+      agentId: 'codex', registrationId: 'sol-reg',
+    });
+    const mission = msg({
+      id: 'sys-mission-root-1', author: 'Sol', body: 'Fix it durably.',
+      agentId: 'codex', registrationId: 'sol-reg',
+      mission: {
+        id: 'mission-1', rootMessageId: 'sys-mission-root-1', title: 'Fix it', objective: 'Fix it durably.',
+        status: 'active', coordinator: 'sol', coordinatorMention: 'sol', tasks: [],
+        summary: '', createdAt: '', updatedAt: '',
+      },
+    });
+    const segments = segmentTranscript([acknowledgement, mission]);
+    expect(segments).toHaveLength(1);
+    expect(segments[0]).toMatchObject({
+      kind: 'work',
+      trace: [acknowledgement],
+      fullGroups: [{ messages: [mission] }],
+    });
+  });
+
+  it('never flattens a coordinator response under a later worker', () => {
+    const coordinator = msg({
+      id: 'a1', author: 'Sol', body: 'Here is the answer.', agentId: 'codex', registrationId: 'sol-reg',
+    });
+    const laterWorker = msg({
+      id: 'a2', author: 'Terra', body: 'Still checking.', agentId: 'codex', missionTaskId: 'task-1',
+    });
+    const segments = segmentTranscript([coordinator, laterWorker]);
+    expect(segments.map((segment) => segment.kind)).toEqual(['group', 'work']);
+    expect(segments[0]).toMatchObject({ kind: 'group', group: { messages: [coordinator] } });
+    if (segments[1].kind === 'work') expect(segments[1].trace).toEqual([laterWorker]);
+  });
+
+  it('derives a compact ordered workflow decal trail', () => {
+    const trace = [
+      msg({ id: '1', author: 'Sol', body: 'Queued for Terra', status: 'sending', missionTaskId: 't1' }),
+      msg({ id: '2', author: 'Terra', body: 'Running regression tests', status: 'running', missionTaskId: 't1' }),
+      msg({ id: '3', author: 'Sol', body: 'Reconciling evidence for review', status: 'running' }),
+      msg({ id: '4', author: 'Sol', body: 'Deploying production', status: 'running' }),
+      msg({ id: '5', author: 'Sol', body: 'Done' }),
+    ];
+    expect(trace.map(workTracePhase)).toEqual(['routing', 'testing', 'reviewing', 'deploying', 'complete']);
+    expect(workTraceDecals(trace).map((decal) => decal.label)).toEqual(['route', 'test', 'review', 'deploy', 'complete']);
+  });
+
+  it('previews and summarizes compactly', () => {
+    // Newest useful line wins (live harness tails grow downward).
+    expect(workTracePreview('line one\nline two')).toBe('line two');
+    expect(workTracePreview('x'.repeat(200)).endsWith('…')).toBe(true);
+    const trace = [
+      msg({ id: '1', author: 'Sol', body: 'a', agentId: 'codex' }),
+      msg({ id: '2', author: 'Terra', body: 'b', agentId: 'codex' }),
+    ];
+    expect(workTraceSummary(trace)).toContain('2 steps');
+    expect(workTraceSummary(trace)).toContain('Sol');
+  });
+
+  it('humanizes protocol JSONL instead of dumping raw objects', () => {
+    expect(humanizeActivityLine('{"type":"thread.started","thread_id":"abc"}')).toBe('session started');
+    expect(humanizeActivityLine(JSON.stringify({
+      type: 'item.started',
+      item: { type: 'command_execution', command: 'rg "mission" client/src' },
+    }))).toBe('Bash rg "mission" client/src');
+    expect(humanizeActivityLine(JSON.stringify({
+      type: 'item.started',
+      item: { type: 'reasoning', text: '' },
+    }))).toBe('thinking…');
+    expect(humanizeActivityLine(JSON.stringify({
+      type: 'item.completed',
+      item: { type: 'file_change', path: '/home/jt/Desktop/cascade/client/src/App.tsx' },
+    }))).toBe('edited src/App.tsx');
+    // Never surface the full JSON blob.
+    expect(workTracePreview('{"type":"thread.started","thread_id":"abc"}\n{"type":"item.started","item":{"type":"reasoning"}}'))
+      .toBe('thinking…');
+  });
+
+  it('normalizes Claude reasoning, ANSI bytes, and streamed tool JSON in mission peeks', () => {
+    const harness = [
+      '\x1b[2m# thinking\x1b[0m',
+      '\x1b[2mchecking the deploy configuration\x1b[0m',
+      '\x1b[36m▶ Bash\x1b[0m',
+      '\x1b[36m{"command":"python -c verify"}\x1b[0m',
+    ].join('\r\n');
+    expect(workTraceHarnessPreview(harness)).toBe('Bash python -c verify');
+    expect(workTraceHarnessPreview(`${harness}\r\n\x1b[32m✓ tool_result\x1b[0m\r\nraw output`))
+      .toBe('Bash done');
+    expect(workTraceHarnessPreview('\x1b[2m# thinking\x1b[0m\r\n\x1b[2mchecking the deployment path\x1b[0m'))
+      .toBe('checking the deployment path');
+    expect(humanizeActivityLine('\x1b[36m{"type":"item.started","item":{"type":"reasoning","text":"checking"}}\x1b[0m'))
+      .toBe('checking');
+    expect(workTraceHarnessPreview('\x1b[36m▶ Bash\x1b[0m\r\n\x1b[36m{"command":"unterminated'))
+      .toBe('Bash');
+  });
+
+  it('derives live chrome from the bounded recent harness tail', () => {
+    const stalePrefix = 'deploying historical release output\n'.repeat(20_000);
+    const current = JSON.stringify({
+      type: 'item.started',
+      item: { type: 'command_execution', command: 'npm test' },
+    });
+    const neutralTail = 'ordinary command output\n'.repeat(1_000);
+    const harness = `${stalePrefix}${neutralTail}${current}`;
+
+    expect(workTraceHarnessPreview(harness)).toBe('Bash npm test');
+    expect(workTracePhase(msg({
+      id: 'long-live',
+      author: 'Sol',
+      body: 'Thinking…',
+      status: 'running',
+      harnessLog: harness,
+    }))).toBe('testing');
+  });
+
+  it('builds a collapsed mission peek from the live step', () => {
+    const peek = workTracePeek([
+      msg({ id: '1', author: 'Sol', body: 'Queued', status: 'sending', missionTaskId: 't1' }),
+      msg({
+        id: '2',
+        author: 'Terra',
+        body: 'Thinking…',
+        status: 'running',
+        harnessLog: '{"type":"thread.started","thread_id":"x"}\nBash rg "mission" client/src',
+      }),
+    ]);
+    expect(peek).toMatchObject({
+      live: true,
+      author: 'Terra',
+      label: 'Bash rg "mission" client/src',
+      phase: 'working',
+    });
+    expect(peek?.summary).toContain('live');
+    expect(peek?.decals.at(-1)?.label).toBe('work');
+  });
+
+});

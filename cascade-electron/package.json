@@ -1,0 +1,30 @@
+{
+  "name": "fizzer-desktop",
+  "version": "0.1.0",
+  "productName": "Fizzer",
+  "description": "Fizzer Desktop App",
+  "author": "Fizzer",
+  "license": "MIT",
+  "main": "main.cjs",
+  "type": "module",
+  "scripts": {
+    "start": "electron .",
+    "start-live-instance": "APP_URL=https://cscd.online electron .",
+    "start:watch": "nodemon --watch main.cjs --watch preload.cjs --watch agent-runner.cjs --watch desktop-runner-host.cjs --watch plan-usage.cjs --watch agent-captions.cjs --exec \"electron .\"",
+    "package": "electron-forge package",
+    "make": "electron-forge make"
+  },
+  "dependencies": {
+    "@resvg/resvg-js": "^2.6.2"
+  },
+  "devDependencies": {
+    "@electron-forge/cli": "^7.2.0",
+    "@electron-forge/maker-deb": "^7.2.0",
+    "@electron-forge/maker-dmg": "^7.11.1",
+    "@electron-forge/maker-rpm": "^7.2.0",
+    "@electron-forge/maker-squirrel": "^7.2.0",
+    "@electron-forge/maker-zip": "^7.2.0",
+    "electron": "39.8.10",
+    "nodemon": "^3.1.10"
+  }
+}

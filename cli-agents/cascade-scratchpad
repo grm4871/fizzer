@@ -1,0 +1,425 @@
+#!/usr/bin/env node
+/**
+ * @file cascade-scratchpad - Append-only work journal for local agents.
+ *
+ * The cheap half of the scratchpad: `jot` during work with zero curation
+ * decisions; a librarian run reads the journal later and distills it into
+ * memory notes (see `cascade-note memory`). Uses the live Cascade API like
+ * the other cascade-* helpers.
+ */
+
+'use strict';
+
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+const DEFAULT_URL = 'https://cscd.online';
+const KINDS = ['observation', 'outcome', 'dead-end', 'decision', 'todo', 'papercut'];
+
+const USAGE = `cascade-scratchpad - agent work journal, skills, open threads, and outcomes
+
+Usage:
+  cascade-scratchpad jot [text...]             append a journal entry (stdin / --text / --content ok)
+  cascade-scratchpad papercut [text...]        log tool friction / bullshit (dead-end shaped; auto-used by runners)
+  cascade-scratchpad journal                   list journal entries
+  cascade-scratchpad done --through <id>       mark entries consolidated
+  cascade-scratchpad status                    unconsolidated count + open threads + last consolidation
+  cascade-scratchpad open [intent...]          list open threads, or open one (intent via args/--text)
+  cascade-scratchpad close <id>                close an open thread (--reason optional)
+  cascade-scratchpad skill write --title T     save an executable procedure (body via stdin;
+                                               first line = when to use it, rest = the steps)
+  cascade-scratchpad skill list                list your skills + shared skills (with win rates)
+  cascade-scratchpad recall <query...>         mid-task: find matching notes/skills when stuck
+  cascade-scratchpad outcome <note-title>      record result of applying a note/skill
+                                               (--win | --loss | --neutral)
+  cascade-scratchpad promote <note-title>      share a memory/skill note with all agents
+
+Options:
+  --kind <k>         observation | outcome | dead-end | decision | todo (jot; default observation)
+  --text <t>         jot/open: inline body (alias of --content; positional args / stdin also ok)
+  --blocked <t>      open: what is blocking (optional)
+  --next <t>         open: next try (optional)
+  --pointer <t>      open: pointer e.g. journal#31, path, command (optional)
+  --reason <t>       close: why this thread is done/abandoned (optional)
+  --closed           open list: include closed threads
+  --agent <key>      agent key (default: this run's agent)
+  --unconsolidated   journal: only entries not yet consolidated
+  --since <id>       journal: entries with id > <id>
+  --limit <n>        journal/open: max entries (default 100 / 50)
+  --through <id>     done: consolidate entries up to and including <id>
+  --title <t>        skill write: skill title
+  --content <text>   skill write / jot / open: inline body (stdin is safer for multiline)
+  --win|--loss|--neutral  outcome: how applying the note went
+  --vault <id>       vault id (default $CASCADE_NOTE_VAULT)
+  --url <base>       API base (default $CASCADE_NOTE_URL, else cscd.online)
+  --token <jwt>      bearer token (default $CASCADE_NOTE_TOKEN)
+  --json             machine-readable output
+
+Jot liberally mid-task: entries are append-only and cost nothing to curate later.
+Dead ends ("tried X, failed because Y") are the most valuable journal entries.
+Open threads are a thin intentional trail (continue/blocked/next) — max ~7 live;
+agent-owned and private (users cannot see them) — open/close yourself, never ask
+the user about them. Read a skill's full body with: cascade-note get <title>
+
+Env: CASCADE_NOTE_URL, CASCADE_NOTE_TOKEN, CASCADE_NOTE_USER,
+     CASCADE_NOTE_PASS, CASCADE_NOTE_VAULT, CASCADE_RUN_ID, CASCADE_HELPER_CONFIG`;
+
+function parseArgs(argv) {
+  const args = { _: [] };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--json') args.json = true;
+    else if (a === '--unconsolidated') args.unconsolidated = true;
+    else if (a === '--win') args.result = 'win';
+    else if (a === '--loss') args.result = 'loss';
+    else if (a === '--neutral') args.result = 'neutral';
+    else if (a === '-h' || a === '--help') args.help = true;
+    else if (a.startsWith('--')) {
+      const key = a.slice(2);
+      const next = argv[i + 1];
+      if (next === undefined || next.startsWith('--')) args[key] = true;
+      else { args[key] = next; i++; }
+    } else {
+      args._.push(a);
+    }
+  }
+  return args;
+}
+
+function fail(msg, code = 1) {
+  process.stderr.write(`cascade-scratchpad: ${msg}\n`);
+  process.exit(code);
+}
+
+function errorMessage(err) {
+  if (!(err instanceof Error)) return String(err);
+  const cause = err.cause instanceof Error ? ` (${err.cause.message})` : '';
+  return `${err.message}${cause}`;
+}
+
+function helperConfigPath() {
+  // Prefer agent-runner's explicit per-run path over CASCADE_RUN_ID alone.
+  const fromEnv = String(process.env.CASCADE_HELPER_CONFIG || '').trim();
+  if (fromEnv) return fromEnv;
+  const runId = String(process.env.CASCADE_RUN_ID || '').trim();
+  if (runId) {
+    return path.join(os.homedir(), '.cascade', 'run-contexts', `${runId}.json`);
+  }
+  return path.join(os.homedir(), '.cascade', 'agent-helper-context.json');
+}
+
+function readHelperConfig() {
+  try {
+    const raw = fs.readFileSync(helperConfigPath(), 'utf8');
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function configString(config, key) {
+  return String(config && config[key] || '').trim();
+}
+
+function baseUrl(args, config) {
+  const raw = String(args.url || configString(config, 'url') || process.env.CASCADE_NOTE_URL || DEFAULT_URL).trim();
+  return raw.replace(/\/$/, '');
+}
+
+async function getToken(url, args, config) {
+  const explicit = String(args.token || configString(config, 'token') || process.env.CASCADE_NOTE_TOKEN || '').trim();
+  if (explicit) return explicit;
+  const user = String(process.env.CASCADE_NOTE_USER || '').trim();
+  const pass = String(process.env.CASCADE_NOTE_PASS || '');
+  if (!user || !pass) {
+    fail('no credentials. Set CASCADE_NOTE_TOKEN, or CASCADE_NOTE_USER + CASCADE_NOTE_PASS.');
+  }
+  const res = await fetch(`${url}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ username: user, password: pass }),
+  });
+  if (!res.ok) fail(`login failed (${res.status}): ${await res.text()}`);
+  const body = await res.json();
+  if (!body.token) fail('login response had no token');
+  return body.token;
+}
+
+async function api(url, token, method, requestPath, body) {
+  const headers = { authorization: `Bearer ${token}` };
+  if (body !== undefined) headers['content-type'] = 'application/json';
+  const res = await fetch(`${url}${requestPath}`, {
+    method,
+    headers,
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+  });
+  const text = await res.text();
+  let json;
+  try { json = text ? JSON.parse(text) : {}; } catch { json = { raw: text }; }
+  if (!res.ok) fail(`${method} ${requestPath} -> ${res.status}: ${json.error || text}`);
+  return json;
+}
+
+async function resolveVault(url, token, args, config) {
+  const explicit = String(args.vault || configString(config, 'vaultId') || process.env.CASCADE_NOTE_VAULT || '').trim();
+  if (explicit) return explicit;
+  const { vaults = [] } = await api(url, token, 'GET', '/api/vaults');
+  if (vaults.length === 0) fail('no vaults found for this account.');
+  if (vaults.length === 1) return vaults[0].id;
+  const list = vaults.map((v) => `  ${v.id}  ${v.name}`).join('\n');
+  fail(`multiple vaults - pass --vault <id>:\n${list}`);
+}
+
+function resolveAgentKey(args, config) {
+  return String(
+    args.agent
+    || configString(config, 'agentMemoryKey')
+    || configString(config, 'chatAuthor')
+    || configString(config, 'agentId')
+    || '',
+  ).replace(/^@+/, '').trim();
+}
+
+async function readStdin() {
+  if (process.stdin.isTTY) return '';
+  return new Promise((resolve, reject) => {
+    let data = '';
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', (chunk) => { data += chunk; });
+    process.stdin.on('end', () => resolve(data));
+    process.stdin.on('error', reject);
+  });
+}
+
+function print(args, human, obj) {
+  if (args.json) process.stdout.write(JSON.stringify(obj) + '\n');
+  else process.stdout.write(human + '\n');
+}
+
+function formatEntry(entry) {
+  const flag = entry.consolidatedAt ? ' ' : '*';
+  return `${flag}#${entry.id} [${entry.kind}] ${entry.createdAt}${entry.agentKey ? ` @${entry.agentKey}` : ''}\n    ${entry.body.replace(/\n/g, '\n    ')}`;
+}
+
+async function main() {
+  const args = parseArgs(process.argv.slice(2));
+  const cmd = args._[0];
+  if (!cmd || args.help) {
+    process.stdout.write(USAGE + '\n');
+    process.exit(cmd ? 0 : 1);
+  }
+  if (!['jot', 'papercut', 'journal', 'done', 'status', 'skill', 'outcome', 'promote', 'recall', 'open', 'close'].includes(cmd)) {
+    fail(`unknown command "${cmd}". Run with --help.`);
+  }
+
+  const config = readHelperConfig();
+  const url = baseUrl(args, config);
+  const token = await getToken(url, args, config);
+  const vaultId = await resolveVault(url, token, args, config);
+  const agentKey = resolveAgentKey(args, config);
+
+  if (cmd === 'jot' || cmd === 'papercut') {
+    // Accept positional, --text, --content, or stdin. Agents often guess --text
+    // (same shape as cascade-note --content); reject bare flags so they don't
+    // silently become the body string "true".
+    const positional = args._.slice(1).join(' ').trim();
+    const flagBody = (() => {
+      for (const key of ['text', 'content']) {
+        const v = args[key];
+        if (v === true) fail(`--${key} needs a value (e.g. jot --kind dead-end --text "…").`);
+        if (typeof v === 'string' && v.trim()) return v.trim();
+      }
+      return '';
+    })();
+    const body = (positional || flagBody || String(await readStdin())).trim();
+    if (!body) fail(`${cmd} needs text (positional args, --text/--content, or stdin).`);
+    const kind = cmd === 'papercut' ? 'papercut' : String(args.kind || 'observation');
+    if (!KINDS.includes(kind)) fail(`--kind must be one of: ${KINDS.join(', ')}`);
+    const runIdRaw = Number(configString(config, 'runId') || process.env.CASCADE_RUN_ID);
+    const payload = {
+      body: cmd === 'papercut' && !/^papercut:/i.test(body) ? `papercut: ${body}` : body,
+      kind,
+      agentKey,
+      ...(Number.isFinite(runIdRaw) && runIdRaw > 0 ? { runId: runIdRaw } : {}),
+    };
+    const { entry } = await api(url, token, 'POST', `/api/vaults/${vaultId}/scratchpad/journal`, payload);
+    print(args, `jotted #${entry.id} [${entry.kind}]`, entry);
+    return;
+  }
+
+  if (cmd === 'journal') {
+    const params = new URLSearchParams();
+    if (agentKey) params.set('agent', agentKey);
+    if (args.unconsolidated) params.set('unconsolidated', '1');
+    if (args.since) params.set('since', String(args.since));
+    if (args.limit) params.set('limit', String(args.limit));
+    const { entries = [] } = await api(url, token, 'GET', `/api/vaults/${vaultId}/scratchpad/journal?${params}`);
+    print(
+      args,
+      entries.length ? entries.map(formatEntry).join('\n') : '(journal empty)',
+      entries,
+    );
+    return;
+  }
+
+  if (cmd === 'done') {
+    const throughId = Number(args.through);
+    if (!Number.isFinite(throughId) || throughId <= 0) fail('done needs --through <entry id>.');
+    const result = await api(url, token, 'POST', `/api/vaults/${vaultId}/scratchpad/consolidate`, {
+      throughId,
+      agentKey,
+    });
+    print(args, `consolidated ${result.marked} entr${result.marked === 1 ? 'y' : 'ies'} through #${throughId}`, result);
+    return;
+  }
+
+  if (cmd === 'skill') {
+    const sub = args._[1];
+    if (sub === 'write') {
+      const title = String(args.title || '').trim();
+      if (!title) fail('skill write needs --title.');
+      const body = (typeof args.content === 'string' ? args.content : String(await readStdin())).trim();
+      if (!body) fail('skill write needs a body via stdin or --content (first line: when to use it).');
+      const { note } = await api(url, token, 'POST', `/api/vaults/${vaultId}/scratchpad/skills`, {
+        title,
+        body,
+        agentKey,
+      });
+      print(args, `skill saved: ${note.title}`, note);
+      return;
+    }
+    if (sub === 'list') {
+      const params = new URLSearchParams();
+      if (agentKey) params.set('agent', agentKey);
+      const { skills = [] } = await api(url, token, 'GET', `/api/vaults/${vaultId}/scratchpad/skills?${params}`);
+      const human = skills.length
+        ? skills.map((s) => {
+            const decided = s.stats ? s.stats.wins + s.stats.losses : 0;
+            const record = s.stats && s.stats.uses > 0
+              ? (decided > 0 ? ` (won ${s.stats.wins}/${decided})` : ` (used ${s.stats.uses}x)`)
+              : '';
+            return `${s.shared ? '[shared] ' : ''}${s.title}${record}\n    ${s.description}`;
+          }).join('\n')
+        : '(no skills yet)';
+      print(args, human, skills);
+      return;
+    }
+    fail('skill needs a subcommand: write | list.');
+  }
+
+  if (cmd === 'recall') {
+    const query = args._.slice(1).join(' ').trim() || String(await readStdin()).trim();
+    if (!query) fail('recall needs a query (arguments or stdin).');
+    const params = new URLSearchParams({ q: query });
+    if (agentKey) params.set('agent', agentKey);
+    if (args.limit) params.set('limit', String(args.limit));
+    const { hits = [] } = await api(url, token, 'GET', `/api/vaults/${vaultId}/scratchpad/recall?${params}`);
+    const human = hits.length
+      ? hits.map((h) => {
+          const decided = h.stats ? h.stats.wins + h.stats.losses : 0;
+          const record = h.stats && decided > 0 ? ` (won ${h.stats.wins}/${decided})` : '';
+          return `[${h.kind}${h.shared ? ' shared' : ''}] ${h.title}${record}\n    ${h.snippet}`;
+        }).join('\n')
+      : `(nothing recalled for "${query}")`;
+    print(args, human, hits);
+    return;
+  }
+
+  if (cmd === 'outcome') {
+    const noteRef = args._.slice(1).join(' ').trim();
+    if (!noteRef) fail('outcome needs a note title or id.');
+    if (!args.result) fail('outcome needs --win, --loss, or --neutral.');
+    const { outcome } = await api(url, token, 'POST', `/api/vaults/${vaultId}/scratchpad/outcome`, {
+      noteRef,
+      result: args.result,
+      agentKey,
+    });
+    print(args, `recorded ${args.result} for "${outcome.title}" (now ${outcome.wins}/${outcome.uses} wins)`, outcome);
+    return;
+  }
+
+  if (cmd === 'promote') {
+    const noteRef = args._.slice(1).join(' ').trim();
+    if (!noteRef) fail('promote needs a note title or id.');
+    const result = await api(url, token, 'POST', `/api/vaults/${vaultId}/scratchpad/promote`, { noteRef, agentKey });
+    print(args, `promoted ${result.kind} "${result.note.title}" to shared agent ${result.kind === 'skill' ? 'skills' : 'memory'}`, result);
+    return;
+  }
+
+  if (cmd === 'open') {
+    const positional = args._.slice(1).join(' ').trim();
+    const flagBody = (() => {
+      for (const key of ['text', 'content']) {
+        const v = args[key];
+        if (v === true) fail(`--${key} needs a value.`);
+        if (typeof v === 'string' && v.trim()) return v.trim();
+      }
+      return '';
+    })();
+    const intent = (positional || flagBody || '').trim();
+    if (!intent) {
+      // list
+      const params = new URLSearchParams();
+      if (agentKey) params.set('agent', agentKey);
+      if (args.closed) params.set('closed', '1');
+      if (args.limit) params.set('limit', String(args.limit));
+      const { threads = [] } = await api(url, token, 'GET', `/api/vaults/${vaultId}/scratchpad/threads?${params}`);
+      const human = threads.length
+        ? threads.map((t) => {
+            const flag = t.closedAt ? ' ' : '*';
+            const bits = [`${flag}#${t.id} ${t.intent}`];
+            if (t.blockedOn) bits.push(`blocked: ${t.blockedOn}`);
+            if (t.nextTry) bits.push(`next: ${t.nextTry}`);
+            if (t.pointer) bits.push(`ptr: ${t.pointer}`);
+            if (t.closedAt) bits.push(`closed ${t.closedAt}${t.closeReason ? ` (${t.closeReason})` : ''}`);
+            return bits.join(' | ');
+          }).join('\n')
+        : '(no open threads)';
+      print(args, human, threads);
+      return;
+    }
+    const runIdRaw = Number(configString(config, 'runId') || process.env.CASCADE_RUN_ID);
+    const payload = {
+      intent,
+      blockedOn: typeof args.blocked === 'string' ? args.blocked : '',
+      nextTry: typeof args.next === 'string' ? args.next : '',
+      pointer: typeof args.pointer === 'string' ? args.pointer : '',
+      agentKey,
+      ...(Number.isFinite(runIdRaw) && runIdRaw > 0 ? { runId: runIdRaw } : {}),
+    };
+    const { thread } = await api(url, token, 'POST', `/api/vaults/${vaultId}/scratchpad/threads`, payload);
+    print(args, `opened #${thread.id}: ${thread.intent}`, thread);
+    return;
+  }
+
+  if (cmd === 'close') {
+    const idRaw = args._[1] || args.id;
+    const threadId = Number(idRaw);
+    if (!Number.isFinite(threadId) || threadId <= 0) fail('close needs a thread id: close <id> [--reason "…"].');
+    const reason = typeof args.reason === 'string' ? args.reason
+      : (typeof args.text === 'string' ? args.text : undefined);
+    const { thread } = await api(url, token, 'POST', `/api/vaults/${vaultId}/scratchpad/threads/${threadId}/close`, {
+      agentKey,
+      reason,
+    });
+    print(args, `closed #${thread.id}${thread.closeReason ? ` (${thread.closeReason})` : ''}`, thread);
+    return;
+  }
+
+  // status
+  const params = new URLSearchParams();
+  if (agentKey) params.set('agent', agentKey);
+  const { status } = await api(url, token, 'GET', `/api/vaults/${vaultId}/scratchpad/status?${params}`);
+  print(
+    args,
+    `unconsolidated: ${status.unconsolidated}`
+      + (status.openThreads != null ? `\nopen threads: ${status.openThreads}` : '')
+      + (status.oldestUnconsolidatedAt ? `\noldest: ${status.oldestUnconsolidatedAt}` : '')
+      + (status.lastConsolidationAt ? `\nlast consolidation: ${status.lastConsolidationAt}` : ''),
+    status,
+  );
+}
+
+main().catch((err) => fail(errorMessage(err)));

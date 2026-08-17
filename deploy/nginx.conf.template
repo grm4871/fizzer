@@ -1,0 +1,130 @@
+# Shared-memory edge limits run before requests reach Cascade. The burst budgets
+# permit normal app startup and reconnect storms while bounding one address.
+limit_req_zone  $binary_remote_addr zone=cascade_auth_per_ip:10m rate=10r/m;
+limit_req_zone  $binary_remote_addr zone=cascade_api_per_ip:20m  rate=20r/s;
+limit_req_zone  $binary_remote_addr zone=cascade_web_per_ip:20m  rate=30r/s;
+limit_conn_zone $binary_remote_addr zone=cascade_connections_per_ip:10m;
+
+# Routine deploys warm a candidate on the fixed private backup port. Keeping
+# this pair stable across nginx worker generations lets a connection that loses
+# the retiring primary retry before its request was sent, without maintenance.
+upstream cascade_app {
+    server 127.0.0.1:CASCADE_PRIMARY_PORT max_fails=1 fail_timeout=2s;
+    CASCADE_BACKUP_SERVER
+    keepalive 64;
+}
+
+# HTTP — ACME challenges + redirect to HTTPS
+server {
+    listen 80;
+    listen [::]:80;
+    server_name DOMAIN www.DOMAIN;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    location / {
+        return 301 https://DOMAIN$request_uri;
+    }
+}
+
+# HTTPS — reverse proxy to the app container
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name DOMAIN www.DOMAIN;
+
+    ssl_certificate     /etc/letsencrypt/live/DOMAIN/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/DOMAIN/privkey.pem;
+    include             /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam         /etc/letsencrypt/ssl-dhparams.pem;
+
+    client_max_body_size 32M;
+
+    # Database-changing releases retain the snapshot-backed maintenance path.
+    # Strictly state-identical routine releases use the rolling upstream above
+    # and never create this marker.
+    if (-f /run/cascade-maintenance) {
+        return 503;
+    }
+
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "no-referrer" always;
+
+    limit_req_status 429;
+    limit_conn_status 429;
+    proxy_connect_timeout 2s;
+    proxy_next_upstream error timeout http_502 http_503 http_504;
+    proxy_next_upstream_tries 2;
+
+    # GitHub's signed push hook is handled by the loopback-only listener, not
+    # Cascade. Keep this exact route ahead of the application catch-all so a
+    # successful app response cannot masquerade as an accepted deployment.
+    location = /_gh/deploy {
+        proxy_pass http://127.0.0.1:9001;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 2s;
+        proxy_read_timeout 15s;
+    }
+
+    location ^~ /api/auth/ {
+        limit_req zone=cascade_auth_per_ip burst=20 nodelay;
+        limit_conn cascade_connections_per_ip 20;
+        proxy_pass http://cascade_app;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 86400;
+    }
+
+    location ^~ /api/ {
+        limit_req zone=cascade_api_per_ip burst=100 nodelay;
+        limit_conn cascade_connections_per_ip 40;
+        proxy_pass http://cascade_app;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 86400;
+    }
+
+    location ^~ /socket.io/ {
+        limit_conn cascade_connections_per_ip 40;
+        proxy_pass http://cascade_app;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 86400;
+    }
+
+    location / {
+        limit_req zone=cascade_web_per_ip burst=200 nodelay;
+        limit_conn cascade_connections_per_ip 60;
+        proxy_pass http://cascade_app;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 86400;
+    }
+}

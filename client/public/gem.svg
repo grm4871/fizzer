@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title>Fizzer</title>
+  <defs><linearGradient id="g" x1="10" y1="8" x2="54" y2="56" gradientUnits="userSpaceOnUse"><stop stop-color="#f5c06c"/><stop offset="1" stop-color="#c77b25"/></linearGradient></defs>
+  <path d="M32 3 59 32 32 61 5 32 32 3Z" fill="#0d0b0a" stroke="url(#g)" stroke-width="2"/>
+  <path d="M32 9v46M9 32h46M14 14l36 36M50 14 14 50" stroke="#df9d3b" stroke-width="1" opacity=".36"/>
+  <path d="M18 15h28l6 10-20 31L12 25l6-10Z" fill="#12100e" stroke="url(#g)" stroke-width="2"/>
+  <path d="M18 15 32 56 46 15M12 25h40M22 25l10-10 10 10" fill="none" stroke="#e5aa50" stroke-width="1.5"/>
+  <circle cx="32" cy="25" r="3.2" fill="#f5c06c"/>
+</svg>
