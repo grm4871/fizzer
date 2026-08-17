@@ -38,7 +38,7 @@ if (has('rpmbuild')) makers.push(new MakerRpm({ options: { name: 'fizzer', produ
 export default {
   packagerConfig: {
     name: 'Fizzer',
-    executableName: 'cascade',
+    executableName: 'fizzer-desktop',
     icon: iconBase,
     asar: true,
     // agent-runner.cjs loads the generated local-agent implementation from

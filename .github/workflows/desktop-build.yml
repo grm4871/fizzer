@@ -43,9 +43,9 @@ jobs:
       run:
         working-directory: cascade-electron
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
 
@@ -71,7 +71,7 @@ jobs:
       # durable copies live on the rolling release.
       # ~2GB per run against a 500MB account quota, so expire them fast.
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cascade-${{ matrix.platform }}-${{ matrix.arch }}
           path: cascade-electron/out/make/**/*
@@ -90,7 +90,7 @@ jobs:
       contents: write
     steps:
       - name: Download native packages
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: cascade-*
           path: artifacts
