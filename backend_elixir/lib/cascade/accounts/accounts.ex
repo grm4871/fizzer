@@ -159,7 +159,8 @@ defmodule Cascade.Accounts.Accounts do
   end
 
   defp insert_registered(username, password_hash, invite_token, options) do
-    require_invite = Keyword.get(options, :require_invite, Cascade.Config.network_mode?())
+    require_invite =
+      Keyword.get(options, :require_invite, Cascade.Config.require_invite_registration?())
 
     try do
       user =

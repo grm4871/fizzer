@@ -17,6 +17,7 @@ services:
     environment:
       NODE_ENV: production
       CASCADE_NETWORK_MODE: "true"
+      CASCADE_REQUIRE_INVITE_REGISTRATION: "false"
       CASCADE_BIND_IP: "0.0.0.0"
       API_PORT: "3000"
       DOCS_DB_PATH: /data/docs.db
