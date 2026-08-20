@@ -25,6 +25,7 @@ const {
   rendererUrlForOrigin,
   resolveInstanceOrigin,
 } = require('./instance-origin.cjs');
+const { launchMacOSInstaller, prepareMacOSUpdate } = require('./macos-updater.cjs');
 
 const explicitUserDataDir = process.env.CASCADE_USER_DATA_DIR || process.env.CASCADE_ELECTRON_DATA_DIR;
 if (explicitUserDataDir) {
@@ -581,6 +582,17 @@ ipcMain.handle('app:updateAndRestart', async () => {
     }
 
     if (!canSelfUpdateFromSource()) {
+      if (process.platform === 'darwin' && app.isPackaged) {
+        desktopUpdateInProgress = true;
+        const update = await prepareMacOSUpdate({
+          arch: process.arch,
+          executablePath: app.getPath('exe'),
+        });
+        launchMacOSInstaller(update);
+        setTimeout(() => app.quit(), 250);
+        return { success: true, restarting: true };
+      }
+
       const downloadUrl = getDesktopDownloadUrl();
       await shell.openExternal(downloadUrl);
       return {

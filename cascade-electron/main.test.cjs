@@ -22,3 +22,10 @@ test('desktop navigation and runner helpers are pinned to the main-process insta
   assert.match(source, /connectDesktopRunner\(token, INSTANCE_ORIGIN\)/);
   assert.doesNotMatch(source, /hostname\.endsWith\('\.cscd\.online'\)/);
 });
+
+test('packaged macOS updates download before launching the detached installer', () => {
+  const prepareAt = source.indexOf('await prepareMacOSUpdate({');
+  const launchAt = source.indexOf('launchMacOSInstaller(update);');
+  const quitAt = source.indexOf('setTimeout(() => app.quit(), 250);');
+  assert.ok(prepareAt > 0 && launchAt > prepareAt && quitAt > launchAt);
+});
