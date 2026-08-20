@@ -33,6 +33,10 @@ end
 
 if config_env() != :test do
   network_mode = parse_bool.(System.get_env("CASCADE_NETWORK_MODE"), false)
+
+  require_invite_registration =
+    parse_bool.(System.get_env("CASCADE_REQUIRE_INVITE_REGISTRATION"), network_mode)
+
   repo_root = System.get_env("CASCADE_REPO_ROOT") || Path.expand("../..", __DIR__)
   data_dir = System.get_env("CASCADE_DATA_DIR") || repo_root
 
@@ -56,6 +60,7 @@ if config_env() != :test do
       ),
     qmd_worker_enabled: parse_bool.(System.get_env("CASCADE_QMD_WORKER_ENABLED"), true),
     network_mode: network_mode,
+    require_invite_registration: require_invite_registration,
     allowed_origins:
       (System.get_env("CASCADE_ALLOWED_ORIGINS") || "")
       |> String.split(",", trim: true)

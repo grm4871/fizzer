@@ -5,6 +5,9 @@ defmodule Cascade.Config do
 
   def network_mode?, do: Application.fetch_env!(:cascade_elixir, :network_mode)
 
+  def require_invite_registration?,
+    do: Application.get_env(:cascade_elixir, :require_invite_registration, network_mode?())
+
   def jwt_secret! do
     case System.get_env("JWT_SECRET") do
       value when is_binary(value) and value != "" and value != @legacy_dev_secret ->

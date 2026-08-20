@@ -38,7 +38,7 @@ defmodule CascadeWeb.AccountRouter do
              Keyword.get(
                conn.assigns.domain_options,
                :require_invite,
-               Cascade.Config.network_mode?()
+               Cascade.Config.require_invite_registration?()
              )
          ) do
       {:ok, user, token} -> respond_session(conn, 201, user, token)
