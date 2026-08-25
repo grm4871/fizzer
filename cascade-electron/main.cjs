@@ -26,6 +26,11 @@ const {
   resolveInstanceOrigin,
 } = require('./instance-origin.cjs');
 const { launchMacOSInstaller, prepareMacOSUpdate } = require('./macos-updater.cjs');
+const { installDesktopShellPath } = require('./shell-path.cjs');
+
+// Finder/Dock launches receive launchd's minimal PATH instead of the user's
+// shell PATH. Repair it before runner/probe modules capture CLI binary names.
+installDesktopShellPath({ packaged: app.isPackaged });
 
 const explicitUserDataDir = process.env.CASCADE_USER_DATA_DIR || process.env.CASCADE_ELECTRON_DATA_DIR;
 if (explicitUserDataDir) {

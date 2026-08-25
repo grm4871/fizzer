@@ -177,6 +177,7 @@ describe('formatAgentChatPrompt', () => {
   it.each([
     ['hermes', 'hermes', 'Hermes'],
     ['omp', 'omp', 'OMP'],
+    ['pi', 'pi', 'Pi'],
   ])('keeps %s close to its direct CLI prompt', (agentId, mention, displayName) => {
     const nativeCli = { ...registration, agentId, mention, displayName };
     const request = 'fix the runner and deploy';

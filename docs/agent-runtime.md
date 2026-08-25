@@ -3,7 +3,7 @@
 ## Supported adapters
 
 The shared agent adapter is `cli-agents/cli-agent.ts`. Current agent IDs include
-Claude Code, Codex, Grok, Antigravity, Copilot, Hermes, Akron Grok, and OMP.
+Claude Code, Codex, Grok, Antigravity, Copilot, Hermes, Akron Grok, OMP, and Pi.
 Available models may be supplemented by a live capability probe from the
 desktop.
 

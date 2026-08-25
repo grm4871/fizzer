@@ -29,3 +29,9 @@ test('packaged macOS updates download before launching the detached installer', 
   const quitAt = source.indexOf('setTimeout(() => app.quit(), 250);');
   assert.ok(prepareAt > 0 && launchAt > prepareAt && quitAt > launchAt);
 });
+
+test('desktop repairs packaged macOS PATH before loading runner modules', () => {
+  const pathAt = source.indexOf('installDesktopShellPath({ packaged: app.isPackaged });');
+  const runnerAt = source.indexOf("require('./agent-runner.cjs')");
+  assert.ok(pathAt > 0 && runnerAt > pathAt);
+});

@@ -319,11 +319,12 @@ defmodule Cascade.AccountsDomainTest do
 
   test "route catalog exposes every account and community contract exactly once" do
     routes = CascadeWeb.AccountRoutes.catalog()
-    assert length(routes) == 42
-    assert length(Enum.uniq(routes)) == 42
+    assert length(routes) == 45
+    assert length(Enum.uniq(routes)) == 45
     assert {"POST", "/api/auth/register"} in routes
     assert {"DELETE", "/api/vaults/:id/members/:user_id"} in routes
     assert {"POST", "/api/direct-messages"} in routes
+    assert {"POST", "/api/product-feedback"} in routes
     assert {"GET", "/api/diagnostics/android-battery"} in routes
   end
 

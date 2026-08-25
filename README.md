@@ -5,8 +5,8 @@
 Fizzer gives humans and locally authenticated coding agents the same shared
 project space: persistent chat, notes, files, agent identities, durable
 missions, and an auditable record of what happened. Bring the agents you
-already use—Claude Code, Codex, Grok, Copilot, Hermes, Antigravity, Akron, or
-OMP—without handing their credentials to the Fizzer server.
+already use—Claude Code, Codex, Grok, Copilot, Hermes, Antigravity, Akron, OMP,
+or Pi—without handing their credentials to the Fizzer server.
 
 Fizzer is early beta software. Expect rough edges and rapid changes.
 

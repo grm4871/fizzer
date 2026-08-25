@@ -30,6 +30,7 @@ defmodule CascadeWeb.AccountRoutes do
     {"POST", "/api/vaults/:id/reports"},
     {"GET", "/api/vaults/:id/reports"},
     {"PATCH", "/api/vaults/:id/reports/:report_id"},
+    {"GET", "/api/admin/reports"},
     {"PATCH", "/api/admin/reports/:report_id"},
     {"POST", "/api/product-feedback"},
     {"GET", "/api/admin/product-feedback"},

@@ -19,6 +19,8 @@ const fakeBin = path.join(scratch, 'fake-codex');
 const fakeAkronBin = path.join(scratch, 'fake-akron');
 const argLog = path.join(scratch, 'args.jsonl');
 const fakeHermesBin = path.join(scratch, 'fake-hermes');
+const fakePiBin = path.join(scratch, 'fake-pi');
+const piArgLog = path.join(scratch, 'pi-args.jsonl');
 const hermesArgLog = path.join(scratch, 'hermes-args.jsonl');
 const hermes503Log = path.join(scratch, 'hermes-503-attempts.txt');
 const hermes503Counter = path.join(scratch, 'hermes-503-count');
@@ -127,9 +129,22 @@ process.stderr.write('\\nsession_id: ' + session + '\\n');
 process.exit(0);
 `);
 fs.chmodSync(fakeHermesBin, 0o755);
+fs.writeFileSync(fakePiBin, `#!/usr/bin/env node
+const fs = require('fs');
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(piArgLog)}, JSON.stringify(args) + '\\n');
+process.stdout.write(JSON.stringify({ type: 'session', version: 3, id: 'pi-session-1', cwd: process.cwd() }) + '\\n');
+process.stdout.write(JSON.stringify({ type: 'message_update', usage: {}, assistantMessageEvent: { type: 'thinking_delta', contentIndex: 0, delta: 'checking' } }) + '\\n');
+process.stdout.write(JSON.stringify({ type: 'tool_execution_start', toolCallId: 'tool-1', toolName: 'read', args: { path: 'README.md' } }) + '\\n');
+process.stdout.write(JSON.stringify({ type: 'tool_execution_end', toolCallId: 'tool-1', toolName: 'read', result: { content: [{ type: 'text', text: 'contents' }] }, isError: false }) + '\\n');
+process.stdout.write(JSON.stringify({ type: 'message_update', usage: {}, assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'done' } }) + '\\n');
+process.exit(0);
+`);
+fs.chmodSync(fakePiBin, 0o755);
 process.env.CODEX_BIN = fakeBin;
 process.env.AKRON_BIN = fakeAkronBin;
 process.env.HERMES_BIN = fakeHermesBin;
+process.env.PI_BIN = fakePiBin;
 process.env.RUNNER_CLI_HEARTBEAT_MS = '25';
 process.env.RUNNER_HERMES_UPSTREAM_BACKOFF_MS = '20';
 process.env.RUNNER_AKRON_IDLE_TIMEOUT_MS = '1000';
@@ -151,6 +166,29 @@ function resetArgs() {
 }
 
 const emit = () => {};
+
+test('Pi uses JSON mode, resumes by session id, and translates native events', async () => {
+  fs.writeFileSync(piArgLog, '');
+  const events: Array<{ type: string; payload: any }> = [];
+  const result = await runCliAgent({
+    agent: 'pi',
+    context: '',
+    userPrompt: 'inspect it',
+    cwd: scratch,
+    resumeSessionId: 'prior-pi-session',
+    model: 'openai/gpt-5.6-terra',
+    emit: (type, payload) => events.push({ type, payload }),
+  });
+  const args = JSON.parse(fs.readFileSync(piArgLog, 'utf8').trim());
+  assert.deepEqual(args.slice(0, 5), ['--mode', 'json', '--approve', '--session', 'prior-pi-session']);
+  assert.equal(args[args.indexOf('--model') + 1], 'openai/gpt-5.6-terra');
+  assert.equal(args.at(-1), 'inspect it');
+  assert.equal(result.sessionId, 'pi-session-1');
+  assert.equal(result.summary, 'done');
+  assert.ok(events.some((event) => event.type === 'text' && event.payload.message.content[0].type === 'thinking'));
+  assert.ok(events.some((event) => event.type === 'text' && event.payload.message.content[0].type === 'tool_use'));
+  assert.ok(events.some((event) => event.type === 'user' && event.payload.message.content[0].type === 'tool_result'));
+});
 
 async function waitFor(predicate: () => boolean, timeoutMs = 2_000) {
   const deadline = Date.now() + timeoutMs;

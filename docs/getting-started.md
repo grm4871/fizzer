@@ -10,7 +10,7 @@
 
 Agent backends are optional for basic note and chat development. To execute
 agents, install and authenticate at least one supported local CLI, such as
-Codex, Grok, Claude Code, Copilot, Hermes, or OMP.
+Codex, Grok, Claude Code, Copilot, Hermes, OMP, or Pi.
 
 ## Install
 

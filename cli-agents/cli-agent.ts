@@ -486,8 +486,9 @@ const HERMES_UPSTREAM_BACKOFF_MS = Math.max(250, Number(process.env.RUNNER_HERME
 const HERMES_UPSTREAM_BACKOFF_CAP_MS = Math.max(HERMES_UPSTREAM_BACKOFF_MS, Number(process.env.RUNNER_HERMES_UPSTREAM_BACKOFF_CAP_MS || 30_000));
 const AKRON_BIN = process.env.AKRON_BIN || 'akron';
 const OMP_BIN = process.env.OMP_BIN || 'omp';
+const PI_BIN = process.env.PI_BIN || 'pi';
 
-export type CliAgentId = 'codex' | 'grok' | 'antigravity' | 'copilot' | 'hermes' | 'akron-grok' | 'omp';
+export type CliAgentId = 'codex' | 'grok' | 'antigravity' | 'copilot' | 'hermes' | 'akron-grok' | 'omp' | 'pi';
 
 const CLI_AGENT_LABELS: Record<CliAgentId, string> = {
   codex: 'Codex',
@@ -497,6 +498,7 @@ const CLI_AGENT_LABELS: Record<CliAgentId, string> = {
   hermes: 'Hermes',
   'akron-grok': 'Akron --grok',
   omp: 'OMP',
+  pi: 'Pi',
 };
 
 export function getCliAgentBin(agent: CliAgentId): string {
@@ -513,6 +515,8 @@ export function getCliAgentBin(agent: CliAgentId): string {
       return AKRON_BIN;
     case 'omp':
       return OMP_BIN;
+    case 'pi':
+      return PI_BIN;
     case 'antigravity':
       return process.env.ANTIGRAVITY_BIN || path.join(os.homedir(), '.gemini', 'antigravity', 'bin', 'agentapi');
   }
@@ -574,7 +578,7 @@ function assertCliAgentAvailable(agent: CliAgentId): void {
 }
 
 interface CliAgentOpts {
-  agent: 'codex' | 'grok' | 'antigravity' | 'copilot' | 'hermes' | 'akron-grok' | 'omp';
+  agent: CliAgentId;
   /** Minimal IDE-style context (selected note + vault). Prepended to the prompt. */
   context: string;
   userPrompt: string;
@@ -650,6 +654,8 @@ export async function runCliAgent(opts: CliAgentOpts): Promise<CliAgentResult> {
     return runAkronGrok(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.runId, opts.env);
   } else if (opts.agent === 'omp') {
     return runOmp(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.images || [], opts.runId, opts.model, opts.env);
+  } else if (opts.agent === 'pi') {
+    return runPi(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.images || [], opts.runId, opts.model, opts.env);
   } else {
     return runAntigravity(
       prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.runId, opts.db, opts.model, opts.yolo, opts.env,
@@ -2738,31 +2744,23 @@ function driveHermesProcess(
   });
 }
 // ═══════════════════════════════════════════════════════════════
-// OMP AGENT
+// PI-FAMILY JSON EVENT AGENTS
 // ═══════════════════════════════════════════════════════════════
 
 /**
  * Runs the OMP CLI and translates its JSONL event stream into content blocks.
  */
-async function runOmp(
-  prompt: string,
+async function runPiJsonAgent(
+  bin: string,
+  label: string,
+  args: string[],
   cwd: string,
   emit: AgentEmit,
-  resumeId?: string,
-  images: CliImage[] = [],
   runId?: number,
-  model?: string,
   env?: NodeJS.ProcessEnv,
 ): Promise<CliAgentResult> {
-  const { paths: imagePaths, cleanup } = writeTempImages(images);
-  const imageArgs = imagePaths.map((p) => `@${p}`);
-  const modelArgs = model ? ['--model', model] : [];
-  const baseArgs = [prompt, '--mode', 'json', '--allow-home', ...imageArgs, ...modelArgs];
-  const args = resumeId ? ['--resume', resumeId, ...baseArgs] : baseArgs;
-
   let summary = '';
-  let reasoningText = '';
-  let sessionId: string | undefined = resumeId;
+  let sessionId: string | undefined;
   const emittedTool = new Set<string>();
   let emittedText = false;
   let lastWasText = false;
@@ -2791,7 +2789,6 @@ async function runOmp(
             if (ev.assistantMessageEvent) {
               const ame = ev.assistantMessageEvent;
               if (ame.type === 'thinking_delta' && ame.delta) {
-                reasoningText += ame.delta;
                 emit('text', { message: { content: [{ type: 'thinking', thinking: ame.delta }] } });
                 lastWasText = false;
               } else if (ame.type === 'text_delta' && ame.delta) {
@@ -2867,19 +2864,41 @@ async function runOmp(
     }
   };
 
+  const summaryText = await driveProcess(
+    bin, args, cwd, onLine, () => summary || '', label, runId, emit, env,
+  );
+  return { summary: summaryText, sessionId };
+}
+
+async function runOmp(
+  prompt: string, cwd: string, emit: AgentEmit, resumeId?: string,
+  images: CliImage[] = [], runId?: number, model?: string, env?: NodeJS.ProcessEnv,
+): Promise<CliAgentResult> {
+  const { paths, cleanup } = writeTempImages(images);
+  const baseArgs = [prompt, '--mode', 'json', '--allow-home', ...paths.map((file) => `@${file}`), ...(model ? ['--model', model] : [])];
   try {
-    const summaryText = await driveProcess(
-      OMP_BIN,
-      args,
-      cwd,
-      onLine,
-      () => summary || '',
-      'OMP',
-      runId,
-      emit,
-      env
-    );
-    return { summary: summaryText, sessionId };
+    const result = await runPiJsonAgent(OMP_BIN, 'OMP', resumeId ? ['--resume', resumeId, ...baseArgs] : baseArgs, cwd, emit, runId, env);
+    return { ...result, sessionId: result.sessionId || resumeId };
+  } finally {
+    cleanup();
+  }
+}
+
+async function runPi(
+  prompt: string, cwd: string, emit: AgentEmit, resumeId?: string,
+  images: CliImage[] = [], runId?: number, model?: string, env?: NodeJS.ProcessEnv,
+): Promise<CliAgentResult> {
+  const { paths, cleanup } = writeTempImages(images);
+  const args = [
+    '--mode', 'json', '--approve',
+    ...(resumeId ? ['--session', resumeId] : []),
+    ...(model ? ['--model', model] : []),
+    ...paths.map((file) => `@${file}`),
+    prompt,
+  ];
+  try {
+    const result = await runPiJsonAgent(PI_BIN, 'Pi', args, cwd, emit, runId, env);
+    return { ...result, sessionId: result.sessionId || resumeId };
   } finally {
     cleanup();
   }

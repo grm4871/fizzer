@@ -5,7 +5,7 @@ defmodule Cascade.Runs.Store do
   alias Cascade.Realtime.OrderedPublisher
 
   @terminal ~w(completed failed canceled)
-  @agents ~w(claude-code codex grok antigravity copilot hermes akron-grok omp)
+  @agents ~w(claude-code codex grok antigravity copilot hermes akron-grok omp pi)
   @run_select """
   id,vault_id,note_id,prompt,agent,session_id,conversation_id,status,started_at,
   finished_at,summary,model,chat_dispatch_id

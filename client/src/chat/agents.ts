@@ -3,7 +3,7 @@
  * Keep in sync with server AgentId / CLI agent lists where applicable.
  */
 
-export type AgentId = 'claude-code' | 'codex' | 'grok' | 'antigravity' | 'copilot' | 'hermes' | 'akron-grok' | 'omp';
+export type AgentId = 'claude-code' | 'codex' | 'grok' | 'antigravity' | 'copilot' | 'hermes' | 'akron-grok' | 'omp' | 'pi';
 
 export const CHAT_AGENTS: Array<{ id: AgentId; label: string }> = [
   { id: 'claude-code', label: 'Claude' },
@@ -14,6 +14,7 @@ export const CHAT_AGENTS: Array<{ id: AgentId; label: string }> = [
   { id: 'hermes', label: 'Hermes' },
   { id: 'akron-grok', label: 'Akron --grok' },
   { id: 'omp', label: 'OMP' },
+  { id: 'pi', label: 'Pi' },
 ];
 
 /** Preserve authoritative in-memory members across a transient hydration error. */
@@ -112,6 +113,7 @@ export const CHAT_AGENT_MODEL_PRESETS: Record<AgentId, { id: string; label: stri
     { id: 'xai-oauth/grok-4.20-0309-non-reasoning', label: 'Grok · 4.20 Non-Reasoning' },
     { id: 'xai-oauth/grok-composer-2.5-fast', label: 'Grok · Composer 2.5 Fast' },
   ],
+  pi: [],
 };
 
 export function agentLabel(agentId: string) {
@@ -195,7 +197,7 @@ export function formatAgentChatPrompt(
   const selfHandle = registration.mention || registration.agentId;
   const selfName = registration.displayName || selfAgent?.label || registration.agentId;
   const nativeScratchpad = registration.agentId === 'akron-grok';
-  const compactNativeCli = registration.agentId === 'hermes' || registration.agentId === 'omp';
+  const compactNativeCli = registration.agentId === 'hermes' || registration.agentId === 'omp' || registration.agentId === 'pi';
   const coordinatorGuidance = registration.orchestrator
     ? ' You are this channel’s coordinator. Handle clear requests directly and treat actionable requests as implementation authority; complete and verify them. Use a tiny prefilled clarification card only when the user asks for a mission/kanban contract or a material scope, authority, or product choice is genuinely unclear. Then use `cascade-chat mission start`, `cascade-chat mission delegate` only for independent work (use `--after`, `--priority`, `--effort`, or `--anonymous` for parallel clones), reconcile it, and `cascade-chat mission finish`. Keep mission summaries short and the user responsive while workers run. Before shipping run `npm run build`; after push, wait for green Deploy with `gh run watch`. Open chat images with `cascade-chat attachment --message-id <id>`.'
     : '';

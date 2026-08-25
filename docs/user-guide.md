@@ -32,7 +32,7 @@ A **channel** is a persistent conversation inside a vault. Use a channel for que
 
 ### Agents are local workers
 
-An agent registration connects a channel to a locally authenticated CLI such as Claude Code, Codex, Grok, Copilot, Hermes, Antigravity, Akron Grok, or OMP. The agent process and provider credentials stay on the owner’s desktop. Fizzer stores the workspace conversation, run events, and results—not the provider’s secret credentials.
+An agent registration connects a channel to a locally authenticated CLI such as Claude Code, Codex, Grok, Copilot, Hermes, Antigravity, Akron Grok, OMP, or Pi. The agent process and provider credentials stay on the owner’s desktop. Fizzer stores the workspace conversation, run events, and results—not the provider’s secret credentials.
 
 ## Ways to use Fizzer
 
