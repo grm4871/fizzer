@@ -9779,11 +9779,11 @@ a.chat-mission-chip:hover { color: var(--text-primary); border-color: var(--acce
 .documentation-assistant-header h2 { margin: 2px 0 3px; font-size: 0.98rem; }
 .documentation-assistant-header p { margin: 0; color: var(--text-tertiary); font-size: 0.72rem; line-height: 1.4; }
 .documentation-assistant-header-actions { display: flex; align-items: center; gap: 6px; }
-.documentation-assistant-header-actions .documentation-assistant-hide { display: inline-flex; align-items: center; gap: 5px; min-height: 30px; padding: 5px 9px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg-raised); color: var(--text-secondary); font-size: 0.7rem; }
 .documentation-assistant-tabs { display: flex; gap: 4px; padding: 8px 10px; border-bottom: 1px solid var(--border-subtle); background: var(--bg-raised); }
 .documentation-assistant-tabs button,
 .documentation-assistant-empty button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 32px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg-surface); color: var(--text-secondary); font-size: 0.72rem; }
 .documentation-assistant-tabs button.is-active { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); color: var(--text-primary); background: color-mix(in srgb, var(--accent) 12%, var(--bg-surface)); }
+.documentation-assistant-tabs .documentation-assistant-hide-launcher { margin-left: auto; }
 .documentation-assistant-body { min-height: 0; overflow-y: auto; padding: 14px; display: grid; align-content: start; gap: 12px; }
 .documentation-assistant-empty { min-height: 210px; display: grid; place-content: center; justify-items: center; gap: 8px; color: var(--text-tertiary); text-align: center; }
 .documentation-assistant-empty strong { color: var(--text-primary); font-size: 0.82rem; }

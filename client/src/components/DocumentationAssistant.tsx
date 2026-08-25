@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { BookOpen, Bot, Flag, Loader2, Maximize2, MessageCircle, Minimize2, Send, Square, X } from 'lucide-react';
+import { BookOpen, Bot, EyeOff, Flag, Loader2, Maximize2, MessageCircle, Minimize2, Send, Square, X } from 'lucide-react';
 import { ChatMessageText } from './ChatMarkdown';
 import type { DesktopRunnerHealth } from '../chat/types';
 import {
@@ -41,6 +41,7 @@ export function DocumentationAssistant({
   const [feedbackError, setFeedbackError] = useState('');
   const [view, setView] = useState<'ask' | 'guide'>('ask');
   const [expanded, setExpanded] = useState(false);
+  const [launcherVisible, setLauncherVisible] = useState(true);
 
   useEffect(() => {
     if (!open) return;
@@ -52,6 +53,12 @@ export function DocumentationAssistant({
     onClose();
     setExpanded(false);
     window.setTimeout(() => launcherRef.current?.focus(), 0);
+  }, [onClose]);
+
+  const hideLauncher = useCallback(() => {
+    onClose();
+    setExpanded(false);
+    setLauncherVisible(false);
   }, [onClose]);
 
   const submit = useCallback(async () => {
@@ -140,7 +147,7 @@ export function DocumentationAssistant({
 
   return (
     <>
-      <button
+      {launcherVisible && <button
         ref={launcherRef}
         type="button"
         className="documentation-assistant-launcher"
@@ -152,7 +159,7 @@ export function DocumentationAssistant({
         title="Ask the Fizzer guide"
       >
         {open ? <X size={18} /> : <Bot size={18} />}
-      </button>
+      </button>}
 
       <aside
         id="fizzer-guide-dialog"
@@ -179,13 +186,14 @@ export function DocumentationAssistant({
             >
               {expanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
             </button>
-            <button type="button" className="documentation-assistant-hide" onClick={close}><X size={14} /> Hide</button>
+            <button type="button" className="btn-icon" onClick={close} aria-label="Close guide"><X size={16} /></button>
           </div>
         </header>
 
         <nav className="documentation-assistant-tabs" aria-label="Guide options">
           <button type="button" className={view === 'ask' ? 'is-active' : ''} onClick={() => setView('ask')}><MessageCircle size={14} /> Ask</button>
           <button type="button" className={view === 'guide' ? 'is-active' : ''} onClick={() => setView('guide')}><BookOpen size={14} /> Read guide</button>
+          <button type="button" className="documentation-assistant-hide-launcher" onClick={hideLauncher}><EyeOff size={14} /> Hide help button</button>
         </nav>
 
         <div className="documentation-assistant-body">
