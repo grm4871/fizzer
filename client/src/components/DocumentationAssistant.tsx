@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Bot, Flag, Loader2, MessageCircle, Send, Square, X } from 'lucide-react';
+import { BookOpen, Bot, Flag, Loader2, Maximize2, MessageCircle, Minimize2, Send, Square, X } from 'lucide-react';
 import { ChatMessageText } from './ChatMarkdown';
 import type { DesktopRunnerHealth } from '../chat/types';
 import {
@@ -39,6 +39,8 @@ export function DocumentationAssistant({
   const [feedbackDraft, setFeedbackDraft] = useState('');
   const [feedbackState, setFeedbackState] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
   const [feedbackError, setFeedbackError] = useState('');
+  const [view, setView] = useState<'ask' | 'guide'>('ask');
+  const [expanded, setExpanded] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -48,6 +50,7 @@ export function DocumentationAssistant({
 
   const close = useCallback(() => {
     onClose();
+    setExpanded(false);
     window.setTimeout(() => launcherRef.current?.focus(), 0);
   }, [onClose]);
 
@@ -153,30 +156,52 @@ export function DocumentationAssistant({
 
       <aside
         id="fizzer-guide-dialog"
-        className={`documentation-assistant${open ? ' is-open' : ''}`}
+        className={`documentation-assistant${open ? ' is-open' : ''}${expanded ? ' is-expanded' : ''}`}
         role="dialog"
         aria-modal="false"
         aria-labelledby="fizzer-guide-title"
+        data-run-status={status}
         hidden={!open}
       >
         <header className="documentation-assistant-header">
           <div>
             <span className="surface-kicker">In-app help</span>
             <h2 id="fizzer-guide-title">Ask the Fizzer guide</h2>
-            <p>Answers come from the user guide through your local Codex runner.</p>
+            <p>Read the full guide here, or ask questions with a connected runner.</p>
           </div>
-          <button type="button" className="btn-icon" onClick={close} aria-label="Close guide assistant"><X size={16} /></button>
+          <div className="documentation-assistant-header-actions">
+            <button
+              type="button"
+              className="btn-icon"
+              onClick={() => setExpanded((current) => !current)}
+              aria-label={expanded ? 'Exit full screen' : 'View guide full screen'}
+              title={expanded ? 'Exit full screen' : 'Full screen'}
+            >
+              {expanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+            </button>
+            <button type="button" className="documentation-assistant-hide" onClick={close}><X size={14} /> Hide</button>
+          </div>
         </header>
 
+        <nav className="documentation-assistant-tabs" aria-label="Guide options">
+          <button type="button" className={view === 'ask' ? 'is-active' : ''} onClick={() => setView('ask')}><MessageCircle size={14} /> Ask</button>
+          <button type="button" className={view === 'guide' ? 'is-active' : ''} onClick={() => setView('guide')}><BookOpen size={14} /> Read guide</button>
+        </nav>
+
         <div className="documentation-assistant-body">
-          {turns.length === 0 && (
+          {view === 'guide' ? (
+            <article className="documentation-assistant-guide">
+              <ChatMessageText messageId="fizzer-user-guide" body={guideMarkdown} mentionableAliases={[]} />
+            </article>
+          ) : turns.length === 0 && (
             <div className="documentation-assistant-empty">
               <MessageCircle size={22} />
               <strong>What would you like to do?</strong>
               <span>Ask why a feature exists, where to find it, or how to use it.</span>
+              <button type="button" onClick={() => setView('guide')}><BookOpen size={14} /> Browse the guide without an AI runner</button>
             </div>
           )}
-          {turns.map((turn) => (
+          {view === 'ask' && turns.map((turn) => (
             <article className={`documentation-assistant-turn is-${turn.role}`} key={turn.id}>
               <span className="documentation-assistant-turn-label">{turn.role === 'user' ? 'You' : 'Fizzer guide'}</span>
               {turn.body ? (
@@ -186,13 +211,13 @@ export function DocumentationAssistant({
               ) : <span className="documentation-assistant-thinking"><Loader2 size={14} className="is-spinning" /> Thinking…</span>}
             </article>
           ))}
-          {runnerHealth?.online === false && status !== 'completed' && (
-            <p className="documentation-assistant-notice">Open Fizzer Desktop or connect a compatible runner to ask questions.</p>
+          {view === 'ask' && runnerHealth?.online === false && (
+            <p className="documentation-assistant-notice">Questions need a connected runner. You can still read the complete guide above.</p>
           )}
-          {error && <p className="documentation-assistant-error" role="alert">{error}</p>}
+          {view === 'ask' && error && <p className="documentation-assistant-error" role="alert">{error}</p>}
         </div>
 
-        <footer className="documentation-assistant-footer">
+        {view === 'ask' && <footer className="documentation-assistant-footer">
           {feedbackOpen ? (
             <div className="documentation-assistant-feedback">
               <strong>Send product feedback</strong>
@@ -232,7 +257,7 @@ export function DocumentationAssistant({
               </div>
             </>
           )}
-        </footer>
+        </footer>}
       </aside>
     </>
   );
