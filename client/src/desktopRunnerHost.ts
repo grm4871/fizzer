@@ -45,6 +45,8 @@ type DelegatedRunPayload = {
   yolo?: boolean;
   hermesProfile?: string;
   hermesSafeMode?: boolean;
+  sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
+  contextMode?: 'self-contained';
   resumeSessionId?: string;
   images?: unknown[];
   conversationId?: string;

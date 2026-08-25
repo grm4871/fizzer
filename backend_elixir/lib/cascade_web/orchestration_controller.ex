@@ -257,6 +257,8 @@ defmodule CascadeWeb.OrchestrationController do
         note_id = blank_nil(params["note_id"])
         conversation_id = blank_nil(params["conversation_id"])
         model = PromptContext.normalize_model(params["model"])
+        context_mode = PromptContext.normalize_context_mode(params["contextMode"])
+        sandbox = PromptContext.normalize_sandbox(params["sandbox"])
 
         resume_session_id =
           if conversation_id do
@@ -274,7 +276,8 @@ defmodule CascadeWeb.OrchestrationController do
             user.id,
             prompt,
             agent,
-            resume_session_id
+            resume_session_id,
+            context_mode
           )
 
         case Store.start(vault.id, note_id, effective_prompt, agent,
@@ -292,7 +295,8 @@ defmodule CascadeWeb.OrchestrationController do
               agent,
               effective_prompt,
               resume_session_id,
-              params
+              params,
+              %{context_mode: context_mode, sandbox: sandbox}
             )
 
           {:error, message} ->
@@ -914,6 +918,7 @@ defmodule CascadeWeb.OrchestrationController do
     end
   end
 
+  defp chat_value(params, key), do: field(params["chat"] || %{}, String.to_atom(key))
   defp dispatch_value(nil, _key, fallback), do: fallback
   defp dispatch_value(dispatch, key, fallback), do: field(dispatch, key, fallback)
 
@@ -921,8 +926,6 @@ defmodule CascadeWeb.OrchestrationController do
 
   defp dispatch_message_value(dispatch, key, fallback),
     do: field(field(dispatch, :message, %{}), key, fallback)
-
-  defp chat_value(params, key), do: field(params["chat"] || %{}, String.to_atom(key))
 
   defp delegate_or_fail(
          conn,
@@ -932,7 +935,8 @@ defmodule CascadeWeb.OrchestrationController do
          agent,
          prompt,
          resume_session_id,
-         params
+         params,
+         runtime
        ) do
     vault_root = ContentStore.get_vault(vault_id, user_id).root_path
 
@@ -945,7 +949,8 @@ defmodule CascadeWeb.OrchestrationController do
           agent,
           prompt,
           params,
-          resume_session_id
+          resume_session_id,
+          runtime
         )
       )
 

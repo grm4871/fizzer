@@ -48,19 +48,38 @@ defmodule Cascade.Runs.PromptContext do
   def agent_memory_key("akron-grok"), do: "akron"
   def agent_memory_key(agent), do: to_string(agent)
 
-  def enrich_prompt(vault_id, user_id, prompt, agent, resume_session_id) do
-    if resume_session_id in [nil, ""] do
-      key = agent_memory_key(agent)
-      memory = memory_context(vault_id, user_id, prompt, key)
-      scratchpad = scratchpad_context(vault_id, user_id, key)
-
-      [@app_context, memory, scratchpad]
-      |> Enum.reject(&(&1 in [nil, ""]))
-      |> Enum.join("\n\n")
-      |> then(&(prompt <> "\n\n[Context: " <> &1 <> "]"))
-      |> Privacy.redact_blocks()
-    else
+  def enrich_prompt(vault_id, user_id, prompt, agent, resume_session_id, mode \\ :default) do
+    if normalize_context_mode(mode) == :self_contained do
       Privacy.redact_blocks(prompt)
+    else
+      if resume_session_id in [nil, ""] do
+        key = agent_memory_key(agent)
+        memory = memory_context(vault_id, user_id, prompt, key)
+        scratchpad = scratchpad_context(vault_id, user_id, key)
+
+        [@app_context, memory, scratchpad]
+        |> Enum.reject(&(&1 in [nil, ""]))
+        |> Enum.join("\n\n")
+        |> then(&(prompt <> "\n\n[Context: " <> &1 <> "]"))
+        |> Privacy.redact_blocks()
+      else
+        Privacy.redact_blocks(prompt)
+      end
+    end
+  end
+
+  def normalize_context_mode("self-contained"), do: :self_contained
+  def normalize_context_mode(:self_contained), do: :self_contained
+  def normalize_context_mode(_mode), do: :default
+
+  def normalize_sandbox("read-only"), do: "read-only"
+  def normalize_sandbox(:read_only), do: "read-only"
+  def normalize_sandbox(_mode), do: nil
+
+  defp context_mode_payload(mode) do
+    case normalize_context_mode(mode) do
+      :self_contained -> "self-contained"
+      :default -> nil
     end
   end
 
@@ -95,6 +114,11 @@ defmodule Cascade.Runs.PromptContext do
     |> maybe_put(:reasoningEffort, field(runtime, :reasoning_effort))
     |> maybe_put(:resumeSessionId, resume_session_id)
     |> maybe_put(:workItemId, field(runtime, :work_item_id))
+    |> maybe_put(
+      :contextMode,
+      context_mode_payload(field(runtime, :context_mode, params["contextMode"]))
+    )
+    |> maybe_put(:sandbox, normalize_sandbox(field(runtime, :sandbox, params["sandbox"])))
   end
 
   def append_context(prompt, chunks) do

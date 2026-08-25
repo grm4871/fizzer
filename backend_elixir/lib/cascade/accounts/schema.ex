@@ -24,6 +24,7 @@ defmodule Cascade.Accounts.Schema do
     ensure_moderation!()
     ensure_community_activity!()
     ensure_android_battery!()
+    ensure_product_feedback!()
     :ok
   end
 
@@ -345,5 +346,29 @@ defmodule Cascade.Accounts.Schema do
       ) ORDER BY created_at ASC, vault_id ASC
       """)
     end
+  end
+
+  def ensure_product_feedback! do
+    SQL.exec("""
+    CREATE TABLE IF NOT EXISTS product_feedback (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      reporter_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      body TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'documentation-assistant',
+      surface TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'open',
+      reviewed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      reviewed_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+    """)
+
+    SQL.exec(
+      "UPDATE product_feedback SET status = 'open' WHERE status IS NULL OR status NOT IN ('open','dismissed','resolved')"
+    )
+
+    SQL.exec(
+      "CREATE INDEX IF NOT EXISTS idx_product_feedback_status_created ON product_feedback(status, created_at)"
+    )
   end
 end

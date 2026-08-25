@@ -967,7 +967,8 @@ async function startLocalAgentRun(opts, sendEvent) {
   const cliModule = await loadCliAgentModule();
   const { runCliAgent, setRunHelperEnv, clearRunHelperEnv } = cliModule;
   activeCliAgentModules.set(runId, cliModule);
-  const helperEnv = buildRunHelperEnv(opts);
+  const selfContained = opts.contextMode === 'self-contained';
+  const helperEnv = selfContained ? {} : buildRunHelperEnv(opts);
   setRunHelperEnv(runId, helperEnv);
   const cwd = resolveAgentCwd(opts.cwd, opts.vaultRoot);
 
@@ -976,7 +977,7 @@ async function startLocalAgentRun(opts, sendEvent) {
   try {
     const result = await runCliAgent({
       agent,
-      context: isChatRun(opts) ? '' : `${CLAUDE_AGENT_CONTEXT} ${noteCapabilityContext(opts)}`,
+      context: isChatRun(opts) || selfContained ? '' : `${CLAUDE_AGENT_CONTEXT} ${noteCapabilityContext(opts)}`,
       userPrompt: prompt,
       cwd,
       resumeSessionId: typeof opts.resumeSessionId === 'string' ? opts.resumeSessionId : undefined,
@@ -984,6 +985,7 @@ async function startLocalAgentRun(opts, sendEvent) {
       model: typeof opts.model === 'string' ? opts.model : undefined,
       reasoningEffort: typeof opts.reasoningEffort === 'string' ? opts.reasoningEffort : undefined,
       priorityServiceTier: opts.priorityServiceTier === true,
+      sandbox: selfContained && opts.sandbox === 'read-only' ? 'read-only' : undefined,
       yolo: opts.yolo === true,
       hermesProfile: typeof opts.hermesProfile === 'string' ? opts.hermesProfile : undefined,
       hermesSafeMode: opts.hermesSafeMode === true,

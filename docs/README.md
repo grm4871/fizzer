@@ -8,6 +8,7 @@ reviewed with the code they describe.
 
 - [Getting started](getting-started.md) — install dependencies and run Fizzer
   locally.
+- [User guide](user-guide.md) — understand what Fizzer can do and how to use it.
 - [Architecture](architecture.md) — understand the client, server, desktop
   shell, persistence, and realtime boundaries.
 - [Agent runtime](agent-runtime.md) — understand local agent execution,

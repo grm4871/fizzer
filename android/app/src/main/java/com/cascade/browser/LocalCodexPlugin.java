@@ -167,7 +167,13 @@ public class LocalCodexPlugin extends Plugin {
     arguments.add("exec");
     arguments.add("--json");
     arguments.add("--skip-git-repo-check");
-    arguments.add("--dangerously-bypass-approvals-and-sandbox");
+    String sandbox = call.getString("sandbox", "");
+    if ("read-only".equals(sandbox)) {
+      arguments.add("--sandbox");
+      arguments.add("read-only");
+    } else {
+      arguments.add("--dangerously-bypass-approvals-and-sandbox");
+    }
     String model = call.getString("model");
     if (model != null && !model.isBlank()) {
       arguments.add("--model");
