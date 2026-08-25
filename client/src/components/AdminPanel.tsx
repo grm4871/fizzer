@@ -6,7 +6,7 @@
  * (first-registered account); the endpoints are owner-gated server-side too.
  */
 import { useEffect, useState } from 'react';
-import { Copy, Flag, KeyRound, X } from 'lucide-react';
+import { Copy, Flag, KeyRound, MessageSquareText, X } from 'lucide-react';
 import { api } from '../api';
 import { ModalShell } from './ModalShell';
 
@@ -29,8 +29,20 @@ interface GlobalReport {
   detail: string;
 }
 
+interface ProductFeedback {
+  id: number;
+  body: string;
+  source: string;
+  surface: string;
+  status: 'open' | 'dismissed' | 'resolved';
+  createdAt: string;
+  reporterUsername: string;
+  reporterDisplayName: string;
+}
+
 export function AdminPanel({ onClose }: { onClose: () => void }) {
   const [users, setUsers] = useState<AdminUser[]>([]);
+  const [productFeedback, setProductFeedback] = useState<ProductFeedback[]>([]);
   const [reports, setReports] = useState<GlobalReport[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -38,17 +50,18 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
   const [token, setToken] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-
   useEffect(() => {
     let alive = true;
     Promise.all([
       api<{ users: AdminUser[] }>('/api/admin/users'),
       api<{ reports: GlobalReport[] }>('/api/admin/reports'),
+      api<{ feedback: ProductFeedback[] }>('/api/admin/product-feedback'),
     ])
-      .then(([userData, reportData]) => {
+      .then(([userData, reportData, feedbackData]) => {
         if (!alive) return;
         setUsers(userData.users);
         setReports(reportData.reports);
+        setProductFeedback(feedbackData.feedback);
       })
       .catch((e) => { if (alive) setError(e instanceof Error ? e.message : 'Failed to load users'); })
       .finally(() => { if (alive) setLoading(false); });
@@ -103,6 +116,22 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
     }
   }
 
+  async function reviewProductFeedback(item: ProductFeedback, action: 'dismiss' | 'resolve') {
+    setBusy(`feedback:${item.id}`);
+    setError('');
+    try {
+      await api(`/api/admin/product-feedback/${item.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ action }),
+      });
+      setProductFeedback((current) => current.filter((feedback) => feedback.id !== item.id));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not review product feedback');
+    } finally {
+      setBusy(null);
+    }
+  }
+
   function targetLabel(report: GlobalReport) {
     if (report.targetType === 'member' && report.targetUsername) return `member @${report.targetUsername}`;
     if (report.targetType === 'vault') return 'public vault';
@@ -134,6 +163,22 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
             </div>
           </div>
         )}
+        <section className="admin-report-queue" aria-labelledby="admin-feedback-title">
+          <div className="admin-report-title"><h3 id="admin-feedback-title"><MessageSquareText size={14} /> Product feedback</h3><span>{productFeedback.length} open</span></div>
+          <p className="admin-panel-hint">Feedback from the in-app Fizzer guide. These are separate from trust-and-safety reports.</p>
+          {productFeedback.map((item) => (
+            <article key={item.id}>
+              <div><strong>{item.reporterDisplayName || item.reporterUsername}</strong><span>@{item.reporterUsername}</span></div>
+              <p>{item.body}</p>
+              <small>{item.surface || item.source} · {item.createdAt}</small>
+              <div>
+                <button type="button" disabled={busy === `feedback:${item.id}`} onClick={() => void reviewProductFeedback(item, 'dismiss')}>Dismiss</button>
+                <button type="button" disabled={busy === `feedback:${item.id}`} onClick={() => void reviewProductFeedback(item, 'resolve')}>Resolve</button>
+              </div>
+            </article>
+          ))}
+          {!loading && productFeedback.length === 0 && <p className="admin-panel-hint">No open product feedback.</p>}
+        </section>
         <section className="admin-report-queue" aria-labelledby="admin-report-title">
           <div className="admin-report-title"><h3 id="admin-report-title"><Flag size={14} /> Reports</h3><span>{reports.length} open</span></div>
           {reports.map((report) => (

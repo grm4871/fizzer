@@ -11,6 +11,7 @@ defmodule CascadeWeb.AccountRouter do
     DirectMessages,
     Invites,
     Moderation,
+    ProductFeedback,
     PublicVaults,
     SQL,
     VaultMembers
@@ -327,6 +328,47 @@ defmodule CascadeWeb.AccountRouter do
   patch "/api/admin/reports/:report_id" do
     authenticated(conn, :account, fn conn, user ->
       review_admin_report(conn, report_id, user.id)
+    end)
+  end
+
+  post "/api/product-feedback" do
+    authenticated(conn, :account, fn conn, user ->
+      case RateLimiter.check(:product_feedback, user.id, 10, 60_000) do
+        :ok ->
+          case ProductFeedback.create(user.id, conn.body_params) do
+            {:ok, feedback} -> JSON.send(conn, 201, %{feedback: feedback})
+            {:error, message} -> JSON.send(conn, 400, %{error: message})
+          end
+
+        {:error, retry_after} ->
+          conn
+          |> put_resp_header("retry-after", Integer.to_string(retry_after))
+          |> JSON.send(429, %{error: "Too many feedback submissions. Try again shortly."})
+      end
+    end)
+  end
+
+  get "/api/admin/product-feedback" do
+    authenticated(conn, nil, fn conn, user ->
+      case ProductFeedback.list(user.id, query(conn, "status", "open")) do
+        {:ok, feedback} -> JSON.send(conn, 200, %{feedback: feedback})
+        {:error, message} -> domain_error(conn, message)
+      end
+    end)
+  end
+
+  patch "/api/admin/product-feedback/:feedback_id" do
+    authenticated(conn, :account, fn conn, user ->
+      case positive_integer(feedback_id, "Invalid feedback id") do
+        {:ok, id} ->
+          case ProductFeedback.review(id, user.id, body(conn, "action")) do
+            {:ok, feedback} -> JSON.send(conn, 200, %{feedback: feedback})
+            {:error, message} -> domain_error(conn, message)
+          end
+
+        {:error, message} ->
+          JSON.send(conn, 400, %{error: message})
+      end
     end)
   end
 
@@ -741,7 +783,7 @@ defmodule CascadeWeb.AccountRouter do
       {:ok, result} ->
         JSON.send(conn, if(result.created, do: 201, else: 200), result)
 
-      {:error, message} when message == "This user is not accepting direct messages" ->
+      {:error, "This user is not accepting direct messages" = message} ->
         JSON.send(conn, 403, %{error: message})
 
       {:error, "Unblock @" <> _ = message} ->
@@ -767,9 +809,19 @@ defmodule CascadeWeb.AccountRouter do
   defp domain_error(conn, message) do
     status =
       cond do
-        message in ["Vault not found", "Join request not found", "Report not found"] -> 404
-        String.starts_with?(message, "Only the vault owner") or message == "Owner only" -> 403
-        true -> 400
+        message in [
+          "Vault not found",
+          "Join request not found",
+          "Report not found",
+          "Feedback not found"
+        ] ->
+          404
+
+        String.starts_with?(message, "Only the vault owner") or message == "Owner only" ->
+          403
+
+        true ->
+          400
       end
 
     JSON.send(conn, status, %{error: message})

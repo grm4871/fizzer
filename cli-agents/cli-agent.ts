@@ -591,6 +591,8 @@ interface CliAgentOpts {
   reasoningEffort?: string;
   /** Codex-only priority processing override. */
   priorityServiceTier?: boolean;
+  /** Codex-only sandbox override for isolated assistants. */
+  sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
   /** Run with permission prompts bypassed ("yolo"). For Codex this widens the
    * sandbox from workspace-write to danger-full-access. */
   yolo?: boolean;
@@ -637,7 +639,7 @@ export async function runCliAgent(opts: CliAgentOpts): Promise<CliAgentResult> {
     ? `[Context: ${opts.context}]\n\n${opts.userPrompt}`
     : opts.userPrompt;
   if (opts.agent === 'codex') {
-    return runCodex(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.images || [], opts.runId, opts.model, opts.reasoningEffort, opts.priorityServiceTier, opts.yolo, opts.env);
+    return runCodex(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.images || [], opts.runId, opts.model, opts.reasoningEffort, opts.priorityServiceTier, opts.yolo, opts.sandbox, opts.env);
   } else if (opts.agent === 'grok') {
     return runGrok(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.runId, opts.model, opts.env);
   } else if (opts.agent === 'copilot') {
@@ -870,11 +872,11 @@ class CodexAppServerClient {
   private turns = new Map<string, CodexAppTurn>();
   private earlyNotifications = new Map<string, JsonObject[]>();
   private threadQueues = new Map<string, Promise<void>>();
-
   async run(options: {
     prompt: string; cwd: string; emit: AgentEmit; resumeId?: string; imagePaths: string[];
     runId?: number; model?: string; reasoningEffort?: string;
-    priorityServiceTier?: boolean; yolo?: boolean; env?: NodeJS.ProcessEnv;
+    priorityServiceTier?: boolean; sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
+    yolo?: boolean; env?: NodeJS.ProcessEnv;
   }): Promise<CliAgentResult> {
     const threadId = typeof options.resumeId === 'string' ? options.resumeId.trim() : '';
     if (!threadId) return this.runUnlocked(options);
@@ -897,17 +899,19 @@ class CodexAppServerClient {
   private async runUnlocked(options: {
     prompt: string; cwd: string; emit: AgentEmit; resumeId?: string; imagePaths: string[];
     runId?: number; model?: string; reasoningEffort?: string;
-    priorityServiceTier?: boolean; yolo?: boolean; env?: NodeJS.ProcessEnv;
+    priorityServiceTier?: boolean; sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
+    yolo?: boolean; env?: NodeJS.ProcessEnv;
   }): Promise<CliAgentResult> {
     await this.ensureStarted();
+    const sandbox = options.sandbox || (options.yolo ? 'danger-full-access' : 'workspace-write');
     const common: JsonObject = {
       cwd: options.cwd,
       model: options.model || null,
       serviceTier: options.priorityServiceTier ? 'priority' : null,
       approvalPolicy: 'never',
-      sandbox: options.yolo ? 'danger-full-access' : 'workspace-write',
+      sandbox,
       config: {
-        sandbox_workspace_write: { network_access: true },
+        ...(sandbox === 'workspace-write' ? { sandbox_workspace_write: { network_access: true } } : {}),
         shell_environment_policy: { inherit: 'all', set: this.environmentOverrides(options.env) },
       },
     };
@@ -1235,6 +1239,7 @@ async function runCodex(
   reasoningEffort?: string,
   priorityServiceTier?: boolean,
   yolo?: boolean,
+  sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access',
   env?: NodeJS.ProcessEnv,
 ): Promise<CliAgentResult> {
   const { paths: imagePaths, cleanup } = writeTempImages(images);
@@ -1251,6 +1256,7 @@ async function runCodex(
         reasoningEffort,
         priorityServiceTier,
         yolo,
+        sandbox,
         env: env ? { ...spawnEnv(runId), ...env } : spawnEnv(runId),
       });
     } finally {
@@ -1269,13 +1275,13 @@ async function runCodex(
     ? ['-c', `model_reasoning_effort="${normalizedEffort}"`]
     : [];
   const serviceTierArgs = priorityServiceTier ? ['-c', 'service_tier="priority"'] : [];
-  const sandbox = yolo ? 'danger-full-access' : 'workspace-write';
-  const sandboxConfigArgs = yolo
-    ? []
-    : ['-c', 'sandbox_workspace_write.network_access=true'];
+  const sandboxMode = sandbox || (yolo ? 'danger-full-access' : 'workspace-write');
+  const sandboxConfigArgs = sandboxMode === 'workspace-write'
+    ? ['-c', 'sandbox_workspace_write.network_access=true']
+    : [];
   const buildArgs = (resume?: string) => (resume
-    ? ['exec', 'resume', '--json', '--skip-git-repo-check', '-c', `sandbox_mode=${sandbox}`, ...sandboxConfigArgs, ...reasoningEffortArgs, ...serviceTierArgs, ...modelArgs, resume, prompt, ...imageArgs]
-    : ['exec', '--json', '--skip-git-repo-check', '--sandbox', sandbox, ...sandboxConfigArgs, ...reasoningEffortArgs, ...serviceTierArgs, ...modelArgs, prompt, ...imageArgs]);
+    ? ['exec', 'resume', '--json', '--skip-git-repo-check', '-c', `sandbox_mode=${sandboxMode}`, ...sandboxConfigArgs, ...reasoningEffortArgs, ...serviceTierArgs, ...modelArgs, resume, prompt, ...imageArgs]
+    : ['exec', '--json', '--skip-git-repo-check', '--sandbox', sandboxMode, ...sandboxConfigArgs, ...reasoningEffortArgs, ...serviceTierArgs, ...modelArgs, prompt, ...imageArgs]);
 
   let summary = '';
   let sessionId: string | undefined;

@@ -94,8 +94,8 @@ npm run test:electron
 ```
 
 See [the documentation index](docs/README.md) for architecture, agent runtime,
-development, testing, and self-hosting details. See
-[CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request and
+development, testing, self-hosting, and the [end-user guide](docs/user-guide.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request and
 [SECURITY.md](SECURITY.md) for vulnerability reports.
 
 ## Data and trust boundaries

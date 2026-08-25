@@ -6,6 +6,7 @@ WORKDIR /client
 COPY client/package.json client/package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm npm ci
 COPY client/ ./
+COPY docs/user-guide.md /docs/user-guide.md
 RUN npm run build
 
 # The native QMD semantic worker remains a supervised specialization beneath

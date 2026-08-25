@@ -47,6 +47,9 @@ const AndroidUpdatePrompt = lazy(() =>
 const OrbitGraph = lazy(() =>
   import('./components/OrbitGraph').then((m) => ({ default: m.OrbitGraph })),
 );
+const DocumentationAssistant = lazy(() =>
+  import('./components/DocumentationAssistant').then((m) => ({ default: m.DocumentationAssistant })),
+);
 import type {
   ChatAgentRegistration,
   ChatChannelPresence,
@@ -163,6 +166,7 @@ export default function App() {
   const [isOwner, setIsOwner] = useState(false);
   const [adminOpen, setAdminOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
+  const [documentationAssistantOpen, setDocumentationAssistantOpen] = useState(false);
   const [accountInitialSection, setAccountInitialSection] = useState<'profile' | 'vault'>('profile');
   const [discoveryDmsOpen, setDiscoveryDmsOpen] = useState<DiscoveryTab | null>(null);
   const [updatesOpen, setUpdatesOpen] = useState(false);
@@ -2319,6 +2323,16 @@ export default function App() {
       setNotice(error instanceof Error ? error.message : 'Could not start agent chat');
     });
   }, [handleSendChatMessage, loadVaultData, openChatChannel]);
+  const handleReportProductFeedback = useCallback(async (body: string) => {
+    await api('/api/product-feedback', {
+      method: 'POST',
+      body: JSON.stringify({
+        body,
+        source: 'documentation-assistant',
+        surface: 'guide-assistant',
+      }),
+    });
+  }, []);
 
   // ═══════════════════════════════════════════════════════════════
   // TAB / PANE MANAGEMENT
@@ -2792,6 +2806,16 @@ export default function App() {
           onRenameNote={renameNoteTab}
           onDeleteFolder={handleDeleteFolder}
       />
+      <Suspense fallback={null}>
+        <DocumentationAssistant
+          open={documentationAssistantOpen}
+          onOpen={() => setDocumentationAssistantOpen(true)}
+          onClose={() => setDocumentationAssistantOpen(false)}
+          vaultId={activeVaultId ?? vaults[0]?.id ?? null}
+          runnerHealth={runnerHealth}
+          onReportFeedback={handleReportProductFeedback}
+        />
+      </Suspense>
 
       {accountOpen && user && (
         <Suspense fallback={null}>
