@@ -1170,7 +1170,7 @@ export const ChatView = memo(function ChatView({
             }}
           >
             {participantMenu.action === 'remove' ? <Trash2 size={14} /> : <X size={14} />}
-            {participantMenu.action === 'remove' ? `Remove @${participantMenu.username} from vault` : 'Leave vault'}
+            {participantMenu.action === 'remove' ? `Remove @${participantMenu.username} from channel` : 'Leave vault'}
           </button>
         </div>
       )}

@@ -73,7 +73,7 @@ import type { DiscoveryTab } from './components/DiscoveryDmsModal';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import * as Layout from './layout/tree';
 import type { LayoutNode } from './layout/tree';
-import { api, ApiError, type CommunityUpdateItem, type CommunityUpdates, type User, type Vault, type VaultMember, type Folder, type NoteSummary, type Note } from './api';
+import { api, ApiError, type CommunityUpdateItem, type CommunityUpdates, type User, type Vault, type Folder, type NoteSummary, type Note } from './api';
 import { connectRunsSocket, connectVaultSocket } from './socket';
 import { ensureDesktopRunnerHost, startDesktopRunnerHost, stopDesktopRunnerHost } from './desktopRunnerHost';
 import {
@@ -1562,14 +1562,19 @@ export default function App() {
     await loadVaultData(vaultId, { soft: true });
   }, [loadVaultData]);
 
-  const handleRemoveChatParticipant = useCallback(async (_channelId: string, username: string) => {
+  const handleRemoveChatParticipant = useCallback(async (channelId: string, username: string) => {
     const vaultId = activeVaultIdRef.current;
     if (!vaultId) return;
-    const data = await api<{ members: VaultMember[] }>(`/api/vaults/${vaultId}/members`);
-    const member = data.members.find((item) => item.username.toLowerCase() === username.toLowerCase());
-    if (!member) throw new Error('Vault member not found');
-    await api(`/api/vaults/${vaultId}/members/${member.userId}`, { method: 'DELETE' });
-    await loadVaultData(vaultId, { soft: true });
+    try {
+      await api(
+        `/api/vaults/${vaultId}/channels/${channelId}/members/${encodeURIComponent(username)}`,
+        { method: 'DELETE' },
+      );
+      await loadVaultData(vaultId, { soft: true });
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not remove participant');
+      throw error;
+    }
   }, [loadVaultData]);
 
   const handleLeaveChatChannel = useCallback(async (_channelId: string) => {
