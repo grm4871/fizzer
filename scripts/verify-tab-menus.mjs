@@ -256,8 +256,16 @@ try {
   // entire workspace halfway down the window.
   await page.getByLabel('Collapse sidebar').first().click();
   await page.locator('.app-shell.sidebar-closed').waitFor({ timeout: 5000 });
-  const workspaceTop = await page.locator('.workspace').evaluate((element) => element.getBoundingClientRect().top);
-  check('closing the desktop sidebar keeps the workspace at the top edge', workspaceTop <= 1, String(workspaceTop));
+  const workspaceBox = await page.locator('.workspace').evaluate((element) => {
+    const box = element.getBoundingClientRect();
+    return { top: box.top, bottom: box.bottom, height: box.height, viewport: window.innerHeight };
+  });
+  check('closing the desktop sidebar keeps the workspace at the top edge', workspaceBox.top <= 1, JSON.stringify(workspaceBox));
+  check(
+    'closing the desktop sidebar keeps the workspace flush with the viewport bottom',
+    Math.abs(workspaceBox.bottom - workspaceBox.viewport) <= 2 && workspaceBox.height >= workspaceBox.viewport - 2,
+    JSON.stringify(workspaceBox),
+  );
 
   // Desktop runner recovery is background state, not a page-load callout. A
   // slow socket reconnect must not make the workspace look blocked on reload.
