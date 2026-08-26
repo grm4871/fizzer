@@ -68,4 +68,39 @@ describe('chatMessageStore', () => {
     expect(chatMessageStore.hasChannel('doomed')).toBe(false);
     expect(chatMessageStore.getChannel('doomed')).toEqual([]);
   });
+
+  it('signals agent work only on start and finish transitions', () => {
+    const channelId = 'activity-transition';
+    chatMessageStore.set(channelId, [
+      { ...message('old-agent', channelId), agentId: 'sol' },
+    ]);
+    expect(chatMessageStore.getAgentActivity()[channelId]).toBeUndefined();
+
+    chatMessageStore.update(channelId, (messages) => [
+      ...messages,
+      { ...message('live-agent', channelId), agentId: 'sol', status: 'running' },
+    ]);
+    expect(chatMessageStore.getAgentActivity()[channelId]).toBe('running');
+
+    chatMessageStore.update(channelId, (messages) => messages.map((item) => (
+      item.id === 'live-agent' ? { ...item, body: 'Done', status: undefined } : item
+    )));
+    expect(chatMessageStore.getAgentActivity()[channelId]).toBe('finished');
+
+    chatMessageStore.clearFinishedAgentActivity(channelId);
+    expect(chatMessageStore.getAgentActivity()[channelId]).toBeUndefined();
+  });
+
+  it('does not mark canceled agent work as finished', () => {
+    const channelId = 'activity-canceled';
+    chatMessageStore.set(channelId, []);
+    chatMessageStore.update(channelId, (messages) => [
+      ...messages,
+      { ...message('canceled-agent', channelId), agentId: 'sol', status: 'running' },
+    ]);
+    chatMessageStore.update(channelId, (messages) => messages.map((item) => (
+      item.id === 'canceled-agent' ? { ...item, status: 'canceled' } : item
+    )));
+    expect(chatMessageStore.getAgentActivity()[channelId]).toBeUndefined();
+  });
 });

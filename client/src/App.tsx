@@ -104,7 +104,7 @@ import {
   type PersistedSession,
   type PersistedWorkspace,
 } from './chat/session';
-import { chatMessageStore } from './chat/messageStore';
+import { chatMessageStore, useAgentActivity } from './chat/messageStore';
 import { Activity, Bell, Download, PanelLeftOpen, Sparkles, Users } from 'lucide-react';
 import { FizzerMark } from './components/FizzerMark';
 
@@ -187,10 +187,12 @@ export default function App() {
   const [chatState, setChatState] = useState<ChatState>(loadChatState);
   const [loadingChatChannels, setLoadingChatChannels] = useState<Record<string, boolean>>({});
   const [chatPresenceByChannel, setChatPresenceByChannel] = useState<Record<string, ChatChannelPresence>>({});
+  const [channelVaultIds, setChannelVaultIds] = useState<Record<string, string>>({});
   const [communityUpdates, setCommunityUpdates] = useState<CommunityUpdates>(EMPTY_COMMUNITY_UPDATES);
   const [communityUpdatesLoading, setCommunityUpdatesLoading] = useState(false);
   const [communityUpdatesError, setCommunityUpdatesError] = useState('');
   const [showAgentMemory, setShowAgentMemory] = useState(() => localStorage.getItem('cascade_show_agent_memory') === '1');
+  const agentActivity = useAgentActivity();
 
   // Tabs + tiling layout
   const [openTabs, setOpenTabs] = useState<Tab[]>(persistedSessionRef.current.openTabs);
@@ -205,7 +207,12 @@ export default function App() {
 
   // UI panels state
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [sidebarWidth, setSidebarWidth] = useState(() => Number(localStorage.getItem('cascade_sidebar_w')) || 268);
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    const railWidth = Number(localStorage.getItem('cascade_sidebar_w_vault_rail'));
+    if (railWidth) return railWidth;
+    const legacyWidth = Number(localStorage.getItem('cascade_sidebar_w')) || 268;
+    return Math.min(540, legacyWidth + 58);
+  });
   const [isResizing, setIsResizing] = useState(false);
   const mobileSidebarSwipeRef = useRef<{ x: number; y: number; at: number; pointerId: number } | null>(null);
   // Members panel open. Mobile starts closed (toolbar opens it like the folder
@@ -378,7 +385,7 @@ export default function App() {
   }, [layout, focusedPaneId]);
 
   useEffect(() => {
-    const id = window.setTimeout(() => localStorage.setItem('cascade_sidebar_w', String(sidebarWidth)), 150);
+    const id = window.setTimeout(() => localStorage.setItem('cascade_sidebar_w_vault_rail', String(sidebarWidth)), 150);
     return () => clearTimeout(id);
   }, [sidebarWidth]);
 
@@ -397,25 +404,38 @@ export default function App() {
     localStorage.setItem('cascade_chat_users_collapsed', chatMembersOpen ? '0' : '1');
   }, [chatMembersOpen]);
 
-  // Persist the workspace session.
-  useEffect(() => {
-    const id = window.setTimeout(() => {
-      const activeWorkspace: PersistedWorkspace = { openTabs, layout, focusedPaneId };
-      if (activeVaultId) {
-        vaultWorkspacesRef.current = {
-          ...vaultWorkspacesRef.current,
-          [activeVaultId]: activeWorkspace,
-        };
-      }
-      const session: PersistedSession = {
-        activeVaultId,
-        ...activeWorkspace,
-        workspacesByVault: vaultWorkspacesRef.current,
+  const persistWorkspaceSession = useCallback(() => {
+    const currentVaultId = activeVaultIdRef.current;
+    const activeWorkspace: PersistedWorkspace = {
+      openTabs: openTabsRef.current,
+      layout: layoutRef.current,
+      focusedPaneId: focusedPaneRef.current.id,
+    };
+    if (currentVaultId) {
+      vaultWorkspacesRef.current = {
+        ...vaultWorkspacesRef.current,
+        [currentVaultId]: activeWorkspace,
       };
-      localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
-    }, 250);
+    }
+    const session: PersistedSession = {
+      activeVaultId: currentVaultId,
+      ...activeWorkspace,
+      workspacesByVault: vaultWorkspacesRef.current,
+    };
+    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
+  }, []);
+
+  // Persist after ordinary changes and synchronously when the desktop window
+  // closes, including a quit immediately after switching vaults or pages.
+  useEffect(() => {
+    const id = window.setTimeout(persistWorkspaceSession, 250);
     return () => clearTimeout(id);
-  }, [activeVaultId, openTabs, layout, focusedPaneId]);
+  }, [activeVaultId, openTabs, layout, focusedPaneId, persistWorkspaceSession]);
+
+  useEffect(() => {
+    window.addEventListener('pagehide', persistWorkspaceSession);
+    return () => window.removeEventListener('pagehide', persistWorkspaceSession);
+  }, [persistWorkspaceSession]);
 
   useEffect(() => {
     const id = window.setTimeout(() => {
@@ -455,7 +475,7 @@ export default function App() {
     bindDragGesture({
       onMove: (e) => {
         const delta = e.clientX - startX;
-        setSidebarWidth(clamp(startSidebar + delta, 180, 480));
+        setSidebarWidth(clamp(startSidebar + delta, 240, 540));
       },
       onEnd: () => {
         releaseInteractionLock();
@@ -901,6 +921,12 @@ export default function App() {
   ) => {
     const channelIds = resolveChatChannelIds(noteList, opts?.channelIds);
     if (channelIds.length === 0) return;
+    setChannelVaultIds((previous) => {
+      if (channelIds.every((channelId) => previous[channelId] === vaultId)) return previous;
+      const next = { ...previous };
+      for (const channelId of channelIds) next[channelId] = vaultId;
+      return next;
+    });
 
     const legacyMessages = readLegacyLocalChatMessages();
     const silent = opts?.silent === true;
@@ -1066,6 +1092,15 @@ export default function App() {
         if (activeVaultIdRef.current !== vaultId) return;
         const nextNotes = noteData.notes || [];
         notesRef.current = nextNotes;
+        const channelIds = nextNotes
+          .filter((note) => note.content_preview.trim().startsWith(CHAT_NOTE_MARKER))
+          .map((note) => note.id);
+        setChannelVaultIds((previous) => {
+          if (channelIds.every((channelId) => previous[channelId] === vaultId)) return previous;
+          const next = { ...previous };
+          for (const channelId of channelIds) next[channelId] = vaultId;
+          return next;
+        });
         setFolders(folderData.folders || []);
         setNotes(nextNotes);
         void primaryChatP.catch(() => undefined);
@@ -1726,11 +1761,33 @@ export default function App() {
     void loadNoteContent(noteId);
   }, [loadNoteContent, openChatChannel]);
 
+  // A vault with no restored active page should still open somewhere useful.
+  // Prefer its last open tab if one survives, then its first chat, then its
+  // first note. This runs when vault data arrives, not when a user closes the
+  // final tab, so an intentional empty workspace remains possible.
+  useEffect(() => {
+    if (!activeVaultId || notes.length === 0) return;
+    const availableIds = new Set(notes.map((note) => note.id));
+    const hasSelectedPage = Layout.getActiveTabIds(layoutRef.current)
+      .some((id) => {
+        const tab = openTabsRef.current.find((candidate) => candidate.id === id);
+        return Boolean(tab && (tab.type === 'new' || tab.type === 'superkanban' || availableIds.has(id)));
+      });
+    if (hasSelectedPage) return;
+
+    const lastOpenTab = [...openTabsRef.current].reverse().find((tab) => availableIds.has(tab.id));
+    const fallback = lastOpenTab
+      ? notes.find((note) => note.id === lastOpenTab.id)
+      : notes.find((note) => note.content_preview.trim().startsWith(CHAT_NOTE_MARKER)) ?? notes[0];
+    if (fallback) openNote(fallback.id, 'replace');
+  }, [activeVaultId, notes, openNote]);
+
   useEffect(() => {
     if (!user || !focusedTab || (focusedTab.type !== 'note' && focusedTab.type !== 'chat')) return;
+    chatMessageStore.clearFinishedAgentActivity(focusedTab.id);
     if (!(communityUpdates.counts.byTarget[focusedTab.id] > 0)) return;
     void markCommunityTargetRead(focusedTab.id);
-  }, [communityUpdates.counts.byTarget, focusedTab?.id, focusedTab?.type, markCommunityTargetRead, user]);
+  }, [agentActivity, communityUpdates.counts.byTarget, focusedTab?.id, focusedTab?.type, markCommunityTargetRead, user]);
 
   const openCommunityUpdate = useCallback(async (item: CommunityUpdateItem) => {
     await markCommunityTargetRead(item.targetId);
@@ -2512,9 +2569,10 @@ export default function App() {
       const mod = e.ctrlKey || e.metaKey;
       if (mod && e.key === 'p') { e.preventDefault(); setCommandPaletteOpen((v) => !v); }
       if (mod && e.shiftKey && e.key.toLowerCase() === 'f') { e.preventDefault(); setSearchOpen((v) => !v); }
+      if (mod && !e.shiftKey && e.key.toLowerCase() === 's') { e.preventDefault(); setSearchOpen(true); }
       if (mod && e.key === '\\' && !(e.altKey || e.shiftKey)) { e.preventDefault(); setSidebarOpen((v) => !v); }
       if (mod && !e.shiftKey && e.key === 'n') { e.preventDefault(); void handleCreateNote(); }
-      if (mod && e.key === 's') { e.preventDefault(); void handleSaveActiveNote(); }
+      if (mod && e.shiftKey && e.key.toLowerCase() === 's') { e.preventDefault(); void handleSaveActiveNote(); }
       if (mod && e.key.toLowerCase() === 'w') {
         e.preventDefault();
         const id = focusedPaneRef.current.activeTabId;
@@ -2754,6 +2812,8 @@ export default function App() {
           notes={notes}
           activeNoteId={activeTabId}
           updateCounts={communityUpdates.counts}
+          agentActivity={agentActivity}
+          channelVaultIds={channelVaultIds}
           showAgentMemory={showAgentMemory}
           onSelectVault={switchVaultWorkspace}
           onCreateVault={handleCreateVault}

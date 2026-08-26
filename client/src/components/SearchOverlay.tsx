@@ -1,7 +1,7 @@
 /**
  * @file SearchOverlay.tsx — Debounced full-text search overlay
  *
- * A modal overlay (Ctrl+Shift+F) that performs server-side full-text search
+ * A modal overlay (Ctrl+S or Ctrl+Shift+F) that performs server-side full-text search
  * across all notes in the active vault. Features:
  * - 300ms debounced API calls to avoid excessive requests
  * - Keyboard navigation (arrow keys, Enter, Escape)

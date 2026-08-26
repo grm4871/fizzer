@@ -96,7 +96,7 @@ try {
 
   // ── Owner renames the vault from the switcher.
   const { page, errors } = await open(owner.token);
-  await page.locator('.vault-switcher-trigger, .sidebar-vault-button, [aria-label*="vault" i]').first().click();
+  await page.getByRole('button', { name: 'Manage vaults' }).click();
   await page.locator('.vault-switcher-menu').waitFor({ timeout: 15000 });
 
   check('switcher no longer carries the agent-memory toggle',
@@ -132,7 +132,7 @@ try {
 
   // ── An editor sees the new name but gets no rename control.
   const { page: matePage, errors: mateErrors } = await open(mate.token);
-  await matePage.locator('.vault-switcher-trigger, .sidebar-vault-button, [aria-label*="vault" i]').first().click();
+  await matePage.getByRole('button', { name: 'Manage vaults' }).click();
   await matePage.locator('.vault-switcher-menu').waitFor({ timeout: 15000 });
   check('editor sees the renamed vault',
     await matePage.locator('.vault-switcher-menu').getByText('After Rename').count() > 0);

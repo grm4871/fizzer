@@ -2,9 +2,9 @@
  * @file Sidebar.tsx — Folder tree navigation and vault controls
  *
  * Renders the left sidebar panel containing:
- * - Vault name header with collapse button
+ * - Inset vault rail beside the folder/channel tree
  * - Quick-action buttons (new note, new folder, search)
- * - Vault selector dropdown (when multiple vaults exist)
+ * - Vault management dialog for create/join/rename controls
  * - Recursive folder tree with expandable folders and note items
  * - User info footer with logout
  *
@@ -17,7 +17,7 @@
  * @component
  */
 
-import { memo, useState, useMemo, useEffect, useRef } from 'react';
+import { memo, useState, useMemo, useEffect, useLayoutEffect, useRef } from 'react';
 import { canRenameVault, isSharedVault, type CommunityUpdates, type Vault, type Folder, type NoteSummary, type User } from '../api';
 import { NOTE_DND_TYPE, noteEmbedMarkdown } from '../docEmbeds';
 import { usePopupMenu } from '../ui/popupMenu';
@@ -28,9 +28,10 @@ import {
   type YouTubeEmbedStateDetail,
 } from '../mediaLinks';
 import { CHAT_NOTE_MARKER } from '../chat/shared';
+import type { ChannelAgentActivity } from '../chat/messageStore';
 import {
   Folder as FolderIcon, FolderOpen, FileText, Pin, Edit2, FolderPlus,
-  Search, ChevronRight, ChevronDown, Check, PanelLeftClose, LogOut, Trash2, FilePlus, FolderInput, Pencil, RefreshCw,
+  Search, ChevronRight, Check, PanelLeftClose, LogOut, Trash2, FilePlus, FolderInput, Pencil, RefreshCw,
   Hash, Unlink, ShieldCheck, SkipBack, Play, Pause, SkipForward, Music2, Plus, LogIn, Compass, Mail, Settings, X,
 } from 'lucide-react';
 import { FizzerMark } from './FizzerMark';
@@ -52,6 +53,8 @@ interface SidebarProps {
   notes: NoteSummary[];
   activeNoteId: string | null;
   updateCounts: CommunityUpdates['counts'];
+  agentActivity: Readonly<Record<string, ChannelAgentActivity>>;
+  channelVaultIds: Readonly<Record<string, string>>;
   showAgentMemory: boolean;
   onSelectVault: (id: string) => void;
   onCreateVault: (name: string) => Promise<boolean>;
@@ -135,6 +138,8 @@ export const Sidebar = memo(function Sidebar({
   notes,
   activeNoteId,
   updateCounts,
+  agentActivity,
+  channelVaultIds,
   showAgentMemory,
   onSelectVault,
   onCreateVault,
@@ -188,6 +193,8 @@ export const Sidebar = memo(function Sidebar({
   const [audioTrackIndex, setAudioTrackIndex] = useState(0);
   const [audioPlaying, setAudioPlaying] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
+  const sidebarRef = useRef<HTMLElement>(null);
+  const [selectionConnector, setSelectionConnector] = useState('');
   const autoplayAudioRef = useRef(false);
   // Drop target highlight: a folder id, or ROOT_DROP_ID for the root area.
   const [dragOverId, setDragOverId] = useState<string | null>(null);
@@ -206,6 +213,91 @@ export const Sidebar = memo(function Sidebar({
     () => vaults.find((v) => v.id === activeVaultId),
     [vaults, activeVaultId],
   );
+
+  const agentActivityByVault = useMemo(() => {
+    const grouped: Record<string, ChannelAgentActivity> = {};
+    for (const [channelId, status] of Object.entries(agentActivity)) {
+      const vaultId = channelVaultIds[channelId]
+        ?? (notes.some((note) => note.id === channelId) ? activeVaultId : null);
+      if (!vaultId) continue;
+      if (status === 'running' || !grouped[vaultId]) grouped[vaultId] = status;
+    }
+    return grouped;
+  }, [activeVaultId, agentActivity, channelVaultIds, notes]);
+
+  const activityKind = (agentStatus: ChannelAgentActivity | undefined, hasHumanUpdates: boolean) => (
+    agentStatus === 'running'
+      ? 'agent-running'
+      : agentStatus === 'finished'
+        ? 'agent-finished'
+        : hasHumanUpdates
+          ? 'human'
+          : null
+  );
+
+  const activityLabel = (kind: ReturnType<typeof activityKind>) => (
+    kind === 'agent-running'
+      ? 'Agent work in progress'
+      : kind === 'agent-finished'
+        ? 'Finished agent work'
+        : 'New human updates'
+  );
+
+  const activityDot = (kind: ReturnType<typeof activityKind>) => kind && (
+    <span
+      className={`activity-dot is-${kind}`}
+      aria-label={activityLabel(kind)}
+      title={activityLabel(kind)}
+    />
+  );
+
+  const activeVaultHasTargetActivity = notes.some((note) => activityKind(
+    agentActivity[note.id],
+    (updateCounts.byTarget[note.id] || 0) > 0,
+  ) !== null);
+
+  useLayoutEffect(() => {
+    const sidebar = sidebarRef.current;
+    if (!sidebar || !activeVaultId || !activeNoteId) {
+      setSelectionConnector('');
+      return;
+    }
+
+    const updateConnector = () => {
+      const vaultButton = sidebar.querySelector<HTMLElement>(`[data-vault-id="${activeVaultId}"]`);
+      const noteButton = document.getElementById(`note-${activeNoteId}`);
+      if (!vaultButton || !noteButton || !sidebar.contains(noteButton)) {
+        setSelectionConnector('');
+        return;
+      }
+      const sidebarBox = sidebar.getBoundingClientRect();
+      const vaultBox = vaultButton.getBoundingClientRect();
+      const noteBox = noteButton.getBoundingClientRect();
+      const startX = vaultBox.right - sidebarBox.left;
+      const endX = noteBox.left - sidebarBox.left;
+      const bendX = startX + (endX - startX) / 2;
+      const startTop = vaultBox.top - sidebarBox.top;
+      const startBottom = vaultBox.bottom - sidebarBox.top;
+      const endTop = noteBox.top - sidebarBox.top;
+      const endBottom = noteBox.bottom - sidebarBox.top;
+      setSelectionConnector(
+        `M ${startX} ${startTop} C ${bendX} ${startTop}, ${bendX} ${endTop}, ${endX} ${endTop} `
+        + `L ${endX} ${endBottom} C ${bendX} ${endBottom}, ${bendX} ${startBottom}, ${startX} ${startBottom} Z`,
+      );
+    };
+
+    const frame = window.requestAnimationFrame(updateConnector);
+    const observer = new ResizeObserver(updateConnector);
+    observer.observe(sidebar);
+    sidebar.addEventListener('scroll', updateConnector, true);
+    window.addEventListener('resize', updateConnector);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer.disconnect();
+      sidebar.removeEventListener('scroll', updateConnector, true);
+      window.removeEventListener('resize', updateConnector);
+    };
+  }, [activeNoteId, activeVaultId, expandedFolders, folders, notes]);
 
   const visibleFolders = useMemo(() => {
     if (showAgentMemory) return folders;
@@ -678,6 +770,7 @@ export const Sidebar = memo(function Sidebar({
   function renderNote(note: NoteSummary, depth: number) {
     const paddingLeft = 12 + depth * 14 + 16;
     const isChatChannel = note.content_preview.trim().startsWith(CHAT_NOTE_MARKER);
+    const noteActivity = activityKind(agentActivity[note.id], (updateCounts.byTarget[note.id] || 0) > 0);
     if (editingNoteId === note.id) {
       return (
         <div key={note.id} className="tree-item tree-editing" style={{ paddingLeft }}>
@@ -699,11 +792,7 @@ export const Sidebar = memo(function Sidebar({
       >
         <span className="tree-icon">{isChatChannel ? <Hash size={15} /> : <FileText size={15} />}</span>
         <span className="tree-label">{note.title || 'Untitled'}</span>
-        {(updateCounts.byTarget[note.id] || 0) > 0 && (
-          <span className="tree-update-badge" aria-label={`${countLabel(updateCounts.byTarget[note.id])} unread updates`}>
-            {countLabel(updateCounts.byTarget[note.id])}
-          </span>
-        )}
+        {activityDot(noteActivity)}
         {note.is_pinned ? <span className="pin-icon"><Pin size={11} fill="currentColor" /></span> : null}
         {note.tags.length > 0 && (
           <span className="tree-tags">
@@ -773,18 +862,60 @@ export const Sidebar = memo(function Sidebar({
   };
 
   return (
-    <aside className="sidebar" id="sidebar" style={{ gridColumn: 1 }}>
+    <aside ref={sidebarRef} className="sidebar" id="sidebar" style={{ gridColumn: 1 }}>
+      <nav className="vault-rail" aria-label="Vaults">
+        <div className="vault-rail-list">
+          {vaults.map((vault) => {
+            const vaultActivity = vault.id === activeVaultId && activeVaultHasTargetActivity
+              ? null
+              : activityKind(
+                agentActivityByVault[vault.id],
+                (updateCounts.byVault[vault.id] || 0) > 0,
+              );
+            const initials = vault.name
+              .split(/\s+/)
+              .filter(Boolean)
+              .slice(0, 2)
+              .map((part) => part[0])
+              .join('')
+              .toUpperCase() || 'V';
+            return (
+              <button
+                key={vault.id}
+                type="button"
+                className={`vault-rail-button${vault.id === activeVaultId ? ' is-active' : ''}`}
+                data-vault-id={vault.id}
+                onClick={() => onSelectVault(vault.id)}
+                aria-label={`Open vault ${vault.name}`}
+                aria-current={vault.id === activeVaultId ? 'page' : undefined}
+                title={vaultOptionLabel(vault)}
+              >
+                <span className="vault-rail-initials" aria-hidden="true">{initials}</span>
+                {activityDot(vaultActivity)}
+              </button>
+            );
+          })}
+        </div>
+        <div className="vault-rail-actions">
+          <button type="button" className="vault-rail-action" onClick={onOpenPublicVaults} aria-label="Browse public vaults" title="Browse public vaults">
+            <Compass size={18} aria-hidden="true" />
+          </button>
+          <button type="button" className="vault-rail-action" onClick={() => setVaultMenuOpen(true)} aria-label="Manage vaults" title="Manage vaults">
+            <Plus size={19} aria-hidden="true" />
+          </button>
+        </div>
+      </nav>
+
+      {selectionConnector && (
+        <svg className="vault-selection-connector" aria-hidden="true">
+          <path d={selectionConnector} />
+        </svg>
+      )}
+
+      <div className="sidebar-panel">
       {/* Header */}
       <div className="sidebar-header">
-        <button
-          type="button"
-          className="vault-name"
-          onClick={() => setVaultMenuOpen((open) => !open)}
-          title="Open vault workspace"
-          aria-label={`Vault switcher; current vault ${activeVault?.name || 'Fizzer'}`}
-          aria-expanded={vaultMenuOpen}
-        >
-          <span className="vault-icon" aria-hidden="true"><FizzerMark size={24} /></span>
+        <div className="vault-name vault-current-label">
           <span className="vault-name-copy">
             <span className="vault-name-text">{activeVault?.name || 'Fizzer'}</span>
             <span className="vault-name-meta">
@@ -793,15 +924,9 @@ export const Sidebar = memo(function Sidebar({
                   ? `${activeVault.memberCount} members · ${activeVault.role || 'member'}`
                   : 'Private · only you'
                 : 'Your workspace'}
-            </span>
+              </span>
           </span>
-          <ChevronDown className="vault-name-chevron" size={14} aria-hidden="true" />
-        </button>
-        {activeVault && (updateCounts.byVault[activeVault.id] || 0) > 0 && (
-          <span className="vault-update-badge" aria-label={`${countLabel(updateCounts.byVault[activeVault.id])} unread updates`}>
-            {countLabel(updateCounts.byVault[activeVault.id])}
-          </span>
-        )}
+        </div>
         <div className="sidebar-actions sidebar-actions-desktop" role="toolbar" aria-label="Sidebar actions">{actionButtons('desktop')}</div>
         <button className="btn-icon sidebar-mobile-collapse" onClick={onCollapse} title="Collapse sidebar"><PanelLeftClose size={16} /></button>
       </div>
@@ -856,11 +981,6 @@ export const Sidebar = memo(function Sidebar({
                         <span className="vault-switcher-copy">
                           <span className="vault-switcher-title-line">
                             <strong>{vault.name}</strong>
-                            {(updateCounts.byVault[vault.id] || 0) > 0 && (
-                              <span className="vault-switcher-update-badge" aria-label={`${countLabel(updateCounts.byVault[vault.id])} unread updates`}>
-                                {countLabel(updateCounts.byVault[vault.id])}
-                              </span>
-                            )}
                             {vault.id === activeVaultId && <Check className="vault-switcher-check" size={16} aria-hidden="true" />}
                           </span>
                           <small>
@@ -1222,6 +1342,7 @@ export const Sidebar = memo(function Sidebar({
           )}
         </div>
       )}
+      </div>
     </aside>
   );
 });

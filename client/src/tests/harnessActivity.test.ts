@@ -140,6 +140,33 @@ describe('buildHarnessActivity', () => {
     });
   });
 
+  it('does not swallow pretty-printed Codex protocol JSON as a { chip', () => {
+    const activity = buildHarnessActivity(msg({
+      status: 'running',
+      harnessLog: [
+        '{',
+        '  "type": "item.started",',
+        '  "item": { "type": "reasoning", "text": "checking the vault rail spacing" }',
+        '}',
+      ].join('\n'),
+    }));
+    const live = liveActivityHeadline(activity);
+    expect(live.verb).toBe('thinking');
+    expect(live.detail).toContain('vault rail');
+    expect(live.detail).not.toMatch(/^\{/);
+    expect(activity.thinkingText).toContain('vault rail');
+  });
+
+  it('hides raw JSON blobs from the live header', () => {
+    const activity = buildHarnessActivity(msg({
+      status: 'running',
+      blocks: [{ type: 'thinking', text: '{"type":"item.started","item":{"type":"reasoning"}}' }],
+    }));
+    const live = liveActivityHeadline(activity);
+    expect(live.verb).toBe('thinking');
+    expect(live.detail).not.toMatch(/^\{/);
+  });
+
   it('keeps prompt dumps out of the live thinking header', () => {
     const activity = buildHarnessActivity(msg({
       blocks: [{

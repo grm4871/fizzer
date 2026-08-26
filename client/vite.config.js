@@ -75,6 +75,11 @@ if (!requestedBase.startsWith('/') || !requestedBase.endsWith('/') || requestedB
 const disableAutoRefresh =
   process.env.CASCADE_DISABLE_AUTO_REFRESH === 'true' ||
   process.env.VITE_DISABLE_AUTO_REFRESH === 'true';
+const isBetaFrontend =
+  requestedBase !== '/' || process.env.CASCADE_BETA_FRONTEND === 'true';
+const devProxyTarget = process.env.CASCADE_DEV_PROXY_TARGET || `http://localhost:${process.env.API_PORT || 3000}`;
+const devProxySecure = devProxyTarget.startsWith('https://');
+const devProxyHeaders = devProxySecure ? { Origin: devProxyTarget } : undefined;
 
 function autoRefreshFlagPlugin() {
   return {
@@ -84,10 +89,10 @@ function autoRefreshFlagPlugin() {
         'window.__CASCADE_DISABLE_AUTO_REFRESH__ = false;',
         `window.__CASCADE_DISABLE_AUTO_REFRESH__ = ${disableAutoRefresh ? 'true' : 'false'};`
       );
-      if (requestedBase === '/') return transformed;
+      if (!isBetaFrontend) return transformed;
       return transformed.replace(
         '<body>',
-        '<body><div class="beta-frontend-banner" role="status">Beta frontend · live data</div>'
+        '<body><div class="beta-frontend-banner" role="status">Beta frontend</div>'
       );
     }
   };
@@ -131,14 +136,16 @@ export default defineConfig({
     hmr: disableAutoRefresh ? false : undefined,
     proxy: {
       '/api': {
-        target: `http://localhost:${process.env.API_PORT || 3000}`,
+        target: devProxyTarget,
         changeOrigin: true,
-        secure: false,
+        secure: devProxySecure,
+        headers: devProxyHeaders,
       },
       '/socket.io': {
-        target: `http://localhost:${process.env.API_PORT || 3000}`,
+        target: devProxyTarget,
         changeOrigin: true,
-        secure: false,
+        secure: devProxySecure,
+        headers: devProxyHeaders,
         ws: true,  // Enable WebSocket proxying
       },
     },

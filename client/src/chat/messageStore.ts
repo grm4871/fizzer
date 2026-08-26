@@ -21,9 +21,27 @@ const EMPTY: ChatMessage[] = Object.freeze([]) as unknown as ChatMessage[];
 
 type Listener = () => void;
 
+export type ChannelAgentActivity = 'running' | 'finished';
+
+function isRunningAgent(message: ChatMessage): boolean {
+  return Boolean(message.agentId) && (message.status === 'sending' || message.status === 'running');
+}
+
+function isFinishedAgent(message: ChatMessage): boolean {
+  return Boolean(message.agentId)
+    && message.status !== 'sending'
+    && message.status !== 'running'
+    && message.status !== 'failed'
+    && message.status !== 'canceled'
+    && message.body.trim().length > 0
+    && !/^Thinking(?:\.{3}|…)$/.test(message.body.trim());
+}
+
 class ChatMessageStore {
   private channels = new Map<string, ChatMessage[]>();
   private listeners = new Map<string, Set<Listener>>();
+  private agentActivity: Readonly<Record<string, ChannelAgentActivity>> = Object.freeze({});
+  private agentActivityListeners = new Set<Listener>();
 
   /** Current messages for a channel; a shared frozen array when none are cached. */
   getChannel(channelId: string): ChatMessage[] {
@@ -42,10 +60,12 @@ class ChatMessageStore {
    * and no subscriber re-renders.
    */
   update(channelId: string, updater: (prev: ChatMessage[]) => ChatMessage[]): void {
+    const hadChannel = this.channels.has(channelId);
     const prev = this.getChannel(channelId);
     const next = updater(prev);
     if (next === prev) return;
     this.channels.set(channelId, next);
+    this.reconcileAgentActivity(channelId, prev, next, hadChannel);
     this.emit(channelId);
   }
 
@@ -64,7 +84,10 @@ class ChatMessageStore {
   /** Set a channel's list outright (used by the load/reconcile path). */
   set(channelId: string, messages: ChatMessage[]): void {
     if (this.channels.get(channelId) === messages) return;
+    const hadChannel = this.channels.has(channelId);
+    const previous = this.getChannel(channelId);
     this.channels.set(channelId, messages);
+    this.reconcileAgentActivity(channelId, previous, messages, hadChannel);
     this.emit(channelId);
   }
 
@@ -72,7 +95,24 @@ class ChatMessageStore {
   remove(channelId: string): void {
     if (!this.channels.has(channelId)) return;
     this.channels.delete(channelId);
+    this.setAgentActivity(channelId, null);
     this.emit(channelId);
+  }
+
+  /** Low-frequency shell signal: emits only when agent work starts or finishes,
+   * never for each streamed token. */
+  getAgentActivity(): Readonly<Record<string, ChannelAgentActivity>> {
+    return this.agentActivity;
+  }
+
+  subscribeAgentActivity(listener: Listener): () => void {
+    this.agentActivityListeners.add(listener);
+    return () => this.agentActivityListeners.delete(listener);
+  }
+
+  /** Viewing a channel acknowledges completed work. Running work remains live. */
+  clearFinishedAgentActivity(channelId: string): void {
+    if (this.agentActivity[channelId] === 'finished') this.setAgentActivity(channelId, null);
   }
 
   subscribe(channelId: string, listener: Listener): () => void {
@@ -93,6 +133,44 @@ class ChatMessageStore {
     if (!set) return;
     for (const listener of set) listener();
   }
+
+  private reconcileAgentActivity(
+    channelId: string,
+    previous: ChatMessage[],
+    next: ChatMessage[],
+    hadChannel: boolean,
+  ): void {
+    if (next.some(isRunningAgent)) {
+      this.setAgentActivity(channelId, 'running');
+      return;
+    }
+
+    const previouslyRunning = previous.some(isRunningAgent)
+      || this.agentActivity[channelId] === 'running';
+    const previousIds = new Set(previous.map((message) => message.id));
+    const receivedFinishedAgent = hadChannel
+      && next.some((message) => !previousIds.has(message.id) && isFinishedAgent(message));
+    if (previouslyRunning || receivedFinishedAgent) {
+      const finishedTransition = previous.some((message) => isRunningAgent(message)
+        && next.some((candidate) => candidate.id === message.id && isFinishedAgent(candidate)));
+      const failedTransition = previous.some((message) => isRunningAgent(message)
+        && next.some((candidate) => candidate.id === message.id
+          && (candidate.status === 'failed' || candidate.status === 'canceled')));
+      this.setAgentActivity(
+        channelId,
+        failedTransition && !finishedTransition && !receivedFinishedAgent ? null : 'finished',
+      );
+    }
+  }
+
+  private setAgentActivity(channelId: string, status: ChannelAgentActivity | null): void {
+    if ((this.agentActivity[channelId] ?? null) === status) return;
+    const next = { ...this.agentActivity };
+    if (status) next[channelId] = status;
+    else delete next[channelId];
+    this.agentActivity = Object.freeze(next);
+    for (const listener of this.agentActivityListeners) listener();
+  }
 }
 
 export const chatMessageStore = new ChatMessageStore();
@@ -106,4 +184,14 @@ export function useChannelMessages(channelId: string): ChatMessage[] {
   );
   const getSnapshot = useCallback(() => chatMessageStore.getChannel(channelId), [channelId]);
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+}
+
+/** Subscribe the app shell to start/finish transitions without making it render
+ * for the token stream itself. */
+export function useAgentActivity(): Readonly<Record<string, ChannelAgentActivity>> {
+  return useSyncExternalStore(
+    (listener) => chatMessageStore.subscribeAgentActivity(listener),
+    () => chatMessageStore.getAgentActivity(),
+    () => chatMessageStore.getAgentActivity(),
+  );
 }
