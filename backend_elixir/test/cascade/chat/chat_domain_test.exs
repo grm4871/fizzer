@@ -7,7 +7,7 @@ defmodule Cascade.ChatDomainTest do
   alias Cascade.Accounts.SQL
   alias Cascade.Auth.Token
   alias Cascade.Chat.{Agents, Channel, Messages, RoomContext, Schema}
-  alias Cascade.Content.Store
+  alias Cascade.Content.{Assets, Store}
   alias Cascade.Missions.Dispatches
   alias Cascade.Runs.RunnerLifecycle
 
@@ -580,6 +580,46 @@ defmodule Cascade.ChatDomainTest do
 
     assert %{"messages" => [%{"id" => "http-message", "author" => "alice"}]} =
              Jason.decode!(response.resp_body)
+  end
+
+  test "agent avatars copy private note assets into a durable public image" do
+    {vault, channel} = chat_vault(1, "Avatar", "Room")
+    note = Store.create_note(vault.id, 1, %{title: "Source", content: "avatar"})
+
+    asset =
+      Assets.upload(note.id, 1, %{
+        media_type: "image/png",
+        data: Base.encode64(<<0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A>>)
+      })
+
+    assert {:ok, identity} =
+             Agents.upsert_identity(1, vault.id, %{
+               agentId: "codex",
+               displayName: "Sol",
+               mention: "sol"
+             })
+
+    assert {:ok, member} = Agents.add_to_channel(1, vault.id, channel.id, identity.id)
+
+    assert {:ok, updated} =
+             Agents.set_avatar(
+               1,
+               vault.id,
+               channel.id,
+               member.id,
+               "https://example.test#{asset.url}"
+             )
+
+    assert updated.avatarUrl =~ "/api/notes/agent-avatars/assets/#{identity.id}?v="
+    File.rm_rf!(Assets.assets_dir(note.id))
+
+    response =
+      conn(:get, updated.avatarUrl)
+      |> CascadeWeb.ContentRouter.call(CascadeWeb.ContentRouter.init([]))
+
+    assert response.status == 200
+    assert get_resp_header(response, "content-type") == ["image/png"]
+    assert response.resp_body == <<0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A>>
   end
 
   test "concurrent message commits publish created events in rowid order" do

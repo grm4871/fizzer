@@ -2,7 +2,7 @@ defmodule Cascade.Chat.Agents do
   @moduledoc "Owner-scoped agent identities and vault/channel membership lifecycle."
 
   alias Cascade.Accounts.{SQL, VaultMembers}
-  alias Cascade.Chat.{Channel, Schema}
+  alias Cascade.Chat.{Avatars, Channel, Schema}
 
   @codex_efforts ~w(low medium high xhigh max ultra)
   @claude_efforts ~w(low medium high xhigh max)
@@ -304,16 +304,17 @@ defmodule Cascade.Chat.Agents do
                WHERE m.id=? AND m.channel_id=?
              """,
              [registration_id, route.sourceChannelId]
-           ) do
+           ),
+         {:ok, stored_url} <- Avatars.persist(user_id, identity_id, url) do
       SQL.transaction(fn ->
         SQL.exec("UPDATE vault_agents SET avatar_url=?,updated_at=datetime('now') WHERE id=?", [
-          url,
+          stored_url,
           identity_id
         ])
 
         SQL.exec(
           "UPDATE chat_agent_members SET avatar_url=?,updated_at=datetime('now') WHERE vault_agent_id=?",
-          [url, identity_id]
+          [stored_url, identity_id]
         )
       end)
 

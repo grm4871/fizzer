@@ -414,6 +414,30 @@ defmodule CascadeWeb.ContentController do
   end
 
   def serve_asset(conn, note_id, asset_id) do
+    if note_id == "agent-avatars" do
+      serve_agent_avatar(conn, asset_id)
+    else
+      serve_private_asset(conn, note_id, asset_id)
+    end
+  end
+
+  defp serve_agent_avatar(conn, agent_id) do
+    case Cascade.Chat.Avatars.resolve(agent_id) do
+      nil ->
+        JSON.send(conn, 404, %{error: "Not found"})
+
+      path ->
+        metadata = Assets.response_metadata(path)
+
+        conn
+        |> put_resp_header("x-content-type-options", "nosniff")
+        |> put_resp_header("content-type", metadata.content_type)
+        |> put_resp_header("cache-control", "public, max-age=31536000, immutable")
+        |> send_file(200, path)
+    end
+  end
+
+  defp serve_private_asset(conn, note_id, asset_id) do
     authenticated(conn, fn conn, auth ->
       with_readable_note(
         conn,
