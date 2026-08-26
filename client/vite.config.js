@@ -79,6 +79,7 @@ const isBetaFrontend =
   requestedBase !== '/' || process.env.CASCADE_BETA_FRONTEND === 'true';
 const devProxyTarget = process.env.CASCADE_DEV_PROXY_TARGET || `http://localhost:${process.env.API_PORT || 3000}`;
 const devProxySecure = devProxyTarget.startsWith('https://');
+const devProxyHeaders = devProxySecure ? { Origin: devProxyTarget } : undefined;
 
 function autoRefreshFlagPlugin() {
   return {
@@ -138,11 +139,13 @@ export default defineConfig({
         target: devProxyTarget,
         changeOrigin: true,
         secure: devProxySecure,
+        headers: devProxyHeaders,
       },
       '/socket.io': {
         target: devProxyTarget,
         changeOrigin: true,
         secure: devProxySecure,
+        headers: devProxyHeaders,
         ws: true,  // Enable WebSocket proxying
       },
     },
