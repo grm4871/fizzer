@@ -58,6 +58,12 @@ if config_env() != :test do
       Path.expand(
         System.get_env("CASCADE_CLIENT_DIST_DIR") || Path.join(repo_root, "client/dist")
       ),
+    beta_client_dist_dir:
+      (case System.get_env("CASCADE_BETA_CLIENT_DIST_DIR") do
+         nil -> nil
+         "" -> nil
+         path -> Path.expand(path)
+       end),
     qmd_worker_enabled: parse_bool.(System.get_env("CASCADE_QMD_WORKER_ENABLED"), true),
     network_mode: network_mode,
     require_invite_registration: require_invite_registration,

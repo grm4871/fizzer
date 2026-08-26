@@ -18,11 +18,19 @@
     return;
   }
 
-  // Get the last known version from localStorage
-  var lastVersion = localStorage.getItem('app_version');
+  // Scope the sentinel to the frontend lane. Production and /beta/ can be open
+  // in the same browser without forcing each other to reload.
+  var scriptUrl = new URL(document.currentScript && document.currentScript.src
+    ? document.currentScript.src
+    : window.location.href);
+  var versionUrl = new URL('version.json', scriptUrl);
+  var versionScope = versionUrl.pathname.replace(/version\.json$/, '');
+  var versionKey = versionScope === '/' ? 'app_version' : 'app_version:' + versionScope;
+  var lastVersion = localStorage.getItem(versionKey);
   
   // Check version immediately
-  fetch('/version.json?t=' + Date.now())
+  versionUrl.search = 't=' + Date.now();
+  fetch(versionUrl)
     .then(function(res) {
       if (!res.ok) return;
       return res.json();
@@ -37,7 +45,7 @@
       
       // If no client version, this might be first load - save server version
       if (!clientVersion) {
-        localStorage.setItem('app_version', serverVersion);
+        localStorage.setItem(versionKey, serverVersion);
         return;
       }
       
@@ -45,7 +53,7 @@
         console.log('[VersionCheck] Version mismatch! Forcing reload...');
         
         // Update to new version in localStorage
-        localStorage.setItem('app_version', serverVersion);
+        localStorage.setItem(versionKey, serverVersion);
         
         // Force cache-busting reload
         var currentUrl = window.location.href.split('?')[0];

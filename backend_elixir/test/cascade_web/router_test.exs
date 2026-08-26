@@ -209,6 +209,39 @@ defmodule CascadeWeb.RouterTest do
     assert spa.resp_body == "<main>app</main>"
   end
 
+  test "serves an isolated beta SPA without changing production assets" do
+    root = Path.join(System.tmp_dir!(), "cascade-static-#{System.unique_integer([:positive])}")
+
+    beta_root =
+      Path.join(System.tmp_dir!(), "cascade-beta-static-#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(Path.join(root, "assets"))
+    File.mkdir_p!(Path.join(beta_root, "assets"))
+    File.write!(Path.join(root, "app.html"), "<main>production</main>")
+    File.write!(Path.join(beta_root, "app.html"), "<main>beta</main>")
+    File.write!(Path.join(beta_root, "assets/main-beta.js"), "console.log('beta')")
+
+    previous_root = Application.fetch_env!(:cascade_elixir, :client_dist_dir)
+    previous_beta = Application.get_env(:cascade_elixir, :beta_client_dist_dir)
+    Application.put_env(:cascade_elixir, :client_dist_dir, root)
+    Application.put_env(:cascade_elixir, :beta_client_dist_dir, beta_root)
+
+    on_exit(fn ->
+      Application.put_env(:cascade_elixir, :client_dist_dir, previous_root)
+      Application.put_env(:cascade_elixir, :beta_client_dist_dir, previous_beta)
+      File.rm_rf!(root)
+      File.rm_rf!(beta_root)
+    end)
+
+    assert request(:get, "/app").resp_body == "<main>production</main>"
+    assert request(:get, "/beta/").resp_body == "<main>beta</main>"
+    assert request(:get, "/beta/channel/123").resp_body == "<main>beta</main>"
+
+    asset = request(:get, "/beta/assets/main-beta.js")
+    assert asset.resp_body == "console.log('beta')"
+    assert get_resp_header(asset, "cache-control") == ["public, max-age=31536000, immutable"]
+  end
+
   defp request(method, path, body \\ nil)
 
   defp request(method, path, nil) do

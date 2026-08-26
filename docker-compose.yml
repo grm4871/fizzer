@@ -23,6 +23,7 @@ services:
       DOCS_DB_PATH: /data/docs.db
       CASCADE_DATA_DIR: /data
       CASCADE_CLIENT_DIST_DIR: /app/client/dist
+      CASCADE_BETA_CLIENT_DIST_DIR: /app/client-beta/current
       CASCADE_NODE_ROOT: /app
       # Preserve the Node backend's HOME-derived storage locations exactly.
       CASCADE_VAULTS_BASE_DIR: /data/.cascade/vaults
@@ -45,3 +46,4 @@ services:
         hard: 200000
     volumes:
       - /var/lib/cascade:/data
+      - /var/lib/cascade-beta:/app/client-beta:ro

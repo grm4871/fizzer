@@ -68,6 +68,10 @@ function htmlFallbackPlugin() {
 }
 
 const isCapacitorBuild = process.env.CAPACITOR === 'true';
+const requestedBase = process.env.CASCADE_CLIENT_BASE || '/';
+if (!requestedBase.startsWith('/') || !requestedBase.endsWith('/') || requestedBase.includes('://')) {
+  throw new Error('CASCADE_CLIENT_BASE must be an absolute path ending in /');
+}
 const disableAutoRefresh =
   process.env.CASCADE_DISABLE_AUTO_REFRESH === 'true' ||
   process.env.VITE_DISABLE_AUTO_REFRESH === 'true';
@@ -76,16 +80,21 @@ function autoRefreshFlagPlugin() {
   return {
     name: 'auto-refresh-flag',
     transformIndexHtml(html) {
-      return html.replace(
+      const transformed = html.replace(
         'window.__CASCADE_DISABLE_AUTO_REFRESH__ = false;',
         `window.__CASCADE_DISABLE_AUTO_REFRESH__ = ${disableAutoRefresh ? 'true' : 'false'};`
+      );
+      if (requestedBase === '/') return transformed;
+      return transformed.replace(
+        '<body>',
+        '<body><div class="beta-frontend-banner" role="status">Beta frontend · live data</div>'
       );
     }
   };
 }
 
 export default defineConfig({
-  base: isCapacitorBuild ? './' : '/',
+  base: isCapacitorBuild ? './' : requestedBase,
   define: {
     '__APP_VERSION__': JSON.stringify(buildVersion)
   },

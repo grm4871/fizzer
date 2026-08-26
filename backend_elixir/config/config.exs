@@ -13,6 +13,7 @@ config :cascade_elixir,
   runner_orphan_reclaim_ms: 120_000,
   trust_proxy_hops: 0,
   client_dist_dir: Path.expand("../../client/dist", __DIR__),
+  beta_client_dist_dir: nil,
   network_mode: false,
   allowed_origins: []
 

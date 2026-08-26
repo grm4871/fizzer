@@ -14,11 +14,20 @@ defmodule CascadeWeb.Static do
 
   def serve(conn) do
     root = Application.fetch_env!(:cascade_elixir, :client_dist_dir) |> Path.expand()
+    beta_root = Application.get_env(:cascade_elixir, :beta_client_dist_dir)
 
     cond do
-      reserved?(conn.request_path) -> :not_found
-      conn.request_path in ["/", "/download"] -> serve_landing_or_app(conn, root)
-      true -> serve_asset_or_app(conn, root)
+      reserved?(conn.request_path) ->
+        :not_found
+
+      beta_root && beta_request?(conn.request_path) ->
+        serve_asset_or_app(conn, Path.expand(beta_root), beta_relative(conn.path_info))
+
+      conn.request_path in ["/", "/download"] ->
+        serve_landing_or_app(conn, root)
+
+      true ->
+        serve_asset_or_app(conn, root)
     end
   end
 
@@ -47,8 +56,8 @@ defmodule CascadeWeb.Static do
     end
   end
 
-  defp serve_asset_or_app(conn, root) do
-    relative = conn.path_info |> Enum.join("/")
+  defp serve_asset_or_app(conn, root, relative \\ nil) do
+    relative = relative || Enum.join(conn.path_info, "/")
 
     case safe_regular_file(root, relative) do
       {:ok, path} -> send_static(conn, path)
@@ -91,6 +100,10 @@ defmodule CascadeWeb.Static do
 
   defp within_root?(candidate, root),
     do: candidate == root or String.starts_with?(candidate, root <> "/")
+
+  defp beta_request?(path), do: path == "/beta" or String.starts_with?(path, "/beta/")
+  defp beta_relative(["beta" | rest]), do: Enum.join(rest, "/")
+  defp beta_relative(_path), do: ""
 
   defp reserved?(path) do
     path == "/oembed" or Enum.any?(@reserved_prefixes, &String.starts_with?(path, &1))
