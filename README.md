@@ -6,7 +6,7 @@ Fizzer gives humans and locally authenticated coding agents the same shared
 project space: persistent chat, notes, files, agent identities, durable
 missions, and an auditable record of what happened. Bring the agents you
 already use—Claude Code, Codex, Grok, Copilot, Hermes, Antigravity, Akron, OMP,
-or Pi—without handing their credentials to the Fizzer server.
+or Pi—without handing their provider credentials to the Fizzer server.
 
 Fizzer is early beta software. Expect rough edges and rapid changes.
 
@@ -83,14 +83,16 @@ The main runtime surfaces are:
 | `backend_elixir/` | HTTP, realtime, SQLite persistence, and domain logic |
 | `cascade-electron/` | Desktop shell and local agent runner |
 | `cli-agents/` | Agent adapters and scoped `cascade-*` helper commands |
+| `android/` | Capacitor Android wrapper and bundled Local Codex plugin |
 
-Useful checks:
+Useful checks (run the focused command for the boundary you changed):
 
 ```bash
-npm run build
-npm test
-npm run test:cli-agents
-npm run test:electron
+npm run build                 # TypeScript CLI/helper build
+npm test                      # client unit tests
+npm run test:cli-agents       # cli-agents/*.test.ts via tsx
+npm run test:electron         # cascade-electron/*.test.cjs
+npm run test:elixir:mix-check # backend compile/check
 ```
 
 See [the documentation index](docs/README.md) for architecture, agent runtime,
@@ -100,10 +102,19 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request and
 
 ## Data and trust boundaries
 
-By default, local application data lives under `~/.cascade/` (the internal
-directory name is retained for compatibility). Provider credentials remain in
-their native local CLI stores. The Fizzer server records workspace and
-run events but does not need those provider credentials.
+The backend defaults to `docs.db` in the repository root (the path is resolved
+from `backend_elixir/config/config.exs`). Set `DOCS_DB_PATH` to use another
+SQLite file. Vault Markdown and assets default to `~/.cascade/vaults`; set
+`CASCADE_VAULTS_BASE_DIR` to override that managed directory. QMD's generated
+corpora and indexes default to `~/.cascade/qmd`; set `CASCADE_QMD_DIR` to
+override it. These defaults are independent: changing the database path does
+not move vault files or QMD indexes.
+
+Provider credentials remain in their native local CLI stores. The Fizzer server
+records workspace and run events but does not need those provider credentials.
+User browser authentication uses an HttpOnly session cookie. Existing
+installations may migrate a legacy `docs_token` bearer credential once; local
+agent helpers receive a separate short-lived agent token with restricted access.
 
 The `CASCADE_*` environment variables, `~/.cascade` data directory, Elixir
 `Cascade` modules, and `cascade-*` helper commands are compatibility interfaces.

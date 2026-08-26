@@ -1,17 +1,13 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Bot, ClipboardList, Flag, Forward, Hash, History, MessageCircle, Reply, Trash2, X } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, type NoteSummary } from '../api';
 import { normalizeMention } from '../chat/mentions';
-import { createChannelWorkItem } from '../chat/workItems';
-import { buildReplyPreview, buildReplyRef } from '../chat/replies';
+import { buildReplyRef } from '../chat/replies';
 import type {
   ChatAgentOption,
   ChatAgentRegistration,
   ChatChannelPresence,
   ChatMediaAttachment,
   ChatMessage,
-  ChatMission,
   ChatReplyRef,
   DesktopRunnerHealth,
   SharedChatNote,
@@ -20,26 +16,17 @@ import type {
 import { ChatAgentPanel, type ChatAgentPanelHandle, planUsageProviderId } from './ChatAgentPanel';
 import { ChatAvatar } from './ChatAvatar';
 import { ChatChannelSettings } from './ChatChannelSettings';
-import { ChatComposer, type ChatComposerHandle } from './ChatComposer';
-import { ChatGroupRow, getRunningMessageState, getSteeringPromptLabels } from './ChatGroupRow';
-import { CHAT_MARKDOWN_PLUGINS } from './ChatMarkdown';
-import { ChatMissionCard } from './ChatMissionCard';
-import { usePopupMenu } from '../ui/popupMenu';
 import { ChatSidebarButtons } from './ChatSidebarButtons';
-import { ChatWorkTrace } from './ChatWorkTrace';
-import {
-  CHAT_RELATIONSHIPS,
-  CHAT_RELATIONSHIP_INSTRUCTIONS,
-  CHAT_RELATIONSHIP_LABELS,
-  type ChatRelationship,
-} from '../chat/relationships';
-import { ReportDialog } from './ReportDialog';
+import { ChatOverlays } from './ChatOverlays';
+import { ChatTranscript } from './ChatTranscript';
+import type { ChatComposerHandle } from './ChatComposer';
+import { CHAT_RELATIONSHIP_INSTRUCTIONS, type ChatRelationship } from '../chat/relationships';
 import { hasRunActivity } from '../chat/harnessActivity';
-import { segmentTranscript, workTracePeek, type ChatMessageGroup } from '../chat/workTrace';
+import { segmentTranscript } from '../chat/workTrace';
 import { useChannelMessages } from '../chat/messageStore';
-import {
-  CHAT_NOTE_MARKER,
-} from '../chat/shared';
+import { useChatScroll } from './useChatScroll';
+import { getRunningMessageState, getSteeringPromptLabels } from './ChatGroupRow';
+import { useChatOverlayActions } from './useChatOverlayActions';
 
 export {
   canGroupChatMessages,
@@ -141,29 +128,12 @@ interface ChatViewProps {
 // render and defeat the notes-aware memo comparators below.
 const EMPTY_NOTES: NoteSummary[] = [];
 
-// Slightly generous: stream/harness growth often leaves a few px of lag for
-// one frame; 24px was flapping sticky under fast agent output.
-function isAtScrollBottom(element: HTMLElement, threshold = 48) {
-  return element.scrollHeight - element.scrollTop - element.clientHeight <= threshold;
-}
-
-export function shouldSnapToRecentOnSend(element: HTMLElement, threshold = 600) {
-  return isAtScrollBottom(element, threshold);
-}
-
-export function isPendingAgentRunShell(message: ChatMessage | undefined) {
-  if (!message) return false;
-  const belongsToAgent = Boolean(message.agentId || message.registrationId || message.runId != null);
-  return belongsToAgent && (message.status === 'sending' || message.status === 'running');
-}
-
-export function shouldDetachStickyForWheel(deltaY: number) {
-  return deltaY < 0;
-}
-
-export function shouldDetachStickyForTouch(startY: number | null, currentY: number | null) {
-  return startY != null && currentY != null && currentY > startY + 4;
-}
+export {
+  shouldSnapToRecentOnSend,
+  isPendingAgentRunShell,
+  shouldDetachStickyForWheel,
+  shouldDetachStickyForTouch,
+} from './chatViewHelpers';
 
 export const ChatView = memo(function ChatView({
   channelId,
@@ -244,85 +214,34 @@ export const ChatView = memo(function ChatView({
   // without waiting for the input's state round-trip.
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
   const [jumpHighlightMessageId, setJumpHighlightMessageId] = useState<string | null>(null);
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; message: ChatMessage } | null>(null);
-  const [collaborationSource, setCollaborationSource] = useState<ChatMessage | null>(null);
-  const [collaborationTargetId, setCollaborationTargetId] = useState('');
-  const [collaborationRelationship, setCollaborationRelationship] = useState<ChatRelationship>('review_request');
-  const [collaborationInstruction, setCollaborationInstruction] = useState(CHAT_RELATIONSHIP_INSTRUCTIONS.review_request);
-  const [collaborationBusy, setCollaborationBusy] = useState(false);
-  const [collaborationError, setCollaborationError] = useState('');
-  const [participantMenu, setParticipantMenu] = useState<{ x: number; y: number; username: string; action: 'remove' | 'leave' } | null>(null);
-  const [reportMessage, setReportMessage] = useState<ChatMessage | null>(null);
-  const contextMenuRef = usePopupMenu<HTMLDivElement>(contextMenu);
-  const participantMenuRef = usePopupMenu<HTMLDivElement>(participantMenu);
-  /** Delete is two-step in the context menu rather than a native confirm dialog. */
-  const [deleteArmed, setDeleteArmed] = useState(false);
-  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
-  const [sharedNote, setSharedNote] = useState<SharedChatNote | null>(null);
-  const [missionArchiveOpen, setMissionArchiveOpen] = useState(false);
-  const [missionArchive, setMissionArchive] = useState<ChatMission[]>([]);
-  const [missionArchiveBusy, setMissionArchiveBusy] = useState(false);
-  const [missionArchiveError, setMissionArchiveError] = useState('');
-  const loadMissionArchive = useCallback(async () => {
-    if (!vaultId) return;
-    setMissionArchiveBusy(true);
-    setMissionArchiveError('');
-    try {
-      const result = await api<{ missions: ChatMission[] }>(
-        `/api/vaults/${vaultId}/channels/${channelId}/missions`,
-      );
-      setMissionArchive(result.missions || []);
-    } catch (error) {
-      setMissionArchiveError(error instanceof Error ? error.message : 'Could not load missions');
-    } finally {
-      setMissionArchiveBusy(false);
-    }
-  }, [vaultId, channelId]);
-  useEffect(() => {
-    setMissionArchiveOpen(false);
-    setMissionArchive([]);
-    setMissionArchiveError('');
-    setCollaborationSource(null);
-    setCollaborationError('');
-  }, [channelId]);
-  const collaborationTargets = useMemo(() => {
-    const profile = Object.values(presence.profiles || {}).find((item) => (
-      item.username.toLowerCase() === currentUser.toLowerCase()
-    ));
-    const currentUserId = profile?.id;
-    const seen = new Set<string>();
-    return registeredAgents.filter((registration) => {
-      if (
-        currentUserId != null
-        && registration.ownerUserId != null
-        && registration.ownerUserId !== currentUserId
-        && !registration.pingableByOthers
-      ) return false;
-      const key = registration.vaultAgentId || registration.id;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-  }, [currentUser, presence.profiles, registeredAgents]);
-  const messagesRef = useRef<HTMLDivElement | null>(null);
-  /** Inner content wrapper — ResizeObserver watches height growth (harness, thinking). */
-  const messagesContentRef = useRef<HTMLDivElement | null>(null);
-  const endRef = useRef<HTMLDivElement | null>(null);
-  const wasAtBottomRef = useRef(true);
-  const scrollFrameRef = useRef<number | null>(null);
-  const jumpHighlightTimerRef = useRef<number | null>(null);
-  // null so the first mount counts as a channel change and force-scrolls to bottom.
-  const previousChannelIdRef = useRef<string | null>(null);
-  // True while we scroll programmatically, so the resulting scroll events aren't
-  // mistaken for the user scrolling away from the bottom (which would unstick).
-  const programmaticScrollRef = useRef(false);
-  const programmaticClearRef = useRef<number | null>(null);
-  const touchStartYRef = useRef<number | null>(null);
-  // Armed only by a send made near the live edge. It bridges the separate
-  // optimistic-human-message and agent-run-shell layout commits.
-  const pendingSendFollowRef = useRef(false);
   const composerRef = useRef<ChatComposerHandle>(null);
   const agentPanelRef = useRef<ChatAgentPanelHandle>(null);
+  const {
+    contextMenu, contextMenuRef, participantMenu, participantMenuRef, deleteArmed, setDeleteArmed,
+    collaborationSource, collaborationTargetId, collaborationRelationship, collaborationInstruction,
+    collaborationBusy, collaborationError, forwardSource, forwardQuery, forwardTargets, forwardingTo, forwardError,
+    missionArchiveOpen, missionArchive, missionArchiveBusy, missionArchiveError, lightboxSrc, sharedNote, reportMessage,
+    setMissionArchiveOpen, setCollaborationTargetId, setCollaborationRelationship, setCollaborationInstruction,
+    setCollaborationSource, setForwardSource, setForwardQuery, setLightboxSrc, setSharedNote, setReportMessage,
+    loadMissionArchive, openSharedNote, openLightbox, startCollaboration, submitCollaboration, openMessageContextMenu,
+    openParticipantContextMenu, startForward, forwardTo, deleteMessage, addToKanban, reportFromContext,
+    participantAction, canCollaborate, targetsForCollaboration, closeContextMenu,
+  } = useChatOverlayActions({
+    channelId,
+    vaultId,
+    currentUser,
+    presence,
+    registeredAgents,
+    notes,
+    channelCwd,
+    directMessage,
+    onCollaborateMessage,
+    onForwardMessage,
+    onDeleteMessage,
+    onRemoveParticipant,
+    onLeaveChannel,
+    onOpenSharedNote,
+  });
   const sortedMessages = useMemo(() => {
     // Index-stable sort: never invent order for messages missing seq. Treating
     // missing seq as MAX_SAFE_INTEGER put an already-persisted agent shell
@@ -352,6 +271,26 @@ export const ChatView = memo(function ChatView({
       })
       .map(({ message }) => message);
   }, [messages]);
+  const {
+    messagesRef,
+    messagesContentRef,
+    endRef,
+    touchStartYRef,
+    pendingSendFollowRef,
+    programmaticScrollRef,
+    userScrollIntentUntilRef,
+    sendMessage,
+    scrollToBottomIfSticky,
+    runJumpToMessage,
+  } = useChatScroll({
+    channelId,
+    sortedMessages,
+    onSendMessage,
+    jumpToMessageId,
+    onJumpHandled,
+    setSelectedMessageId,
+    setJumpHighlightMessageId,
+  });
   // Grouping identity cache removed: transcript segments are recomputed with
   // message-ref equality via sortedMessages + segmentTranscript.
   // Lazily hydrate messages whose data-URL images the list payload stripped.
@@ -477,10 +416,6 @@ export const ChatView = memo(function ChatView({
     }
     return Array.from(aliases);
   }, [humanUsers, registeredAgents]);
-  const openSharedNote = useCallback(async (messageId: string, title: string) => {
-    const note = await onOpenSharedNote?.(channelId, messageId, title);
-    if (note) setSharedNote(note);
-  }, [channelId, onOpenSharedNote]);
 
   useEffect(() => {
     if (typeof localStorage === 'undefined') return;
@@ -492,290 +427,6 @@ export const ChatView = memo(function ChatView({
       agentPanelRef.current?.closeChrome();
     }
   }, [usersCollapsed, onMembersOpenChange]);
-
-  /** Suppress sticky pin for a short window after the user scrolls (RO noise). */
-  const userScrollQuietUntilRef = useRef(0);
-  /** Only trusted user gestures may detach sticky-bottom; layout scroll events may not. */
-  const userScrollIntentUntilRef = useRef(0);
-
-  /** Pin the scroller to the bottom now, flagging it as a programmatic scroll. */
-  const scrollToBottom = useCallback(() => {
-    const el = messagesRef.current;
-    if (!el) return;
-    // Never yank the list while the user is actively scrolling history.
-    if (performance.now() < userScrollQuietUntilRef.current) return;
-    if (!wasAtBottomRef.current && previousChannelIdRef.current === channelId) return;
-    programmaticScrollRef.current = true;
-    el.scrollTop = el.scrollHeight;
-    // Content often grows in the same frame as the pin (stream tokens, harness).
-    // One follow-up rAF catches the race without a second RO cycle.
-    requestAnimationFrame(() => {
-      const scroller = messagesRef.current;
-      if (!scroller) return;
-      if (performance.now() < userScrollQuietUntilRef.current) return;
-      if (!wasAtBottomRef.current && previousChannelIdRef.current === channelId) return;
-      if (!isAtScrollBottom(scroller)) {
-        programmaticScrollRef.current = true;
-        scroller.scrollTop = scroller.scrollHeight;
-      }
-    });
-    if (programmaticClearRef.current != null) clearTimeout(programmaticClearRef.current);
-    programmaticClearRef.current = window.setTimeout(() => {
-      programmaticClearRef.current = null;
-      programmaticScrollRef.current = false;
-    }, 120);
-  }, [channelId]);
-
-  const scrollToBottomIfSticky = useCallback(() => {
-    if (!wasAtBottomRef.current) return;
-    if (performance.now() < userScrollQuietUntilRef.current) return;
-    if (scrollFrameRef.current != null) return;
-    scrollFrameRef.current = requestAnimationFrame(() => {
-      scrollFrameRef.current = null;
-      if (wasAtBottomRef.current && performance.now() >= userScrollQuietUntilRef.current) {
-        scrollToBottom();
-      }
-    });
-  }, [scrollToBottom]);
-
-  const sendMessage = useCallback((
-    targetChannelId: string,
-    body: string,
-    media?: ChatMediaAttachment[],
-    replyTo?: ChatReplyRef,
-  ) => {
-    const scroller = messagesRef.current;
-    const shouldSnap = !scroller || shouldSnapToRecentOnSend(scroller);
-
-    // Decide from the pre-send viewport. The optimistic message changes the
-    // scroll height immediately afterward and would otherwise make a nearby
-    // reader look too far away to follow their own message.
-    wasAtBottomRef.current = shouldSnap;
-    pendingSendFollowRef.current = shouldSnap;
-    if (shouldSnap) {
-      userScrollQuietUntilRef.current = 0;
-      userScrollIntentUntilRef.current = 0;
-    }
-
-    onSendMessage(targetChannelId, body, media, replyTo);
-
-    if (shouldSnap) {
-      scrollToBottom();
-      requestAnimationFrame(scrollToBottom);
-    }
-  }, [onSendMessage, scrollToBottom]);
-
-  useLayoutEffect(() => {
-    if (previousChannelIdRef.current !== channelId) {
-      // New channel (or first mount): force the view to the bottom, re-pinning
-      // across a few frames because markdown/images/widgets settle after paint.
-      previousChannelIdRef.current = channelId;
-      wasAtBottomRef.current = true;
-      pendingSendFollowRef.current = false;
-      userScrollQuietUntilRef.current = 0;
-      scrollToBottom();
-      requestAnimationFrame(scrollToBottom);
-      const t1 = window.setTimeout(scrollToBottom, 60);
-      const t2 = window.setTimeout(scrollToBottom, 200);
-      return () => { clearTimeout(t1); clearTimeout(t2); };
-    }
-
-    const latest = sortedMessages.at(-1);
-    if (pendingSendFollowRef.current && isPendingAgentRunShell(latest)) {
-      // The runner card (status + Stop button) arrives after the user's row.
-      // Reassert the live edge for that second commit, then ordinary sticky
-      // tracking owns subsequent harness growth.
-      pendingSendFollowRef.current = false;
-      wasAtBottomRef.current = true;
-      userScrollQuietUntilRef.current = 0;
-      userScrollIntentUntilRef.current = 0;
-      scrollToBottom();
-      requestAnimationFrame(scrollToBottom);
-      const settle = window.setTimeout(scrollToBottom, 80);
-      return () => clearTimeout(settle);
-    }
-    scrollToBottomIfSticky();
-  }, [sortedMessages, channelId, scrollToBottom, scrollToBottomIfSticky]);
-
-  // Jump to a specific message (e.g. clicked from search). Waits until the
-  // target is in this channel's list, force-mounts + highlights its group via
-  // the selection state, then scrolls it to center. Auto-pin-to-bottom is
-  // suppressed so the freshly-opened channel doesn't yank us back down.
-  const jumpHandledRef = useRef<string | null>(null);
-  const jumpTimersRef = useRef<{ raf: number; timer: number }>({ raf: 0, timer: 0 });
-
-  // Select (which force-mounts the group out of its offscreen placeholder),
-  // then centre it. Auto-pin-to-bottom is suppressed so a freshly opened
-  // channel does not yank us back down.
-  const runJumpToMessage = useCallback((targetId: string) => {
-    setSelectedMessageId(targetId);
-    setJumpHighlightMessageId(targetId);
-    if (jumpHighlightTimerRef.current != null) clearTimeout(jumpHighlightTimerRef.current);
-    jumpHighlightTimerRef.current = window.setTimeout(() => {
-      jumpHighlightTimerRef.current = null;
-      setJumpHighlightMessageId((current) => current === targetId ? null : current);
-    }, 1300);
-    wasAtBottomRef.current = false;
-    pendingSendFollowRef.current = false;
-    userScrollQuietUntilRef.current = performance.now() + 1200;
-    const scrollToTarget = () => {
-      const scroller = messagesRef.current;
-      if (!scroller) return false;
-      const selector = `[data-message-id="${(window.CSS?.escape ?? String)(targetId)}"]`;
-      const el = scroller.querySelector<HTMLElement>(selector);
-      if (!el) return false;
-      el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-      return true;
-    };
-    // The group may still be mounting from its offscreen placeholder; retry a
-    // few frames so scrollIntoView runs against the settled layout.
-    let tries = 0;
-    const tick = () => {
-      const done = scrollToTarget();
-      tries += 1;
-      if (!done || tries < 4) jumpTimersRef.current.timer = window.setTimeout(tick, 90);
-    };
-    cancelAnimationFrame(jumpTimersRef.current.raf);
-    if (jumpTimersRef.current.timer) clearTimeout(jumpTimersRef.current.timer);
-    jumpTimersRef.current.raf = requestAnimationFrame(tick);
-  }, []);
-
-  useEffect(() => () => {
-    cancelAnimationFrame(jumpTimersRef.current.raf);
-    if (jumpTimersRef.current.timer) clearTimeout(jumpTimersRef.current.timer);
-  }, []);
-
-  // Jump to a specific message opened from elsewhere (e.g. clicked from
-  // search). Waits until the target is in this channel's list.
-  useEffect(() => {
-    if (!jumpToMessageId) { jumpHandledRef.current = null; return; }
-    if (jumpHandledRef.current === jumpToMessageId) return;
-    if (!sortedMessages.some((message) => message.id === jumpToMessageId)) return;
-    jumpHandledRef.current = jumpToMessageId;
-    runJumpToMessage(jumpToMessageId);
-    onJumpHandled?.();
-  }, [jumpToMessageId, sortedMessages, onJumpHandled, runJumpToMessage]);
-
-  // Which reply quotes can actually scroll somewhere.
-  const loadedMessageIds = useMemo(
-    () => new Set(sortedMessages.map((message) => message.id)),
-    [sortedMessages],
-  );
-
-  // Keep a bottom-following chat pinned when either its content grows or the
-  // viewport shrinks (for example, when the reply banner mounts above the
-  // composer). Watching content alone leaves the last rows below the fold.
-  useEffect(() => {
-    const content = messagesContentRef.current;
-    const viewport = messagesRef.current;
-    if ((!content && !viewport) || typeof ResizeObserver === 'undefined') return;
-    let roFrame: number | null = null;
-    const ro = new ResizeObserver(() => {
-      // Coalesce RO storms (markdown/images/fonts) to one rAF — was a scroll jank source.
-      if (roFrame != null) return;
-      roFrame = requestAnimationFrame(() => {
-        roFrame = null;
-        scrollToBottomIfSticky();
-      });
-    });
-    if (content) ro.observe(content);
-    if (viewport) ro.observe(viewport);
-    return () => {
-      if (roFrame != null) cancelAnimationFrame(roFrame);
-      ro.disconnect();
-    };
-  }, [channelId, scrollToBottomIfSticky]);
-
-  useEffect(() => () => {
-    if (scrollFrameRef.current != null) cancelAnimationFrame(scrollFrameRef.current);
-    if (jumpHighlightTimerRef.current != null) clearTimeout(jumpHighlightTimerRef.current);
-    if (programmaticClearRef.current != null) clearTimeout(programmaticClearRef.current);
-  }, []);
-
-  const updateBottomStickiness = useCallback(() => {
-    const element = messagesRef.current;
-    if (!element) return;
-    const atBottom = isAtScrollBottom(element);
-    // Programmatic pins set scrollTop then fire scroll events. Content can also
-    // grow mid-pin (agent stream / harness), leaving !atBottom without any user
-    // gesture — that must NOT clear wasAtBottom or sticky follow dies for the
-    // rest of the run. Only detach mid-pin when a real user intent is active.
-    if (programmaticScrollRef.current) {
-      if (!atBottom && performance.now() < userScrollIntentUntilRef.current) {
-        programmaticScrollRef.current = false;
-        wasAtBottomRef.current = false;
-        userScrollQuietUntilRef.current = performance.now() + 220;
-      }
-      return;
-    }
-    // Content growth, scroll anchoring, and virtualization can emit scroll
-    // events without user input. Those must not silently detach a bottom-pinned
-    // desktop viewport before the agent response arrives.
-    if (performance.now() >= userScrollIntentUntilRef.current) {
-      if (atBottom) wasAtBottomRef.current = true;
-      return;
-    }
-    wasAtBottomRef.current = atBottom;
-    // While reading history, ignore ResizeObserver sticky pins briefly.
-    if (!atBottom) {
-      userScrollQuietUntilRef.current = performance.now() + 220;
-    }
-  }, []);
-
-  // Native passive scroll listener — React's onScroll isn't passive and can
-  // block compositor scrolling on long threads.
-  useEffect(() => {
-    const el = messagesRef.current;
-    if (!el) return;
-    el.addEventListener('scroll', updateBottomStickiness, { passive: true });
-    return () => el.removeEventListener('scroll', updateBottomStickiness);
-  }, [channelId, updateBottomStickiness]);
-
-  useEffect(() => {
-    setContextMenu(null);
-    setParticipantMenu(null);
-  }, [channelId]);
-
-  useEffect(() => {
-    if (!lightboxSrc) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setLightboxSrc(null);
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [lightboxSrc]);
-
-  useEffect(() => {
-    if (!contextMenu) return;
-    const close = () => setContextMenu(null);
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') close();
-    };
-    window.addEventListener('click', close);
-    window.addEventListener('keydown', onKeyDown);
-    window.addEventListener('scroll', close, true);
-    return () => {
-      window.removeEventListener('click', close);
-      window.removeEventListener('keydown', onKeyDown);
-      window.removeEventListener('scroll', close, true);
-    };
-  }, [contextMenu]);
-
-  useEffect(() => {
-    if (!participantMenu) return;
-    const close = () => setParticipantMenu(null);
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') close();
-    };
-    window.addEventListener('click', close);
-    window.addEventListener('keydown', onKeyDown);
-    window.addEventListener('scroll', close, true);
-    return () => {
-      window.removeEventListener('click', close);
-      window.removeEventListener('keydown', onKeyDown);
-      window.removeEventListener('scroll', close, true);
-    };
-  }, [participantMenu]);
 
   const openAgentSettingsFromMessage = useCallback((message: ChatMessage, event: React.MouseEvent) => {
     event.stopPropagation();
@@ -789,485 +440,70 @@ export const ChatView = memo(function ChatView({
   }, [canManageRegistration, registrationById]);
 
   const startReply = useCallback((message: ChatMessage) => {
-    setContextMenu(null);
+    closeContextMenu();
     // Focus after paint so the reply bar is mounted first (esp. mobile keyboard).
     composerRef.current?.startReply(buildReplyRef(message, registeredAgents));
-  }, [registeredAgents]);
-
-  const targetsForCollaboration = useCallback((message: ChatMessage) => (
-    collaborationTargets.filter((registration) => (
-      registration.id !== message.registrationId
-      && (!message.registrationId || registration.vaultAgentId !== registeredAgents.find((item) => item.id === message.registrationId)?.vaultAgentId)
-    ))
-  ), [collaborationTargets, registeredAgents]);
-
-  const startCollaboration = useCallback((message: ChatMessage) => {
-    const targets = targetsForCollaboration(message);
-    if (!onCollaborateMessage || targets.length === 0) return;
-    setContextMenu(null);
-    setCollaborationSource(message);
-    setCollaborationTargetId(targets[0].id);
-    setCollaborationRelationship('review_request');
-    setCollaborationInstruction(CHAT_RELATIONSHIP_INSTRUCTIONS.review_request);
-    setCollaborationError('');
-  }, [onCollaborateMessage, targetsForCollaboration]);
-
-  const submitCollaboration = useCallback(async (event: React.FormEvent) => {
-    event.preventDefault();
-    if (!collaborationSource || !collaborationTargetId || !collaborationInstruction.trim() || !onCollaborateMessage) return;
-    setCollaborationBusy(true);
-    setCollaborationError('');
-    try {
-      await onCollaborateMessage(
-        channelId,
-        collaborationSource.id,
-        collaborationTargetId,
-        collaborationRelationship,
-        collaborationInstruction.trim(),
-      );
-      setCollaborationSource(null);
-    } catch (error) {
-      setCollaborationError(error instanceof Error ? error.message : 'Could not ask agent');
-    } finally {
-      setCollaborationBusy(false);
-    }
-  }, [channelId, collaborationInstruction, collaborationRelationship, collaborationSource, collaborationTargetId, onCollaborateMessage]);
-
-  const openMessageContextMenu = useCallback((event: React.MouseEvent, message: ChatMessage) => {
-    event.preventDefault();
-    event.stopPropagation();
-    setDeleteArmed(false);
-    setContextMenu({ x: event.clientX, y: event.clientY, message });
-  }, []);
-
-  const openParticipantContextMenu = useCallback((event: React.MouseEvent, username: string, action: 'remove' | 'leave') => {
-    event.preventDefault();
-    event.stopPropagation();
-    setParticipantMenu({ x: event.clientX, y: event.clientY, username, action });
-  }, []);
-
-  /** Message queued for forwarding; drives the channel picker overlay. */
-  const [forwardSource, setForwardSource] = useState<ChatMessage | null>(null);
-  const [forwardQuery, setForwardQuery] = useState('');
-  const [forwardError, setForwardError] = useState('');
-  const [forwardingTo, setForwardingTo] = useState<string | null>(null);
-
-  /** Chat channels in this vault, minus the one we are already reading. */
-  const forwardTargets = useMemo(() => {
-    const query = forwardQuery.trim().toLowerCase();
-    return notes
-      .filter((note) => note.content_preview.trim().startsWith(CHAT_NOTE_MARKER))
-      .filter((note) => note.id !== channelId)
-      .filter((note) => !query || note.title.toLowerCase().includes(query))
-      .slice(0, 50);
-  }, [notes, channelId, forwardQuery]);
-
-  const startForward = useCallback((message: ChatMessage) => {
-    setContextMenu(null);
-    setForwardQuery('');
-    setForwardError('');
-    setForwardSource(message);
-  }, []);
-
-  const forwardTo = useCallback(async (targetChannelId: string) => {
-    if (!forwardSource || !onForwardMessage) return;
-    setForwardingTo(targetChannelId);
-    setForwardError('');
-    try {
-      await onForwardMessage(forwardSource.channelId || channelId, forwardSource.id, targetChannelId);
-      setForwardSource(null);
-    } catch (error) {
-      setForwardError(error instanceof Error ? error.message : 'Could not forward message');
-    } finally {
-      setForwardingTo(null);
-    }
-  }, [forwardSource, onForwardMessage, channelId]);
-
-  const deleteMessage = useCallback((message: ChatMessage) => {
-    setContextMenu(null);
-    setDeleteArmed(false);
-    void onDeleteMessage?.(message.channelId || channelId, message.id);
-  }, [onDeleteMessage, channelId]);
-
+  }, [closeContextMenu, registeredAgents]);
   const toggleMessageSelection = useCallback((id: string) => {
     setSelectedMessageId((current) => (current === id ? null : id));
   }, []);
-
-  const openLightbox = useCallback((src: string) => setLightboxSrc(src), []);
+  const loadedMessageIds = useMemo(
+    () => new Set(sortedMessages.map((message) => message.id)),
+    [sortedMessages],
+  );
 
   return (
     <section className={`chat-view${sidebarMode === 'only' ? ' is-sidebar-only' : ''}${sidebarMode === 'hidden' ? ' is-sidebar-hidden' : ''}${directMessage ? ' is-direct-message' : ''}`}>
       {sidebarMode !== 'only' && <div className="chat-main">
-        <header className="chat-header">
-          <div className="chat-header-copy">
-            <h2>{channelName}</h2>
-            <span>{sortedMessages.length} messages</span>
-          </div>
-          {vaultId && !directMessage && (
-            <button
-              type="button"
-              className="chat-mission-archive-button"
-              title="Mission history"
-              aria-label="Open mission history"
-              onClick={() => {
-                setMissionArchiveOpen(true);
-                void loadMissionArchive();
-              }}
-            >
-              <History size={15} />
-              <span>Missions</span>
-            </button>
-          )}
-        </header>
-
-        <div
-          ref={messagesRef}
-          className="chat-messages"
-          role="log"
-          aria-label={`${channelName} messages`}
-          onTouchStart={(event) => {
-            touchStartYRef.current = event.touches[0]?.clientY ?? null;
-          }}
-          onTouchMove={(event) => {
-            const startY = touchStartYRef.current;
-            const currentY = event.touches[0]?.clientY;
-            // Only a finger moving down means "read older messages". A touch
-            // at the bottom or an upward swipe must not disarm sticky-follow
-            // just before a new agent row changes the layout.
-            if (shouldDetachStickyForTouch(startY, currentY)) {
-              pendingSendFollowRef.current = false;
-              programmaticScrollRef.current = false;
-              userScrollIntentUntilRef.current = performance.now() + 500;
-            }
-          }}
-          onTouchEnd={() => { touchStartYRef.current = null; }}
-          onWheel={(event) => {
-            // Scrolling upward is the only wheel gesture that intentionally
-            // detaches from the live edge. Downward wheel noise at the bottom
-            // previously caused intermittent missed agent auto-scrolls.
-            if (shouldDetachStickyForWheel(event.deltaY)) {
-              pendingSendFollowRef.current = false;
-              programmaticScrollRef.current = false;
-              userScrollIntentUntilRef.current = performance.now() + 180;
-            }
-          }}
-        >
-          <div ref={messagesContentRef} className="chat-messages-content">
-          {/* Never blank an already-loaded transcript for a background refresh. */}
-          {isLoadingMessages && sortedMessages.length === 0 ? (
-            <div className="chat-empty" aria-live="polite">
-              <span className="chat-loading-dot" aria-hidden="true" />
-              <strong>Loading messages…</strong>
-            </div>
-          ) : sortedMessages.length === 0 ? (
-            <div className="chat-empty">
-              {directMessage
-                ? <MessageCircle size={28} className="chat-empty-icon" />
-                : <Hash size={28} className="chat-empty-icon" />}
-              <strong>{directMessage ? channelName : `#${channelName}`}</strong>
-              <span className="chat-empty-hint">
-                {directMessage ? 'No messages yet — say hello.' : 'No messages yet — say hello or @mention an agent to start.'}
-              </span>
-            </div>
-          ) : (
-            transcriptSegments.flatMap((segment) => {
-              const renderGroupRow = (group: ChatMessageGroup) => {
-                const head = group.messages[0];
-                const groupSelected = selectedMessageId != null
-                  && group.messages.some((message) => message.id === selectedMessageId);
-                const groupJumpHighlighted = jumpHighlightMessageId != null
-                  && group.messages.some((message) => message.id === jumpHighlightMessageId);
-                const runKey = head.registrationId || head.agentId || '';
-                const runState = runKey ? runningMessageState.get(runKey) : undefined;
-                return (
-                  <ChatGroupRow
-                    key={head.id}
-                    group={group}
-                    selectedMessageId={groupSelected ? selectedMessageId : null}
-                    jumpHighlightMessageId={groupJumpHighlighted ? jumpHighlightMessageId : null}
-                    avatarKind={getMessageAvatarKind(head)}
-                    avatarUrl={getMessageAvatarUrl(head)}
-                    authorLabel={getMessageAuthorLabel(head)}
-                    ownerLabel={getMessageOwnerLabel(head)}
-                    planUsage={getMessagePlanUsage(head)}
-                    latestRunningMessageId={runState?.latestId}
-                    runningSiblingCount={runState?.count || 0}
-                    steeringPromptLabels={steeringPromptLabels}
-                    mentionableAliases={mentionableAliases}
-                    notes={notes}
-                    onOpenNote={onOpenNote}
-                    onOpenSharedNote={openSharedNote}
-                    onCancelRun={onCancelRun}
-                    onToggleSelect={toggleMessageSelection}
-                    onContextMenu={openMessageContextMenu}
-                    onReply={startReply}
-                    onJumpToMessage={runJumpToMessage}
-                    loadedMessageIds={loadedMessageIds}
-                    onLightbox={openLightbox}
-                    onImageLoad={scrollToBottomIfSticky}
-                    onAgentAvatarClick={
-                      resolveMessageRegistration(head)
-                        ? (event) => openAgentSettingsFromMessage(head, event)
-                        : undefined
-                    }
-                    scrollRootRef={messagesRef}
-                    vaultId={vaultId}
-                    onHydrateMessage={onHydrateMessage}
-                    contextMenuMessage={group.messages.find((message) => Boolean(message.mission))}
-                  />
-                );
-              };
-              if (segment.kind === 'work') {
-                // A trace is always nested in an agent row. System notices
-                // that start a run are attributed when persisted; older
-                // unowned notices deliberately stay out of the transcript
-                // instead of looking like progress on the human message.
-                // Anchor a completed mission clump to its user-facing update,
-                // not to an empty worker shell that happened to start the run.
-                // This keeps the mission, mixed-agent trace, and outcome under
-                // one coordinator header while preserving each trace author.
-                const updateHost = segment.updateGroups.at(-1)?.messages.at(-1);
-                const host = updateHost
-                  || segment.carrier
-                  || segment.trace.find((message) => message.registrationId || message.agentId);
-                if (!host) return [];
-                // A real carrier is persisted for system-only work. Existing
-                // agent traces use the same empty shell shape at render time.
-                const carrier = updateHost || !segment.carrier ? {
-                  ...host,
-                  id: `agent-trace-${segment.id}`,
-                  body: '',
-                  status: undefined,
-                } : segment.carrier;
-                const traceSelected = selectedMessageId != null
-                  && segment.trace.some((message) => message.id === selectedMessageId);
-                const traceJumpHighlighted = jumpHighlightMessageId != null
-                  && segment.trace.some((message) => message.id === jumpHighlightMessageId);
-                const missionArtifacts = [
-                  ...(carrier.mission ? [carrier] : []),
-                  ...segment.fullGroups
-                  .flatMap((group) => group.messages)
-                  .filter((message) => Boolean(message.mission)),
-                ];
-                const displayCarrier = carrier.mission ? { ...carrier, mission: undefined } : carrier;
-                const carrierKey = displayCarrier.registrationId || displayCarrier.agentId || displayCarrier.author;
-                const clumpedUpdateMessages: ChatMessage[] = [];
-                const separateUpdateGroups: ChatMessageGroup[] = [];
-                for (const group of segment.updateGroups) {
-                  const head = group.messages[0];
-                  const headKey = head.registrationId || head.agentId || head.author;
-                  if (headKey === carrierKey) clumpedUpdateMessages.push(...group.messages);
-                  else separateUpdateGroups.push(group);
-                }
-                const clumpedSelected = selectedMessageId != null
-                  && clumpedUpdateMessages.some((message) => message.id === selectedMessageId);
-                const missionHasTrace = missionArtifacts.length > 0 && segment.trace.length > 0;
-                const workTrace = (
-                  <ChatWorkTrace
-                    trace={segment.trace}
-                    selectedMessageId={traceSelected || clumpedSelected ? selectedMessageId : null}
-                    onCancelRun={onCancelRun}
-                    onContextMenu={openMessageContextMenu}
-                    onReply={startReply}
-                    vaultId={vaultId}
-                    onHydrateMessage={onHydrateMessage}
-                    runningMessageState={runningMessageState}
-                    embedded={missionHasTrace}
-                  />
-                );
-                const peek = workTracePeek(segment.trace);
-                const unifiedMission = missionArtifacts.length > 0
-                  ? missionArtifacts.map((message) => (
-                    <ChatMissionCard
-                      key={message.id}
-                      mission={message.mission!}
-                      vaultId={vaultId}
-                      channelId={message.channelId}
-                      traceContent={workTrace}
-                      tracePeek={peek}
-                      replyMessage={message}
-                      onReply={startReply}
-                      onContextMenu={openMessageContextMenu}
-                    />
-                  ))
-                  : workTrace;
-                const nodes: ReactNode[] = [
-                  <ChatGroupRow
-                    key={`work-${segment.id}`}
-                    group={{ messages: [displayCarrier, ...clumpedUpdateMessages] }}
-                    selectedMessageId={traceSelected ? selectedMessageId : null}
-                    jumpHighlightMessageId={traceJumpHighlighted ? jumpHighlightMessageId : null}
-                    avatarKind="agent"
-                    avatarUrl={getMessageAvatarUrl(displayCarrier)}
-                    authorLabel={getMessageAuthorLabel(displayCarrier)}
-                    ownerLabel={getMessageOwnerLabel(displayCarrier)}
-                    planUsage={getMessagePlanUsage(displayCarrier)}
-                    latestRunningMessageId={undefined}
-                    runningSiblingCount={0}
-                    steeringPromptLabels={steeringPromptLabels}
-                    mentionableAliases={mentionableAliases}
-                    notes={notes}
-                    onOpenNote={onOpenNote}
-                    onOpenSharedNote={openSharedNote}
-                    onCancelRun={onCancelRun}
-                    onToggleSelect={toggleMessageSelection}
-                    onContextMenu={openMessageContextMenu}
-                    onReply={startReply}
-                    onJumpToMessage={runJumpToMessage}
-                    loadedMessageIds={loadedMessageIds}
-                    onLightbox={openLightbox}
-                    onImageLoad={scrollToBottomIfSticky}
-                    onAgentAvatarClick={
-                      resolveMessageRegistration(displayCarrier)
-                        ? (event) => openAgentSettingsFromMessage(displayCarrier, event)
-                        : undefined
-                    }
-                    scrollRootRef={messagesRef}
-                    vaultId={vaultId}
-                    onHydrateMessage={onHydrateMessage}
-                    traceContent={unifiedMission}
-                    traceAfterFirstMessage={clumpedUpdateMessages.length > 0}
-                    contextMenuMessage={missionArtifacts[0]}
-                  />,
-                ];
-                for (const group of segment.fullGroups) {
-                  const messagesWithoutMissions = group.messages.filter((message) => !message.mission);
-                  if (messagesWithoutMissions.length) nodes.push(renderGroupRow({ messages: messagesWithoutMissions }));
-                }
-                for (const group of separateUpdateGroups) nodes.push(renderGroupRow(group));
-                return nodes;
-              }
-
-              return renderGroupRow(segment.group);
-            })
-          )}
-          <div ref={endRef} />
-          </div>
-        </div>
-
-        <ChatComposer
-          ref={composerRef}
+        <ChatTranscript
           channelId={channelId}
           channelName={channelName}
           directMessage={directMessage}
-          notes={notes}
+          isLoadingMessages={isLoadingMessages}
+          sortedMessages={sortedMessages}
+          transcriptSegments={transcriptSegments}
+          messagesRef={messagesRef}
+          messagesContentRef={messagesContentRef}
+          endRef={endRef}
+          touchStartYRef={touchStartYRef}
+          pendingSendFollowRef={pendingSendFollowRef}
+          programmaticScrollRef={programmaticScrollRef}
+          userScrollIntentUntilRef={userScrollIntentUntilRef}
+          composerRef={composerRef}
+          runningMessageState={runningMessageState}
+          selectedMessageId={selectedMessageId}
+          jumpHighlightMessageId={jumpHighlightMessageId}
+          loadedMessageIds={loadedMessageIds}
+          steeringPromptLabels={steeringPromptLabels}
           mentionableAliases={mentionableAliases}
+          notes={notes}
           registeredAgents={registeredAgents}
+          vaultId={vaultId}
+          onOpenNote={onOpenNote}
+          onOpenSharedNote={openSharedNote}
+          onCancelRun={onCancelRun}
+          onToggleSelect={toggleMessageSelection}
+          onContextMenu={openMessageContextMenu}
+          onReply={startReply}
+          onJumpToMessage={runJumpToMessage}
+          onLightbox={openLightbox}
+          onImageLoad={scrollToBottomIfSticky}
+          onHydrateMessage={onHydrateMessage}
+          onAgentAvatarClick={openAgentSettingsFromMessage}
+          resolveMessageRegistration={resolveMessageRegistration}
+          getMessageAvatarKind={getMessageAvatarKind}
+          getMessageAvatarUrl={getMessageAvatarUrl}
+          getMessageAuthorLabel={getMessageAuthorLabel}
+          getMessageOwnerLabel={getMessageOwnerLabel}
+          getMessagePlanUsage={getMessagePlanUsage}
           onSendMessage={sendMessage}
+          onMissionArchiveOpen={() => {
+            setMissionArchiveOpen(true);
+            void loadMissionArchive();
+          }}
         />
       </div>}
-
-      {contextMenu && (
-        <div
-          ref={contextMenuRef}
-          className="chat-context-menu"
-          role="menu"
-          aria-label="Message options"
-          style={{ top: contextMenu.y, left: contextMenu.x }}
-          onClick={(event) => event.stopPropagation()}
-        >
-          <button type="button" role="menuitem" onClick={() => startReply(contextMenu.message)}>
-            <Reply size={14} />
-            Reply
-          </button>
-          {onCollaborateMessage
-            && Boolean(contextMenu.message.agentId || contextMenu.message.registrationId)
-            && targetsForCollaboration(contextMenu.message).length > 0 && (
-            <button type="button" role="menuitem" onClick={() => startCollaboration(contextMenu.message)}>
-              <Bot size={14} />
-              Ask agent…
-            </button>
-          )}
-          {onForwardMessage && (
-            <button type="button" role="menuitem" onClick={() => startForward(contextMenu.message)}>
-              <Forward size={14} />
-              Forward
-            </button>
-          )}
-          {vaultId && !directMessage && (
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                const message = contextMenu.message;
-                setContextMenu(null);
-                void createChannelWorkItem(vaultId, {
-                  title: (message.body || 'Work item').replace(/\s+/g, ' ').trim().slice(0, 120) || 'Work item',
-                  brief: message.body || '',
-                  channelId,
-                  sourceKind: 'message',
-                  sourceId: message.id,
-                  repository: channelCwd || '',
-                  workspaceMode: channelCwd ? 'isolated' : 'shared',
-                }).catch(() => {
-                  /* settings panel shows work items on next open */
-                });
-              }}
-            >
-              <ClipboardList size={14} />
-              Add to kanban
-            </button>
-          )}
-          {vaultId && !directMessage && (
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                setReportMessage(contextMenu.message);
-                setContextMenu(null);
-              }}
-            >
-              <Flag size={14} />
-              Report
-            </button>
-          )}
-          {onDeleteMessage && (
-            <>
-              <div className="menu-divider" role="separator" />
-              <button
-                type="button"
-                role="menuitem"
-                className={`is-danger${deleteArmed ? ' is-armed' : ''}`}
-                onClick={() => (deleteArmed ? deleteMessage(contextMenu.message) : setDeleteArmed(true))}
-              >
-                <Trash2 size={14} />
-                {deleteArmed ? 'Delete for everyone?' : 'Delete'}
-              </button>
-            </>
-          )}
-        </div>
-      )}
-
-      {participantMenu && (
-        <div
-          ref={participantMenuRef}
-          className="chat-context-menu"
-          role="menu"
-          aria-label="Participant options"
-          style={{ top: participantMenu.y, left: participantMenu.x }}
-          onClick={(event) => event.stopPropagation()}
-        >
-          <button
-            type="button"
-            role="menuitem"
-            className="is-danger"
-            onClick={() => {
-              const { action, username } = participantMenu;
-              setParticipantMenu(null);
-              if (action === 'remove') void onRemoveParticipant?.(channelId, username);
-              else void onLeaveChannel?.(channelId);
-            }}
-          >
-            {participantMenu.action === 'remove' ? <Trash2 size={14} /> : <X size={14} />}
-            {participantMenu.action === 'remove' ? `Remove @${participantMenu.username} from vault` : 'Leave vault'}
-          </button>
-        </div>
-      )}
-
-      {sidebarMode !== 'hidden' && <aside
-        className={`chat-users${usersCollapsed ? ' is-collapsed' : ''}`}
-        aria-label="Chat users"
-      >
+      {sidebarMode !== 'hidden' && <aside className={`chat-users${usersCollapsed ? ' is-collapsed' : ''}`} aria-label="Chat users">
         <ChatSidebarButtons
           collapsed={usersCollapsed}
           inviteSelected={agentChrome.inviteOpen}
@@ -1281,7 +517,6 @@ export const ChatView = memo(function ChatView({
             setChannelSettingsOpen((open) => !open);
           }}
         />
-
         {!usersCollapsed && channelSettingsOpen && (
           <ChatChannelSettings
             channelId={channelId}
@@ -1293,272 +528,119 @@ export const ChatView = memo(function ChatView({
             onClose={() => setChannelSettingsOpen(false)}
           />
         )}
-
-
         {!usersCollapsed && (
-          <>
-        <ChatAgentPanel
-          ref={agentPanelRef}
-          channelId={channelId}
-          currentUser={currentUser}
-          availableAgents={availableAgents}
-          registeredAgents={registeredAgents}
-          registeredAgentRows={registeredAgentRows}
-          vaultAgents={vaultAgents}
-          runnerHealth={runnerHealth}
-          onRegisterAgent={onRegisterAgent}
-          onRemoveAgent={onRemoveAgent}
-          onUpsertVaultAgent={onUpsertVaultAgent}
-          onDeleteVaultAgent={onDeleteVaultAgent}
-          onDeleteAgentProfile={onDeleteAgentProfile}
-          onAddVaultAgentToChannel={onAddVaultAgentToChannel}
-          onInviteUser={onInviteUser}
-          canManageRegistration={canManageRegistration}
-          onExpandRail={() => {
-            setUsersCollapsed(false);
-            setChannelSettingsOpen(false);
-          }}
-          onChromeChange={onAgentChromeChange}
-        >
-        <div className="chat-users-title">People in this vault</div>
-        {humanUsers.map((name) => {
-          const isSelf = name === currentUser;
-          const isOnline = isSelf || onlineUsers.has(name);
-          const isOwner = name === presence.owner;
-          const roleLabel = isOwner ? 'owner' : isSelf ? 'you' : isOnline ? 'online' : 'offline';
-          const participantAction = presence.owner === currentUser && !isSelf && onRemoveParticipant
-            ? 'remove'
-            : isSelf && !isOwner && onLeaveChannel
-              ? 'leave'
-              : null;
-          return (
-          <div
-            className={`chat-user chat-human${isOnline ? '' : ' is-offline'}${isSelf ? ' is-self' : ''}`}
-            key={name}
-            onContextMenu={participantAction
-              ? (event) => openParticipantContextMenu(event, name, participantAction)
-              : undefined}
+          <ChatAgentPanel
+            ref={agentPanelRef}
+            channelId={channelId}
+            currentUser={currentUser}
+            availableAgents={availableAgents}
+            registeredAgents={registeredAgents}
+            registeredAgentRows={registeredAgentRows}
+            vaultAgents={vaultAgents}
+            runnerHealth={runnerHealth}
+            onRegisterAgent={onRegisterAgent}
+            onRemoveAgent={onRemoveAgent}
+            onUpsertVaultAgent={onUpsertVaultAgent}
+            onDeleteVaultAgent={onDeleteVaultAgent}
+            onDeleteAgentProfile={onDeleteAgentProfile}
+            onAddVaultAgentToChannel={onAddVaultAgentToChannel}
+            onInviteUser={onInviteUser}
+            canManageRegistration={canManageRegistration}
+            onExpandRail={() => {
+              setUsersCollapsed(false);
+              setChannelSettingsOpen(false);
+            }}
+            onChromeChange={onAgentChromeChange}
           >
-            <div className="chat-user-row">
-              <ChatAvatar name={presence.profiles?.[name]?.displayName || name} kind="human" avatarUrl={presence.profiles?.[name]?.avatarUrl} size="sm" />
-              <div className="chat-user-copy">
-                <strong>{presence.profiles?.[name]?.displayName || name}</strong>
-                {presence.profiles?.[name]?.displayName && presence.profiles?.[name]?.displayName !== name && <span className="chat-user-handle">@{name}</span>}
-                <span className="chat-user-role">{roleLabel}</span>
-              </div>
-            </div>
-          </div>
-          );
-        })}
-        </ChatAgentPanel>
-          </>
+            <div className="chat-users-title">People in this vault</div>
+            {humanUsers.map((name) => {
+              const isSelf = name === currentUser;
+              const isOnline = isSelf || onlineUsers.has(name);
+              const isOwner = name === presence.owner;
+              const roleLabel = isOwner ? 'owner' : isSelf ? 'you' : isOnline ? 'online' : 'offline';
+              const participantActionKind = presence.owner === currentUser && !isSelf && onRemoveParticipant
+                ? 'remove'
+                : isSelf && !isOwner && onLeaveChannel ? 'leave' : null;
+              return (
+                <div
+                  className={`chat-user chat-human${isOnline ? '' : ' is-offline'}${isSelf ? ' is-self' : ''}`}
+                  key={name}
+                  onContextMenu={participantActionKind
+                    ? (event) => openParticipantContextMenu(event, name, participantActionKind)
+                    : undefined}
+                >
+                  <div className="chat-user-row">
+                    <ChatAvatar name={presence.profiles?.[name]?.displayName || name} kind="human" avatarUrl={presence.profiles?.[name]?.avatarUrl} size="sm" />
+                    <div className="chat-user-copy">
+                      <strong>{presence.profiles?.[name]?.displayName || name}</strong>
+                      {presence.profiles?.[name]?.displayName && presence.profiles?.[name]?.displayName !== name && <span className="chat-user-handle">@{name}</span>}
+                      <span className="chat-user-role">{roleLabel}</span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </ChatAgentPanel>
         )}
       </aside>}
-
-      {missionArchiveOpen && (
-        <div
-          className="chat-mission-archive-overlay"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="chat-mission-archive-title"
-          onClick={() => setMissionArchiveOpen(false)}
-        >
-          <section className="chat-mission-archive" onClick={(event) => event.stopPropagation()}>
-            <header>
-              <div>
-                <strong id="chat-mission-archive-title">Mission history</strong>
-                <span>Durable work in #{channelName}</span>
-              </div>
-              <div>
-                <button type="button" disabled={missionArchiveBusy} onClick={() => void loadMissionArchive()}>
-                  Refresh
-                </button>
-                <button type="button" title="Close" aria-label="Close mission history" onClick={() => setMissionArchiveOpen(false)}>
-                  <X size={16} />
-                </button>
-              </div>
-            </header>
-            <div className="chat-mission-archive-list">
-              {missionArchiveBusy && missionArchive.length === 0 && <div className="chat-mission-archive-empty">Loading missions…</div>}
-              {missionArchiveError && <div className="chat-mission-archive-empty is-error">{missionArchiveError}</div>}
-              {!missionArchiveBusy && !missionArchiveError && missionArchive.length === 0 && (
-                <div className="chat-mission-archive-empty">No missions in this channel yet.</div>
-              )}
-              {missionArchive.map((mission) => (
-                <ChatMissionCard key={mission.id} mission={mission} vaultId={vaultId} channelId={channelId} />
-              ))}
-            </div>
-          </section>
-        </div>
-      )}
-
-      {collaborationSource && (
-        <div
-          className="chat-forward-overlay"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="chat-collaboration-title"
-          onClick={() => !collaborationBusy && setCollaborationSource(null)}
-        >
-          <form className="chat-forward-panel chat-collaboration-panel" onSubmit={(event) => void submitCollaboration(event)} onClick={(event) => event.stopPropagation()}>
-            <div className="chat-forward-head">
-              <strong id="chat-collaboration-title">Ask another agent</strong>
-              <button type="button" title="Cancel" disabled={collaborationBusy} onClick={() => setCollaborationSource(null)}>
-                <X size={14} />
-              </button>
-            </div>
-            <div className="chat-forward-preview">
-              <strong>{collaborationSource.author}</strong>
-              <span>{buildReplyPreview(collaborationSource)}</span>
-            </div>
-            <label className="chat-collaboration-field">
-              Agent
-              <select value={collaborationTargetId} onChange={(event) => setCollaborationTargetId(event.target.value)}>
-                {targetsForCollaboration(collaborationSource).map((registration) => (
-                  <option key={registration.id} value={registration.id}>
-                    {registration.displayName} (@{registration.mention})
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="chat-collaboration-field">
-              Relationship
-              <select
-                value={collaborationRelationship}
-                onChange={(event) => {
-                  const relationship = event.target.value as ChatRelationship;
-                  setCollaborationRelationship(relationship);
-                  setCollaborationInstruction(CHAT_RELATIONSHIP_INSTRUCTIONS[relationship]);
-                }}
-              >
-                {CHAT_RELATIONSHIPS.map((relationship) => (
-                  <option key={relationship} value={relationship}>{CHAT_RELATIONSHIP_LABELS[relationship]}</option>
-                ))}
-              </select>
-            </label>
-            <label className="chat-collaboration-field">
-              Instruction
-              <textarea
-                autoFocus
-                rows={4}
-                value={collaborationInstruction}
-                onChange={(event) => setCollaborationInstruction(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Escape' && !collaborationBusy) setCollaborationSource(null);
-                }}
-              />
-            </label>
-            {collaborationError && <div className="chat-forward-error">{collaborationError}</div>}
-            <div className="chat-collaboration-actions">
-              <button type="button" disabled={collaborationBusy} onClick={() => setCollaborationSource(null)}>Cancel</button>
-              <button type="submit" disabled={collaborationBusy || !collaborationTargetId || !collaborationInstruction.trim()}>
-                {collaborationBusy ? 'Asking…' : 'Ask agent'}
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {forwardSource && (
-        <div
-          className="chat-forward-overlay"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Forward message"
-          onClick={() => setForwardSource(null)}
-        >
-          <div className="chat-forward-panel" onClick={(event) => event.stopPropagation()}>
-            <div className="chat-forward-head">
-              <strong>Forward message</strong>
-              <button type="button" title="Cancel" onClick={() => setForwardSource(null)}>
-                <X size={14} />
-              </button>
-            </div>
-            <div className="chat-forward-preview">
-              <strong>{forwardSource.author}</strong>
-              <span>{buildReplyPreview(forwardSource)}</span>
-            </div>
-            <input
-              className="chat-forward-search"
-              value={forwardQuery}
-              autoFocus
-              placeholder="Search channels…"
-              onChange={(event) => setForwardQuery(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Escape') setForwardSource(null);
-                if (event.key === 'Enter' && forwardTargets[0]) void forwardTo(forwardTargets[0].id);
-              }}
-            />
-            <div className="chat-forward-list">
-              {forwardTargets.length === 0 && (
-                <div className="chat-forward-empty">No other channels</div>
-              )}
-              {forwardTargets.map((target) => (
-                <button
-                  key={target.id}
-                  type="button"
-                  className="chat-forward-target"
-                  disabled={forwardingTo !== null}
-                  onClick={() => void forwardTo(target.id)}
-                >
-                  <Hash size={13} />
-                  <span>{target.title}</span>
-                  {forwardingTo === target.id && <em>sending…</em>}
-                </button>
-              ))}
-            </div>
-            {forwardError && <div className="chat-forward-error">{forwardError}</div>}
-          </div>
-        </div>
-      )}
-
-      {lightboxSrc && (
-        <div
-          className="chat-lightbox"
-          role="dialog"
-          aria-modal="true"
-          onClick={() => setLightboxSrc(null)}
-        >
-          <button
-            type="button"
-            className="chat-lightbox-close"
-            title="Close"
-            onClick={() => setLightboxSrc(null)}
-          >
-            <X size={20} />
-          </button>
-          <img
-            src={lightboxSrc}
-            alt=""
-            className="chat-lightbox-image"
-            onClick={(event) => event.stopPropagation()}
-          />
-        </div>
-      )}
-      {sharedNote && (
-        <div className="chat-lightbox" role="dialog" aria-modal="true" onClick={() => setSharedNote(null)}>
-          <article className="chat-shared-note" onClick={(event) => event.stopPropagation()}>
-            <header>
-              <h2>{sharedNote.title}</h2>
-              <button type="button" className="btn-icon" title="Close" onClick={() => setSharedNote(null)}>
-                <X size={18} />
-              </button>
-            </header>
-            <div className="chat-shared-note-body">
-              <ReactMarkdown remarkPlugins={CHAT_MARKDOWN_PLUGINS}>{sharedNote.content}</ReactMarkdown>
-            </div>
-          </article>
-        </div>
-      )}
-      {reportMessage && vaultId && (
-        <ReportDialog
-          vaultId={vaultId}
-          targetType="message"
-          targetId={reportMessage.id}
-          title={`message from ${reportMessage.author}`}
-          onClose={() => setReportMessage(null)}
-        />
-      )}
+      <ChatOverlays
+        contextMenu={contextMenu}
+        contextMenuRef={contextMenuRef}
+        participantMenu={participantMenu}
+        participantMenuRef={participantMenuRef}
+        deleteArmed={deleteArmed}
+        setDeleteArmed={setDeleteArmed}
+        onReply={startReply}
+        onStartCollaboration={startCollaboration}
+        onStartForward={startForward}
+        onAddToKanban={addToKanban}
+        onReport={reportFromContext}
+        onDeleteMessage={deleteMessage}
+        onParticipantAction={participantAction}
+        onCollaborateMessage={onCollaborateMessage}
+        canCollaborate={canCollaborate}
+        onForwardMessage={onForwardMessage}
+        vaultId={vaultId}
+        directMessage={directMessage}
+        onDeleteMessageAvailable={Boolean(onDeleteMessage)}
+        channelName={channelName}
+        channelId={channelId}
+        missionArchiveOpen={missionArchiveOpen}
+        missionArchive={missionArchive}
+        missionArchiveBusy={missionArchiveBusy}
+        missionArchiveError={missionArchiveError}
+        onRefreshMissionArchive={() => void loadMissionArchive()}
+        onCloseMissionArchive={() => setMissionArchiveOpen(false)}
+        collaborationSource={collaborationSource}
+        collaborationTargetId={collaborationTargetId}
+        collaborationTargets={collaborationSource ? targetsForCollaboration(collaborationSource) : []}
+        collaborationRelationship={collaborationRelationship}
+        collaborationInstruction={collaborationInstruction}
+        collaborationBusy={collaborationBusy}
+        collaborationError={collaborationError}
+        onSetCollaborationTarget={setCollaborationTargetId}
+        onSetCollaborationRelationship={(value) => {
+          setCollaborationRelationship(value);
+          setCollaborationInstruction(CHAT_RELATIONSHIP_INSTRUCTIONS[value]);
+        }}
+        onSetCollaborationInstruction={setCollaborationInstruction}
+        onSubmitCollaboration={(event) => void submitCollaboration(event)}
+        onCloseCollaboration={() => setCollaborationSource(null)}
+        forwardSource={forwardSource}
+        forwardQuery={forwardQuery}
+        forwardTargets={forwardTargets}
+        forwardingTo={forwardingTo}
+        forwardError={forwardError}
+        onSetForwardQuery={setForwardQuery}
+        onForwardTo={(targetChannelId) => void forwardTo(targetChannelId)}
+        onCloseForward={() => setForwardSource(null)}
+        lightboxSrc={lightboxSrc}
+        onCloseLightbox={() => setLightboxSrc(null)}
+        sharedNote={sharedNote}
+        onCloseSharedNote={() => setSharedNote(null)}
+        reportMessage={reportMessage}
+        onCloseReport={() => setReportMessage(null)}
+      />
     </section>
   );
 });

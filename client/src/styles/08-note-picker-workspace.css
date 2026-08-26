@@ -1,0 +1,283 @@
+/* Owns Note-link picker and workspace desktop actions. */
+/* Picker and workspace entry rules stay before session and chat surfaces. */
+.note-link-picker-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: rgba(5, 6, 9, 0.68);
+  backdrop-filter: blur(3px);
+}
+.note-link-picker {
+  width: min(100%, 540px);
+  max-height: min(74dvh, 620px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 16px max(16px, env(safe-area-inset-bottom));
+  border: 1px solid var(--border-strong);
+  border-bottom: 0;
+  border-radius: 18px 18px 0 0;
+  background: var(--bg-surface);
+  box-shadow: 0 -16px 48px rgba(0, 0, 0, 0.45);
+}
+.note-link-picker-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.note-link-picker-header > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.note-link-picker-header strong {
+  color: var(--text-primary);
+  font-family: var(--font-display);
+  font-size: 1rem;
+}
+.note-link-picker-header span {
+  color: var(--text-tertiary);
+  font-size: 0.75rem;
+}
+.note-link-picker-close {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: var(--bg-raised);
+  color: var(--text-secondary);
+}
+.note-link-picker-search {
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 13px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-deep);
+  color: var(--text-tertiary);
+}
+.note-link-picker-search:focus-within {
+  border-color: var(--accent);
+}
+.note-link-picker-search input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 1rem;
+}
+.note-link-picker-list {
+  min-height: 80px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.note-link-picker-list button {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+}
+.note-link-picker-list button:active,
+.note-link-picker-list button:hover {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+.note-link-picker-list p {
+  margin: 24px 0;
+  color: var(--text-tertiary);
+  text-align: center;
+}
+.chat-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+  background: var(--bg-base);
+}
+.chat-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.chat-header {
+  min-height: 50px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.chat-header svg {
+  color: color-mix(in srgb, var(--text-secondary) 70%, var(--text-tertiary));
+  flex-shrink: 0;
+}
+.chat-header-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.chat-header-copy h2 {
+  font-family: var(--font-display);
+  font-size: 0.9375rem;
+  font-weight: 700;
+  font-style: italic;
+  letter-spacing: 0.04em;
+  line-height: 1.2;
+}
+.chat-mission-archive-button {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 0.6875rem;
+  cursor: pointer;
+}
+.chat-mission-archive-button:hover {
+  background: color-mix(in srgb, var(--bg-raised) 80%, transparent);
+  color: var(--text-primary);
+}
+.workspace-toolbar {
+  display: flex;
+  min-height: 34px;
+}
+.news-ticker {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  padding-left: 6px;
+}
+.news-ticker-viewport {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  align-self: stretch;
+  overflow: hidden;
+  contain: layout paint;
+  isolation: isolate;
+}
+.news-ticker-label {
+  flex: none;
+  padding-right: 8px;
+  border-right: 1px solid var(--border);
+  margin-right: 2px;
+  font-size: 0.5625rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+.news-ticker-track {
+  position: absolute;
+  inset: 0 auto 0 0;
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+  font-size: 0.6875rem;
+  letter-spacing: 0.02em;
+  color: var(--accent);
+  opacity: 0.78;
+  visibility: hidden;
+}
+.news-ticker-track.is-running {
+  visibility: visible;
+  will-change: transform;
+  animation: news-ticker-scroll linear both;
+}
+.news-ticker-track.is-static {
+  position: static;
+  display: block;
+  visibility: visible;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@keyframes news-ticker-scroll {
+  from { transform: translate3d(var(--news-start, 100%), 0, 0); }
+  to { transform: translate3d(var(--news-end, -100%), 0, 0); }
+}
+.workspace-session-btn {
+  position: relative;
+}
+.workspace-updates-btn { position: relative; }
+.workspace-updates-badge {
+  position: absolute;
+  top: -4px;
+  right: -5px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--bg-base);
+  font: 750 0.5rem/15px var(--font-mono);
+  text-align: center;
+  box-shadow: 0 0 0 2px var(--bg-surface);
+}
+.workspace-desktop-action {
+  min-height: 26px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 7px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 0.625rem;
+  font-weight: 600;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: border-color var(--transition-fast), background var(--transition-fast), color var(--transition-fast);
+}
+.workspace-desktop-action:hover,
+.workspace-desktop-action:focus-visible {
+  background: var(--accent-subtle);
+  color: var(--accent-hover);
+}
+.workspace-session-badge,
+.csb-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--bg-base);
+  font-size: 0.5625rem;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
+}

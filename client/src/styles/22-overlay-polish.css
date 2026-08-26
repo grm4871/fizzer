@@ -1,0 +1,409 @@
+/* Owns Late overlay language, fields, controls, product account, and community polish. */
+/* This source-defined late layer intentionally overrides earlier feature defaults. */
+/* ── Overlay surfaces follow the shell's language ──────────────────────
+   The main screen separates by background step and fill, and reserves a
+   border for real region boundaries. Modals, panels and popup menus used
+   their own outline-per-widget styling, which read as a different app.
+   These rules apply the shell's language to the overlay families without
+   touching the dialog edges themselves. */
+
+.account-settings,
+.admin-panel,
+.session-manager,
+.updates-modal,
+.report-dialog,
+.discovery-dms-modal,
+.command-palette,
+.chat-channel-settings-panel {
+  --overlay-field: color-mix(in srgb, var(--bg-raised) 82%, var(--bg-base));
+}
+
+/* Fields are filled, not outlined; the border shows up on focus. */
+.account-settings :is(input, textarea, select),
+.admin-panel :is(input, textarea, select),
+.session-manager :is(input, textarea, select),
+.updates-modal :is(input, textarea, select),
+.report-dialog :is(input, textarea, select),
+.discovery-dms-modal :is(input, textarea, select),
+.chat-channel-settings-panel :is(input, textarea, select) {
+  border-color: transparent;
+  background: var(--overlay-field);
+}
+.account-settings :is(input, textarea, select):focus,
+.admin-panel :is(input, textarea, select):focus,
+.session-manager :is(input, textarea, select):focus,
+.updates-modal :is(input, textarea, select):focus,
+.report-dialog :is(input, textarea, select):focus,
+.discovery-dms-modal :is(input, textarea, select):focus,
+.chat-channel-settings-panel :is(input, textarea, select):focus {
+  border-color: var(--border);
+  outline: none;
+}
+/* Checkboxes and radios keep their native box. */
+.account-settings :is(input[type='checkbox'], input[type='radio']),
+.admin-panel :is(input[type='checkbox'], input[type='radio']),
+.discovery-dms-modal :is(input[type='checkbox'], input[type='radio']),
+.chat-channel-settings-panel :is(input[type='checkbox'], input[type='radio']) {
+  background: none;
+}
+
+/* Buttons fill instead of outlining at rest. */
+.account-settings .btn,
+.account-settings-actions button,
+.account-avatar-actions button,
+.admin-panel button:not(.btn-icon),
+.discovery-dms-modal button:not(.btn-icon),
+.report-dialog button:not(.btn-icon),
+.chat-channel-settings-panel button:not(.btn-icon) {
+  border-color: transparent;
+}
+.account-settings .btn:hover:not(:disabled),
+.account-settings-actions button:hover:not(:disabled),
+.account-avatar-actions button:hover:not(:disabled),
+.admin-panel button:not(.btn-icon):hover:not(:disabled),
+.discovery-dms-modal button:not(.btn-icon):hover:not(:disabled),
+.report-dialog button:not(.btn-icon):hover:not(:disabled),
+.chat-channel-settings-panel button:not(.btn-icon):hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--bg-overlay);
+}
+/* The primary action keeps its accent fill. */
+.account-settings .btn-primary,
+.admin-panel .btn-primary,
+.discovery-dms-modal .btn-primary,
+.report-dialog .btn-primary { border-color: var(--accent); }
+
+/* Panels and list rows: fill, no resting outline, square-left highlight. */
+.chat-channel-settings-panel {
+  border-color: transparent;
+  background: var(--overlay-field);
+}
+.account-vault-members li,
+.account-banned-users > *,
+.account-join-requests > *:not(strong),
+.admin-panel-list > *,
+.updates-item,
+.command-palette-item {
+  border-color: transparent;
+}
+.updates-item:hover,
+.command-palette-item:hover,
+.command-palette-item.highlighted {
+  border-color: transparent;
+  background: var(--bg-overlay);
+}
+
+/* Popup menus: rows highlight by fill, squared off on the left like the tree. */
+.tree-context-menu button,
+.chat-context-menu button {
+  border-radius: 0 var(--rail-row-radius) var(--rail-row-radius) 0;
+}
+.account-settings-actions button,
+.account-avatar-actions button {
+  background: var(--overlay-field);
+}
+/* Status readouts are chips, not controls: colour carries the state, the
+   outline is redundant. */
+.session-manager-count { border-color: transparent; background: var(--overlay-field); }
+.session-manager-runner.online,
+.session-manager-runner.offline { border-color: transparent; }
+
+/* ── Product-surface polish ────────────────────────────────────────────
+   Chat established the Fizzer language: dark stepped surfaces, one warm
+   action color, and the three-color rail. Secondary screens use that same
+   vocabulary at a calmer, more legible product scale. */
+.surface-kicker {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--accent-hover);
+  font: 700 0.625rem/1.2 var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.overlay-backdrop,
+.session-manager-backdrop {
+  background:
+    radial-gradient(circle at 50% 12%, hsla(38, 80%, 38%, 0.08), transparent 36%),
+    hsla(226, 22%, 3%, 0.82);
+  backdrop-filter: blur(14px) saturate(0.78);
+  -webkit-backdrop-filter: blur(14px) saturate(0.78);
+}
+
+.account-settings,
+.admin-panel,
+.updates-modal,
+.discovery-dms-modal,
+.report-dialog,
+.command-palette,
+.search-overlay,
+.session-manager {
+  --text-secondary: hsl(222, 9%, 68%);
+  --text-tertiary: hsl(224, 8%, 51%);
+}
+
+/* Authentication is a real product entry point, not a bare form. */
+.auth-shell {
+  padding: 28px;
+  background:
+    radial-gradient(circle at 50% 18%, hsla(192, 78%, 44%, 0.055), transparent 24%),
+    radial-gradient(ellipse 70% 42% at 50% 115%, hsla(38, 92%, 50%, 0.13), transparent 70%),
+    var(--bg-base);
+}
+.auth-panel {
+  position: relative;
+  width: min(430px, 100%);
+  gap: 17px;
+  padding: 30px 32px 28px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--border) 82%, var(--text-tertiary));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-surface) 96%, transparent);
+  box-shadow: 0 30px 90px hsla(228, 35%, 1%, 0.66), var(--bevel);
+}
+.auth-panel::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  height: 3px;
+  background: var(--decal-stripe-h);
+}
+.auth-brand { justify-content: flex-start; margin: 0; }
+.auth-brand + .auth-decal { display: none; }
+.auth-panel h1 { font-size: 1.2rem; letter-spacing: 0.15em; }
+.auth-intro { display: grid; gap: 4px; padding: 5px 0 3px; }
+.auth-intro > strong {
+  color: var(--text-primary);
+  font: italic 720 1.45rem/1.15 var(--font-display);
+  letter-spacing: 0.01em;
+}
+.auth-intro p { color: hsl(222, 9%, 62%); font-size: 0.84rem; line-height: 1.55; }
+.auth-panel label { gap: 7px; color: hsl(224, 8%, 56%); font-size: 0.7rem; }
+.auth-panel input {
+  min-height: 46px;
+  padding: 10px 13px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-raised) 78%, var(--bg-base));
+  font-size: 0.9rem;
+}
+.auth-panel input:focus,
+.auth-panel input:focus-visible {
+  padding: 10px 13px;
+  border: 1px solid color-mix(in srgb, var(--accent) 72%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.auth-panel button[type='submit'] { min-height: 46px; border-radius: 8px; }
+.auth-desktop-note { margin: 1px 0; font-size: 0.77rem; line-height: 1.55; }
+.auth-panel .link-button { min-height: 26px; font-size: 0.78rem; }
+
+/* Settings: a wide, navigable control center with one readable content rail. */
+.account-settings {
+  width: min(900px, calc(100vw - 44px));
+  height: min(820px, calc(100dvh - 44px));
+  max-height: none;
+  display: grid;
+  grid-template-columns: 205px minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bg-surface) 98%, transparent);
+}
+.account-settings > header {
+  position: relative;
+  z-index: 6;
+  top: 0;
+  grid-column: 1 / -1;
+  min-height: 96px;
+  padding: 22px 26px;
+  background: color-mix(in srgb, var(--bg-surface) 98%, transparent);
+}
+.account-settings > header::after,
+.updates-header::after,
+.discovery-dms-header::after,
+.admin-panel-header::after,
+.report-dialog header::after {
+  content: '';
+  position: absolute;
+  inset: auto 0 -1px;
+  height: 2px;
+  background: var(--decal-stripe-h);
+  opacity: 0.78;
+}
+.account-settings > header,
+.updates-header,
+.discovery-dms-header,
+.admin-panel-header,
+.report-dialog header { position: relative; }
+.account-settings h2 { font: italic 740 1.45rem/1.1 var(--font-display); }
+.account-settings > header p { margin-top: 6px; font-size: 0.8rem; }
+.account-settings > header .btn-icon,
+.updates-header .btn-icon,
+.discovery-dms-header .btn-icon,
+.admin-panel-header .btn-icon { width: 40px; height: 40px; }
+.account-settings-nav {
+  grid-column: 1;
+  grid-row: 2;
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  padding: 18px 12px;
+  border-right: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-base) 56%, var(--bg-surface));
+}
+.account-settings-nav button {
+  width: 100%;
+  min-height: 56px;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  color: var(--text-tertiary);
+  text-align: left;
+  cursor: pointer;
+}
+.account-settings-nav button:hover,
+.account-settings-nav button:focus-visible,
+.account-settings-nav button[aria-selected='true'] { background: var(--bg-raised); color: var(--accent-hover); }
+.account-settings-nav button[aria-selected='true'] { box-shadow: inset 3px 0 0 var(--accent); }
+.account-settings-nav button > svg { justify-self: center; }
+.account-settings-nav button > span { min-width: 0; display: grid; gap: 2px; }
+.account-settings-nav strong { color: var(--text-primary); font-size: 0.78rem; font-weight: 650; }
+.account-settings-nav small { overflow: hidden; font-size: 0.65rem; text-overflow: ellipsis; white-space: nowrap; }
+.account-settings-section {
+  grid-column: 2;
+  grid-row: 2;
+  min-height: 0;
+  align-content: start;
+  overflow-y: auto;
+  gap: 15px;
+  padding: 24px 28px 27px;
+  background: var(--bg-surface);
+}
+.account-settings-section[hidden] { display: none; }
+.account-section-heading {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 3px;
+  margin-bottom: 2px;
+}
+.account-section-heading h3 { color: var(--text-primary); font: 680 1.05rem/1.2 var(--font-sans); }
+.account-section-heading p { color: var(--text-tertiary); font-size: 0.76rem; }
+.account-profile-section { grid-template-columns: 82px minmax(0, 1fr) minmax(0, 1fr); }
+.account-profile-section > .account-avatar-preview { grid-column: 1; }
+.account-profile-section > .account-avatar-actions { grid-column: 2 / -1; }
+.account-profile-section > label { grid-column: auto; }
+.account-profile-section > label:nth-of-type(1) { grid-column: 1 / 3; }
+.account-profile-section > label:nth-of-type(2) { grid-column: 3; }
+.account-profile-section > .account-settings-status,
+.account-profile-section > .account-settings-actions { grid-column: 1 / -1; }
+.account-avatar-preview { width: 74px; height: 74px; border-radius: 50%; font-size: 1.35rem; }
+.account-avatar-preview img { border-radius: 50%; }
+.account-settings label { gap: 7px; font-size: 0.78rem; }
+.account-settings input,
+.account-settings textarea,
+.account-settings select { min-height: 42px; padding: 9px 11px; border-radius: 8px; font-size: 0.8rem; }
+.account-settings small,
+.account-settings-hint { font-size: 0.71rem; line-height: 1.5; }
+.account-local-codex-output {
+  margin: 0.4rem 0 0;
+  max-height: 13rem;
+  overflow: auto;
+  padding: 0.75rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.65rem;
+  background: color-mix(in srgb, var(--bg-secondary) 88%, black);
+  color: var(--text-secondary);
+  font: 0.72rem/1.5 var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.account-local-codex-login {
+  align-self: flex-start;
+  color: var(--accent);
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+.android-update-card {
+  position: fixed;
+  z-index: 520;
+  right: max(14px, env(safe-area-inset-right));
+  bottom: max(14px, env(safe-area-inset-bottom));
+  width: min(410px, calc(100vw - 28px));
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px 12px;
+  padding: 16px;
+  border: 1px solid var(--border-active);
+  border-radius: 10px;
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-lg);
+}
+.android-update-card > .btn-icon { position: absolute; top: 6px; right: 6px; }
+.android-update-mark { display: grid; place-items: center; width: 34px; height: 34px; color: var(--accent); background: var(--accent-subtle); border-radius: 8px; }
+.android-update-card > div:nth-of-type(2) { display: flex; min-width: 0; flex-direction: column; gap: 4px; padding-right: 22px; }
+.android-update-card strong { font-family: var(--font-display); font-size: 0.9rem; }
+.android-update-card p { display: flex; align-items: center; gap: 5px; color: var(--text-secondary); font-size: 0.72rem; }
+.android-update-card small { color: var(--text-secondary); font-size: 0.7rem; overflow-wrap: anywhere; }
+.android-update-card > .btn { grid-column: 1 / -1; width: 100%; }
+.account-section-title { gap: 9px; font-size: 0.92rem; }
+.account-settings-actions button,
+.account-avatar-actions button { min-height: 38px; padding: 8px 13px; border-radius: 8px; font-size: 0.76rem; cursor: pointer; }
+.account-settings-actions button { background: var(--accent-subtle); color: var(--accent-hover); }
+.account-vault-members { gap: 8px; }
+.account-vault-members li,
+.account-banned-users > div,
+.account-join-requests > div { min-height: 52px; padding: 9px 11px; border-radius: 9px; background: var(--bg-base); }
+.account-public-discovery { gap: 13px; padding: 16px; border-radius: 10px; }
+.account-vault-invite { gap: 8px; }
+.account-vault-invite button,
+.account-vault-member-actions button,
+.account-join-requests button,
+.account-banned-users button { min-height: 34px; padding: 6px 10px; font-size: 0.72rem; }
+
+/* Community surfaces share one bounded shell. */
+.discovery-dms-backdrop,
+.discovery-dms-backdrop.is-messages,
+.updates-backdrop,
+.admin-backdrop { align-items: center; padding: 24px; }
+.discovery-dms-modal,
+.discovery-dms-modal.is-messages {
+  width: min(900px, calc(100vw - 48px));
+  height: min(720px, calc(100dvh - 48px));
+  max-height: none;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--accent) 16%, var(--border));
+  border-radius: 14px;
+  background: var(--bg-surface);
+  box-shadow: 0 28px 90px hsla(228, 35%, 1%, 0.68), var(--bevel);
+}
+.discovery-dms-modal.is-messages .discovery-dms-body { flex: 1; display: block; }
+.discovery-dms-modal.is-messages .dm-panel { height: 100%; min-height: 0; overflow: auto; padding: 24px 28px; }
+.discovery-dms-modal.is-messages .dm-panel > .dm-section { min-height: 0; flex: 1; }
+.discovery-dms-modal.is-messages .dm-panel > .dm-section > .discovery-list { min-height: 180px; }
+.discovery-dms-header { min-height: 94px; padding: 20px 24px 18px; }
+.discovery-dms-header h2,
+.updates-header h2 { font-size: 1.35rem; letter-spacing: 0.025em; }
+.discovery-dms-header p,
+.updates-header p { margin-top: 5px; font-size: 0.78rem; }
+.discovery-dms-body { flex: 1; min-height: 0; }
+.discovery-panel { gap: 18px; padding: 24px 28px 28px; }
+.discovery-search { min-height: 46px; padding: 0 14px; border-radius: 9px; }
+.discovery-search input { font-size: 0.84rem; }
+.discovery-list { gap: 9px; }
+.discovery-row { min-height: 62px; padding: 10px 12px; border-radius: 10px; background: var(--bg-base); }
+.discovery-avatar { width: 38px; height: 38px; font-size: 0.82rem; }
+.discovery-row-copy strong { font-size: 0.85rem; }
+.discovery-row-copy span { font-size: 0.72rem; }
+.public-vault-card { padding: 13px; }
+.public-vault-card-copy > strong { font-size: 0.9rem; }
+.public-vault-purpose { font-size: 0.77rem; }
+.discovery-row > button:not(.dm-open):not(.public-vault-card-copy),
+.public-vault-primary-action { min-height: 38px; padding: 8px 13px; border-radius: 8px; font-size: 0.74rem; }
+.discovery-empty { min-height: 220px; font-size: 0.8rem; }
+.dm-compose { gap: 8px; }

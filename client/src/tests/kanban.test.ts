@@ -17,8 +17,8 @@ import {
   renameKanbanColumn,
   setSuperkanbanMarker,
   toggleKanbanCard,
-  KanbanView,
-} from '../components/KanbanView';
+} from '../components/kanbanMarkdown';
+import { KanbanView } from '../components/KanbanView';
 import {
   mergeKanbanSources,
   mergeLiveWorkIntoKanban,

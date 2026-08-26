@@ -63,7 +63,27 @@ function appBundleForExecutable(executablePath) {
   return bundle;
 }
 
-const INSTALL_SCRIPT = `#!/bin/bash
+const INSTALL_COMMANDS = Object.freeze({
+  kill: '/bin/kill',
+  sleep: '/bin/sleep',
+  mkdir: '/bin/mkdir',
+  rm: '/bin/rm',
+  hdiutil: '/usr/bin/hdiutil',
+  ditto: '/usr/bin/ditto',
+  xattr: '/usr/bin/xattr',
+  mv: '/bin/mv',
+  open: '/usr/bin/open',
+});
+
+function shellQuote(value) {
+  return `'${String(value).replaceAll("'", "'\\''")}'`;
+}
+
+function createInstallScript(commands = INSTALL_COMMANDS) {
+  const command = Object.fromEntries(
+    Object.entries(INSTALL_COMMANDS).map(([name]) => [name, shellQuote(commands[name])]),
+  );
+  return `#!/bin/bash
 set -euo pipefail
 
 pid="$1"
@@ -76,30 +96,33 @@ stage="$parent/.Fizzer.update-$pid.app"
 backup="$parent/.Fizzer.backup-$pid.app"
 
 cleanup() {
-  /usr/bin/hdiutil detach "$mount_point" -quiet >/dev/null 2>&1 || true
-  /bin/rm -rf "$work_dir" "$stage"
+  ${command.hdiutil} detach "$mount_point" -quiet >/dev/null 2>&1 || true
+  ${command.rm} -rf "$work_dir" "$stage"
 }
 trap cleanup EXIT
 
-while /bin/kill -0 "$pid" >/dev/null 2>&1; do /bin/sleep 0.2; done
-/bin/mkdir -p "$mount_point"
-/usr/bin/hdiutil attach "$dmg" -nobrowse -readonly -mountpoint "$mount_point" -quiet
+while ${command.kill} -0 "$pid" >/dev/null 2>&1; do ${command.sleep} 0.2; done
+${command.mkdir} -p "$mount_point"
+${command.hdiutil} attach "$dmg" -nobrowse -readonly -mountpoint "$mount_point" -quiet
 source_app="$mount_point/Fizzer.app"
 test -d "$source_app"
 
-/bin/rm -rf "$stage" "$backup"
-/usr/bin/ditto "$source_app" "$stage"
-/usr/bin/xattr -dr com.apple.quarantine "$stage"
+${command.rm} -rf "$stage" "$backup"
+${command.ditto} "$source_app" "$stage"
+${command.xattr} -dr com.apple.quarantine "$stage"
 
-if test -e "$target"; then /bin/mv "$target" "$backup"; fi
-if /bin/mv "$stage" "$target"; then
-  /bin/rm -rf "$backup"
-  /usr/bin/open "$target"
+if test -e "$target"; then ${command.mv} "$target" "$backup"; fi
+if ${command.mv} "$stage" "$target"; then
+  ${command.rm} -rf "$backup"
+  ${command.open} "$target"
 else
-  if test -e "$backup"; then /bin/mv "$backup" "$target"; fi
+  if test -e "$backup"; then ${command.mv} "$backup" "$target"; fi
   exit 1
 fi
 `;
+}
+
+const INSTALL_SCRIPT = createInstallScript();
 
 async function prepareMacOSUpdate({ arch, executablePath, fetchImpl = fetch }) {
   const target = appBundleForExecutable(executablePath);
@@ -134,6 +157,7 @@ module.exports = {
   INSTALL_SCRIPT,
   appBundleForExecutable,
   assetNameForArch,
+  createInstallScript,
   downloadVerifiedAsset,
   expectedSha256,
   fetchReleaseAsset,

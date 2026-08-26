@@ -1,0 +1,264 @@
+/* Owns Account settings, profile, membership, moderation, and vault controls. */
+/* These account defaults precede discovery and the intentional late polish layers. */
+.account-settings {
+  width: min(560px, 100%);
+  max-height: min(780px, 90vh);
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-surface);
+  box-shadow: 0 24px 80px hsla(228, 30%, 2%, 0.55);
+}
+.account-settings > header,
+.updates-header,
+.discovery-dms-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid var(--border);
+}
+.account-settings > header {
+  padding: 18px 20px;
+}
+.account-settings h2,
+.account-settings p,
+.updates-header h2,
+.updates-header p,
+.discovery-dms-header h2,
+.discovery-dms-header p { margin: 0; }
+.account-settings h2 { font-size: 1.05rem; }
+.account-settings p { margin-top: 4px; color: var(--text-tertiary); font-size: 0.75rem; }
+.account-settings-section {
+  display: grid;
+  gap: 12px;
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.account-settings-section:last-child { border-bottom: 0; }
+.account-profile-section {
+  grid-template-columns: 72px minmax(0, 1fr);
+}
+.account-profile-section > label,
+.account-profile-section > .account-settings-status,
+.account-profile-section > .account-settings-actions { grid-column: 1 / -1; }
+.account-avatar-preview {
+  width: 64px;
+  height: 64px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--accent-subtle);
+  color: var(--accent);
+  font-size: 1.15rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.account-avatar-preview img { border-radius: 50%; }
+.account-avatar-actions { display: flex; align-content: center; flex-wrap: wrap; gap: 7px; }
+.account-avatar-actions button,
+.account-settings-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+.account-avatar-actions small { flex-basis: 100%; }
+.account-settings label { display: grid; gap: 5px; color: var(--text-secondary); font-size: 0.75rem; }
+.account-settings input {
+  width: 100%;
+  min-height: 36px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-deep);
+  color: var(--text-primary);
+}
+.account-settings input:disabled { color: var(--text-tertiary); opacity: 0.8; }
+.account-settings small { color: var(--text-tertiary); font-size: 0.6875rem; line-height: 1.4; }
+.account-section-title { display: flex; align-items: center; gap: 7px; color: var(--text-primary); }
+.account-settings-status { color: var(--text-secondary); font-size: 0.75rem; }
+.account-settings-actions { display: flex; justify-content: flex-end; }
+.account-settings-actions button { border-color: hsla(38, 55%, 48%, 0.4); color: var(--accent-hover); }
+.account-settings-lede { margin: 0 0 8px; color: var(--text-tertiary); font-size: 0.75rem; }
+.account-vault-members {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.account-vault-members li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-base);
+}
+.account-vault-members li > div {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+.account-vault-members strong {
+  font-size: 0.8125rem;
+  color: var(--text-primary);
+}
+.account-vault-members span {
+  font-size: 0.7rem;
+  color: var(--text-tertiary);
+}
+.account-vault-role {
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+}
+.account-vault-member-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.account-vault-member-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 0.66rem;
+}
+.account-vault-member-actions button.is-danger { border-color: color-mix(in srgb, var(--danger) 38%, var(--border)); color: var(--danger); }
+.account-vault-member-actions select,
+.account-vault-invite select,
+.account-vault-invite input {
+  font-size: 0.75rem;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+.account-vault-invite {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.account-vault-invite input { flex: 1 1 8rem; min-width: 0; }
+.account-vault-invite button {
+  font-size: 0.75rem;
+  padding: 5px 10px;
+  border: 1px solid hsla(38, 55%, 48%, 0.4);
+  border-radius: var(--radius-sm);
+  color: var(--accent-hover);
+  cursor: pointer;
+}
+.account-vault-invite button:disabled { opacity: 0.5; cursor: default; }
+.account-vault-you { font-style: normal; color: var(--text-tertiary); font-weight: 500; }
+.account-settings-hint {
+  display: block;
+  margin-top: 6px;
+  font-size: 0.7rem;
+  color: var(--text-tertiary);
+}
+/* `.account-settings label` is a grid, so a checkbox row has to out-specify it
+   or the box stacks above its text and inherits the 36px text-input sizing. */
+.account-settings label.account-settings-check {
+  display: flex; align-items: center; gap: 8px;
+  color: var(--text-secondary); cursor: pointer;
+}
+.account-settings label.account-settings-check input[type='checkbox'] {
+  width: 15px; min-width: 15px; height: 15px; min-height: 0; flex: none;
+  margin: 0; padding: 0; border: 0; border-radius: 0; background: none;
+  accent-color: var(--accent);
+}
+.account-vault-visibility { display: flex; align-items: center; gap: 8px; margin: 10px 0; color: var(--text-secondary); }
+.account-vault-visibility label { display: flex; grid-template-columns: none; flex: 1; align-items: center; gap: 7px; }
+.account-vault-visibility input { width: auto; }
+.account-public-discovery {
+  display: grid;
+  gap: 9px;
+  margin: 10px 0 14px;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--border));
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--bg-base) 88%, transparent);
+}
+.account-public-discovery .account-vault-visibility { margin: 0; }
+.account-public-discovery label { gap: 5px; }
+.account-public-discovery textarea { min-height: 54px; resize: vertical; }
+.account-public-discovery label > small { justify-self: end; color: var(--text-tertiary); font-size: 0.65rem; }
+.account-public-discovery .account-settings-actions { margin-top: 0; }
+.account-join-requests { display: grid; gap: 7px; margin: 0 0 12px; }
+.account-join-requests > strong { color: var(--text-secondary); font-size: 0.72rem; }
+.account-join-requests > div {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-base);
+}
+.account-join-requests > div > span { min-width: 0; flex: 1; color: var(--text-primary); font-size: 0.72rem; }
+.account-join-requests > div small { color: var(--text-tertiary); }
+.account-join-requests button { padding: 4px 7px; border: 1px solid var(--border); border-radius: 6px; color: var(--text-secondary); font-size: 0.66rem; }
+.account-join-requests button:last-child { border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); color: var(--accent-hover); }
+.account-moderation-queue,
+.account-banned-users { display: grid; gap: 7px; margin: 2px 0 12px; }
+.account-moderation-title { display: flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 0.72rem; }
+.account-moderation-title span { margin-left: auto; color: var(--text-tertiary); }
+.account-moderation-queue article {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--danger) 22%, var(--border));
+  border-radius: 7px;
+  background: var(--bg-base);
+}
+.account-moderation-queue article > div:first-child { display: flex; justify-content: space-between; gap: 8px; font-size: 0.7rem; }
+.account-moderation-queue article > div:first-child strong { text-transform: capitalize; }
+.account-moderation-queue article > div:first-child span { color: var(--text-tertiary); overflow-wrap: anywhere; }
+.account-moderation-queue article p { color: var(--text-secondary); font-size: 0.72rem; white-space: pre-wrap; }
+.account-moderation-queue article > div:last-child { display: flex; justify-content: flex-end; gap: 6px; }
+.account-moderation-queue button,
+.account-banned-users button { padding: 4px 7px; border: 1px solid var(--border); border-radius: 6px; color: var(--text-secondary); font-size: 0.66rem; }
+.account-banned-users > strong { color: var(--text-secondary); font-size: 0.72rem; }
+.account-banned-users > div { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg-base); }
+.account-banned-users > div > span { min-width: 0; flex: 1; color: var(--text-primary); font-size: 0.72rem; }
+.account-banned-users em { color: var(--text-tertiary); font-style: normal; }
+.account-vault-leave {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  padding: 5px 10px;
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--border));
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--danger);
+  cursor: pointer;
+}
+.account-vault-leave:disabled { opacity: 0.5; cursor: default; }
+@media (max-width: 520px) {
+  .overlay-backdrop.account-settings-backdrop { align-items: end; padding: 0; }
+  .account-settings { max-height: 92vh; border-radius: 14px 14px 0 0; }
+}

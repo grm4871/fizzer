@@ -1,0 +1,362 @@
+/* Owns Large-scale activity, search, admin, editor, vault, and session product surfaces. */
+/* Product sizing is intentionally late and preserves all existing selectors. */
+.dm-compose > label,
+.dm-section h3 { font-size: 0.7rem; }
+.dm-compose > div { min-height: 46px; border-radius: 9px; }
+.dm-compose input { font-size: 0.84rem; }
+.dm-compose button { padding: 0 15px; font-size: 0.74rem; }
+.dm-settings-details > summary { min-height: 48px; padding: 10px 13px; font-size: 0.76rem; }
+.dm-privacy-row { min-height: 58px; padding: 11px 13px; }
+
+/* Activity, search, commands and administration use the same large rhythm. */
+.updates-modal { width: min(720px, calc(100vw - 48px)); min-height: 480px; max-height: calc(100dvh - 48px); }
+.updates-header { min-height: 94px; padding: 20px 24px 18px; }
+.updates-body { padding: 18px 20px 24px; }
+.updates-item { min-height: 66px; gap: 12px; padding: 11px 12px; border-radius: 9px; }
+.updates-kind { width: 36px; height: 36px; }
+.updates-item-heading { font-size: 0.76rem; }
+.updates-target { font-size: 0.76rem; }
+.updates-preview { font-size: 0.77rem; }
+.updates-empty { min-height: 280px; font-size: 0.8rem; }
+
+.command-palette,
+.search-overlay { width: min(700px, calc(100vw - 40px)); max-height: min(680px, 76dvh); border-radius: 13px; }
+.command-palette-input-wrap,
+.search-input-wrap { min-height: 60px; padding: 14px 18px; }
+.command-palette-input,
+.search-input { font-size: 0.96rem; }
+.command-palette-results,
+.search-results { max-height: 460px; padding: 7px; }
+.command-palette-item,
+.search-result-item { min-height: 58px; padding: 11px 13px; border-radius: 8px; }
+.command-palette-item .item-title,
+.search-result-item .result-title { font-size: 0.88rem; }
+.command-palette-item .item-path,
+.search-result-item .result-snippet { font-size: 0.76rem; }
+.command-palette-footer,
+.search-footer {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 15px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-deep);
+  color: var(--text-tertiary);
+  font: italic 0.65rem var(--font-display);
+  letter-spacing: 0.04em;
+}
+.search-footer kbd { margin: 0 3px 0 7px; padding: 2px 5px; border: 1px solid var(--border); background: var(--bg-raised); font: 0.61rem var(--font-mono); }
+
+.admin-panel {
+  width: min(760px, calc(100vw - 48px));
+  max-height: calc(100dvh - 48px);
+  gap: 0;
+  padding: 0;
+  overflow-y: auto;
+  border-radius: 14px;
+}
+.admin-panel-header {
+  position: sticky;
+  z-index: 3;
+  top: 0;
+  min-height: 92px;
+  padding: 20px 24px;
+  background: var(--bg-surface);
+}
+.admin-panel-header h2 { margin: 2px 0 0; font: italic 730 1.3rem var(--font-display); }
+.admin-panel > .admin-panel-hint { padding: 20px 24px 12px; font-size: 0.78rem; }
+.admin-panel .error,
+.admin-token { margin: 0 24px 16px; }
+.admin-report-queue,
+.admin-accounts { display: grid; gap: 10px; padding: 16px 24px 22px; overflow: visible; }
+.admin-report-queue { border-bottom: 1px solid var(--border); }
+.admin-report-title h3 { font-size: 0.86rem; }
+.admin-report-queue article { gap: 7px; padding: 12px 13px; border-radius: 9px; }
+.admin-report-queue article p,
+.admin-panel-hint { font-size: 0.76rem; }
+.admin-user-list { gap: 8px; overflow: visible; }
+.admin-user-row { min-height: 52px; padding: 10px 12px; border-color: transparent; border-radius: 9px; background: var(--bg-base); }
+
+.report-dialog { width: min(520px, calc(100vw - 36px)); gap: 16px; padding: 22px; border-radius: 13px; }
+.report-dialog header { padding-bottom: 14px; }
+.report-dialog header > div > span { display: grid; gap: 2px; }
+.report-dialog h2 { font-size: 1.05rem; }
+.report-dialog label { gap: 7px; font-size: 0.8rem; }
+.report-dialog select,
+.report-dialog textarea { min-height: 42px; padding: 9px 11px; font-size: 0.8rem; }
+.report-dialog p { font-size: 0.76rem; }
+.report-dialog-actions button { min-height: 38px; padding: 8px 13px; font-size: 0.76rem; }
+
+/* Work surfaces keep the chat shell but gain roomier reading and board scale. */
+.editor-toolbar { min-height: 42px; padding: 6px 14px; gap: 3px; }
+.toolbar-btn { min-width: 31px; height: 30px; }
+.editor-title { padding: 26px 32px 8px; font-size: 2rem; }
+.kanban-view { padding: 18px 24px 36px; }
+.kanban-toolbar { margin-bottom: 16px; padding: 10px 0 11px; }
+.kanban-search { width: 240px; min-height: 36px; padding: 0 10px; border-radius: 7px; }
+.kanban-search input { height: 34px; font-size: 0.78rem; }
+.kanban-archive-complete { height: 36px; padding: 0 11px; font-size: 0.72rem; }
+.kanban-board { gap: 14px; }
+.kanban-column { width: 292px; flex-basis: 292px; border-radius: 9px; }
+.kanban-column > header { min-height: 44px; padding: 9px 10px 8px; }
+.kanban-cards { padding: 9px; }
+.kanban-card { min-height: 44px; margin-bottom: 9px; padding: 11px; font-size: 0.82rem; }
+.kanban-add-card { padding: 9px; }
+
+.new-tab-page {
+  gap: 10px;
+  max-width: 520px;
+  margin: auto;
+  padding: 42px;
+  border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bg-surface) 78%, transparent);
+  box-shadow: var(--bevel);
+}
+.new-tab-mark {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 4px;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+  border-radius: 12px;
+  background: var(--accent-subtle);
+  color: var(--accent-hover);
+}
+.new-tab-page > strong { color: var(--text-primary); font: italic 710 1.35rem/1.2 var(--font-display); }
+.new-tab-page > span:not(.surface-kicker) { max-width: 26rem; color: var(--text-secondary); font-size: 0.82rem; }
+.new-tab-shortcuts { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 9px; color: var(--text-tertiary); font-size: 0.69rem; }
+.new-tab-shortcuts span { display: inline-flex; align-items: center; gap: 6px; }
+.new-tab-shortcuts kbd { padding: 3px 6px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg-base); color: var(--text-secondary); font: 0.62rem var(--font-mono); }
+
+.vault-switcher-menu {
+  background:
+    radial-gradient(circle at 18% 0%, hsla(38, 75%, 36%, 0.085), transparent 30%),
+    var(--bg-base);
+}
+.vault-switcher-shell { width: min(100%, 980px); }
+.vault-switcher-heading { padding: 8px 2px 24px; font-size: 1.35rem; color: var(--text-primary); }
+.vault-switcher-section { margin-top: 32px; }
+.vault-switcher-section-title { margin-bottom: 14px; font-size: 0.66rem; }
+.vault-switcher-grid { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+.vault-switcher-row > button:first-child { min-height: 204px; }
+.vault-switcher-action { min-height: 116px; padding: 20px; }
+.vault-switcher-copy strong { font-size: 0.96rem; }
+.vault-switcher-copy small { font-size: 0.72rem; }
+
+.session-manager { width: min(1180px, calc(100vw - 48px)); height: min(800px, calc(100dvh - 48px)); border-radius: 12px; }
+.session-manager-header { min-height: 70px; padding: 12px 18px; }
+.session-manager-header h2 { font-size: 1.08rem; }
+.session-manager-item { min-height: 78px; padding: 12px; }
+.session-manager-empty span,
+.session-manager-detail-empty span { font-size: 0.78rem; }
+
+@media (max-width: 760px) {
+  .auth-shell { padding: 16px; }
+  .auth-panel { padding: 26px 22px 22px; }
+
+  .overlay-backdrop.account-settings-backdrop,
+  .discovery-dms-backdrop,
+  .discovery-dms-backdrop.is-messages,
+  .updates-backdrop,
+  .admin-backdrop { align-items: stretch; padding: 0; }
+
+  .account-settings {
+    width: 100%;
+    height: 100dvh;
+    max-height: none;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto minmax(0, 1fr);
+    border: 0;
+    border-radius: 0;
+  }
+  .account-settings > header { min-height: 88px; padding: calc(17px + env(safe-area-inset-top)) 18px 16px; }
+  .account-settings-nav {
+    position: relative;
+    z-index: 5;
+    top: auto;
+    grid-column: 1;
+    grid-row: 2;
+    min-height: 0;
+    display: flex;
+    gap: 5px;
+    overflow-x: auto;
+    padding: 8px 12px;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .account-settings-nav button { min-width: 128px; min-height: 48px; grid-template-columns: 22px 1fr; padding: 6px 8px; }
+  .account-settings-nav button[aria-selected='true'] { box-shadow: inset 0 -3px 0 var(--accent); }
+  .account-settings-nav strong { font-size: 0.8rem; }
+  .account-settings-nav small { font-size: 0.74rem; }
+  .account-settings-section { grid-column: 1; grid-row: 3; padding: 22px 18px 25px; }
+  .account-settings small,
+  .account-settings-hint { font-size: 0.76rem; }
+  .account-profile-section { grid-template-columns: 72px minmax(0, 1fr); }
+  .account-profile-section > .account-avatar-preview { grid-column: 1; }
+  .account-profile-section > .account-avatar-actions { grid-column: 2; }
+  .account-profile-section > label:nth-of-type(1),
+  .account-profile-section > label:nth-of-type(2) { grid-column: 1 / -1; }
+
+  .discovery-dms-modal,
+  .discovery-dms-modal.is-messages,
+  .updates-modal,
+  .admin-panel {
+    width: 100%;
+    height: 100dvh;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+  }
+  .discovery-dms-header,
+  .updates-header { min-height: 88px; padding: calc(16px + env(safe-area-inset-top)) 16px 14px; }
+  .discovery-dms-header p,
+  .updates-header p { font-size: 0.82rem; }
+  .discovery-panel,
+  .discovery-dms-modal.is-messages .dm-panel { padding: 18px 14px calc(20px + env(safe-area-inset-bottom)); }
+  .discovery-row { min-height: 58px; }
+  .updates-body { padding: 14px 12px calc(18px + env(safe-area-inset-bottom)); }
+  .admin-panel-header { padding-top: calc(18px + env(safe-area-inset-top)); }
+  .admin-panel > .admin-panel-hint,
+  .admin-report-queue,
+  .admin-accounts { padding-inline: 18px; }
+
+  .command-palette,
+  .search-overlay { width: calc(100vw - 20px); max-height: min(76dvh, 620px); }
+  .overlay-backdrop:has(.command-palette),
+  .overlay-backdrop:has(.search-overlay) { padding-top: calc(10px + env(safe-area-inset-top)); }
+  .command-palette-footer,
+  .search-footer { display: none; }
+
+  .editor-title { padding: 20px 20px 7px; font-size: 1.65rem; }
+  .editor-toolbar { overflow-x: auto; padding-inline: 8px; }
+  .kanban-view { padding: 12px 12px 28px; }
+  .kanban-column { width: 84vw; max-width: 320px; flex-basis: 84vw; }
+  .new-tab-page { margin: auto 16px; padding: 30px 22px; }
+  .new-tab-shortcuts { display: none; }
+
+  .vault-switcher-menu { padding: calc(18px + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom)); }
+  .vault-switcher-heading { font-size: 1.1rem; }
+  .vault-switcher-row > button:first-child { min-height: 168px; grid-template-rows: 96px auto; }
+  .vault-switcher-art { min-height: 96px; }
+  .vault-switcher-action { min-height: 96px; }
+}
+
+/* Direct messages are a first-class inbox. The vault-backed transport remains
+   private implementation detail and never appears as workspace navigation. */
+.discovery-dms-modal.is-messages { width: min(1080px, calc(100vw - 48px)); }
+.discovery-dms-modal.is-messages .discovery-dms-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+.dm-inbox {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  display: grid;
+  grid-template-columns: 310px minmax(0, 1fr);
+  background: var(--bg-base);
+}
+.dm-inbox-sidebar {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 14px;
+  padding: 16px 14px;
+  border-right: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-surface) 86%, var(--bg-base));
+}
+.dm-inbox-sidebar .dm-compose > div { min-height: 40px; }
+.dm-inbox-sidebar .dm-compose button {
+  width: 42px;
+  justify-content: center;
+  padding: 0;
+}
+.dm-conversations { min-height: 0; grid-template-rows: auto minmax(0, 1fr); }
+.dm-conversations > .discovery-list { min-height: 0; align-content: start; overflow-y: auto; }
+.dm-inbox-sidebar .discovery-row { min-height: 54px; padding: 8px; border-color: transparent; }
+.dm-inbox-sidebar .discovery-avatar { width: 34px; height: 34px; }
+.dm-conversation-row:hover { border-color: var(--border); background: var(--bg-raised); }
+.dm-conversation-row.is-selected {
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--border));
+  background: color-mix(in srgb, var(--accent-subtle) 72%, var(--bg-base));
+}
+.dm-conversation-row.is-selected .dm-open strong { color: var(--accent-hover); }
+.dm-inbox-sidebar .dm-block-button { opacity: 0; transition: opacity var(--transition-fast); }
+.dm-conversation-row:hover .dm-block-button,
+.dm-conversation-row:focus-within .dm-block-button { opacity: 1; }
+.dm-inbox-sidebar .dm-settings-details { max-height: min(330px, 52vh); overflow-y: auto; }
+.dm-inbox-sidebar .dm-settings-details > summary { min-height: 40px; padding: 8px 10px; font-size: 0.7rem; }
+.dm-inbox-sidebar .dm-settings-body { gap: 10px; padding-inline: 8px; }
+.dm-inbox-sidebar .dm-privacy-row { min-height: 48px; padding: 8px; }
+.dm-inbox-sidebar .dm-privacy-row span { white-space: normal; }
+.dm-inbox-sidebar .dm-block-list { max-height: 112px; }
+.dm-inbox-sidebar .dm-block-list .discovery-row { min-height: 42px; }
+.dm-inbox-thread { min-width: 0; min-height: 0; display: flex; }
+.dm-thread { position: relative; min-width: 0; min-height: 0; flex: 1; display: flex; }
+.dm-thread > .chat-view { min-width: 0; min-height: 0; }
+.dm-thread .chat-header { min-height: 58px; padding-inline: 20px; background: var(--bg-surface); }
+.dm-thread .chat-header-copy h2 { font-size: 1rem; font-style: normal; letter-spacing: 0; }
+.dm-thread .chat-messages { padding-top: 20px; }
+.dm-thread .chat-composer { padding: 12px 18px 16px; border-top: 1px solid var(--border-subtle); }
+.dm-thread-back { display: none; }
+.dm-thread-status,
+.discovery-dms-status {
+  z-index: 4;
+  padding: 8px 14px;
+  border-top: 1px solid color-mix(in srgb, var(--danger) 24%, var(--border));
+  background: color-mix(in srgb, var(--danger-subtle) 80%, var(--bg-surface));
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+}
+.dm-thread-status { position: absolute; inset: auto 0 0; }
+.dm-thread-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--text-tertiary);
+  font-size: 0.78rem;
+  text-align: center;
+}
+.dm-thread-empty strong { color: var(--text-secondary); font: italic 700 1rem var(--font-display); }
+
+@media (max-width: 760px) {
+  .discovery-dms-modal.is-messages { width: 100%; }
+  .dm-inbox { grid-template-columns: minmax(0, 1fr); }
+  .dm-inbox-sidebar,
+  .dm-inbox-thread { grid-column: 1; grid-row: 1; }
+  .dm-inbox-sidebar { border-right: 0; padding: 14px 12px calc(14px + env(safe-area-inset-bottom)); }
+  .dm-inbox:not(.has-selection) .dm-inbox-thread,
+  .dm-inbox.has-selection .dm-inbox-sidebar { display: none; }
+  .dm-thread-back {
+    position: absolute;
+    z-index: 4;
+    top: 12px;
+    left: 10px;
+    width: 34px;
+    height: 34px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-raised);
+    color: var(--text-secondary);
+    font-size: 0;
+  }
+  .dm-thread .chat-header { padding-left: 54px; }
+  .dm-thread .chat-message-group { padding-inline: 14px; }
+  .dm-thread .chat-composer { padding-inline: 10px; padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
+  .dm-inbox-sidebar .dm-block-button { opacity: 1; }
+}
+

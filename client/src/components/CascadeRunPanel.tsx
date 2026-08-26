@@ -8,8 +8,8 @@
 
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, lazy, Suspense, type RefObject } from 'react';
 import { ChevronRight, Square, TerminalSquare } from 'lucide-react';
+import { buildHarnessActivity, hasRunActivity } from '../chat/harnessActivity';
 import {
-  buildHarnessActivity,
   buildHeaderStatChips,
   formatContextLine,
   formatCostUsd,
@@ -18,16 +18,13 @@ import {
   formatRateLimitWindowLines,
   formatTokenCount,
   formatTurnsLine,
-  hasRunActivity,
   hasUsageStats,
   isHarnessPromptDump,
   liveActivityHeadline,
   summarizeActivity,
   toolResultPreview,
-  type ActivityItem,
-  type HarnessActivity,
-  type RunStats,
-} from '../chat/harnessActivity';
+} from '../chat/harnessActivityFormatters';
+import type { ActivityItem, HarnessActivity, RunStats } from '../chat/harnessActivityTypes';
 // xterm is only mounted behind the Raw tab, so it does not belong in the
 // initial chunk — load it when the user actually switches to raw output.
 const HarnessTerminal = lazy(() =>
@@ -37,23 +34,7 @@ import type { ChatMessage } from '../chat/types';
 import { ThinkingSpinner } from './ThinkingSpinner';
 import { api } from '../api';
 
-const SCROLL_PIN_PX = 48;
-const EDGE_PX = 2;
-
-function isPinnedToBottom(el: HTMLElement, slack = SCROLL_PIN_PX): boolean {
-  return el.scrollHeight - el.scrollTop - el.clientHeight <= slack;
-}
-
-function scrollToBottom(el: HTMLElement | null | undefined) {
-  if (!el) return;
-  el.scrollTop = el.scrollHeight;
-}
-
-/** Scroll once after layout; repeated updates naturally coalesce before paint. */
-function scrollToBottomSoon(el: HTMLElement | null | undefined) {
-  if (!el) return;
-  requestAnimationFrame(() => scrollToBottom(el));
-}
+import { isPinnedToBottom, scrollToBottomSoon, EDGE_PX } from './cascadeRunScroll';
 
 function isScrollableY(el: HTMLElement): boolean {
   if (el.scrollHeight <= el.clientHeight + 1) return false;

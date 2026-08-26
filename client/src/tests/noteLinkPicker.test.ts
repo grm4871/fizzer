@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { NoteSummary } from '../api';
-import { filterLinkableNotes } from '../components/NoteEditor';
+import { filterLinkableNotes } from '../components/noteEditorLinks';
 
 function note(id: string, title: string, isArchived = 0): NoteSummary {
   return {

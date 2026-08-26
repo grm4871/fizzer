@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { NoteSummary } from '../api';
-import { sidebarInsertionIndex, sortSidebarNotes } from '../components/Sidebar';
+import { sidebarInsertionIndex } from '../components/sidebar/dragAndDrop';
+import { sortSidebarNotes } from '../components/sidebar/treeModel';
 import { tabInsertionIndex } from '../components/PaneGrid';
 
 const note = (id: string, position: number, title = id): NoteSummary => ({

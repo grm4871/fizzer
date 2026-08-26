@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { canRenameVault, isSharedVault, type Vault } from '../api';
-import { vaultOptionLabel } from '../components/Sidebar';
+import { vaultOptionLabel } from '../components/sidebar/vaultHelpers';
 
 const vault = (overrides: Partial<Vault> = {}): Vault => ({
   id: 'v1',

@@ -1,159 +1,30 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState, type ReactNode } from 'react';
 import { ChevronRight, X } from 'lucide-react';
-import { formatChatTime } from '../chat/time';
 import { createChatAgentRegistrationId } from '../chat/shared';
-import { normalizeMention } from '../chat/mentions';
 import type {
   ChatAgentOption,
   ChatAgentRegistration,
   DesktopRunnerHealth,
-  PlanUsage,
-  PlanUsageWindow,
   VaultAgent,
 } from '../chat/types';
+import {
+  CUSTOM_MODEL_VALUE,
+  modelFromPicker,
+  ReasoningEffortSelect,
+  resolveModelPicker,
+} from './chatAgentPanelSupport';
+export {
+  CUSTOM_MODEL_VALUE,
+  modelFromPicker,
+  planUsageProviderId,
+  ReasoningEffortSelect,
+  resolveModelPicker,
+  PlanUsageMeters,
+  REASONING_EFFORTS,
+} from './chatAgentPanelSupport';
 import { ChatAgentToggle } from './ChatAgentToggle';
-import { ChatAvatar } from './ChatAvatar';
-
-const CUSTOM_MODEL_VALUE = '__custom__';
-
-function resolveModelPicker(
-  agent: ChatAgentOption | undefined,
-  model: string,
-): { choice: string; custom: string } {
-  const trimmed = model.trim();
-  if (!agent || agent.models.length === 0) {
-    return { choice: CUSTOM_MODEL_VALUE, custom: trimmed };
-  }
-  if (!trimmed) return { choice: agent.models[0]?.id ?? '', custom: '' };
-  if (agent.models.some((preset) => preset.id === trimmed)) {
-    return { choice: trimmed, custom: '' };
-  }
-  return { choice: CUSTOM_MODEL_VALUE, custom: trimmed };
-}
-
-function modelFromPicker(choice: string, custom: string) {
-  return (choice === CUSTOM_MODEL_VALUE ? custom : choice).trim();
-}
-
-export const REASONING_EFFORTS = [
-  { id: 'low', label: 'Low' },
-  { id: 'medium', label: 'Medium' },
-  { id: 'high', label: 'High' },
-  { id: 'xhigh', label: 'Extra high' },
-  { id: 'max', label: 'Max' },
-  { id: 'ultra', label: 'Ultra' },
-] as const;
-
-export function ReasoningEffortSelect({
-  agentId,
-  value,
-  onChange,
-}: {
-  agentId: string;
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  const defaultLabel = agentId === 'claude-code' ? 'Use Claude Code default' : 'Use Codex CLI default';
-  const efforts = agentId === 'claude-code'
-    ? REASONING_EFFORTS.filter((effort) => effort.id !== 'ultra')
-    : REASONING_EFFORTS;
-  return (
-    <select value={value} onChange={(event) => onChange(event.target.value)}>
-      <option value="">{defaultLabel}</option>
-      {efforts.map((effort) => (
-        <option key={effort.id} value={effort.id}>{effort.label}</option>
-      ))}
-    </select>
-  );
-}
-
-export function planUsageProviderId(agentId: string) {
-  if (agentId === 'akron-grok') return 'grok';
-  if (agentId === 'hermes') return 'nous';
-  return agentId;
-}
-
-function planUsageWindows(usage?: PlanUsage | null): PlanUsageWindow[] {
-  if (!usage || usage.status !== 'ok') return [];
-  if (usage.windows?.length) return usage.windows;
-  if (typeof usage.usedPercent !== 'number') return [];
-  return [{
-    label: usage.windowMinutes ? `${Math.round(usage.windowMinutes / 60)}h` : 'usage',
-    usedPercent: usage.usedPercent,
-    ...(usage.windowMinutes ? { windowMinutes: usage.windowMinutes } : {}),
-    ...(usage.resetsAt ? { resetsAt: usage.resetsAt } : {}),
-    ...(usage.resetsLabel ? { resetsLabel: usage.resetsLabel } : {}),
-  }];
-}
-
-function formatPlanUsageTitle(usage?: PlanUsage | null) {
-  if (!usage) return '';
-  if (usage.status !== 'ok') return usage.detail || 'Plan usage unavailable';
-  const lines = planUsageWindows(usage).map((window) => {
-    let reset = window.resetsLabel || '';
-    if (!reset && window.resetsAt) {
-      reset = formatChatTime(window.resetsAt);
-    }
-    return `${window.label}: ${Math.round(window.usedPercent)}% used${reset ? ` · ${reset}` : ''}`;
-  });
-  if (usage.planType) lines.push(`Plan: ${usage.planType}`);
-  if (usage.detail) lines.push(usage.detail);
-  return lines.join('\n');
-}
-
-export function PlanUsageMeters({
-  usage,
-  stacked = false,
-  decal = false,
-}: {
-  usage: PlanUsage;
-  stacked?: boolean;
-  /** Compact right-rail chips — no row growth. */
-  decal?: boolean;
-}) {
-  const title = formatPlanUsageTitle(usage);
-  if (usage.status !== 'ok') {
-    if (decal) return null;
-    return <span className="chat-plan-meters is-unavailable" title={title}>usage unavailable</span>;
-  }
-  const windows = planUsageWindows(usage).slice(0, 3);
-  if (windows.length === 0) return null;
-  return (
-    <span
-      className={`chat-plan-meters${stacked ? ' is-stacked' : ''}${decal ? ' is-decal' : ''}`}
-      title={title}
-    >
-      {windows.map((window, index) => {
-        const percent = Math.round(window.usedPercent);
-        return (
-          <span
-            className="chat-plan-meter"
-            key={`${window.label}:${index}`}
-            role="progressbar"
-            aria-label={`${window.label} plan usage ${percent}%`}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={percent}
-          >
-            <span className="chat-plan-meter-label">{decal ? `${percent}%` : window.label}</span>
-            <span className="chat-plan-meter-track" aria-hidden="true">
-              <span className="chat-plan-meter-fill" style={{ width: `${percent}%` }} />
-            </span>
-            {!decal && <span className="chat-plan-meter-value">{percent}%</span>}
-          </span>
-        );
-      })}
-      {!decal && usage.detail && (() => {
-        const topUpMatch = usage.detail.match(/Top-up credits:\s*\$?([\d.]+)/i);
-        const totalMatch = usage.detail.match(/Total usable:\s*\$?([\d.]+)/i);
-        if (!topUpMatch && !totalMatch) return null;
-        const label = topUpMatch ? `top-up $${topUpMatch[1]}` : `usable $${totalMatch![1]}`;
-        return <span className="chat-plan-meter-detail">{label}</span>;
-      })()}
-    </span>
-  );
-}
-
+import { ChatAgentMemberPicker } from './ChatAgentMemberPicker';
+import { useAgentRegistration, type AgentPanelMode } from './useAgentRegistration';
 
 export type ChatAgentPanelHandle = {
   openMenu: () => void;
@@ -203,7 +74,7 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
   onChromeChange,
   children,
 }, ref) {
-  const [agentPanelMode, setAgentPanelMode] = useState<'picker' | 'create' | 'edit-member' | 'edit-identity'>('picker');
+  const [agentPanelMode, setAgentPanelMode] = useState<AgentPanelMode>('picker');
   const [agentMenuOpen, setAgentMenuOpen] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteUsername, setInviteUsername] = useState('');
@@ -421,111 +292,22 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
     }
   }
 
-  async function submitAgentRegistration(event: React.FormEvent) {
-    event.preventDefault();
-    if (!agentForm.agentId) return;
-    const mention = normalizeMention(agentForm.mention || '');
-    if (!mention && agentPanelMode !== 'edit-member') {
-      setAgentFormError('Choose a unique @ handle.');
-      return;
-    }
-    if (agentPanelMode !== 'edit-member' && mention) {
-      const vaultClash = vaultAgents.some((va) =>
-        va.id !== agentForm.vaultAgentId
-        && normalizeMention(va.mention) === mention,
-      );
-      if (vaultClash) {
-        setAgentFormError(`@${mention} is already used by another vault agent.`);
-        return;
-      }
-      const channelClash = registeredAgents.some((registration) =>
-        registration.id !== agentForm.id
-        && registration.vaultAgentId !== agentForm.vaultAgentId
-        && normalizeMention(registration.mention) === mention,
-      );
-      if (channelClash) {
-        setAgentFormError(`@${mention} is already used in this channel.`);
-        return;
-      }
-    }
-    const model = modelFromPicker(modelChoice, customModel);
-    if (!model && agentPanelMode !== 'edit-member') {
-      setAgentFormError('Choose a model or enter a custom model ID.');
-      return;
-    }
-
-    const persistMembership = (overrides: Partial<ChatAgentRegistration> = {}) => {
-      onRegisterAgent(channelId, {
-        ...agentForm,
-        ...overrides,
-        id: agentForm.id || createChatAgentRegistrationId(),
-        displayName: agentForm.displayName.trim(),
-        mention: overrides.mention ?? mention,
-        model: overrides.model ?? model,
-        cwd: agentForm.cwd.trim(),
-        contextPrompt: agentForm.contextPrompt.trim(),
-      });
-    };
-
-    try {
-      if (agentPanelMode === 'edit-identity' && onUpsertVaultAgent && agentForm.vaultAgentId) {
-        await onUpsertVaultAgent({
-          id: agentForm.vaultAgentId,
-          agentId: agentForm.agentId,
-          displayName: agentForm.displayName.trim(),
-          mention,
-          model,
-          cwd: agentForm.cwd.trim(),
-          contextPrompt: agentForm.contextPrompt.trim(),
-          hermesProfile: agentForm.hermesProfile.trim(),
-          hermesSafeMode: agentForm.hermesSafeMode,
-        });
-        if (registeredAgents.some((registration) => registration.id === agentForm.id)) {
-          persistMembership();
-        }
-      } else if (agentPanelMode === 'create' && onUpsertVaultAgent) {
-        const va = await onUpsertVaultAgent({
-          agentId: agentForm.agentId,
-          displayName: agentForm.displayName.trim() || agentForm.agentId,
-          mention,
-          model,
-          cwd: agentForm.cwd.trim(),
-          contextPrompt: agentForm.contextPrompt.trim(),
-          hermesProfile: agentForm.hermesProfile.trim(),
-          hermesSafeMode: agentForm.hermesSafeMode,
-        });
-        const vaultAgentId = va?.id || agentForm.vaultAgentId || '';
-        if (vaultAgentId && onAddVaultAgentToChannel) {
-          await onAddVaultAgentToChannel(channelId, vaultAgentId);
-        }
-        persistMembership({ vaultAgentId });
-      } else {
-        if (agentForm.vaultAgentId && onUpsertVaultAgent) {
-          await onUpsertVaultAgent({
-            id: agentForm.vaultAgentId,
-            agentId: agentForm.agentId,
-            displayName: agentForm.displayName.trim(),
-            mention: mention || agentForm.mention,
-            model,
-            cwd: agentForm.cwd.trim(),
-            contextPrompt: agentForm.contextPrompt.trim(),
-            hermesProfile: agentForm.hermesProfile.trim(),
-            hermesSafeMode: agentForm.hermesSafeMode,
-          });
-        }
-        persistMembership({
-          mention: mention || agentForm.mention,
-          model: model || agentForm.model,
-        });
-      }
-      setAgentMenuOpen(false);
-      setEditingRegistrationId(null);
-      setAgentPanelMode('picker');
-      setAgentFormError('');
-    } catch (error) {
-      setAgentFormError(error instanceof Error ? error.message : 'Could not save agent');
-    }
-  }
+  const submitAgentRegistration = useAgentRegistration({
+    channelId,
+    agentPanelMode,
+    agentForm,
+    modelChoice,
+    customModel,
+    vaultAgents,
+    registeredAgents,
+    setAgentFormError,
+    setAgentMenuOpen,
+    setEditingRegistrationId,
+    setAgentPanelMode,
+    onRegisterAgent,
+    onUpsertVaultAgent,
+    onAddVaultAgentToChannel,
+  });
 
   async function submitInvite(event: React.FormEvent) {
     event.preventDefault();
@@ -574,142 +356,38 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
 
         {children}
 
-        <div className="chat-agent-section">
-          <div className="chat-users-title">Agents in this vault</div>
-          {registeredAgentRows.length === 0 && (
-            <div className="chat-runs-empty">No agents in this vault yet</div>
-          )}
-          {registeredAgentRows.map((agent) => {
-          const selectedModel = agent.registration.model || agent.models[0]?.id || '';
-          const isEditing = editingRegistrationId === agent.registration.id && agentMenuOpen;
-          const canManage = canManageRegistration(agent.registration);
-          const planUsage = canManage
-            ? runnerHealth?.planUsage?.[planUsageProviderId(agent.registration.agentId)] || null
-            : null;
-          return (
-            <div
-              className={`chat-user chat-agent-user${agent.registration.orchestrator ? ' is-supervisor' : ''}${isEditing ? ' is-editing' : ''}`}
-              key={agent.registration.id}
-            >
-              <button
-                type="button"
-                className="chat-agent-edit-btn"
-                disabled={!canManage}
-                onClick={canManage ? (event) => editRegisteredAgent(event, agent.registration) : undefined}
-                title={canManage ? 'Channel settings for this agent' : 'Only the agent owner can edit its settings'}
-              >
-                <ChatAvatar name={agent.registration.displayName || agent.label} kind="agent" avatarUrl={agent.registration.avatarUrl} size="sm" />
-                {/* Supervisor reads as a hairline ring on the avatar (see .is-supervisor);
-                    the rank still needs a name for screen readers. */}
-                {agent.registration.orchestrator && <span className="sr-only">Channel supervisor</span>}
-                <div className="chat-user-copy">
-                  <div className="chat-user-copy-head">
-                    <strong>{agent.registration.displayName || agent.label}</strong>
-                    {planUsage && <PlanUsageMeters usage={planUsage} decal />}
-                  </div>
-                  <span className="chat-user-handle">@{agent.registration.mention || agent.id}</span>
-                  <span className="chat-user-role">{selectedModel || 'no model'}</span>
-                </div>
-              </button>
-              {canManage && <button
-                type="button"
-                className="chat-remove-agent"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  if (agent.registration.vaultAgentId && onDeleteVaultAgent) void onDeleteVaultAgent(agent.registration.vaultAgentId);
-                  else onRemoveAgent(channelId, agent.registration.id);
-                }}
-                title="Remove agent from this vault"
-              >
-                <X size={12} />
-              </button>}
-            </div>
-          );
-          })}
-
-          {agentMenuOpen && agentPanelMode === 'picker' && (
-          <div className="chat-agent-menu" onClick={(event) => event.stopPropagation()}>
-            <div className="chat-agent-menu-heading">Vault agents</div>
-            {vaultAgents.length === 0 ? (
-              <div className="chat-runs-empty">No vault agents yet</div>
-            ) : (
-              vaultAgents.map((va) => {
-                const inChannel = channelVaultAgentIds.has(va.id);
-                const canManage = va.ownerUsername === currentUser;
-                return (
-                  <div key={va.id} className={`chat-vault-pick-row${inChannel ? ' is-in-channel' : ''}`}>
-                    <button
-                      type="button"
-                      className="chat-vault-pick-btn"
-                      disabled={inChannel || !canManage}
-                      onClick={() => {
-                        if (!inChannel) void addVaultAgentFromPicker(va.id);
-                      }}
-                      title={inChannel ? 'Already in this vault' : canManage ? 'Add to this vault' : 'Only the agent owner can add it'}
-                    >
-                      <ChatAvatar name={va.displayName || va.mention} kind="agent" avatarUrl={va.avatarUrl} size="sm" />
-                      <span className="chat-user-copy">
-                        <strong>{va.displayName || va.mention}</strong>
-                        <span>
-                          @{va.mention} · {va.model || va.agentId}
-                          {va.ownerUsername ? ` · ${va.ownerUsername}'s agent` : ''}
-                          {inChannel ? ' · in vault' : ''}
-                        </span>
-                      </span>
-                    </button>
-                    {canManage && (
-                      <button
-                        type="button"
-                        className="chat-vault-edit-agent"
-                        title={`Edit @${va.mention} vault identity`}
-                        onClick={(event) => openVaultIdentity(event, va)}
-                      >
-                        Edit identity
-                      </button>
-                    )}
-                    {onDeleteAgentProfile && canManage && (
-                      <button
-                        type="button"
-                        className="chat-remove-agent"
-                        title="Permanently delete agent profile"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          if (window.confirm(`Permanently delete @${va.mention} from your agent profiles and every vault?`)) {
-                            void onDeleteAgentProfile(va.id);
-                          }
-                        }}
-                      >
-                        <X size={12} />
-                      </button>
-                    )}
-                  </div>
-                );
-              })
-            )}
-            {agentFormError && <div className="chat-agent-form-error">{agentFormError}</div>}
-            <div className="chat-agent-menu-actions">
-              <button
-                type="button"
-                onClick={() => {
-                  setAgentMenuOpen(false);
-                  setAgentPanelMode('picker');
-                  setAgentFormError('');
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setAgentPanelMode('create');
-                  openAgentEditor();
-                }}
-              >
-                Create new…
-              </button>
-            </div>
-          </div>
-          )}
+        <ChatAgentMemberPicker
+          currentUser={currentUser}
+          registeredAgentRows={registeredAgentRows}
+          editingRegistrationId={editingRegistrationId}
+          agentMenuOpen={agentMenuOpen}
+          pickerOpen={agentMenuOpen && agentPanelMode === 'picker'}
+          runnerHealth={runnerHealth}
+          canManageRegistration={canManageRegistration}
+          onEdit={editRegisteredAgent}
+          onRemoveAgent={(event, registration) => {
+            event.stopPropagation();
+            if (registration.vaultAgentId && onDeleteVaultAgent) void onDeleteVaultAgent(registration.vaultAgentId);
+            else onRemoveAgent(channelId, registration.id);
+          }}
+          vaultAgents={vaultAgents}
+          channelVaultAgentIds={channelVaultAgentIds}
+          agentFormError={agentFormError}
+          onAddVaultAgent={(id) => { void addVaultAgentFromPicker(id); }}
+          onEditVaultIdentity={openVaultIdentity}
+          onDeleteAgentProfile={onDeleteAgentProfile
+            ? (id) => { void onDeleteAgentProfile(id); }
+            : undefined}
+          onCancelPicker={() => {
+            setAgentMenuOpen(false);
+            setAgentPanelMode('picker');
+            setAgentFormError('');
+          }}
+          onCreateNew={() => {
+            setAgentPanelMode('create');
+            openAgentEditor();
+          }}
+        />
 
           {agentMenuOpen && agentPanelMode !== 'picker' && (
           <form
@@ -989,7 +667,6 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
             </div>
           </form>
           )}
-        </div>
 
     </>
   );

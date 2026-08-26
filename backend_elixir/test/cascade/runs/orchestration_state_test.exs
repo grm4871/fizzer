@@ -150,7 +150,7 @@ defmodule Cascade.Runs.OrchestrationStateTest do
 
   test "runner reconnect storms preserve an active run",
        context do
-    assert {:ok, run} = Store.start(context.vault_id, nil, "survive reconnect storm", "codex")
+    assert {:ok, run} = Store.start(context.vault_id, nil, "reconnect storm", "codex")
     :ok = Store.record_delegated(run.id, context.user_id)
 
     assert {:ok, [run_id]} =

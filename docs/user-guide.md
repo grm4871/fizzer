@@ -1,77 +1,76 @@
 # Fizzer user guide
 
-Fizzer is a shared workspace for people, notes, conversations, and locally-run AI agents. The repository is named `cascade-browser`, but the current product branding is **Fizzer**.
-
-Use Fizzer when you want one place where:
-
-- knowledge is durable instead of disappearing in chat;
-- people and AI agents can work in the same project context;
-- coding agents can run on an owner’s computer without sending provider credentials to the server;
-- work can be organized, assigned, reviewed, and resumed;
-- private material stays private while useful project context is shared.
-
-Fizzer is early-beta software. The interface and available agent adapters may change.
+Fizzer is a shared workspace for people, notes, conversations, and locally-run
+AI agents. The repository is named `cascade-browser`, but the product is
+**Fizzer**. It is early-beta software, so interface details and available agent
+adapters may change.
 
 ## The mental model
 
-### Vaults are workspaces
+### Accounts and vaults
 
-A **vault** is the top-level boundary for a project or community. It contains folders, notes, chat channels, members, agents, and activity. Create separate vaults when the context or permissions should be separate—for example, one for personal research and another for a client project.
+Your **account** is your identity: username, display name, avatar, password,
+mentions, invitations, direct-message settings, blocks, and ownership. Your
+login handle is stable; your display name and avatar can change.
 
-A vault can be private or shared. Shared vault members have roles such as owner, editor, or viewer. The owner controls membership, invitations, discovery settings, moderation, and role changes.
+A **vault** is the top-level project or community boundary. It contains folders,
+notes, channels, members, agents, work items, missions, and activity. Use
+separate vaults when context or permissions must be separate. A vault member has
+one of three roles:
 
-### Notes are the durable layer
+- **owner** — manages membership, invitations, discovery, moderation, and
+  settings;
+- **editor** — can read and write notes, folders, and chats;
+- **viewer** — read-only access, subject to the vault's access rules.
 
-A **note** is a Markdown-backed document. Use notes for requirements, decisions, meeting records, research, specifications, checklists, reference material, or anything you want to remain useful after a conversation ends.
+### Notes, channels, and agents
 
-Notes can be placed in folders, linked to each other, searched, converted to Kanban boards, and published as public snapshots.
+A **note** is a Markdown-backed durable document for requirements, decisions,
+research, specifications, checklists, and reference material. Notes can live in
+folders, link to other notes, be searched, become Kanban boards, and be published
+as public snapshots.
 
-### Channels are the coordination layer
+A **channel** is a persistent conversation inside a vault. Use it for questions,
+decisions, status updates, agent requests, and project discussion. A channel
+transcript is shared and realtime.
 
-A **channel** is a persistent conversation inside a vault. Use a channel for questions, decisions, status updates, agent requests, and project discussion. Channels appear in the same navigation tree as notes and can be opened in tabs or split panes.
-
-### Agents are local workers
-
-An agent registration connects a channel to a locally authenticated CLI such as Claude Code, Codex, Grok, Copilot, Hermes, Antigravity, Akron Grok, OMP, or Pi. The agent process and provider credentials stay on the owner’s desktop. Fizzer stores the workspace conversation, run events, and results—not the provider’s secret credentials.
+An **agent registration** attaches a locally authenticated provider CLI to a
+vault/channel. The agent process and provider credentials stay on the owner's
+computer. Fizzer stores workspace conversation, run events, and results, not the
+provider secret.
 
 ## Ways to use Fizzer
 
-| Goal | Use | Why |
+| Goal | Use | Result |
 | --- | --- | --- |
-| Keep personal or team knowledge | Notes and folders | The information remains searchable and editable after chat moves on. |
-| Discuss work with people | Vault channels | Everyone sees the same durable transcript and context. |
-| Ask an AI to do work | Agent mentions | The request runs through the owner’s local authenticated CLI. |
-| Coordinate a larger task | Missions | Work becomes a durable, trackable task instead of one fragile prompt. |
-| Track implementation | Work items and Kanban | Tasks, branches, reviews, and status have an addressable home. |
-| Protect sensitive context | Private note blocks | Agents and model prompts do not receive the marked content. |
-| Share a finished document | Publish | Readers get a public snapshot without access to the private vault. |
-| Find prior decisions | Workspace search | Search covers both notes and chats. |
-| See what changed | Updates | Mentions, replies, note changes, and new activity are collected in one place. |
+| Keep team knowledge | Notes and folders | Searchable, editable information that outlives chat |
+| Discuss work | Vault channels | One durable transcript for members |
+| Ask an AI to work | Agent mention | A run through the owner's local CLI |
+| Coordinate multi-step work | Missions | Durable ownership, dependencies, retries, and review |
+| Track implementation | Work items and Kanban | An addressable lifecycle, branch, workspace, and review record |
+| Protect human-only context | Private blocks | Content redacted from agent/model surfaces |
+| Share a finished document | Publish | A public snapshot without vault membership |
+| Find prior decisions | Workspace search | Ranked note and chat results |
+| Catch up | Updates | Mentions, replies, note changes, and activity by vault |
 
 ## Getting started
 
-### Option 1: use the desktop beta
+### Desktop beta
 
-1. Download a desktop release from the project’s GitHub releases.
-2. Install at least one supported agent CLI on the same computer if you want AI execution. Authenticate that CLI directly with its provider.
+1. Download a desktop release from [Fizzer Releases](https://github.com/grm4871/fizzer/releases).
+2. Install and authenticate a supported agent CLI on the computer that should
+   execute runs.
 3. Open Fizzer and create an account.
 4. Create a vault from the vault switcher.
-5. Create a note or channel and start working.
+5. Create a note or channel and begin working.
 
-The desktop installers are currently unsigned, so macOS or another operating system may ask you to confirm that you trust the application.
+The desktop installers are currently unsigned, so your operating system may ask
+you to confirm that you trust the application.
 
-### Option 2: run from source
+### From source
 
-For ordinary note and chat work, the browser/headless mode is enough. Agent execution requires the desktop shell or another compatible runner.
-
-Prerequisites:
-
-- Node.js 20 or newer;
-- npm and Git;
-- Elixir 1.17+ and Erlang/OTP for the local API;
-- an Electron-capable desktop session for local agent execution.
-
-From the repository root:
+For ordinary note and chat work, browser/headless mode is enough. Agent
+execution requires the desktop shell or another compatible runner.
 
 ```bash
 cp .env.example .env
@@ -80,147 +79,140 @@ npm install --prefix cascade-electron
 npm run dev
 ```
 
-This starts the API at `http://localhost:3000`, the Vite client at `http://localhost:5173`, and the Electron shell.
+This starts the API at `http://localhost:3000`, Vite at
+`http://localhost:5173`, and the Electron shell. Use `npm run dev-headless` for
+API plus Vite without Electron. Prerequisites and data overrides are in the
+[getting-started guide](getting-started.md).
 
-For browser-only work:
-
-```bash
-npm run dev-headless
-```
-
-Local runtime data is stored outside the checkout by default:
-
-- database: `~/.cascade/docs.db`;
-- vault files and assets: `~/.cascade/vaults/`.
+By default, the backend database is `docs.db` in the repository root. Vault
+files/assets default to `~/.cascade/vaults/`; QMD search data defaults to
+`~/.cascade/qmd/`. Set `DOCS_DB_PATH`, `CASCADE_VAULTS_BASE_DIR`, or
+`CASCADE_QMD_DIR` independently when needed.
 
 ## The main workspace
 
 ### Sidebar
 
-The left sidebar contains:
-
-- the current vault and vault switcher;
-- quick actions for a new note, folder, channel, and search;
-- the folder and note tree;
-- unread activity badges;
-- access to public vault discovery and direct messages;
-- account and vault management actions.
-
-Right-click a note or folder for rename, delete, move, and creation actions. Drag notes and folders to reorder them or move them into another folder. The `Notes` heading is the drop target for moving an item back to the vault root.
+The left sidebar provides the current vault and switcher, new note/folder/channel
+actions, the note tree, unread badges, public vault discovery, direct messages,
+and account/vault management. Right-click notes and folders to rename, delete,
+move, or create items. Drag them to reorder or move them. `Notes` is the drop
+target for moving an item to the vault root.
 
 ### Tabs and panes
 
-Notes, channels, and the Superkanban command center open as tabs. Tabs are remembered per vault in the local browser session.
+Notes, channels, and Superkanban open as tabs. Tabs and pane layout are restored
+per vault in the browser's local session. Drag a tab onto another pane's center
+to dock it, toward an edge to split, or drag a divider to resize.
 
-- Drag a tab onto the center of another pane to dock it there.
-- Drag a tab toward a pane edge to split the pane.
-- Resize split panes with their divider.
-- Drag a tab outside the workspace to pop it into a separate desktop window when running Electron.
-- Use the tab context menu to close tabs or close other tabs.
+**Only note tabs can pop out into a separate Electron desktop window.** Chat,
+Superkanban, and new tabs remain in the main workspace. Drag a popped-out note's
+header back to merge it into the workspace.
 
-This is useful when comparing a specification with a note, keeping chat beside a board, or watching an agent while editing a document.
+### Toolbar
 
-### Workspace toolbar
-
-The top toolbar provides:
-
-- **Orbit** — a live view of currently running agents;
+- **Orbit** — a live view of locally discovered Claude Code and Codex sessions;
 - **Updates** — unread mentions, replies, note changes, and other activity;
-- **Sessions** — active AI runs, model, elapsed time, and controls;
-- **Members** — open the current vault’s people and agent panel when available.
+- **Sessions** — active Fizzer runs, timing, output, and cancellation;
+- **Members** — the current vault's people and agent panel when available.
 
-## Vaults, folders, and sharing
+## Vaults, sharing, and community
 
-### Create and switch vaults
+### Create and organize a vault
 
 1. Open the vault name at the top of the sidebar.
-2. Choose **New vault**.
-3. Enter a name and create it.
-4. Switch between vaults from the same menu.
+2. Choose **New vault**, enter a name, and create it.
+3. Switch vaults from the same menu.
+4. Add folders and notes using quick actions, context menus, or `Cmd/Ctrl+N`.
 
-Use a separate vault when you need a clean context boundary, different collaborators, or different access rules.
+A new vault is private and starts with a `General` channel note. The vault menu
+also permits rename or permanent deletion when your role allows it.
 
-The vault menu also lets you rename or delete vaults when your role permits it. Deleting a vault is permanent and removes its notes.
+### Invite and manage members
 
-### Organize notes
-
-Use **New folder** to create a folder. Create notes from the quick action, from a folder’s context menu, or with `Cmd/Ctrl+N`.
-
-Rename a note inline from the note title or via its context menu. Move notes by dragging them or using the move action. Folders can be nested and reordered.
-
-### Invite and manage people
-
-Open account settings and choose **Current vault**, or use the member controls in a channel.
-
-Owners can:
-
-- invite a user by username;
-- copy an invite link for a chosen role;
-- change a member’s role;
-- remove or ban a member;
-- unban a member;
-- leave moderation reports unresolved or resolved;
-- approve or decline public-vault join requests.
-
-A viewer can read according to the vault’s access rules but should not be given editor access unless the owner intentionally promotes them.
+Open account settings and choose **Current vault**, or use channel member
+controls. Owners can invite by username, copy a role-specific invite link,
+change roles, remove or ban members, unban members, review reports, and approve
+or decline public-vault join requests. A viewer cannot modify vault content.
 
 ### Public vault discovery
 
-Vault owners can list a vault publicly with a summary, topics, community guidelines, and an optional sanitized home-note preview. Choose one join policy:
+Owners can list a vault publicly with a summary, topics, community guidelines,
+and an optional sanitized home-note preview. Choose one join policy:
 
 - **Open** — anyone can join as a viewer;
-- **Request** — the owner must approve the request;
-- **Invite only** — discovery does not permit self-joining.
+- **Request** — the owner must approve a join request;
+- **Invite only** — discovery does not allow self-joining.
 
-Open the vault switcher and choose **Browse public vaults** to search by name, owner, purpose, or topic. Open a vault’s detail page to read its guidelines and join or request access.
+Choose **Browse public vaults** in the switcher to search by vault name, owner,
+purpose, or topic. Open a detail page to read guidelines and join or request
+access. Before membership, only the configured sanitized preview is exposed;
+working notes remain private.
 
-Use public discovery when you want people to find a community or project without making the vault’s working notes public.
+### Moderation and reporting
+
+Use **Report** on a vault, note, message, or member for a Trust-and-safety
+report. A vault owner can review reports for that vault; the server owner can
+A report records its target, reason, details, and reporter internally. In the
+vault moderation queue, the reporter's identity is intentionally hidden from
+vault owners; the queue shows the report target and details without exposing who
+filed it. The server owner can see reporter identity and vault ownership context
+in the global moderation queue. Owners cannot report themselves or review their
+own member-target report.
+
+A reviewer chooses **Dismiss** when the report does not require action or
+**Resolve** when it has been handled. These actions close the report with a
+reviewer and timestamp; they do not silently delete the underlying content.
+Bans and public-vault unlisting are separate moderation actions.
+
+### Product feedback is different
+
+**Product feedback** is a private message to the Fizzer server owner about a
+product bug or usability suggestion. It is not a Trust-and-safety report and it
+does not create a GitHub issue. The owner can Dismiss or Resolve feedback from
+Administration.
 
 ## Notes
 
-### Edit and save a note
+### Edit and save
 
-Open a note from the sidebar. The editor is a Markdown live-preview editor. The title is editable at the top of the note.
+Open a note from the sidebar. The editor is Markdown with a live preview; the
+title is editable. Edits mark the tab dirty. Save with `Cmd/Ctrl+S` on desktop
+or **Save** on mobile. Save before closing a tab or switching context if the
+latest draft must persist.
 
-Edits make the tab dirty. Save the active note with:
+Note bodies are loaded on demand. A restored tab does not imply its previous
+body is cached; Fizzer re-fetches it from the server.
 
-- `Cmd/Ctrl+S` on desktop;
-- the **Save** action on mobile.
+### Supported formatting and media
 
-Save before closing a tab or switching context if you need the latest draft persisted.
+The editor supports bold, italic, strikethrough, inline code, links, headings
+1–3, lists, checklists, rules, tables, images, MP3 audio, MP4 video, pasted or
+dropped images, Fizzer note links, private blocks, publishing, and Kanban view.
+Note media uploads are validated by `backend_elixir/lib/cascade/content/assets.ex`:
+images (PNG, JPEG, GIF, WebP), MP3, and MP4 are supported; SVG uploads are not.
+Each upload is limited to 8 MB.
 
-### Formatting toolbar
+Chat attachments use the composer input (`image/*`, `video/*`, `audio/*`,
+`.pdf`, `.txt`, `.md`). Each file is limited to 8 MB and one message accepts at
+most 8 media items. The composer previews images/video and names other files.
+Pasted clipboard images count toward the same limit.
 
-The editor supports:
+### Link notes
 
-- bold, italic, strikethrough, and inline code;
-- links;
-- headings 1–3;
-- checklists, bullet lists, and numbered lists;
-- horizontal rules;
-- Markdown tables rendered as live previews;
-- images, MP3 audio, and MP4 video uploads;
-- pasted or dropped images;
-- links to other Fizzer notes;
-- private blocks;
-- public publishing;
-- an editor view and a Kanban view.
-
-Uploaded images, audio, and video are limited to 8 MB each. Images can also be resized in the editor.
-
-### Link notes together
-
-Use the note-link action on mobile or the link control in the editor to search for another note and insert a link. You can also type an Obsidian-style wikilink such as:
+Use the link control (or the mobile note-link action) to search for a note and
+insert a link. Obsidian-style links also work:
 
 ```markdown
 [[Decision log]]
 ```
 
-Clicking a wikilink opens the matching note. Linking notes is useful for connecting requirements to decisions, research to conclusions, or a project overview to its working documents.
+Clicking a link opens the matching note. A note can also embed a linked chat
+note where that message grants access to it.
 
-### Hide sensitive material from agents
+### Private blocks and search
 
-Select the private-block toolbar action, or use this Markdown form:
+Mark human-only material with the private-block action or:
 
 ```markdown
 :::private
@@ -229,9 +221,15 @@ internal-only context
 :::
 ```
 
-The editor renders the block as a protected region. Private blocks are redacted before search, memory, previews, publishing, and model prompts. Use them for secrets or context that collaborators may see but agents must not receive.
+Private blocks remain in the note for members who can read it, but are redacted
+when an **agent** receives note/chat data, search results, memory, previews,
+publishing output, or model prompts. This is not a password manager.
 
-Do not treat this as a substitute for a password manager. Avoid storing credentials in notes when a dedicated secret store is available.
+A member's normal workspace search is not an agent request: member search can
+match and show private content the member is authorized to read. Agent-scoped
+search uses the redacted corpus. The server selects this behavior from the
+authenticated access type; see `backend_elixir/lib/cascade/content/privacy.ex`
+and `backend_elixir/lib/cascade/search/qmd.ex`.
 
 ### Ask an agent from a note
 
@@ -241,219 +239,234 @@ An AI directive has the form:
 {{ai: Summarize this note into three decisions}}
 ```
 
-Place the cursor on the directive and press `Cmd/Ctrl+Enter`. Fizzer sends the prompt through the active agent path. Use this for small, note-local actions such as summarizing, extracting tasks, or drafting a rewrite.
-
-For larger work, use a channel and a mission so the request has a durable conversational and task history.
+Place the cursor on it and press `Cmd/Ctrl+Enter`. For a small note-local action,
+Fizzer sends it through the active agent path. Use a channel and mission for
+larger work with durable context and review.
 
 ### Publish a note
 
-1. Open the note.
-2. Select the globe action in the editor toolbar.
-3. Fizzer publishes a snapshot and copies the public link.
-4. Use the link action to copy it again or the external-link action to open it.
-5. Click the public status in the footer to unpublish.
+1. Open the note and select the globe action.
+2. Review the public snapshot and copy its link.
+3. Use the link or external-link action to open it.
+4. Click the public status in the footer to unpublish.
 
-Publishing is for sharing a finished or intentionally public document. It is not the same as inviting someone to the vault: a public snapshot does not grant access to the private workspace.
+Publishing creates a public snapshot; it does not grant access to the private
+vault. Private blocks are scrubbed from the published surface.
 
 ## Chat and direct messages
 
-### Send a channel message
+### Channel messages
 
 1. Open or create a channel.
 2. Type in the composer.
-3. Press Enter to send; use Shift+Enter for a new line.
-4. Use the emoji action or upload action when needed.
+3. Press Enter to send; use Shift+Enter for a newline.
+4. Add supported attachments or emoji when useful.
 
-A channel transcript is persistent and realtime. Use ordinary messages for context, questions, decisions, and progress. Attach images or other supported media when visual context matters.
+Right-click a message to Reply, Ask agent…, Forward, Add to kanban, Report, or
+Delete (when permitted). A reply preserves its quoted context and can notify
+or not notify the quoted agent. Forwarding copies the message to another
+channel with its origin. A report enters the moderation queue, not Product
+feedback or the Fizzer tracker.
 
-### Reply, quote, and forward
+### Direct messages
 
-Right-click a message to:
+Open **Messages** from the vault switcher or community controls and enter a
+username. Direct messages are one-to-one linked channels backed by private
+per-user DM vaults; they are not shared vaults and cannot be converted into a
+shared vault. You can control whether strangers may start DMs and block or
+unblock users. Blocking prevents new contact according to the DM policy while
+preserving existing history rules.
 
-- **Reply** — attach the message as the direct context for your response;
-- **Ask agent…** — send a typed follow-up to an agent response;
-- **Forward** — copy the message into another channel while retaining its origin;
-- **Add to kanban** — turn the message into a durable work item;
-- **Report** — report a channel message to the vault’s moderation queue;
-- **Delete** — delete for everyone when you have permission.
-
-Use replies when the conversation has multiple threads. Use forwarding when another channel needs the result but should still be able to see where it came from.
-
-### Chat with a person directly
-
-Open **Messages** from the vault switcher or community controls. Start a conversation by entering a username. You can control whether strangers may start new direct messages and block or unblock users.
-
-Use direct messages for private coordination that does not belong in a shared vault channel. Put decisions that the team needs later into a vault note or channel instead.
+Use DMs for private coordination. Put decisions the team needs later in a vault
+note or channel. DM conversations are included in your Updates counts but are
+not listed as ordinary project vaults.
 
 ## Local AI agents
 
-### What an agent run does
+### Install, authenticate, and register
 
-An agent run combines the user’s request with relevant channel and workspace context, starts on the registered owner’s local runner, streams status and tool activity, and persists the result back into the channel.
+Install and authenticate the provider CLI on the computer that will execute the
+run. Fizzer does not replace provider login or store provider credentials on the
+server. The desktop runner is required for normal local execution; if it is
+offline, notes and chat still work but runs wait until a compatible runner
+reconnects.
 
-A run may show:
+To add an agent:
 
-- queued, running, completed, failed, or canceled status;
-- answer text and reasoning/tool blocks;
-- a readable activity trace;
-- raw harness output when needed;
-- model, token, context, turn, and rate-limit statistics.
+1. Open a channel and the people/agent panel.
+2. Choose **Add agent** or create a new vault agent.
+3. Select backend and model, display name, and `@` handle.
+4. Set `Cwd`/**Project folder** to a vault root or project path.
+5. Add persona/context instructions if useful and save.
 
-The short chat bubble is the outcome. Open the activity or session views when you need the detailed process trace.
+A vault agent identity can be reused across channels. Channel membership carries
+conversation flags such as **Coordinate this channel**, **Reply to every human
+message**, **Other agents**, **Other people**, and **Full host access**. The
+coordinator flag makes that registration the channel dispatcher and also keeps
+reply-to-human enabled. Keep **Full host access** off unless the local-machine
+consequences are understood.
 
-### Install and authenticate an agent
+### Mention and run lifecycle
 
-Install and authenticate the provider’s CLI on the computer that will execute the run. Fizzer does not replace the provider login and does not store that provider credential on the server.
+Mention `@agent-handle` to request a response. A run combines the request with
+bounded channel/workspace context, starts on the registered owner's local
+runner, streams normalized status/tool events, and persists the result back to
+the channel. Sessions keep a provider conversation and a watermark so a
+follow-up can steer the active session rather than starting a duplicate cold
+process. Mission task sessions are task-scoped and do not inherit a worker's
+whole channel transcript.
 
-The desktop runner is required for normal local agent execution. If the runner is offline, ordinary notes and chat remain usable but agent runs cannot start until a compatible runner reconnects.
+The chat shows queued (`sending`), running, completed, failed, or canceled run
+information, plus answer text, reasoning/tool blocks, activity trace, raw
+harness output, model/usage statistics, and rate limits when available. Open
+Sessions or the activity panel for detail; the short bubble may intentionally
+stay compact.
 
-### Add an agent to a channel
+### Orbit limitations
 
-1. Open a channel.
-2. Open the people/agent panel on the right.
-3. Choose **Add agent** or create a new vault agent.
-4. Select a backend and model.
-5. Set a display name and `@` handle.
-6. Set the working directory (`Cwd`) to the vault root or a project path.
-7. Add standing persona/context instructions if useful.
-8. Save the registration.
+Orbit is not a universal agent monitor. It is a desktop-local view of recently
+active **Claude Code and Codex** sessions discovered from their local state
+files. Electron scans those files and polls roughly every 750 ms; the hosted
+backend route returns an empty graph because it cannot see a desktop filesystem.
+Other providers, remote runs, and completed sessions do not appear. Optional
+captions use local Ollama (`OLLAMA_URL`, default `http://127.0.0.1:11434`) when
+available. Orbit nodes can open the related activity and may append a caption to
+a selected note; those captions are separate from the run transcript.
 
-An agent identity can be reused across channels in the vault. Channel membership controls how that identity behaves in a particular conversation.
+### Android Local Codex
 
-### Mention behavior
+Supported Android builds expose **Local Codex** under account settings. The
+bundled native runtime uses a private app `codex-home` and `codex-workspace`,
+authenticates with Codex device auth, and can be enabled for foreground runs.
+The screen stays awake during login/run activity. It streams Codex JSON output
+through the same Fizzer run projection and can be canceled from the app.
 
-Use `@agent-handle` when you want a specific agent to respond. The registration can also allow mentions from other agents or from other people in the vault.
-
-The channel settings include:
-
-- **Coordinate this channel** — the agent reads every human message and can delegate durable work;
-- **Reply to every human message** — the agent answers ordinary human messages without an explicit mention;
-- **Other agents** — other agents may mention it;
-- **Other people** — any vault member may mention it;
-- **Full host access** — bypasses prompts and workspace boundaries.
-
-Keep **Full host access** off unless you understand the local-machine consequences. The recommended execution mode keeps the agent inside its owner’s workspace and uses the owner’s local CLI account.
-
-### Choose a project folder
-
-Open channel settings and set **Project folder** to the directory where the agent should work. Agents can also use a vault-relative path in their registration.
-
-Set a project folder when you want an agent to edit a repository or inspect a defined project. Leave it unset for general conversation or note-oriented work.
-
-### Coordinate multiple agents
-
-A channel may designate one agent as its coordinator. The coordinator can answer simple questions directly and create a mission for non-trivial work. It can delegate tasks to other registered agents or to isolated anonymous worker sessions.
-
-Enable coordination when the channel benefits from a single dispatcher—for example, a project room with one planning agent and several specialist agents. Do not enable several competing coordinators for the same channel.
+Android Local Codex is not the desktop runner: it does not execute arbitrary
+provider CLIs, uses its bundled Codex binary, and runs only while Fizzer is in
+use. If it is unsupported, unauthenticated, or disabled, the desktop/remote
+runner path remains unchanged.
 
 ## Missions and durable work
 
-A **mission** is a durable task record projected into the chat transcript. It is useful when a request has multiple steps, may take a long time, needs delegation, or requires review after workers finish.
+A **mission** is a durable task record projected into a channel's chat. It is
+useful for multi-step work, dependencies, delegation, retries, and coordinator
+review. The authoritative state machine is
+`backend_elixir/lib/cascade/missions/store.ex`.
 
-Typical mission states are:
+Mission statuses are exactly:
 
-- pending or running;
-- reviewing after worker output arrives;
-- attention when a task fails or is blocked;
-- completed only after the coordinator explicitly finishes it;
-- canceled when stopped.
+- **active** — work can be scheduled or is moving;
+- **reviewing** — workers have settled and the coordinator should inspect the
+  evidence;
+- **attention** — a worker failed or a dependency needs intervention;
+- **blocked** — the mission is stalled or explicitly retained as blocked;
+- **completed** — the coordinator finished it after active workers settled;
+- **canceled** — the coordinator stopped it.
 
-Open **Missions** in a channel to inspect mission history. Expand a mission to see tasks, assignees, statuses, attempts, and event history.
+Mission tasks have a different status set: **pending**, **running**,
+**completed**, **failed**, **blocked**, or **canceled**. Ready pending tasks are
+scheduled only when dependencies are completed. A run settling as completed,
+failed, or canceled updates its task; a terminal task can be retried to pending
+when its prior run is no longer active. A completed mission cannot retain
+pending or running workers. Expand **Missions** to inspect assignees, attempts,
+dependencies, summaries, and event history.
 
-A coordinator can review worker evidence, retry a task, or finish the mission with a concise summary. Worker completion alone does not mean the mission is finished; the coordinator should verify and integrate the result.
+A coordinator may review worker evidence, retry a task, or finish/cancel the
+mission. Worker completion alone does not finish the mission.
 
-Use missions instead of a loose sequence of prompts when you care about ownership, dependencies, retries, or an auditable record.
+### Orchestration flow
 
-## Kanban and project workspaces
+The normal flow is:
 
-### Turn a note into a Kanban board
+1. a channel message is persisted through the chat API;
+2. a coordinator registration creates or updates a mission and its task records;
+3. ready tasks become durable dispatch-outbox entries;
+4. a local runner claims a dispatch and starts a provider session;
+5. run/session/tool/status events are persisted and projected into chat;
+6. task state and its work-item twin are synchronized;
+7. dependency completion releases the next task, or the coordinator receives a
+   review/attention wake;
+8. the coordinator integrates evidence and explicitly completes or cancels the
+   mission.
 
-Open a note and select the Kanban view. If the note is not already a board, choose **Create board**. Fizzer creates a portable Markdown-backed board with columns such as Backlog, In progress, and Done.
+This is durable server state, not a client-only chain of prompts. A reconnect or
+renderer reload can recover pending dispatches.
 
-Kanban actions include:
+## Kanban, work items, and Git workspaces
 
-- add, rename, complete, and delete cards;
-- add, rename, collapse, archive, and delete lists;
-- drag cards between lists or reorder them;
-- search cards;
-- archive completed cards;
-- optionally include the board in Superkanban.
+### Boards
 
-The board remains ordinary Markdown, so the content stays portable. A compatible Obsidian Kanban marker is recognized when present.
+Open a note and choose Kanban view. If it is not a board, choose **Create
+board**. Cards and lists remain Markdown-backed; Fizzer recognizes the
+`kanban-plugin: board` marker and list headings. You can add/rename/complete/
+delete cards, manage lists, drag cards, search, and archive completed cards.
 
-### Superkanban
+**Superkanban** is the vault-wide command center. It merges opted-in note boards
+and live work-item cards, with filters for board/text and backlog/completed
+visibility. A board's **Add to Superkanban** toggle is shown **only when the
+vault has more than one Kanban board**. A single board is still usable in its
+note's Kanban view. A channel's Project setup may point at a board or create an
+internal board only when the user explicitly chooses that control; an
+orchestrated channel does **not** automatically create a Kanban board.
 
-**Superkanban** is the vault-wide command center. It collates boards across the vault and shows active, blocked, and in-review work. Filter by board or text, and choose whether backlog and completed cards are visible.
+### Work items
 
-Use it when you want a single high-level view instead of opening boards one at a time. A channel with an orchestrator can receive a local board automatically; other boards can be included with the board’s **Add to Superkanban** action.
+Choose **Add to kanban** on a message or **New work item** in channel project
+tools. A work item is a server-backed addressable record with title, brief,
+source, status, assignee/lease, repository, workspace mode, branch, runs,
+review evidence, and pull-request information. Mission tasks can have linked
+work-item twins; manual and note/kanban work can exist independently.
 
-### Create work items
+Set **Project folder** in channel setup to the repository where work belongs. In
+the desktop app, project tools can create an isolated Git worktree, bind it to a
+work item, inspect branch/commits/dirty/unpushed state, review a diff, open a
+draft pull request, and mark the work item done. The worktree bridge is desktop
+only; the browser client cannot access local Git worktrees.
 
-Right-click a channel message and choose **Add to kanban**, or open the channel’s project tools and choose **New work item**.
+A review comment or **Request changes** creates durable review evidence tied to a
+snapshot/commit. It does not automatically push, merge, or dispatch another run.
 
-A work item records the task title, brief, channel/source, status, assignee or lease, repository, workspace mode, branch, runs, review evidence, and pull request information.
+### Managed-agent domain
 
-Use work items when a chat message needs a durable lifecycle rather than remaining only as conversation.
+Managed agents are a separate server control plane for vault-level entitlement,
+allowed models, monthly/per-run/included budgets, concurrency, reservations,
+execution claims, heartbeats, checkpoints, settlement, and audit rows. The
+`Cascade.ManagedAgents` domain does not receive or store a user's provider CLI
+credentials. Owners manage the vault entitlement; operators claim and settle
+execution against the recorded limits.
 
-### Use isolated Git workspaces
+## Search, updates, and sessions
 
-Set a channel’s **Project folder**, then open the project tools. In the desktop app you can:
+- `Cmd/Ctrl+P` opens **Open anything** for note titles/tags and unmatched-note
+  creation.
+- `Cmd/Ctrl+Shift+F` opens workspace search for notes and chats.
 
-1. create a work item;
-2. create a new isolated workspace/worktree;
-3. bind the workspace to the work item;
-4. use the workspace for agent or human changes;
-5. inspect branch, commits, dirty files, and unpushed work;
-6. review the diff;
-7. open a pull request, optionally as a draft;
-8. mark the work item done when the result is accepted.
+Member search is server-side ranked lexical/QMD search over authorized content;
+agent requests use a separate redacted variant. QMD keeps note and chat corpora
+under `~/.cascade/qmd` by default and can fall back to lexical ranking when the
+worker is unavailable.
 
-Isolation is valuable when multiple agents or people might touch the same repository. It reduces accidental cross-task edits and gives reviewers a concrete branch and base commit.
+**Updates** groups mentions, replies, note changes, channel posts, and unread
+counts by vault. Mark a target or all activity read. **Sessions** shows active
+runs, elapsed time, output, and cancellation. **Orbit** is the limited desktop
+local-session view described above.
 
-The worktree and pull-request controls are desktop features. The panel will say **Desktop only** when the required Electron bridge is unavailable.
+## Account, device, and local storage
 
-### Review agent changes
+Account settings contain Profile, Preferences, Security, Local Codex (when the
+Android plugin is available), and Current vault management. Provider credentials
+remain in native provider stores; do not put API keys in committed `.env` or
+ordinary notes.
 
-A completed task can expose a review panel showing changed files and textual diffs. Add snapshot-bound comments or request changes. A change request records review feedback; it does not automatically push, merge, or dispatch more work.
-
-## Search, updates, sessions, and activity
-
-### Search
-
-- `Cmd/Ctrl+P` opens **Open anything**, which searches note titles and tags and can create a new note from an unmatched query.
-- `Cmd/Ctrl+Shift+F` opens workspace search, which searches notes and chats using server-side ranked search.
-
-Use the command palette for navigation and quick note creation. Use workspace search when you remember content but not the document or channel where it lives.
-
-### Updates
-
-Open **Updates** from the toolbar to see new activity across vaults and conversations:
-
-- mentions;
-- replies;
-- note changes;
-- channel posts;
-- unread counts grouped by vault.
-
-Open an item to jump to its note or message, or choose **Mark all read**. This is the best place to recover context after being away.
-
-### Orbit and sessions
-
-**Orbit** shows running agents at a glance. **Sessions** is the operational view: inspect active runs, model, elapsed time, and detailed output, and cancel a run when necessary.
-
-Use Sessions when an agent appears stuck, when you need to distinguish queued work from running work, or when the chat transcript is intentionally keeping the final answer compact.
-
-## Account and device settings
-
-Open account settings from the user/profile control.
-
-- **Profile** — change display name and avatar. The login handle remains stable because it is used for mentions, invitations, ownership, and history.
-- **Preferences** — show or hide agent-memory folders and their updates.
-- **Security** — change the account password.
-- **Local Codex** — on supported Android builds, authenticate the bundled Codex runtime and optionally switch execution to the phone while Fizzer is open.
-- **Current vault** — manage members, roles, invitations, public discovery, join requests, reports, bans, and leaving the vault.
-
-Provider credentials normally remain in the provider’s native local CLI store. Do not put API keys in `.env` committed to the repository or in ordinary notes.
+The browser stores workspace layout, active vault, open tabs, and selected UI
+preferences in localStorage keys such as `cascade_session` and
+`cascade_chat_state`. Note drafts are kept in memory per vault and are **not**
+written to localStorage. Chat transcripts are also not persisted there; they
+are reloaded from the server into the in-memory message store after a cold load
+or backgrounded mobile webview. On account login, account switching, or logout,
+Fizzer clears the persisted workspace pointer and legacy `docs_token` so one
+user cannot reopen another user's vault tabs. Clearing browser site data also
+clears local layout/history but not server vault content.
 
 ## Useful shortcuts
 
@@ -461,113 +474,101 @@ Provider credentials normally remain in the provider’s native local CLI store.
 | --- | --- |
 | `Cmd/Ctrl+P` | Open anything / find notes or create a note |
 | `Cmd/Ctrl+Shift+F` | Search notes and chats |
-| `Cmd/Ctrl+\\` | Toggle the main sidebar |
+| `Cmd/Ctrl+\\` | Toggle main sidebar |
 | `Cmd/Ctrl+N` | Create a note |
-| `Cmd/Ctrl+S` | Save the active note |
-| `Cmd/Ctrl+W` | Close the active tab |
-| `Cmd/Ctrl+Alt+\\` or `Cmd/Ctrl+Shift+\\` | Split the focused pane |
+| `Cmd/Ctrl+S` | Save active note |
+| `Cmd/Ctrl+W` | Close active tab |
+| `Cmd/Ctrl+Alt+\\` or `Cmd/Ctrl+Shift+\\` | Split focused pane |
 | `Cmd/Ctrl+Enter` in an `{{ai: ...}}` directive | Run the directive |
 | `Enter` in chat | Send a message |
 | `Shift+Enter` in chat | Insert a newline |
-| `Escape` | Close the active popup or modal |
+| `Escape` | Close active popup or modal |
 
-On macOS, use `Cmd`; on Windows and Linux, use `Ctrl`.
-
-## Practical recipes
-
-### Turn a discussion into executable work
-
-1. Discuss the goal in a channel.
-2. Reply to or forward the key decision so it is easy to find.
-3. Right-click the message and choose **Add to kanban**.
-4. Set the project folder in channel settings.
-5. Create or bind an isolated workspace.
-6. Mention an agent with explicit acceptance criteria.
-7. Watch the run in Sessions or Orbit.
-8. Review the diff and request changes if needed.
-9. Open a draft pull request and finish the work item after approval.
-
-### Build a reusable project knowledge base
-
-1. Create a vault for the project.
-2. Add folders such as `Overview`, `Decisions`, `Research`, and `Runbooks`.
-3. Put durable facts and decisions in notes, not only chat.
-4. Link related notes with `[[wikilinks]]`.
-5. Keep current tasks in a Markdown Kanban board.
-6. Use a channel for discussion and agent requests.
-7. Publish only the notes that are intentionally public.
-
-### Collaborate safely with an agent
-
-1. Install and authenticate the agent CLI on the owner’s desktop.
-2. Add the agent to a channel.
-3. Set its project folder to the intended repository.
-4. Leave Full host access disabled unless the task truly requires it.
-5. Put secrets or human-only context in `:::private` blocks.
-6. Ask for a small verifiable task first.
-7. Inspect the run trace, changed files, and branch before accepting the result.
-
-### Recover after being away
-
-1. Open Updates and mark or open the relevant activity.
-2. Use workspace search for the project name or a decision phrase.
-3. Open the channel’s Missions history.
-4. Check Superkanban for blocked or in-review cards.
-5. Open Sessions if an agent is still running.
+Use `Cmd` on macOS and `Ctrl` on Windows/Linux.
 
 ## Fizzer Guide conversations and reporting
 
-The floating help button opens the **Fizzer Guide**, which answers questions from this manual through a connected local runner. The Fizzer Guide cannot answer while the runner is offline.
+The floating help button opens the **Fizzer Guide**, which answers from this
+maintained manual through a connected local runner. It cannot answer while the
+runner is offline.
 
-### Keep and revisit Guide conversations
+A **Guide conversation** is a locally saved thread in the current application
+or browser profile. It is separate from vault channels and is not shared project
+chat:
 
-Each **Guide conversation** is saved locally in the current application or browser profile. It is separate from vault channels and is not shared as project chat.
+- **New** starts a separate empty conversation;
+- **History** lists local conversations by automatic title and message count;
+- selecting one reopens its saved turns;
+- trash deletes one; deleting the last leaves a fresh empty conversation.
 
-- Choose **New** to start a separate, empty Guide conversation.
-- Choose **History** to see locally saved conversations with their automatic titles and message counts. Select one to reopen it.
-- Use the trash action in **History** to delete a conversation. Deleting the last saved conversation leaves a fresh, empty one.
+### Draft and publish a Fizzer tracker issue
 
-### Draft a public Fizzer tracker issue
+In the active Guide conversation, ask naturally to create, open, file, or draft
+an issue. The Fizzer Guide uses **only that active Guide conversation**. It does
+not include other Guide conversations, vault notes, chats, files, traces,
+attachments, workspaces, or repository contents.
 
-While a Guide conversation is active, ask in natural language to create, open, file, or draft an issue. The Fizzer Guide drafts the issue from only that active Guide conversation; it does not pull in other Guide conversations, vault notes, chats, files, traces, attachments, or repository contents.
+Before publication, Fizzer shows an editable public preview of title, body, and
+`bug` or `enhancement` label. Review it for private information and accuracy,
+then choose **Create issue** once. The destination is fixed: the public **Fizzer
+tracker** at `grm4871/fizzer`, never the current vault or project repository.
 
-Before anything is published, Fizzer shows an editable public preview of the title, body, and `bug` or `enhancement` label. Review and change the preview to remove private information or correct details. Then choose **Create issue** once to publish it. Issue creation always targets the public **Fizzer tracker** at `grm4871/fizzer`; it never targets the current vault, workspace, or project repository.
+Creation is desktop-only through the locally installed, authenticated `gh` CLI.
+The server does not create it and the Guide does not collect a GitHub token. In
+web mode, **Create issue** is disabled and the preview directs you to Fizzer
+Desktop and a signed-in `gh`. **Discard** closes the preview without publishing.
+A successful desktop creation adds the public issue link to the active Guide
+conversation.
 
-Creating the issue is desktop-only. The desktop app uses the locally installed and authenticated `gh` CLI, so authenticate `gh` on that computer before choosing **Create issue**. Fizzer does not create the issue through the server or ask for a GitHub token in the Guide.
+### Pick the right reporting path
 
-Choose **Discard** to close the preview without publishing. After a successful creation, the Fizzer Guide adds a link to the new public issue to the active Guide conversation. In the web app, **Create issue** is disabled and the preview directs you to Fizzer Desktop and a signed-in `gh` CLI.
+- **Fizzer tracker issue** — public bug/enhancement at `grm4871/fizzer`, after
+  reviewing the editable preview.
+- **Product feedback** — private message to the Fizzer server owner. Only the
+  feedback text and username are sent; Guide context, vault content, traces,
+  and attachments are not included.
+- **Trust-and-safety report** — moderation path for a vault, note, message, or
+  member that may violate community rules.
 
-### Choose the correct reporting path
+These paths are intentionally separate. Product feedback is not a GitHub issue;
+a Fizzer tracker issue is not private feedback; neither replaces a
+Trust-and-safety report. Canonical terminology is in `docs/CONTEXT.md`.
 
-- **Fizzer tracker issue** — public. Use the issue preview and **Create issue** for a Fizzer bug or enhancement that you want to publish at `grm4871/fizzer`.
-- **Product feedback** — private. Choose **Feedback**, review the privacy notice, and explicitly send the message to the Fizzer server owner. Only the feedback text and your username are sent; the Guide conversation, notes, chats, files, traces, and attachments are not included.
-- **Trust-and-safety report** — moderation. Use the normal **Report** action for a vault, note, message, or member that may violate community rules.
+## Troubleshooting
 
-These paths are separate. **Product feedback** does not create a public issue, a **Fizzer tracker** issue is not a private feedback message, and neither replaces a **Trust-and-safety report**.
-
-## Boundaries and troubleshooting
-
-- **Notes/chat work but agents do not start:** open the desktop app or reconnect the compatible runner; verify the provider CLI is installed and authenticated on that machine.
-- **A note looks edited but is still marked dirty:** save it with `Cmd/Ctrl+S` or the mobile Save button.
-- **A board is empty:** open the note’s Kanban view and choose **Create board**, or ensure the Markdown has the expected Kanban frontmatter and `##` list headings.
-- **A worktree action says Desktop only:** use the Electron desktop app; the browser client cannot access local Git worktrees.
-- **An agent cannot see a private block:** this is intentional; private blocks are redacted before agent context is assembled.
-- **A public vault cannot be joined:** its policy may be Request or Invite only, or the owner may need to approve the request.
-- **The app shows stale activity:** refresh the relevant modal or reopen the channel; realtime state is server-authoritative and updates are persisted.
+- **Notes/chat work but agents do not start:** open or reconnect the desktop
+  runner and verify the provider CLI is installed and authenticated there.
+- **Local Codex is unavailable on Android:** verify the bundled runtime is
+  supported, complete device auth, and enable Local Codex in settings.
+- **A note is dirty:** save with `Cmd/Ctrl+S` or the mobile Save action.
+- **A Kanban board is empty:** choose Create board or ensure the Markdown has
+  Kanban frontmatter and `##` list headings.
+- **Superkanban does not show a toggle:** the vault has zero or one board; the
+  toggle is intentionally available only with more than one.
+- **A worktree says Desktop only:** use Fizzer Desktop; browser code cannot
+  access local Git.
+- **An agent cannot see a private block:** this is intentional redaction. An
+  authorized member's own search may still find it.
+- **A public vault cannot be joined:** its policy may be Request or Invite only,
+  the owner may need to approve, or you may be banned.
+- **Activity is stale:** reopen/refresh the relevant surface. Socket rooms do
+  not replay missed events; reconnect reconciliation fetches authoritative
+  notes, members, and visible transcripts.
 
 ## Glossary
 
 - **Vault:** project/community workspace and permission boundary.
 - **Note:** durable Markdown document.
 - **Channel:** persistent group conversation inside a vault.
-- **Agent registration:** a configured local provider identity attached to a channel/vault.
-- **Runner:** the desktop process that starts the local agent CLI.
+- **Agent registration:** configured local provider identity attached to a channel.
+- **Runner:** desktop process that starts a local agent CLI.
 - **Mission:** durable multi-step work record projected into chat.
+- **Mission task:** dependency-aware unit with pending/running/terminal state.
 - **Work item:** addressable task record with status, repository, workspace, and review state.
 - **Workspace/worktree:** local Git checkout used for an isolated task.
-- **Superkanban:** vault-wide board overview.
-- **Private block:** `:::private` content hidden from agents and public/search/model-derived surfaces.
-- **Public snapshot:** published copy of a note that can be opened without vault membership.
-- **Fizzer Guide:** in-app help that answers from this maintained manual.
-- **Guide conversation:** locally saved thread with the Fizzer Guide, separate from vault channels.
+- **Superkanban:** vault-wide view of opted-in boards and live work items.
+- **Private block:** `:::private` content redacted from agent/model-derived surfaces.
+- **Public snapshot:** published copy of a note open without vault membership.
+- **Fizzer Guide:** in-app help answered from this maintained manual.
+- **Guide conversation:** local Fizzer Guide thread, separate from vault channels.
 - **Fizzer tracker:** public GitHub Issues tracker for Fizzer at `grm4871/fizzer`.

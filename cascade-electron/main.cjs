@@ -27,11 +27,14 @@ const {
 } = require('./instance-origin.cjs');
 const { launchMacOSInstaller, prepareMacOSUpdate } = require('./macos-updater.cjs');
 const { installDesktopShellPath } = require('./shell-path.cjs');
-
-// Finder/Dock launches receive launchd's minimal PATH instead of the user's
-// shell PATH. Repair it before runner/probe modules capture CLI binary names.
-installDesktopShellPath({ packaged: app.isPackaged });
-
+const {
+  bootstrapDesktopDependencies,
+  createMainWindow,
+  createMainWindowOptions,
+  createOriginPolicy,
+  registerReadyHousekeeping,
+  runPackagedMacOSUpdate,
+} = require('./main-behavior.cjs');
 const explicitUserDataDir = process.env.CASCADE_USER_DATA_DIR || process.env.CASCADE_ELECTRON_DATA_DIR;
 if (explicitUserDataDir) {
   const userDataDir = path.resolve(explicitUserDataDir);
@@ -39,16 +42,43 @@ if (explicitUserDataDir) {
   app.setPath('userData', userDataDir);
 }
 
-const { startLocalAgentRun, cancelLocalAgentRun, reapOrphanedLocalAgentRuns } = require('./agent-runner.cjs');
-const { connectDesktopRunner, disconnectDesktopRunner, isDesktopRunnerConnected } = require('./desktop-runner-host.cjs');
-const { collectPlanUsage } = require('./plan-usage.cjs');
-const { AgentRunState, settleCancelAcknowledgement } = require('./agent-run-state.cjs');
-const { collectLocalAgents } = require('./local-agents.cjs');
-const worktrees = require('./worktrees.cjs');
-const { createFizzerIssue } = require('./github-issues.cjs');
+
+// Finder/Dock launches receive launchd's minimal PATH instead of the user's
+// shell PATH. Repair it before runner/probe modules capture CLI binary names.
+const desktopDependencies = bootstrapDesktopDependencies({
+  packaged: app.isPackaged,
+  installDesktopShellPath,
+  loadModules: () => {
+    const agentRunner = require('./agent-runner.cjs');
+    const runnerHost = require('./desktop-runner-host.cjs');
+    const planUsage = require('./plan-usage.cjs');
+    const agentRunState = require('./agent-run-state.cjs');
+    const localAgents = require('./local-agents.cjs');
+    const worktrees = require('./worktrees.cjs');
+    const githubIssues = require('./github-issues.cjs');
+    return { agentRunner, runnerHost, planUsage, agentRunState, localAgents, worktrees, githubIssues };
+  },
+});
+
+const {
+  startLocalAgentRun,
+  cancelLocalAgentRun,
+  reapOrphanedLocalAgentRuns,
+} = desktopDependencies.agentRunner;
+const {
+  connectDesktopRunner,
+  disconnectDesktopRunner,
+  isDesktopRunnerConnected,
+} = desktopDependencies.runnerHost;
+const { collectPlanUsage } = desktopDependencies.planUsage;
+const { AgentRunState, settleCancelAcknowledgement } = desktopDependencies.agentRunState;
+const { collectLocalAgents } = desktopDependencies.localAgents;
+const worktrees = desktopDependencies.worktrees;
+const { createFizzerIssue } = desktopDependencies.githubIssues;
 const APP_NAME = 'Fizzer';
 const INSTANCE_ORIGIN = resolveInstanceOrigin({ packaged: app.isPackaged });
 const APP_URL = rendererUrlForOrigin(INSTANCE_ORIGIN);
+const originPolicy = createOriginPolicy({ instanceOrigin: INSTANCE_ORIGIN, isSameOrigin });
 // Same as client `--bg-base` (hsl(225, 12%, 7%)). Set on every window so the
 // shell is never Chromium's default white while the hosted page is loading.
 const APP_BACKGROUND = '#101014';
@@ -188,7 +218,7 @@ function broadcastToWindows(channel, payload) {
 }
 
 function isAllowedNavigation(url) {
-  return isSameOrigin(url, INSTANCE_ORIGIN);
+  return originPolicy.isAllowedNavigation(url);
 }
 
 /**
@@ -299,32 +329,23 @@ function createWindow() {
   // Always install (or clear) the app menu before windows open.
   Menu.setApplicationMenu(buildApplicationMenu());
 
-  mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
+  const options = createMainWindowOptions({
     icon: APP_ICON,
+    preload: path.join(__dirname, 'preload.cjs'),
+    platform: process.platform,
     backgroundColor: APP_BACKGROUND,
-    // Never show a menu bar on Linux/Windows (Debug used to live here in
-    // unpackaged launches). macOS uses the system menu bar via setApplicationMenu.
-    autoHideMenuBar: process.platform !== 'darwin',
-    // Keep the renderer warm while unfocused so alt-tab back doesn't wait on
-    // Chromium's background timer/rAF throttle before first paint.
-    backgroundThrottling: false,
-    webPreferences: {
-      nodeIntegration: false,
-      contextIsolation: true,
-      preload: path.join(__dirname, 'preload.cjs')
-    }
   });
-
-  configureWindow(mainWindow);
-
   // Load immediately. A Node HEAD probe used to sit on a blank window for up
   // to 30s, and Node TLS to cscd.online fails on some networks that Chromium
   // can still reach. did-fail-load already retries the local Vite URL.
   const baseUrl = getAppBaseUrl();
   console.log('[Main] Loading app URL:', baseUrl);
-  mainWindow.loadURL(baseUrl);
+  mainWindow = createMainWindow({
+    BrowserWindow,
+    options,
+    configureWindow,
+    url: baseUrl,
+  });
 
   mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
     if (!isMainFrame || app.isPackaged) return;
@@ -503,10 +524,7 @@ ipcMain.handle('agent:getState', async (_event, afterSeq = 0) => agentRunState.s
 /** Configure helper env for local agent children (renderer owns /runners socket). */
 ipcMain.handle('runner:setToken', async (_event, { token, apiUrl } = {}) => {
   try {
-    if (!isSameOrigin(apiUrl, INSTANCE_ORIGIN)) {
-      throw new Error('Runner origin does not match the desktop instance selected at startup');
-    }
-    return connectDesktopRunner(token, INSTANCE_ORIGIN);
+    return originPolicy.connectRunner(token, apiUrl, connectDesktopRunner);
   } catch (error) {
     console.error('[IPC] Failed to configure desktop runner:', error);
     return { success: false, error: error.message };
@@ -593,13 +611,13 @@ ipcMain.handle('app:updateAndRestart', async () => {
     if (!canSelfUpdateFromSource()) {
       if (process.platform === 'darwin' && app.isPackaged) {
         desktopUpdateInProgress = true;
-        const update = await prepareMacOSUpdate({
+        return await runPackagedMacOSUpdate({
           arch: process.arch,
           executablePath: app.getPath('exe'),
+          prepareMacOSUpdate,
+          launchMacOSInstaller,
+          quit: () => app.quit(),
         });
-        launchMacOSInstaller(update);
-        setTimeout(() => app.quit(), 250);
-        return { success: true, restarting: true };
       }
 
       const downloadUrl = getDesktopDownloadUrl();
@@ -636,27 +654,20 @@ ipcMain.handle('app:updateAndRestart', async () => {
 // APP LIFECYCLE
 // ═══════════════════════════════════════════════════════════════
 
-app.whenReady().then(() => {
-  // `npm start` runs from the generic Electron binary, whose dock tile is the
-  // Electron logo until the running app overrides it.
-  if (process.platform === 'darwin' && !app.isPackaged && app.dock) {
-    try { app.dock.setIcon(APP_ICON); } catch { /* non-fatal: dev cosmetics */ }
-  }
-
-  // Allow app-shell permissions needed by the hosted app.
-  session.defaultSession.setPermissionCheckHandler(() => true);
-  session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
-    callback(true);
-  });
-
-  createWindow();
-
-  // Housekeeping after first paint. Reaping imports the CLI agent module and
-  // prune walks every registered worktree — neither should hold the window.
-  void reapOrphanedLocalAgentRuns().catch((error) => {
-    console.error('[Main] Failed to reap orphaned agent processes:', error);
-  });
-  void worktrees.pruneWorkspaces().then((pruned) => {
+registerReadyHousekeeping({
+  app,
+  session,
+  createWindow: () => {
+    // `npm start` runs from the generic Electron binary, whose dock tile is the
+    // Electron logo until the running app overrides it.
+    if (process.platform === 'darwin' && !app.isPackaged && app.dock) {
+      try { app.dock.setIcon(APP_ICON); } catch { /* non-fatal: dev cosmetics */ }
+    }
+    createWindow();
+  },
+  reapOrphanedLocalAgentRuns,
+  pruneWorkspaces: () => worktrees.pruneWorkspaces(),
+  onPruned: (pruned) => {
     if (pruned.removed.length || pruned.forgotten.length) {
       console.log(
         `[Main] Pruned ${pruned.removed.length} finished task workspace(s)`
@@ -664,9 +675,7 @@ app.whenReady().then(() => {
         + `${pruned.kept.length ? `, kept ${pruned.kept.length}` : ''}`,
       );
     }
-  }).catch((error) => {
-    console.error('[Main] Failed to prune task workspaces:', error);
-  });
+  },
 });
 
 app.on('window-all-closed', () => {

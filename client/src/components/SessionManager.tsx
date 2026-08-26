@@ -1,33 +1,10 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type FormEvent,
-  type KeyboardEvent as ReactKeyboardEvent,
-  type ReactNode,
-  type UIEvent,
-} from 'react';
-import {
-  Activity,
-  Bot,
-  ChevronLeft,
-  ExternalLink,
-  Hash,
-  Loader2,
-  MessageSquarePlus,
-  Radio,
-  RefreshCw,
-  Send,
-  Square,
-  Terminal,
-  X,
-} from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type UIEvent } from 'react';
+import { Activity, ChevronLeft, ExternalLink, Loader2, MessageSquarePlus, Radio, RefreshCw, Send, Square, Terminal, X } from 'lucide-react';
 import { api, formatRelativeDate } from '../api';
 import { agentLabel } from '../chat/agents';
 import { normalizeChatRunBlocks } from '../chat/runBlocks';
 import { ModalShell } from './ModalShell';
+import { SessionList } from '../app/SessionList';
 
 export type ActiveSession = {
   id: number;
@@ -223,21 +200,21 @@ export function sessionConsoleText(events: RunEvent[]): string {
   }).join(''), 200_000);
 }
 
-function sessionName(session: ActiveSession): string {
+export function sessionName(session: ActiveSession): string {
   return session.author || agentLabel(session.agent);
 }
 
-function sessionHandle(session: ActiveSession): string {
+export function sessionHandle(session: ActiveSession): string {
   return (session.mention || session.author || session.agent).replace(/^@/, '');
 }
 
-function shortModel(model: string | null): string {
+export function shortModel(model: string | null): string {
   if (!model) return 'Default model';
   const tail = model.split('/').pop() || model;
   return tail.length > 38 ? `${tail.slice(0, 36)}…` : tail;
 }
 
-function elapsedLabel(startedAt: string, now: number): string {
+export function elapsedLabel(startedAt: string, now: number): string {
   const started = Date.parse(startedAt);
   if (!Number.isFinite(started)) return '—';
   const seconds = Math.max(0, Math.floor((now - started) / 1000));
@@ -538,42 +515,15 @@ export function SessionManager({
                 <span>Agents appear here as soon as they enter the queue.</span>
               </div>
             )}
-            <div className="session-manager-items">
-              {sessions.map((session) => {
-                const request = sessionRequestText(session.prompt);
-                const chosen = session.id === selectedId;
-                return (
-                  <button
-                    type="button"
-                    key={session.id}
-                    className={`session-manager-item${chosen ? ' selected' : ''}`}
-                    onClick={() => {
-                      setSelectedId(session.id);
-                      setView('activity');
-                    }}
-                    aria-current={chosen ? 'true' : undefined}
-                  >
-                    <span className="session-manager-avatar"><Bot size={15} /></span>
-                    <span className="session-manager-item-main">
-                      <span className="session-manager-item-line">
-                        <strong>{sessionName(session)}</strong>
-                        <em className={session.status}>{session.status}</em>
-                      </span>
-                      <span className="session-manager-item-request">{request}</span>
-                      <span className="session-manager-item-meta">
-                        {session.channel_title ? <><Hash size={10} />{session.channel_title}</> : 'note run'}
-                        <i />
-                        {session.vault_name}
-                        <i />
-                        {shortModel(session.model)}
-                        <i />
-                        {elapsedLabel(session.started_at, now)}
-                      </span>
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
+            <SessionList
+              sessions={sessions}
+              selectedId={selectedId}
+              now={now}
+              onSelect={(id) => {
+                setSelectedId(id);
+                setView('activity');
+              }}
+            />
           </nav>
 
           <main className="session-manager-detail">

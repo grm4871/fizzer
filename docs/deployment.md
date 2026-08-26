@@ -1,229 +1,471 @@
 # Deployment and operations
 
-## Production topology
+This runbook covers the maintained production path. Fizzer does not contain a
+server-deploy GitHub Actions workflow. The only checked-in workflows are
+`.github/workflows/desktop-build.yml` and `.github/workflows/android-beta.yml`;
+they publish client artifacts, not a production server deployment.
 
-Production serves the certified Dockerized Elixir service and built React client behind nginx.
-Persistent application data is mounted from `/var/lib/cascade` into `/data` in
-the container.
+## Production topology and boundaries
 
-`docker-compose.yml` binds the application to `127.0.0.1:3000`; nginx owns the
-public HTTP and TLS boundary.
+The production Compose service is named `cascade`. It runs the certified image
+as UID/GID `1000:1000`, mounts `/var/lib/cascade` at `/data`, and listens only
+on `127.0.0.1:3000`. nginx owns the public HTTP/TLS boundary and proxies to the
+loopback service. The Compose file pins the production envelope to 2 CPUs on
+`0-1`, 3 GiB with no swap, 100,000 PIDs, and a 200,000-file limit.
 
-## Immutable release artifact
+The application data root contains SQLite, vaults, QMD indexes, and the
+persisted deploy secret at `.cascade/deploy-secret`. Keep it writable by UID
+1000, but keep release attestations elsewhere:
 
-Production never rebuilds a release candidate. Build from a clean, committed
-checkout, run the capacity gates against that image ID, then certify and stage
-the same artifact before pushing the commit:
+- `/var/lib/cascade` — application-owned durable data (`0750`, UID/GID 1000).
+- `/var/lib/cascade-release` and its `certified-images` child — root-owned,
+  mode `0700`; manifests and checksums are root-owned mode `0600`.
+- `<checkout>/.env` — root-owned mode `0600`; it contains `JWT_SECRET` and
+  production URL configuration and is **not** inside the data backup.
+
+The container cannot replace a root-owned certification manifest through the
+application volume. This is a filesystem ownership boundary, not a substitute
+for host hardening, firewall rules, encrypted storage, or DDoS protection.
+
+## Host prerequisites
+
+Use a Linux host with systemd, root access, and enough disk for the image,
+Compose snapshots, and one rollback copy. Install or provide all of the
+following before bootstrap: Git, Docker Engine with the Compose v2 plugin,
+nginx, Certbot plus the nginx plugin, `curl`, `openssl`, `dig` (`dnsutils` on
+Debian), `ssh`, `scp`, and GNU `coreutils` (`sha256sum`, `stat`, and `df`). On
+Debian/Ubuntu, a starting point is:
 
 ```bash
-npm run release:image:build
+sudo apt-get update
+sudo apt-get install -y docker.io docker-compose-plugin nginx certbot python3-certbot-nginx curl openssl dnsutils git openssh-client coreutils
+sudo systemctl enable --now docker nginx
+sudo docker compose version
+```
 
-# Run the four load shards and capacity monitor against:
-IMAGE="cascade:certified-$(git rev-parse HEAD)"
+Package names and Docker installation policy vary by distribution. The scripts
+do not configure a firewall, SSH policy, unattended upgrades, fail2ban, an
+encrypted volume, a provider firewall, or a CDN/WAF. Configure those separately;
+permit only the ports and administration paths your deployment requires (normally
+SSH, HTTP, and HTTPS). Do not expose port 3000 publicly.
+
+Before bootstrap, point the domain's A/AAAA records at this host and ensure
+ports 80 and 443 reach nginx. The bootstrap script must run as root from the
+exact clean checkout whose image was staged.
+
+## Build an exact candidate
+
+Build on a release/CI machine, not on the production host. The build helper
+requires a clean checkout and archives the exact full Git revision before
+calling Docker BuildKit:
+
+```bash
+REVISION="$(git rev-parse HEAD)"
+IMAGE="cascade:certified-$REVISION"
+npm run release:image:build
 IMAGE_ID="$(docker image inspect --format '{{if .Descriptor}}{{index .Descriptor.Annotations "config.digest"}}{{else}}{{.Id}}{{end}}' "$IMAGE")"
+printf 'revision=%s\nimage=%s\nimage_id=%s\n' "$REVISION" "$IMAGE" "$IMAGE_ID"
+```
+
+The image label and immutable ID must be retained with release evidence. A
+`FROM` digest pins the selected base-image bytes, but it does **not** make the
+`apt-get update && apt-get install` layers fully reproducible: Debian package
+indexes and package versions can change. This Dockerfile has no Debian snapshot
+repository or complete apt package lock. Treat the image ID, not a rebuild from
+the same Dockerfile, as the release artifact.
+
+A shared BuildKit cache is optional and is not the runtime image. For a private
+GHCR cache, authenticate first and use a platform-specific reference:
+
+```bash
+GITHUB_USERNAME=YOUR_GITHUB_USERNAME
+: "${GITHUB_TOKEN:?export GITHUB_TOKEN with package-write permission first}"
+export CASCADE_BUILD_CACHE_REF=ghcr.io/grm4871/fizzer:buildcache-amd64
+echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_USERNAME" --password-stdin
+npm run release:image:build
+```
+
+Use `buildcache-arm64` only with `CASCADE_TARGET_PLATFORM=linux/arm64`. The
+production default is `linux/amd64`; an ARM Mac may use emulation. Keep cache
+packages private unless exposing intermediate layers is acceptable.
+
+## Capacity certification (only for capacity-sensitive changes)
+
+Capacity evidence is additive to the normal release checks. Run it when a
+change affects concurrency, dispatch, realtime/presence, runner lifecycle,
+SQLite contention, runtime limits, or deployment infrastructure. It is not
+needed for ordinary UI, documentation, packaging, or route/contract changes.
+
+Do not invoke `certification-runner.mjs` directly and do not pass a shortened
+list of certified-image arguments. The outer `release:capacity:run` wrapper
+holds the host lock, owns candidate creation/cleanup, isolates generators from
+CPUs `0-1`, and invokes the checked-in runner. Prepare a production-derived,
+checkpointed fixture and source corpus first. The source database, corpus,
+fixture, results, and each phase data root must be canonical, pairwise-disjoint
+paths on disk-backed storage; never use `/tmp` for results.
+
+Define every path and secret before invoking the wrapper. The JWT secret must be
+the same secret used when generating the authenticated fixture; keep both
+secrets private and do not put them in evidence:
+
+```bash
+REVISION="$(git rev-parse HEAD)"
+IMAGE="cascade:certified-$REVISION"
+IMAGE_ID="$(docker image inspect --format '{{if .Descriptor}}{{index .Descriptor.Annotations "config.digest"}}{{else}}{{.Id}}{{end}}' "$IMAGE")"
+SOURCE_DB=/secure/cascade-capacity/production-after/docs.db
+SOURCE_CORPUS=/secure/cascade-capacity/production-corpus
+TEMPLATE_DIR=/secure/cascade-capacity/prepared-production-fixture
+FIXTURE=/secure/cascade-capacity/fixtures-10k.jsonl
+RESULTS_DIR=/secure/cascade-capacity/results-$REVISION
+MAIN_DATA=/secure/cascade-capacity/main10k-$REVISION
+FAULT_DATA=/secure/cascade-capacity/faults-$REVISION
+SOAK_DATA=/secure/cascade-capacity/soak5k-$REVISION
+export CAPACITY_RELEASE_COOKIE="$(openssl rand -hex 32)"
+export CAPACITY_JWT_SECRET="$(openssl rand -hex 32)"
+mkdir -p "$RESULTS_DIR"
+chmod 700 "$RESULTS_DIR"
+
+npm run release:capacity:run -- \
+  --profile final10k \
+  --image "$IMAGE_ID" \
+  --data-template-dir "$TEMPLATE_DIR" \
+  --data-dir "$MAIN_DATA" \
+  --fault-data-dir "$FAULT_DATA" \
+  --soak-data-dir "$SOAK_DATA" \
+  --host-port 39094 \
+  -- \
+  --profile final10k \
+  --image "$IMAGE" \
+  --image-id "$IMAGE_ID" \
+  --revision "$REVISION" \
+  --source-database "$SOURCE_DB" \
+  --source-corpus-root "$SOURCE_CORPUS" \
+  --fixture "$FIXTURE" \
+  --results-dir "$RESULTS_DIR" \
+  --source-ip 192.0.2.10 --source-ip 192.0.2.11 \
+  --source-ip 192.0.2.12 --source-ip 192.0.2.13 \
+  --soak-source-ip 192.0.2.20 \
+  --fixture-prefix capacity
+```
+
+The example addresses are placeholders: use genuine, distinct generator source
+addresses available on the isolated capacity host. The final profile runs the
+10,000-user gate, runner-restart and SQLite-lock fault proofs, and the separate
+5,000-user two-hour durability soak as sequential, pairwise-distinct candidates.
+The monitor is 2,250 seconds (300-second ramp, 1,860-second workload, and
+post-workload observation), with four group-preserving shards. A diagnostic
+1,000-user run uses `--profile diagnostic1k`, one fresh data root, and a 1,000-
+user fixture; it cannot certify an image.
+
+The wrapper writes `monitor.jsonl`, `shard-0.json` through `shard-3.json`,
+`reconciliation.json`, phase preflight/freeze files, `runtime-proof.json`,
+`runner-restart.json`, `sqlite-lock.json`, and `soak-invariants.json` below
+`RESULTS_DIR`. Preserve the complete directory, image ID, fixture/source hashes,
+host shape, and timestamps. A nonzero monitor or shard result fails
+certification; never turn a client pass into a capacity claim.
+
+The candidate target in this proof is loopback. It does not prove that the
+production nginx edge accepts 10,000 connections: the unmodified edge allows
+40 Socket.IO connections per source address, so that exercise needs at least
+250 genuine source addresses plus margin. If that pool is unavailable, keep
+the backend capacity proof separate, prove the 41st same-address connection is
+rejected, and report any staging-only allowlisted edge bypass as a separate
+proof. Never treat forged `X-Forwarded-For` values as distinct clients.
+
+Create the certification manifest only after the wrapper succeeds. This is the
+complete certifier contract (the runner-generated filenames are intentional):
+
+```bash
+SCRATCH_DIR=/secure/cascade-capacity/certification-scratch-$REVISION
+MANIFEST="$PWD/.cascade-release/$REVISION.json"
+mkdir -p "$SCRATCH_DIR" "$(dirname "$MANIFEST")"
+chmod 700 "$SCRATCH_DIR"
 
 npm run release:image:certify -- \
   --image "$IMAGE" \
-  --monitor /secure/cascade-capacity/monitor.jsonl \
-  --load-result /secure/cascade-capacity/shard-0.json \
-  --load-result /secure/cascade-capacity/shard-1.json \
-  --load-result /secure/cascade-capacity/shard-2.json \
-  --load-result /secure/cascade-capacity/shard-3.json \
-  --fault-result /secure/cascade-capacity/runner-restart.json \
-  --fault-result /secure/cascade-capacity/sqlite-lock.json \
-  --soak-result /secure/cascade-capacity/soak-invariants.json
+  --source-database "$SOURCE_DB" \
+  --source-corpus-root "$SOURCE_CORPUS" \
+  --fixture "$FIXTURE" \
+  --load-driver loadtest_elixir/load.mjs \
+  --reconciliation-driver loadtest_elixir/reconcile-capacity.mjs \
+  --monitor "$RESULTS_DIR/monitor.jsonl" \
+  --fixture-preflight "$RESULTS_DIR/fixture-preflight-main10k.json" \
+  --fault-preflight "$RESULTS_DIR/fixture-preflight-faults.json" \
+  --soak-preflight "$RESULTS_DIR/fixture-preflight-soak5k.json" \
+  --runtime-proof "$RESULTS_DIR/runtime-proof.json" \
+  --reconciliation "$RESULTS_DIR/reconciliation.json" \
+  --main-freeze "$RESULTS_DIR/freeze-main10k.json" \
+  --fault-freeze "$RESULTS_DIR/freeze-faults.json" \
+  --soak-freeze "$RESULTS_DIR/freeze-soak5k.json" \
+  --load-result "$RESULTS_DIR/shard-0.json" \
+  --load-result "$RESULTS_DIR/shard-1.json" \
+  --load-result "$RESULTS_DIR/shard-2.json" \
+  --load-result "$RESULTS_DIR/shard-3.json" \
+  --fault-result "$RESULTS_DIR/runner-restart.json" \
+  --fault-result "$RESULTS_DIR/sqlite-lock.json" \
+  --soak-result "$RESULTS_DIR/soak-invariants.json" \
+  --scratch-directory "$SCRATCH_DIR" \
+  --output "$MANIFEST"
 
-npm run release:image:stage -- \
-  ".cascade-release/$(git rev-parse HEAD).json"
+npm run release:image:verify -- --manifest "$MANIFEST"
 ```
 
-The build refuses a dirty checkout. Dockerfile bases are digest-pinned, the
-image carries the full Git revision, and certification refuses a different
-monitor image ID, a failed/incomplete 10,000-user run, fewer than four bound
-load shards, a monitor shorter than 2,250 seconds, a concurrent gate shorter
-than 30 minutes, any shard that does not span that gate, or an image whose
-embedded cutover gate is closed. The manifest also requires exact-image runner
-restart/reclaim and SQLite lock/recovery proofs plus a separate 5,000-user,
-two-hour churn/run-event durability soak. The durability soak never replaces
-the exact 10,000-user/30-minute capacity gate: both must pass for the same image
-ID, full revision, target, fixture identity, and production runtime shape.
-Certification reopens the raw capacity and soak journals, fixture file, and
-both server-log artifacts without following symlinks; recomputes their semantic
-gates from the captured records; and verifies every byte count, line count, and
-SHA-256. Fatal/error logs, per-sample container/config drift, probe/DB errors,
-non-identical requested/delegated/terminal/persisted run-ID sets, failed SQLite
-integrity/count reconciliation, or a probe uninstall failure all fail closed.
-The durability artifact also binds the observed 300-310-second ramp, all ten
-deterministic churn cohorts, exact live event sequences 2/3/4, one-owner fixture
-groups, the single batched runner teardown snapshot/flush, and a fully drained
-presence dispatcher with zero unclassified/noop/failure outcomes.
-The certified and production runtime envelope is the same exact 2 CPUs pinned
-to `0-1`, 3 GiB memory/no additional swap, 100,000 PIDs, and 200,000 open-file
-limit. The deploy checks both rendered Compose configuration and container
-inspection before reopening traffic, leaving roughly 0.8 GiB host memory
-outside the app container.
-Staging streams `docker save` over SSH into `docker load`, verifies the remote
-image ID, and installs a root-owned checksum manifest below the separate
-root-only `/var/lib/cascade-release` trust root. The application-writable
-`/var/lib/cascade` volume has no path to replace release attestations. Staging
-does not start or replace the production container.
+The certifier emits `$MANIFEST.sha256`. The manifest and checksum bind the
+exact image ID, full revision, source/fixture identity, runtime envelope,
+preflights, freezes, load shards, faults, soak, and all evidence digests. The
+scratch directory must be private, owned by the certifier user, disk-backed,
+and have at least 2 GiB free. Do not edit, regenerate, or rename evidence
+files after certification.
 
-### Shared Docker build cache
+## Stage: routine versus certified
 
-The Dockerfile uses BuildKit caches for npm, Hex/Rebar, and Elixir's `_build`
-directory. The release helper uses the local BuildKit cache by default. Set
-`CASCADE_BUILD_CACHE_REF` to share dependency and compilation layers through a
-registry. The cache is separate for each target platform.
+Staging loads an image on the host and leaves the running production container
+untouched. These commands are deliberately different:
 
-The example address is GitHub Container Registry (GHCR). Replace
-`YOUR_GITHUB_USERNAME` with the GitHub account that owns the cache package. It
-is storage for a Docker cache image, not a running service. The first successful
-cache export creates the package; publishing requires a GitHub token with
-package write permission, and every builder that imports or exports it must
-have appropriate registry access. Keep the package private unless exposing
-intermediate build layers is acceptable.
+- **Routine exact-image release (no capacity manifest):**
+  `npm run release:image:stage -- <ssh-host>`
+- **Capacity-certified release:**
+  `npm run release:image:stage-certified -- <manifest> <ssh-host>`
+
+For example:
 
 ```bash
-echo "$GITHUB_TOKEN" | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
-
-# The repository's shared cache is:
-export CASCADE_BUILD_CACHE_REF=ghcr.io/grm4871/fizzer:buildcache-amd64
-
-# An ARM64 Mac uses emulation but produces the server-compatible AMD64 image.
-npm run release:image:build
-
-# An AMD64 builder uses the same command and cache ref natively.
-# For an intentional ARM64 artifact, set CASCADE_TARGET_PLATFORM=linux/arm64
-# and export CASCADE_BUILD_CACHE_REF=...:buildcache-arm64 instead.
+DEPLOY_HOST=prod.example.net
+MANIFEST="$PWD/.cascade-release/$(git rev-parse HEAD).json"
+npm run release:image:stage -- "$DEPLOY_HOST"
+# or, after certification:
+npm run release:image:stage-certified -- "$MANIFEST" "$DEPLOY_HOST"
 ```
 
-The registry cache is separate from the certified runtime image and uses
-`mode=max`, so later Linux builders can reuse matching dependency and
-compilation layers. The `RUN --mount=type=cache` directories themselves remain
-local to each BuildKit builder; they provide incremental compiler reuse when a
-builder handles successive source changes. The release image is still built in
-a Linux environment because its bundled OTP runtime and native NIFs must match
-the target OS and architecture.
-Production should consume the already-certified image with `--no-build`; a CI
-or release builder should populate this shared cache rather than compiling on
-the production host. If a builder is pruned, the registry
-cache remains available to the next build.
+Routine staging verifies the local and remote immutable image ID and revision
+label. Certified staging additionally verifies the manifest/checksum, loads the
+same image, and installs the manifest under root-owned
+`/var/lib/cascade-release/certified-images/<revision>.json` with its checksum.
+The remote staging host needs strict, pre-established SSH host keys; staging
+uses `BatchMode` and strict host-key checking and streams `docker save` through
+SSH into `docker load`.
 
-Run `npm run test:elixir:release-safety` before certification. It is already
-included once by `npm run test:elixir-release`; the component scripts are
-available for focused work:
+A capacity manifest is optional for a routine exact-image release. When a
+manifest is present on a host, `remote-update.sh` validates its checksum, image
+ID, image tag, and revision; a mismatched or partial manifest fails closed. A
+new host's `deploy/deploy.sh` is stricter: bootstrap requires the certified
+manifest for the checkout revision. Existing hosts use `remote-update.sh`.
 
-- `npm run test:elixir:deploy-safety` exercises certification, rollback, and
-  the exact nginx edge policy.
-- `npm run test:elixir:certified-image`, `npm run test:elixir:rollback`, and
-  `npm run test:elixir:edge` expose those three gates individually without
-  rerunning them in the aggregate release command.
-- `npm run test:elixir:load-harness` exercises the load driver, monitor, edge
-  limit proof, and protocol codec.
+## Bootstrap a production host
 
-## Routine release
-
-Fizzer does not include or operate a production deployment workflow. After
-staging a certified image, run the update on infrastructure you control:
+After staging the image, prepare the environment **before** starting the
+container, then run the bootstrap from the exact checkout as root:
 
 ```bash
-bash deploy/remote-update.sh
+sudo -i
+cd /path/to/fizzer
+cp deploy/.env.example .env
+vi .env
+export DOMAIN=fizzer.example.com
+./deploy/deploy.sh "$DOMAIN"
 ```
 
-That script uses two fail-closed cutover modes:
+Set `CASCADE_PUBLIC_URL=https://$DOMAIN`, the matching
+`CASCADE_ALLOWED_ORIGINS`, and a generated `JWT_SECRET` in `.env` before
+running `deploy.sh`; do not leave example values in the file. The script fills
+`CASCADE_ALLOWED_ORIGINS` and `JWT_SECRET` only when absent or updating the
+allowed origin. It does not set a custom `CASCADE_PUBLIC_URL`.
 
-1. acquires the shared deploy lock;
-2. requires the root-owned certification manifest for the exact full commit;
-3. verifies the staged tag, immutable image ID, revision label, checksum, and
-   embedded cutover approval;
-4. checks disk space and removes only stale, non-running Compose containers;
-5. runs the isolated database, HTTP, and Socket.IO preflight on that image and
-   determines whether a complete candidate boot is logically state-identical;
-6. for a state-identical release, warms the image on loopback port `39001`,
-   verifies it against live state, and uses nginx's fixed `3000` primary / `39001`
-   backup pair while the canonical Compose container is replaced;
-7. verifies the canonical image directly, lets nginx's primary failure timer
-   expire, then drains the temporary bridge without ever creating the
-   maintenance marker;
-8. for a release that intentionally changes persistent state, retains the
-   mutation-free maintenance gate, checked snapshot, post-start data comparison,
-   and automatic image/database rollback path;
-9. verifies health, Engine.IO, authenticated reads/realtime, the public TLS edge,
-   and the exact running image ID before promoting it to `cascade:latest`.
+`deploy.sh` is bootstrap-only and refuses to replace an existing `cascade`
+container. It creates `/var/lib/cascade` as UID/GID 1000, checks the root-owned
+certification directories and manifest, starts Compose with `--no-build`, and
+checks the image ID and runtime envelope before installing nginx. It obtains a
+Let's Encrypt certificate, installs the HTTPS site, and reloads nginx only
+after `nginx -t` succeeds.
 
-The rolling upstream is failover, not load balancing: the warmed candidate does
-not receive public traffic until the previous primary stops accepting a
-connection. Rollback starts the previous image against the same live state, so
-writes accepted during the rolling handoff are preserved rather than rewound.
+Protect the environment file:
 
-Always watch the host update and verify the expected commit and image ID. A
-successful push is not proof that a self-hosted production instance changed.
+```bash
+sudo chown root:root .env
+sudo chmod 600 .env
+```
 
-## Infrastructure security boundary
+## Promote and roll back
 
-The checked-in nginx policy applies bounded per-address authentication, API,
-web, and connection limits before the application allocates request bodies. It protects
-the application process from ordinary abuse; it cannot absorb traffic that
-saturates the VPS link. Volumetric DDoS protection requires a provider or
-CDN/WAF in front of the host and therefore a DNS/account change outside a code
-deployment.
+On an existing host, run the same checked-out revision's update script as root:
 
-`/var/lib/cascade` contains SQLite, Markdown, and note assets. Back it with an
-encrypted provider volume or an OS-managed encrypted filesystem. Migrating the
-live directory is deliberately not automated by a release: it requires an
-authenticated infrastructure console, a verified backup, a maintenance window,
-and post-copy ownership/data reconciliation. Application-level encryption with
-a key stored beside the data would not protect a stolen volume.
+```bash
+sudo -i
+cd /path/to/fizzer
+export CASCADE_DEPLOY_DOMAIN=fizzer.example.com
+./deploy/remote-update.sh
+```
+
+The script never builds. It acquires the deploy lock; validates the clean full
+revision, staged image, optional capacity manifest, `.env` ownership, rendered
+Compose configuration, and container envelope; runs isolated database/HTTP/
+Socket.IO preflight; checks disk; and records the currently running image as a
+rollback tag.
+
+For a state-identical release, it starts the candidate on loopback `39001`,
+checks health, Engine.IO v4 (and v3 rejection), authenticated reads/realtime,
+and the public edge, then stops the old primary so nginx fails over to the
+warmed bridge. It starts the canonical `cascade` service on port 3000, repeats
+runtime and authenticated checks, waits for nginx's failure timer, drains the
+bridge, and only then tags the image `cascade:latest`. This is failover, not
+load balancing.
+
+If schema/data preflight says persistent state changes, the script instead
+creates the root-owned `/run/cascade-maintenance` gate, verifies nginx returns
+503, stops the old service, checkpoints and validates a SQLite snapshot, starts
+the candidate with `--no-build`, checks live data and health, then commits and
+reopens traffic. It retains the snapshot path printed by the script.
+
+Failures before commit trigger the appropriate rollback automatically. A
+rolling rollback starts the previous image while preserving live state. A
+maintenance rollback keeps traffic gated, restores the checked SQLite snapshot
+when the candidate touched data, boots the previous image, and reopens traffic
+only after health and nginx checks pass. If rollback cannot be proven healthy,
+the maintenance gate remains active; investigate logs and the printed snapshot
+rather than manually pointing Compose at `latest`. Keep the old image and
+snapshot until the post-deploy verification is complete.
+
+## Backups and recovery boundary
+
+A production backup must include both durable application data and the separate
+`.env` file. `/var/lib/cascade` includes SQLite, vault/QMD trees, and the
+persisted deploy secret, but **does not include** `<checkout>/.env` (JWT secret,
+public URL, and allowed origins). Losing `.env` invalidates sessions and may
+prevent recovery even when the data archive is intact. Encrypt backups and
+store them outside the host.
+
+Stop the service for a filesystem-consistent archive:
+
+```bash
+BACKUP_DIR=/var/backups/fizzer
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+sudo install -d -m 700 -o root -g root "$BACKUP_DIR"
+sudo docker compose -f /path/to/fizzer/docker-compose.yml stop cascade
+sudo tar --xattrs --acls -C /var/lib -czf "$BACKUP_DIR/cascade-data-$STAMP.tar.gz" cascade
+sudo tar --xattrs --acls -C /path/to/fizzer -czf "$BACKUP_DIR/cascade-env-$STAMP.tar.gz" .env
+sudo docker compose -f /path/to/fizzer/docker-compose.yml start cascade
+sudo sha256sum "$BACKUP_DIR/cascade-data-$STAMP.tar.gz" \
+  "$BACKUP_DIR/cascade-env-$STAMP.tar.gz" \
+  | sudo tee "$BACKUP_DIR/SHA256SUMS-$STAMP" >/dev/null
+```
+
+Restore only from a trusted, verified archive: stop Fizzer, move the current
+`/var/lib/cascade` aside, extract the data archive under `/var/lib`, restore
+`.env` with root ownership and mode 0600, check `/var/lib/cascade` ownership
+(UID/GID 1000), start Compose with `--no-build`, and verify health plus a
+representative vault. Keep the displaced data until that verification passes.
+
+## nginx, certificates, and edge assumptions
+
+The checked-in nginx policy applies per-address request/connection limits and
+forwards `X-Forwarded-*` headers. It is not volumetric DDoS protection. The
+production Compose service sets `CASCADE_TRUST_PROXY_HOPS=1` because exactly one
+nginx proxy is expected. Do not set a nonzero value when clients can reach the
+application directly or when the proxy chain is different: forwarded headers
+are then attacker-controlled or interpreted with the wrong hop count.
+
+`deploy.sh` and `finish-https.sh` request certificates, but renewal is an
+operator responsibility. Install a deploy hook that tests and reloads nginx
+only after a successful renewal:
+
+```bash
+sudo sh -c 'printf "%s\n" "#!/bin/sh" "set -eu" "nginx -t" "systemctl reload nginx" "systemctl is-active --quiet nginx" > /etc/letsencrypt/renewal-hooks/deploy/20-cascade-nginx'
+sudo chmod 755 /etc/letsencrypt/renewal-hooks/deploy/20-cascade-nginx
+sudo certbot renew --dry-run
+sudo nginx -t
+sudo systemctl is-active --quiet nginx
+```
+
+After a real renewal, verify the timer/log and the served certificate and
+application through the configured name:
+
+```bash
+DOMAIN=fizzer.example.com
+sudo systemctl list-timers --all | grep -i certbot
+sudo journalctl -u certbot.service --since "24 hours ago" --no-pager
+curl --noproxy '*' --resolve "$DOMAIN:443:127.0.0.1" -fsS "https://$DOMAIN/api/health"
+```
+
+For Tailscale or another private proxy, the proxy must be the only path to the
+loopback service and must preserve the intended host/origin and forwarding
+headers. Tailscale Serve is appropriate for a self-hosted private instance,
+not an excuse to bind port 3000 publicly. Confirm the proxy's hop count and
+TLS certificate from a real client before enabling forwarded-address trust.
+
+## Deploy watcher
+
+The optional watcher is host-side automation, not a GitHub workflow. Install it
+once as root after bootstrap:
+
+```bash
+sudo /path/to/fizzer/deploy/install-deploy-watcher.sh fizzer.example.com
+sudo systemctl status cascade-deploy.path
+```
+
+The app's authenticated `POST /api/deploy` writes
+`/var/lib/cascade/deploy.request`; systemd starts the root watcher, which
+fetches/resets the checkout and runs `remote-update.sh`. On first backend start,
+when `CASCADE_DEPLOY_TOKEN` is absent, the backend generates
+`/data/.cascade/deploy-secret` (the host path is
+`/var/lib/cascade/.cascade/deploy-secret`) as a mode-0600 file. Start the app
+and wait for health before reading the token:
+
+```bash
+curl -fsS http://127.0.0.1:3000/api/health
+sudo cat /var/lib/cascade/.cascade/deploy-secret
+```
+
+If `CASCADE_DEPLOY_TOKEN` is explicitly set in `.env`, that value overrides the
+persisted token and must be backed up as part of `.env`. Send the token as
+`Authorization: Bearer <token>`; the status endpoint is separately
+authenticated. The watcher installer prints the token path but does not create
+a token itself.
+
+`deploy.result` is written under the application data root and chowned to UID
+1000 so the app can report it. Treat that result as an untrusted status hint,
+not an attestation: an application-writable path is not a secure audit log.
+For release truth, inspect root-owned manifests, `docker inspect`, the checked
+out revision, nginx, and the watcher/service logs. The watcher does not itself
+provide signature verification or general host hardening.
 
 ## Verification
 
-At minimum, verify:
+Define the public origin and checkout before running checks; do not rely on
+undeclared shell variables:
 
 ```bash
+FIZZER_DOMAIN=fizzer.example.com
+FIZZER_CHECKOUT=/path/to/fizzer
 curl -fsS "https://$FIZZER_DOMAIN/api/health"
-```
-
-On the host, also verify the container and checkout:
-
-```bash
-docker compose -f "$FIZZER_CHECKOUT/docker-compose.yml" ps
-git -C "$FIZZER_CHECKOUT" rev-parse --short HEAD
+sudo docker compose -f "$FIZZER_CHECKOUT/docker-compose.yml" ps
+sudo git -C "$FIZZER_CHECKOUT" rev-parse --short HEAD
 curl -fsS http://127.0.0.1:3000/api/health
-docker inspect --format '{{.Image}}' cascade
-node "$FIZZER_CHECKOUT/deploy/certified-image.mjs" field \
-  --manifest "/var/lib/cascade-release/certified-images/$(git -C "$FIZZER_CHECKOUT" rev-parse HEAD).json" \
-  --name image.id
+sudo docker inspect --format '{{.Image}}' cascade
 ```
 
-For a renderer release, load the production client and check for runtime
-errors. The repository helper accepts a production URL:
+For a certified release, verify the staged manifest against that revision:
 
 ```bash
-node scripts/verify-client-runtime.mjs --no-preview "https://$FIZZER_DOMAIN/app.html"
+REVISION="$(sudo git -C "$FIZZER_CHECKOUT" rev-parse HEAD)"
+sudo node "$FIZZER_CHECKOUT/deploy/certified-image.mjs" field \
+  --manifest "/var/lib/cascade-release/certified-images/$REVISION.json" \
+  --name image.id
+node "$FIZZER_CHECKOUT/scripts/verify-client-runtime.mjs" --no-preview \
+  "https://$FIZZER_DOMAIN/app.html"
 ```
 
-## First-time host setup
+The manifest command applies only when a certified manifest was staged. For a
+routine release without one, compare the inspected image ID with the recorded
+release evidence instead. Always inspect the configured public origin, because a
+successful image push is not proof that this host changed.
 
-`deploy/deploy.sh <domain>` bootstraps nginx, certificates, environment, and the
-Compose application. It requires the exact revision's certified image to have
-been staged first, starts it with `--no-build`, and refuses to replace an
-existing Cascade container. It is not the routine update path; existing hosts
-must use the snapshot-backed `deploy/remote-update.sh` cutover.
-
-Use `deploy/.env.example` as the minimal environment template and generate a
-strong `JWT_SECRET`.
-
-## Client refresh behavior
+## Client refresh
 
 Do not terminate Electron after a deployment; doing so kills active desktop
-agent runs.
-
-- Web clients observe `version.json` and reload automatically.
-- Electron source builds use the sidebar **Update desktop app** action to
-  fast-forward the checkout and reload renderer windows in place.
-- `Ctrl/Cmd+R` reloads only the focused renderer.
-- Do not use `Ctrl/Cmd+Shift+R` as a deployment follow-up because it relaunches
-  the whole app.
-
-Server-only compatible releases require no desktop refresh. In-flight agent
-runs are designed to survive a model-server restart through runner reclaim.
+agent runs. Web clients observe `version.json` and reload automatically.
+Electron source builds use **Update desktop app** to fast-forward and reload
+renderer windows in place; `Ctrl/Cmd+R` reloads only the focused renderer, while
+`Ctrl/Cmd+Shift+R` relaunches the whole app. Server-only compatible releases do
+not require a desktop refresh. The current desktop workflow publishes unsigned
+technical-beta installers; a GitHub checksum is integrity evidence, not code
+signing or publisher identity.

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { isMp3Link } from '../components/Sidebar';
+import { isMp3Link } from '../components/sidebar/mediaHelpers';
 import { ChatMediaEmbed } from '../components/ChatView';
 import { chatMediaLink, twitterEmbedResizeHeight, youtubeVideoId } from '../mediaLinks';
 

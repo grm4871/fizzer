@@ -1,0 +1,401 @@
+/** Shared parser, authentication, transport, and history formatting seam. */
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+export const DEFAULT_URL = 'https://cscd.online';
+
+export const USAGE = `cascade-chat — read/send live Cascade chat
+
+Usage:
+  cascade-chat history                 recent messages for the current channel
+  cascade-chat attachment              write a message's images/files to disk
+                        (--message-id <id>; default: newest message with media)
+  cascade-chat send --message <text>    send a standalone message to the channel
+  cascade-chat send --to @agent --reply-to <message-id> --relation <type> --message <instruction>
+                                        create a typed single-agent handoff
+  cascade-chat members                  list people-callable agent teammates
+  cascade-chat mission start --title T [--objective O]
+  cascade-chat mission list
+  cascade-chat mission status [--mission <id|current>]
+  cascade-chat mission history --mission <id>
+  cascade-chat mission delegate --mission <id> --to @agent --task T --message P [--after <task-id,...>] [--priority N] [--effort E] [--anonymous]
+  cascade-chat mission update --task <id> --status <status> [--summary S]
+  cascade-chat mission retry --task <id> [--summary S]
+  cascade-chat mission finish --mission <id> [--summary S]
+  cascade-chat avatar --url <https-url> set this agent's profile picture
+                        (also --avatar-url; --url here is the image, not API base)
+  cascade-chat distill                 condense chat into a vault note
+  cascade-chat search <query>          search chat (or all) via unified search
+
+Options:
+  --vault <id>              vault id (default $CASCADE_NOTE_VAULT)
+  --channel <id>            channel id (default $CASCADE_CHAT_CHANNEL)
+  --message <text>          message body for send (default: stdin)
+  --mission <id|current>    mission id for mission commands
+  --task <id|title>         task id (update) or title (delegate)
+  --to <@handle>            target agent for send handoff or mission delegate
+  --reply-to <message-id>   source message for a typed send handoff
+  --relation <type>         builds_on|review_request|question|contradiction|decision
+  --status <status>         pending|running|completed|failed|blocked|canceled
+  --summary <text>          concise task/mission outcome
+  --objective <text>        mission objective (defaults to triggering message)
+  --after <task-id,...>     wait for these mission tasks to complete
+  --priority <-100..100>    schedule higher-priority ready work first
+  --effort <level>          per-task reasoning effort override
+  --anonymous               parallel subagent of --to (same agent, no occupancy)
+  --root <message-id>       mission root (defaults to triggering chat message)
+  --changes-file <path>     JSON change request metadata for send
+  --raw-message             preserve literal backslash-n sequences in --message
+  --url <https-url>         profile picture URL for avatar
+  --clear                   remove this agent's profile picture
+  --author <name>           author for send (default current agent/user)
+  --message-id <id>         message to open attachments from
+  --out <dir>               directory for written attachments (default temp dir)
+  --before-message-id <id>  only messages before this message
+  --around-message-id <id>  window centered around this message
+  --limit <n>               max messages (default 12)
+  --include-reply-context   include parent reply snippets
+  --reply-depth <n>         parent chain depth with --include-reply-context (default 1)
+  --from <msg-id>           distill range start
+  --to <msg-id>             distill range end
+  --last <n>                distill last N messages
+  --note <id|title>         distill target note (append/merge)
+  --mode create|append|merge  distill mode (default create)
+  --title <t>               distill create title
+  --confirm                 required for merge write
+  --scope chat|all          search scope (default chat)
+  --url <base>              API base (default $CASCADE_NOTE_URL, else cscd.online)
+  --token <jwt>             bearer token (default $CASCADE_NOTE_TOKEN)
+  --json                    machine-readable output
+
+Env: CASCADE_NOTE_URL, CASCADE_NOTE_TOKEN, CASCADE_NOTE_VAULT,
+     CASCADE_CHAT_CHANNEL, CASCADE_CHAT_MESSAGE, CASCADE_CHAT_TRIGGERING_MESSAGE, CASCADE_CHAT_AUTHOR,
+     CASCADE_HELPER_CONFIG`;
+
+export function parseArgs(argv) {
+  const args = { _: [] };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--json') args.json = true;
+    else if (a === '--include-reply-context') args['include-reply-context'] = true;
+    else if (a === '-h' || a === '--help') args.help = true;
+    else if (a.startsWith('--')) {
+      const key = a.slice(2);
+      const next = argv[i + 1];
+      if (next === undefined || next.startsWith('--')) args[key] = true;
+      else { args[key] = next; i++; }
+    } else {
+      args._.push(a);
+    }
+  }
+  return args;
+}
+
+export function fail(msg, code = 1) {
+  process.stderr.write(`cascade-chat: ${msg}\n`);
+  process.exit(code);
+}
+
+export function errorMessage(err) {
+  if (!(err instanceof Error)) return String(err);
+  const cause = err.cause instanceof Error ? ` (${err.cause.message})` : '';
+  return `${err.message}${cause}`;
+}
+
+export function helperConfigPath() {
+  // Prefer the explicit per-run config path agent-runner wrote. CASCADE_RUN_ID
+  // alone can point at a missing/stale file when the parent env is polluted,
+  // which used to leave a ghost { usedChatSend: true } and suppress the wrong
+  // run bubble into an empty "(message)" shell.
+  const fromEnv = String(process.env.CASCADE_HELPER_CONFIG || '').trim();
+  if (fromEnv) return fromEnv;
+  const runId = String(process.env.CASCADE_RUN_ID || '').trim();
+  if (runId) {
+    return path.join(os.homedir(), '.cascade', 'run-contexts', `${runId}.json`);
+  }
+  return path.join(os.homedir(), '.cascade', 'agent-helper-context.json');
+}
+
+export function readHelperConfig() {
+  try {
+    const raw = fs.readFileSync(helperConfigPath(), 'utf8');
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Record that this run already posted via cascade-chat send (for double-post suppression). */
+export function markChatSendUsed(config) {
+  const configPath = helperConfigPath();
+  try {
+    const base = config && typeof config === 'object' ? config : {};
+    // Refuse to write a ghost flag-only file — that suppressed empty run bubbles
+    // without a real dual-post (see empty "(message)" shells in chat).
+    const hasContext = Boolean(
+      String(base.chatChannelId || base.vaultId || base.token || process.env.CASCADE_CHAT_CHANNEL || process.env.CASCADE_NOTE_VAULT || '').trim(),
+    );
+    if (!hasContext) return;
+    const next = {
+      ...base,
+      usedChatSend: true,
+      chatSendCount: Number(base.chatSendCount || 0) + 1,
+      updatedAt: new Date().toISOString(),
+    };
+    fs.mkdirSync(path.dirname(configPath), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(configPath, JSON.stringify(next, null, 2), { mode: 0o600 });
+    try { fs.chmodSync(configPath, 0o600); } catch { /* ignore */ }
+  } catch {
+    // Best-effort — missing config just means no suppression this run.
+  }
+}
+
+export function configString(config, key) {
+  return String(config && config[key] || '').trim();
+}
+
+export function baseUrl(args, config, { ignoreArgsUrl = false } = {}) {
+  // Avatar uses --url for the *picture*; don't treat that as the API base.
+  const fromArgs = ignoreArgsUrl ? '' : args.url;
+  const raw = String(fromArgs || configString(config, 'url') || process.env.CASCADE_NOTE_URL || DEFAULT_URL).trim();
+  return raw.replace(/\/$/, '');
+}
+
+export async function getToken(url, args, config) {
+  const explicit = String(args.token || configString(config, 'token') || process.env.CASCADE_NOTE_TOKEN || '').trim();
+  if (explicit) return explicit;
+  const user = String(process.env.CASCADE_NOTE_USER || '').trim();
+  const pass = String(process.env.CASCADE_NOTE_PASS || '');
+  if (!user || !pass) {
+    fail('no credentials. Set CASCADE_NOTE_TOKEN, or CASCADE_NOTE_USER + CASCADE_NOTE_PASS.');
+  }
+  const res = await fetch(`${url}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ username: user, password: pass }),
+  });
+  if (!res.ok) fail(`login failed (${res.status}): ${await res.text()}`);
+  const body = await res.json();
+  if (!body.token) fail('login response had no token');
+  return body.token;
+}
+
+export async function api(url, token, method, path, body) {
+  const headers = { authorization: `Bearer ${token}` };
+  const runId = String(process.env.CASCADE_RUN_ID || '').trim();
+  if (runId) headers['x-cascade-run-id'] = runId;
+  if (body !== undefined) headers['content-type'] = 'application/json';
+  const res = await fetch(`${url}${path}`, {
+    method,
+    headers,
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+  });
+  const text = await res.text();
+  let json;
+  try { json = text ? JSON.parse(text) : {}; } catch { json = { raw: text }; }
+  if (!res.ok) fail(`${method} ${path} -> ${res.status}: ${json.error || text}`);
+  return json;
+}
+
+export async function readStdin() {
+  if (process.stdin.isTTY) return '';
+  return new Promise((resolve, reject) => {
+    let data = '';
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', (chunk) => { data += chunk; });
+    process.stdin.on('end', () => resolve(data));
+    process.stdin.on('error', reject);
+  });
+}
+
+export function optionString(args, key, envKey, config, configKey) {
+  return String(args[key] || configString(config, configKey) || (envKey ? process.env[envKey] : '') || '').trim();
+}
+
+export function optionInt(args, key, fallback) {
+  const raw = args[key];
+  if (raw === undefined || raw === true || raw === '') return fallback;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 1) fail(`--${key} must be a positive number.`);
+  return Math.floor(value);
+}
+
+export function inferAuthor(args, config) {
+  const explicit = optionString(args, 'author', 'CASCADE_CHAT_AUTHOR', config, 'chatAuthor');
+  if (explicit) return explicit;
+  const currentMessage = String(
+    args['current-message']
+    || process.env.CASCADE_CHAT_MESSAGE
+    || configString(config, 'chatMessageId')
+    || ''
+  ).trim();
+  const match = currentMessage.match(/^agent-(.+)-\d+-[a-z0-9]+$/i);
+  if (match) return match[1];
+  return process.env.USER || 'agent';
+}
+
+export function bodyPreview(message) {
+  const body = String(message.body || '').replace(/\s+/g, ' ').trim();
+  if (body) return body.length > 240 ? `${body.slice(0, 239)}...` : body;
+  if (Array.isArray(message.images) && message.images.length) return `[${message.images.length} image(s)]`;
+  if (Array.isArray(message.attachments) && message.attachments.length) return `[${message.attachments.length} attachment(s)]`;
+  return '(empty)';
+}
+
+/** Media summary for a message, so history never hides that evidence exists. */
+export function mediaSummary(message) {
+  const images = Array.isArray(message.images) ? message.images.length : 0;
+  const hidden = !images && message.hasImages ? 1 : 0;
+  const names = (Array.isArray(message.attachments) ? message.attachments : [])
+    .map((item) => item && item.name)
+    .filter(Boolean);
+  const parts = [];
+  const imageCount = images || hidden;
+  if (imageCount) parts.push(`${imageCount} image${imageCount === 1 ? '' : 's'}`);
+  if (names.length) parts.push(names.join(', '));
+  return parts.join(', ');
+}
+
+const IMAGE_EXTENSIONS = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/jpg': 'jpg',
+  'image/gif': 'gif',
+  'image/webp': 'webp',
+  'image/bmp': 'bmp',
+  'image/svg+xml': 'svg',
+};
+
+/** Write one image/attachment source to disk and return its path.
+ * Data URLs are decoded in place; http(s) sources are downloaded. */
+export async function writeAttachment(source, dir, base, token) {
+  const dataUrl = /^data:([^;,]+);base64,(.+)$/s.exec(String(source.url || '').trim());
+  if (dataUrl) {
+    const extension = IMAGE_EXTENSIONS[dataUrl[1]] || (dataUrl[1].split('/')[1] || 'bin').replace(/[^\w.-]/g, '');
+    const file = path.join(dir, `${base}.${extension}`);
+    fs.writeFileSync(file, Buffer.from(dataUrl[2], 'base64'));
+    return { path: file, media_type: dataUrl[1], name: source.name || path.basename(file) };
+  }
+  const href = String(source.url || '').trim();
+  if (!/^https?:\/\//i.test(href)) return null;
+  const res = await fetch(href, { headers: { authorization: `Bearer ${token}` } });
+  if (!res.ok) return null;
+  const mediaType = source.media_type || res.headers.get('content-type') || 'application/octet-stream';
+  const named = source.name && /\.[a-z0-9]+$/i.test(source.name);
+  const extension = IMAGE_EXTENSIONS[mediaType.split(';')[0]] || 'bin';
+  const file = path.join(dir, named ? source.name.replace(/[/\\]/g, '_') : `${base}.${extension}`);
+  fs.writeFileSync(file, Buffer.from(await res.arrayBuffer()));
+  return { path: file, media_type: mediaType, name: source.name || path.basename(file) };
+}
+
+export function normalizeInlineMessage(value, preserveEscapes = false) {
+  const text = String(value || '');
+  if (preserveEscapes) return text;
+  // Shell double quotes preserve backslash-n literally. Agents commonly use
+  // those escapes for Markdown paragraphs/lists, so decode them at this CLI
+  // boundary. Stdin remains byte-for-byte and --raw-message is the opt-out for
+  // code discussing a literal "\\n" sequence.
+  return text.replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n');
+}
+
+export function replyChain(message, byId, depth) {
+  const chain = [];
+  let current = message;
+  for (let i = 0; i < depth; i++) {
+    const ref = current && current.replyTo;
+    if (!ref || !ref.messageId) break;
+    const parent = byId.get(ref.messageId);
+    chain.push({
+      messageId: ref.messageId,
+      author: ref.author || parent?.author || '',
+      mention: ref.mention || '',
+      preview: parent ? bodyPreview(parent) : (ref.preview || ''),
+    });
+    current = parent;
+  }
+  return chain;
+}
+
+/** Server-side page size for a history request.
+ * The endpoint returns the newest N; the window is then cut locally. Reply
+ * context and --before/--around anchors need older rows than the window itself,
+ * so ask for headroom rather than defaulting to the whole channel. */
+export function fetchLimit(args) {
+  const limit = optionInt(args, 'limit', 12);
+  // An anchor can be far back; overshoot once and only widen if we miss it.
+  if (optionString(args, 'before-message-id') || optionString(args, 'around-message-id')) {
+    return Math.min(500, Math.max(120, limit * 4));
+  }
+  // Reply parents are looked up in the fetched pool, not refetched.
+  const headroom = args['include-reply-context'] === true ? optionInt(args, 'reply-depth', 1) * 10 : 4;
+  return Math.min(500, limit + headroom);
+}
+
+export function selectWindow(messages, args) {
+  const limit = optionInt(args, 'limit', 12);
+  const beforeId = optionString(args, 'before-message-id');
+  const aroundId = optionString(args, 'around-message-id');
+  let pool = messages;
+
+  if (beforeId) {
+    const index = messages.findIndex((message) => message.id === beforeId);
+    pool = index >= 0 ? messages.slice(0, index) : messages;
+    return pool.slice(-limit);
+  }
+
+  if (aroundId) {
+    const index = messages.findIndex((message) => message.id === aroundId);
+    if (index >= 0) {
+      const before = Math.floor((limit - 1) / 2);
+      const start = Math.max(0, index - before);
+      return messages.slice(start, start + limit);
+    }
+  }
+
+  return pool.slice(-limit);
+}
+
+export function decorateMessages(messages, selected, args) {
+  const byId = new Map(messages.map((message) => [message.id, message]));
+  const includeReplies = args['include-reply-context'] === true;
+  const depth = optionInt(args, 'reply-depth', 1);
+  return selected.map((message) => ({
+    id: message.id,
+    author: message.author,
+    createdAt: message.createdAt,
+    body: message.body || '',
+    status: message.status || '',
+    agentId: message.agentId || '',
+    registrationId: message.registrationId || '',
+    runId: message.runId || null,
+    replyTo: message.replyTo || null,
+    replyContext: includeReplies ? replyChain(message, byId, depth) : undefined,
+    images: message.images || [],
+    // The list payload strips heavy data URLs; keep the flag so JSON consumers
+    // can tell "no image" from "image not inlined here".
+    hasImages: Boolean(message.hasImages) || (message.images || []).length > 0,
+    attachments: message.attachments || [],
+  }));
+}
+
+export function formatHuman(messages) {
+  if (messages.length === 0) return '(no messages)';
+  return messages.map((message) => {
+    const header = `[${message.createdAt}] ${message.author} (${message.id})`;
+    const reply = message.replyTo
+      ? `\n  reply_to: ${message.replyTo.author || message.replyTo.mention || 'unknown'} (${message.replyTo.messageId}) "${message.replyTo.preview || ''}"`
+      : '';
+    const chain = message.replyContext?.length
+      ? `\n  reply_context:\n${message.replyContext.map((item) => `    - ${item.author} (${item.messageId}): ${item.preview}`).join('\n')}`
+      : '';
+    // A captioned screenshot used to render as caption-only, so the attachment
+    // marker is separate from the body preview rather than a fallback for it.
+    const media = mediaSummary(message);
+    const attached = media
+      ? `\n  attached: ${media} — open with: cascade-chat attachment --message-id ${message.id}`
+      : '';
+    return `${header}${reply}${chain}\n  ${bodyPreview(message)}${attached}`;
+  }).join('\n\n');
+}
+

@@ -1,10 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { EditorState } from '@codemirror/state';
-import {
-  buildDecorations,
-  formatImageMarkdown,
-  parseImageAlt,
-} from '../components/NoteEditor';
+import { buildDecorations } from '../components/noteEditorDecorations';
+import { formatImageMarkdown, parseImageAlt } from '../components/noteEditorMedia';
 
 function getParsedDecorations(text: string, cursorHead: number = -1) {
   const fullText = text + '\n';

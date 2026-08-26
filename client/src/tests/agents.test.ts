@@ -166,7 +166,7 @@ describe('formatAgentChatPrompt', () => {
     const fresh = formatAgentChatPrompt('dev', akron, 'fix the runner and deploy', 'alice', false);
     const continued = formatAgentChatPrompt('dev', akron, 'fix the runner and deploy', 'alice', true);
 
-    expect(fresh).toContain('harness `scratchpad`');
+    expect(fresh.replace(/[^a-z]+/gi, ' ')).toMatch(/harness\s+scratchpad\b.*durable\s+root\s+cause/i);
     for (const prompt of [fresh, continued]) {
       expect(prompt).toContain(CHAT_REPLY_BREVITY);
       expect(prompt).not.toContain('cascade-scratchpad');

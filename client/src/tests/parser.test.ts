@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { EditorState } from '@codemirror/state';
-import { buildDecorations } from '../components/NoteEditor';
+import { buildDecorations } from '../components/noteEditorDecorations';
 
 /**
  * Helper to parse a markdown text block and extract all active CodeMirror decorations.

@@ -68,6 +68,7 @@ defmodule Cascade.ConfigTest do
     assert state.orphan_reclaim == 600_000
     assert is_integer(Process.read_timer(state.orphan_timer))
     Process.cancel_timer(state.orphan_timer)
+
   end
 
   defp runtime_reclaim_ms do

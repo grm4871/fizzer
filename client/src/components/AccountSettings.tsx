@@ -10,52 +10,17 @@ import {
 } from '../androidLocalCodex';
 import { ensureDesktopRunnerHost, stopDesktopRunnerHost } from '../desktopRunnerHost';
 import { ModalShell } from './ModalShell';
-
-type AssignableRole = Exclude<VaultRole, 'owner'>;
-export type AccountSettingsSection = 'profile' | 'preferences' | 'security' | 'local-agent' | 'vault';
-type PublicJoinPolicy = 'open' | 'request' | 'invite';
-type PublicVaultSettings = {
-  visibility: 'private' | 'public';
-  summary: string;
-  topics: string[];
-  guidelines: string;
-  homeNoteId: string | null;
-  joinPolicy: PublicJoinPolicy;
-};
-type PublicHomeNoteChoice = { id: string; title: string };
-type PublicJoinRequest = {
-  id: number;
-  userId: number;
-  username: string;
-  displayName: string;
-  avatarUrl: string;
-  status: 'pending';
-  createdAt: string;
-};
-type VaultBan = {
-  userId: number;
-  username: string;
-  displayName: string;
-  avatarUrl: string;
-  reason: string;
-  createdAt: string;
-};
-type VaultReport = {
-  id: number;
-  targetType: 'vault' | 'note' | 'message' | 'member';
-  targetId: string;
-  targetUsername: string | null;
-  reason: 'spam' | 'harassment' | 'hate' | 'illegal' | 'other';
-  detail: string;
-  createdAt: string;
-};
-
-const ROLE_HELP: Record<VaultRole, string> = {
-  owner: 'Owns the vault. Cannot be removed or demoted here.',
-  editor: 'Can read and write notes, folders, and chats.',
-  viewer: 'Read-only access.',
-};
-
+import {
+  ROLE_HELP,
+  type AccountSettingsSection,
+  type AssignableRole,
+  type PublicHomeNoteChoice,
+  type PublicJoinPolicy,
+  type PublicJoinRequest,
+  type PublicVaultSettings,
+  type VaultBan,
+  type VaultReport,
+} from './accountSettingsTypes';
 export function AccountSettings({ user, vaultId, vaultName, initialSection = 'profile', showAgentMemory, onShowAgentMemoryChange, onClose, onUserChanged, onSessionChanged, onMembershipChanged }: {
   user: User;
   vaultId?: string | null;
@@ -85,14 +50,12 @@ export function AccountSettings({ user, vaultId, vaultName, initialSection = 'pr
   const [localCodexBusy, setLocalCodexBusy] = useState(false);
   const localCodexLoginUrl = localCodexOutput.match(/https?:\/\/[^\s]+/)?.[0];
   const fileRef = useRef<HTMLInputElement>(null);
-
   useEffect(() => {
     if (!localCodexAvailable) return;
     void getAndroidLocalCodexStatus().then(setLocalCodexStatus).catch((error) => {
       setLocalCodexStatus({ supported: false, authenticated: false, error: String(error) });
     });
   }, [localCodexAvailable]);
-
   const authenticateLocalCodex = async () => {
     setLocalCodexBusy(true);
     setLocalCodexOutput('Starting secure device login…');
@@ -112,7 +75,6 @@ export function AccountSettings({ user, vaultId, vaultName, initialSection = 'pr
       unsubscribe?.();
     }
   };
-
   const toggleLocalCodex = async () => {
     if (!localCodexStatus) return;
     setLocalCodexBusy(true);
@@ -125,7 +87,6 @@ export function AccountSettings({ user, vaultId, vaultName, initialSection = 'pr
       setLocalCodexBusy(false);
     }
   };
-
   const [members, setMembers] = useState<VaultMember[]>([]);
   const [myRole, setMyRole] = useState<VaultRole | null>(null);
   const [memberUsername, setMemberUsername] = useState('');
@@ -143,9 +104,6 @@ export function AccountSettings({ user, vaultId, vaultName, initialSection = 'pr
   const [publicJoinRequests, setPublicJoinRequests] = useState<PublicJoinRequest[]>([]);
   const [vaultBans, setVaultBans] = useState<VaultBan[]>([]);
   const [vaultReports, setVaultReports] = useState<VaultReport[]>([]);
-
-  // Wrap a member-management mutation: flip memberBusy, clear status, and
-  // surface errors uniformly. Callers keep their own pre-checks/prompts.
   const runMember = async (errMsg: string, fn: () => Promise<void>) => {
     setMemberBusy(true);
     setMemberState('');
@@ -157,7 +115,6 @@ export function AccountSettings({ user, vaultId, vaultName, initialSection = 'pr
       setMemberBusy(false);
     }
   };
-
   const loadMembers = async () => {
     if (!vaultId) {
       setMembers([]);
@@ -202,7 +159,6 @@ export function AccountSettings({ user, vaultId, vaultName, initialSection = 'pr
       setMemberState(error instanceof Error ? error.message : 'Could not load vault members');
     }
   };
-
   useEffect(() => {
     void loadMembers();
   }, [vaultId]);
@@ -291,10 +247,6 @@ export function AccountSettings({ user, vaultId, vaultName, initialSection = 'pr
     });
   };
 
-  /**
-   * Share link for someone whose username you don't know, or who has no
-   * account yet — inviting by username needs both.
-   */
   const copyInviteLink = async () => {
     if (!vaultId) return;
     await runMember('Could not create invite link', async () => {
@@ -426,7 +378,6 @@ export function AccountSettings({ user, vaultId, vaultName, initialSection = 'pr
       : `${report.targetType} ${report.targetId}`
   );
 
-  // Any non-owner member may remove themselves; the vault disappears from their switcher.
   const leaveVault = async () => {
     if (!vaultId || !canLeave) return;
     if (!window.confirm(`Leave ${vaultName || 'this vault'}? You lose access until someone invites you back.`)) return;

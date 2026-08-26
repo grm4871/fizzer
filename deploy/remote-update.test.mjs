@@ -5,7 +5,14 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 const deployDirectory = path.dirname(fileURLToPath(import.meta.url));
-const source = fs.readFileSync(path.join(deployDirectory, 'remote-update.sh'), 'utf8');
+const source = [
+  'remote-update.sh',
+  'lib/remote-update-identity.sh',
+  'lib/remote-update-preflight.sh',
+  'lib/remote-update-snapshot.sh',
+  'lib/remote-update-auth-smoke.sh',
+  'lib/remote-update-cutover.sh',
+].map((file) => fs.readFileSync(path.join(deployDirectory, file), 'utf8')).join('\n');
 const compose = fs.readFileSync(path.join(deployDirectory, '../docker-compose.yml'), 'utf8');
 const dockerfile = fs.readFileSync(path.join(deployDirectory, '../Dockerfile'), 'utf8');
 const nginxTemplate = fs.readFileSync(path.join(deployDirectory, 'nginx.conf.template'), 'utf8');

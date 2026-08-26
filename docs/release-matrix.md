@@ -1,75 +1,138 @@
 # Fizzer release matrix
 
-Use this matrix to choose release checks from the boundaries touched by a change. Frontend and backend verification are intentionally independent; do not run one merely because the other changed.
+Use this matrix to choose checks from the boundaries touched by a change. Record
+pass, fail, or not applicable against the exact commit. A build passing is not
+evidence that the served user-visible flow works.
 
-Record pass, fail, or not applicable in the commit, run trace, or release notes. A build passing is not evidence that the user-visible flow works.
+## Release paths
 
-## Baseline for every production release
+There are two image paths; do not mix their commands:
 
-Run the scoped suite from the exact commit being shipped: `npm run test:release:frontend` for every hosted/client UI change, `npm run test:release:backend` for API/Elixir/agent-server changes, and `npm run test:release:desktop` for Electron main-process or packaging changes. Add only the UI verifier(s) from the table below that cover the changed flow. `npm run test:release:frontend:full` retains the exhaustive browser sweep for periodic or cross-cutting UI work; it is not the routine frontend gate. Run `npm run test:release` only for a change that crosses all three runtime boundaries. The human items below still need doing.
-
-- [ ] Review `git status` and the committed diff; confirm every intended file is in the commit and unrelated work is not.
-- [ ] Run the applicable scoped release suite(s); any failure in a touched boundary blocks release.
-- [ ] For frontend changes, confirm the runtime check reports no console errors, uncaught exceptions, or failed module loads.
-- [ ] For backend changes, require contract, route, data, deploy/rollback/edge, and load-harness unit parity.
-- [ ] For a source release, confirm the GitHub workflow passes on the exact commit.
-- [ ] For an installer release, verify each native package and its published SHA-256 checksum.
-- [ ] Self-hosted deployments must define and verify their own health, rollback, and served-bundle checks.
-
-## Checks by change class
-
-| Change touches | Required checks | Recurring failure caught |
+| Path | When | Required sequence |
 | --- | --- | --- |
-| Chat rendering, composer, replies | Send and receive; reply banner; long/streaming response; scroll remains usable; no duplicate status UI | Reply banner covering messages, scroll jumps, duplicate Thinking/Harness indicators |
-| Search, links, forwarding | Open a chat search result and verify exact-message jump/highlight; forward across channels and verify provenance after reload | Message IDs dropped between components, implementation or migration omitted from commit |
-| Tabs, panes, menus, Superkanban | Open every changed tab from its real entry point; right-click/long-press menus; verify empty and populated states | Route fallthrough, missing props, clipped or immediately dismissed menus |
-| Agent start and run lifecycle | Fresh run; resumed session; startup failure; renderer reload during an active run; reconnect and replay; cancel | Orphaned ID-less placeholders, stuck running state, lost output, duplicate processes |
-| Agent prompt, context, helpers | Fresh and resumed turns; reply to an older message; nested project channel; read/write a live note using `cascade-note` | Ignored thread context, lost project ancestry, helper contract disappearing on resume, vault mistaken for cwd |
-| Electron renderer or main process | Browser runtime check plus Electron smoke; Ctrl/Cmd+R during an active run; verify the main process and agent continue | Browser-only success hiding Electron lifecycle failures |
-| Resume, sockets, performance | Brief and long background/resume; offline/online; stream a long run while switching windows | Focus-triggered resync storms, renderer stalls, missed socket events |
-| Android UI | Build/install the actual APK; test status/nav safe areas, keyboard open/close, rotation, and outer/inner foldable layouts | Letterboxing, stuck splash, keyboard viewport breakage, foldable-only overflow |
-| Android packaging/update | Verify APK signing/version, release asset, download endpoint, size, install-over-current, and launch | Broken self-update, APK accidentally bloating the Docker context, stale download |
-| API, persistence, migrations | Test a fresh database and an upgraded copy; restart server; reload client and verify data survives | Features working in memory but failing after deploy/restart or on existing databases |
-| Deployment/configuration | Clean-checkout revision-labelled image; host autodeploy completion; disk/RAM headroom; container health; expected commit, image ID, and served assets | Local-only fixes, artifact drift, stalled/OOM deploys, old production bundle reported as current |
+| Routine exact-image | UI, docs, packaging, and ordinary route/contract changes | `npm run release:image:build`, then `npm run release:image:stage -- <ssh-host>`, then host-side `deploy/remote-update.sh` |
+| Capacity-certified | Concurrency, dispatch, realtime/presence, runner lifecycle, SQLite contention, runtime limits, or deployment-infrastructure changes | Build; run the outer `npm run release:capacity:run -- ... -- ...` wrapper; run the complete `release:image:certify` contract over its generated evidence; then `npm run release:image:stage-certified -- <manifest> <ssh-host>`; then `remote-update.sh` |
+
+The capacity manifest is optional for an existing host's routine exact-image
+release. If a manifest is staged, `remote-update.sh` validates its checksum,
+full revision, image tag, and immutable image ID against the candidate; a partial
+or mismatched manifest fails closed. First-time `deploy/deploy.sh` bootstrap
+requires the certified manifest for its checkout revision.
+
+Capacity certification must use the outer `release:capacity:run` command. That
+wrapper holds the lock, isolates generators from candidate CPUs `0-1`, invokes
+only the checked-in `loadtest_elixir/certification-runner.mjs`, and owns exact
+candidate IDs, phase roots, and cleanup. Do not call the runner directly or use
+an incomplete direct `certified-image` invocation. The final profile covers the
+10,000-user gate, two fault proofs, and separate 5,000-user/two-hour soak. Keep
+source DB/corpus, fixture, results, and phase roots canonical, private,
+pairwise-disjoint, and disk-backed; never use `/tmp` for results. The certifier
+then consumes the runner's monitor, four shard, preflight, freeze, runtime,
+reconciliation, fault, and soak artifacts and emits a manifest plus checksum.
+The full executable command is in `docs/deployment.md` and
+`loadtest_elixir/CAPACITY_TELEMETRY.md`.
+
+## Baseline checks
+
+Run the scoped suite from the exact commit being shipped:
+
+- Hosted/client UI: `npm run test:release:frontend`.
+- API, Elixir, or agent server: `npm run test:release:backend`.
+- Electron main process or packaging: `npm run test:release:desktop`.
+- A change crossing all three boundaries: `npm run test:release`.
+
+`npm run test:release:frontend:full` is the exhaustive UI sweep for periodic or
+cross-cutting work, not the routine frontend gate. `npm run build:vps` does not
+type-check the renderer; frontend coverage starts with `npm run typecheck:client`.
+Backend coverage is `mix check` plus the Elixir contract, route, data, e2e, and
+deploy/rollback/edge suites, not `npm test` alone.
+
+For every release:
+
+- [ ] Review `git status` and the committed diff; release image builds require a clean checkout.
+- [ ] Run each applicable scoped suite; a failure in a touched boundary blocks release.
+- [ ] Confirm the exact image ID, full Git revision, and target platform in release evidence.
+- [ ] Confirm `.env` has the exact `CASCADE_PUBLIC_URL`, matching allowed origin, and a protected JWT secret.
+- [ ] Confirm production host prerequisites, Compose shape, disk/RAM headroom, and UID/GID 1000 data ownership.
+- [ ] Watch the host-side update process; confirm expected commit, image ID, health, and served asset/API through the configured domain.
+- [ ] Keep rollback image/snapshot and release evidence until post-deploy checks pass.
+
+## Checks by changed surface
+
+| Change touches | Required human check | Failure caught |
+| --- | --- | --- |
+| Chat rendering, composer, replies | Send/receive, reply banner, long/streaming response, scroll, duplicate status UI | Covered messages, jumps, duplicate Thinking/Harness indicators |
+| Search, links, forwarding | Search result exact-message jump/highlight; forward across channels; reload and verify provenance | Dropped IDs or provenance |
+| Tabs, panes, menus, Superkanban | Open every changed entry point; right-click/long-press; empty/populated states | Route fallthrough, clipping, immediate dismissal |
+| Agent start and run lifecycle | Fresh/resumed run; startup failure; reload during run; reconnect/replay; cancel | Orphans, stuck state, lost output, duplicate processes |
+| Agent prompt/context/helpers | Fresh/resumed turns; older-message reply; nested project; read/write a live note | Lost thread/project/helper context |
+| Electron renderer/main | Browser runtime plus Electron smoke; `Ctrl/Cmd+R` during active run | Browser-only success hiding lifecycle failure |
+| Resume, sockets, performance | Background/resume, offline/online, long run while switching windows | Resync storms, stalls, missed events |
+| Android UI | Build/install APK; keyboard, rotation, status/nav safe areas, foldable layouts | Letterboxing, splash, viewport, foldable overflow |
+| Android packaging/update | APK signing/version, release asset/download, checksum, install-over-current | Stale or unsigned/mis-versioned package |
+| API, persistence, migrations | Fresh and upgraded DB; restart; reload; verify durable data | In-memory-only behavior or migration loss |
+| Deployment/configuration | Clean revision-labelled image; host update; runtime shape; health; served bundle | Drift, stalled/OOM deployment, stale assets |
 
 ## Automated gates
 
-Where a row above has a command, run the command instead of reasoning about the code — each of these was verified to fail when its bug is reintroduced, not merely to pass today.
+Use the command that covers the changed surface; do not infer behavior from
+source inspection:
 
-| Row | Command | What it actually asserts |
+| Surface | Command | Scope |
 | --- | --- | --- |
-| Chat rendering, composer, replies | `npm test`, `npm run test:chat-mission`, `npm run verify:chat-mission-ui` | Grouping/merge rules, reply refs, mention parsing, run blocks, steering; durable mission state across linked clients/reload; inline artifact and coordinator setting in the built client |
-| Search, links, forwarding | `npm run test:chat-forward`, `npm run verify:chat-forward-ui`, `npm run verify:reply-jump-ui` | Copy fidelity + provenance across channels, socket broadcast, survives reload, refusals; then the same via real right-click → picker → banner; reply quotes scroll to and highlight the quoted message |
-| Tabs, panes, menus, Superkanban | `npm run verify:tab-menus` | Every `+`/tab menu item present (catches a prop that never reached the component), menu survives the opening right-click, menu unclipped, Superkanban routes to a populated board, Close tab works |
-| Agent start and run lifecycle | `npm run test:desktop-runner` | Run reclaim, replay, duplicate-process avoidance |
-| Vault switcher, vault settings | `npm run verify:vault-rename-ui` | Rename reaches `PATCH /api/vaults/:id` and updates the switcher, non-owners get neither the control nor the API, and the agent-memory preference lives in account settings |
-| API, persistence, migrations | `npm run test:elixir:mix-check` and `npm run test:elixir:data-parity` | Fresh **and** upgraded databases: every column the writers use exists after migration, legacy rows survive, and writes still work against a migrated table. Routine deploys classify rolling-safe from `sqlite_master` only; full row/corpus compare runs only when that schema changes. |
-| Elixir backend | `npm run test:release:backend` | Sequential, fail-closed `mix check`; Elixir contract and route inventories; data compatibility; e2es; rollback, nginx edge, load-driver, monitor, and protocol regression suites |
-| Deployment/configuration | Watch the update process on your host, then inspect the served bundle | Deploy completion plus the asset your configured domain really serves |
+| Chat | `npm test`, `npm run test:chat-mission`, `npm run verify:chat-mission-ui` | Client tests, mission lifecycle, built-client mission flow |
+| Search/forward/reply | `npm run test:chat-forward`, `npm run verify:chat-forward-ui`, `npm run verify:reply-jump-ui` | Provenance, sockets/reload, real picker/reply jump |
+| Tabs/menus | `npm run verify:tab-menus` | Real menu entry points, clipping, populated Superkanban route |
+| Agent lifecycle | `npm run test:desktop-runner` | Reclaim, replay, duplicate-process avoidance |
+| Vault settings | `npm run verify:vault-rename-ui` | Owner controls, API mutation, account preference |
+| API/data | `npm run test:elixir:mix-check`, `npm run test:elixir:data-parity` | Fresh/upgraded schema, legacy rows, write compatibility |
+| Backend release | `npm run test:release:backend` | Build, mix/contract/route/data/e2e and release-safety gates |
+| Deployment | Host update plus served-bundle check | Real configured domain and running image, not local output |
 
-Still manual, by nature: Electron lifecycle (`Ctrl/Cmd+R` during an active run), Android/foldable layouts, background/resume and offline behavior, and any production exercise requiring a real account.
-
-The checkout gate proves behavioral parity and data preservation; it does not certify production capacity. Run the production-shaped 10,000-user capacity test and 5,000-user two-hour durability soak only when changing concurrency, dispatch, realtime/presence, runner lifecycle, database contention, runtime resource limits, or deployment infrastructure. Those gates remain additive and bind to one exact image ID. UI presentation, Electron packaging, documentation, and ordinary contract/route parity fixes use the routine staged-image path. `deploy/remote-update.sh` never rebuilds: it validates the revision label, embedded route gate, production-shaped preflight, snapshot/rollback, authenticated smoke, and reopened edge on every cutover; when capacity certification is present it must match the exact image.
-
-`npm run build:vps` still does not type-check the renderer. Frontend release coverage starts with `npm run typecheck:client`. Backend coverage is `mix check` plus the Elixir e2e and contract scripts, not `npm test`.
+The production-shaped capacity gate is not part of ordinary checkout parity.
+Run it only for the capacity-sensitive classes above, and bind every artifact
+to one immutable image ID. A capacity pass does not replace health, authenticated
+live smoke, nginx, backup, rollback, or served-bundle checks.
 
 ## Environment and lifecycle coverage
 
-Use the smallest set that covers the changed boundary:
-
 | Surface | Fresh | Resume/reload | Disconnect/recover | Production |
 | --- | --- | --- | --- | --- |
-| Web | Baseline runtime smoke | Required for stateful UI | Required for socket work | Required for client changes |
-| Electron | Required for desktop changes | Required for renderer/run changes | Required for runner/socket work | Verify in-place refresh; never relaunch active runs |
-| Android/foldable | Required for mobile changes | Required for cached/session UI | Required for networking changes | Verify installed APK and live hosted UI |
-| Agent harness | Fresh session | Resumed session | Interrupted/reclaimed run | Verify the deployed prompt/helper contract |
+| Web | Baseline runtime smoke | Stateful UI reload | Socket offline/online | Configured public origin |
+| Electron | Required for desktop changes | Renderer/run reload | Runner/socket recovery | In-place refresh; do not relaunch active runs |
+| Android/foldable | Installed APK | Cached/session UI | Networking changes | Installed APK plus live hosted UI |
+| Agent harness | Fresh session | Resumed session | Interrupted/reclaimed run | Deployed prompt/helper contract |
+
+## Workflow and artifact truth
+
+The repository currently has only two GitHub workflows:
+
+- `desktop-build.yml` builds native macOS, Windows, and Linux installers and
+  publishes the rolling `desktop-beta` release. These technical-beta installers
+  are **unsigned**; uploaded SHA-256 values provide integrity checking, not code
+  signing or publisher identity.
+- `android-beta.yml` builds/publishes the sideload APK only when its signing
+  secrets are configured; otherwise it explicitly skips the APK build.
+
+Neither workflow builds, certifies, stages, promotes, or rolls back the server.
+A successful Actions run or GitHub upload is not proof that production changed.
+
+Ownership matters during handoff: the image builder owns the immutable local
+image; capacity runner owns evidence files until the certifier consumes them;
+the certifier owns the manifest/checksum; certified staging installs those as
+root-owned `0600` files below `/var/lib/cascade-release`; the application owns
+only UID/GID 1000 data below `/var/lib/cascade`. `deploy.result` is writable by
+the application so the watcher can report status and is not an attestation.
 
 ## Release evidence
 
-A release claim should say what was verified, not merely “tests passed.” Include:
+A release claim should identify what was verified, not merely say “tests
+passed.” Include:
 
-- Commit SHA and Actions run result.
-- Commands/checks executed and any intentionally skipped matrix rows.
-- Production health plus the served asset or API behavior checked.
+- Commit SHA, image ID, platform, and applicable Actions run result.
+- Commands/checks executed and intentionally skipped matrix rows.
+- Capacity manifest/checksum and retained artifact paths, when certification was required.
+- Host health, authenticated live behavior, public TLS edge, and served asset/API check.
 - Device and viewport for mobile UI changes.
 - Whether an active agent run survived reload/reconnect when lifecycle code changed.
+- Rollback image/snapshot location and the operator who owns cleanup after sign-off.

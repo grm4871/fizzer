@@ -2,12 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { CascadeRunPanel } from '../components/CascadeRunPanel';
-import {
-  buildHarnessActivity,
-  hasRunActivity,
-  liveActivityHeadline,
-  summarizeActivity,
-} from '../chat/harnessActivity';
+import { buildHarnessActivity, hasRunActivity } from '../chat/harnessActivity';
+import { buildHeaderStatChips, liveActivityHeadline, summarizeActivity } from '../chat/harnessActivityFormatters';
 import { appendChatRunBlocks, normalizeChatRunBlocks } from '../chat/runBlocks';
 import type { ChatMessage } from '../chat/types';
 
@@ -107,8 +103,7 @@ describe('buildHarnessActivity', () => {
     expect(activity.stats.rateLimitUtilization).toBe(62);
   });
 
-  it('builds header chips for tokens, context, and cost', async () => {
-    const { buildHeaderStatChips } = await import('../chat/harnessActivity');
+  it('builds header chips for tokens, context, and cost', () => {
     const activity = buildHarnessActivity(msg({
       harnessLog: '# cascade-stats {"inputTokens":1200,"outputTokens":80,"totalCostUsd":0.012,"contextWindow":200000,"contextUsed":42000}\n',
     }));

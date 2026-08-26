@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { AlertTriangle, LayoutDashboard, Loader2, Search } from 'lucide-react';
-import { hasObsidianKanbanMarker, parseKanbanMarkdown, type KanbanCard } from './KanbanView';
+import { hasObsidianKanbanMarker, parseKanbanMarkdown, type KanbanCard } from './kanbanMarkdown';
 import { ErrorBoundary } from './ErrorBoundary';
 import type { Note } from '../api';
 import type { WorkItem, WorkItemStatus } from '../chat/workItems';
