@@ -4647,68 +4647,6 @@ button.chat-avatar.is-clickable:focus-visible {
   background: var(--bg-raised);
   box-shadow: var(--shadow-md);
 }
-.chat-collaboration-panel {
-  width: min(440px, calc(100vw - 32px));
-  gap: 12px;
-  padding: 16px;
-}
-.chat-collaboration-field {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  color: var(--text-secondary);
-  font-size: 0.6875rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-}
-.chat-collaboration-field select,
-.chat-collaboration-field textarea {
-  width: 100%;
-  padding: 8px 9px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-base);
-  color: var(--text-primary);
-  font: inherit;
-  font-size: 0.8125rem;
-  font-weight: 400;
-  letter-spacing: normal;
-}
-.chat-collaboration-field textarea {
-  min-height: 88px;
-  resize: vertical;
-  line-height: 1.4;
-}
-.chat-collaboration-field select:focus-visible,
-.chat-collaboration-field textarea:focus-visible {
-  border-color: var(--accent);
-  outline: none;
-  box-shadow: 0 0 0 2px var(--accent-subtle);
-}
-.chat-collaboration-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-.chat-collaboration-actions button {
-  min-height: 32px;
-  padding: 6px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-overlay);
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-.chat-collaboration-actions button[type="submit"] {
-  border-color: color-mix(in srgb, var(--accent) 65%, var(--border));
-  background: var(--accent);
-  color: hsl(226, 12%, 8%);
-  font-weight: 700;
-}
-.chat-collaboration-actions button:disabled {
-  cursor: default;
-  opacity: 0.55;
-}
 .chat-forward-head {
   display: flex;
   align-items: center;

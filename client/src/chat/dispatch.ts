@@ -34,7 +34,6 @@ import {
   replyQuoteTargetsAgent,
   stripRegisteredAgentMentions,
 } from './mentions';
-import type { ChatRelationship } from './relationships';
 import {
   applyRemoteChatMessage,
   appendChatRunBlocks,
@@ -1039,52 +1038,6 @@ export function useChatDispatch({
     }
   }, [markChatRunCanceled]);
 
-  const handleCollaborateChatMessage = useCallback(async (
-    channelId: string,
-    sourceMessageId: string,
-    targetRegistrationId: string,
-    relationship: ChatRelationship,
-    instruction: string,
-  ): Promise<void> => {
-    const vaultId = activeVaultIdRef.current;
-    if (!vaultId) throw new Error('No active vault');
-    const history = chatMessageStore.getChannel(channelId);
-    const data = await api<{
-      message: ChatMessage;
-      agents: ChatAgentRegistration[];
-      dispatches: ChatAgentDispatch[];
-    }>(`/api/vaults/${vaultId}/channels/${channelId}/messages/${encodeURIComponent(sourceMessageId)}/collaborate`, {
-      method: 'POST',
-      body: JSON.stringify({
-        target: targetRegistrationId,
-        relationship,
-        instruction,
-        requestId: `collab-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      }),
-    });
-    chatMessageStore.update(channelId, (messages) => {
-      const index = messages.findIndex((message) => message.id === data.message.id);
-      if (index === -1) return [...messages, data.message];
-      const next = [...messages];
-      next[index] = mergeRemoteChatMessage(messages[index], data.message);
-      return next;
-    });
-    setChatState((prev) => ({
-      ...prev,
-      registeredAgentsByChannel: {
-        ...prev.registeredAgentsByChannel,
-        [channelId]: data.agents,
-      },
-    }));
-    await dispatchChatAgentIntents(
-      channelId,
-      data.message,
-      data.agents,
-      data.dispatches,
-      history,
-    );
-  }, [dispatchChatAgentIntents]);
-
   const handleSendChatMessage = useCallback((
     channelId: string,
     body: string,
@@ -1197,7 +1150,6 @@ export function useChatDispatch({
     handleDeleteChatMessage,
     handleForwardChatMessage,
     handleCancelChatRun,
-    handleCollaborateChatMessage,
     handleSendChatMessage,
   };
 }

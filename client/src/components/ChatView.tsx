@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Bot, ClipboardList, Flag, Forward, Hash, History, MessageCircle, Reply, Trash2, X } from 'lucide-react';
+import { ClipboardList, Flag, Forward, Hash, History, MessageCircle, Reply, Trash2, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { api, type NoteSummary } from '../api';
 import { normalizeMention } from '../chat/mentions';
@@ -27,12 +27,6 @@ import { ChatMissionCard } from './ChatMissionCard';
 import { usePopupMenu } from '../ui/popupMenu';
 import { ChatSidebarButtons } from './ChatSidebarButtons';
 import { ChatWorkTrace } from './ChatWorkTrace';
-import {
-  CHAT_RELATIONSHIPS,
-  CHAT_RELATIONSHIP_INSTRUCTIONS,
-  CHAT_RELATIONSHIP_LABELS,
-  type ChatRelationship,
-} from '../chat/relationships';
 import { ReportDialog } from './ReportDialog';
 import { hasRunActivity } from '../chat/harnessActivity';
 import { segmentTranscript, workTracePeek, type ChatMessageGroup } from '../chat/workTrace';
@@ -105,14 +99,6 @@ interface ChatViewProps {
   onRemoveParticipant?: (channelId: string, username: string) => Promise<void>;
   onLeaveChannel?: (channelId: string) => Promise<void>;
   onSendMessage: (channelId: string, body: string, media?: ChatMediaAttachment[], replyTo?: ChatReplyRef) => void;
-  /** Create a typed, single-agent handoff linked to an existing chat message. */
-  onCollaborateMessage?: (
-    channelId: string,
-    sourceMessageId: string,
-    targetRegistrationId: string,
-    relationship: ChatRelationship,
-    instruction: string,
-  ) => Promise<void>;
   /** Delete a message for everyone (own messages, or any when you host the channel). */
   onDeleteMessage?: (channelId: string, messageId: string) => Promise<void> | void;
   /** Copy a message into another channel. Resolves once the copy is posted. */
@@ -185,7 +171,6 @@ export const ChatView = memo(function ChatView({
   onRemoveParticipant,
   onLeaveChannel,
   onSendMessage,
-  onCollaborateMessage,
   onDeleteMessage,
   onForwardMessage,
   onCancelRun,
@@ -245,12 +230,6 @@ export const ChatView = memo(function ChatView({
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
   const [jumpHighlightMessageId, setJumpHighlightMessageId] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; message: ChatMessage } | null>(null);
-  const [collaborationSource, setCollaborationSource] = useState<ChatMessage | null>(null);
-  const [collaborationTargetId, setCollaborationTargetId] = useState('');
-  const [collaborationRelationship, setCollaborationRelationship] = useState<ChatRelationship>('review_request');
-  const [collaborationInstruction, setCollaborationInstruction] = useState(CHAT_RELATIONSHIP_INSTRUCTIONS.review_request);
-  const [collaborationBusy, setCollaborationBusy] = useState(false);
-  const [collaborationError, setCollaborationError] = useState('');
   const [participantMenu, setParticipantMenu] = useState<{ x: number; y: number; username: string; action: 'remove' | 'leave' } | null>(null);
   const [reportMessage, setReportMessage] = useState<ChatMessage | null>(null);
   const contextMenuRef = usePopupMenu<HTMLDivElement>(contextMenu);
@@ -282,28 +261,7 @@ export const ChatView = memo(function ChatView({
     setMissionArchiveOpen(false);
     setMissionArchive([]);
     setMissionArchiveError('');
-    setCollaborationSource(null);
-    setCollaborationError('');
   }, [channelId]);
-  const collaborationTargets = useMemo(() => {
-    const profile = Object.values(presence.profiles || {}).find((item) => (
-      item.username.toLowerCase() === currentUser.toLowerCase()
-    ));
-    const currentUserId = profile?.id;
-    const seen = new Set<string>();
-    return registeredAgents.filter((registration) => {
-      if (
-        currentUserId != null
-        && registration.ownerUserId != null
-        && registration.ownerUserId !== currentUserId
-        && !registration.pingableByOthers
-      ) return false;
-      const key = registration.vaultAgentId || registration.id;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-  }, [currentUser, presence.profiles, registeredAgents]);
   const messagesRef = useRef<HTMLDivElement | null>(null);
   /** Inner content wrapper — ResizeObserver watches height growth (harness, thinking). */
   const messagesContentRef = useRef<HTMLDivElement | null>(null);
@@ -794,45 +752,6 @@ export const ChatView = memo(function ChatView({
     composerRef.current?.startReply(buildReplyRef(message, registeredAgents));
   }, [registeredAgents]);
 
-  const targetsForCollaboration = useCallback((message: ChatMessage) => (
-    collaborationTargets.filter((registration) => (
-      registration.id !== message.registrationId
-      && (!message.registrationId || registration.vaultAgentId !== registeredAgents.find((item) => item.id === message.registrationId)?.vaultAgentId)
-    ))
-  ), [collaborationTargets, registeredAgents]);
-
-  const startCollaboration = useCallback((message: ChatMessage) => {
-    const targets = targetsForCollaboration(message);
-    if (!onCollaborateMessage || targets.length === 0) return;
-    setContextMenu(null);
-    setCollaborationSource(message);
-    setCollaborationTargetId(targets[0].id);
-    setCollaborationRelationship('review_request');
-    setCollaborationInstruction(CHAT_RELATIONSHIP_INSTRUCTIONS.review_request);
-    setCollaborationError('');
-  }, [onCollaborateMessage, targetsForCollaboration]);
-
-  const submitCollaboration = useCallback(async (event: React.FormEvent) => {
-    event.preventDefault();
-    if (!collaborationSource || !collaborationTargetId || !collaborationInstruction.trim() || !onCollaborateMessage) return;
-    setCollaborationBusy(true);
-    setCollaborationError('');
-    try {
-      await onCollaborateMessage(
-        channelId,
-        collaborationSource.id,
-        collaborationTargetId,
-        collaborationRelationship,
-        collaborationInstruction.trim(),
-      );
-      setCollaborationSource(null);
-    } catch (error) {
-      setCollaborationError(error instanceof Error ? error.message : 'Could not ask agent');
-    } finally {
-      setCollaborationBusy(false);
-    }
-  }, [channelId, collaborationInstruction, collaborationRelationship, collaborationSource, collaborationTargetId, onCollaborateMessage]);
-
   const openMessageContextMenu = useCallback((event: React.MouseEvent, message: ChatMessage) => {
     event.preventDefault();
     event.stopPropagation();
@@ -1170,14 +1089,6 @@ export const ChatView = memo(function ChatView({
             <Reply size={14} />
             Reply
           </button>
-          {onCollaborateMessage
-            && Boolean(contextMenu.message.agentId || contextMenu.message.registrationId)
-            && targetsForCollaboration(contextMenu.message).length > 0 && (
-            <button type="button" role="menuitem" onClick={() => startCollaboration(contextMenu.message)}>
-              <Bot size={14} />
-              Ask agent…
-            </button>
-          )}
           {onForwardMessage && (
             <button type="button" role="menuitem" onClick={() => startForward(contextMenu.message)}>
               <Forward size={14} />
@@ -1389,73 +1300,6 @@ export const ChatView = memo(function ChatView({
               ))}
             </div>
           </section>
-        </div>
-      )}
-
-      {collaborationSource && (
-        <div
-          className="chat-forward-overlay"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="chat-collaboration-title"
-          onClick={() => !collaborationBusy && setCollaborationSource(null)}
-        >
-          <form className="chat-forward-panel chat-collaboration-panel" onSubmit={(event) => void submitCollaboration(event)} onClick={(event) => event.stopPropagation()}>
-            <div className="chat-forward-head">
-              <strong id="chat-collaboration-title">Ask another agent</strong>
-              <button type="button" title="Cancel" disabled={collaborationBusy} onClick={() => setCollaborationSource(null)}>
-                <X size={14} />
-              </button>
-            </div>
-            <div className="chat-forward-preview">
-              <strong>{collaborationSource.author}</strong>
-              <span>{buildReplyPreview(collaborationSource)}</span>
-            </div>
-            <label className="chat-collaboration-field">
-              Agent
-              <select value={collaborationTargetId} onChange={(event) => setCollaborationTargetId(event.target.value)}>
-                {targetsForCollaboration(collaborationSource).map((registration) => (
-                  <option key={registration.id} value={registration.id}>
-                    {registration.displayName} (@{registration.mention})
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="chat-collaboration-field">
-              Relationship
-              <select
-                value={collaborationRelationship}
-                onChange={(event) => {
-                  const relationship = event.target.value as ChatRelationship;
-                  setCollaborationRelationship(relationship);
-                  setCollaborationInstruction(CHAT_RELATIONSHIP_INSTRUCTIONS[relationship]);
-                }}
-              >
-                {CHAT_RELATIONSHIPS.map((relationship) => (
-                  <option key={relationship} value={relationship}>{CHAT_RELATIONSHIP_LABELS[relationship]}</option>
-                ))}
-              </select>
-            </label>
-            <label className="chat-collaboration-field">
-              Instruction
-              <textarea
-                autoFocus
-                rows={4}
-                value={collaborationInstruction}
-                onChange={(event) => setCollaborationInstruction(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Escape' && !collaborationBusy) setCollaborationSource(null);
-                }}
-              />
-            </label>
-            {collaborationError && <div className="chat-forward-error">{collaborationError}</div>}
-            <div className="chat-collaboration-actions">
-              <button type="button" disabled={collaborationBusy} onClick={() => setCollaborationSource(null)}>Cancel</button>
-              <button type="submit" disabled={collaborationBusy || !collaborationTargetId || !collaborationInstruction.trim()}>
-                {collaborationBusy ? 'Asking…' : 'Ask agent'}
-              </button>
-            </div>
-          </form>
         </div>
       )}
 

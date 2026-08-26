@@ -271,7 +271,6 @@ A channel transcript is persistent and realtime. Use ordinary messages for conte
 Right-click a message to:
 
 - **Reply** — attach the message as the direct context for your response;
-- **Ask agent…** — send a typed follow-up to an agent response;
 - **Forward** — copy the message into another channel while retaining its origin;
 - **Add to kanban** — turn the message into a durable work item;
 - **Report** — report a channel message to the vault’s moderation queue;

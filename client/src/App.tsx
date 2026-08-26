@@ -1556,7 +1556,6 @@ export default function App() {
     handleDeleteChatMessage,
     handleForwardChatMessage,
     handleCancelChatRun,
-    handleCollaborateChatMessage,
     handleSendChatMessage,
   } = useChatDispatch({
     activeVaultIdRef,
@@ -2601,7 +2600,6 @@ export default function App() {
             onRemoveParticipant={handleRemoveChatParticipant}
             onLeaveChannel={handleLeaveChatChannel}
             onSendMessage={handleSendChatMessage}
-            onCollaborateMessage={handleCollaborateChatMessage}
             onDeleteMessage={handleDeleteChatMessage}
             onForwardMessage={handleForwardChatMessage}
             onCancelRun={handleCancelChatRun}
@@ -2637,7 +2635,7 @@ export default function App() {
         </Suspense>
       </ErrorBoundary>
     );
-  }, [chatState.registeredAgentsByChannel, chatPresenceByChannel, currentUsername, user, loadingChatChannels, runnerHealth, vaultAgents, handleCancelChatRun, handleInviteChatUser, handleRemoveChatParticipant, handleLeaveChatChannel, handleRegisterChatAgent, handleRemoveChatAgent, handleUpsertVaultAgent, handleDeleteVaultAgent, handleDeleteAgentProfile, handleAddVaultAgentToChannel, handleSendChatMessage, handleCollaborateChatMessage, handleForwardChatMessage, noteContents, notes, getNoteChangeHandler, getNoteSaveHandler, getNoteRenameHandler, handleExecuteDirective, handleOpenWikilink, openNote, chatMembersOpen, activeVaultId, handleHydrateChatMessage, handleOpenSharedChatNote, superkanbanNotes, superkanbanLiveWork, superkanbanLoading, superkanbanError, chatJumpTarget, handleChatJumpHandled]);
+  }, [chatState.registeredAgentsByChannel, chatPresenceByChannel, currentUsername, user, loadingChatChannels, runnerHealth, vaultAgents, handleCancelChatRun, handleInviteChatUser, handleRemoveChatParticipant, handleLeaveChatChannel, handleRegisterChatAgent, handleRemoveChatAgent, handleUpsertVaultAgent, handleDeleteVaultAgent, handleDeleteAgentProfile, handleAddVaultAgentToChannel, handleSendChatMessage, handleForwardChatMessage, noteContents, notes, getNoteChangeHandler, getNoteSaveHandler, getNoteRenameHandler, handleExecuteDirective, handleOpenWikilink, openNote, chatMembersOpen, activeVaultId, handleHydrateChatMessage, handleOpenSharedChatNote, superkanbanNotes, superkanbanLiveWork, superkanbanLoading, superkanbanError, chatJumpTarget, handleChatJumpHandled]);
 
   if (!authReady) return <main className="auth-shell" id="auth-pending" />;
 
@@ -2999,7 +2997,6 @@ export default function App() {
                 onRemoveParticipant={handleRemoveChatParticipant}
                 onLeaveChannel={handleLeaveChatChannel}
                 onSendMessage={handleSendChatMessage}
-                onCollaborateMessage={handleCollaborateChatMessage}
                 onCancelRun={handleCancelChatRun}
                 notes={notes}
                 onOpenNote={openNote}
