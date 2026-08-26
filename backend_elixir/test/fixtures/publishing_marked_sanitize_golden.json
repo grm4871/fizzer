@@ -22,7 +22,7 @@
   {
     "name": "links_images",
     "markdown": "[safe](https://example.com/a?b=1) [mail](mailto:person@example.com) [local](/notes/one) ![image](https://example.com/image.png)",
-    "html": "<p><a href=\"https://example.com/a?b=1\" rel=\"noopener noreferrer\">safe</a> <a href=\"mailto:person@example.com\" rel=\"noopener noreferrer\">mail</a> <a href=\"/notes/one\" rel=\"noopener noreferrer\">local</a> <img src=\"https://example.com/image.png\" alt=\"image\" /></p>\n"
+    "html": "<p><a href=\"https://example.com/a?b=1\" rel=\"noopener noreferrer\">safe</a> <a href=\"mailto:person@example.com\" rel=\"noopener noreferrer\">mail</a> <a href=\"/notes/one\" rel=\"noopener noreferrer\">local</a> <a href=\"https://example.com/image.png\" rel=\"noopener noreferrer\">External image: image</a></p>\n"
   },
   {
     "name": "private_wiki_ai",

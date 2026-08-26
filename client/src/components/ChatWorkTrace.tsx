@@ -21,6 +21,7 @@ import { hasRunActivity } from '../chat/harnessActivity';
 import { CascadeRunPanel } from './CascadeRunPanel';
 import { shouldRenderRunPanel } from './ChatGroupRow';
 import { ChatQuoteRefs } from './ChatQuoteRefs';
+import { SafeMarkdownImage } from './ChatMarkdown';
 import { ThinkingSpinner } from './ThinkingSpinner';
 import { SwipeToReply } from './SwipeToReply';
 import type { ChatMessage } from '../chat/types';
@@ -52,7 +53,7 @@ function WorkTraceBody({ body }: { body: string }) {
   const text = body.replace(/\\+`/g, '`');
   return (
     <div className="chat-work-line-md">
-      <ReactMarkdown remarkPlugins={MARKDOWN_PLUGINS}>{text}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={MARKDOWN_PLUGINS} components={{ img: SafeMarkdownImage }}>{text}</ReactMarkdown>
     </div>
   );
 }

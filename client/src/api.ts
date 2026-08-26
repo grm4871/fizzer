@@ -169,8 +169,8 @@ export class ApiError extends Error {
 /**
  * Generic typed fetch wrapper for the Cascade API.
  *
- * Sends HttpOnly cookies and temporarily attaches a legacy localStorage token
- * so existing signed-in installations can migrate without logging out.
+ * Sends the HttpOnly session cookie. Legacy JavaScript-readable credentials are
+ * discarded instead of being attached to requests.
  *
  * @template T - Expected shape of the JSON response body
  * @param path - API path (e.g. `/api/vaults`)
@@ -178,25 +178,14 @@ export class ApiError extends Error {
  * @returns Parsed JSON response typed as `T`
  */
 export async function api<T>(path: string, options: RequestInit = {}) {
-  const token = localStorage.getItem('docs_token');
+  localStorage.removeItem('docs_token');
   const headers = {
     'Content-Type': 'application/json',
     'X-Cascade-Browser': '1',
     ...options.headers,
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    ...(token ? { 'X-Cascade-Session-Migrate': '1' } : {}),
   };
   const res = await fetch(`${API_BASE}${path}`, { ...options, headers, credentials: 'include' });
   const data = await res.json().catch(() => ({}));
-  // Only clear the exact legacy credential this request sent. An anonymous
-  // bootstrap request from a document being replaced must not race and delete
-  // a token another page just stored for one-release migration.
-  if (res.status === 401 && token && localStorage.getItem('docs_token') === token) {
-    localStorage.removeItem('docs_token');
-  }
-  if (res.ok && token && path === '/api/session' && localStorage.getItem('docs_token') === token) {
-    localStorage.removeItem('docs_token');
-  }
   if (!res.ok) {
     const body = data && typeof data === 'object' ? data as Record<string, unknown> : {};
     throw new ApiError(

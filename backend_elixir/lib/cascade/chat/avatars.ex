@@ -6,20 +6,25 @@ defmodule Cascade.Chat.Avatars do
 
   @image_types ~w(image/png image/jpeg image/gif image/webp)
 
+  def persist(_user_id, agent_id, "") do
+    purge(agent_id)
+    {:ok, ""}
+  end
+
   def persist(user_id, agent_id, url) do
     case internal_asset(url) do
       {:ok, note_id, asset_id} -> copy_asset(user_id, agent_id, note_id, asset_id)
-      :external -> {:ok, url}
+      :external -> {:error, "Profile picture must be an uploaded note image"}
     end
   end
 
-  def resolve(agent_id) do
-    if Regex.match?(~r/^[A-Za-z0-9_-]+$/u, agent_id) do
+  def resolve(asset_id) do
+    if Regex.match?(~r/^[A-Za-z0-9_-]+$/u, asset_id) do
       directory = directory()
 
       with {:ok, files} <- File.ls(directory),
            filename when not is_nil(filename) <-
-             Enum.find(files, &String.starts_with?(&1, agent_id <> ".")),
+             Enum.find(files, &String.starts_with?(&1, asset_id <> ".")),
            path = Path.join(directory, filename),
            {:ok, %{type: :regular}} <- File.lstat(path) do
         path
@@ -27,6 +32,19 @@ defmodule Cascade.Chat.Avatars do
         _ -> nil
       end
     end
+  end
+
+  def purge(agent_id) do
+    if Regex.match?(~r/^[A-Za-z0-9_-]+$/u, agent_id) do
+      for pattern <- [agent_id <> ".*", agent_id <> "-*"] do
+        directory()
+        |> Path.join(pattern)
+        |> Path.wildcard()
+        |> Enum.each(&File.rm/1)
+      end
+    end
+
+    :ok
   end
 
   defp copy_asset(user_id, agent_id, note_id, asset_id) do
@@ -37,7 +55,9 @@ defmodule Cascade.Chat.Avatars do
            Assets.response_metadata(source) do
       extension = Path.extname(source)
       File.mkdir_p!(directory())
-      destination = Path.join(directory(), agent_id <> extension)
+      purge(agent_id)
+      asset_id = "#{agent_id}-#{System.system_time(:microsecond)}"
+      destination = Path.join(directory(), asset_id <> extension)
 
       temporary =
         destination <> ".tmp-" <> Base.url_encode64(:crypto.strong_rand_bytes(6), padding: false)
@@ -45,15 +65,8 @@ defmodule Cascade.Chat.Avatars do
       File.cp!(source, temporary)
       File.chmod!(temporary, 0o644)
 
-      directory()
-      |> Path.join(agent_id <> ".*")
-      |> Path.wildcard()
-      |> Enum.reject(&(&1 == temporary))
-      |> Enum.each(&File.rm/1)
-
       File.rename!(temporary, destination)
-      version = File.stat!(destination).mtime |> :calendar.datetime_to_gregorian_seconds()
-      {:ok, "/api/notes/agent-avatars/assets/#{agent_id}?v=#{version}"}
+      {:ok, "/api/notes/agent-avatars/assets/#{asset_id}"}
     else
       nil -> {:error, "Profile picture asset was not found"}
       _ -> {:error, "Profile picture must be a readable image asset"}

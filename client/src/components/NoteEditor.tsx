@@ -586,7 +586,13 @@ class VideoWidget extends WidgetType {
     };
 
     if (/^https?:\/\//i.test(resolved) && !resolved.includes('/api/notes/')) {
-      finish(resolved);
+      const link = document.createElement('a');
+      link.href = resolved;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = `External video: ${this.alt || 'video'}`;
+      wrap.appendChild(link);
+      return wrap;
     } else {
       fetch(resolved, {
         credentials: 'include',
@@ -696,16 +702,12 @@ class ImageWidget extends WidgetType {
 
     const resolved = resolveAssetUrl(this.url);
     if (/^https?:\/\//i.test(resolved) && !resolved.includes('/api/notes/')) {
-      img.src = resolved;
-      img.onload = () => img.classList.remove('is-loading');
-      img.onerror = () => {
-        img.classList.remove('is-loading');
-        img.classList.add('is-error');
-        img.alt = 'Failed to load image';
-      };
-      wrap.appendChild(img);
-      wrap.appendChild(handle);
-      wrap.appendChild(sizeLabel);
+      const link = document.createElement('a');
+      link.href = resolved;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = `External image: ${this.alt || 'image'}`;
+      wrap.appendChild(link);
       return wrap;
     }
 

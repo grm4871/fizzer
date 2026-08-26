@@ -114,6 +114,8 @@ defmodule Cascade.Chat.Agents do
           SQL.changes("DELETE FROM vault_agents WHERE id=?", [identity_id]) > 0
         end)
 
+      if deleted, do: Avatars.purge(identity_id)
+
       {:ok, deleted}
     else
       false -> {:error, "Vault not found"}

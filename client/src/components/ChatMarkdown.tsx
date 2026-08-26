@@ -26,6 +26,16 @@ import {
 
 export const CHAT_MARKDOWN_PLUGINS = [remarkGfm, remarkBreaks];
 
+export function SafeMarkdownImage({ src = '', alt = '' }: { src?: string; alt?: string }) {
+  let local = src.startsWith('/') || src.startsWith('data:') || src.startsWith('blob:');
+  if (!local && typeof window !== 'undefined') {
+    try { local = new URL(src, window.location.href).origin === window.location.origin; } catch { local = false; }
+  }
+  return local
+    ? <img src={src} alt={alt} />
+    : <a href={src} target="_blank" rel="noopener noreferrer">External image{alt ? `: ${alt}` : ''}</a>;
+}
+
 function formatChatMentions(text: string, aliases: string[]): ReactNode[] {
   const mentionable = [...new Set(
     aliases.map((alias) => normalizeMention(alias)).filter(Boolean),
@@ -105,6 +115,7 @@ const STREAM_BODY_PAINT_MS = 120;
 
 export function ChatMediaEmbed({ href, label }: { href: string; label: ReactNode }) {
   const media = chatMediaLink(href);
+  const [embedLoaded, setEmbedLoaded] = useState(false);
   const frameRef = useRef<HTMLIFrameElement>(null);
   const youtubeInfoRef = useRef({ currentTime: 0, title: 'YouTube video' });
   const [twitterHeight, setTwitterHeight] = useState<number | null>(null);
@@ -159,6 +170,14 @@ export function ChatMediaEmbed({ href, label }: { href: string; label: ReactNode
     return () => window.removeEventListener('message', onMessage);
   }, [href, media?.provider]);
   if (!media) return <a href={href} target="_blank" rel="noopener noreferrer">{label}</a>;
+  if (!embedLoaded) {
+    return (
+      <span className={`chat-media-embed is-${media.aspect} is-${media.provider}`}>
+        <a href={href} target="_blank" rel="noopener noreferrer">{label}</a>
+        <button type="button" onClick={() => setEmbedLoaded(true)}>Load external embed</button>
+      </span>
+    );
+  }
   return (
     <span className={`chat-media-embed is-${media.aspect} is-${media.provider}`}>
       <a href={href} target="_blank" rel="noopener noreferrer">{label}</a>
@@ -360,7 +379,9 @@ export const ChatMessageText = memo(function ChatMessageText({
       // ```svg blocks render as inline graphics. Sanitize first — message
       // bodies are untrusted, and raw SVG can smuggle <script>/onload/etc.
       if (!isInline && match && match[1] === 'svg' && isAgent) {
-        const clean = DOMPurify.sanitize(value, { USE_PROFILES: { svg: true, svgFilters: true } });
+        const clean = DOMPurify
+          .sanitize(value, { USE_PROFILES: { svg: true, svgFilters: true } })
+          .replace(/\s(?:href|xlink:href|src)=["']https?:\/\/[^"']*["']/gi, '');
         return <span className="chat-svg" dangerouslySetInnerHTML={{ __html: clean }} />;
       }
 
@@ -388,7 +409,8 @@ export const ChatMessageText = memo(function ChatMessageText({
         );
       }
       return <code className={className} {...props}>{children}</code>;
-    }
+    },
+    img: SafeMarkdownImage,
   }), [withInlineMarkup, isAgent]);
 
   return (
@@ -412,4 +434,3 @@ export const ChatMessageText = memo(function ChatMessageText({
   && (prev.notes === next.notes || !bodyHasNoteRefs(next.body))
   && prev.onOpenNote === next.onOpenNote
 );
-

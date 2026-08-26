@@ -7,6 +7,7 @@ import {
 } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { SafeMarkdownImage } from './ChatMarkdown';
 import {
   Archive,
   Check,
@@ -400,6 +401,7 @@ function CardMarkdown({ text }: { text: string }) {
       remarkPlugins={[remarkGfm]}
       components={{
         a: ({ children, ...props }) => <a {...props} target="_blank" rel="noreferrer">{children}</a>,
+        img: SafeMarkdownImage,
         p: ({ children }) => <>{children}</>,
       }}
     >

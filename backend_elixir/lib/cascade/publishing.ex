@@ -93,6 +93,7 @@ defmodule Cascade.Publishing do
     |> String.replace(~r/\s+(?:href|src)=""/iu, "")
     |> force_link_rel()
     |> restore_raster_data_urls(data_urls)
+    |> block_remote_images()
     |> String.trim_trailing()
     |> Kernel.<>("\n")
   end
@@ -341,6 +342,24 @@ defmodule Cascade.Publishing do
 
   defp restore_raster_data_urls(html, urls) do
     Enum.reduce(urls, html, fn {marker, url}, output -> String.replace(output, marker, url) end)
+  end
+
+  defp block_remote_images(html) do
+    Regex.replace(
+      ~r/<img\b([^>]*?)\bsrc="(https?:\/\/[^"]+)"([^>]*)>/iu,
+      html,
+      fn _full, before, url, after_attrs ->
+        attrs = before <> after_attrs
+
+        label =
+          case Regex.run(~r/\balt="([^"]*)"/iu, attrs, capture: :all_but_first) do
+            [alt] when alt != "" -> "External image: " <> alt
+            _ -> "External image"
+          end
+
+        ~s(<a href="#{url}" rel="noopener noreferrer">#{label}</a>)
+      end
+    )
   end
 
   defp force_link_rel(html) do

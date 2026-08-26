@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm';
 import { AlertTriangle, LayoutDashboard, Loader2, Search } from 'lucide-react';
 import { hasObsidianKanbanMarker, parseKanbanMarkdown, type KanbanCard } from './KanbanView';
 import { ErrorBoundary } from './ErrorBoundary';
+import { SafeMarkdownImage } from './ChatMarkdown';
 import type { Note } from '../api';
 import type { WorkItem, WorkItemStatus } from '../chat/workItems';
 
@@ -342,7 +343,7 @@ function SuperkanbanViewInner({
                     className={`kanban-card${card.checked ? ' is-complete' : ''}${card.live ? ' is-live-work' : ''}`}
                     key={card.id}
                   >
-                    <div className="kanban-card-title"><ReactMarkdown remarkPlugins={[remarkGfm]}>{card.text || ''}</ReactMarkdown></div>
+                    <div className="kanban-card-title"><ReactMarkdown remarkPlugins={[remarkGfm]} components={{ img: SafeMarkdownImage }}>{card.text || ''}</ReactMarkdown></div>
                     {card.live ? (
                       <span className="superkanban-source is-live" title={card.branch || card.workItemId || 'Live work'}>
                         {card.sourceTitle}

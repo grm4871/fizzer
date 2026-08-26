@@ -610,7 +610,7 @@ defmodule Cascade.ChatDomainTest do
                "https://example.test#{asset.url}"
              )
 
-    assert updated.avatarUrl =~ "/api/notes/agent-avatars/assets/#{identity.id}?v="
+    assert updated.avatarUrl =~ "/api/notes/agent-avatars/assets/#{identity.id}-"
     File.rm_rf!(Assets.assets_dir(note.id))
 
     response =
@@ -620,6 +620,24 @@ defmodule Cascade.ChatDomainTest do
     assert response.status == 200
     assert get_resp_header(response, "content-type") == ["image/png"]
     assert response.resp_body == <<0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A>>
+
+    assert {:ok, cleared} = Agents.set_avatar(1, vault.id, channel.id, member.id, "")
+    assert cleared.avatarUrl == ""
+
+    revoked =
+      conn(:get, updated.avatarUrl)
+      |> CascadeWeb.ContentRouter.call(CascadeWeb.ContentRouter.init([]))
+
+    assert revoked.status == 404
+
+    assert {:error, "Profile picture must be an uploaded note image"} =
+             Agents.set_avatar(
+               1,
+               vault.id,
+               channel.id,
+               member.id,
+               "https://tracker.example/avatar.png"
+             )
   end
 
   test "concurrent message commits publish created events in rowid order" do
