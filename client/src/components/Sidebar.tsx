@@ -269,11 +269,16 @@ export const Sidebar = memo(function Sidebar({
       const vaultBox = vaultButton.getBoundingClientRect();
       const noteBox = noteButton.getBoundingClientRect();
       const startX = vaultBox.right - sidebarBox.left;
-      const startY = vaultBox.top + vaultBox.height / 2 - sidebarBox.top;
       const endX = noteBox.left - sidebarBox.left;
-      const endY = noteBox.top + noteBox.height / 2 - sidebarBox.top;
       const bendX = startX + (endX - startX) / 2;
-      setSelectionConnector(`M ${startX} ${startY} C ${bendX} ${startY}, ${bendX} ${endY}, ${endX} ${endY}`);
+      const startTop = vaultBox.top - sidebarBox.top;
+      const startBottom = vaultBox.bottom - sidebarBox.top;
+      const endTop = noteBox.top - sidebarBox.top;
+      const endBottom = noteBox.bottom - sidebarBox.top;
+      setSelectionConnector(
+        `M ${startX} ${startTop} C ${bendX} ${startTop}, ${bendX} ${endTop}, ${endX} ${endTop} `
+        + `L ${endX} ${endBottom} C ${bendX} ${endBottom}, ${bendX} ${startBottom}, ${startX} ${startBottom} Z`,
+      );
     };
 
     const frame = window.requestAnimationFrame(updateConnector);

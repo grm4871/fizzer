@@ -613,6 +613,7 @@ button:focus-visible,
 .vault-rail-button:hover::before { width: 2px; }
 .vault-rail-button.is-active {
   border-color: transparent;
+  border-radius: 0;
   background: color-mix(in srgb, var(--accent) 13%, var(--bg-raised));
   color: var(--text-primary);
 }
@@ -671,14 +672,7 @@ button:focus-visible,
   pointer-events: none;
 }
 .vault-selection-connector path {
-  fill: none;
-  stroke: var(--decal-1);
-  stroke-width: 2.5px;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  opacity: 0.78;
-  filter: drop-shadow(0 0 3px var(--accent-glow));
-  vector-effect: non-scaling-stroke;
+  fill: color-mix(in srgb, var(--accent) 13%, var(--bg-raised));
 }
 .sidebar-panel {
   min-width: 0;

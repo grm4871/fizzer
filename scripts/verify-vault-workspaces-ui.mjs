@@ -132,10 +132,10 @@ try {
   await openNote(a1);
   const connector = page.locator('.vault-selection-connector path');
   await connector.waitFor({ timeout: 10_000 });
-  check('active vault accent curves through the inset gutter into the active page',
-    /^M [\d.-]+ [\d.-]+ C [\d.-]+ [\d.-]+, [\d.-]+ [\d.-]+, [\d.-]+ [\d.-]+$/.test(
+  check('active vault selection is one filled ribbon into the active page',
+    /^M [\d.-]+ [\d.-]+ C .+ L [\d.-]+ [\d.-]+ C .+ Z$/.test(
       await connector.getAttribute('d') || '',
-    ));
+    ) && await connector.evaluate((path) => getComputedStyle(path).fill !== 'none'));
   await openNote(a2, true);
 
   // Give Alpha a distinct two-pane layout with Alpha two focused.
