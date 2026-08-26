@@ -2570,9 +2570,10 @@ export default function App() {
       const mod = e.ctrlKey || e.metaKey;
       if (mod && e.key === 'p') { e.preventDefault(); setCommandPaletteOpen((v) => !v); }
       if (mod && e.shiftKey && e.key.toLowerCase() === 'f') { e.preventDefault(); setSearchOpen((v) => !v); }
+      if (mod && !e.shiftKey && e.key.toLowerCase() === 's') { e.preventDefault(); setSearchOpen(true); }
       if (mod && e.key === '\\' && !(e.altKey || e.shiftKey)) { e.preventDefault(); setSidebarOpen((v) => !v); }
       if (mod && !e.shiftKey && e.key === 'n') { e.preventDefault(); void handleCreateNote(); }
-      if (mod && e.key === 's') { e.preventDefault(); void handleSaveActiveNote(); }
+      if (mod && e.shiftKey && e.key.toLowerCase() === 's') { e.preventDefault(); void handleSaveActiveNote(); }
       if (mod && e.key.toLowerCase() === 'w') {
         e.preventDefault();
         const id = focusedPaneRef.current.activeTabId;

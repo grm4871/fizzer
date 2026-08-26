@@ -1626,7 +1626,7 @@ export const NoteEditor = memo(function NoteEditor({ note, content, onContentCha
         ...searchKeymap,
         indentWithTab,
         {
-          key: 'Mod-s',
+          key: 'Mod-Shift-s',
           run: () => {
             onSaveRef.current();
             return true;

@@ -120,7 +120,7 @@ try {
   const savedTitle = `Blank saved note ${Date.now()}`;
   await page.locator('#editor-title').fill(savedTitle);
   await page.locator('#editor-title').press('Enter');
-  await page.keyboard.press('Control+s');
+  await page.keyboard.press('Control+Shift+s');
   await page.waitForFunction(async ({ apiBase: base, token: authToken, vaultId, title }) => {
     const response = await fetch(`${base}/api/vaults/${vaultId}/notes?title=${encodeURIComponent(title)}`, {
       headers: { authorization: `Bearer ${authToken}` },
@@ -129,6 +129,13 @@ try {
     const payload = await response.json();
     return payload.notes?.some((note) => note.title === title);
   }, { apiBase, token, vaultId: vault.id, title: savedTitle });
+  await page.keyboard.press('Control+s');
+  const searchDialog = page.getByRole('dialog', { name: 'Search workspace' });
+  await searchDialog.waitFor();
+  if (!(await page.locator('#search-input').evaluate((input) => input === document.activeElement))) {
+    throw new Error('Ctrl+S opened search without focusing its query input');
+  }
+  await page.keyboard.press('Escape');
 
   await page.getByText('embed-channel', { exact: false }).first().click();
   const embed = page.locator('.chat-doc-embed');

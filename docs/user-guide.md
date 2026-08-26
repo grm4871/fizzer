@@ -184,7 +184,7 @@ Open a note from the sidebar. The editor is a Markdown live-preview editor. The 
 
 Edits make the tab dirty. Save the active note with:
 
-- `Cmd/Ctrl+S` on desktop;
+- `Cmd/Ctrl+Shift+S` on desktop;
 - the **Save** action on mobile.
 
 Save before closing a tab or switching context if you need the latest draft persisted.
@@ -460,10 +460,11 @@ Provider credentials normally remain in the provider’s native local CLI store.
 | Shortcut | Action |
 | --- | --- |
 | `Cmd/Ctrl+P` | Open anything / find notes or create a note |
+| `Cmd/Ctrl+S` | Search notes and chats |
 | `Cmd/Ctrl+Shift+F` | Search notes and chats |
 | `Cmd/Ctrl+\\` | Toggle the main sidebar |
 | `Cmd/Ctrl+N` | Create a note |
-| `Cmd/Ctrl+S` | Save the active note |
+| `Cmd/Ctrl+Shift+S` | Save the active note |
 | `Cmd/Ctrl+W` | Close the active tab |
 | `Cmd/Ctrl+Alt+\\` or `Cmd/Ctrl+Shift+\\` | Split the focused pane |
 | `Cmd/Ctrl+Enter` in an `{{ai: ...}}` directive | Run the directive |
@@ -526,7 +527,7 @@ This feedback action is for product bugs and usability suggestions. Use the norm
 ## Boundaries and troubleshooting
 
 - **Notes/chat work but agents do not start:** open the desktop app or reconnect the compatible runner; verify the provider CLI is installed and authenticated on that machine.
-- **A note looks edited but is still marked dirty:** save it with `Cmd/Ctrl+S` or the mobile Save button.
+- **A note looks edited but is still marked dirty:** save it with `Cmd/Ctrl+Shift+S` or the mobile Save button.
 - **A board is empty:** open the note’s Kanban view and choose **Create board**, or ensure the Markdown has the expected Kanban frontmatter and `##` list headings.
 - **A worktree action says Desktop only:** use the Electron desktop app; the browser client cannot access local Git worktrees.
 - **An agent cannot see a private block:** this is intentional; private blocks are redacted before agent context is assembled.
