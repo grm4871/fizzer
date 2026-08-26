@@ -134,6 +134,7 @@ function friendlyToolName(name: string): string {
     Task: 'Task',
     TodoWrite: 'Todos',
   };
+  if (/^reasoning$/i.test(n)) return 'thinking';
   if (map[n]) return map[n];
   // snake_case → Title Case
   if (n.includes('_') || n.includes('-')) {
@@ -268,6 +269,7 @@ function parseHarnessLog(raw: string, hasStructuredTools: boolean, hasStructured
   const meta: HarnessMeta = { fallbackItems: [], fallbackThinking: '' };
   let inThinking = false;
   let thinkingBuf = '';
+  let jsonBuf = '';
   const toolById = new Map<string, ActivityTool>();
   let seq = 0;
 
@@ -372,13 +374,17 @@ function parseHarnessLog(raw: string, hasStructuredTools: boolean, hasStructured
       continue;
     }
 
-    // JSONL fallback (Codex / Copilot / Grok) when we lack structured blocks
-    if (trimmed.startsWith('{') && (!hasStructuredTools || !hasStructuredThinking)) {
+    // JSONL fallback (Codex / Copilot / Grok) when we lack structured blocks.
+    // Pretty-printed or split frames start as `{` and must be buffered until
+    // JSON.parse succeeds — dropping them swallows the rest of the turn.
+    if ((jsonBuf || trimmed.startsWith('{')) && (!hasStructuredTools || !hasStructuredThinking)) {
+      jsonBuf = jsonBuf ? `${jsonBuf}\n${trimmed}` : trimmed;
       try {
-        const ev = JSON.parse(trimmed) as Record<string, unknown>;
+        const ev = JSON.parse(jsonBuf) as Record<string, unknown>;
+        jsonBuf = '';
         parseJsonlEvent(ev, meta, toolById, hasStructuredTools, hasStructuredThinking, () => seq++);
       } catch {
-        if (inThinking && !hasStructuredThinking) thinkingBuf += `${line}\n`;
+        if (jsonBuf.length > 80_000) jsonBuf = '';
       }
       continue;
     }
@@ -907,8 +913,36 @@ export function formatRateLimitWindowLines(stats: RunStats): string[] {
 function compactLiveDetail(text: string | undefined, max = 88): string {
   const collapsed = String(text || '').replace(/\s+/g, ' ').trim();
   if (!collapsed) return '';
+  if (collapsed.startsWith('{')) {
+    try {
+      const ev = JSON.parse(collapsed) as Record<string, unknown>;
+      const human = headlineFromProtocolEvent(ev);
+      if (human) return compactLiveDetail(human, max);
+    } catch { /* incomplete or non-event JSON */ }
+    return '';
+  }
   if (collapsed.length <= max) return collapsed;
   return `${collapsed.slice(0, max - 1)}…`;
+}
+
+function headlineFromProtocolEvent(ev: Record<string, unknown>): string {
+  const type = String(ev.type || ev.event || '').trim();
+  const item = (ev.item && typeof ev.item === 'object')
+    ? ev.item as Record<string, unknown>
+    : undefined;
+  if (type === 'thought' || type === 'reasoning') {
+    return String(ev.data ?? ev.text ?? ev.content ?? '').replace(/\s+/g, ' ').trim();
+  }
+  if (type === 'item.started' || type === 'item.completed') {
+    const itemType = String(item?.type || '');
+    const text = String(item?.text ?? item?.command ?? item?.path ?? '').replace(/\s+/g, ' ').trim();
+    if (itemType === 'reasoning') return text || 'thinking…';
+    if (itemType === 'agent_message') return text || 'replying…';
+    if (itemType === 'command_execution') return text ? `Bash ${text}` : 'running command…';
+    if (itemType) return text || `${itemType.replace(/[_-]+/g, ' ')}…`;
+  }
+  if (type) return type.replace(/[._]+/g, ' ');
+  return '';
 }
 
 /** System/user prompt blobs must not leak into the live header or thinking well. */

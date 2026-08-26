@@ -176,7 +176,8 @@ function ThinkingBlock({
   }, [text, live]);
 
   const lines = paintText.trim() ? indentBlock(paintText.trim()) : [];
-  const collapsedPreview = lines[0]?.replace(/^\s+/, '') || '';
+  const firstLine = lines[0]?.replace(/^\s+/, '') || '';
+  const collapsedPreview = firstLine.startsWith('{') ? '' : firstLine;
   const more = lines.length > 1 ? ` (+${lines.length - 1} lines)` : '';
 
   useEffect(() => {
