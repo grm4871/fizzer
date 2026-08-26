@@ -848,6 +848,59 @@ defmodule Cascade.ChatDomainTest do
            ) == [["guest-root", guest_coordinator.id], ["owner-root", sol.id]]
   end
 
+  test "reply metadata wakes an agent when its optimistic source shell is missing" do
+    {vault, channel} = chat_vault(1, "Reply fallback", "Reply fallback room")
+    user = %{id: 1, username: "alice"}
+
+    {:ok, identity} =
+      Agents.upsert_identity(user.id, vault.id, %{
+        agentId: "codex",
+        displayName: "Sol",
+        mention: "sol"
+      })
+
+    {:ok, registration} =
+      Agents.add_to_channel(user.id, vault.id, channel.id, identity.id, %{})
+
+    {:ok, reply} =
+      Messages.create(user, vault.id, channel.id, %{
+        id: "reply-to-missing-agent-shell",
+        body: "Please handle this follow-up.",
+        createdAt: "2026-08-14T17:00:00.000Z",
+        replyTo: %{
+          messageId: "missing-optimistic-agent-shell",
+          author: "Sol",
+          mention: "sol",
+          preview: "Thinking..."
+        }
+      })
+
+    assert {:ok, [dispatch]} = Dispatches.create_for_message(user.id, channel.id, reply)
+    assert dispatch.registration.id == registration.id
+
+    {:ok, _human} =
+      Messages.create(user, vault.id, channel.id, %{
+        id: "persisted-human-source",
+        body: "Human source",
+        createdAt: "2026-08-14T17:01:00.000Z"
+      })
+
+    {:ok, human_reply} =
+      Messages.create(user, vault.id, channel.id, %{
+        id: "reply-to-persisted-human",
+        body: "This must not infer an agent target.",
+        createdAt: "2026-08-14T17:02:00.000Z",
+        replyTo: %{
+          messageId: "persisted-human-source",
+          author: "Sol",
+          mention: "sol",
+          preview: "Human source"
+        }
+      })
+
+    assert {:ok, []} = Dispatches.create_for_message(user.id, channel.id, human_reply)
+  end
+
   test "exhausted Claude and Codex skip reply-to-all without blocking explicit mentions" do
     {vault, channel} = chat_vault(1, "Usage gate", "Usage gated room")
     user = %{id: 1, username: "alice"}

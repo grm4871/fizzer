@@ -137,8 +137,8 @@ defmodule Cascade.Missions.Dispatches do
       end
 
     implicit_reply =
-      if not from_agent and is_map(replied) and present?(field(replied, :registrationId)) and
-           present?(field(reply, :mention)),
+      if not from_agent and present?(field(reply, :mention)) and
+           (is_nil(replied) or present?(field(replied, :registrationId))),
          do: "@#{field(reply, :mention)}",
          else: ""
 
