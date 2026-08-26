@@ -864,9 +864,6 @@ button:focus-visible,
 }
 .vault-switcher-copy small { color: var(--text-tertiary); font-size: 0.6875rem; font-weight: 500; text-transform: capitalize; }
 .vault-switcher-check { margin-left: auto; flex: none; color: var(--accent-hover); }
-.vault-switcher-title-line > .activity-dot { margin-left: auto; }
-.vault-switcher-title-line > .activity-dot + .vault-switcher-check { margin-left: 0; }
-.sidebar-header > .activity-dot { margin-right: 6px; }
 .vault-switcher-menu .vault-switcher-rename,
 .vault-switcher-menu .vault-switcher-delete,
 .vault-switcher-menu .vault-switcher-manage {

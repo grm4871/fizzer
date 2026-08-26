@@ -251,6 +251,11 @@ export const Sidebar = memo(function Sidebar({
     />
   );
 
+  const activeVaultHasTargetActivity = notes.some((note) => activityKind(
+    agentActivity[note.id],
+    (updateCounts.byTarget[note.id] || 0) > 0,
+  ) !== null);
+
   useLayoutEffect(() => {
     const sidebar = sidebarRef.current;
     if (!sidebar || !activeVaultId || !activeNoteId) {
@@ -861,10 +866,12 @@ export const Sidebar = memo(function Sidebar({
       <nav className="vault-rail" aria-label="Vaults">
         <div className="vault-rail-list">
           {vaults.map((vault) => {
-            const vaultActivity = activityKind(
-              agentActivityByVault[vault.id],
-              (updateCounts.byVault[vault.id] || 0) > 0,
-            );
+            const vaultActivity = vault.id === activeVaultId && activeVaultHasTargetActivity
+              ? null
+              : activityKind(
+                agentActivityByVault[vault.id],
+                (updateCounts.byVault[vault.id] || 0) > 0,
+              );
             const initials = vault.name
               .split(/\s+/)
               .filter(Boolean)
@@ -920,10 +927,6 @@ export const Sidebar = memo(function Sidebar({
               </span>
           </span>
         </div>
-        {activeVault && activityDot(activityKind(
-          agentActivityByVault[activeVault.id],
-          (updateCounts.byVault[activeVault.id] || 0) > 0,
-        ))}
         <div className="sidebar-actions sidebar-actions-desktop" role="toolbar" aria-label="Sidebar actions">{actionButtons('desktop')}</div>
         <button className="btn-icon sidebar-mobile-collapse" onClick={onCollapse} title="Collapse sidebar"><PanelLeftClose size={16} /></button>
       </div>
@@ -978,10 +981,6 @@ export const Sidebar = memo(function Sidebar({
                         <span className="vault-switcher-copy">
                           <span className="vault-switcher-title-line">
                             <strong>{vault.name}</strong>
-                            {activityDot(activityKind(
-                              agentActivityByVault[vault.id],
-                              (updateCounts.byVault[vault.id] || 0) > 0,
-                            ))}
                             {vault.id === activeVaultId && <Check className="vault-switcher-check" size={16} aria-hidden="true" />}
                           </span>
                           <small>
