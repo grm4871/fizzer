@@ -89,7 +89,13 @@ try {
   const errors = [];
   page.on('pageerror', (error) => errors.push(`pageerror: ${error.message}`));
   page.on('console', (message) => {
-    if (message.type() === 'error') errors.push(`console.error: ${message.text()}`);
+    if (message.type() === 'error' && !message.text().startsWith('Failed to load resource:')) {
+      errors.push(`console.error: ${message.text()}`);
+    }
+  });
+  page.on('response', (response) => {
+    const staleSocketPoll = response.status() === 400 && response.url().includes('/socket.io/');
+    if (response.status() >= 400 && !staleSocketPoll) errors.push(`http ${response.status()}: ${response.url()}`);
   });
 
   const selectVault = async (vault) => {
@@ -134,8 +140,11 @@ try {
   await selectVault(vaultB);
   check('switching to Beta does not carry Alpha tabs',
     !(await tabTitles()).some((title) => title.startsWith('Alpha')), JSON.stringify(await tabTitles()));
-  check('new Beta workspace starts with one empty pane',
-    await page.locator('.editor-pane').count() === 1 && await page.locator('.tab-item').count() === 0);
+  const betaDefaultTab = page.locator('.editor-pane.is-focused .tab-item.active .tab-title');
+  await betaDefaultTab.waitFor({ timeout: 15_000 });
+  check('new Beta workspace selects a default page',
+    await page.locator('.editor-pane').count() === 1
+      && (await betaDefaultTab.innerText()).trim().length > 0);
 
   await openNote(b1);
   await openNote(b2, true);
@@ -181,6 +190,13 @@ try {
     await page.locator('.editor-pane').count() === 2
       && (await tabTitles()).includes(a1.title)
       && (await tabTitles()).includes(a2.title));
+
+  const guideLauncher = page.getByRole('button', { name: 'Ask the Fizzer guide' });
+  await guideLauncher.click();
+  await page.getByRole('button', { name: 'Hide help button' }).click();
+  check('hide help removes the launcher', await guideLauncher.count() === 0);
+  await page.reload({ waitUntil: 'networkidle' });
+  check('hide help setting survives reload', await guideLauncher.count() === 0);
 
   const fatal = errors.filter((line) => !line.includes('[VersionCheck]'));
   if (fatal.length > 0) {

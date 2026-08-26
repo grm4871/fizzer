@@ -11,6 +11,8 @@ import {
 } from '../documentationAssistant';
 import guideMarkdown from '../../../docs/user-guide.md?raw';
 
+const LAUNCHER_HIDDEN_STORAGE_KEY = 'fizzer_guide_launcher_hidden';
+
 export interface DocumentationAssistantProps {
   open: boolean;
   onOpen: () => void;
@@ -41,7 +43,9 @@ export function DocumentationAssistant({
   const [feedbackError, setFeedbackError] = useState('');
   const [view, setView] = useState<'ask' | 'guide'>('ask');
   const [expanded, setExpanded] = useState(false);
-  const [launcherVisible, setLauncherVisible] = useState(true);
+  const [launcherVisible, setLauncherVisible] = useState(() => (
+    typeof localStorage === 'undefined' || localStorage.getItem(LAUNCHER_HIDDEN_STORAGE_KEY) !== '1'
+  ));
 
   useEffect(() => {
     if (!open) return;
@@ -59,6 +63,7 @@ export function DocumentationAssistant({
     onClose();
     setExpanded(false);
     setLauncherVisible(false);
+    localStorage.setItem(LAUNCHER_HIDDEN_STORAGE_KEY, '1');
   }, [onClose]);
 
   const submit = useCallback(async () => {

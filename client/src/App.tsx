@@ -397,25 +397,38 @@ export default function App() {
     localStorage.setItem('cascade_chat_users_collapsed', chatMembersOpen ? '0' : '1');
   }, [chatMembersOpen]);
 
-  // Persist the workspace session.
-  useEffect(() => {
-    const id = window.setTimeout(() => {
-      const activeWorkspace: PersistedWorkspace = { openTabs, layout, focusedPaneId };
-      if (activeVaultId) {
-        vaultWorkspacesRef.current = {
-          ...vaultWorkspacesRef.current,
-          [activeVaultId]: activeWorkspace,
-        };
-      }
-      const session: PersistedSession = {
-        activeVaultId,
-        ...activeWorkspace,
-        workspacesByVault: vaultWorkspacesRef.current,
+  const persistWorkspaceSession = useCallback(() => {
+    const currentVaultId = activeVaultIdRef.current;
+    const activeWorkspace: PersistedWorkspace = {
+      openTabs: openTabsRef.current,
+      layout: layoutRef.current,
+      focusedPaneId: focusedPaneRef.current.id,
+    };
+    if (currentVaultId) {
+      vaultWorkspacesRef.current = {
+        ...vaultWorkspacesRef.current,
+        [currentVaultId]: activeWorkspace,
       };
-      localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
-    }, 250);
+    }
+    const session: PersistedSession = {
+      activeVaultId: currentVaultId,
+      ...activeWorkspace,
+      workspacesByVault: vaultWorkspacesRef.current,
+    };
+    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
+  }, []);
+
+  // Persist after ordinary changes and synchronously when the desktop window
+  // closes, including a quit immediately after switching vaults or pages.
+  useEffect(() => {
+    const id = window.setTimeout(persistWorkspaceSession, 250);
     return () => clearTimeout(id);
-  }, [activeVaultId, openTabs, layout, focusedPaneId]);
+  }, [activeVaultId, openTabs, layout, focusedPaneId, persistWorkspaceSession]);
+
+  useEffect(() => {
+    window.addEventListener('pagehide', persistWorkspaceSession);
+    return () => window.removeEventListener('pagehide', persistWorkspaceSession);
+  }, [persistWorkspaceSession]);
 
   useEffect(() => {
     const id = window.setTimeout(() => {
@@ -1726,6 +1739,27 @@ export default function App() {
 
     void loadNoteContent(noteId);
   }, [loadNoteContent, openChatChannel]);
+
+  // A vault with no restored active page should still open somewhere useful.
+  // Prefer its last open tab if one survives, then its first chat, then its
+  // first note. This runs when vault data arrives, not when a user closes the
+  // final tab, so an intentional empty workspace remains possible.
+  useEffect(() => {
+    if (!activeVaultId || notes.length === 0) return;
+    const availableIds = new Set(notes.map((note) => note.id));
+    const hasSelectedPage = Layout.getActiveTabIds(layoutRef.current)
+      .some((id) => {
+        const tab = openTabsRef.current.find((candidate) => candidate.id === id);
+        return Boolean(tab && (tab.type === 'new' || tab.type === 'superkanban' || availableIds.has(id)));
+      });
+    if (hasSelectedPage) return;
+
+    const lastOpenTab = [...openTabsRef.current].reverse().find((tab) => availableIds.has(tab.id));
+    const fallback = lastOpenTab
+      ? notes.find((note) => note.id === lastOpenTab.id)
+      : notes.find((note) => note.content_preview.trim().startsWith(CHAT_NOTE_MARKER)) ?? notes[0];
+    if (fallback) openNote(fallback.id, 'replace');
+  }, [activeVaultId, notes, openNote]);
 
   useEffect(() => {
     if (!user || !focusedTab || (focusedTab.type !== 'note' && focusedTab.type !== 'chat')) return;
