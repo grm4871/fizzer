@@ -159,12 +159,12 @@ try {
   await page.waitForLoadState('networkidle');
   await sharing.waitFor({ state: 'detached' });
 
-  await page.getByRole('button', { name: /Vault switcher/ }).click();
+  await page.getByRole('button', { name: 'Manage vaults' }).click();
   await page.getByRole('menuitem', { name: 'Join vault' }).click();
   await page.getByLabel('Vault invite link').fill(mateVaultInvite);
   await page.getByRole('button', { name: 'Join', exact: true }).click();
   await page.getByText('Joined Mate workspace as editor.').waitFor();
-  await page.getByRole('button', { name: /Vault switcher; current vault Mate workspace/ }).waitFor();
+  await page.getByRole('button', { name: 'Open vault Mate workspace' }).waitFor();
 
   await json(`/api/vaults/${profileVault.id}/reports`, {
     method: 'POST', headers: mateAuth,

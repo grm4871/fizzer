@@ -163,10 +163,9 @@ try {
     localStorage.removeItem('cascade_chat_state_v1');
   });
   await page.goto(appUrl, { waitUntil: 'domcontentloaded' });
-  await page.getByRole('button', { name: /Vault switcher; current vault Home/ }).waitFor();
+  await page.getByRole('button', { name: 'Open vault Home' }).waitFor();
 
-  await page.getByRole('button', { name: /Vault switcher/ }).click();
-  await page.getByRole('menuitem', { name: 'Browse public vaults' }).click();
+  await page.getByRole('button', { name: 'Browse public vaults' }).click();
   const dialog = page.getByRole('dialog', { name: 'Explore vaults' });
   await dialog.getByText('Community Lab').waitFor();
   await dialog.getByLabel('Search public vaults').fill('design');

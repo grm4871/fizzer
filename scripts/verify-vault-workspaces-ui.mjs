@@ -99,8 +99,7 @@ try {
   });
 
   const selectVault = async (vault) => {
-    await page.getByRole('button', { name: /Vault switcher; current vault/ }).click();
-    const choice = page.getByRole('menuitemradio', { name: new RegExp(vault.name) });
+    const choice = page.getByRole('button', { name: `Open vault ${vault.name}` });
     await choice.waitFor({ timeout: 10_000 });
     await choice.click();
     await page.waitForFunction(
@@ -121,8 +120,22 @@ try {
   await page.evaluate((value) => localStorage.setItem('docs_token', value), token);
   await page.goto(APP_URL, { waitUntil: 'networkidle' });
 
+  const railBox = await page.locator('.vault-rail').boundingBox();
+  const panelBox = await page.locator('.sidebar-panel').boundingBox();
+  check('vault rail is inset beside the notes and channels panel',
+    Boolean(railBox && panelBox)
+      && railBox.x < panelBox.x
+      && Math.abs((railBox.x + railBox.width) - panelBox.x) <= 2
+      && railBox.height === panelBox.height);
+
   await selectVault(vaultA);
   await openNote(a1);
+  const connector = page.locator('.vault-selection-connector path');
+  await connector.waitFor({ timeout: 10_000 });
+  check('active vault accent curves through the inset gutter into the active page',
+    /^M [\d.-]+ [\d.-]+ C [\d.-]+ [\d.-]+, [\d.-]+ [\d.-]+, [\d.-]+ [\d.-]+$/.test(
+      await connector.getAttribute('d') || '',
+    ));
   await openNote(a2, true);
 
   // Give Alpha a distinct two-pane layout with Alpha two focused.

@@ -104,7 +104,7 @@ import {
   type PersistedSession,
   type PersistedWorkspace,
 } from './chat/session';
-import { chatMessageStore } from './chat/messageStore';
+import { chatMessageStore, useAgentActivity } from './chat/messageStore';
 import { Activity, Bell, Download, PanelLeftOpen, Sparkles, Users } from 'lucide-react';
 import { FizzerMark } from './components/FizzerMark';
 
@@ -187,10 +187,12 @@ export default function App() {
   const [chatState, setChatState] = useState<ChatState>(loadChatState);
   const [loadingChatChannels, setLoadingChatChannels] = useState<Record<string, boolean>>({});
   const [chatPresenceByChannel, setChatPresenceByChannel] = useState<Record<string, ChatChannelPresence>>({});
+  const [channelVaultIds, setChannelVaultIds] = useState<Record<string, string>>({});
   const [communityUpdates, setCommunityUpdates] = useState<CommunityUpdates>(EMPTY_COMMUNITY_UPDATES);
   const [communityUpdatesLoading, setCommunityUpdatesLoading] = useState(false);
   const [communityUpdatesError, setCommunityUpdatesError] = useState('');
   const [showAgentMemory, setShowAgentMemory] = useState(() => localStorage.getItem('cascade_show_agent_memory') === '1');
+  const agentActivity = useAgentActivity();
 
   // Tabs + tiling layout
   const [openTabs, setOpenTabs] = useState<Tab[]>(persistedSessionRef.current.openTabs);
@@ -205,7 +207,12 @@ export default function App() {
 
   // UI panels state
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [sidebarWidth, setSidebarWidth] = useState(() => Number(localStorage.getItem('cascade_sidebar_w')) || 268);
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    const railWidth = Number(localStorage.getItem('cascade_sidebar_w_vault_rail'));
+    if (railWidth) return railWidth;
+    const legacyWidth = Number(localStorage.getItem('cascade_sidebar_w')) || 268;
+    return Math.min(540, legacyWidth + 58);
+  });
   const [isResizing, setIsResizing] = useState(false);
   const mobileSidebarSwipeRef = useRef<{ x: number; y: number; at: number; pointerId: number } | null>(null);
   // Members panel open. Mobile starts closed (toolbar opens it like the folder
@@ -378,7 +385,7 @@ export default function App() {
   }, [layout, focusedPaneId]);
 
   useEffect(() => {
-    const id = window.setTimeout(() => localStorage.setItem('cascade_sidebar_w', String(sidebarWidth)), 150);
+    const id = window.setTimeout(() => localStorage.setItem('cascade_sidebar_w_vault_rail', String(sidebarWidth)), 150);
     return () => clearTimeout(id);
   }, [sidebarWidth]);
 
@@ -468,7 +475,7 @@ export default function App() {
     bindDragGesture({
       onMove: (e) => {
         const delta = e.clientX - startX;
-        setSidebarWidth(clamp(startSidebar + delta, 180, 480));
+        setSidebarWidth(clamp(startSidebar + delta, 240, 540));
       },
       onEnd: () => {
         releaseInteractionLock();
@@ -914,6 +921,12 @@ export default function App() {
   ) => {
     const channelIds = resolveChatChannelIds(noteList, opts?.channelIds);
     if (channelIds.length === 0) return;
+    setChannelVaultIds((previous) => {
+      if (channelIds.every((channelId) => previous[channelId] === vaultId)) return previous;
+      const next = { ...previous };
+      for (const channelId of channelIds) next[channelId] = vaultId;
+      return next;
+    });
 
     const legacyMessages = readLegacyLocalChatMessages();
     const silent = opts?.silent === true;
@@ -1079,6 +1092,15 @@ export default function App() {
         if (activeVaultIdRef.current !== vaultId) return;
         const nextNotes = noteData.notes || [];
         notesRef.current = nextNotes;
+        const channelIds = nextNotes
+          .filter((note) => note.content_preview.trim().startsWith(CHAT_NOTE_MARKER))
+          .map((note) => note.id);
+        setChannelVaultIds((previous) => {
+          if (channelIds.every((channelId) => previous[channelId] === vaultId)) return previous;
+          const next = { ...previous };
+          for (const channelId of channelIds) next[channelId] = vaultId;
+          return next;
+        });
         setFolders(folderData.folders || []);
         setNotes(nextNotes);
         void primaryChatP.catch(() => undefined);
@@ -1763,9 +1785,10 @@ export default function App() {
 
   useEffect(() => {
     if (!user || !focusedTab || (focusedTab.type !== 'note' && focusedTab.type !== 'chat')) return;
+    chatMessageStore.clearFinishedAgentActivity(focusedTab.id);
     if (!(communityUpdates.counts.byTarget[focusedTab.id] > 0)) return;
     void markCommunityTargetRead(focusedTab.id);
-  }, [communityUpdates.counts.byTarget, focusedTab?.id, focusedTab?.type, markCommunityTargetRead, user]);
+  }, [agentActivity, communityUpdates.counts.byTarget, focusedTab?.id, focusedTab?.type, markCommunityTargetRead, user]);
 
   const openCommunityUpdate = useCallback(async (item: CommunityUpdateItem) => {
     await markCommunityTargetRead(item.targetId);
@@ -2790,6 +2813,8 @@ export default function App() {
           notes={notes}
           activeNoteId={activeTabId}
           updateCounts={communityUpdates.counts}
+          agentActivity={agentActivity}
+          channelVaultIds={channelVaultIds}
           showAgentMemory={showAgentMemory}
           onSelectVault={switchVaultWorkspace}
           onCreateVault={handleCreateVault}

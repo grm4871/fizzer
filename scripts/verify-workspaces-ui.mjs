@@ -144,7 +144,7 @@ try {
   await plain.goto(APP_URL, { waitUntil: 'domcontentloaded' });
   await plain.evaluate((t) => localStorage.setItem('docs_token', t), token);
   await plain.goto(APP_URL, { waitUntil: 'networkidle' });
-  await plain.getByRole('button', { name: /Vault switcher; current vault/ }).click();
+  await plain.getByRole('button', { name: 'Manage vaults' }).click();
   const vaultWorkspace = plain.getByRole('dialog', { name: 'Vault workspace' });
   await vaultWorkspace.waitFor({ timeout: 10_000 });
   const vaultWorkspaceBox = await vaultWorkspace.boundingBox();

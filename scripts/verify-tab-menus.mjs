@@ -114,7 +114,7 @@ try {
 
   // ── Vault switcher: creation must work without window.prompt (unsupported
   // in Electron renderers) and select the newly created vault.
-  const vaultButton = page.locator('.vault-name').first();
+  const vaultButton = page.getByRole('button', { name: 'Manage vaults' });
   await vaultButton.waitFor({ timeout: 20000 });
   await vaultButton.click();
   await page.getByRole('menuitem', { name: 'New vault' }).click();
@@ -131,8 +131,7 @@ try {
   check('new vault persisted through the API', createdVaults.vaults.some((item) => item.name === vaultName));
 
   // Switch back to the seeded vault for the menu tests below.
-  await vaultButton.click();
-  await page.getByRole('menuitemradio', { name: new RegExp(`Tabs ${stamp}`) }).click();
+  await page.getByRole('button', { name: `Open vault Tabs ${stamp}` }).click();
 
   const entry = page.getByText('menus-chan', { exact: false }).first();
   await entry.waitFor({ timeout: 20000 });
