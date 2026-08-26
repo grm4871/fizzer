@@ -108,6 +108,15 @@ defmodule Cascade.Realtime.NativeRunnerIntegrationTest do
              probeMode: "cancel"
            })
 
+    assert {:error, :active_runner} =
+             RunnerLifecycle.register(context.user_id, "contending-desktop", %{
+               activeRunIds: [],
+               runnerInstanceId: "another-desktop"
+             })
+
+    assert {:ok, %{sid: ^sid}} = Hub.runner(context.user_id)
+    assert Store.get(canceled.id).status == "queued"
+
     assert Store.cancel(canceled.id)
     assert Store.get(canceled.id).status == "canceled"
 

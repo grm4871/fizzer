@@ -145,14 +145,39 @@ defmodule Cascade.Runs.RunnerLifecycle do
   @impl true
   def handle_call({:register, owner_id, sid, metadata}, _from, state) do
     active_ids = Map.get(metadata, :activeRunIds, [])
+    previous = state.runners[owner_id]
+    next_instance = Map.get(metadata, :runnerInstanceId, "")
 
+    if conflicting_live_runner?(owner_id, previous, next_instance) do
+      {:reply, {:error, :active_runner}, state}
+    else
+      register_runner(owner_id, sid, metadata, active_ids, previous, next_instance, state)
+    end
+  end
+
+  def handle_call({:health, owner_id}, _from, state) do
+    error = state.last_error[owner_id]
+
+    {:reply,
+     %{
+       online: false,
+       activeRuns: 0,
+       lastError: error && error.message,
+       lastErrorAt: error && error.at,
+       lastSeenAt: state.last_seen[owner_id],
+       planUsage: state.plan_usage[owner_id]
+     }, state}
+  end
+
+  def handle_call({:plan_usage, owner_id}, _from, state),
+    do: {:reply, state.plan_usage[owner_id] || %{}, state}
+
+  defp register_runner(owner_id, sid, metadata, active_ids, previous, next_instance, state) do
     reclaimed =
       active_ids
       |> Enum.filter(&(Store.delegated_owner(&1) == owner_id))
       |> Enum.uniq()
 
-    previous = state.runners[owner_id]
-    next_instance = Map.get(metadata, :runnerInstanceId, "")
     previous_instance = previous && previous.instance_id
 
     state =
@@ -191,22 +216,24 @@ defmodule Cascade.Runs.RunnerLifecycle do
     {:reply, {:ok, reclaimed}, state}
   end
 
-  def handle_call({:health, owner_id}, _from, state) do
-    error = state.last_error[owner_id]
+  # Two desktop installations can be signed into the same account. A newcomer
+  # must not be mistaken for a restart while the incumbent transport is still
+  # alive and owns work; replacing it would disconnect the real runner and fail
+  # its omitted runs with the misleading desktop-restarted summary.
+  defp conflicting_live_runner?(owner_id, previous, next_instance) do
+    previous_instance = previous && previous.instance_id
 
-    {:reply,
-     %{
-       online: false,
-       activeRuns: 0,
-       lastError: error && error.message,
-       lastErrorAt: error && error.at,
-       lastSeenAt: state.last_seen[owner_id],
-       planUsage: state.plan_usage[owner_id]
-     }, state}
+    previous_instance not in [nil, ""] and next_instance not in [nil, ""] and
+      previous_instance != next_instance and incumbent_online?(owner_id, previous.sid) and
+      Enum.any?(Store.open_delegated(), &(&1.owner_user_id == owner_id))
   end
 
-  def handle_call({:plan_usage, owner_id}, _from, state),
-    do: {:reply, state.plan_usage[owner_id] || %{}, state}
+  defp incumbent_online?(owner_id, sid) do
+    match?({:ok, %{sid: ^sid}}, Hub.runner(owner_id)) and
+      match?({:ok, _pid}, Cascade.Realtime.lookup(sid))
+  rescue
+    _ -> false
+  end
 
   @impl true
   def handle_cast({:plan_usage, owner_id, usage}, state) do
