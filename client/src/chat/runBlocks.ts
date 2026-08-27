@@ -21,6 +21,23 @@ export function afterChatTimestamp(iso: string | undefined | null): string {
   return new Date(ms).toISOString();
 }
 
+/** Persisted row order is authoritative. Fall back to timestamps only while an
+ * optimistic row is still missing its server sequence. */
+export function sortChatMessages(messages: ChatMessage[]): ChatMessage[] {
+  return messages
+    .map((message, index) => ({ message, index }))
+    .sort((a, b) => {
+      const seqA = a.message.seq;
+      const seqB = b.message.seq;
+      if (typeof seqA === 'number' && typeof seqB === 'number' && seqA !== seqB) {
+        return seqA - seqB;
+      }
+      const byTime = Date.parse(a.message.createdAt) - Date.parse(b.message.createdAt);
+      return byTime || a.index - b.index;
+    })
+    .map(({ message }) => message);
+}
+
 export function textFromRunContent(content: unknown): string {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return '';

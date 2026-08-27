@@ -614,6 +614,29 @@ defmodule Cascade.ChatDomainTest do
     assert agent.content =~ "Private block hidden"
   end
 
+  test "message list follows commit order when client timestamps disagree" do
+    {vault, channel} = chat_vault(1, "Ordered messages", "Room")
+    user = %{id: 1, username: "alice"}
+
+    assert {:ok, first} =
+             Messages.create(user, vault.id, channel.id, %{
+               id: "clock-ahead",
+               body: "prompt",
+               createdAt: "2026-08-27T12:35:00.000Z"
+             })
+
+    assert {:ok, second} =
+             Messages.create(user, vault.id, channel.id, %{
+               id: "clock-behind",
+               body: "reply",
+               createdAt: "2026-08-27T12:34:00.000Z"
+             })
+
+    assert first.seq < second.seq
+    assert {:ok, messages} = Messages.list(channel.id, 1)
+    assert Enum.map(messages, & &1.id) == ~w(clock-ahead clock-behind)
+  end
+
   test "message writes authorize and fetch once instead of re-resolving the channel" do
     {vault, channel} = chat_vault(1, "Fast messages", "Room")
     user = %{id: 1, username: "alice"}

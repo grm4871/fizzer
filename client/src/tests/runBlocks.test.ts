@@ -5,6 +5,7 @@ import {
   honestAgentChatBody,
   mergeRemoteChatMessage,
   reconcileChatMessageSnapshot,
+  sortChatMessages,
 } from '../chat/runBlocks';
 import type { ChatMessage } from '../chat/types';
 
@@ -18,6 +19,22 @@ function chatMessage(id: string, overrides: Partial<ChatMessage> = {}): ChatMess
     ...overrides,
   };
 }
+
+describe('sortChatMessages', () => {
+  it('uses server sequence when client timestamps disagree', () => {
+    const prompt = chatMessage('prompt', { seq: 41, createdAt: '2026-08-27T12:35:00.000Z' });
+    const reply = chatMessage('reply', { seq: 42, createdAt: '2026-08-27T12:34:00.000Z' });
+
+    expect(sortChatMessages([reply, prompt])).toEqual([prompt, reply]);
+  });
+
+  it('keeps timestamp order while an optimistic row has no sequence', () => {
+    const prompt = chatMessage('prompt', { createdAt: '2026-08-27T12:34:00.000Z' });
+    const shell = chatMessage('shell', { seq: 42, createdAt: '2026-08-27T12:34:00.001Z' });
+
+    expect(sortChatMessages([shell, prompt])).toEqual([prompt, shell]);
+  });
+});
 
 describe('honestAgentChatBody', () => {
   it('uses the latest runner summary instead of accumulated progress text', () => {

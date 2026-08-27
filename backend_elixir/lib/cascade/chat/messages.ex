@@ -18,7 +18,7 @@ defmodule Cascade.Chat.Messages do
 
       messages =
         SQL.all(
-          "SELECT #{columns} FROM chat_messages WHERE channel_id=? ORDER BY created_at DESC,rowid DESC LIMIT ?",
+          "SELECT #{columns} FROM chat_messages WHERE channel_id=? ORDER BY rowid DESC LIMIT ?",
           [route.sourceChannelId, limit]
         )
         |> Enum.reverse()
