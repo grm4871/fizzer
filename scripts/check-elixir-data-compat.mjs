@@ -248,10 +248,14 @@ function databaseSnapshotFromCopy(filename) {
     if (tables.vault_agents) {
       const hasHermesProfile = tables.vault_agents.columns.some((column) => column.name === 'hermes_profile');
       const hasHermesSafeMode = tables.vault_agents.columns.some((column) => column.name === 'hermes_safe_mode');
+      const hasIdentityScope = tables.vault_agents.columns.some((column) => column.name === 'identity_scope');
+      const hasExpiresAt = tables.vault_agents.columns.some((column) => column.name === 'expires_at');
       compatibility.vaultAgentHermes = db.prepare(`
         SELECT rowid,id,
           ${hasHermesProfile ? 'hermes_profile' : "''"} AS hermesProfile,
-          ${hasHermesSafeMode ? 'hermes_safe_mode' : '0'} AS hermesSafeMode
+          ${hasHermesSafeMode ? 'hermes_safe_mode' : '0'} AS hermesSafeMode,
+          ${hasIdentityScope ? 'identity_scope' : "'network'"} AS identityScope,
+          ${hasExpiresAt ? 'expires_at' : 'NULL'} AS expiresAt
         FROM vault_agents ORDER BY rowid
       `).all();
     }
@@ -484,20 +488,28 @@ function exactRunOwnershipBackfill(before, after) {
   return true;
 }
 
-function exactVaultAgentHermesMigration(before, after) {
+function exactVaultAgentAdditiveMigration(before, after) {
   const oldTable = before.tables.vault_agents;
   const newTable = after.tables.vault_agents;
   if (!oldTable || !newTable
       || !/UNIQUE\s*\(\s*owner_user_id\s*,\s*mention\s*\)/iu.test(newTable.schema.sql)) {
     return false;
   }
+  const oldNames = new Set(oldTable.columns.map((column) => column.name));
+  const expectedAdditions = [
+    ...(!oldNames.has('hermes_profile') ? [
+      { name: 'hermes_profile', type: 'TEXT', notnull: 1, dflt_value: "''", pk: 0 },
+      { name: 'hermes_safe_mode', type: 'INTEGER', notnull: 1, dflt_value: '0', pk: 0 },
+    ] : []),
+    ...(!oldNames.has('identity_scope') ? [
+      { name: 'identity_scope', type: 'TEXT', notnull: 1, dflt_value: "'network'", pk: 0 },
+      { name: 'expires_at', type: 'TEXT', notnull: 0, dflt_value: null, pk: 0 },
+    ] : []),
+  ];
   const additions = newTable.columns.slice(oldTable.columns.length);
-  if (!same(additions.map(({ name, type, notnull, dflt_value, pk }) => (
+  if (!expectedAdditions.length || !same(additions.map(({ name, type, notnull, dflt_value, pk }) => (
     { name, type, notnull, dflt_value, pk }
-  )), [
-    { name: 'hermes_profile', type: 'TEXT', notnull: 1, dflt_value: "''", pk: 0 },
-    { name: 'hermes_safe_mode', type: 'INTEGER', notnull: 1, dflt_value: '0', pk: 0 },
-  ])) return false;
+  )), expectedAdditions)) return false;
   if (!same(oldTable.columns, newTable.columns.slice(0, oldTable.columns.length))
       || !same(oldTable.normalizedForeignKeys, newTable.normalizedForeignKeys)
       || oldTable.rows.count !== newTable.rows.count
@@ -510,7 +522,9 @@ function exactVaultAgentHermesMigration(before, after) {
   return oldRows.length === newRows.length && oldRows.every((oldRow, index) => {
     const newRow = newRows[index];
     return newRow?.rowid === oldRow.rowid && newRow.id === oldRow.id
-      && newRow.hermesProfile === '' && newRow.hermesSafeMode === 0;
+      && newRow.hermesProfile === oldRow.hermesProfile
+      && newRow.hermesSafeMode === oldRow.hermesSafeMode
+      && newRow.identityScope === 'network' && newRow.expiresAt === null;
   });
 }
 
@@ -624,11 +638,11 @@ export function compareDatabaseSnapshots(before, after, allowedAdditions = DEFAU
       }
     } else if (table === 'vault_agents') {
       if (!same(before.tables[table], after.tables[table])
-          && !exactVaultAgentHermesMigration(before, after)) {
+          && !exactVaultAgentAdditiveMigration(before, after)) {
         const oldRows = before.tables[table].rows;
         const newRows = after.tables[table].rows;
         failures.push(
-          `table changed outside pinned Hermes migration: ${table} (rows ${oldRows.count}/${oldRows.sha256.slice(0, 12)} -> ${newRows.count}/${newRows.sha256.slice(0, 12)})`,
+          `table changed outside pinned agent identity migration: ${table} (rows ${oldRows.count}/${oldRows.sha256.slice(0, 12)} -> ${newRows.count}/${newRows.sha256.slice(0, 12)})`,
         );
       }
     } else if (NORMALIZED_TABLE_SQL_SHA256.has(table)) {

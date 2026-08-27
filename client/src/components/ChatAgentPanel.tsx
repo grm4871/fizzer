@@ -213,6 +213,8 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
   const [agentFormError, setAgentFormError] = useState('');
   const [modelChoice, setModelChoice] = useState('');
   const [customModel, setCustomModel] = useState('');
+  const [identityScope, setIdentityScope] = useState<VaultAgent['identityScope']>('network');
+  const [sessionLeaseMinutes, setSessionLeaseMinutes] = useState(60);
   const createDefaultAgentForm = useCallback((): ChatAgentRegistration => {
     return {
       id: createChatAgentRegistrationId(),
@@ -293,6 +295,8 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
       setAgentForm({ ...registration, model: modelFromPicker(choice, custom) });
       setEditingRegistrationId(registration.id);
     } else {
+      setIdentityScope('network');
+      setSessionLeaseMinutes(60);
       const form = createDefaultAgentForm();
       const agent = availableAgents.find((option) => option.id === form.agentId);
       const { choice, custom } = resolveModelPicker(agent, form.model);
@@ -345,6 +349,12 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
 
   function editVaultIdentity(event: React.MouseEvent, registration: ChatAgentRegistration) {
     event.stopPropagation();
+    const identity = vaultAgents.find((agent) => agent.id === registration.vaultAgentId);
+    setIdentityScope(identity?.identityScope || 'network');
+    if (identity?.expiresAt) {
+      const remaining = (Date.parse(identity.expiresAt) - Date.now()) / 60_000;
+      setSessionLeaseMinutes(remaining > 1440 ? 10080 : remaining > 60 ? 1440 : 60);
+    }
     setAgentPanelMode('edit-identity');
     openAgentEditor(registration);
   }
@@ -365,6 +375,11 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
       hermesProfile: identity.hermesProfile || '',
       hermesSafeMode: identity.hermesSafeMode === true,
     };
+    setIdentityScope(identity.identityScope || 'network');
+    if (identity.expiresAt) {
+      const remaining = (Date.parse(identity.expiresAt) - Date.now()) / 60_000;
+      setSessionLeaseMinutes(remaining > 1440 ? 10080 : remaining > 60 ? 1440 : 60);
+    }
     setAgentPanelMode('edit-identity');
     openAgentEditor(registration);
   }
@@ -425,19 +440,11 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
     event.preventDefault();
     if (!agentForm.agentId) return;
     const mention = normalizeMention(agentForm.mention || '');
-    if (!mention && agentPanelMode !== 'edit-member') {
-      setAgentFormError('Choose a unique @ handle.');
+    if (!mention) {
+      setAgentFormError('Choose a local @ alias.');
       return;
     }
-    if (agentPanelMode !== 'edit-member' && mention) {
-      const vaultClash = vaultAgents.some((va) =>
-        va.id !== agentForm.vaultAgentId
-        && normalizeMention(va.mention) === mention,
-      );
-      if (vaultClash) {
-        setAgentFormError(`@${mention} is already used by another vault agent.`);
-        return;
-      }
+    if (mention) {
       const channelClash = registeredAgents.some((registration) =>
         registration.id !== agentForm.id
         && registration.vaultAgentId !== agentForm.vaultAgentId
@@ -445,6 +452,17 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
       );
       if (channelClash) {
         setAgentFormError(`@${mention} is already used in this channel.`);
+        return;
+      }
+    }
+    if (agentPanelMode !== 'edit-member' && mention) {
+      const vaultClash = vaultAgents.some((va) =>
+        va.id !== agentForm.vaultAgentId
+        && (!va.ownerUsername || va.ownerUsername === currentUser)
+        && normalizeMention(va.mention) === mention,
+      );
+      if (vaultClash) {
+        setAgentFormError(`@${mention} is already used by another agent you control.`);
         return;
       }
     }
@@ -479,6 +497,10 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
           contextPrompt: agentForm.contextPrompt.trim(),
           hermesProfile: agentForm.hermesProfile.trim(),
           hermesSafeMode: agentForm.hermesSafeMode,
+          identityScope,
+          expiresAt: identityScope === 'session'
+            ? new Date(Date.now() + sessionLeaseMinutes * 60_000).toISOString()
+            : null,
         });
         if (registeredAgents.some((registration) => registration.id === agentForm.id)) {
           persistMembership();
@@ -493,6 +515,10 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
           contextPrompt: agentForm.contextPrompt.trim(),
           hermesProfile: agentForm.hermesProfile.trim(),
           hermesSafeMode: agentForm.hermesSafeMode,
+          identityScope,
+          expiresAt: identityScope === 'session'
+            ? new Date(Date.now() + sessionLeaseMinutes * 60_000).toISOString()
+            : null,
         });
         const vaultAgentId = va?.id || agentForm.vaultAgentId || '';
         if (vaultAgentId && onAddVaultAgentToChannel) {
@@ -511,6 +537,10 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
             contextPrompt: agentForm.contextPrompt.trim(),
             hermesProfile: agentForm.hermesProfile.trim(),
             hermesSafeMode: agentForm.hermesSafeMode,
+            identityScope,
+            expiresAt: identityScope === 'session'
+              ? new Date(Date.now() + sessionLeaseMinutes * 60_000).toISOString()
+              : null,
           });
         }
         persistMembership({
@@ -651,7 +681,11 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
                       <span className="chat-user-copy">
                         <strong>{va.displayName || va.mention}</strong>
                         <span>
-                          @{va.mention} · {va.model || va.agentId}
+                          @{va.mention} · {va.model || va.agentId} · {va.identityScope === 'vault'
+                            ? 'vault bot/app'
+                            : va.identityScope === 'session'
+                              ? 'session actor'
+                              : 'network principal'}
                           {va.ownerUsername ? ` · ${va.ownerUsername}'s agent` : ''}
                           {inChannel ? ' · in vault' : ''}
                         </span>
@@ -781,14 +815,39 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
               />
             </label>
             <label>
-              @ handle
+              Default @ alias
               <input
                 value={agentForm.mention}
                 placeholder="grok"
                 spellCheck={false}
                 onChange={(event) => setAgentForm((value) => ({ ...value, mention: event.target.value.replace(/^@+/, '') }))}
               />
+              <span className="chat-agent-field-hint">Channels may assign a different local alias. This is not an access grant.</span>
             </label>
+            <label>
+              Lifetime and reach
+              <select
+                value={identityScope}
+                onChange={(event) => setIdentityScope(event.target.value as VaultAgent['identityScope'])}
+              >
+                <option value="network">Network principal — reusable across vaults</option>
+                <option value="vault">Vault bot/app — local to this vault</option>
+                <option value="session">Session actor — expires automatically</option>
+              </select>
+            </label>
+            {identityScope === 'session' && (
+              <label>
+                Lease
+                <select
+                  value={sessionLeaseMinutes}
+                  onChange={(event) => setSessionLeaseMinutes(Number(event.target.value))}
+                >
+                  <option value={60}>1 hour</option>
+                  <option value={1440}>24 hours</option>
+                  <option value={10080}>7 days</option>
+                </select>
+              </label>
+            )}
             <label>
               Cwd
               <input
@@ -882,6 +941,21 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
             </div>
             {(agentPanelMode === 'edit-member' || agentPanelMode === 'create') && (
               <>
+            {agentPanelMode === 'edit-member' && (
+              <label>
+                Local @ alias
+                <input
+                  value={agentForm.mention}
+                  placeholder="sol"
+                  spellCheck={false}
+                  onChange={(event) => setAgentForm((value) => ({
+                    ...value,
+                    mention: event.target.value.replace(/^@+/, ''),
+                  }))}
+                />
+                <span className="chat-agent-field-hint">Unique only in this channel; changing it does not rename the principal.</span>
+              </label>
+            )}
             <div className="chat-agent-group">
               <div className="chat-agent-group-title">Replies</div>
               <ChatAgentToggle

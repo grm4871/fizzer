@@ -6,23 +6,27 @@ defmodule Cascade.Chat.Agents do
 
   @codex_efforts ~w(low medium high xhigh max ultra)
   @claude_efforts ~w(low medium high xhigh max)
+  @identity_scopes ~w(network vault session)
 
   def list_vault(user_id, vault_id) do
     if VaultMembers.role(vault_id, user_id) do
+      purge_expired_sessions!()
+
       agents =
         SQL.all(
           """
           SELECT va.id,va.vault_id,va.agent_id,va.display_name,va.avatar_url,va.mention,
             va.model,va.cwd,va.context_prompt,va.hermes_profile,va.hermes_safe_mode,
+            va.identity_scope,va.expires_at,
             va.owner_user_id,u.username,va.created_at,va.updated_at
           FROM vault_agents va LEFT JOIN users u ON u.id=va.owner_user_id
-          WHERE (va.owner_user_id=? OR va.vault_id=? OR EXISTS(
+          WHERE ((va.owner_user_id=? AND (va.identity_scope='network' OR va.vault_id=?)) OR va.vault_id=? OR EXISTS(
             SELECT 1 FROM chat_agent_members m WHERE m.vault_agent_id=va.id AND m.vault_id=?
           )) AND NOT EXISTS(
             SELECT 1 FROM vault_agent_exclusions x WHERE x.vault_id=? AND x.vault_agent_id=va.id
           ) ORDER BY va.display_name COLLATE NOCASE,va.mention COLLATE NOCASE
           """,
-          [user_id, vault_id, vault_id, vault_id]
+          [user_id, vault_id, vault_id, vault_id, vault_id]
         )
         |> Enum.map(&identity/1)
         |> Enum.map(&Map.put(&1, :channelIds, channel_ids(&1.id)))
@@ -53,7 +57,7 @@ defmodule Cascade.Chat.Agents do
 
       existing =
         SQL.one(
-          "SELECT owner_user_id,avatar_url FROM vault_agents WHERE id=? AND (owner_user_id=? OR vault_id=?)",
+          "SELECT owner_user_id,avatar_url,identity_scope,expires_at FROM vault_agents WHERE id=? AND (owner_user_id=? OR vault_id=?)",
           [id, user_id, vault_id]
         )
 
@@ -125,6 +129,8 @@ defmodule Cascade.Chat.Agents do
   end
 
   def list_members(channel_id, user_id) do
+    purge_expired_sessions!()
+
     with {:ok, route} <- Channel.assert_channel(channel_id, user_id) do
       members =
         SQL.all(
@@ -133,7 +139,7 @@ defmodule Cascade.Chat.Agents do
               m.mention,m.model,m.reasoning_effort,m.priority_service_tier,m.cwd,m.context_prompt,
               m.taggable_by_agents,m.reply_to_every_message,m.orchestrator,m.pingable_by_others,
               m.yolo,m.conversation_id,va.hermes_profile,va.hermes_safe_mode FROM chat_agent_members m
-            LEFT JOIN vault_agents va ON va.id=m.vault_agent_id
+            JOIN vault_agents va ON va.id=m.vault_agent_id
             WHERE m.channel_id=? ORDER BY m.created_at,m.rowid
           """,
           [route.sourceChannelId]
@@ -152,17 +158,22 @@ defmodule Cascade.Chat.Agents do
            agent_id,
            display_name,
            avatar_url,
-           mention,
-           model,
-           cwd,
-           prompt,
+           default_mention,
+           default_model,
+           default_cwd,
+           default_prompt,
            owner_id | _
          ] <-
            SQL.one(
-             "SELECT id,vault_id,agent_id,display_name,avatar_url,mention,model,cwd,context_prompt,owner_user_id,created_at,updated_at FROM vault_agents WHERE id=? AND (owner_user_id=? OR vault_id=?)",
-             [identity_id, user_id, route.localVaultId]
+             "SELECT id,vault_id,agent_id,display_name,avatar_url,mention,model,cwd,context_prompt,owner_user_id,created_at,updated_at FROM vault_agents WHERE id=? AND ((owner_user_id=? AND (identity_scope='network' OR vault_id=?)) OR vault_id=?) AND (identity_scope!='session' OR julianday(expires_at)>julianday('now'))",
+             [identity_id, user_id, route.localVaultId, route.localVaultId]
            ),
          :ok <- manage_identity(owner_id, user_id),
+         mention <-
+           Schema.normalize_mention(value(flags, "mention", default_mention), default_mention),
+         model <- value(flags, "model", default_model) |> to_string() |> String.trim(),
+         cwd <- value(flags, "cwd", default_cwd) |> to_string(),
+         prompt <- value(flags, "contextPrompt", default_prompt) |> to_string(),
          :ok <- member_handle_available(route.sourceChannelId, identity_id, mention) do
       existing =
         SQL.one(
@@ -350,6 +361,7 @@ defmodule Cascade.Chat.Agents do
              """
                SELECT m.id,m.vault_agent_id,va.owner_user_id FROM chat_agent_members m
                JOIN vault_agents va ON va.id=m.vault_agent_id WHERE m.id=? AND m.channel_id=?
+               AND (va.identity_scope!='session' OR julianday(va.expires_at)>julianday('now'))
              """,
              [registration_id, route.sourceChannelId]
            ) do
@@ -393,15 +405,22 @@ defmodule Cascade.Chat.Agents do
     hermes_profile = value(input, "hermesProfile", "") |> to_string() |> String.trim()
     hermes_safe_mode = boolean(input, "hermesSafeMode", false)
 
+    identity_scope =
+      identity_scope(value(input, "identityScope", existing_value(existing, 2, "network")))
+
+    expires_at =
+      expiry(identity_scope, value(input, "expiresAt", existing_value(existing, 3, nil)))
+
     SQL.transaction(fn ->
       SQL.exec(
         """
         INSERT INTO vault_agents(id,vault_id,agent_id,display_name,avatar_url,mention,model,cwd,context_prompt,
-          hermes_profile,hermes_safe_mode,owner_user_id)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
+          hermes_profile,hermes_safe_mode,identity_scope,expires_at,owner_user_id)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
           agent_id=excluded.agent_id,display_name=excluded.display_name,avatar_url=excluded.avatar_url,
           mention=excluded.mention,model=excluded.model,cwd=excluded.cwd,context_prompt=excluded.context_prompt,
           hermes_profile=excluded.hermes_profile,hermes_safe_mode=excluded.hermes_safe_mode,
+          identity_scope=excluded.identity_scope,expires_at=excluded.expires_at,
           updated_at=datetime('now')
         """,
         [
@@ -416,16 +435,18 @@ defmodule Cascade.Chat.Agents do
           prompt,
           hermes_profile,
           bool_int(hermes_safe_mode),
+          identity_scope,
+          expires_at,
           user_id
         ]
       )
 
       SQL.exec(
         """
-        UPDATE chat_agent_members SET agent_id=?,display_name=?,avatar_url=?,mention=?,model=?,cwd=?,
-          context_prompt=?,updated_at=datetime('now') WHERE vault_agent_id=?
+        UPDATE chat_agent_members SET agent_id=?,display_name=?,avatar_url=?,updated_at=datetime('now')
+        WHERE vault_agent_id=?
         """,
-        [agent_id, display_name, avatar, mention, model, cwd, prompt, id]
+        [agent_id, display_name, avatar, id]
       )
 
       SQL.exec("DELETE FROM vault_agent_exclusions WHERE vault_id=? AND vault_agent_id=?", [
@@ -449,6 +470,8 @@ defmodule Cascade.Chat.Agents do
          prompt,
          hermes_profile,
          hermes_safe_mode,
+         identity_scope,
+         expires_at,
          owner_id,
          owner_username,
          created_at,
@@ -466,6 +489,8 @@ defmodule Cascade.Chat.Agents do
       contextPrompt: prompt || "",
       hermesProfile: hermes_profile || "",
       hermesSafeMode: hermes_safe_mode != 0,
+      identityScope: identity_scope || "network",
+      expiresAt: expires_at,
       ownerUserId: owner_id,
       ownerUsername: owner_username || "",
       createdAt: created_at,
@@ -527,14 +552,57 @@ defmodule Cascade.Chat.Agents do
       )
       |> List.flatten()
 
-  defp identity_clash?(id, mention, user_id, vault_id),
+  defp identity_clash?(id, mention, user_id, _vault_id),
     do:
       not is_nil(
         SQL.one(
-          "SELECT 1 FROM vault_agents WHERE mention=? COLLATE NOCASE AND id!=? AND (owner_user_id=? OR vault_id=?)",
-          [mention, id, user_id, vault_id]
+          "SELECT 1 FROM vault_agents WHERE mention=? COLLATE NOCASE AND id!=? AND owner_user_id=?",
+          [mention, id, user_id]
         )
       )
+
+  defp identity_scope(value) do
+    normalized = value |> to_string() |> String.trim() |> String.downcase()
+    if normalized in @identity_scopes, do: normalized, else: "network"
+  end
+
+  defp expiry("session", value) do
+    case DateTime.from_iso8601(to_string(value || "")) do
+      {:ok, expiry, _offset} ->
+        if DateTime.compare(expiry, DateTime.utc_now()) == :gt,
+          do: DateTime.to_iso8601(expiry),
+          else: DateTime.utc_now() |> DateTime.add(3600, :second) |> DateTime.to_iso8601()
+
+      _ ->
+        DateTime.utc_now() |> DateTime.add(3600, :second) |> DateTime.to_iso8601()
+    end
+  end
+
+  defp expiry(_scope, _value), do: nil
+
+  defp purge_expired_sessions! do
+    expired =
+      SQL.all(
+        "SELECT id FROM vault_agents WHERE identity_scope='session' AND expires_at IS NOT NULL AND julianday(expires_at)<=julianday('now')"
+      )
+      |> List.flatten()
+
+    SQL.transaction(fn ->
+      SQL.exec(
+        "DELETE FROM chat_agent_members WHERE vault_agent_id IN (SELECT id FROM vault_agents WHERE identity_scope='session' AND expires_at IS NOT NULL AND julianday(expires_at)<=julianday('now'))"
+      )
+
+      SQL.exec(
+        "DELETE FROM vault_agent_exclusions WHERE vault_agent_id IN (SELECT id FROM vault_agents WHERE identity_scope='session' AND expires_at IS NOT NULL AND julianday(expires_at)<=julianday('now'))"
+      )
+
+      SQL.exec(
+        "DELETE FROM vault_agents WHERE identity_scope='session' AND expires_at IS NOT NULL AND julianday(expires_at)<=julianday('now')"
+      )
+    end)
+
+    Enum.each(expired, &Avatars.purge/1)
+  end
 
   defp member_handle_available(channel_id, identity_id, mention),
     do:
@@ -543,7 +611,7 @@ defmodule Cascade.Chat.Agents do
           "SELECT 1 FROM chat_agent_members WHERE channel_id=? AND mention=? COLLATE NOCASE AND vault_agent_id!=?",
           [channel_id, mention, identity_id]
         ),
-        do: {:error, "@#{mention} is already used by another agent in this vault"},
+        do: {:error, "@#{mention} is already used by another agent in this channel"},
         else: :ok
       )
 

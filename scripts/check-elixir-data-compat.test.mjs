@@ -68,7 +68,7 @@ test('permits only the additive Elixir migration ledger', () => {
   }
 });
 
-test('permits only the pinned additive Hermes identity migration', () => {
+test('permits only pinned additive agent identity columns with default values', () => {
   const files = fixture();
   try {
     const before = new Database(files.before);
@@ -92,6 +92,8 @@ test('permits only the pinned additive Hermes identity migration', () => {
     after.exec(`
       ALTER TABLE vault_agents ADD COLUMN hermes_profile TEXT NOT NULL DEFAULT '';
       ALTER TABLE vault_agents ADD COLUMN hermes_safe_mode INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE vault_agents ADD COLUMN identity_scope TEXT NOT NULL DEFAULT 'network';
+      ALTER TABLE vault_agents ADD COLUMN expires_at TEXT;
     `);
     after.close();
     assert.equal(runComparison(files).ok, true, runComparison(files).failures.join('\n'));
@@ -100,7 +102,7 @@ test('permits only the pinned additive Hermes identity migration', () => {
     changed.prepare('UPDATE vault_agents SET hermes_profile = ? WHERE id = ?').run('unexpected', 'sol');
     changed.close();
     assert.ok(runComparison(files).failures.some((failure) => (
-      failure.startsWith('table changed outside pinned Hermes migration: vault_agents')
+      failure.startsWith('table changed outside pinned agent identity migration: vault_agents')
     )));
   } finally {
     fs.rmSync(files.directory, { recursive: true, force: true });

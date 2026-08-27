@@ -221,7 +221,7 @@ export interface ChatAgentRegistration {
   conversationId: string;
 }
 
-/** Persistent vault-scoped agent identity (shared across channels). */
+/** Stable agent principal. Its visible @ alias is copied into each channel binding and may diverge. */
 export interface VaultAgent {
   id: string;
   vaultId: string;
@@ -234,6 +234,8 @@ export interface VaultAgent {
   contextPrompt: string;
   hermesProfile: string;
   hermesSafeMode: boolean;
+  identityScope: 'network' | 'vault' | 'session';
+  expiresAt?: string | null;
   ownerUserId: number;
   ownerUsername: string;
   channelIds?: string[];

@@ -460,6 +460,86 @@ defmodule Cascade.ChatDomainTest do
              nil
   end
 
+  test "agent principals separate local aliases, reach, leases, and invocation policy" do
+    {home, channel} = chat_vault(1, "Agent home", "Room")
+    {other, _other_channel} = chat_vault(1, "Other", "Elsewhere")
+    {bob_home, _bob_channel} = chat_vault(2, "Bob agents", "Bots")
+
+    assert {:ok, network} =
+             Agents.upsert_identity(1, home.id, %{
+               agentId: "codex",
+               displayName: "Sol",
+               mention: "sol",
+               identityScope: "network"
+             })
+
+    assert {:ok, bob_sol} =
+             Agents.upsert_identity(2, bob_home.id, %{
+               agentId: "codex",
+               displayName: "Bob's Sol",
+               mention: "sol",
+               identityScope: "network"
+             })
+
+    assert bob_sol.mention == network.mention
+
+    assert {:ok, member} =
+             Agents.add_to_channel(1, home.id, channel.id, network.id, %{
+               mention: "room-sol",
+               model: "room-model",
+               pingableByOthers: false
+             })
+
+    assert member.mention == "room-sol"
+    refute member.pingableByOthers
+
+    assert {:ok, renamed} =
+             Agents.upsert_identity(1, home.id, %{
+               id: network.id,
+               agentId: "codex",
+               displayName: "Solar",
+               mention: "solar",
+               model: "new-default",
+               identityScope: "network"
+             })
+
+    assert renamed.mention == "solar"
+    assert {:ok, [local]} = Agents.list_members(channel.id, 1)
+    assert local.mention == "room-sol"
+    assert local.model == "room-model"
+
+    assert {:ok, vault_bot} =
+             Agents.upsert_identity(1, home.id, %{
+               agentId: "codex",
+               displayName: "Scratch bot",
+               mention: "scratch",
+               identityScope: "vault"
+             })
+
+    assert {:ok, other_agents} = Agents.list_vault(1, other.id)
+    assert Enum.any?(other_agents, &(&1.id == network.id))
+    refute Enum.any?(other_agents, &(&1.id == vault_bot.id))
+
+    assert {:ok, session} =
+             Agents.upsert_identity(1, home.id, %{
+               agentId: "codex",
+               displayName: "Temporary",
+               mention: "temporary",
+               identityScope: "session",
+               expiresAt: DateTime.utc_now() |> DateTime.add(60, :second) |> DateTime.to_iso8601()
+             })
+
+    assert {:ok, session_member} =
+             Agents.add_to_channel(1, home.id, channel.id, session.id, %{mention: "temp-local"})
+
+    SQL.exec("UPDATE vault_agents SET expires_at='2000-01-01T00:00:00Z' WHERE id=?", [session.id])
+    assert {:ok, active_members} = Agents.list_members(channel.id, 1)
+    refute Enum.any?(active_members, &(&1.id == session_member.id))
+    assert {:ok, home_agents} = Agents.list_vault(1, home.id)
+    refute Enum.any?(home_agents, &(&1.id == session.id))
+    assert SQL.one("SELECT id FROM vault_agents WHERE id=?", [session.id]) == nil
+  end
+
   test "concurrent identity adds preserve a single channel registration" do
     {vault, channel} = chat_vault(1, "One", "A")
 
