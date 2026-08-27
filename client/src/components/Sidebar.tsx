@@ -118,6 +118,24 @@ export function sortSidebarNotes(notes: NoteSummary[]) {
   );
 }
 
+type ConnectorBox = Pick<DOMRect, 'left' | 'right' | 'top' | 'bottom'>;
+
+export function vaultSelectionConnectorPath(
+  sidebarBox: ConnectorBox,
+  vaultBox: ConnectorBox,
+  noteBox: ConnectorBox,
+) {
+  const startX = vaultBox.right - sidebarBox.left;
+  const endX = noteBox.left - sidebarBox.left;
+  const bendX = startX + (endX - startX) / 2;
+  const startTop = vaultBox.top - sidebarBox.top;
+  const startBottom = vaultBox.bottom - sidebarBox.top;
+  const endTop = noteBox.top - sidebarBox.top;
+  const endBottom = noteBox.bottom - sidebarBox.top;
+  return `M ${startX} ${startTop} C ${bendX} ${startTop}, ${bendX} ${endTop}, ${endX} ${endTop} `
+    + `L ${endX} ${endBottom} C ${bendX} ${endBottom}, ${bendX} ${startBottom}, ${startX} ${startBottom} Z`;
+}
+
 export function isMp3Link(label: string, href: string) {
   const normalizedLabel = label.trim().toLowerCase();
   const normalizedHref = href.toLowerCase();
@@ -263,39 +281,42 @@ export const Sidebar = memo(function Sidebar({
       return;
     }
 
+    let frame = 0;
     const updateConnector = () => {
       const vaultButton = sidebar.querySelector<HTMLElement>(`[data-vault-id="${activeVaultId}"]`);
       const noteButton = document.getElementById(`note-${activeNoteId}`);
       if (!vaultButton || !noteButton || !sidebar.contains(noteButton)) {
-        setSelectionConnector('');
+        setSelectionConnector((current) => current === '' ? current : '');
         return;
       }
-      const sidebarBox = sidebar.getBoundingClientRect();
-      const vaultBox = vaultButton.getBoundingClientRect();
-      const noteBox = noteButton.getBoundingClientRect();
-      const startX = vaultBox.right - sidebarBox.left;
-      const endX = noteBox.left - sidebarBox.left;
-      const bendX = startX + (endX - startX) / 2;
-      const startTop = vaultBox.top - sidebarBox.top;
-      const startBottom = vaultBox.bottom - sidebarBox.top;
-      const endTop = noteBox.top - sidebarBox.top;
-      const endBottom = noteBox.bottom - sidebarBox.top;
-      setSelectionConnector(
-        `M ${startX} ${startTop} C ${bendX} ${startTop}, ${bendX} ${endTop}, ${endX} ${endTop} `
-        + `L ${endX} ${endBottom} C ${bendX} ${endBottom}, ${bendX} ${startBottom}, ${startX} ${startBottom} Z`,
+      const next = vaultSelectionConnectorPath(
+        sidebar.getBoundingClientRect(),
+        vaultButton.getBoundingClientRect(),
+        noteButton.getBoundingClientRect(),
       );
+      setSelectionConnector((current) => current === next ? current : next);
     };
 
-    const frame = window.requestAnimationFrame(updateConnector);
-    const observer = new ResizeObserver(updateConnector);
+    const scheduleConnectorUpdate = () => {
+      if (frame) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        updateConnector();
+      });
+    };
+
+    // Measure in the layout phase so the connector is present in the first
+    // painted frame. Later layout churn is coalesced to one update per frame.
+    updateConnector();
+    const observer = new ResizeObserver(scheduleConnectorUpdate);
     observer.observe(sidebar);
-    sidebar.addEventListener('scroll', updateConnector, true);
-    window.addEventListener('resize', updateConnector);
+    sidebar.addEventListener('scroll', scheduleConnectorUpdate, true);
+    window.addEventListener('resize', scheduleConnectorUpdate);
     return () => {
-      window.cancelAnimationFrame(frame);
+      if (frame) window.cancelAnimationFrame(frame);
       observer.disconnect();
-      sidebar.removeEventListener('scroll', updateConnector, true);
-      window.removeEventListener('resize', updateConnector);
+      sidebar.removeEventListener('scroll', scheduleConnectorUpdate, true);
+      window.removeEventListener('resize', scheduleConnectorUpdate);
     };
   }, [activeNoteId, activeVaultId, expandedFolders, folders, notes]);
 
