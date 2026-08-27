@@ -60,6 +60,19 @@ defmodule Cascade.Runs.ChatProjectionTest do
     assert suppressed.done
   end
 
+  test "keeps an outcome paragraph after an initial progress sentence" do
+    body = "I'll inspect the scroll behavior.\n\nLive traces now follow the transcript pin."
+
+    projected =
+      ChatProjection.build([
+        event("text", %{chatVisible: true, message: %{content: body}}),
+        event("status", %{status: "completed", summary: body})
+      ])
+
+    assert projected.body == body
+    assert projected.done
+  end
+
   test "chunked project matches a single full rebuild" do
     events =
       [

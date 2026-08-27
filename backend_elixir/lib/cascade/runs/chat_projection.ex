@@ -558,10 +558,13 @@ defmodule Cascade.Runs.ChatProjection do
 
   defp generic_summary?(value) do
     text = trim(value)
+    standalone = not String.contains?(text, "\n\n")
 
     Regex.match?(~r/^(done\.?|completed note operations successfully\.?|agent failed\.?)$/i, text) or
-      Regex.match?(~r/^I will\b/i, text) or Regex.match?(~r/^I(?:'ll| am going to)\b/i, text) or
-      Regex.match?(~r/^Let me\b/i, text)
+      (standalone and
+         (Regex.match?(~r/^I will\b/i, text) or
+            Regex.match?(~r/^I(?:'ll| am going to)\b/i, text) or
+            Regex.match?(~r/^Let me\b/i, text)))
   end
 
   defp value(map, key, fallback \\ nil)
