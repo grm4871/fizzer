@@ -28,7 +28,7 @@ defmodule CascadeWeb.ChatRouter do
   end
 
   put "/api/vaults/:vault_id/vault-agents" do
-    authenticated(conn, :user, :vault, fn conn, user ->
+    authenticated(conn, :any, :vault, fn conn, user ->
       case serialized_mutation_and_emit(
              conn,
              fn -> Agents.upsert_identity(user.id, vault_id, conn.body_params) end,
@@ -62,7 +62,7 @@ defmodule CascadeWeb.ChatRouter do
   end
 
   delete "/api/vaults/:vault_id/vault-agents/:agent_id" do
-    authenticated(conn, :user, :vault, fn conn, user ->
+    authenticated(conn, :any, :vault, fn conn, user ->
       mutation_result(conn, fn -> Agents.unlink_from_vault(user.id, vault_id, agent_id) end, %{
         event: "vault:vaultAgentRemoved",
         vaultId: vault_id,
@@ -338,7 +338,7 @@ defmodule CascadeWeb.ChatRouter do
   end
 
   put "/api/vaults/:vault_id/channels/:channel_id/agents" do
-    authenticated(conn, :user, :vault, fn conn, user ->
+    authenticated(conn, :any, :vault, fn conn, user ->
       registration(
         conn,
         fn -> Agents.upsert_member(user.id, vault_id, channel_id, conn.body_params) end,
@@ -350,7 +350,7 @@ defmodule CascadeWeb.ChatRouter do
   end
 
   post "/api/vaults/:vault_id/channels/:channel_id/agents/from-vault" do
-    authenticated(conn, :user, :vault, fn conn, user ->
+    authenticated(conn, :any, :vault, fn conn, user ->
       registration(
         conn,
         fn ->
@@ -390,7 +390,7 @@ defmodule CascadeWeb.ChatRouter do
   end
 
   delete "/api/vaults/:vault_id/channels/:channel_id/agents/:registration_id" do
-    authenticated(conn, :user, :vault, fn conn, user ->
+    authenticated(conn, :any, :vault, fn conn, user ->
       mutation_result(
         conn,
         fn -> Agents.remove_member(user.id, vault_id, channel_id, registration_id) end,

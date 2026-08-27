@@ -169,8 +169,7 @@ defmodule Cascade.Chat.Agents do
              [identity_id, user_id, route.localVaultId, route.localVaultId]
            ),
          :ok <- manage_identity(owner_id, user_id),
-         mention <-
-           Schema.normalize_mention(value(flags, "mention", default_mention), default_mention),
+         mention <- Schema.normalize_mention(default_mention, agent_id),
          model <- value(flags, "model", default_model) |> to_string() |> String.trim(),
          cwd <- value(flags, "cwd", default_cwd) |> to_string(),
          prompt <- value(flags, "contextPrompt", default_prompt) |> to_string(),
@@ -552,12 +551,19 @@ defmodule Cascade.Chat.Agents do
       )
       |> List.flatten()
 
-  defp identity_clash?(id, mention, user_id, _vault_id),
+  defp identity_clash?(id, mention, user_id, vault_id),
     do:
       not is_nil(
         SQL.one(
-          "SELECT 1 FROM vault_agents WHERE mention=? COLLATE NOCASE AND id!=? AND owner_user_id=?",
-          [mention, id, user_id]
+          """
+          SELECT 1 FROM vault_agents va
+          WHERE va.mention=? COLLATE NOCASE AND va.id!=? AND (
+            va.vault_id=? OR (va.owner_user_id=? AND va.identity_scope='network') OR EXISTS(
+              SELECT 1 FROM chat_agent_members m WHERE m.vault_agent_id=va.id AND m.vault_id=?
+            )
+          ) LIMIT 1
+          """,
+          [mention, id, vault_id, user_id, vault_id]
         )
       )
 

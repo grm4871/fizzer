@@ -160,6 +160,40 @@ defmodule CascadeWeb.RouterTest do
     assert rejected.status == 403
   end
 
+  test "agent credentials can manage a vault-local agent roster but cannot delete global profiles",
+       %{
+         user_id: user_id
+       } do
+    token = Token.sign_agent(%{id: user_id, username: @username, auth_version: 0})
+
+    for {method, path} <- [
+          {:get, "/api/vaults/v1/vault-agents"},
+          {:put, "/api/vaults/v1/vault-agents"},
+          {:delete, "/api/vaults/v1/vault-agents/a1"},
+          {:put, "/api/vaults/v1/channels/c1/agents"},
+          {:post, "/api/vaults/v1/channels/c1/agents/from-vault"},
+          {:delete, "/api/vaults/v1/channels/c1/agents/r1"}
+        ] do
+      conn = conn(method, path) |> put_req_header("authorization", "Bearer #{token}")
+
+      options =
+        if method == :get,
+          do: [],
+          else: [mutation_gate: fn _session, _request -> :ok end]
+
+      assert {:ok, _authorized} = Auth.require(conn, options)
+    end
+
+    profile =
+      conn(:delete, "/api/vaults/v1/vault-agents/a1/profile")
+      |> put_req_header("authorization", "Bearer #{token}")
+
+    assert {:error, rejected} =
+             Auth.require(profile, mutation_gate: fn _session, _request -> :ok end)
+
+    assert rejected.status == 403
+  end
+
   test "shared auth boundary requires an explicit mutation policy", %{user_id: user_id} do
     token = Token.sign_user(%{id: user_id, username: @username, auth_version: 0})
 

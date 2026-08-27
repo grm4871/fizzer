@@ -119,7 +119,7 @@
   "summary": {
     "httpRoutes": 171,
     "socketIoInboundDeclarations": 11,
-    "socketIoOutboundLiteralDeclarations": 60,
+    "socketIoOutboundLiteralDeclarations": 61,
     "sqliteDeclarations": 37
   },
   "httpRoutes": [
@@ -1570,15 +1570,21 @@
       },
       {
         "namespace": "/vault",
+        "event": "vault:chatMessageCreated",
+        "source": "backend_elixir/lib/cascade/runs/chat_projection.ex",
+        "line": 371
+      },
+      {
+        "namespace": "/vault",
         "event": "vault:chatMessageDeleted",
         "source": "backend_elixir/lib/cascade/runs/chat_projection.ex",
-        "line": 350
+        "line": 423
       },
       {
         "namespace": "/vault",
         "event": "vault:chatMessageUpdated",
         "source": "backend_elixir/lib/cascade/runs/chat_projection.ex",
-        "line": 366
+        "line": 439
       }
     ]
   },

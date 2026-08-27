@@ -4,7 +4,7 @@ defmodule Cascade.ChatDomainTest do
   import Plug.Conn
   import Plug.Test
 
-  alias Cascade.Accounts.SQL
+  alias Cascade.Accounts.{SQL, VaultMembers}
   alias Cascade.Auth.Token
   alias Cascade.Chat.{Agents, Channel, Messages, RoomContext, Schema}
   alias Cascade.Content.{Assets, Store}
@@ -490,7 +490,7 @@ defmodule Cascade.ChatDomainTest do
                pingableByOthers: false
              })
 
-    assert member.mention == "room-sol"
+    assert member.mention == "sol"
     refute member.pingableByOthers
 
     assert {:ok, renamed} =
@@ -505,7 +505,7 @@ defmodule Cascade.ChatDomainTest do
 
     assert renamed.mention == "solar"
     assert {:ok, [local]} = Agents.list_members(channel.id, 1)
-    assert local.mention == "room-sol"
+    assert local.mention == "sol"
     assert local.model == "room-model"
 
     assert {:ok, vault_bot} =
@@ -532,12 +532,35 @@ defmodule Cascade.ChatDomainTest do
     assert {:ok, session_member} =
              Agents.add_to_channel(1, home.id, channel.id, session.id, %{mention: "temp-local"})
 
+    assert session_member.mention == "temporary"
+
     SQL.exec("UPDATE vault_agents SET expires_at='2000-01-01T00:00:00Z' WHERE id=?", [session.id])
     assert {:ok, active_members} = Agents.list_members(channel.id, 1)
     refute Enum.any?(active_members, &(&1.id == session_member.id))
     assert {:ok, home_agents} = Agents.list_vault(1, home.id)
     refute Enum.any?(home_agents, &(&1.id == session.id))
     assert SQL.one("SELECT id FROM vault_agents WHERE id=?", [session.id]) == nil
+  end
+
+  test "vault handles are unique across agents controlled by different members" do
+    {vault, _channel} = chat_vault(1, "Shared agents", "Room")
+    assert {:ok, _member} = VaultMembers.add(vault.id, 1, 2, "editor")
+
+    assert {:ok, _bob_agent} =
+             Agents.upsert_identity(2, vault.id, %{
+               agentId: "claude-code",
+               displayName: "Bob's helper",
+               mention: "helper",
+               identityScope: "vault"
+             })
+
+    assert {:error, "Mention @helper is already used by another agent"} =
+             Agents.upsert_identity(1, vault.id, %{
+               agentId: "codex",
+               displayName: "Alice's helper",
+               mention: "helper",
+               identityScope: "vault"
+             })
   end
 
   test "concurrent identity adds preserve a single channel registration" do

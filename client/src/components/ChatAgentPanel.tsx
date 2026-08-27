@@ -213,7 +213,7 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
   const [agentFormError, setAgentFormError] = useState('');
   const [modelChoice, setModelChoice] = useState('');
   const [customModel, setCustomModel] = useState('');
-  const [identityScope, setIdentityScope] = useState<VaultAgent['identityScope']>('network');
+  const [identityScope, setIdentityScope] = useState<VaultAgent['identityScope']>('vault');
   const [sessionLeaseMinutes, setSessionLeaseMinutes] = useState(60);
   const createDefaultAgentForm = useCallback((): ChatAgentRegistration => {
     return {
@@ -295,7 +295,7 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
       setAgentForm({ ...registration, model: modelFromPicker(choice, custom) });
       setEditingRegistrationId(registration.id);
     } else {
-      setIdentityScope('network');
+      setIdentityScope('vault');
       setSessionLeaseMinutes(60);
       const form = createDefaultAgentForm();
       const agent = availableAgents.find((option) => option.id === form.agentId);
@@ -444,25 +444,13 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
       setAgentFormError('Choose a local @ alias.');
       return;
     }
-    if (mention) {
-      const channelClash = registeredAgents.some((registration) =>
-        registration.id !== agentForm.id
-        && registration.vaultAgentId !== agentForm.vaultAgentId
-        && normalizeMention(registration.mention) === mention,
-      );
-      if (channelClash) {
-        setAgentFormError(`@${mention} is already used in this channel.`);
-        return;
-      }
-    }
     if (agentPanelMode !== 'edit-member' && mention) {
       const vaultClash = vaultAgents.some((va) =>
         va.id !== agentForm.vaultAgentId
-        && (!va.ownerUsername || va.ownerUsername === currentUser)
         && normalizeMention(va.mention) === mention,
       );
       if (vaultClash) {
-        setAgentFormError(`@${mention} is already used by another agent you control.`);
+        setAgentFormError(`@${mention} is already used in this vault.`);
         return;
       }
     }
@@ -524,7 +512,6 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
         if (vaultAgentId && onAddVaultAgentToChannel) {
           await onAddVaultAgentToChannel(channelId, vaultAgentId);
         }
-        persistMembership({ vaultAgentId });
       } else {
         if (agentForm.vaultAgentId && onUpsertVaultAgent) {
           await onUpsertVaultAgent({
@@ -757,13 +744,13 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
             <div className="chat-agent-menu-heading chat-agent-editor-heading">
               <strong id="chat-agent-editor-title">
                 {agentPanelMode === 'edit-member' && 'Channel membership'}
-                {agentPanelMode === 'edit-identity' && 'Vault identity'}
-                {agentPanelMode === 'create' && 'New vault agent'}
+                {agentPanelMode === 'edit-identity' && 'Agent identity'}
+                {agentPanelMode === 'create' && 'Add agent to this vault'}
               </strong>
               <span>
                 {agentPanelMode === 'edit-member' && 'Run behavior for this conversation.'}
-                {agentPanelMode === 'edit-identity' && 'Applies to every channel in this vault.'}
-                {agentPanelMode === 'create' && 'Added to every channel in this vault.'}
+                {agentPanelMode === 'edit-identity' && 'Name, @handle, and runtime defaults for this vault.'}
+                {agentPanelMode === 'create' && 'Choose an unused @handle and a runnable backend.'}
               </span>
               <button
                 type="button"
@@ -815,15 +802,16 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
               />
             </label>
             <label>
-              Default @ alias
+              @ handle in this vault
               <input
                 value={agentForm.mention}
                 placeholder="grok"
                 spellCheck={false}
                 onChange={(event) => setAgentForm((value) => ({ ...value, mention: event.target.value.replace(/^@+/, '') }))}
               />
-              <span className="chat-agent-field-hint">Channels may assign a different local alias. This is not an access grant.</span>
+              <span className="chat-agent-field-hint">Unique in this vault. Mention it in any channel to run this agent.</span>
             </label>
+            {agentPanelMode === 'edit-identity' && (
             <label>
               Lifetime and reach
               <select
@@ -835,6 +823,7 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
                 <option value="session">Session actor — expires automatically</option>
               </select>
             </label>
+            )}
             {identityScope === 'session' && (
               <label>
                 Lease
@@ -941,21 +930,6 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
             </div>
             {(agentPanelMode === 'edit-member' || agentPanelMode === 'create') && (
               <>
-            {agentPanelMode === 'edit-member' && (
-              <label>
-                Local @ alias
-                <input
-                  value={agentForm.mention}
-                  placeholder="sol"
-                  spellCheck={false}
-                  onChange={(event) => setAgentForm((value) => ({
-                    ...value,
-                    mention: event.target.value.replace(/^@+/, ''),
-                  }))}
-                />
-                <span className="chat-agent-field-hint">Unique only in this channel; changing it does not rename the principal.</span>
-              </label>
-            )}
             <div className="chat-agent-group">
               <div className="chat-agent-group-title">Replies</div>
               <ChatAgentToggle
