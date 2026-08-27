@@ -49,7 +49,7 @@ defmodule Cascade.Runs.ChatProjection do
       end
 
     projection = content(state)
-    target = target(run_id, owner_id)
+    target = target(run_id, owner_id) || restore_target(run_id, owner_id)
     persisted = cursor.persisted
     fingerprint = persist_fingerprint(projection)
 
@@ -303,6 +303,79 @@ defmodule Cascade.Runs.ChatProjection do
              {:ok, route} <- MissionStore.owner_route(owner, source_vault_id, source_channel_id) do
           %{
             user: %{id: owner, username: username},
+            vault_id: route.localVaultId,
+            channel_id: route.localChannelId,
+            source_vault_id: route.sourceVaultId,
+            source_channel_id: route.sourceChannelId,
+            message_id: message_id
+          }
+        else
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  # The client normally creates the durable reply shell before delegation. If
+  # that request races, fails, or an old client omits it, terminal run output
+  # must still have an authoritative chat destination.
+  defp restore_target(run_id, owner_id) do
+    case SQL.one(
+           """
+           SELECT r.chat_dispatch_id,d.channel_id,m.id,m.display_name,m.agent_id,
+                  va.owner_user_id,n.vault_id
+           FROM runs r
+           JOIN chat_agent_dispatches d ON d.id=r.chat_dispatch_id
+           JOIN chat_agent_members m ON m.id=d.registration_id AND m.channel_id=d.channel_id
+           JOIN vault_agents va ON va.id=m.vault_agent_id
+           JOIN notes n ON n.id=d.channel_id
+           WHERE r.id=?
+           """,
+           [run_id]
+         ) do
+      [
+        dispatch_id,
+        source_channel_id,
+        registration_id,
+        display_name,
+        agent_id,
+        agent_owner_id,
+        source_vault_id
+      ] ->
+        owner_id = owner_id || agent_owner_id
+
+        with ^agent_owner_id <- owner_id,
+             [username] <- SQL.one("SELECT username FROM users WHERE id=?", [owner_id]),
+             {:ok, route} <-
+               MissionStore.owner_route(owner_id, source_vault_id, source_channel_id),
+             message_id = "agent-dispatch-#{dispatch_id}",
+             {:ok, message} <-
+               Messages.create(
+                 %{id: owner_id, username: username},
+                 route.localVaultId,
+                 route.localChannelId,
+                 %{
+                   id: message_id,
+                   author: display_name,
+                   agentId: agent_id,
+                   registrationId: registration_id,
+                   runId: run_id,
+                   body: "Thinking...",
+                   status: "running"
+                 },
+                 access: :agent
+               ) do
+          Events.emit(%{
+            event: "vault:chatMessageCreated",
+            vaultId: route.sourceVaultId,
+            channelId: route.sourceChannelId,
+            message: message
+          })
+
+          %{
+            user: %{id: owner_id, username: username},
             vault_id: route.localVaultId,
             channel_id: route.localChannelId,
             source_vault_id: route.sourceVaultId,

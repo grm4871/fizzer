@@ -196,6 +196,9 @@ defmodule CascadeWeb.OrchestrationChatDispatchTest do
                %{}
              )
 
+    # A missing client-created reply shell must not eat the completed answer.
+    SQL.exec("DELETE FROM chat_messages WHERE id=?", [response_message_id])
+
     assert {:ok, []} =
              Cascade.Realtime.DomainAdapter.handle_event(
                "/runners",
@@ -221,7 +224,11 @@ defmodule CascadeWeb.OrchestrationChatDispatchTest do
              )
 
     assert {:ok, completed_message} =
-             Messages.get(ctx.owner_channel.id, ctx.owner.id, response_message_id)
+             Messages.get(
+               ctx.owner_channel.id,
+               ctx.owner.id,
+               "agent-dispatch-#{ctx.dispatch.id}"
+             )
 
     assert completed_message.body == "Production-ready answer"
     assert completed_message[:status] == nil
