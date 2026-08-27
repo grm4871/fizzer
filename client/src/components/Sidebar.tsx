@@ -282,6 +282,7 @@ export const Sidebar = memo(function Sidebar({
     }
 
     let frame = 0;
+    let disposed = false;
     const updateConnector = () => {
       const vaultButton = sidebar.querySelector<HTMLElement>(`[data-vault-id="${activeVaultId}"]`);
       const noteButton = document.getElementById(`note-${activeNoteId}`);
@@ -298,21 +299,30 @@ export const Sidebar = memo(function Sidebar({
     };
 
     const scheduleConnectorUpdate = () => {
-      if (frame) return;
+      if (disposed || frame) return;
       frame = window.requestAnimationFrame(() => {
         frame = 0;
         updateConnector();
       });
     };
 
-    // Measure in the layout phase so the connector is present in the first
-    // painted frame. Later layout churn is coalesced to one update per frame.
+    // Measure immediately, then once more after the first committed frame.
+    // The vault rail and note list can finish mounting without changing the
+    // sidebar's own border box, so observing only the sidebar misses that
+    // initial layout change.
     updateConnector();
+    scheduleConnectorUpdate();
     const observer = new ResizeObserver(scheduleConnectorUpdate);
     observer.observe(sidebar);
+    const vaultButton = sidebar.querySelector<HTMLElement>(`[data-vault-id="${activeVaultId}"]`);
+    const noteButton = document.getElementById(`note-${activeNoteId}`);
+    if (vaultButton) observer.observe(vaultButton);
+    if (noteButton && sidebar.contains(noteButton)) observer.observe(noteButton);
+    void document.fonts?.ready.then(scheduleConnectorUpdate);
     sidebar.addEventListener('scroll', scheduleConnectorUpdate, true);
     window.addEventListener('resize', scheduleConnectorUpdate);
     return () => {
+      disposed = true;
       if (frame) window.cancelAnimationFrame(frame);
       observer.disconnect();
       sidebar.removeEventListener('scroll', scheduleConnectorUpdate, true);
