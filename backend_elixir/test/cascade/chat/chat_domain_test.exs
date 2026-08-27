@@ -424,7 +424,7 @@ defmodule Cascade.ChatDomainTest do
     assert Enum.sort(Enum.map(messages, & &1.seq)) == Enum.map(messages, & &1.seq)
   end
 
-  test "vault unlink preserves the owner profile and memberships elsewhere until explicit profile deletion" do
+  test "vault agents cannot be attached across vaults and profile deletion is explicit" do
     {first_vault, first_channel} = chat_vault(1, "One", "A")
     {test_vault, test_channel} = chat_vault(1, "Test", "B")
 
@@ -438,19 +438,17 @@ defmodule Cascade.ChatDomainTest do
     assert {:ok, first_member} =
              Agents.add_to_channel(1, first_vault.id, first_channel.id, identity.id)
 
-    assert {:ok, test_member} =
+    assert {:error, "Vault agent not found"} =
              Agents.add_to_channel(1, test_vault.id, test_channel.id, identity.id)
 
-    assert {:ok, true} = Agents.unlink_from_vault(1, test_vault.id, identity.id)
-    assert {:ok, still_present} = Agents.get(1, first_vault.id, identity.id)
-    assert first_channel.id in still_present.channelIds
-    refute test_channel.id in still_present.channelIds
+    assert {:ok, true} = Agents.unlink_from_vault(1, first_vault.id, identity.id)
+    assert {:error, "Vault agent not found"} = Agents.get(1, first_vault.id, identity.id)
 
-    assert SQL.one("SELECT id FROM chat_agent_members WHERE id=?", [first_member.id]) == [
-             first_member.id
-           ]
+    assert SQL.one("SELECT id FROM chat_agent_members WHERE id=?", [first_member.id]) == nil
 
-    assert SQL.one("SELECT id FROM chat_agent_members WHERE id=?", [test_member.id]) == nil
+    assert SQL.one("SELECT id FROM chat_agent_members WHERE channel_id=?", [test_channel.id]) ==
+             nil
+
     assert SQL.one("SELECT id FROM vault_agents WHERE id=?", [identity.id]) == [identity.id]
 
     assert {:ok, true} = Agents.delete_profile(1, first_vault.id, identity.id)
@@ -460,7 +458,7 @@ defmodule Cascade.ChatDomainTest do
              nil
   end
 
-  test "agent principals separate local aliases, reach, leases, and invocation policy" do
+  test "vault agents separate local aliases, leases, and invocation policy" do
     {home, channel} = chat_vault(1, "Agent home", "Room")
     {other, _other_channel} = chat_vault(1, "Other", "Elsewhere")
     {bob_home, _bob_channel} = chat_vault(2, "Bob agents", "Bots")
@@ -472,6 +470,8 @@ defmodule Cascade.ChatDomainTest do
                mention: "sol",
                identityScope: "network"
              })
+
+    assert network.identityScope == "vault"
 
     assert {:ok, bob_sol} =
              Agents.upsert_identity(2, bob_home.id, %{
@@ -505,7 +505,7 @@ defmodule Cascade.ChatDomainTest do
 
     assert renamed.mention == "solar"
     assert {:ok, [local]} = Agents.list_members(channel.id, 1)
-    assert local.mention == "sol"
+    assert local.mention == "solar"
     assert local.model == "room-model"
 
     assert {:ok, vault_bot} =
@@ -517,7 +517,7 @@ defmodule Cascade.ChatDomainTest do
              })
 
     assert {:ok, other_agents} = Agents.list_vault(1, other.id)
-    assert Enum.any?(other_agents, &(&1.id == network.id))
+    refute Enum.any?(other_agents, &(&1.id == network.id))
     refute Enum.any?(other_agents, &(&1.id == vault_bot.id))
 
     assert {:ok, session} =

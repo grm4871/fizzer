@@ -6,7 +6,7 @@ defmodule Cascade.Chat.Agents do
 
   @codex_efforts ~w(low medium high xhigh max ultra)
   @claude_efforts ~w(low medium high xhigh max)
-  @identity_scopes ~w(network vault session)
+  @identity_scopes ~w(vault session)
 
   def list_vault(user_id, vault_id) do
     if VaultMembers.role(vault_id, user_id) do
@@ -20,13 +20,13 @@ defmodule Cascade.Chat.Agents do
             va.identity_scope,va.expires_at,
             va.owner_user_id,u.username,va.created_at,va.updated_at
           FROM vault_agents va LEFT JOIN users u ON u.id=va.owner_user_id
-          WHERE ((va.owner_user_id=? AND (va.identity_scope='network' OR va.vault_id=?)) OR va.vault_id=? OR EXISTS(
+          WHERE (va.vault_id=? OR EXISTS(
             SELECT 1 FROM chat_agent_members m WHERE m.vault_agent_id=va.id AND m.vault_id=?
           )) AND NOT EXISTS(
             SELECT 1 FROM vault_agent_exclusions x WHERE x.vault_id=? AND x.vault_agent_id=va.id
           ) ORDER BY va.display_name COLLATE NOCASE,va.mention COLLATE NOCASE
           """,
-          [user_id, vault_id, vault_id, vault_id, vault_id]
+          [vault_id, vault_id, vault_id]
         )
         |> Enum.map(&identity/1)
         |> Enum.map(&Map.put(&1, :channelIds, channel_ids(&1.id)))
@@ -165,8 +165,8 @@ defmodule Cascade.Chat.Agents do
            owner_id | _
          ] <-
            SQL.one(
-             "SELECT id,vault_id,agent_id,display_name,avatar_url,mention,model,cwd,context_prompt,owner_user_id,created_at,updated_at FROM vault_agents WHERE id=? AND ((owner_user_id=? AND (identity_scope='network' OR vault_id=?)) OR vault_id=?) AND (identity_scope!='session' OR julianday(expires_at)>julianday('now'))",
-             [identity_id, user_id, route.localVaultId, route.localVaultId]
+             "SELECT id,vault_id,agent_id,display_name,avatar_url,mention,model,cwd,context_prompt,owner_user_id,created_at,updated_at FROM vault_agents WHERE id=? AND (vault_id=? OR EXISTS(SELECT 1 FROM chat_agent_members m WHERE m.vault_agent_id=vault_agents.id AND m.vault_id=?)) AND (identity_scope!='session' OR julianday(expires_at)>julianday('now'))",
+             [identity_id, route.localVaultId, route.localVaultId]
            ),
          :ok <- manage_identity(owner_id, user_id),
          mention <- Schema.normalize_mention(default_mention, agent_id),
@@ -405,7 +405,7 @@ defmodule Cascade.Chat.Agents do
     hermes_safe_mode = boolean(input, "hermesSafeMode", false)
 
     identity_scope =
-      identity_scope(value(input, "identityScope", existing_value(existing, 2, "network")))
+      identity_scope(value(input, "identityScope", existing_value(existing, 2, "vault")))
 
     expires_at =
       expiry(identity_scope, value(input, "expiresAt", existing_value(existing, 3, nil)))
@@ -442,10 +442,10 @@ defmodule Cascade.Chat.Agents do
 
       SQL.exec(
         """
-        UPDATE chat_agent_members SET agent_id=?,display_name=?,avatar_url=?,updated_at=datetime('now')
+        UPDATE chat_agent_members SET agent_id=?,display_name=?,avatar_url=?,mention=?,updated_at=datetime('now')
         WHERE vault_agent_id=?
         """,
-        [agent_id, display_name, avatar, id]
+        [agent_id, display_name, avatar, mention, id]
       )
 
       SQL.exec("DELETE FROM vault_agent_exclusions WHERE vault_id=? AND vault_agent_id=?", [
@@ -488,7 +488,7 @@ defmodule Cascade.Chat.Agents do
       contextPrompt: prompt || "",
       hermesProfile: hermes_profile || "",
       hermesSafeMode: hermes_safe_mode != 0,
-      identityScope: identity_scope || "network",
+      identityScope: identity_scope || "vault",
       expiresAt: expires_at,
       ownerUserId: owner_id,
       ownerUsername: owner_username || "",
@@ -551,25 +551,25 @@ defmodule Cascade.Chat.Agents do
       )
       |> List.flatten()
 
-  defp identity_clash?(id, mention, user_id, vault_id),
+  defp identity_clash?(id, mention, _user_id, vault_id),
     do:
       not is_nil(
         SQL.one(
           """
           SELECT 1 FROM vault_agents va
           WHERE va.mention=? COLLATE NOCASE AND va.id!=? AND (
-            va.vault_id=? OR (va.owner_user_id=? AND va.identity_scope='network') OR EXISTS(
+            va.vault_id=? OR EXISTS(
               SELECT 1 FROM chat_agent_members m WHERE m.vault_agent_id=va.id AND m.vault_id=?
             )
           ) LIMIT 1
           """,
-          [mention, id, vault_id, user_id, vault_id]
+          [mention, id, vault_id, vault_id]
         )
       )
 
   defp identity_scope(value) do
     normalized = value |> to_string() |> String.trim() |> String.downcase()
-    if normalized in @identity_scopes, do: normalized, else: "network"
+    if normalized in @identity_scopes, do: normalized, else: "vault"
   end
 
   defp expiry("session", value) do

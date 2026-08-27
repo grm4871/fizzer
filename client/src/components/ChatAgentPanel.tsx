@@ -350,7 +350,7 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
   function editVaultIdentity(event: React.MouseEvent, registration: ChatAgentRegistration) {
     event.stopPropagation();
     const identity = vaultAgents.find((agent) => agent.id === registration.vaultAgentId);
-    setIdentityScope(identity?.identityScope || 'network');
+    setIdentityScope(identity?.identityScope === 'session' ? 'session' : 'vault');
     if (identity?.expiresAt) {
       const remaining = (Date.parse(identity.expiresAt) - Date.now()) / 60_000;
       setSessionLeaseMinutes(remaining > 1440 ? 10080 : remaining > 60 ? 1440 : 60);
@@ -375,7 +375,7 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
       hermesProfile: identity.hermesProfile || '',
       hermesSafeMode: identity.hermesSafeMode === true,
     };
-    setIdentityScope(identity.identityScope || 'network');
+    setIdentityScope(identity.identityScope === 'session' ? 'session' : 'vault');
     if (identity.expiresAt) {
       const remaining = (Date.parse(identity.expiresAt) - Date.now()) / 60_000;
       setSessionLeaseMinutes(remaining > 1440 ? 10080 : remaining > 60 ? 1440 : 60);
@@ -668,11 +668,12 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
                       <span className="chat-user-copy">
                         <strong>{va.displayName || va.mention}</strong>
                         <span>
-                          @{va.mention} · {va.model || va.agentId} · {va.identityScope === 'vault'
-                            ? 'vault bot/app'
-                            : va.identityScope === 'session'
-                              ? 'session actor'
-                              : 'network principal'}
+                          @{va.mention} · {va.model || va.agentId} · {va.identityScope === 'session'
+                            ? 'temporary agent'
+                            : 'vault agent'}
+                          {va.identityScope === 'network' && va.ownerUsername
+                            ? ` · legacy identity ${va.mention}~${va.ownerUsername}`
+                            : ''}
                           {va.ownerUsername ? ` · ${va.ownerUsername}'s agent` : ''}
                           {inChannel ? ' · in vault' : ''}
                         </span>
@@ -813,14 +814,13 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
             </label>
             {agentPanelMode === 'edit-identity' && (
             <label>
-              Lifetime and reach
+              Lifetime
               <select
                 value={identityScope}
                 onChange={(event) => setIdentityScope(event.target.value as VaultAgent['identityScope'])}
               >
-                <option value="network">Network principal — reusable across vaults</option>
-                <option value="vault">Vault bot/app — local to this vault</option>
-                <option value="session">Session actor — expires automatically</option>
+                <option value="vault">Keep in this vault</option>
+                <option value="session">Temporary — expires automatically</option>
               </select>
             </label>
             )}
