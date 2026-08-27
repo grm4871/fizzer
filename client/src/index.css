@@ -4149,9 +4149,17 @@ button:focus-visible,
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-y: contain;
   touch-action: pan-y;
+  overflow-anchor: auto;
 }
 .chat-messages-content {
   min-height: min-content;
+}
+.chat-messages-content > * {
+  overflow-anchor: none;
+}
+.chat-messages-end {
+  overflow-anchor: auto;
+  height: 1px;
 }
 .chat-empty {
   height: 100%;
@@ -5310,6 +5318,17 @@ button.chat-avatar.is-clickable:focus-visible {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   scrollbar-width: thin;
+}
+/* Live traces are transcript: they grow the chat pane instead of scrolling
+   inside a nested viewport that the outer pin cannot see. */
+.cascade-run-panel.is-running .crp-term,
+.cascade-run-panel.is-running .crp-term-pre,
+.cascade-run-panel.is-running .crp-raw-wrap,
+.cascade-run-panel.is-running .harness-terminal {
+  max-height: none;
+  overflow: visible;
+  contain: none;
+  height: auto;
 }
 .crp-term-cursor {
   color: hsl(38, 67%, 52%);

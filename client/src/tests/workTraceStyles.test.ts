@@ -18,4 +18,13 @@ describe('work-trace surface', () => {
       /\.chat-work-line-body:has\(\.cascade-run-panel\)[\s\S]{0,160}border-left:\s*0/,
     );
   });
+
+  it('lets live reasoning grow the transcript instead of a nested scroller', () => {
+    expect(styles).toMatch(
+      /\.cascade-run-panel\.is-running \.crp-term[\s\S]{0,280}overflow:\s*visible/,
+    );
+    expect(styles).toMatch(
+      /\.cascade-run-panel\.is-running \.crp-term-pre[\s\S]{0,200}overflow:\s*visible/,
+    );
+  });
 });

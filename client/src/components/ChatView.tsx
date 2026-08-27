@@ -127,8 +127,12 @@ interface ChatViewProps {
 // render and defeat the notes-aware memo comparators below.
 const EMPTY_NOTES: NoteSummary[] = [];
 
-// Slightly generous: stream/harness growth often leaves a few px of lag for
-// one frame; 24px was flapping sticky under fast agent output.
+// Transcript stickiness:
+// 1. The messages pane is the only viewport that owns "follow live".
+// 2. Live traces expand that pane; they must not scroll inside themselves.
+// 3. Size changes pin to bottom unless the user scrolled up.
+// Slightly generous: stream growth often leaves a few px of lag for one frame;
+// 24px was flapping sticky under fast agent output.
 function isAtScrollBottom(element: HTMLElement, threshold = 48) {
   return element.scrollHeight - element.scrollTop - element.clientHeight <= threshold;
 }
@@ -1060,7 +1064,7 @@ export const ChatView = memo(function ChatView({
               return renderGroupRow(segment.group);
             })
           )}
-          <div ref={endRef} />
+          <div ref={endRef} className="chat-messages-end" aria-hidden="true" />
           </div>
         </div>
 

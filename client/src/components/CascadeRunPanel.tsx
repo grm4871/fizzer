@@ -606,11 +606,12 @@ export const CascadeRunPanel = memo(function CascadeRunPanel({
     scrollToBottomSoon(bodyRef.current);
   }, [scrollEpoch, isRunning, open, showRaw, activity]);
 
-  // Keep the main chat panel pinned when harness/thinking expands.
+  // Keep the main chat panel pinned when harness/thinking expands — including
+  // the collapsed live header, not only an expanded trace.
   useLayoutEffect(() => {
-    if (!open || !activity) return;
+    if (!isRunning && !open) return;
     onContentGrowRef.current?.();
-  }, [scrollEpoch, open, activity]);
+  }, [scrollEpoch, open, activity, isRunning, live, summary]);
 
   if (!isRunning && !canExpand) return null;
 
