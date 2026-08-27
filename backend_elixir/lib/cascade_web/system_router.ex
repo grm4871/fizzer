@@ -14,8 +14,8 @@ defmodule CascadeWeb.SystemRouter do
     "linux-deb" => "Fizzer-linux-x64.deb",
     "linux-rpm" => "Fizzer-linux-x64.rpm"
   }
-  @android_version_code 10
-  @android_version_name "dev-2026.08.13-native-updater"
+  @android_version_code 11
+  @android_version_name "beta-2026.08.27-mobile-vault-rail"
 
   plug :put_domain_options
   plug :match

@@ -81,8 +81,8 @@ defmodule CascadeWeb.SystemRouterTest do
     assert Jason.decode!(missing.resp_body) == %{
              "available" => false,
              "url" => "/download/android",
-             "versionCode" => 10,
-             "versionName" => "dev-2026.08.13-native-updater"
+             "versionCode" => 11,
+             "versionName" => "beta-2026.08.27-mobile-vault-rail"
            }
 
     File.write!(Path.join(context.data, "cascade-android.apk"), "apk")

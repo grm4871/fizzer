@@ -9,8 +9,8 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         // Sideload dev shell — versionCode only needs bumps when the *native*
         // wrapper changes. UI ships via https://cscd.online/app.html.
-        versionCode 10
-        versionName "dev-2026.08.13-native-updater"
+        versionCode 11
+        versionName "beta-2026.08.27-mobile-vault-rail"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.

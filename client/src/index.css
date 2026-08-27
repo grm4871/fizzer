@@ -7294,7 +7294,7 @@ button.chat-avatar.is-clickable:focus-visible {
   .vault-rail {
     width: 54px;
     flex-basis: 54px;
-    padding-inline: 6px;
+    padding: calc(8px + env(safe-area-inset-top, 0px)) 6px 8px;
   }
   .sidebar-actions-desktop {
     display: none;
