@@ -68,6 +68,45 @@ test('permits only the additive Elixir migration ledger', () => {
   }
 });
 
+test('permits only the pinned additive Hermes identity migration', () => {
+  const files = fixture();
+  try {
+    const before = new Database(files.before);
+    before.exec(`
+      CREATE TABLE vaults (id TEXT PRIMARY KEY);
+      INSERT INTO vaults VALUES ('general');
+      CREATE TABLE vault_agents (
+        id TEXT PRIMARY KEY, vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
+        agent_id TEXT NOT NULL, display_name TEXT NOT NULL, avatar_url TEXT NOT NULL DEFAULT '',
+        mention TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', cwd TEXT NOT NULL DEFAULT '',
+        context_prompt TEXT NOT NULL DEFAULT '', owner_user_id INTEGER REFERENCES users(id),
+        created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(owner_user_id,mention)
+      );
+      INSERT INTO vault_agents VALUES ('sol','general','codex','Sol','','sol','','','',1,datetime('now'),datetime('now'));
+    `);
+    before.close();
+    fs.copyFileSync(files.before, files.after);
+
+    const after = new Database(files.after);
+    after.exec(`
+      ALTER TABLE vault_agents ADD COLUMN hermes_profile TEXT NOT NULL DEFAULT '';
+      ALTER TABLE vault_agents ADD COLUMN hermes_safe_mode INTEGER NOT NULL DEFAULT 0;
+    `);
+    after.close();
+    assert.equal(runComparison(files).ok, true, runComparison(files).failures.join('\n'));
+
+    const changed = new Database(files.after);
+    changed.prepare('UPDATE vault_agents SET hermes_profile = ? WHERE id = ?').run('unexpected', 'sol');
+    changed.close();
+    assert.ok(runComparison(files).failures.some((failure) => (
+      failure.startsWith('table changed outside pinned Hermes migration: vault_agents')
+    )));
+  } finally {
+    fs.rmSync(files.directory, { recursive: true, force: true });
+  }
+});
+
 test('rolling eligibility requires exact data and corpus identity', () => {
   const files = fixture();
   try {

@@ -488,14 +488,15 @@ defmodule Cascade.Chat.Schema do
                 id TEXT PRIMARY KEY, vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
                 agent_id TEXT NOT NULL, display_name TEXT NOT NULL, avatar_url TEXT NOT NULL DEFAULT '',
                 mention TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', cwd TEXT NOT NULL DEFAULT '',
-                context_prompt TEXT NOT NULL DEFAULT '', owner_user_id INTEGER REFERENCES users(id),
+                context_prompt TEXT NOT NULL DEFAULT '', hermes_profile TEXT NOT NULL DEFAULT '',
+                hermes_safe_mode INTEGER NOT NULL DEFAULT 0, owner_user_id INTEGER REFERENCES users(id),
                 created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')),
                 UNIQUE(owner_user_id,mention)
               )
               """)
 
               SQL.exec(
-                "INSERT INTO vault_agents_owner_scoped SELECT id,vault_id,agent_id,display_name,avatar_url,mention,model,cwd,context_prompt,owner_user_id,created_at,updated_at FROM vault_agents"
+                "INSERT INTO vault_agents_owner_scoped SELECT id,vault_id,agent_id,display_name,avatar_url,mention,model,cwd,context_prompt,hermes_profile,hermes_safe_mode,owner_user_id,created_at,updated_at FROM vault_agents"
               )
 
               SQL.exec("DROP TABLE vault_agents")

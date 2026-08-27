@@ -30,6 +30,7 @@ const NORMALIZED_OBJECT_SQL_SHA256 = new Map([
   ['trigger:chat_messages_au', '839d6582356d56eb5ae5b8391e078d3922762de41e5d77f09c678a70496143e1'],
   ['index:chat_mission_events_source_key_idx', '2c8b0abee1bdda9732d0801bfb1370a05c349190a1d6d7b1a75bb1ec2b564767'],
   ['index:runs_owner_active_idx', '2f1bd1bf23ba264283a4b5097177e08c9f5e37defd10b936faa4bdff93fc3ea9'],
+  ['index:chat_agent_members_identity_idx', '1744cce7ccd24c24973e1e44fc9a00cdcb3f20545cc643e3ec4cb10d02f0a52d'],
 ]);
 
 const MIGRATION_LEDGER_SQL_SHA256 =
@@ -242,6 +243,16 @@ function databaseSnapshotFromCopy(filename) {
       compatibility.runOwnership = db.prepare(`
         SELECT rowid,id,${hasOwner ? 'owner_user_id' : 'NULL'} AS ownerUserId
         FROM runs ORDER BY rowid
+      `).all();
+    }
+    if (tables.vault_agents) {
+      const hasHermesProfile = tables.vault_agents.columns.some((column) => column.name === 'hermes_profile');
+      const hasHermesSafeMode = tables.vault_agents.columns.some((column) => column.name === 'hermes_safe_mode');
+      compatibility.vaultAgentHermes = db.prepare(`
+        SELECT rowid,id,
+          ${hasHermesProfile ? 'hermes_profile' : "''"} AS hermesProfile,
+          ${hasHermesSafeMode ? 'hermes_safe_mode' : '0'} AS hermesSafeMode
+        FROM vault_agents ORDER BY rowid
       `).all();
     }
     if (tables.delegated_runs) {
@@ -473,6 +484,36 @@ function exactRunOwnershipBackfill(before, after) {
   return true;
 }
 
+function exactVaultAgentHermesMigration(before, after) {
+  const oldTable = before.tables.vault_agents;
+  const newTable = after.tables.vault_agents;
+  if (!oldTable || !newTable
+      || !/UNIQUE\s*\(\s*owner_user_id\s*,\s*mention\s*\)/iu.test(newTable.schema.sql)) {
+    return false;
+  }
+  const additions = newTable.columns.slice(oldTable.columns.length);
+  if (!same(additions.map(({ name, type, notnull, dflt_value, pk }) => (
+    { name, type, notnull, dflt_value, pk }
+  )), [
+    { name: 'hermes_profile', type: 'TEXT', notnull: 1, dflt_value: "''", pk: 0 },
+    { name: 'hermes_safe_mode', type: 'INTEGER', notnull: 1, dflt_value: '0', pk: 0 },
+  ])) return false;
+  if (!same(oldTable.columns, newTable.columns.slice(0, oldTable.columns.length))
+      || !same(oldTable.normalizedForeignKeys, newTable.normalizedForeignKeys)
+      || oldTable.rows.count !== newTable.rows.count
+      || oldTable.rows.includesRowid !== newTable.rows.includesRowid) return false;
+  for (const column of oldTable.rows.columns) {
+    if (oldTable.rows.columnSha256[column] !== newTable.rows.columnSha256[column]) return false;
+  }
+  const oldRows = before.compatibility.vaultAgentHermes || [];
+  const newRows = after.compatibility.vaultAgentHermes || [];
+  return oldRows.length === newRows.length && oldRows.every((oldRow, index) => {
+    const newRow = newRows[index];
+    return newRow?.rowid === oldRow.rowid && newRow.id === oldRow.id
+      && newRow.hermesProfile === '' && newRow.hermesSafeMode === 0;
+  });
+}
+
 export function verifyFtsIntegrity(filename, snapshot) {
   const ftsTables = Object.values(snapshot.tables)
     .filter((table) => table.rows.virtual && /\bUSING\s+fts5\s*\(/iu.test(table.schema.sql))
@@ -579,6 +620,15 @@ export function compareDatabaseSnapshots(before, after, allowedAdditions = DEFAU
         const newRows = after.tables[table].rows;
         failures.push(
           `table changed outside pinned ownership migration: ${table} (rows ${oldRows.count}/${oldRows.sha256.slice(0, 12)} -> ${newRows.count}/${newRows.sha256.slice(0, 12)})`,
+        );
+      }
+    } else if (table === 'vault_agents') {
+      if (!same(before.tables[table], after.tables[table])
+          && !exactVaultAgentHermesMigration(before, after)) {
+        const oldRows = before.tables[table].rows;
+        const newRows = after.tables[table].rows;
+        failures.push(
+          `table changed outside pinned Hermes migration: ${table} (rows ${oldRows.count}/${oldRows.sha256.slice(0, 12)} -> ${newRows.count}/${newRows.sha256.slice(0, 12)})`,
         );
       }
     } else if (NORMALIZED_TABLE_SQL_SHA256.has(table)) {
