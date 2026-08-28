@@ -190,6 +190,14 @@ function isAllowedNavigation(url) {
   return isSameOrigin(url, INSTANCE_ORIGIN);
 }
 
+function isSafeExternalUrl(url) {
+  try {
+    return ['http:', 'https:', 'mailto:'].includes(new URL(url).protocol);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Shared per-window wiring: navigation guards, external-window blocking, and
  * keyboard shortcuts. Applied to the main window and every popped-out pane
@@ -223,7 +231,8 @@ function configureWindow(win) {
     try {
       if (!isAllowedNavigation(url)) {
         event.preventDefault();
-        console.log('[Main] Blocked navigation to:', url);
+        if (isSafeExternalUrl(url)) void shell.openExternal(url);
+        else console.log('[Main] Blocked navigation to:', url);
       }
     } catch {
       event.preventDefault();
@@ -235,7 +244,8 @@ function configureWindow(win) {
   win.webContents.setWindowOpenHandler(({ url }) => {
     try {
       if (!isAllowedNavigation(url)) {
-        console.log('[Main] Blocked window open to:', url);
+        if (isSafeExternalUrl(url)) void shell.openExternal(url);
+        else console.log('[Main] Blocked window open to:', url);
         return { action: 'deny' };
       }
     } catch {

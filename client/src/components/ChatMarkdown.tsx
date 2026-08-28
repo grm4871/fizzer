@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
+import { Capacitor } from '@capacitor/core';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import DOMPurify from 'dompurify';
@@ -25,6 +26,7 @@ import {
 } from '../mediaLinks';
 
 export const CHAT_MARKDOWN_PLUGINS = [remarkGfm, remarkBreaks];
+const CHAT_EXTERNAL_TARGET = Capacitor.isNativePlatform() ? undefined : '_blank';
 
 export function SafeMarkdownImage({ src = '', alt = '' }: { src?: string; alt?: string }) {
   let local = src.startsWith('/') || src.startsWith('data:') || src.startsWith('blob:');
@@ -33,7 +35,7 @@ export function SafeMarkdownImage({ src = '', alt = '' }: { src?: string; alt?: 
   }
   return local
     ? <img src={src} alt={alt} />
-    : <a href={src} target="_blank" rel="noopener noreferrer">External image{alt ? `: ${alt}` : ''}</a>;
+    : <a href={src} target={CHAT_EXTERNAL_TARGET} rel="noopener noreferrer">External image{alt ? `: ${alt}` : ''}</a>;
 }
 
 function formatChatMentions(text: string, aliases: string[]): ReactNode[] {
@@ -169,18 +171,18 @@ export function ChatMediaEmbed({ href, label }: { href: string; label: ReactNode
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
   }, [href, media?.provider]);
-  if (!media) return <a href={href} target="_blank" rel="noopener noreferrer">{label}</a>;
+  if (!media) return <a href={href} target={CHAT_EXTERNAL_TARGET} rel="noopener noreferrer">{label}</a>;
   if (!embedLoaded) {
     return (
       <span className={`chat-media-embed is-${media.aspect} is-${media.provider}`}>
-        <a href={href} target="_blank" rel="noopener noreferrer">{label}</a>
+        <a href={href} target={CHAT_EXTERNAL_TARGET} rel="noopener noreferrer">{label}</a>
         <button type="button" onClick={() => setEmbedLoaded(true)}>Load external embed</button>
       </span>
     );
   }
   return (
     <span className={`chat-media-embed is-${media.aspect} is-${media.provider}`}>
-      <a href={href} target="_blank" rel="noopener noreferrer">{label}</a>
+      <a href={href} target={CHAT_EXTERNAL_TARGET} rel="noopener noreferrer">{label}</a>
       <iframe
         ref={frameRef}
         src={media.embedUrl}

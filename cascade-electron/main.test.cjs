@@ -23,6 +23,12 @@ test('desktop navigation and runner helpers are pinned to the main-process insta
   assert.doesNotMatch(source, /hostname\.endsWith\('\.cscd\.online'\)/);
 });
 
+test('desktop opens safe external links in the system browser', () => {
+  assert.match(source, /\['http:', 'https:', 'mailto:'\]\.includes\(new URL\(url\)\.protocol\)/);
+  assert.match(source, /if \(isSafeExternalUrl\(url\)\) void shell\.openExternal\(url\)/);
+  assert.match(source, /setWindowOpenHandler\(\(\{ url \}\) =>/);
+});
+
 test('packaged macOS updates download before launching the detached installer', () => {
   const prepareAt = source.indexOf('await prepareMacOSUpdate({');
   const launchAt = source.indexOf('launchMacOSInstaller(update);');
