@@ -6320,10 +6320,19 @@ button.chat-avatar.is-clickable:focus-visible {
   color: var(--text-secondary);
 }
 .chat-vault-pick-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 4px;
   margin-bottom: 4px;
+}
+.chat-agent-picker-list {
+  display: flex;
+  flex-direction: column;
+  max-height: min(52dvh, 420px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 .chat-vault-pick-row.is-in-channel .chat-vault-pick-btn {
   opacity: 0.55;
@@ -6404,6 +6413,9 @@ button.chat-avatar.is-clickable:focus-visible {
 .chat-remove-agent:hover {
   background: var(--danger-subtle);
   color: var(--danger);
+}
+.chat-vault-pick-row .chat-remove-agent {
+  opacity: 1;
 }
 .chat-agent-menu,
 .chat-invite-menu {
@@ -6744,6 +6756,13 @@ button.chat-avatar.is-clickable:focus-visible {
   cursor: default;
 }
 @media (max-width: 700px) {
+  .chat-vault-pick-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .chat-vault-pick-row .chat-vault-edit-agent {
+    grid-column: 1 / -1;
+    justify-self: end;
+  }
   .chat-agent-editor {
     grid-template-columns: minmax(0, 1fr);
     gap: 12px;

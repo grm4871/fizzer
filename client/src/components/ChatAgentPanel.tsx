@@ -650,7 +650,7 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
             {vaultAgents.length === 0 ? (
               <div className="chat-runs-empty">No vault agents yet</div>
             ) : (
-              vaultAgents.map((va) => {
+              <div className="chat-agent-picker-list">{vaultAgents.map((va) => {
                 const inChannel = channelVaultAgentIds.has(va.id);
                 const canManage = va.ownerUsername === currentUser;
                 return (
@@ -706,7 +706,7 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
                     )}
                   </div>
                 );
-              })
+              })}</div>
             )}
             {agentFormError && <div className="chat-agent-form-error">{agentFormError}</div>}
             <div className="chat-agent-menu-actions">

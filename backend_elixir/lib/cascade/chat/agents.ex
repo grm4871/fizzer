@@ -20,13 +20,15 @@ defmodule Cascade.Chat.Agents do
             va.identity_scope,va.expires_at,
             va.owner_user_id,u.username,va.created_at,va.updated_at
           FROM vault_agents va LEFT JOIN users u ON u.id=va.owner_user_id
-          WHERE (va.vault_id=? OR EXISTS(
-            SELECT 1 FROM chat_agent_members m WHERE m.vault_agent_id=va.id AND m.vault_id=?
-          )) AND NOT EXISTS(
-            SELECT 1 FROM vault_agent_exclusions x WHERE x.vault_id=? AND x.vault_agent_id=va.id
+          WHERE va.owner_user_id=? OR (
+            (va.vault_id=? OR EXISTS(
+              SELECT 1 FROM chat_agent_members m WHERE m.vault_agent_id=va.id AND m.vault_id=?
+            )) AND NOT EXISTS(
+              SELECT 1 FROM vault_agent_exclusions x WHERE x.vault_id=? AND x.vault_agent_id=va.id
+            )
           ) ORDER BY va.display_name COLLATE NOCASE,va.mention COLLATE NOCASE
           """,
-          [vault_id, vault_id, vault_id]
+          [user_id, vault_id, vault_id, vault_id]
         )
         |> Enum.map(&identity/1)
         |> Enum.map(&Map.put(&1, :channelIds, channel_ids(&1.id)))
@@ -165,8 +167,8 @@ defmodule Cascade.Chat.Agents do
            owner_id | _
          ] <-
            SQL.one(
-             "SELECT id,vault_id,agent_id,display_name,avatar_url,mention,model,cwd,context_prompt,owner_user_id,created_at,updated_at FROM vault_agents WHERE id=? AND (vault_id=? OR EXISTS(SELECT 1 FROM chat_agent_members m WHERE m.vault_agent_id=vault_agents.id AND m.vault_id=?)) AND (identity_scope!='session' OR julianday(expires_at)>julianday('now'))",
-             [identity_id, route.localVaultId, route.localVaultId]
+             "SELECT id,vault_id,agent_id,display_name,avatar_url,mention,model,cwd,context_prompt,owner_user_id,created_at,updated_at FROM vault_agents WHERE id=? AND (owner_user_id=? OR vault_id=? OR EXISTS(SELECT 1 FROM chat_agent_members m WHERE m.vault_agent_id=vault_agents.id AND m.vault_id=?)) AND (identity_scope!='session' OR julianday(expires_at)>julianday('now'))",
+             [identity_id, user_id, route.localVaultId, route.localVaultId]
            ),
          :ok <- manage_identity(owner_id, user_id),
          mention <- Schema.normalize_mention(default_mention, agent_id),
