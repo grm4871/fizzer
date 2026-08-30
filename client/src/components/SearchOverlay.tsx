@@ -137,6 +137,7 @@ export function SearchOverlay({
             ref={inputRef}
             id="search-input"
             className="search-input"
+            autoFocus
             value={query}
             onChange={(e) => {
               setQuery(e.target.value);

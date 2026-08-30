@@ -106,13 +106,13 @@ defmodule CascadeWeb.RouterTest do
     assert Jason.decode!(conn.resp_body)["error"] =~ "CSRF"
   end
 
-  test "ported domain routes are mounted while unsupported APIs fail visibly" do
+  test "mounted API routes enforce their boundary while unknown routes are absent" do
     mounted = request(:get, "/api/vaults")
     assert mounted.status == 401
 
     conn = request(:get, "/api/not-yet-ported")
-    assert conn.status == 501
-    assert Jason.decode!(conn.resp_body)["error"] =~ "not reached Elixir parity"
+    assert conn.status == 404
+    assert Jason.decode!(conn.resp_body) == %{"error" => "Not found"}
   end
 
   test "native Engine.IO rejects old clients before namespace handling" do

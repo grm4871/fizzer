@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pickPort } from './lib/test-ports.mjs';
 import { spawnElixirApi } from './lib/elixir-api.mjs';
+import { installBrowserSession } from './lib/browser-session.mjs';
 
 const apiPort = await pickPort();
 const previewPort = await pickPort();
@@ -96,15 +97,24 @@ try {
     if (response.status() >= 400) errors.push(`response ${response.status()}: ${response.url()}`);
   });
   const initialSession = { activeVaultId: vault.id, openTabs: [], layout: { type: 'pane', id: 'root', tabIds: [], activeTabId: null }, focusedPaneId: 'root' };
+  await installBrowserSession(page.context(), apiBase, token);
   await page.goto(appUrl, { waitUntil: 'domcontentloaded' });
-  await page.evaluate(({ token: value, session }) => {
-    localStorage.setItem('docs_token', value);
+  await page.evaluate(({ session }) => {
     localStorage.setItem('cascade_session', JSON.stringify(session));
-  }, { token, session: initialSession });
+  }, { session: initialSession });
   await page.reload({ waitUntil: 'networkidle' });
 
   const visibleSidebarActions = page.locator('.sidebar-actions:visible');
-  if (await visibleSidebarActions.count() !== 1) throw new Error('sidebar rendered duplicate visible action rows');
+  const visibleSidebarActionCount = await visibleSidebarActions.count();
+  if (visibleSidebarActionCount !== 1) {
+    const rows = await page.locator('.sidebar-actions').evaluateAll((nodes) => nodes.map((node) => ({
+      className: node.className,
+      display: getComputedStyle(node).display,
+      box: node.getBoundingClientRect().toJSON(),
+    })));
+    const body = (await page.locator('body').innerText()).replace(/\s+/g, ' ').slice(0, 500);
+    throw new Error(`sidebar must render one visible action row; found ${visibleSidebarActionCount}: ${JSON.stringify(rows)}; body=${body}`);
+  }
 
   await page.locator('#new-note-btn-desktop').click();
   const createdNote = await page.waitForFunction(async ({ apiBase: base, token: authToken, vaultId }) => {

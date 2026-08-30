@@ -80,6 +80,21 @@ const isBetaFrontend =
 const devProxyTarget = process.env.CASCADE_DEV_PROXY_TARGET || `http://localhost:${process.env.API_PORT || 3000}`;
 const devProxySecure = devProxyTarget.startsWith('https://');
 const devProxyHeaders = devProxySecure ? { Origin: devProxyTarget } : undefined;
+const proxy = {
+  '/api': {
+    target: devProxyTarget,
+    changeOrigin: true,
+    secure: devProxySecure,
+    headers: devProxyHeaders,
+  },
+  '/socket.io': {
+    target: devProxyTarget,
+    changeOrigin: true,
+    secure: devProxySecure,
+    headers: devProxyHeaders,
+    ws: true,
+  },
+};
 
 function autoRefreshFlagPlugin() {
   return {
@@ -134,22 +149,9 @@ export default defineConfig({
     // desktop window quietly renders whatever else is squatting on it.
     strictPort: true,
     hmr: disableAutoRefresh ? false : undefined,
-    proxy: {
-      '/api': {
-        target: devProxyTarget,
-        changeOrigin: true,
-        secure: devProxySecure,
-        headers: devProxyHeaders,
-      },
-      '/socket.io': {
-        target: devProxyTarget,
-        changeOrigin: true,
-        secure: devProxySecure,
-        headers: devProxyHeaders,
-        ws: true,  // Enable WebSocket proxying
-      },
-    },
+    proxy,
     // Allow nip.io and cscd.online subdomains for staging access
     allowedHosts: ['.nip.io', '.cscd.online', 'localhost']
   },
+  preview: { proxy },
 });

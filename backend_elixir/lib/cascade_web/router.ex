@@ -72,11 +72,7 @@ defmodule CascadeWeb.Router do
 
       :not_found ->
         if String.starts_with?(conn.request_path, "/api/") do
-          JSON.send(conn, 501, %{
-            error: "This API route has not reached Elixir parity",
-            method: conn.method,
-            path: conn.request_path
-          })
+          JSON.send(conn, 404, %{error: "Not found"})
         else
           case Static.serve(conn) do
             {:served, conn} -> conn
