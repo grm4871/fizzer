@@ -387,39 +387,6 @@ defmodule Cascade.Chat.Agents do
     end
   end
 
-  def ensure_vault_wide(user_id, vault_id, channel_id) do
-    with {:ok, available} <- list_vault(user_id, vault_id) do
-      linked = linked_identity_ids(vault_id)
-
-      Enum.each(available, fn identity ->
-        if MapSet.member?(linked, identity.id) do
-          case add_to_channel(user_id, vault_id, channel_id, identity.id) do
-            {:ok, _} -> :ok
-            _ -> :ok
-          end
-        end
-      end)
-
-      list_members(channel_id, user_id)
-    end
-  end
-
-  defp linked_identity_ids(vault_id) do
-    SQL.all(
-      """
-      SELECT va.id FROM vault_agents va
-      WHERE (va.vault_id=? OR EXISTS(
-        SELECT 1 FROM chat_agent_members m WHERE m.vault_agent_id=va.id AND m.vault_id=?
-      )) AND NOT EXISTS(
-        SELECT 1 FROM vault_agent_exclusions x WHERE x.vault_id=? AND x.vault_agent_id=va.id
-      )
-      """,
-      [vault_id, vault_id, vault_id]
-    )
-    |> List.flatten()
-    |> MapSet.new()
-  end
-
   def resolve_owner_projection(user_id, channel_id, registration_id) do
     with {:ok, route} <- Channel.assert_channel(channel_id, user_id),
          row when not is_nil(row) <-

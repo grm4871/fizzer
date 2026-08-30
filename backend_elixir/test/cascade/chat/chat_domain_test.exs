@@ -485,7 +485,7 @@ defmodule Cascade.ChatDomainTest do
     assert {:ok, available} = Agents.list_vault(1, test_vault.id)
     assert Enum.any?(available, &(&1.id == identity.id))
 
-    assert {:ok, []} = Agents.ensure_vault_wide(1, test_vault.id, test_channel.id)
+    assert {:ok, []} = Agents.list_members(test_channel.id, 1)
 
     assert SQL.one(
              "SELECT id FROM chat_agent_members WHERE vault_agent_id=? AND vault_id=?",
@@ -497,10 +497,12 @@ defmodule Cascade.ChatDomainTest do
 
     assert second_member.vaultAgentId == identity.id
 
-    assert {:ok, [projected_member]} =
-             Agents.ensure_vault_wide(1, test_vault.id, test_channel_two.id)
+    assert {:ok, []} = Agents.list_members(test_channel_two.id, 1)
 
-    assert projected_member.vaultAgentId == identity.id
+    assert {:ok, true} =
+             Agents.remove_member(1, test_vault.id, test_channel.id, second_member.id)
+
+    assert {:ok, []} = Agents.list_members(test_channel.id, 1)
 
     assert {:ok, true} = Agents.unlink_from_vault(1, first_vault.id, identity.id)
     assert {:ok, reusable_profile} = Agents.get(1, first_vault.id, identity.id)
@@ -517,7 +519,7 @@ defmodule Cascade.ChatDomainTest do
     assert restored_member.vaultAgentId == identity.id
 
     assert SQL.one("SELECT id FROM chat_agent_members WHERE channel_id=?", [test_channel.id]) ==
-             [second_member.id]
+             nil
 
     assert SQL.one("SELECT id FROM vault_agents WHERE id=?", [identity.id]) == [identity.id]
 
