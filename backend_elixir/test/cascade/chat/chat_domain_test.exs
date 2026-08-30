@@ -9,6 +9,7 @@ defmodule Cascade.ChatDomainTest do
   alias Cascade.Chat.{Agents, Channel, Messages, RoomContext, Schema}
   alias Cascade.Content.{Assets, Store}
   alias Cascade.Missions.Dispatches
+  alias Cascade.Runs.Store, as: RunStore
   alias Cascade.Runs.RunnerLifecycle
 
   @node_column_signatures %{
@@ -53,6 +54,7 @@ defmodule Cascade.ChatDomainTest do
       ["reply_to_every_message", "INTEGER", 1, "0", 0],
       ["orchestrator", "INTEGER", 1, "0", 0],
       ["pingable_by_others", "INTEGER", 1, "0", 0],
+      ["ambient_group_chat", "INTEGER", 1, "0", 0],
       ["yolo", "INTEGER", 1, "0", 0],
       ["conversation_id", "TEXT", 1, "''", 0],
       ["created_at", "TEXT", 1, "datetime('now')", 0],
@@ -1151,6 +1153,93 @@ defmodule Cascade.ChatDomainTest do
       })
 
     assert {:ok, []} = Dispatches.create_for_message(user.id, channel.id, human_reply)
+  end
+
+  test "ambient group chat serializes peer-aware dispatches instead of fanning out" do
+    {vault, channel} = chat_vault(1, "Ambient", "Ambient room")
+    user = %{id: 1, username: "alice"}
+
+    registrations =
+      for {name, mention} <- [
+            {"Skeptic", "skeptic"},
+            {"Builder", "builder"},
+            {"Herald", "herald"}
+          ] do
+        {:ok, identity} =
+          Agents.upsert_identity(1, vault.id, %{
+            agentId: "codex",
+            displayName: name,
+            mention: mention
+          })
+
+        {:ok, registration} =
+          Agents.add_to_channel(1, vault.id, channel.id, identity.id, %{
+            ambientGroupChat: true,
+            taggableByAgents: true
+          })
+
+        assert registration.ambientGroupChat
+        registration
+      end
+
+    {:ok, root} =
+      Messages.create(user, vault.id, channel.id, %{
+        id: "ambient-root",
+        body: "Begin the experiment."
+      })
+
+    assert {:ok, [first_dispatch]} = Dispatches.create_for_message(user.id, channel.id, root)
+    assert first_dispatch.registration.id == Enum.at(registrations, 0).id
+
+    assert {:ok, first_run} =
+             RunStore.start(vault.id, nil, "first ambient turn", "codex",
+               owner_user_id: user.id,
+               chat_dispatch_id: first_dispatch.id
+             )
+
+    {:ok, first_reply} =
+      Messages.create(
+        user,
+        vault.id,
+        channel.id,
+        %{
+          id: "ambient-first-reply",
+          body: "I think the evidence matters.",
+          registrationId: first_dispatch.registration.id,
+          runId: first_run.id
+        },
+        access: :agent
+      )
+
+    assert {:ok, [second_dispatch]} =
+             Dispatches.create_for_message(user.id, channel.id, first_reply)
+
+    assert second_dispatch.registration.id == Enum.at(registrations, 1).id
+
+    assert {:ok, second_run} =
+             RunStore.start(vault.id, nil, "second ambient turn", "codex",
+               owner_user_id: user.id,
+               chat_dispatch_id: second_dispatch.id
+             )
+
+    {:ok, second_reply} =
+      Messages.create(
+        user,
+        vault.id,
+        channel.id,
+        %{
+          id: "ambient-second-reply",
+          body: "That evidence needs a falsifier.",
+          registrationId: second_dispatch.registration.id,
+          runId: second_run.id
+        },
+        access: :agent
+      )
+
+    assert {:ok, [third_dispatch]} =
+             Dispatches.create_for_message(user.id, channel.id, second_reply)
+
+    assert third_dispatch.registration.id == Enum.at(registrations, 2).id
   end
 
   test "exhausted Claude and Codex skip reply-to-all without blocking explicit mentions" do

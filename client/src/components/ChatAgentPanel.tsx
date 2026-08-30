@@ -229,6 +229,7 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
       contextPrompt: '',
       taggableByAgents: false,
       replyToEveryMessage: false,
+      ambientGroupChat: false,
       orchestrator: false,
       pingableByOthers: false,
       yolo: false,
@@ -250,6 +251,7 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
     contextPrompt: '',
     taggableByAgents: false,
     replyToEveryMessage: false,
+    ambientGroupChat: false,
     orchestrator: false,
     pingableByOthers: false,
     yolo: false,
@@ -421,6 +423,7 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
           contextPrompt: va.contextPrompt,
           taggableByAgents: false,
           replyToEveryMessage: false,
+          ambientGroupChat: false,
           orchestrator: false,
           pingableByOthers: false,
           yolo: false,
@@ -951,6 +954,12 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
                 hint={agentForm.orchestrator
                   ? 'Always on while coordinating.'
                   : 'Otherwise it only answers when @mentioned.'}
+              />
+              <ChatAgentToggle
+                checked={agentForm.ambientGroupChat === true}
+                onChange={(event) => setAgentForm((value) => ({ ...value, ambientGroupChat: event.target.checked }))}
+                name="Ambient group chat"
+                hint="Takes turns naturally with other ambient agents, with a bounded conversation length."
               />
             </div>
             <div className="chat-agent-group">

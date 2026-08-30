@@ -140,7 +140,7 @@ defmodule Cascade.Chat.Agents do
             SELECT m.id,m.vault_agent_id,va.owner_user_id,m.agent_id,m.display_name,m.avatar_url,
               m.mention,m.model,m.reasoning_effort,m.priority_service_tier,m.cwd,m.context_prompt,
               m.taggable_by_agents,m.reply_to_every_message,m.orchestrator,m.pingable_by_others,
-              m.yolo,m.conversation_id,va.hermes_profile,va.hermes_safe_mode FROM chat_agent_members m
+              m.ambient_group_chat,m.yolo,m.conversation_id,va.hermes_profile,va.hermes_safe_mode FROM chat_agent_members m
             JOIN vault_agents va ON va.id=m.vault_agent_id
             WHERE m.channel_id=? ORDER BY m.created_at,m.rowid
           """,
@@ -186,7 +186,7 @@ defmodule Cascade.Chat.Agents do
          :ok <- member_handle_available(route.sourceChannelId, identity_id, mention) do
       existing =
         SQL.one(
-          "SELECT id,reasoning_effort,priority_service_tier,taggable_by_agents,reply_to_every_message,orchestrator,pingable_by_others,yolo,conversation_id FROM chat_agent_members WHERE vault_agent_id=? AND channel_id=? ORDER BY rowid LIMIT 1",
+          "SELECT id,reasoning_effort,priority_service_tier,taggable_by_agents,reply_to_every_message,orchestrator,pingable_by_others,ambient_group_chat,yolo,conversation_id FROM chat_agent_members WHERE vault_agent_id=? AND channel_id=? ORDER BY rowid LIMIT 1",
           [identity_id, route.sourceChannelId]
         )
 
@@ -209,10 +209,11 @@ defmodule Cascade.Chat.Agents do
         orchestrator or boolean(flags, "replyToEveryMessage", existing_value(existing, 4, 0) != 0)
 
       pingable = boolean(flags, "pingableByOthers", existing_value(existing, 6, 0) != 0)
-      yolo = boolean(flags, "yolo", existing_value(existing, 7, 0) != 0)
+      ambient = boolean(flags, "ambientGroupChat", existing_value(existing, 7, 0) != 0)
+      yolo = boolean(flags, "yolo", existing_value(existing, 8, 0) != 0)
 
       conversation_id =
-        value(flags, "conversationId", existing_value(existing, 8, ""))
+        value(flags, "conversationId", existing_value(existing, 9, ""))
         |> to_string()
         |> String.trim()
         |> nonblank(Ecto.UUID.generate())
@@ -231,15 +232,16 @@ defmodule Cascade.Chat.Agents do
             """
             INSERT INTO chat_agent_members(id,channel_id,vault_id,vault_agent_id,agent_id,display_name,avatar_url,
               mention,model,reasoning_effort,priority_service_tier,cwd,context_prompt,taggable_by_agents,
-              reply_to_every_message,orchestrator,pingable_by_others,yolo,conversation_id)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+              reply_to_every_message,orchestrator,pingable_by_others,ambient_group_chat,yolo,conversation_id)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(channel_id,vault_agent_id) DO UPDATE SET
               agent_id=excluded.agent_id,display_name=excluded.display_name,avatar_url=excluded.avatar_url,
               mention=excluded.mention,model=excluded.model,reasoning_effort=excluded.reasoning_effort,
               priority_service_tier=excluded.priority_service_tier,cwd=excluded.cwd,
               context_prompt=excluded.context_prompt,taggable_by_agents=excluded.taggable_by_agents,
               reply_to_every_message=excluded.reply_to_every_message,orchestrator=excluded.orchestrator,
-              pingable_by_others=excluded.pingable_by_others,yolo=excluded.yolo,
+              pingable_by_others=excluded.pingable_by_others,ambient_group_chat=excluded.ambient_group_chat,
+              yolo=excluded.yolo,
               conversation_id=excluded.conversation_id,updated_at=datetime('now')
             """,
             [
@@ -260,6 +262,7 @@ defmodule Cascade.Chat.Agents do
               bool_int(reply_every),
               bool_int(orchestrator),
               bool_int(pingable),
+              bool_int(ambient),
               bool_int(yolo),
               conversation_id
             ]
@@ -578,6 +581,7 @@ defmodule Cascade.Chat.Agents do
          reply_every,
          orchestrator,
          pingable,
+         ambient,
          yolo,
          conversation_id,
          hermes_profile,
@@ -600,6 +604,7 @@ defmodule Cascade.Chat.Agents do
       replyToEveryMessage: reply_every != 0,
       orchestrator: orchestrator != 0,
       pingableByOthers: pingable != 0,
+      ambientGroupChat: ambient != 0,
       yolo: yolo != 0,
       hermesProfile: hermes_profile || "",
       hermesSafeMode: hermes_safe_mode != 0,

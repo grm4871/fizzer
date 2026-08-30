@@ -205,6 +205,8 @@ export interface ChatAgentRegistration {
   contextPrompt: string;
   taggableByAgents: boolean;
   replyToEveryMessage: boolean;
+  /** Join serialized, bounded ambient conversation in this channel. */
+  ambientGroupChat?: boolean;
   orchestrator: boolean;
   /** Allow users other than the owner to @mention/trigger this agent in a
    * shared channel. The run still executes on the owner's desktop runner. */

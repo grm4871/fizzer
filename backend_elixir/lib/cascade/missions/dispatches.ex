@@ -5,6 +5,8 @@ defmodule Cascade.Missions.Dispatches do
   alias Cascade.Chat.{Agents, Channel, Messages, RoomContext, Schema}
   alias Cascade.Runs.RunnerLifecycle
 
+  @ambient_hops 15
+
   def create_for_message(user_id, channel_id, message) do
     if String.starts_with?(to_string(field(message, :id, "")), "sys-") do
       {:ok, []}
@@ -170,31 +172,93 @@ defmodule Cascade.Missions.Dispatches do
     calls_specialist =
       Enum.any?(registrations, &(not &1.orchestrator and MapSet.member?(explicit_ids, &1.id)))
 
-    registrations
-    |> Enum.reduce({[], MapSet.new()}, fn registration, {selected, seen} ->
-      explicit = MapSet.member?(explicit_ids, registration.id)
+    selected =
+      registrations
+      |> Enum.reduce({[], MapSet.new()}, fn registration, {selected, seen} ->
+        explicit = MapSet.member?(explicit_ids, registration.id)
 
-      always =
-        not from_agent and registration.ownerUserId == user_id and
-          registration.replyToEveryMessage and
-          not (registration.orchestrator and calls_specialist) and
-          reply_to_all_available?(registration)
+        always =
+          not from_agent and registration.ownerUserId == user_id and
+            registration.replyToEveryMessage and
+            not (registration.orchestrator and calls_specialist) and
+            reply_to_all_available?(registration)
 
-      identity = registration.vaultAgentId || registration.id
+        identity = registration.vaultAgentId || registration.id
 
-      allowed =
-        registration.id != field(message, :registrationId) and
+        allowed =
+          registration.id != field(message, :registrationId) and
+            if(from_agent,
+              do: registration.taggableByAgents,
+              else: registration.ownerUserId == user_id or registration.pingableByOthers
+            ) and
+            (explicit or always) and not MapSet.member?(seen, identity)
+
+        if allowed,
+          do: {selected ++ [registration], MapSet.put(seen, identity)},
+          else: {selected, seen}
+      end)
+      |> elem(0)
+
+    if selected == [] and MapSet.size(explicit_ids) == 0 do
+      ambient_target(user_id, message, registrations, from_agent)
+    else
+      selected
+    end
+  end
+
+  defp ambient_target(user_id, message, registrations, from_agent) do
+    chain = ambient_chain(field(message, :id), @ambient_hops)
+
+    if length(chain) >= @ambient_hops do
+      []
+    else
+      current = field(message, :registrationId)
+
+      registrations
+      |> Enum.with_index()
+      |> Enum.filter(fn {registration, _index} ->
+        registration.ambientGroupChat and registration.id != current and
           if(from_agent,
             do: registration.taggableByAgents,
             else: registration.ownerUserId == user_id or registration.pingableByOthers
-          ) and
-          (explicit or always) and not MapSet.member?(seen, identity)
+          )
+      end)
+      |> Enum.min_by(
+        fn {registration, index} ->
+          {Enum.count(chain, &(&1 == registration.id)), index}
+        end,
+        fn -> nil end
+      )
+      |> case do
+        {registration, _index} -> [registration]
+        nil -> []
+      end
+    end
+  end
 
-      if allowed,
-        do: {selected ++ [registration], MapSet.put(seen, identity)},
-        else: {selected, seen}
-    end)
-    |> elem(0)
+  defp ambient_chain(message_id, remaining, registrations \\ [])
+  defp ambient_chain(_message_id, 0, registrations), do: Enum.reverse(registrations)
+
+  defp ambient_chain(message_id, remaining, registrations) do
+    case SQL.one(
+           "SELECT registration_id,run_id FROM chat_messages WHERE id=? LIMIT 1",
+           [message_id]
+         ) do
+      [registration_id, run_id] ->
+        next =
+          if present?(registration_id), do: [registration_id | registrations], else: registrations
+
+        case SQL.one(
+               "SELECT d.message_id FROM runs r JOIN chat_agent_dispatches d ON d.id=r.chat_dispatch_id WHERE r.id=? LIMIT 1",
+               [run_id]
+             ) do
+          [parent_id] -> ambient_chain(parent_id, remaining - 1, next)
+          _ -> Enum.reverse(next)
+        end
+
+      _ ->
+        Enum.reverse(registrations)
+    end
   end
 
   # Explicit mentions remain authoritative. This only suppresses the automatic
