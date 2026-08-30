@@ -1070,16 +1070,17 @@ export default function App() {
         const vaultAgentsP = soft ? Promise.resolve() : loadVaultAgents(vaultId);
 
         const [folderData, noteData] = await Promise.all([foldersP, notesP]);
-        // A slower response from the vault we just left must never repaint the
-        // newly-selected vault's tree.
-        if (activeVaultIdRef.current !== vaultId) return;
         const nextNotes = noteData.notes || [];
         const nextFolders = folderData.folders || [];
-        notesRef.current = nextNotes;
         vaultListingsRef.current = {
           ...vaultListingsRef.current,
           [vaultId]: { folders: nextFolders, notes: nextNotes, savedAt: Date.now() },
         };
+        persistWorkspaceSession();
+        // Background-prefetched vaults populate the instant-switch cache but
+        // must never repaint whichever vault the user is currently viewing.
+        if (activeVaultIdRef.current !== vaultId) return;
+        notesRef.current = nextNotes;
         const channelIds = nextNotes
           .filter((note) => note.content_preview.trim().startsWith(CHAT_NOTE_MARKER))
           .map((note) => note.id);
@@ -1091,7 +1092,6 @@ export default function App() {
         });
         setFolders(nextFolders);
         setNotes(nextNotes);
-        persistWorkspaceSession();
         void primaryChatP.catch(() => undefined);
         void vaultAgentsP.catch(() => undefined);
         if (!soft && secondaryChats.length > 0) {
@@ -1113,6 +1113,21 @@ export default function App() {
     loadVaultDataInflight.set(inflightKey, run);
     return run;
   }, [loadChatMessages, loadChatAgentMembers, loadChatPresence, loadVaultAgents, openChatTabIds, persistWorkspaceSession]);
+
+  // The vault rail is navigation, so selecting any visible vault should feel
+  // like switching tabs rather than beginning a fetch. Warm each uncached
+  // notes/folders listing after the shell is ready; loadVaultData keeps these
+  // lightweight soft reads isolated from the active vault's UI.
+  useEffect(() => {
+    if (!user || vaults.length === 0) return;
+    const timer = window.setTimeout(() => {
+      for (const vault of vaults) {
+        if (vaultListingsRef.current[vault.id]) continue;
+        void loadVaultData(vault.id, { soft: true });
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [user, vaults, loadVaultData]);
 
   /** Hydrate one chat channel when the user focuses its tab (skip if cached). */
   const ensureChatChannelLoaded = useCallback((channelId: string) => {

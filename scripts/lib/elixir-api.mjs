@@ -37,6 +37,7 @@ export function spawnElixirApi(repoRoot, options = {}) {
     cwd: spec.cwd,
     env: elixirApiEnv(repoRoot, options),
     stdio: options.stdio || ['ignore', 'pipe', 'pipe'],
+    detached: options.detached === true,
   });
 }
 

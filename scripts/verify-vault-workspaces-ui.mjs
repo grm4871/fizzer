@@ -44,6 +44,7 @@ function check(name, condition, detail = '') {
 const server = spawnElixirApi(root, {
     port: API_PORT,
     dbPath: DB_PATH,
+    detached: process.platform !== 'win32',
     extraEnv: {
       JWT_SECRET: 'vault-workspaces-secret',
       CASCADE_ALLOW_OPEN_REGISTRATION: '1',
@@ -53,8 +54,13 @@ server.stderr.on('data', (chunk) => process.stderr.write(`[server-err] ${chunk}`
 
 const preview = spawn(
   'npm',
-  ['--workspace=client', 'run', 'preview', '--', '--host', '127.0.0.1', '--port', String(PREVIEW_PORT)],
-  { cwd: root, env: { ...process.env, API_PORT: String(API_PORT) }, stdio: ['ignore', 'pipe', 'pipe'] },
+  ['--workspace=client', 'run', 'dev', '--', '--host', '127.0.0.1', '--port', String(PREVIEW_PORT)],
+  {
+    cwd: root,
+    env: { ...process.env, API_PORT: String(API_PORT) },
+    stdio: ['ignore', 'pipe', 'pipe'],
+    detached: process.platform !== 'win32',
+  },
 );
 preview.stderr.on('data', (chunk) => process.stderr.write(`[preview] ${chunk}`));
 
@@ -64,9 +70,10 @@ try {
   await waitForUrl(APP_URL);
 
   const stamp = Date.now();
+  const testUsername = `vault_ws_${stamp}`;
   const { token } = await must(`${API_BASE}/api/auth/register`, {
     method: 'POST',
-    body: JSON.stringify({ username: `vault_ws_${stamp}`, password: 'testpass12345' }),
+    body: JSON.stringify({ username: testUsername, password: 'testpass12345' }),
   });
   const auth = { Authorization: `Bearer ${token}` };
   const createVault = async (name) => (await must(`${API_BASE}/api/vaults`, {
@@ -117,8 +124,10 @@ try {
   const tabTitles = () => page.locator('.tab-item .tab-title').allInnerTexts();
 
   await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
-  await page.evaluate((value) => localStorage.setItem('docs_token', value), token);
-  await page.goto(APP_URL, { waitUntil: 'networkidle' });
+  await page.getByLabel('Username').fill(testUsername);
+  await page.getByLabel('Password').fill('testpass12345');
+  await page.getByRole('button', { name: 'Log in' }).click();
+  await page.locator('.vault-rail').waitFor({ timeout: 15_000 });
 
   const railBox = await page.locator('.vault-rail').boundingBox();
   const panelBox = await page.locator('.sidebar-panel').boundingBox();
@@ -224,8 +233,19 @@ try {
   process.exitCode = 1;
 } finally {
   if (browser) await browser.close();
-  preview.kill('SIGTERM');
-  server.kill('SIGTERM');
-  await delay(300);
+  const signal = (child, name) => {
+    if (child.exitCode != null || child.signalCode != null) return;
+    try {
+      if (process.platform !== 'win32' && child.pid) process.kill(-child.pid, name);
+      else child.kill(name);
+    } catch (error) {
+      if (error?.code !== 'ESRCH') throw error;
+    }
+  };
+  for (const child of [preview, server]) {
+    signal(child, 'SIGTERM');
+  }
+  await delay(1_000);
+  for (const child of [preview, server]) signal(child, 'SIGKILL');
   try { fs.unlinkSync(DB_PATH); } catch { /* clean */ }
 }
