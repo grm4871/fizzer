@@ -36,6 +36,17 @@ async function fetchJson(url, options = {}) {
   return data;
 }
 
+async function waitForRunStatus(runId, auth, expected, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  let current = null;
+  while (Date.now() < deadline) {
+    current = await fetchJson(`${API_BASE}/api/runs/${runId}`, { headers: auth });
+    if (current.run.status === expected) return current;
+    await sleep(50);
+  }
+  return current;
+}
+
 function startServer() {
   return launchTestBackend({
     name: 'desktop-runner-e2e', repoRoot: root, port: API_PORT,
@@ -336,18 +347,35 @@ async function main() {
     if (!restartPayload || restartPayload.runId !== restartRun.id) {
       throw new Error('Expected restart fixture run to be delegated');
     }
-    reconnected.emit('runner:register', {
-      runnerInstanceId: 'desktop-main-b',
-      activeRunIds: [],
+    reconnected.disconnect();
+    const restarted = io(`${API_BASE}/runners`, {
+      auth: { token },
+      transports: ['websocket'],
     });
-    await sleep(300);
-    const interrupted = await fetchJson(`${API_BASE}/api/runs/${restartRun.id}`, { headers: auth });
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('Restart reconnect timeout')), 10000);
+      restarted.on('runner:registered', () => {
+        clearTimeout(timer);
+        resolve();
+      });
+      restarted.on('connect', () => {
+        restarted.emit('runner:register', {
+          runnerInstanceId: 'desktop-main-b',
+          activeRunIds: [],
+        });
+      });
+      restarted.on('connect_error', (error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+    });
+    const interrupted = await waitForRunStatus(restartRun.id, auth, 'failed');
     if (interrupted.run.status !== 'failed' || !String(interrupted.run.summary).includes('restarted')) {
       throw new Error(`Expected app-restart run to fail visibly, got ${interrupted.run.status}: ${interrupted.run.summary}`);
     }
     console.log('[e2e] OK full app restart released omitted run ownership');
 
-    reconnected.disconnect();
+    restarted.disconnect();
     runnerSocket.disconnect();
 
     // Wait past waitForDesktopRunner (6s) so offline is definitive.
