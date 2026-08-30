@@ -6,8 +6,8 @@
  * navigation security guards that restrict loading to the operator-selected Fizzer
  * instance. Keyboard shortcuts are intercepted at the main-process level
  * and forwarded to the renderer via IPC when Chromium would otherwise
- * swallow them. In production, loads https://cscd.online; in development,
- * loads the Vite dev server.
+ * swallow them. Packaged builds start a private loopback Fizzer instance;
+ * development loads Vite unless explicitly opted into the embedded runtime.
  *
  * @module cascade-electron/main
  */
@@ -16,7 +16,7 @@
 // IMPORTS & CONFIG
 // ═══════════════════════════════════════════════════════════════
 
-const { app, BrowserWindow, ipcMain, session, Menu, shell, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, session, Menu, shell, clipboard, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
@@ -24,7 +24,9 @@ const {
   isSameOrigin,
   rendererUrlForOrigin,
   resolveInstanceOrigin,
+  shouldUseEmbeddedBackend,
 } = require('./instance-origin.cjs');
+const { startEmbeddedBackend } = require('./embedded-backend.cjs');
 const { launchMacOSInstaller, prepareMacOSUpdate } = require('./macos-updater.cjs');
 const { installDesktopShellPath } = require('./shell-path.cjs');
 
@@ -46,8 +48,9 @@ const { AgentRunState, settleCancelAcknowledgement } = require('./agent-run-stat
 const { collectLocalAgents } = require('./local-agents.cjs');
 const worktrees = require('./worktrees.cjs');
 const APP_NAME = 'Fizzer';
-const INSTANCE_ORIGIN = resolveInstanceOrigin({ packaged: app.isPackaged });
-const APP_URL = rendererUrlForOrigin(INSTANCE_ORIGIN);
+const USE_EMBEDDED_BACKEND = shouldUseEmbeddedBackend({ packaged: app.isPackaged });
+let INSTANCE_ORIGIN = USE_EMBEDDED_BACKEND ? null : resolveInstanceOrigin({ packaged: app.isPackaged });
+let APP_URL = INSTANCE_ORIGIN ? rendererUrlForOrigin(INSTANCE_ORIGIN) : null;
 // Same as client `--bg-base` (hsl(225, 12%, 7%)). Set on every window so the
 // shell is never Chromium's default white while the hosted page is loading.
 const APP_BACKGROUND = '#101014';
@@ -66,6 +69,8 @@ const APP_ICON = path.join(__dirname, 'assets', 'icon.png');
 
 let mainWindow;
 let desktopUpdateInProgress = false;
+let embeddedBackend;
+let appQuitting = false;
 const agentRunState = new AgentRunState();
 // Removed: dead `serverProcess` variable — it was declared but never assigned,
 // and the corresponding `if (serverProcess) serverProcess.kill()` in the
@@ -106,6 +111,7 @@ function buildApplicationMenu() {
 
 /** Resolve the renderer URL pinned to the main-process-selected instance. */
 function getAppBaseUrl() {
+  if (!APP_URL) throw new Error('Fizzer local backend has not started');
   return APP_URL;
 }
 
@@ -152,11 +158,11 @@ async function updateDesktopInPlace() {
   const root = getProjectRoot();
   const gitBin = process.platform === 'win32' ? 'git.exe' : 'git';
 
-  // The desktop shell loads its UI from cscd.online, but its local agent
-  // runner imports the generated dist/cli-agents module. dist is ignored, so a
-  // source pull alone leaves CLI/harness fixes dormant until somebody happens
-  // to build manually. Rebuild in place; it does not terminate main or active
-  // agent processes.
+  // The desktop shell loads its UI from its selected instance, but its local
+  // agent runner imports the generated dist/cli-agents module. dist is ignored,
+  // so a source pull alone leaves CLI/harness fixes dormant until somebody
+  // happens to build manually. Rebuild in place; it does not terminate main or
+  // active agent processes.
   // Stash local changes so a dirty tree cannot abort the update. Rebase keeps
   // real local commits while also recovering when the same patch was merged
   // upstream under a different commit id (a common outcome of parallel agent
@@ -308,8 +314,7 @@ function configureWindow(win) {
 
 /**
  * Creates the main application window with security-hardened webPreferences.
- * In production it loads https://cscd.online/app; in development the app route
- * for the configured `--APP_URL=` URL.
+ * Loads the selected local, hosted, or development instance.
  */
 function createWindow() {
   // Always install (or clear) the app menu before windows open.
@@ -335,15 +340,14 @@ function createWindow() {
 
   configureWindow(mainWindow);
 
-  // Load immediately. A Node HEAD probe used to sit on a blank window for up
-  // to 30s, and Node TLS to cscd.online fails on some networks that Chromium
-  // can still reach. did-fail-load already retries the local Vite URL.
+  // Load immediately. The embedded service has already passed its health
+  // check; configured remote origins are left to Chromium's network stack.
   const baseUrl = getAppBaseUrl();
   console.log('[Main] Loading app URL:', baseUrl);
   mainWindow.loadURL(baseUrl);
 
   mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
-    if (!isMainFrame || app.isPackaged) return;
+    if (!isMainFrame || (app.isPackaged && !USE_EMBEDDED_BACKEND)) return;
     console.error('[Main] Failed to load app URL:', errorCode, errorDescription, validatedURL);
     setTimeout(() => {
       if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -649,14 +653,32 @@ ipcMain.handle('app:updateAndRestart', async () => {
 // APP LIFECYCLE
 // ═══════════════════════════════════════════════════════════════
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   // `npm start` runs from the generic Electron binary, whose dock tile is the
   // Electron logo until the running app overrides it.
   if (process.platform === 'darwin' && !app.isPackaged && app.dock) {
     try { app.dock.setIcon(APP_ICON); } catch { /* non-fatal: dev cosmetics */ }
   }
 
-  // Allow app-shell permissions needed by the hosted app.
+  if (USE_EMBEDDED_BACKEND) {
+    embeddedBackend = await startEmbeddedBackend({
+      packaged: app.isPackaged,
+      resourcesPath: process.resourcesPath,
+      projectRoot: getProjectRoot(),
+      userDataDir: app.getPath('userData'),
+    });
+    INSTANCE_ORIGIN = embeddedBackend.origin;
+    APP_URL = rendererUrlForOrigin(INSTANCE_ORIGIN);
+    embeddedBackend.process.once('exit', (code, signal) => {
+      if (appQuitting) return;
+      dialog.showErrorBox(
+        'Fizzer local service stopped',
+        `The private local service exited (code ${code ?? 'none'}, signal ${signal ?? 'none'}). Reopen Fizzer to restart it.`,
+      );
+    });
+  }
+
+  // Allow app-shell permissions needed by the selected app instance.
   session.defaultSession.setPermissionCheckHandler(() => true);
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
     callback(true);
@@ -680,6 +702,11 @@ app.whenReady().then(() => {
   }).catch((error) => {
     console.error('[Main] Failed to prune task workspaces:', error);
   });
+}).catch((error) => {
+  embeddedBackend?.stop();
+  console.error('[Main] Failed to start Fizzer:', error);
+  dialog.showErrorBox('Fizzer could not start', error instanceof Error ? error.message : String(error));
+  app.quit();
 });
 
 app.on('window-all-closed', () => {
@@ -687,6 +714,8 @@ app.on('window-all-closed', () => {
 });
 
 app.on('will-quit', () => {
+  appQuitting = true;
+  embeddedBackend?.stop();
   disconnectDesktopRunner();
 });
 

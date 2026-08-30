@@ -11,6 +11,8 @@ Elixir backend  <---->  SQLite + vault files
   |  /runners relay
   |
 Electron renderer ---- IPC ---- Electron main ---- local agent CLIs
+                                 |
+                                 +---- packaged local backend (desktop default)
 ```
 
 ## React renderer
@@ -73,6 +75,13 @@ and chats.
 `cascade-electron/main.cjs` owns windows, IPC handlers, desktop updates, and
 local agent process startup. `preload.cjs` exposes a narrow renderer bridge.
 `agent-runner.cjs` adapts local providers into the common run-event protocol.
+
+Packaged desktop builds also carry a platform-native OTP release and the built
+React client. Electron starts that service on a random `127.0.0.1` port, keeps
+SQLite and vault files below its user-data directory, and stops the service
+with the app. An explicit `CASCADE_APP_URL`, `APP_URL`, or `--instance-url=`
+selects a remote instance instead. Source development keeps using Vite unless
+`FIZZER_EMBEDDED_BACKEND=1` is set.
 
 The `/runners` Socket.IO connection intentionally lives in the Chromium
 renderer (`client/src/desktopRunnerHost.ts`) while agent processes execute in

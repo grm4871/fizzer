@@ -38,8 +38,20 @@ function commandLineInstanceUrl(argv = []) {
   return '';
 }
 
+function configuredInstanceUrl(env = process.env, argv = process.argv.slice(2)) {
+  return String(env.CASCADE_APP_URL || env.APP_URL || commandLineInstanceUrl(argv) || '').trim();
+}
+
+function shouldUseEmbeddedBackend({ packaged = false, env = process.env, argv = process.argv.slice(2) } = {}) {
+  if (configuredInstanceUrl(env, argv)) return false;
+
+  const override = String(env.FIZZER_EMBEDDED_BACKEND || env.CASCADE_EMBEDDED_BACKEND || '').trim().toLowerCase();
+  if (override) return !['0', 'false', 'no', 'off'].includes(override);
+  return packaged;
+}
+
 function resolveInstanceOrigin({ packaged = false, env = process.env, argv = process.argv.slice(2) } = {}) {
-  const configured = String(env.CASCADE_APP_URL || env.APP_URL || commandLineInstanceUrl(argv) || '').trim();
+  const configured = configuredInstanceUrl(env, argv);
   const fallback = packaged ? HOSTED_ORIGIN : DEVELOPMENT_ORIGIN;
   return parseInstanceOrigin(configured || fallback, configured ? 'Configured instance URL' : 'Default instance URL');
 }
@@ -64,4 +76,5 @@ module.exports = {
   parseInstanceOrigin,
   rendererUrlForOrigin,
   resolveInstanceOrigin,
+  shouldUseEmbeddedBackend,
 };

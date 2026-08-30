@@ -1,6 +1,7 @@
 node_modules/
 client/node_modules/
 cascade-electron/node_modules/
+cascade-electron/embedded-runtime/
 
 dist/
 client/dist/

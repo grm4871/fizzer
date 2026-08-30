@@ -1,5 +1,6 @@
-// Electron Forge config. The packaged app is a thin shell that loads
-// https://cscd.online (see main.cjs) and includes the local agent runtime.
+// Electron Forge config. The packaged app includes the local web/data service,
+// client bundle, and agent runtime; an explicit instance URL still selects a
+// hosted or self-hosted server.
 // The zip maker works everywhere; native installers (.dmg/.exe/.deb/.rpm) are
 // gated behind the platform tooling that produces them.
 import { execSync } from 'node:child_process';
@@ -46,6 +47,7 @@ export default {
     // a shell that opens but cannot run or reap agents.
     extraResource: [
       path.join(rootDir, 'dist'),
+      path.join(configDir, 'embedded-runtime'),
       path.join(rootDir, 'FIZZER-LICENSE.txt'),
       path.join(rootDir, 'THIRD_PARTY_NOTICES.md'),
       path.join(configDir, 'node_modules', '@resvg', 'resvg-js', 'LICENSE'),

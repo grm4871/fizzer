@@ -10,3 +10,8 @@ package. Fizzer does not modify resvg-js.
 
 Electron's own notices are shipped as `LICENSE.electron.txt` and
 `LICENSES.chromium.html`.
+
+Fizzer Desktop also includes an Erlang/OTP + Elixir release and its Hex
+dependencies so the private local service can run without a separately
+installed server. Their notice, Apache-2.0 text, and package license files are
+shipped under `embedded-runtime/backend-licenses/`.

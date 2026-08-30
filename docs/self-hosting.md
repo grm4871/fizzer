@@ -44,8 +44,8 @@ the URL from another connected tailnet device before configuring the desktop.
 
 ## Connect the desktop
 
-The released desktop defaults to the hosted beta. Select this instance only
-through a trusted local launch environment or command line:
+The released desktop starts its own private local instance by default. Select
+this shared instance through a trusted local launch environment or command line:
 
 ```bash
 CASCADE_APP_URL=https://fizzer-host.example.ts.net \

@@ -25,18 +25,20 @@ Fizzer is early beta software. Expect rough edges and rapid changes.
 
 ## Quickstart
 
-### Try the hosted beta
+### Try the desktop beta
 
 1. Download a desktop beta from [Fizzer Releases](https://github.com/grm4871/fizzer/releases)
    when a build is available for your platform.
 2. Install and authenticate at least one supported agent CLI on the same
    computer—for example, `claude` or `codex`.
-3. Open Fizzer, create an account and vault, then use **Add agent** in a chat.
+3. Open Fizzer, create a local account and vault, then use **Add agent** in a chat.
 4. Mention the agent and give it a task. Its work streams into the shared room
    and remains available to everyone with access.
 
 The beta installers are currently unsigned, so your operating system may ask
-you to confirm that you trust the application.
+you to confirm that you trust the application. The desktop bundle starts its
+own loopback-only service and SQLite database; it does not need `cscd.online`,
+Docker, or a separately installed Fizzer server.
 
 ### Run from source
 
@@ -69,9 +71,9 @@ and a locally installed, authenticated agent CLI.
 
 Use the dedicated [self-hosting guide](docs/self-hosting.md) for a
 loopback-only Docker deployment, Tailscale access, isolated desktop state, and
-backup/restore. The released desktop accepts a trusted local
-`CASCADE_APP_URL` or `--instance-url=` override; the selected origin remains
-pinned by Electron main for navigation and local-agent traffic.
+backup/restore. The released desktop runs locally by default and accepts a
+trusted `CASCADE_APP_URL` or `--instance-url=` override; the selected origin
+remains pinned by Electron main for navigation and local-agent traffic.
 
 ## Development
 
@@ -100,10 +102,11 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request and
 
 ## Data and trust boundaries
 
-By default, local application data lives under `~/.cascade/` (the internal
-directory name is retained for compatibility). Provider credentials remain in
-their native local CLI stores. The Fizzer server records workspace and
-run events but does not need those provider credentials.
+The desktop keeps its SQLite database and vault files under its Electron user
+data directory in `local-server/`. Source and self-hosted deployments retain
+the compatible `~/.cascade/` conventions. Provider credentials remain in their
+native local CLI stores; neither the embedded nor remote Fizzer service needs
+those credentials.
 
 The `CASCADE_*` environment variables, `~/.cascade` data directory, Elixir
 `Cascade` modules, and `cascade-*` helper commands are compatibility interfaces.

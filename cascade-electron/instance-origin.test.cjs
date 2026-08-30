@@ -6,14 +6,20 @@ const {
   parseInstanceOrigin,
   rendererUrlForOrigin,
   resolveInstanceOrigin,
+  shouldUseEmbeddedBackend,
 } = require('./instance-origin.cjs');
 
-test('packaged desktop defaults to the hosted instance', () => {
+test('packaged desktop defaults to its embedded instance', () => {
+  assert.equal(shouldUseEmbeddedBackend({ packaged: true, env: {}, argv: [] }), true);
   assert.equal(resolveInstanceOrigin({ packaged: true, env: {}, argv: [] }), HOSTED_ORIGIN);
   assert.equal(rendererUrlForOrigin(HOSTED_ORIGIN), 'https://cscd.online/app');
 });
 
 test('packaged desktop honors an explicit HTTPS self-host', () => {
+  assert.equal(
+    shouldUseEmbeddedBackend({ packaged: true, env: { CASCADE_APP_URL: 'https://fizzer.example.ts.net:8443/' }, argv: [] }),
+    false,
+  );
   assert.equal(
     resolveInstanceOrigin({ packaged: true, env: { CASCADE_APP_URL: 'https://fizzer.example.ts.net:8443/' }, argv: [] }),
     'https://fizzer.example.ts.net:8443',
@@ -22,6 +28,11 @@ test('packaged desktop honors an explicit HTTPS self-host', () => {
     resolveInstanceOrigin({ packaged: true, env: {}, argv: ['--instance-url=https://other.example.test'] }),
     'https://other.example.test',
   );
+});
+
+test('source desktop can opt into the embedded instance', () => {
+  assert.equal(shouldUseEmbeddedBackend({ packaged: false, env: { FIZZER_EMBEDDED_BACKEND: '1' }, argv: [] }), true);
+  assert.equal(shouldUseEmbeddedBackend({ packaged: true, env: { FIZZER_EMBEDDED_BACKEND: '0' }, argv: [] }), false);
 });
 
 test('instance validation allows HTTP only on loopback', () => {

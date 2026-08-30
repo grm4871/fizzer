@@ -43,6 +43,17 @@ const requiredFiles = [
   path.join(resources, 'dist', 'cli-agents', 'cascade-chat'),
   path.join(resources, 'dist', 'cli-agents', 'cascade-scratchpad'),
   path.join(resources, 'dist', 'cli-agents', 'auto-papercut.mjs'),
+  path.join(resources, 'embedded-runtime', 'client-dist', 'app.html'),
+  path.join(resources, 'embedded-runtime', 'backend-licenses', 'THIRD_PARTY_NOTICES.md'),
+  path.join(resources, 'embedded-runtime', 'backend-licenses', 'APACHE-2.0.txt'),
+  path.join(resources, 'embedded-runtime', 'backend-licenses', 'hex', 'bandit', 'LICENSE'),
+  path.join(
+    resources,
+    'embedded-runtime',
+    'backend-release',
+    'bin',
+    platform === 'win32' ? 'cascade_elixir.bat' : 'cascade_elixir',
+  ),
 ];
 const missing = requiredFiles.filter((file) => !fs.existsSync(file));
 if (missing.length) {
@@ -63,6 +74,7 @@ const asarEntries = new Set(
 const requiredAsarEntries = [
   '/agent-runner.cjs',
   '/desktop-runner-host.cjs',
+  '/embedded-backend.cjs',
   '/instance-origin.cjs',
 ];
 const absentFromAsar = requiredAsarEntries.filter((entry) => !asarEntries.has(entry));
@@ -77,4 +89,4 @@ if (forbiddenAsarEntries.length) {
   throw new Error(`Packaged app.asar redistributes Claude runtime files:\n${forbiddenAsarEntries.map((entry) => `- ${entry}`).join('\n')}`);
 }
 
-console.log(`[verify-desktop-package] OK - ${platform}/${arch} includes the desktop shell, agent runtime, and helpers without a bundled Claude runtime`);
+console.log(`[verify-desktop-package] OK - ${platform}/${arch} includes the local service, client, agent runtime, and helpers without a bundled Claude runtime`);

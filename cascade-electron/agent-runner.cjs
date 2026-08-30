@@ -37,7 +37,7 @@ const CHAT_CONTEXT_TOOL_CONTEXT = 'Your channel transcript is append-only. A con
 // Live Cascade API config for helper wrappers, populated by the
 // desktop runner host once it knows the server URL + the user's auth token.
 // Children inherit these via process.env, so the wrapper authenticates against
-// the same live instance the desktop is connected to (cscd.online by default).
+// the same local or remote instance the desktop is connected to.
 const noteApi = { url: '', token: '', configured: false };
 const AGENT_STATE_DIR = process.env.CASCADE_AGENT_STATE_DIR
   || process.env.CASCADE_USER_DATA_DIR

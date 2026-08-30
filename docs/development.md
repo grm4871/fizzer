@@ -8,6 +8,7 @@ npm run dev-headless        # API + Vite
 npm run dev-debug           # full stack with backend debug mode
 npm run build               # TypeScript CLI helper/agent build
 npm run build:client        # production renderer bundle
+npm run build:desktop-runtime # native OTP release + client for Electron
 npm test                    # client unit tests
 npm run test:native         # API native rebuild helper tests
 npm run rebuild:native      # rebuild helper better-sqlite3 if the ABI drifted

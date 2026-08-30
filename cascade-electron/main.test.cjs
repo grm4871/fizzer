@@ -9,10 +9,11 @@ test('desktop startup paints a window before housekeeping and does not HEAD the 
   assert.doesNotMatch(source, /\bwaitForAppUrl\b|\bcanReachUrl\b/);
   assert.match(source, /backgroundColor: APP_BACKGROUND/);
   assert.match(source, /createWindow\(\);/);
+  const backendAt = source.indexOf('await startEmbeddedBackend(');
   const createAt = source.indexOf('createWindow();');
   const reapAt = source.indexOf('void reapOrphanedLocalAgentRuns()');
   const pruneAt = source.indexOf('void worktrees.pruneWorkspaces()');
-  assert.ok(createAt > 0 && reapAt > createAt && pruneAt > createAt);
+  assert.ok(backendAt > 0 && createAt > backendAt && reapAt > createAt && pruneAt > createAt);
 });
 
 test('desktop navigation and runner helpers are pinned to the main-process instance', () => {

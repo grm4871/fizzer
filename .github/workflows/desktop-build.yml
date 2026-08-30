@@ -33,7 +33,7 @@ jobs:
           - os: macos-latest
             platform: darwin
             arch: arm64
-          - os: macos-latest
+          - os: macos-15-intel
             platform: darwin
             arch: x64
           - os: windows-latest
@@ -49,11 +49,17 @@ jobs:
         with:
           node-version: 24
 
-      - name: Build local agent runtime
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: '29'
+          elixir-version: '1.20.2'
+
+      - name: Build local desktop runtime
         working-directory: .
         run: |
           npx --yes npm@11.16.0 ci --ignore-scripts
           npx --yes npm@11.16.0 run build
+          npx --yes npm@11.16.0 run build:desktop-runtime
 
       - name: Install dependencies
         # npm 11.16 records optional peers more strictly than earlier npm 11
