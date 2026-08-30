@@ -18,8 +18,8 @@ export const CHAT_AGENTS: Array<{ id: AgentId; label: string }> = [
 ];
 
 /** Preserve authoritative in-memory members across a transient hydration error. */
-export function agentsAfterLoadFailure<T>(cached?: T[], legacy?: T[]): T[] {
-  return cached ?? legacy ?? [];
+export function agentsAfterLoadFailure<T>(cached?: T[]): T[] {
+  return cached ?? [];
 }
 
 /**

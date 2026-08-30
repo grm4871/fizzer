@@ -20,12 +20,11 @@ const registration = {
 describe('agent member hydration', () => {
   it('preserves loaded registrations when a reconnect fetch fails', () => {
     const cached = [{ id: 'ocsol', mention: 'ocsol' }];
-    expect(agentsAfterLoadFailure(cached, [])).toBe(cached);
+    expect(agentsAfterLoadFailure(cached)).toBe(cached);
   });
 
-  it('falls back to legacy registrations only when no server state was loaded', () => {
-    const legacy = [{ id: 'legacy', mention: 'legacy' }];
-    expect(agentsAfterLoadFailure(undefined, legacy)).toBe(legacy);
+  it('does not resurrect removed registrations from legacy local state', () => {
+    expect(agentsAfterLoadFailure(undefined)).toEqual([]);
   });
 });
 

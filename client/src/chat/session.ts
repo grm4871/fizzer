@@ -7,7 +7,6 @@ import type { LayoutNode } from '../layout/tree';
 import type { Tab } from '../components/TabBar';
 import type { Folder, NoteSummary } from '../api';
 import type { ChatAgentRegistration, ChatMessage } from './types';
-import { agentLabel, normalizeChatCwd, type AgentId } from './agents';
 
 export const SESSION_STORAGE_KEY = 'cascade_session';
 export const CHAT_STORAGE_KEY = 'cascade_chat_state';
@@ -178,58 +177,6 @@ export function loadPersistedSession(): PersistedSession {
     return restorePersistedSession(JSON.parse(raw));
   } catch {
     return emptySession();
-  }
-}
-
-export function readLegacyLocalChatAgentMembers(): Record<string, ChatAgentRegistration[]> {
-  try {
-    const raw = localStorage.getItem(CHAT_STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as Partial<ChatState>;
-    if (!parsed.registeredAgentsByChannel || typeof parsed.registeredAgentsByChannel !== 'object') return {};
-    const registeredAgentsByChannel: Record<string, ChatAgentRegistration[]> = {};
-    for (const [channelId, registrations] of Object.entries(parsed.registeredAgentsByChannel)) {
-      if (!Array.isArray(registrations)) continue;
-      registeredAgentsByChannel[channelId] = registrations
-        .filter((registration): registration is ChatAgentRegistration =>
-          Boolean(registration) &&
-          typeof registration === 'object' &&
-          typeof registration.agentId === 'string',
-        )
-        .map((registration, index) => {
-          const mention = typeof registration.mention === 'string' && registration.mention.trim()
-            ? registration.mention.replace(/^@+/, '').trim()
-            : registration.agentId;
-          return {
-            id: typeof registration.id === 'string' && registration.id.trim()
-              ? registration.id.trim()
-              : `legacy-${registration.agentId}-${mention}-${index}`,
-            vaultAgentId: typeof registration.vaultAgentId === 'string' ? registration.vaultAgentId : '',
-            agentId: registration.agentId,
-            displayName: typeof registration.displayName === 'string' && registration.displayName.trim()
-              ? registration.displayName.trim()
-              : agentLabel(registration.agentId as AgentId),
-            avatarUrl: typeof registration.avatarUrl === 'string' ? registration.avatarUrl : '',
-            mention,
-            model: typeof registration.model === 'string' ? registration.model : '',
-            reasoningEffort: typeof registration.reasoningEffort === 'string' ? registration.reasoningEffort : '',
-            priorityServiceTier: registration.priorityServiceTier === true,
-            cwd: typeof registration.cwd === 'string' ? normalizeChatCwd(registration.cwd) : '',
-            contextPrompt: typeof registration.contextPrompt === 'string' ? registration.contextPrompt : '',
-            taggableByAgents: typeof registration.taggableByAgents === 'boolean' ? registration.taggableByAgents : true,
-            replyToEveryMessage: typeof registration.replyToEveryMessage === 'boolean' ? registration.replyToEveryMessage : false,
-            orchestrator: typeof registration.orchestrator === 'boolean' ? registration.orchestrator : false,
-            pingableByOthers: typeof registration.pingableByOthers === 'boolean' ? registration.pingableByOthers : false,
-            yolo: typeof registration.yolo === 'boolean' ? registration.yolo : false,
-            hermesProfile: typeof registration.hermesProfile === 'string' ? registration.hermesProfile : '',
-            hermesSafeMode: registration.hermesSafeMode === true,
-            conversationId: typeof registration.conversationId === 'string' ? registration.conversationId : '',
-          };
-        });
-    }
-    return registeredAgentsByChannel;
-  } catch {
-    return {};
   }
 }
 

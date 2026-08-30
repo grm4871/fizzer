@@ -152,7 +152,14 @@ defmodule Cascade.Chat.Agents do
     end
   end
 
-  def add_to_channel(user_id, vault_id, channel_id, identity_id, flags \\ %{}) do
+  def add_to_channel(
+        user_id,
+        vault_id,
+        channel_id,
+        identity_id,
+        flags \\ %{},
+        restore_excluded \\ false
+      ) do
     with {:ok, route} <- Channel.assert_vault_channel(vault_id, channel_id, user_id),
          [
            id,
@@ -171,6 +178,7 @@ defmodule Cascade.Chat.Agents do
              [identity_id, user_id, route.localVaultId, route.localVaultId]
            ),
          :ok <- manage_identity(owner_id, user_id),
+         :ok <- allow_vault_link(route.localVaultId, identity_id, restore_excluded),
          mention <- Schema.normalize_mention(default_mention, agent_id),
          model <- value(flags, "model", default_model) |> to_string() |> String.trim(),
          cwd <- value(flags, "cwd", default_cwd) |> to_string(),
@@ -212,10 +220,12 @@ defmodule Cascade.Chat.Agents do
       with :ok <-
              coordinator_available(route.sourceChannelId, registration_id, owner_id, orchestrator) do
         SQL.transaction(fn ->
-          SQL.exec("DELETE FROM vault_agent_exclusions WHERE vault_id=? AND vault_agent_id=?", [
-            route.localVaultId,
-            identity_id
-          ])
+          if restore_excluded do
+            SQL.exec("DELETE FROM vault_agent_exclusions WHERE vault_id=? AND vault_agent_id=?", [
+              route.localVaultId,
+              identity_id
+            ])
+          end
 
           SQL.exec(
             """
@@ -268,6 +278,18 @@ defmodule Cascade.Chat.Agents do
       nil -> {:error, "Vault agent not found"}
       {:error, _} = error -> error
       _ -> {:error, "Vault agent not found"}
+    end
+  end
+
+  defp allow_vault_link(_vault_id, _identity_id, true), do: :ok
+
+  defp allow_vault_link(vault_id, identity_id, false) do
+    case SQL.one(
+           "SELECT 1 FROM vault_agent_exclusions WHERE vault_id=? AND vault_agent_id=?",
+           [vault_id, identity_id]
+         ) do
+      nil -> :ok
+      _ -> {:error, "Agent was removed from this vault"}
     end
   end
 

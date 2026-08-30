@@ -467,6 +467,14 @@ defmodule Cascade.ChatDomainTest do
 
     assert SQL.one("SELECT id FROM chat_agent_members WHERE id=?", [first_member.id]) == nil
 
+    assert {:error, "Agent was removed from this vault"} =
+             Agents.add_to_channel(1, first_vault.id, first_channel.id, identity.id)
+
+    assert {:ok, restored_member} =
+             Agents.add_to_channel(1, first_vault.id, first_channel.id, identity.id, %{}, true)
+
+    assert restored_member.vaultAgentId == identity.id
+
     assert SQL.one("SELECT id FROM chat_agent_members WHERE channel_id=?", [test_channel.id]) ==
              [second_member.id]
 

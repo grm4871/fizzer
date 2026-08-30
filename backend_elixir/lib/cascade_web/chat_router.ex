@@ -359,7 +359,8 @@ defmodule CascadeWeb.ChatRouter do
             vault_id,
             channel_id,
             body(conn, "vaultAgentId", body(conn, "agentId", "")),
-            conn.body_params
+            conn.body_params,
+            true
           )
         end,
         vault_id,

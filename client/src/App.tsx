@@ -97,7 +97,6 @@ import {
   emptyWorkspace,
   loadChatState,
   loadPersistedSession,
-  readLegacyLocalChatAgentMembers,
   readLegacyLocalChatMessages,
   SESSION_STORAGE_KEY,
   type ChatState,
@@ -843,27 +842,10 @@ export default function App() {
     const finalIds = resolveChatChannelIds(noteList, opts?.channelIds);
     if (finalIds.length === 0) return;
 
-    const legacyAgents = readLegacyLocalChatAgentMembers();
     const results = await Promise.all(finalIds.map(async (channelId) => {
       try {
         const data = await api<{ agents: ChatAgentRegistration[] }>(`/api/vaults/${vaultId}/channels/${channelId}/agents`);
-        let agents = data.agents ?? [];
-        const local = legacyAgents[channelId] ?? [];
-        if (agents.length === 0 && local.length > 0) {
-          for (const registration of local) {
-            try {
-              await api(`/api/vaults/${vaultId}/channels/${channelId}/agents`, {
-                method: 'PUT',
-                body: JSON.stringify(registration),
-              });
-            } catch {
-              // Best-effort migration from pre-network agent member storage.
-            }
-          }
-          const refreshed = await api<{ agents: ChatAgentRegistration[] }>(`/api/vaults/${vaultId}/channels/${channelId}/agents`);
-          agents = refreshed.agents ?? [];
-        }
-        return { channelId, agents };
+        return { channelId, agents: data.agents ?? [] };
       } catch {
         // A transient deploy/socket gap must not erase registrations that were
         // already loaded. Reply refs can still display an author-derived @name
@@ -871,10 +853,7 @@ export default function App() {
         // a reply with no run.
         return {
           channelId,
-          agents: agentsAfterLoadFailure(
-            chatStateRef.current.registeredAgentsByChannel[channelId],
-            legacyAgents[channelId],
-          ),
+          agents: agentsAfterLoadFailure(chatStateRef.current.registeredAgentsByChannel[channelId]),
         };
       }
     }));
@@ -1017,8 +996,12 @@ export default function App() {
 
   const persistChatAgentMemberToServer = useCallback(async (vaultId: string, channelId: string, registration: ChatAgentRegistration) => {
     try {
-      const data = await api<{ registration: ChatAgentRegistration }>(`/api/vaults/${vaultId}/channels/${channelId}/agents`, {
-        method: 'PUT',
+      const fromVault = Boolean(registration.vaultAgentId);
+      const endpoint = fromVault
+        ? `/api/vaults/${vaultId}/channels/${channelId}/agents/from-vault`
+        : `/api/vaults/${vaultId}/channels/${channelId}/agents`;
+      const data = await api<{ registration: ChatAgentRegistration }>(endpoint, {
+        method: fromVault ? 'POST' : 'PUT',
         body: JSON.stringify(registration),
       });
       return data.registration;
