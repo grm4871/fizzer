@@ -411,11 +411,17 @@ defmodule Cascade.Runs.ChatProjection do
            access: :agent
          ) do
       {:ok, message} ->
-        emit_message(target, message)
+        dispatches =
+          if projection.done and trim(projection.body) != "" do
+            case Dispatches.create_for_message(target.user.id, target.channel_id, message) do
+              {:ok, created} -> created
+              _ -> []
+            end
+          else
+            []
+          end
 
-        if projection.done and trim(projection.body) != "" do
-          _ = Dispatches.create_for_message(target.user.id, target.channel_id, message)
-        end
+        emit_message(target, message, dispatches)
 
         if projection.done and trim(projection.body) == "" do
           SQL.exec("DELETE FROM chat_messages WHERE id=? AND channel_id=?", [
@@ -438,12 +444,13 @@ defmodule Cascade.Runs.ChatProjection do
     end
   end
 
-  defp emit_message(target, message) do
+  defp emit_message(target, message, dispatches) do
     Events.emit(%{
       event: "vault:chatMessageUpdated",
       vaultId: target.source_vault_id,
       channelId: target.source_channel_id,
-      message: message
+      message: message,
+      dispatches: dispatches
     })
   end
 
