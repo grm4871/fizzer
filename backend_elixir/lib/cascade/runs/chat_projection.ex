@@ -8,7 +8,7 @@ defmodule Cascade.Runs.ChatProjection do
 
   alias Cascade.Accounts.SQL
   alias Cascade.Chat.Messages
-  alias Cascade.Missions.Scheduler
+  alias Cascade.Missions.{Dispatches, Scheduler}
   alias Cascade.Missions.Store, as: MissionStore
   alias Cascade.Realtime.Events
   alias Cascade.Runs.Store
@@ -412,6 +412,10 @@ defmodule Cascade.Runs.ChatProjection do
          ) do
       {:ok, message} ->
         emit_message(target, message)
+
+        if projection.done and trim(projection.body) != "" do
+          _ = Dispatches.create_for_message(target.user.id, target.channel_id, message)
+        end
 
         if projection.done and trim(projection.body) == "" do
           SQL.exec("DELETE FROM chat_messages WHERE id=? AND channel_id=?", [
