@@ -8,16 +8,17 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import WebSocket, { WebSocketServer } from 'ws';
+import { pickPort } from '../scripts/lib/test-ports.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const templatePath = path.join(root, 'deploy/nginx.conf.template');
 const nginxImage = process.env.CASCADE_NGINX_TEST_IMAGE
   || 'nginx:1.22-alpine@sha256:8745c93f1a1c33a8ec8c82707b9bb1c8fe9ebf2b5d82e9480e78625d809855a1';
-const httpPort = 18080;
-const httpsPort = 18443;
-const backendPort = 3000;
-const backupPort = 3001;
-const webhookPort = 19001;
+const httpPort = await pickPort();
+const httpsPort = await pickPort();
+const backendPort = await pickPort();
+const backupPort = await pickPort();
+const webhookPort = await pickPort();
 const domain = 'edge.test';
 const temp = await mkdtemp(path.join(tmpdir(), 'cascade-nginx-edge-'));
 const containerName = `cascade-nginx-edge-${process.pid}`;
