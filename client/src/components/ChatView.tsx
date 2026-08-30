@@ -337,6 +337,14 @@ export const ChatView = memo(function ChatView({
   const agentAuthors = useMemo(() => new Set(
     registeredAgentRows.flatMap((agent) => [agent.label, agent.registration.displayName].filter(Boolean)),
   ), [registeredAgentRows]);
+  const agentAuthorKeys = useMemo(() => new Set(
+    registeredAgentRows.flatMap((agent) => [
+      agent.label,
+      agent.registration.displayName,
+      agent.registration.mention,
+      agent.registration.agentId,
+    ].filter(Boolean).map((name) => name.trim().toLocaleLowerCase())),
+  ), [registeredAgentRows]);
   // Collapse multi-agent chatter into TUI-style work traces between human turns.
   const transcriptSegments = useMemo(
     () => segmentTranscript(sortedMessages, { agentAuthors }),
@@ -401,19 +409,21 @@ export const ChatView = memo(function ChatView({
     const names = new Set<string>();
     for (const message of messages) {
       if (message.author === 'Cascade') continue;
-      if (message.agentId || agentAuthors.has(message.author)) continue;
+      if (message.agentId || agentAuthorKeys.has(message.author.trim().toLocaleLowerCase())) continue;
       if (message.author) names.add(message.author);
     }
     return Array.from(names).sort((a, b) => a.localeCompare(b)).join('\n');
-  }, [agentAuthors, messages]);
+  }, [agentAuthorKeys, messages]);
   const humanUsers = useMemo(() => {
-    const names = new Set<string>(presence.participants);
+    const names = new Set<string>(presence.participants.filter(
+      (name) => !agentAuthorKeys.has(name.trim().toLocaleLowerCase()),
+    ));
     if (currentUser) names.add(currentUser);
     for (const name of humanMessageAuthors.split('\n')) {
       if (name) names.add(name);
     }
     return Array.from(names).sort((a, b) => a.localeCompare(b));
-  }, [currentUser, humanMessageAuthors, presence.participants]);
+  }, [agentAuthorKeys, currentUser, humanMessageAuthors, presence.participants]);
   const mentionableAliases = useMemo(() => {
     const aliases = new Set<string>();
     for (const registration of registeredAgents) {
