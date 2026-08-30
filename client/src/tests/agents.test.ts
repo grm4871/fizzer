@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
   agentsAfterLoadFailure,
   CHAT_AGENT_MODEL_PRESETS,
@@ -25,6 +26,15 @@ describe('agent member hydration', () => {
   it('falls back to legacy registrations only when no server state was loaded', () => {
     const legacy = [{ id: 'legacy', mention: 'legacy' }];
     expect(agentsAfterLoadFailure(undefined, legacy)).toBe(legacy);
+  });
+});
+
+describe('agent editor layout', () => {
+  it('keeps save actions in document flow instead of overlaying scrolled fields', () => {
+    const styles = readFileSync(new URL('../index.css', import.meta.url), 'utf8');
+    const actions = styles.match(/\.chat-agent-editor \.chat-agent-menu-actions \{([^}]+)\}/)?.[1] || '';
+    expect(actions).not.toMatch(/position:\s*sticky/);
+    expect(actions).not.toMatch(/backdrop-filter/);
   });
 });
 

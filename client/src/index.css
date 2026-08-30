@@ -6504,13 +6504,8 @@ button.chat-avatar.is-clickable:focus-visible {
   color: var(--text-primary);
 }
 .chat-agent-editor .chat-agent-menu-actions {
-  position: sticky;
-  bottom: 0;
-  z-index: 1;
   margin-top: 8px;
-  padding: 16px 0;
-  background: color-mix(in srgb, var(--bg-base) 92%, transparent);
-  backdrop-filter: blur(14px);
+  padding: 16px 0 0;
 }
 .chat-agent-editor .chat-agent-menu-actions button {
   min-height: 40px;
@@ -6769,9 +6764,8 @@ button.chat-avatar.is-clickable:focus-visible {
     padding: calc(20px + env(safe-area-inset-top)) 16px calc(20px + env(safe-area-inset-bottom));
   }
   .chat-agent-editor .chat-agent-menu-actions {
-    bottom: 0;
     margin-top: 4px;
-    padding: 12px 0 calc(12px + env(safe-area-inset-bottom));
+    padding: 12px 0 0;
   }
   .chat-agent-editor > label,
   .chat-agent-editor > .chat-agent-group {
