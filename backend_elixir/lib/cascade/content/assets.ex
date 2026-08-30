@@ -5,7 +5,7 @@ defmodule Cascade.Content.Assets do
 
   alias Cascade.Content.{Query, Store}
 
-  @max_bytes 8 * 1_024 * 1_024
+  @max_bytes 64 * 1_024 * 1_024
   @extensions %{
     "image/png" => "png",
     "image/jpeg" => "jpg",
@@ -15,7 +15,10 @@ defmodule Cascade.Content.Assets do
     "image/svg+xml" => "svg",
     "audio/mpeg" => "mp3",
     "audio/mp3" => "mp3",
-    "video/mp4" => "mp4"
+    "video/mp4" => "mp4",
+    "application/pdf" => "pdf",
+    "text/plain" => "txt",
+    "text/markdown" => "md"
   }
   @mime_by_extension %{
     ".png" => "image/png",
@@ -25,7 +28,10 @@ defmodule Cascade.Content.Assets do
     ".webp" => "image/webp",
     ".svg" => "image/svg+xml",
     ".mp3" => "audio/mpeg",
-    ".mp4" => "video/mp4"
+    ".mp4" => "video/mp4",
+    ".pdf" => "application/pdf",
+    ".txt" => "text/plain",
+    ".md" => "text/markdown"
   }
 
   def max_bytes, do: @max_bytes
@@ -85,6 +91,12 @@ defmodule Cascade.Content.Assets do
       "video/mp4" ->
         byte_size(bytes) >= 12 and binary_part(bytes, 4, 4) == "ftyp"
 
+      "application/pdf" ->
+        byte_size(bytes) >= 5 and binary_part(bytes, 0, 5) == "%PDF-"
+
+      media_type when media_type in ["text/plain", "text/markdown"] ->
+        String.valid?(bytes) and not String.contains?(bytes, <<0>>)
+
       _ ->
         false
     end
@@ -123,7 +135,7 @@ defmodule Cascade.Content.Assets do
         raise ArgumentError, "SVG uploads are not supported"
 
       not Map.has_key?(@extensions, declared) ->
-        raise ArgumentError, "Only image, MP3, and MP4 uploads are supported"
+        raise ArgumentError, "This file type is not supported"
 
       true ->
         :ok
@@ -178,12 +190,12 @@ defmodule Cascade.Content.Assets do
 
   def response_metadata(path) do
     extension = path |> Path.extname() |> String.downcase()
-    legacy_svg? = extension == ".svg"
+    downloadable? = extension in [".svg", ".pdf", ".txt", ".md"]
 
     %{
       content_type: Map.get(@mime_by_extension, extension, "application/octet-stream"),
       content_disposition:
-        "#{if(legacy_svg?, do: "attachment", else: "inline")}; filename=\"#{Path.basename(path)}\"",
+        "#{if(downloadable?, do: "attachment", else: "inline")}; filename=\"#{Path.basename(path)}\"",
       cache_control: "private, max-age=3600",
       csp: "default-src 'none'; sandbox"
     }

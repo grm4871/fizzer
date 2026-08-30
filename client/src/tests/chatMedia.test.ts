@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { isMp4Attachment, isVideoMediaType } from '../components/ChatComposer';
+import { CHAT_MEDIA_MAX_BYTES, isMp4Attachment, isVideoMediaType } from '../components/ChatComposer';
 
 describe('chat video attachments', () => {
+  it('allows files up to 64 MB', () => {
+    expect(CHAT_MEDIA_MAX_BYTES).toBe(64 * 1024 * 1024);
+  });
+
   it('recognizes video/* and mp4 filenames/urls', () => {
     expect(isVideoMediaType('video/mp4')).toBe(true);
     expect(isVideoMediaType('image/png')).toBe(false);

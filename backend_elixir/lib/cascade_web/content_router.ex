@@ -12,7 +12,7 @@ defmodule CascadeWeb.ContentRouter do
     parsers: [:json],
     pass: ["application/json"],
     json_decoder: Jason,
-    length: 12 * 1_024 * 1_024
+    length: 96 * 1_024 * 1_024
 
   plug :dispatch
 

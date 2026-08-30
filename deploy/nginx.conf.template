@@ -40,7 +40,7 @@ server {
     include             /etc/letsencrypt/options-ssl-nginx.conf;
     ssl_dhparam         /etc/letsencrypt/ssl-dhparams.pem;
 
-    client_max_body_size 32M;
+    client_max_body_size 96M;
 
     # Database-changing releases retain the snapshot-backed maintenance path.
     # Strictly state-identical routine releases use the rolling upstream above

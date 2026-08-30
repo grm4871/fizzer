@@ -213,6 +213,9 @@ defmodule Cascade.ContentDomainTest do
     png = <<0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A>>
     assert Assets.matches_media_type?("image/png", png)
     refute Assets.matches_media_type?("image/png", "<script>")
+    assert Assets.max_bytes() == 64 * 1_024 * 1_024
+    assert Assets.matches_media_type?("application/pdf", "%PDF-1.7\n")
+    assert Assets.matches_media_type?("text/markdown", "# Notes\n")
 
     vault = Store.create_vault(1, %{name: "Assets"})
     note = Store.create_note(vault.id, 1, %{title: "Image", content: ""})
@@ -222,6 +225,16 @@ defmodule Cascade.ContentDomainTest do
     assert band(File.stat!(Path.dirname(path)).mode, 0o777) == 0o700
     assert band(File.stat!(path).mode, 0o777) == 0o600
     assert Assets.resolve_path(note.id, "../escape") == nil
+
+    pdf =
+      Assets.upload(note.id, 1, %{
+        media_type: "application/pdf",
+        data: Base.encode64("%PDF-1.7\n")
+      })
+
+    pdf_path = Assets.resolve_path(note.id, pdf.asset_id)
+    assert File.read!(pdf_path) == "%PDF-1.7\n"
+    assert Assets.response_metadata(pdf_path).content_disposition =~ "attachment"
 
     assert_raise ArgumentError, "SVG uploads are not supported", fn ->
       Assets.upload(note.id, 1, %{media_type: "image/svg+xml", data: Base.encode64("<svg/>")})

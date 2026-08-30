@@ -456,8 +456,8 @@ class PrivateBlockWidget extends WidgetType {
   }
 }
 
-const NOTE_IMAGE_MAX_BYTES = 8 * 1024 * 1024;
-const NOTE_AUDIO_MAX_BYTES = 8 * 1024 * 1024;
+const NOTE_IMAGE_MAX_BYTES = 64 * 1024 * 1024;
+const NOTE_AUDIO_MAX_BYTES = 64 * 1024 * 1024;
 
 function imageFileFromDataTransfer(dataTransfer: DataTransfer | null): File | null {
   if (!dataTransfer) return null;

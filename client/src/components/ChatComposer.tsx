@@ -1,12 +1,12 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
 import { ImagePlus, Paperclip, Send, Smile, X } from 'lucide-react';
-import type { NoteSummary } from '../api';
+import { api, type NoteSummary } from '../api';
 import { NOTE_DND_TYPE, noteEmbedMarkdown } from '../docEmbeds';
 import { normalizeMention } from '../chat/mentions';
 import type { ChatAgentRegistration, ChatMediaAttachment, ChatReplyRef } from '../chat/types';
 
 export const CHAT_MEDIA_LIMIT = 8;
-export const CHAT_MEDIA_MAX_BYTES = 8 * 1024 * 1024;
+export const CHAT_MEDIA_MAX_BYTES = 64 * 1024 * 1024;
 
 const CHAT_EMOJIS = ['😀', '😂', '😍', '🥳', '😎', '🤔', '👍', '👎', '❤️', '🔥', '🎉', '✅', '👀', '🙏', '💎', '🚀'];
 
@@ -30,6 +30,15 @@ export function isMp4Attachment(attachment: { name?: string; media_type?: string
   return name.endsWith('.mp4') || url.includes('video/mp4') || /\.mp4(\?|$)/.test(url);
 }
 
+function inferredMediaType(file: File) {
+  if (file.type) return file.type;
+  const name = file.name.toLowerCase();
+  if (name.endsWith('.md')) return 'text/markdown';
+  if (name.endsWith('.txt')) return 'text/plain';
+  if (name.endsWith('.pdf')) return 'application/pdf';
+  return 'application/octet-stream';
+}
+
 function readMediaFile(file: File): Promise<ChatMediaAttachment | null> {
   return new Promise((resolve) => {
     if (file.size > CHAT_MEDIA_MAX_BYTES) {
@@ -41,7 +50,7 @@ function readMediaFile(file: File): Promise<ChatMediaAttachment | null> {
       const url = String(reader.result);
       const data = url.split(',')[1] || '';
       resolve({
-        media_type: file.type || 'application/octet-stream',
+        media_type: inferredMediaType(file),
         data,
         url,
         name: file.name,
@@ -115,12 +124,20 @@ export const ChatComposer = forwardRef<ChatComposerHandle, {
         setMediaError(`"${file.name}" is too large (max ${CHAT_MEDIA_MAX_BYTES / (1024 * 1024)}MB).`);
         continue;
       }
-      next.push(item);
+      try {
+        const uploaded = await api<{ url: string }>(`/api/notes/${channelId}/assets`, {
+          method: 'POST',
+          body: JSON.stringify({ media_type: item.media_type, data: item.data, filename: item.name }),
+        });
+        next.push({ ...item, url: uploaded.url });
+      } catch (error) {
+        setMediaError(error instanceof Error ? error.message : `Could not upload "${file.name}".`);
+      }
     }
     if (next.length === 0) return;
     setMediaError('');
     setPendingMedia((prev) => [...prev, ...next].slice(0, CHAT_MEDIA_LIMIT));
-  }, []);
+  }, [channelId]);
 
   const addDesktopClipboardImage = useCallback(async () => {
     const image = await getElectronClipboardAPI()?.readClipboardImage?.();

@@ -206,7 +206,7 @@ The editor supports:
 - public publishing;
 - an editor view and a Kanban view.
 
-Uploaded images, audio, and video are limited to 8 MB each. Images can also be resized in the editor.
+Uploaded images, audio, video, PDFs, and text files are limited to 64 MB each. Images can also be resized in the editor.
 
 ### Link notes together
 
