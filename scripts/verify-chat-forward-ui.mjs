@@ -207,6 +207,9 @@ try {
       createdAt: new Date().toISOString(),
     }),
   });
+  // Browsers emit this when connectivity returns; exercise the application's
+  // explicit resume path instead of depending on Socket.IO's jittered timer.
+  await page.evaluate(() => window.dispatchEvent(new Event('online')));
   await page.getByText(missedBody, { exact: true }).waitFor({ timeout: 20000 });
   // Reconnect reconciliation fetches the intentionally slim transcript again.
   // It must not replace an already hydrated image with the `hasImages` marker.
