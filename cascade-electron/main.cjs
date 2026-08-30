@@ -157,14 +157,21 @@ async function updateDesktopInPlace() {
   // source pull alone leaves CLI/harness fixes dormant until somebody happens
   // to build manually. Rebuild in place; it does not terminate main or active
   // agent processes.
-  // Stash local changes so a dirty tree cannot abort the fast-forward pull,
-  // and always restore them even if the local rebuild fails.
+  // Stash local changes so a dirty tree cannot abort the update. Rebase keeps
+  // real local commits while also recovering when the same patch was merged
+  // upstream under a different commit id (a common outcome of parallel agent
+  // work); --ff-only permanently wedged the update button in that state.
   const stashOut = await runUpdateCommand(gitBin, ['stash', '--include-untracked'], root);
   const didStash = !/No local changes to save/i.test(stashOut);
   try {
-    await runUpdateCommand(gitBin, ['pull', '--ff-only'], root);
+    await runUpdateCommand(gitBin, ['pull', '--rebase'], root);
     const npmBin = process.platform === 'win32' ? 'npm.cmd' : 'npm';
     await runUpdateCommand(npmBin, ['run', 'build'], root);
+  } catch (error) {
+    // A conflicted rebase must not remain half-open when we restore the user's
+    // uncommitted work below.
+    try { await runUpdateCommand(gitBin, ['rebase', '--abort'], root); } catch { /* no rebase in progress */ }
+    throw error;
   } finally {
     if (didStash) {
       await runUpdateCommand(gitBin, ['stash', 'pop'], root);

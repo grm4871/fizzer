@@ -79,8 +79,8 @@ try {
   const createVault = async (name) => (await must(`${API_BASE}/api/vaults`, {
     method: 'POST', headers: auth, body: JSON.stringify({ name }),
   })).vault;
-  const createNote = async (vaultId, title) => (await must(`${API_BASE}/api/vaults/${vaultId}/notes`, {
-    method: 'POST', headers: auth, body: JSON.stringify({ title, content: `# ${title}\n` }),
+  const createNote = async (vaultId, title, content = `# ${title}\n`) => (await must(`${API_BASE}/api/vaults/${vaultId}/notes`, {
+    method: 'POST', headers: auth, body: JSON.stringify({ title, content }),
   })).note;
 
   const vaultA = await createVault(`Workspace Alpha ${stamp}`);
@@ -89,6 +89,7 @@ try {
   const a2 = await createNote(vaultA.id, 'Alpha two');
   const b1 = await createNote(vaultB.id, 'Beta one');
   const b2 = await createNote(vaultB.id, 'Beta two');
+  const betaChat = await createNote(vaultB.id, 'Beta chat', 'cascade://chat-channel');
 
   const { chromium } = await import('playwright');
   browser = await chromium.launch({ headless: true });
@@ -192,6 +193,17 @@ try {
     JSON.stringify(restoredBetaTitles));
   check('returning to Beta restores its active tab',
     (await page.locator('.editor-pane.is-focused .tab-item.active .tab-title').innerText()) === b1.title);
+
+  await page.locator(`#note-${betaChat.id}`).click({ modifiers: ['Control'] });
+  const composer = page.locator('.pane-tab-keepalive:not([aria-hidden="true"]) .chat-composer textarea');
+  await composer.waitFor({ timeout: 15_000 });
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await composer.waitFor({ timeout: 15_000 });
+  await page.waitForFunction(() => document.activeElement?.matches('.chat-composer textarea'));
+  await composer.fill('editable immediately after restore');
+  check('restored chat composer is focused and writable without a tab switch',
+    await composer.inputValue() === 'editable immediately after restore');
+  await page.locator('.tab-item', { hasText: b1.title }).click();
 
   await delay(400);
   const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('cascade_session') || '{}'));

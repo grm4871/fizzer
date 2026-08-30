@@ -115,6 +115,27 @@ export const ChatComposer = forwardRef<ChatComposerHandle, {
     setReplyNotifiesAgent(true);
   }, [channelId]);
 
+  // A restored chat can paint before its transcript/listing hydration settles.
+  // Focus the visible composer once it has survived that first paint; otherwise
+  // Electron can leave focus on the replaced document body until a tab switch.
+  // Never steal focus from a control the user already reached during startup.
+  useEffect(() => {
+    let secondFrame = 0;
+    const firstFrame = requestAnimationFrame(() => {
+      secondFrame = requestAnimationFrame(() => {
+        const textarea = draftRef.current;
+        const active = document.activeElement;
+        if (textarea?.offsetParent && (!active || active === document.body)) {
+          textarea.focus({ preventScroll: true });
+        }
+      });
+    });
+    return () => {
+      cancelAnimationFrame(firstFrame);
+      if (secondFrame) cancelAnimationFrame(secondFrame);
+    };
+  }, [channelId]);
+
   const addMediaFiles = useCallback(async (files: File[]) => {
     if (files.length === 0) return;
     const next: ChatMediaAttachment[] = [];

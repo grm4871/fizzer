@@ -41,3 +41,9 @@ test('desktop repairs packaged macOS PATH before loading runner modules', () => 
   const runnerAt = source.indexOf("require('./agent-runner.cjs')");
   assert.ok(pathAt > 0 && runnerAt > pathAt);
 });
+
+test('source desktop update reconciles parallel equivalent commits', () => {
+  assert.match(source, /\['pull', '--rebase'\]/);
+  assert.match(source, /\['rebase', '--abort'\]/);
+  assert.doesNotMatch(source, /\['pull', '--ff-only'\]/);
+});
