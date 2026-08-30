@@ -84,4 +84,20 @@ describe('vault workspace session restore', () => {
     expect(restored.focusedPaneId).toBe('pane-a');
     expect(Layout.getActiveTabIds(restored.workspacesByVault['vault-b'].layout)).toEqual(['valid-b']);
   });
+
+  it('restores cached vault listings for instant stale-while-revalidate paint', () => {
+    const restored = restorePersistedSession({
+      activeVaultId: 'vault-a',
+      vaultListingsByVault: {
+        'vault-a': {
+          folders: [{ id: 'folder-a', vault_id: 'vault-a', parent_id: null, name: 'Notes', position: 0, created_at: 'now' }],
+          notes: [{ id: 'note-a', vault_id: 'vault-a', folder_id: 'folder-a', title: 'Alpha', content_preview: 'hello', is_pinned: 0, is_archived: 0, is_listed: 1, position: 0, word_count: 1, created_at: 'now', updated_at: 'now', tags: [] }],
+          savedAt: 123,
+        },
+      },
+    });
+
+    expect(restored.vaultListingsByVault['vault-a'].notes[0].title).toBe('Alpha');
+    expect(restored.vaultListingsByVault['vault-a'].savedAt).toBe(123);
+  });
 });

@@ -5,6 +5,7 @@
 import * as Layout from '../layout/tree';
 import type { LayoutNode } from '../layout/tree';
 import type { Tab } from '../components/TabBar';
+import type { Folder, NoteSummary } from '../api';
 import type { ChatAgentRegistration, ChatMessage } from './types';
 import { agentLabel, normalizeChatCwd, type AgentId } from './agents';
 
@@ -26,6 +27,13 @@ export interface PersistedWorkspace {
 export interface PersistedSession extends PersistedWorkspace {
   activeVaultId: string | null;
   workspacesByVault: Record<string, PersistedWorkspace>;
+  vaultListingsByVault: Record<string, PersistedVaultListing>;
+}
+
+export interface PersistedVaultListing {
+  folders: Folder[];
+  notes: NoteSummary[];
+  savedAt: number;
 }
 
 export interface ChatState {
@@ -67,7 +75,7 @@ export function emptyWorkspace(): PersistedWorkspace {
 }
 
 export function emptySession(): PersistedSession {
-  return { activeVaultId: null, workspacesByVault: {}, ...emptyWorkspace() };
+  return { activeVaultId: null, workspacesByVault: {}, vaultListingsByVault: {}, ...emptyWorkspace() };
 }
 
 type PersistedWorkspaceInput = Partial<PersistedWorkspace> & {
@@ -125,14 +133,29 @@ export function restorePersistedSession(value: unknown): PersistedSession {
   const parsed = value as PersistedWorkspaceInput & {
     activeVaultId?: unknown;
     workspacesByVault?: unknown;
+    vaultListingsByVault?: unknown;
   };
   const activeVaultId = typeof parsed.activeVaultId === 'string' ? parsed.activeVaultId : null;
   const workspacesByVault: Record<string, PersistedWorkspace> = {};
+  const vaultListingsByVault: Record<string, PersistedVaultListing> = {};
 
   if (parsed.workspacesByVault && typeof parsed.workspacesByVault === 'object' && !Array.isArray(parsed.workspacesByVault)) {
     for (const [vaultId, workspace] of Object.entries(parsed.workspacesByVault)) {
       if (!vaultId) continue;
       workspacesByVault[vaultId] = restoreWorkspace(workspace);
+    }
+  }
+
+  if (parsed.vaultListingsByVault && typeof parsed.vaultListingsByVault === 'object' && !Array.isArray(parsed.vaultListingsByVault)) {
+    for (const [vaultId, listing] of Object.entries(parsed.vaultListingsByVault)) {
+      if (!vaultId || !listing || typeof listing !== 'object') continue;
+      const candidate = listing as Partial<PersistedVaultListing>;
+      if (!Array.isArray(candidate.folders) || !Array.isArray(candidate.notes)) continue;
+      vaultListingsByVault[vaultId] = {
+        folders: candidate.folders,
+        notes: candidate.notes,
+        savedAt: Number(candidate.savedAt) || 0,
+      };
     }
   }
 
@@ -145,7 +168,7 @@ export function restorePersistedSession(value: unknown): PersistedSession {
   const activeWorkspace = activeVaultId
     ? workspacesByVault[activeVaultId] ?? emptyWorkspace()
     : emptyWorkspace();
-  return { activeVaultId, workspacesByVault, ...activeWorkspace };
+  return { activeVaultId, workspacesByVault, vaultListingsByVault, ...activeWorkspace };
 }
 
 export function loadPersistedSession(): PersistedSession {

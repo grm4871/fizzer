@@ -182,8 +182,11 @@ export default function App() {
   // App data state
   const [vaults, setVaults] = useState<Vault[]>([]);
   const [activeVaultId, setActiveVaultIdState] = useState<string | null>(persistedSessionRef.current.activeVaultId);
-  const [folders, setFolders] = useState<Folder[]>([]);
-  const [notes, setNotes] = useState<NoteSummary[]>([]);
+  const initialVaultListing = persistedSessionRef.current.activeVaultId
+    ? persistedSessionRef.current.vaultListingsByVault[persistedSessionRef.current.activeVaultId]
+    : undefined;
+  const [folders, setFolders] = useState<Folder[]>(initialVaultListing?.folders ?? []);
+  const [notes, setNotes] = useState<NoteSummary[]>(initialVaultListing?.notes ?? []);
   const [chatState, setChatState] = useState<ChatState>(loadChatState);
   const [loadingChatChannels, setLoadingChatChannels] = useState<Record<string, boolean>>({});
   const [chatPresenceByChannel, setChatPresenceByChannel] = useState<Record<string, ChatChannelPresence>>({});
@@ -294,6 +297,7 @@ export default function App() {
   const vaultWorkspacesRef = useRef<Record<string, PersistedWorkspace>>({
     ...persistedSessionRef.current.workspacesByVault,
   });
+  const vaultListingsRef = useRef({ ...persistedSessionRef.current.vaultListingsByVault });
   // Draft bodies stay isolated with their vault while the app is open. They are
   // deliberately not written to localStorage; persisted tabs re-fetch bodies.
   const vaultNoteContentsRef = useRef<Record<string, Record<string, NoteEntry>>>({});
@@ -334,15 +338,16 @@ export default function App() {
     layoutRef.current = workspace.layout;
     focusedPaneRef.current = nextFocusedPane;
     noteContentsRef.current = nextNoteContents;
-    notesRef.current = [];
+    const nextListing = nextVaultId ? vaultListingsRef.current[nextVaultId] : undefined;
+    notesRef.current = nextListing?.notes ?? [];
 
     setActiveVaultIdState(nextVaultId);
     setOpenTabs(workspace.openTabs);
     setLayout(workspace.layout);
     setFocusedPaneId(nextFocusedPane.id);
     setNoteContents(nextNoteContents);
-    setFolders([]);
-    setNotes([]);
+    setFolders(nextListing?.folders ?? []);
+    setNotes(nextListing?.notes ?? []);
     setVaultAgents([]);
     setSuperkanbanNotes([]);
     setSuperkanbanLiveWork([]);
@@ -355,6 +360,7 @@ export default function App() {
     const workspace = emptyWorkspace();
     const firstPane = Layout.getFirstPane(workspace.layout);
     vaultWorkspacesRef.current = {};
+    vaultListingsRef.current = {};
     vaultNoteContentsRef.current = {};
     activeVaultIdRef.current = null;
     openTabsRef.current = [];
@@ -421,6 +427,7 @@ export default function App() {
       activeVaultId: currentVaultId,
       ...activeWorkspace,
       workspacesByVault: vaultWorkspacesRef.current,
+      vaultListingsByVault: vaultListingsRef.current,
     };
     localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
   }, []);
@@ -830,17 +837,10 @@ export default function App() {
     noteList: NoteSummary[],
     opts?: { channelIds?: string[] },
   ) => {
-    // Always include every chat note in the vault — not just open tabs.
-    // Per-channel membership is the sticky source of "different agent counts";
-    // the server projects the vault-wide roster on each GET, so we must hit
-    // every channel or unopened rooms stay stale.
-    const allChatIds = noteList
-      .filter((note) => note.content_preview.trim().startsWith(CHAT_NOTE_MARKER))
-      .map((note) => note.id);
-    const finalIds = [...new Set([
-      ...resolveChatChannelIds(noteList, opts?.channelIds),
-      ...allChatIds,
-    ])];
+    // Membership hydrates on demand for open channels. The server projects the
+    // vault roster during this request, so touching every unopened room turned
+    // one vault refresh into an expensive mutation-heavy request fan-out.
+    const finalIds = resolveChatChannelIds(noteList, opts?.channelIds);
     if (finalIds.length === 0) return;
 
     const legacyAgents = readLegacyLocalChatAgentMembers();
@@ -1077,21 +1077,26 @@ export default function App() {
         const foldersP = api<{ folders: Folder[] }>(`/api/vaults/${vaultId}/folders`);
         const notesP = api<{ notes: NoteSummary[] }>(`/api/vaults/${vaultId}/notes`);
         // Primary chat + vault agents must not gate notes-tree paint.
-        const primaryChatP = primaryChats.length > 0
+        const primaryChatP = !soft && primaryChats.length > 0
           ? Promise.all([
               loadChatMessages(vaultId, [], { silent, channelIds: primaryChats }),
               loadChatAgentMembers(vaultId, [], { channelIds: primaryChats }),
               loadChatPresence(vaultId, [], { channelIds: primaryChats }),
             ])
           : Promise.resolve();
-        const vaultAgentsP = loadVaultAgents(vaultId);
+        const vaultAgentsP = soft ? Promise.resolve() : loadVaultAgents(vaultId);
 
         const [folderData, noteData] = await Promise.all([foldersP, notesP]);
         // A slower response from the vault we just left must never repaint the
         // newly-selected vault's tree.
         if (activeVaultIdRef.current !== vaultId) return;
         const nextNotes = noteData.notes || [];
+        const nextFolders = folderData.folders || [];
         notesRef.current = nextNotes;
+        vaultListingsRef.current = {
+          ...vaultListingsRef.current,
+          [vaultId]: { folders: nextFolders, notes: nextNotes, savedAt: Date.now() },
+        };
         const channelIds = nextNotes
           .filter((note) => note.content_preview.trim().startsWith(CHAT_NOTE_MARKER))
           .map((note) => note.id);
@@ -1101,11 +1106,12 @@ export default function App() {
           for (const channelId of channelIds) next[channelId] = vaultId;
           return next;
         });
-        setFolders(folderData.folders || []);
+        setFolders(nextFolders);
         setNotes(nextNotes);
+        persistWorkspaceSession();
         void primaryChatP.catch(() => undefined);
         void vaultAgentsP.catch(() => undefined);
-        if (secondaryChats.length > 0) {
+        if (!soft && secondaryChats.length > 0) {
           // Defer background tabs one frame so the active channel can paint.
           window.setTimeout(() => {
             if (activeVaultIdRef.current !== vaultId) return;
@@ -1123,7 +1129,7 @@ export default function App() {
 
     loadVaultDataInflight.set(inflightKey, run);
     return run;
-  }, [loadChatMessages, loadChatAgentMembers, loadChatPresence, loadVaultAgents, openChatTabIds]);
+  }, [loadChatMessages, loadChatAgentMembers, loadChatPresence, loadVaultAgents, openChatTabIds, persistWorkspaceSession]);
 
   /** Hydrate one chat channel when the user focuses its tab (skip if cached). */
   const ensureChatChannelLoaded = useCallback((channelId: string) => {

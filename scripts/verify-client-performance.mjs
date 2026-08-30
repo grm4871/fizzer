@@ -5,6 +5,7 @@ import { gzipSync } from 'node:zlib';
 const root = path.resolve(import.meta.dirname, '..');
 const dist = path.join(root, 'client', 'dist');
 const html = fs.readFileSync(path.join(dist, 'app.html'), 'utf8');
+const appSource = fs.readFileSync(path.join(root, 'client', 'src', 'App.tsx'), 'utf8');
 
 function requiredAsset(pattern, label) {
   const match = html.match(pattern);
@@ -46,6 +47,15 @@ for (const lazyBoundary of ['ChatView-', 'SessionManager-', 'AccountSettings-', 
   if (!assetNames.some((name) => name.startsWith(lazyBoundary) && name.endsWith('.js'))) {
     throw new Error(`Expected a separate lazy chunk for ${lazyBoundary.slice(0, -1)}`);
   }
+}
+if (/const allChatIds = noteList/.test(appSource)) {
+  throw new Error('Vault loading still fans agent membership requests out across unopened chat channels');
+}
+if (!/const primaryChatP = !soft && primaryChats\.length > 0/.test(appSource)) {
+  throw new Error('Soft vault refreshes must not reload chat transcripts, presence, and membership');
+}
+if (!/vaultListingsByVault: vaultListingsRef\.current/.test(appSource)) {
+  throw new Error('Vault metadata is not persisted for immediate stale-while-revalidate paint');
 }
 
 console.log(
