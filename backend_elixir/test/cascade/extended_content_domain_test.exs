@@ -353,9 +353,12 @@ defmodule Cascade.ExtendedContentDomainTest do
         content: "cascade://chat-channel"
       })
 
+    first_message_id = "evolution-m1-#{context.user_id}"
+    second_message_id = "evolution-m2-#{context.user_id}"
+
     Query.execute(
-      "INSERT INTO chat_messages (id, channel_id, vault_id, author, body, status, created_at) VALUES ('m1', ?, ?, 'alice', 'We should ship [[Roadmap]] after verification because this is a substantive message.', NULL, '2026-01-01'), ('m2', ?, ?, 'Sol', 'Action: deploy and verify production before calling it done.', NULL, '2026-01-02')",
-      [channel.id, vault.id, channel.id, vault.id]
+      "INSERT INTO chat_messages (id, channel_id, vault_id, author, body, status, created_at) VALUES (?, ?, ?, 'alice', 'We should ship [[Roadmap]] after verification because this is a substantive message.', NULL, '2026-01-01'), (?, ?, ?, 'Sol', 'Action: deploy and verify production before calling it done.', NULL, '2026-01-02')",
+      [first_message_id, channel.id, vault.id, second_message_id, channel.id, vault.id]
     )
 
     assert Evolution.extract_wiki_titles("[[Roadmap]] ![[roadmap|alias]]") == ["Roadmap"]
@@ -366,7 +369,9 @@ defmodule Cascade.ExtendedContentDomainTest do
              nextAfterRowid: nil
            }
 
-    assert [%{messageId: "m1", noteId: note_id}] = Evolution.list_chat_note_backlinks(target.id)
+    assert [%{messageId: ^first_message_id, noteId: note_id}] =
+             Evolution.list_chat_note_backlinks(target.id)
+
     assert note_id == target.id
 
     created =
