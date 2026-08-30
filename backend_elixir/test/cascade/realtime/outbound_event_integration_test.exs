@@ -222,6 +222,22 @@ defmodule Cascade.Realtime.OutboundEventIntegrationTest do
       ["sol-registration", source_channel.id, source.id, "sol-agent", "codex", "Sol", "sol"]
     )
 
+    SQL.exec(
+      "INSERT INTO chat_agent_members(id,channel_id,vault_id,vault_agent_id,agent_id,display_name,mention) VALUES(?,?,?,?,?,?,?)",
+      ["eve-registration", source_channel.id, source.id, "eve-agent", "codex", "Eve", "eve"]
+    )
+
+    legacy_local = Store.create_vault(3, %{name: "Legacy agent vault"})
+
+    legacy_channel =
+      Store.create_note(legacy_local.id, 3, %{
+        title: "Legacy mirror",
+        content: "cascade://chat-channel"
+      })
+
+    assert {:ok, _route} =
+             Channel.link(source.id, source_channel.id, legacy_local.id, legacy_channel.id, 1)
+
     for {id, author} <- [{"legacy-builder", "builder"}, {"legacy-sol", "Sol"}] do
       SQL.exec(
         "INSERT INTO chat_messages(id,channel_id,vault_id,author,body) VALUES(?,?,?,?,?)",
@@ -234,6 +250,7 @@ defmodule Cascade.Realtime.OutboundEventIntegrationTest do
     assert "alice" in snapshot.participants
     refute "builder" in snapshot.participants
     refute "Sol" in snapshot.participants
+    refute "eve" in snapshot.participants
   end
 
   test "real Bandit keeps mutation responses in the stream owner", %{target: target} do
