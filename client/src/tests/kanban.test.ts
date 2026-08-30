@@ -200,6 +200,18 @@ describe('Markdown-backed Kanban helpers', () => {
     expect(visible).not.toContain('command center');
   });
 
+  it('keeps Add list in the toolbar so the board can fit the pane', () => {
+    const markup = renderToStaticMarkup(createElement(KanbanView, {
+      content: SAMPLE,
+      onContentChange: () => {},
+    }));
+    const boardAt = markup.indexOf('class="kanban-board"');
+    expect(boardAt).toBeGreaterThan(0);
+    expect(markup.slice(0, boardAt)).toContain('kanban-add-column');
+    expect(markup.slice(0, boardAt)).toContain('New Kanban list name');
+    expect(markup.slice(boardAt)).not.toContain('kanban-add-column');
+  });
+
   it('archives cards using the Obsidian thematic-break archive format', () => {
     const board = parseKanbanMarkdown(SAMPLE);
     let next = archiveKanbanCard(SAMPLE, board.columns[0].cards[0].id);

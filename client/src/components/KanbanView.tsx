@@ -551,6 +551,15 @@ function KanbanViewInner({ content, onContentChange, showSuperkanbanToggle = fal
             {inSuperkanban ? 'In Superkanban' : 'Add to Superkanban'}
           </button>
         )}
+        <form className="kanban-add-column" onSubmit={submitColumn}>
+          <input
+            value={columnDraft}
+            onChange={(event) => setColumnDraft(event.target.value)}
+            placeholder="Add list…"
+            aria-label="New Kanban list name"
+          />
+          <button type="submit" aria-label="Add Kanban list"><Plus size={14} /></button>
+        </form>
         <button
           type="button"
           className="kanban-archive-complete"
@@ -746,16 +755,6 @@ function KanbanViewInner({ content, onContentChange, showSuperkanbanToggle = fal
             </section>
           );
         })}
-
-        <form className="kanban-add-column" onSubmit={submitColumn}>
-          <input
-            value={columnDraft}
-            onChange={(event) => setColumnDraft(event.target.value)}
-            placeholder="Add list…"
-            aria-label="New Kanban list name"
-          />
-          <button type="submit" aria-label="Add Kanban list"><Plus size={14} /></button>
-        </form>
       </div>
     </div>
   );
