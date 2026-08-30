@@ -11,6 +11,8 @@ import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pickPort } from './lib/test-ports.mjs';
 import { spawnElixirApi } from './lib/elixir-api.mjs';
+import { installBrowserSession } from './lib/browser-session.mjs';
+import { stopChildProcess } from './lib/child-process.mjs';
 
 const API_PORT = Number(process.env.TEST_API_PORT) || await pickPort();
 const PREVIEW_PORT = Number(process.env.TEST_PREVIEW_PORT) || await pickPort();
@@ -194,8 +196,8 @@ try {
     if (message.type() === 'error') errors.push(`console.error: ${message.text()}`);
   });
 
+  await installBrowserSession(context, API_BASE, token);
   await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
-  await page.evaluate((value) => localStorage.setItem('docs_token', value), token);
   await page.goto(APP_URL, { waitUntil: 'networkidle' });
   console.log('[verify-chat-swipe-reply-ui] app loaded');
   // The mobile drawer intentionally starts closed; open it through the same
@@ -395,8 +397,7 @@ try {
   process.exitCode = 1;
 } finally {
   await browser?.close();
-  preview.kill('SIGTERM');
-  server.kill('SIGTERM');
+  await Promise.all([stopChildProcess(preview), stopChildProcess(server)]);
 }
 
 process.exit(process.exitCode || 0);

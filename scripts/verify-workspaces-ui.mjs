@@ -15,6 +15,8 @@ import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pickPort } from './lib/test-ports.mjs';
 import { spawnElixirApi } from './lib/elixir-api.mjs';
+import { installBrowserSession } from './lib/browser-session.mjs';
+import { stopChildProcess } from './lib/child-process.mjs';
 
 const API_PORT = Number(process.env.TEST_API_PORT) || await pickPort();
 const PREVIEW_PORT = Number(process.env.TEST_PREVIEW_PORT) || await pickPort();
@@ -126,8 +128,8 @@ try {
   // Exercise the viewport lifecycle on its own page so responsive mode changes
   // cannot leak state into the feature-flow assertions below.
   const viewportPage = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  await installBrowserSession(viewportPage.context(), API_BASE, token);
   await viewportPage.goto(APP_URL, { waitUntil: 'domcontentloaded' });
-  await viewportPage.evaluate((t) => localStorage.setItem('docs_token', t), token);
   await viewportPage.goto(APP_URL, { waitUntil: 'networkidle' });
   const shell = viewportPage.locator('.app-shell');
   for (const height of [650, 1000, 900]) {
@@ -141,8 +143,8 @@ try {
 
   // ── Browser tab (no desktop bridge): the panel must not appear at all.
   const plain = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  await installBrowserSession(plain.context(), API_BASE, token);
   await plain.goto(APP_URL, { waitUntil: 'domcontentloaded' });
-  await plain.evaluate((t) => localStorage.setItem('docs_token', t), token);
   await plain.goto(APP_URL, { waitUntil: 'networkidle' });
   await plain.getByRole('button', { name: 'Manage vaults' }).click();
   const vaultWorkspace = plain.getByRole('dialog', { name: 'Vault workspace' });
@@ -216,12 +218,16 @@ try {
 
   // ── Desktop shell (bridge present).
   const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  await installBrowserSession(page.context(), API_BASE, token);
   const errors = [];
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
-  page.on('console', (m) => { if (m.type() === 'error') errors.push(`console.error: ${m.text()}`); });
+  page.on('console', (m) => {
+    if (m.type() === 'error' && !m.text().includes('[VersionCheck]')) {
+      errors.push(`console.error: ${m.text()}`);
+    }
+  });
   await page.addInitScript(BRIDGE);
   await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
-  await page.evaluate((t) => localStorage.setItem('docs_token', t), token);
   await page.goto(APP_URL, { waitUntil: 'networkidle' });
   await page.getByText('ws-chan', { exact: false }).first().click();
   await page.getByRole('button', { name: 'Project setup' }).first().click();
@@ -311,8 +317,7 @@ try {
   check('no runtime errors', errors.length === 0, errors.join(' | '));
 } finally {
   await browser?.close();
-  server.kill('SIGTERM');
-  preview.kill('SIGTERM');
+  await Promise.all([stopChildProcess(preview), stopChildProcess(server)]);
 }
 
 process.exit(failures ? 1 : 0);

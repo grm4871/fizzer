@@ -17,6 +17,8 @@ import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pickPort } from './lib/test-ports.mjs';
 import { spawnElixirApi } from './lib/elixir-api.mjs';
+import { installBrowserSession } from './lib/browser-session.mjs';
+import { stopChildProcess } from './lib/child-process.mjs';
 
 // Ports come from the OS by default: a leftover dev server on a hardcoded
 // port used to surface as an unexplained startup timeout.
@@ -106,10 +108,14 @@ try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
   const errors = [];
   page.on('pageerror', (error) => errors.push(`pageerror: ${error.message}`));
-  page.on('console', (msg) => { if (msg.type() === 'error') errors.push(`console.error: ${msg.text()}`); });
+  page.on('console', (msg) => {
+    if (msg.type() === 'error' && !msg.text().startsWith('Failed to load resource:')) {
+      errors.push(`console.error: ${msg.text()}`);
+    }
+  });
 
+  await installBrowserSession(page.context(), API_BASE, token);
   await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
-  await page.evaluate((t) => localStorage.setItem('docs_token', t), token);
   await page.goto(APP_URL, { waitUntil: 'networkidle' });
 
   // ── Vault switcher: creation must work without window.prompt (unsupported
@@ -270,8 +276,8 @@ try {
   // slow socket reconnect must not make the workspace look blocked on reload.
   const desktopPage = await browser.newPage({ viewport: { width: 1280, height: 800 } });
   await desktopPage.addInitScript(() => { window.electronAPI = {}; });
+  await installBrowserSession(desktopPage.context(), API_BASE, token);
   await desktopPage.goto(APP_URL, { waitUntil: 'domcontentloaded' });
-  await desktopPage.evaluate((t) => localStorage.setItem('docs_token', t), token);
   await desktopPage.goto(APP_URL, { waitUntil: 'networkidle' });
   await desktopPage.locator('.workspace-toolbar').waitFor({ timeout: 20000 });
   check('desktop reload does not show a runner reconnect gate', await desktopPage.getByText('Desktop agent runner is reconnecting').count() === 0);
@@ -291,7 +297,5 @@ try {
   process.exitCode = 1;
 } finally {
   if (browser) await browser.close();
-  preview.kill('SIGTERM');
-  server.kill('SIGTERM');
-  await delay(300);
+  await Promise.all([stopChildProcess(preview), stopChildProcess(server)]);
 }

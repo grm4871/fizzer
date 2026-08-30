@@ -2,6 +2,7 @@
 import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pickPort } from './lib/test-ports.mjs';
+import { stopChildProcess } from './lib/child-process.mjs';
 
 const root = new URL('..', import.meta.url).pathname;
 const previewPort = await pickPort();
@@ -158,7 +159,6 @@ try {
   });
 
   await page.addInitScript(() => {
-    localStorage.setItem('docs_token', 'discovery-ui-token');
     localStorage.removeItem('cascade_session_v1');
     localStorage.removeItem('cascade_chat_state_v1');
   });
@@ -199,7 +199,9 @@ try {
   }
   await dialog.getByRole('button', { name: 'Join as viewer' }).click();
   await dialog.waitFor({ state: 'detached' });
-  await page.getByRole('button', { name: /current vault Community Lab/ }).waitFor();
+  const joinedVault = page.getByRole('button', { name: 'Open vault Community Lab' });
+  await joinedVault.waitFor();
+  if (await joinedVault.getAttribute('aria-current') !== 'page') throw new Error('joined public vault did not become active');
 
   const messagesButton = page.locator('#direct-messages-btn');
   if ((await messagesButton.getAttribute('aria-label')) !== '2 unread direct messages') throw new Error('mailbox did not announce unread DMs');
@@ -230,7 +232,7 @@ try {
   await messagesDialog.getByPlaceholder('Message @dana').fill('hello from the standalone inbox');
   await messagesDialog.getByRole('button', { name: 'Send message' }).click();
   await messagesDialog.getByText('hello from the standalone inbox').waitFor();
-  if (!(await page.getByRole('button', { name: /current vault Community Lab/ }).count())) {
+  if (await joinedVault.getAttribute('aria-current') !== 'page') {
     throw new Error('opening a DM changed the active vault workspace');
   }
 
@@ -257,6 +259,5 @@ try {
   console.log('[discovery-dms-ui] OK — standalone messages inbox, inline thread/send, unread state, DM privacy, blocks, and unchanged vault workspace');
 } finally {
   if (browser) await browser.close();
-  preview.kill('SIGTERM');
-  await delay(150);
+  await stopChildProcess(preview);
 }

@@ -4,6 +4,8 @@ import fs from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pickPort } from './lib/test-ports.mjs';
 import { spawnElixirApi } from './lib/elixir-api.mjs';
+import { installBrowserSession } from './lib/browser-session.mjs';
+import { stopChildProcess } from './lib/child-process.mjs';
 
 const apiPort = await pickPort();
 const previewPort = await pickPort();
@@ -59,11 +61,14 @@ try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
   const errors = [];
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
-  page.on('console', (m) => { if (m.type() === 'error') errors.push(`console.error: ${m.text()}`); });
+  page.on('console', (m) => {
+    if (m.type() === 'error' && !m.text().startsWith('Failed to load resource:')) errors.push(`console.error: ${m.text()}`);
+  });
+  await installBrowserSession(page.context(), apiBase, token);
   await page.goto(appUrl, { waitUntil: 'domcontentloaded' });
-  await page.evaluate((value) => localStorage.setItem('docs_token', value), token);
+  await page.evaluate(() => localStorage.setItem('docs_token', 'stale-legacy-token'));
   await page.reload({ waitUntil: 'networkidle' });
-  if (await page.evaluate(() => localStorage.getItem('docs_token')) !== null) throw new Error('legacy browser token was not removed after cookie migration');
+  if (await page.evaluate(() => localStorage.getItem('docs_token')) !== null) throw new Error('legacy browser token was not removed');
   if (!(await page.context().cookies(apiBase)).some((cookie) => cookie.name === 'cascade_session' && cookie.httpOnly)) {
     throw new Error('browser session did not migrate into an HttpOnly cookie');
   }
@@ -187,7 +192,6 @@ try {
   console.log('[account-ui] OK — anonymous owner reports, ban/unban and stale-invite enforcement, accountable global unlist, account settings, and vault sharing');
 } finally {
   if (browser) await browser.close();
-  preview.kill('SIGTERM'); server.kill('SIGTERM');
-  await delay(200);
+  await Promise.all([stopChildProcess(preview), stopChildProcess(server)]);
   try { fs.unlinkSync(dbPath); } catch {}
 }

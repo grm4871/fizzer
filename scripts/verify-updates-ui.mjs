@@ -5,6 +5,8 @@ import fs from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pickPort } from './lib/test-ports.mjs';
 import { spawnElixirApi } from './lib/elixir-api.mjs';
+import { installBrowserSession } from './lib/browser-session.mjs';
+import { stopChildProcess } from './lib/child-process.mjs';
 
 const apiPort = await pickPort();
 const root = new URL('..', import.meta.url).pathname;
@@ -61,6 +63,10 @@ try {
   const { vault } = await json('/api/vaults', {
     method: 'POST', headers: aliceAuth, body: JSON.stringify({ name: 'Updates team' }),
   });
+  const { note: neutralNote } = await json(`/api/vaults/${vault.id}/notes`, {
+    method: 'POST', headers: aliceAuth,
+    body: JSON.stringify({ title: 'Start here', content: '# Start here' }),
+  });
   await json(`/api/vaults/${vault.id}/members`, {
     method: 'POST', headers: aliceAuth,
     body: JSON.stringify({ username: bob.user.username, role: 'editor' }),
@@ -89,15 +95,15 @@ try {
   const errors = [];
   page.on('pageerror', (error) => errors.push(`pageerror: ${error.message}`));
   page.on('console', (message) => { if (message.type() === 'error') errors.push(`console.error: ${message.text()}`); });
-  await page.addInitScript(({ token, vaultId }) => {
-    localStorage.setItem('docs_token', token);
+  await installBrowserSession(page.context(), apiBase, bob.token);
+  await page.addInitScript(({ vaultId, noteId, noteTitle }) => {
     localStorage.setItem('cascade_session', JSON.stringify({
       activeVaultId: vaultId,
-      openTabs: [],
-      layout: { type: 'pane', id: 'root', tabIds: [], activeTabId: null },
+      openTabs: [{ id: noteId, title: noteTitle, type: 'note', dirty: false }],
+      layout: { type: 'pane', id: 'root', tabIds: [noteId], activeTabId: noteId },
       focusedPaneId: 'root',
     }));
-  }, { token: bob.token, vaultId: vault.id });
+  }, { vaultId: vault.id, noteId: neutralNote.id, noteTitle: neutralNote.title });
   await page.goto(appUrl, { waitUntil: 'networkidle' });
 
   const updatesButton = page.locator('#community-updates-btn');
@@ -106,7 +112,7 @@ try {
   if ((await page.locator('.workspace-updates-badge').innerText()).trim() !== '2') {
     throw new Error('workspace unread badge did not show 2');
   }
-  if (await page.locator('.tree-update-badge').count() !== 2) {
+  if (await page.locator('.tree-item > .activity-dot.is-human').count() !== 2) {
     throw new Error('note/channel unread badges were not both rendered');
   }
 
@@ -128,14 +134,13 @@ try {
 
   await updatesButton.click();
   await page.locator('.updates-item', { hasText: note.title }).click();
-  await page.locator('.cm-editor').waitFor({ timeout: 15000 });
+  await page.locator('.tab-item.active', { hasText: note.title }).waitFor({ timeout: 15000 });
   await page.waitForFunction(() => !document.querySelector('.workspace-updates-badge'));
   if (errors.length) throw new Error(errors.join('\n'));
   console.log('[updates-ui] OK — socket refresh, badges, modal, channel message jump, note deep link, and mark-read');
 } finally {
   await browser?.close();
-  server.kill('SIGTERM');
-  await delay(250);
+  await stopChildProcess(server);
   for (const target of [dbPath, vaultRoot]) {
     try { fs.rmSync(target, { recursive: true, force: true }); } catch {}
   }

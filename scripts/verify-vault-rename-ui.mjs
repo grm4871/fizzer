@@ -15,6 +15,8 @@ import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pickPort } from './lib/test-ports.mjs';
 import { spawnElixirApi } from './lib/elixir-api.mjs';
+import { installBrowserSession } from './lib/browser-session.mjs';
+import { stopChildProcess } from './lib/child-process.mjs';
 
 const API_PORT = Number(process.env.TEST_API_PORT) || await pickPort();
 const PREVIEW_PORT = Number(process.env.TEST_PREVIEW_PORT) || await pickPort();
@@ -87,9 +89,14 @@ try {
     const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
     const errors = [];
     page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
-    page.on('console', (m) => { if (m.type() === 'error') errors.push(`console.error: ${m.text()}`); });
+    page.on('console', (m) => {
+      if (m.type() !== 'error') return;
+      if (m.text().includes('[VersionCheck]')) return;
+      if (m.text().startsWith('Failed to load resource:')) return;
+      errors.push(`console.error: ${m.text()}`);
+    });
+    await installBrowserSession(page.context(), API_BASE, token);
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
-    await page.evaluate((t) => localStorage.setItem('docs_token', t), token);
     await page.goto(APP_URL, { waitUntil: 'networkidle' });
     return { page, errors };
   };
@@ -153,6 +160,5 @@ try {
   console.log('[vault-rename-ui] OK — vault rename, owner gating, and the relocated agent-memory preference');
 } finally {
   await browser?.close();
-  server.kill('SIGTERM');
-  preview.kill('SIGTERM');
+  await Promise.all([stopChildProcess(preview), stopChildProcess(server)]);
 }

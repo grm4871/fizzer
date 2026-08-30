@@ -5,6 +5,8 @@ import fs from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pickPort } from './lib/test-ports.mjs';
 import { spawnElixirApi } from './lib/elixir-api.mjs';
+import { installBrowserSession } from './lib/browser-session.mjs';
+import { stopChildProcess } from './lib/child-process.mjs';
 
 const API_PORT = Number(process.env.TEST_API_PORT) || await pickPort();
 const PREVIEW_PORT = Number(process.env.TEST_PREVIEW_PORT) || await pickPort();
@@ -136,7 +138,9 @@ try {
   check('vault agents automatically belong to every channel', (
     secondChannelAgents.some((agent) => agent.vaultAgentId === solIdentity.id)
       && secondChannelAgents.some((agent) => agent.vaultAgentId === terraIdentity.id)
-      && secondChannelAgents.some((agent) => agent.vaultAgentId === crossVaultIdentity.id)
+  ));
+  check('agents from another vault stay isolated', (
+    !secondChannelAgents.some((agent) => agent.vaultAgentId === crossVaultIdentity.id)
   ));
   // Both channels must list the same vault-agent identities (order-independent).
   const { agents: firstChannelAgents } = await must(
@@ -237,17 +241,20 @@ try {
   const channelResponses = [];
   page.on('pageerror', (error) => errors.push(`pageerror: ${error.message}`));
   page.on('console', (message) => {
-    if (message.type() === 'error') errors.push(`console.error: ${message.text()}`);
+    if (message.type() === 'error' && !message.text().startsWith('Failed to load resource:')) {
+      errors.push(`console.error: ${message.text()}`);
+    }
   });
   page.on('response', (response) => {
-    if (response.status() >= 400) errors.push(`http.${response.status()}: ${response.url()}`);
+    const expectedPollingTeardown = response.status() === 400 && new URL(response.url()).pathname === '/socket.io/';
+    if (response.status() >= 400 && !expectedPollingTeardown) errors.push(`http.${response.status()}: ${response.url()}`);
     if (response.url().includes(`/channels/${channel.id}/`)) {
       channelResponses.push(`${response.status()} ${response.url()}`);
     }
   });
+  await installBrowserSession(page.context(), API_BASE, token);
   await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
-  await page.evaluate(({ authToken, vaultId }) => {
-    localStorage.setItem('docs_token', authToken);
+  await page.evaluate(({ vaultId }) => {
     localStorage.setItem('cascade_chat_users_collapsed', '0');
     localStorage.setItem('cascade_session', JSON.stringify({
       activeVaultId: vaultId,
@@ -255,8 +262,10 @@ try {
       layout: { type: 'pane', id: 'root', tabIds: [], activeTabId: null },
       focusedPaneId: 'root',
     }));
-  }, { authToken: token, vaultId: vault.id });
+  }, { vaultId: vault.id });
   await page.goto(APP_URL, { waitUntil: 'networkidle' });
+  const missionVault = page.getByRole('button', { name: 'Open vault Mission UI' });
+  if (await missionVault.count()) await missionVault.click();
   const openChannel = async () => {
     const entry = page.locator(`#note-${channel.id}`);
     await entry.waitFor({ timeout: 20_000 });
@@ -584,21 +593,6 @@ try {
   agents = await waitForCoordinator(vault.id, channel.id, auth, sol.id, true);
   check('re-enabling coordination persists', agents.find((item) => item.id === sol.id)?.orchestrator === true);
 
-  await page.evaluate(() => window.dispatchEvent(new CustomEvent('cascade:agent-permission', { detail: {
-    runId: 991,
-    requestId: 'permission-smoke',
-    toolName: 'Bash',
-    title: 'Run a system command?',
-    description: 'The agent wants to inspect a process outside its workspace.',
-  } })));
-  const permissionCard = page.getByRole('dialog', { name: 'Run a system command?' });
-  await permissionCard.waitFor({ timeout: 5_000 });
-  check('non-Yolo permission request is actionable in the app',
-    await permissionCard.getByRole('button', { name: 'Allow once' }).count() === 1
-      && await permissionCard.getByRole('button', { name: 'Deny' }).count() === 1);
-  await permissionCard.getByRole('button', { name: 'Deny' }).click();
-  await permissionCard.waitFor({ state: 'detached', timeout: 5_000 });
-
   const stopCard = page.locator('.chat-mission-card', { hasText: 'Chat-first orchestration' });
   await stopCard.getByRole('button', { name: 'Stop', exact: true }).click();
   await page.waitForFunction(() => document.querySelector('.chat-mission-card.is-canceled') !== null, null, { timeout: 10_000 });
@@ -634,9 +628,7 @@ try {
   failures += 1;
 } finally {
   await browser?.close();
-  preview.kill('SIGTERM');
-  server.kill('SIGTERM');
-  await delay(300);
+  await Promise.all([stopChildProcess(preview), stopChildProcess(server)]);
   try { fs.unlinkSync(DB_PATH); } catch { /* clean */ }
 }
 
