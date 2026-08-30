@@ -165,10 +165,18 @@ defmodule Cascade.Chat.Channel do
             JOIN vaults v ON v.id=l.local_vault_id
             JOIN users u ON u.id=v.created_by WHERE l.source_channel_id=?
           UNION
-          SELECT author FROM (
+          SELECT legacy.author FROM (
             SELECT DISTINCT author FROM chat_messages
             WHERE channel_id=? AND COALESCE(agent_id,'')=''
               AND author NOT IN ('','Cascade') LIMIT 200
+          ) legacy
+          WHERE NOT EXISTS (
+            SELECT 1 FROM chat_agent_members agent
+            WHERE agent.channel_id=? AND (
+              agent.display_name=legacy.author COLLATE NOCASE OR
+              agent.mention=legacy.author COLLATE NOCASE OR
+              agent.agent_id=legacy.author COLLATE NOCASE
+            )
           )
         )
         SELECT u.id,n.username,u.username,
@@ -178,7 +186,13 @@ defmodule Cascade.Chat.Channel do
         WHERE n.username IS NOT NULL AND n.username != ''
         ORDER BY LOWER(n.username),n.username
         """,
-        [source_vault_id, source_vault_id, source_channel_id, source_channel_id]
+        [
+          source_vault_id,
+          source_vault_id,
+          source_channel_id,
+          source_channel_id,
+          source_channel_id
+        ]
       )
 
     users =

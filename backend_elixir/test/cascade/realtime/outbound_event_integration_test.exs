@@ -201,6 +201,41 @@ defmodule Cascade.Realtime.OutboundEventIntegrationTest do
     refute Map.has_key?(snapshot.profiles, "ALICE")
   end
 
+  test "participant snapshots do not promote legacy agent authors to people" do
+    {source, source_channel, _local, _local_channel} = linked_chat()
+
+    SQL.exec(
+      "INSERT INTO chat_agent_members(id,channel_id,vault_id,vault_agent_id,agent_id,display_name,mention) VALUES(?,?,?,?,?,?,?)",
+      [
+        "builder-registration",
+        source_channel.id,
+        source.id,
+        "builder-agent",
+        "codex",
+        "Builder",
+        "builder"
+      ]
+    )
+
+    SQL.exec(
+      "INSERT INTO chat_agent_members(id,channel_id,vault_id,vault_agent_id,agent_id,display_name,mention) VALUES(?,?,?,?,?,?,?)",
+      ["sol-registration", source_channel.id, source.id, "sol-agent", "codex", "Sol", "sol"]
+    )
+
+    for {id, author} <- [{"legacy-builder", "builder"}, {"legacy-sol", "Sol"}] do
+      SQL.exec(
+        "INSERT INTO chat_messages(id,channel_id,vault_id,author,body) VALUES(?,?,?,?,?)",
+        [id, source_channel.id, source.id, author, "legacy agent message"]
+      )
+    end
+
+    snapshot = Channel.participant_snapshot(source.id, source_channel.id)
+
+    assert "alice" in snapshot.participants
+    refute "builder" in snapshot.participants
+    refute "Sol" in snapshot.participants
+  end
+
   test "real Bandit keeps mutation responses in the stream owner", %{target: target} do
     {vault, channel, _local, _local_channel} = linked_chat()
     authorization = "Bearer #{token(1, "alice")}"
