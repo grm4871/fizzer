@@ -15,7 +15,7 @@ const FTS5_SHADOW_SUFFIXES = ['config', 'data', 'docsize', 'idx'];
 // compare equal: the resulting schema must be the reviewed Node-compatible
 // shape as well.
 const NORMALIZED_TABLE_SQL_SHA256 = new Map([
-  ['chat_agent_members', 'caa0376559c9e2b1327b414bea0b8c92c110f093b2d83277ffbc0778367cd59c'],
+  ['chat_agent_members', '47958f4df6d7c4133c1a4d0841d2f061a18aa79f9d62bf861b1d423eb18ef7a1'],
   ['chat_channel_links', '5c044d64e74a55bae505e0dc14fa0943d8f2ec550a3a4ee0c8cee6098b8b2f51'],
   ['chat_messages', 'c0ec7be003cb9470e0854022dd4197394b8b52e5b6d81369ab274151ccaf7ae4'],
   ['chat_messages_fts', 'a0537f09f6a0d235e2c50e090ce48214ddd0efa80544131812ccd37822e501a1'],
@@ -528,6 +528,26 @@ function exactVaultAgentAdditiveMigration(before, after) {
   });
 }
 
+function exactChatAgentMemberAdditiveMigration(before, after) {
+  const oldTable = before.tables.chat_agent_members;
+  const newTable = after.tables.chat_agent_members;
+  if (!oldTable || !newTable) return false;
+  const oldNames = new Set(oldTable.columns.map((column) => column.name));
+  if (oldNames.has('ambient_group_chat')) return false;
+  const ambient = newTable.columns.find((column) => column.name === 'ambient_group_chat');
+  if (!ambient || ambient.type !== 'INTEGER' || Number(ambient.notnull) !== 1
+      || ambient.dflt_value !== '0' || Number(ambient.pk) !== 0) return false;
+  const oldColumns = oldTable.rows.columns;
+  if (oldTable.rows.count !== newTable.rows.count
+      || oldTable.rows.includesRowid !== newTable.rows.includesRowid
+      || !oldColumns.every((column) => newTable.rows.columns.includes(column))
+      || !same(oldTable.normalizedForeignKeys, newTable.normalizedForeignKeys)) return false;
+  for (const column of oldColumns) {
+    if (oldTable.rows.columnSha256[column] !== newTable.rows.columnSha256[column]) return false;
+  }
+  return newTable.schema.sqlSha256 === NORMALIZED_TABLE_SQL_SHA256.get('chat_agent_members');
+}
+
 export function verifyFtsIntegrity(filename, snapshot) {
   const ftsTables = Object.values(snapshot.tables)
     .filter((table) => table.rows.virtual && /\bUSING\s+fts5\s*\(/iu.test(table.schema.sql))
@@ -645,6 +665,9 @@ export function compareDatabaseSnapshots(before, after, allowedAdditions = DEFAU
           `table changed outside pinned agent identity migration: ${table} (rows ${oldRows.count}/${oldRows.sha256.slice(0, 12)} -> ${newRows.count}/${newRows.sha256.slice(0, 12)})`,
         );
       }
+    } else if (table === 'chat_agent_members'
+        && exactChatAgentMemberAdditiveMigration(before, after)) {
+      // The ambient participation flag is an additive, default-false migration.
     } else if (NORMALIZED_TABLE_SQL_SHA256.has(table)) {
       const oldTable = before.tables[table];
       const newTable = after.tables[table];
