@@ -272,6 +272,14 @@ defmodule Cascade.Chat.Agents do
             [identity_id, route.sourceChannelId]
           )
 
+        backfill_legacy_messages(
+          route.sourceChannelId,
+          saved_registration_id,
+          agent_id,
+          mention,
+          display_name
+        )
+
         list_members(channel_id, user_id) |> map_ok_find(saved_registration_id)
       end
     else
@@ -291,6 +299,18 @@ defmodule Cascade.Chat.Agents do
       nil -> :ok
       _ -> {:error, "Agent was removed from this vault"}
     end
+  end
+
+  defp backfill_legacy_messages(channel_id, registration_id, agent_id, mention, display_name) do
+    SQL.exec(
+      """
+      UPDATE chat_messages SET agent_id=?,registration_id=?
+      WHERE channel_id=? AND SUBSTR(id,1,6)='agent-'
+        AND COALESCE(agent_id,'')='' AND COALESCE(registration_id,'')=''
+        AND (LOWER(author)=LOWER(?) OR LOWER(author)=LOWER(?))
+      """,
+      [agent_id, registration_id, channel_id, mention, display_name]
+    )
   end
 
   def upsert_member(user_id, vault_id, channel_id, input) do

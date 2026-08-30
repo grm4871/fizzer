@@ -169,7 +169,7 @@ defmodule Cascade.ChatDomainTest do
     end
   end
 
-  test "schema restores identity metadata on legacy agent messages without relabeling human messages" do
+  test "linking an agent restores legacy identity metadata without relabeling human messages" do
     {vault, channel} = chat_vault(1, "Agents", "General")
 
     assert {:ok, identity} =
@@ -178,8 +178,6 @@ defmodule Cascade.ChatDomainTest do
                displayName: "Builder",
                mention: "builder"
              })
-
-    assert {:ok, member} = Agents.add_to_channel(1, vault.id, channel.id, identity.id)
 
     SQL.exec(
       "INSERT INTO chat_messages(id,channel_id,vault_id,author,body) VALUES(?,?,?,?,?),(?,?,?,?,?)",
@@ -197,7 +195,7 @@ defmodule Cascade.ChatDomainTest do
       ]
     )
 
-    assert :ok = Schema.ensure!()
+    assert {:ok, member} = Agents.add_to_channel(1, vault.id, channel.id, identity.id)
 
     assert ["codex", member.id] ==
              SQL.one(
