@@ -428,6 +428,9 @@ defmodule Cascade.ChatDomainTest do
     {first_vault, first_channel} = chat_vault(1, "One", "A")
     {test_vault, test_channel} = chat_vault(1, "Test", "B")
 
+    test_channel_two =
+      Store.create_note(test_vault.id, 1, %{title: "C", content: "cascade://chat-channel"})
+
     assert {:ok, identity} =
              Agents.upsert_identity(1, first_vault.id, %{
                agentId: "codex",
@@ -441,10 +444,22 @@ defmodule Cascade.ChatDomainTest do
     assert {:ok, available} = Agents.list_vault(1, test_vault.id)
     assert Enum.any?(available, &(&1.id == identity.id))
 
+    assert {:ok, []} = Agents.ensure_vault_wide(1, test_vault.id, test_channel.id)
+
+    assert SQL.one(
+             "SELECT id FROM chat_agent_members WHERE vault_agent_id=? AND vault_id=?",
+             [identity.id, test_vault.id]
+           ) == nil
+
     assert {:ok, second_member} =
              Agents.add_to_channel(1, test_vault.id, test_channel.id, identity.id)
 
     assert second_member.vaultAgentId == identity.id
+
+    assert {:ok, [projected_member]} =
+             Agents.ensure_vault_wide(1, test_vault.id, test_channel_two.id)
+
+    assert projected_member.vaultAgentId == identity.id
 
     assert {:ok, true} = Agents.unlink_from_vault(1, first_vault.id, identity.id)
     assert {:ok, reusable_profile} = Agents.get(1, first_vault.id, identity.id)
