@@ -184,6 +184,7 @@ defmodule Cascade.Chat.Schema do
     migrate_agent_identity_scope!()
     backfill_member_identities!()
     reconcile_member_uniqueness!()
+    backfill_legacy_agent_messages!()
     repair_node_schema_parity!()
     create_indexes_and_search!()
     :ok
@@ -464,6 +465,35 @@ defmodule Cascade.Chat.Schema do
     SQL.exec("""
     UPDATE vault_agents SET owner_user_id=(SELECT created_by FROM vaults WHERE id=vault_agents.vault_id)
     WHERE owner_user_id IS NULL
+    """)
+  end
+
+  defp backfill_legacy_agent_messages! do
+    SQL.exec("""
+    UPDATE chat_messages AS message
+    SET agent_id=(
+          SELECT member.agent_id FROM chat_agent_members AS member
+          WHERE member.channel_id=message.channel_id
+            AND (LOWER(member.mention)=LOWER(message.author)
+              OR LOWER(member.display_name)=LOWER(message.author))
+          ORDER BY member.created_at,member.rowid LIMIT 1
+        ),
+        registration_id=(
+          SELECT member.id FROM chat_agent_members AS member
+          WHERE member.channel_id=message.channel_id
+            AND (LOWER(member.mention)=LOWER(message.author)
+              OR LOWER(member.display_name)=LOWER(message.author))
+          ORDER BY member.created_at,member.rowid LIMIT 1
+        )
+    WHERE SUBSTR(message.id,1,6)='agent-'
+      AND COALESCE(message.agent_id,'')=''
+      AND COALESCE(message.registration_id,'')=''
+      AND EXISTS(
+        SELECT 1 FROM chat_agent_members AS member
+        WHERE member.channel_id=message.channel_id
+          AND (LOWER(member.mention)=LOWER(message.author)
+            OR LOWER(member.display_name)=LOWER(message.author))
+      )
     """)
   end
 

@@ -169,6 +169,47 @@ defmodule Cascade.ChatDomainTest do
     end
   end
 
+  test "schema restores identity metadata on legacy agent messages without relabeling human messages" do
+    {vault, channel} = chat_vault(1, "Agents", "General")
+
+    assert {:ok, identity} =
+             Agents.upsert_identity(1, vault.id, %{
+               agentId: "codex",
+               displayName: "Builder",
+               mention: "builder"
+             })
+
+    assert {:ok, member} = Agents.add_to_channel(1, vault.id, channel.id, identity.id)
+
+    SQL.exec(
+      "INSERT INTO chat_messages(id,channel_id,vault_id,author,body) VALUES(?,?,?,?,?),(?,?,?,?,?)",
+      [
+        "agent-builder-old",
+        channel.id,
+        vault.id,
+        "builder",
+        "legacy agent output",
+        "msg-human-builder",
+        channel.id,
+        vault.id,
+        "builder",
+        "human output"
+      ]
+    )
+
+    assert :ok = Schema.ensure!()
+
+    assert ["codex", member.id] ==
+             SQL.one(
+               "SELECT agent_id,registration_id FROM chat_messages WHERE id='agent-builder-old'"
+             )
+
+    assert [nil, nil] ==
+             SQL.one(
+               "SELECT agent_id,registration_id FROM chat_messages WHERE id='msg-human-builder'"
+             )
+  end
+
   test "Node upgrade canonicalizes legacy Elixir ordering without losing chat data" do
     {source, source_channel} = chat_vault(1, "Schema source", "Source")
     {local, local_channel} = chat_vault(2, "Schema local", "Local")
