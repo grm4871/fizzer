@@ -7,10 +7,30 @@ import Database from 'better-sqlite3';
 import {
   databaseSnapshot,
   materializeSchemaFingerprint,
+  compareSchemaFingerprints,
   parseArgs,
   readSchemaFingerprint,
   runComparison,
 } from './check-elixir-data-compat.mjs';
+
+test('rolling schema classification permits only the pinned ambient column transition', () => {
+  const base = { type: 'table', name: 'chat_agent_members', tableName: 'chat_agent_members', sql: "CREATE TABLE \"chat_agent_members\" ( id TEXT PRIMARY KEY, channel_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE, vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE, agent_id TEXT NOT NULL, display_name TEXT NOT NULL DEFAULT '', avatar_url TEXT NOT NULL DEFAULT '', mention TEXT NOT NULL DEFAULT '', model TEXT NOT NULL DEFAULT '', reasoning_effort TEXT NOT NULL DEFAULT '', priority_service_tier INTEGER NOT NULL DEFAULT 0, cwd TEXT NOT NULL DEFAULT '', context_prompt TEXT NOT NULL DEFAULT '', taggable_by_agents INTEGER NOT NULL DEFAULT 0, reply_to_every_message INTEGER NOT NULL DEFAULT 0, orchestrator INTEGER NOT NULL DEFAULT 0, pingable_by_others INTEGER NOT NULL DEFAULT 0, yolo INTEGER NOT NULL DEFAULT 0, conversation_id TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')), vault_agent_id TEXT NOT NULL DEFAULT '' )" };
+  const ambient = { ...base, sql: base.sql.replace('yolo INTEGER', 'ambient_group_chat INTEGER NOT NULL DEFAULT 0, yolo INTEGER') };
+  assert.deepEqual(compareSchemaFingerprints(
+    { objects: [base], migrations: [] },
+    { objects: [ambient], migrations: [] },
+  ), []);
+
+  const unknown = { ...ambient, sql: ambient.sql.replace('DEFAULT 0, yolo', 'DEFAULT 1, yolo') };
+  assert.deepEqual(compareSchemaFingerprints(
+    { objects: [base], migrations: [] },
+    { objects: [unknown], migrations: [] },
+  ), ['database schema changed']);
+  assert.deepEqual(compareSchemaFingerprints(
+    { objects: [ambient], migrations: [] },
+    { objects: [base], migrations: [] },
+  ), ['database schema changed']);
+});
 
 function fixture() {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-data-compat-'));

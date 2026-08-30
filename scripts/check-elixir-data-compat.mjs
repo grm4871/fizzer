@@ -41,6 +41,16 @@ const MIGRATION_LEDGER_ROW = {
   checksum: 'b844b7f41e5377d5ce8ff5dd3c3cc0951cab766773f5bf0816aaec45864d338a',
 };
 
+// Reviewed schema transitions that are safe while the previous release is
+// still serving. Keep these exact and directional: an unrecognized DDL change
+// must continue through the snapshot-backed maintenance cutover.
+const ROLLING_SCHEMA_TRANSITIONS = new Map([
+  ['table:chat_agent_members', new Map([
+    ['caa0376559c9e2b1327b414bea0b8c92c110f093b2d83277ffbc0778367cd59c',
+      '47958f4df6d7c4133c1a4d0841d2f061a18aa79f9d62bf861b1d423eb18ef7a1'],
+  ])],
+]);
+
 function parseArgs(argv) {
   const args = { allowTable: [], requireIdentical: false, schemaOnly: false };
   for (let index = 0; index < argv.length; index += 1) {
@@ -347,7 +357,30 @@ export function loadSchemaFingerprint(source) {
 
 export function compareSchemaFingerprints(before, after) {
   const failures = [];
-  if (!same(before.objects, after.objects)) failures.push('database schema changed');
+  const beforeObjects = new Map(before.objects.map((object) => [`${object.type}:${object.name}`, object]));
+  const afterObjects = new Map(after.objects.map((object) => [`${object.type}:${object.name}`, object]));
+  let objectsMatch = beforeObjects.size === afterObjects.size;
+  if (objectsMatch) {
+    for (const [key, oldObject] of beforeObjects) {
+      const nextObject = afterObjects.get(key);
+      if (!nextObject) {
+        objectsMatch = false;
+        break;
+      }
+      if (same(oldObject, nextObject)) continue;
+      const transitions = ROLLING_SCHEMA_TRANSITIONS.get(key);
+      const oldHash = sha256(normalizedSql(oldObject.sql));
+      const nextHash = sha256(normalizedSql(nextObject.sql));
+      if (oldObject.type !== nextObject.type
+          || oldObject.name !== nextObject.name
+          || oldObject.tableName !== nextObject.tableName
+          || transitions?.get(oldHash) !== nextHash) {
+        objectsMatch = false;
+        break;
+      }
+    }
+  }
+  if (!objectsMatch) failures.push('database schema changed');
   if (!same(before.migrations, after.migrations)) failures.push('migration ledger changed');
   return failures;
 }
