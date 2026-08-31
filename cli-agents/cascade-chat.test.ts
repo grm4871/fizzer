@@ -140,6 +140,7 @@ test('coordinator helper starts and delegates a mission with structured API call
     coordinatorRegistrationId: 'reg-sol',
     title: 'Release',
     objective: 'Ship safely',
+    controlPlane: false,
   });
   assert.deepEqual(requests[2]?.body, {
     coordinatorRegistrationId: 'reg-sol',
@@ -189,11 +190,14 @@ test('mission start always posts a coordinator shell as the mission root', async
   assert.equal(requests[1].body?.rootMessageId, 'sys-mission-root-new');
 });
 
-test('control-plane mission start does not bind the coordinator run as a primary task', async (t) => {
+test('control-plane mission start explicitly asks the server not to bind a primary task', async (t) => {
   const runHeaders: Array<string | undefined> = [];
+  const bodies: Array<Record<string, unknown>> = [];
   const server = http.createServer(async (req, res) => {
-    for await (const _chunk of req) { /* consume request */ }
+    let raw = '';
+    for await (const chunk of req) raw += chunk;
     runHeaders.push(req.headers['x-cascade-run-id'] as string | undefined);
+    bodies.push(raw ? JSON.parse(raw) : {});
     res.setHeader('content-type', 'application/json');
     if (req.url?.endsWith('/messages')) return res.end(JSON.stringify({ message:{ id:'control-root' } }));
     if (req.url?.endsWith('/missions')) return res.end(JSON.stringify({ mission:{ id:'control-mission', title:'Control' } }));
@@ -210,7 +214,8 @@ test('control-plane mission start does not bind the coordinator run as a primary
     env:{ ...process.env, CASCADE_HELPER_CONFIG:config, CASCADE_RUN_ID:'4242' },
   });
   assert.equal(runHeaders[0], '4242');
-  assert.equal(runHeaders[1], undefined);
+  assert.equal(runHeaders[1], '4242');
+  assert.equal(bodies[1]?.controlPlane, true);
 });
 
 test('send creates a typed single-agent handoff without suppressing the caller reply', async (t) => {

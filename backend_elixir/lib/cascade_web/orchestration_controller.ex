@@ -1,6 +1,8 @@
 defmodule CascadeWeb.OrchestrationController do
   @moduledoc false
 
+  require Logger
+
   alias Cascade.Accounts.{SQL, VaultMembers}
   alias Cascade.Auth.Session
   alias Cascade.Chat.{Agents, Channel, Messages, RoomContext}
@@ -74,10 +76,12 @@ defmodule CascadeWeb.OrchestrationController do
         else: {:error, "Desktop agent runner disconnected"}
     else
       {:reused, run} -> {:ok, run}
-      _ -> :retry
+      reason -> {:retry, reason}
     end
   rescue
-    _ -> :retry
+    error ->
+      Logger.warning("mission dispatch claim failed: #{Exception.message(error)}")
+      {:retry, {:exception, error.__struct__}}
   end
 
   def list_runs(conn, vault_id) do

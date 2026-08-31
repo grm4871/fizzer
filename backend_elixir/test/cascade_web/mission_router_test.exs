@@ -150,7 +150,7 @@ defmodule CascadeWeb.MissionRouterTest do
       )
 
     assert completed.status == 200
-    assert json(completed)["mission"]["status"] == "reviewing"
+    assert json(completed)["mission"]["status"] == "attention"
 
     history = request(ctx, :get, base <> "/missions/#{mission["id"]}/history")
     assert history.status == 200
@@ -166,9 +166,8 @@ defmodule CascadeWeb.MissionRouterTest do
         summary: "Integrated and verified."
       })
 
-    assert finished.status == 200
-    assert json(finished)["mission"]["status"] == "completed"
-    assert json(finished)["mission"]["summary"] == "Integrated and verified."
+    assert finished.status == 400
+    assert json(finished)["error"] == "Mission has no completed worker evidence"
   end
 
   test "authentication, channel privacy, and mutation errors fail closed", ctx do

@@ -51,6 +51,62 @@ async function socketFor(token, vaultId) {
   return { socket, created, updated };
 }
 
+async function runnerFor(token) {
+  const socket = io(`${API_BASE}/runners`, { auth: { token }, transports: ['websocket'] });
+  const delegated = [];
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('runner socket timeout')), 10_000);
+    socket.on('connect_error', reject);
+    socket.on('runner:registered', (response) => {
+      clearTimeout(timer);
+      if (response?.ok === false) reject(new Error(response.error || 'runner registration failed'));
+      else resolve();
+    });
+    socket.on('connect', () => {
+      socket.emit('runner:register', {
+        activeRunIds: [],
+        runnerInstanceId: `mission-e2e-${Date.now()}`,
+      });
+    });
+  });
+  socket.on('workspace:prepare', (payload, acknowledge) => {
+    acknowledge({
+      ok: true,
+      path: `/tmp/mission-e2e-${payload.workItemId}`,
+      repository: '/tmp/mission-e2e-repo',
+      branch: payload.branch,
+      baseBranch: 'master',
+      baseCommit: '0123456789abcdef0123456789abcdef01234567',
+      resumed: false,
+    });
+  });
+  socket.on('run:delegate', (payload) => {
+    delegated.push(payload);
+    socket.emit('runner:runEvent', {
+      runId: payload.runId,
+      type: 'status',
+      payload: { status: 'running' },
+    });
+  });
+  await waitUntil('runner registration to become authoritative', async () => {
+    const status = await request(`${API_BASE}/api/me/desktop-runner`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    return status.ok && status.data.online;
+  });
+  return { socket, delegated };
+}
+
+async function waitUntil(label, predicate, timeout = 10_000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    const value = await predicate();
+    if (value) return value;
+    await sleep(50);
+  }
+  throw new Error(`timed out waiting for ${label}`);
+}
+
 let failures = 0;
 function check(label, condition) {
   if (condition) console.log(`[mission-e2e] OK  ${label}`);
@@ -79,7 +135,9 @@ async function main() {
     });
     const solIdentity = await must(`${API_BASE}/api/vaults/${vault.id}/vault-agents`, {
       method: 'PUT', headers: owner.auth,
-      body: JSON.stringify({ agentId: 'codex', displayName: 'Sol', mention: 'sol', model: 'gpt-5.6-sol' }),
+      body: JSON.stringify({
+        agentId: 'codex', displayName: 'Sol', mention: 'sol', model: 'gpt-5.6-sol', cwd: root,
+      }),
     });
     const terraIdentity = await must(`${API_BASE}/api/vaults/${vault.id}/vault-agents`, {
       method: 'PUT', headers: owner.auth,
@@ -244,6 +302,92 @@ async function main() {
     )));
     const archive = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/missions`, { headers: agentAuth });
     check('mission archive is independent of the transcript window', archive.missions?.some((item) => item.id === mission.id));
+
+    const runner = await runnerFor(owner.token);
+    const parallel = [];
+    for (const label of ['alpha', 'beta']) {
+      const rootId = `sys-parallel-${label}-${stamp}`;
+      await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/messages`, {
+        method: 'POST', headers: agentAuth,
+        body: JSON.stringify({
+          id: rootId, channelId: channel.id, author: 'Sol', registrationId: sol.id,
+          body: `Parallel ${label}`, createdAt: new Date().toISOString(),
+        }),
+      });
+      const { mission: parallelMission } = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/missions`, {
+        method: 'POST', headers: agentAuth,
+        body: JSON.stringify({
+          rootMessageId: rootId,
+          coordinatorRegistrationId: sol.id,
+          title: `Parallel ${label}`,
+          objective: `Execute parallel ${label}`,
+          controlPlane: true,
+        }),
+      });
+      check(`control-plane ${label} starts without a coordinator task`, parallelMission.tasks?.length === 0);
+      const delegatedTask = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/missions/${parallelMission.id}/tasks`, {
+        method: 'POST', headers: agentAuth,
+        body: JSON.stringify({
+          coordinatorRegistrationId: sol.id,
+          title: `Anonymous ${label}`,
+          assignee: '@sol',
+          prompt: `SYSTEM_PARALLEL_${label.toUpperCase()}`,
+          anonymous: true,
+        }),
+      });
+      parallel.push({ mission: parallelMission, task: delegatedTask.task });
+    }
+
+    const workers = [];
+    for (const { mission: parallelMission } of parallel) {
+      let observedMission;
+      let running;
+      try {
+        running = await waitUntil(`running worker for ${parallelMission.title}`, async () => {
+          const result = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/missions/${parallelMission.id}`, { headers: agentAuth });
+          observedMission = result.mission;
+          const taskState = result.mission.tasks?.[0];
+          return taskState?.status === 'running' && taskState.runId ? taskState : null;
+        });
+      } catch (error) {
+        throw new Error(`${error.message}; last mission state: ${JSON.stringify(observedMission)}`);
+      }
+      workers.push(running);
+      check(`parallel mission ${parallelMission.title} reaches running`, true);
+    }
+    check('independent anonymous missions dispatch concurrently', new Set(workers.map((run) => run.runId)).size === 2);
+    check('each worker is bound to its own isolated workspace', workers.every((run) => (
+      run.workItemId && String(run.worktreePath).startsWith('/tmp/mission-e2e-')
+    )));
+
+    for (const worker of workers) {
+      runner.socket.emit('runner:runEvent', {
+        runId: worker.runId,
+        type: 'status',
+        payload: { status: 'completed', summary: `Produced by run ${worker.runId}` },
+      });
+    }
+
+    for (const { mission: parallelMission } of parallel) {
+      const reviewing = await waitUntil(`review wake for ${parallelMission.title}`, async () => {
+        const result = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/missions/${parallelMission.id}`, { headers: agentAuth });
+        return result.mission.status === 'reviewing' ? result.mission : null;
+      });
+      check(`parallel mission ${parallelMission.title} reconciles run evidence`, (
+        reviewing.tasks?.[0]?.verification?.startsWith('Produced by run ')
+        && reviewing.tasks?.[0]?.baseCommit === '0123456789abcdef0123456789abcdef01234567'
+      ));
+      const finishedParallel = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/missions/${parallelMission.id}/finish`, {
+        method: 'POST', headers: agentAuth,
+        body: JSON.stringify({
+          coordinatorRegistrationId: sol.id,
+          status: 'completed',
+          summary: 'Parallel worker evidence reconciled.',
+        }),
+      });
+      check(`parallel mission ${parallelMission.title} finishes after review`, finishedParallel.mission?.status === 'completed');
+    }
+    runner.socket.disconnect();
 
     ownerSocket.socket.disconnect();
     guestSocket.socket.disconnect();

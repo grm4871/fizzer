@@ -385,18 +385,19 @@ defmodule Cascade.Missions.Store do
   end
 
   def link_dispatch(task_id, dispatch_id) do
-    case task_row(task_id) do
-      nil ->
-        {:error, "Mission task not found"}
+    SQL.transaction(fn ->
+      task = task_row(task_id) || raise "Mission task not found"
 
-      task ->
-        changed =
-          SQL.changes(
-            "UPDATE chat_mission_tasks SET dispatch_id=COALESCE(dispatch_id,?),updated_at=datetime('now') WHERE id=? AND dispatch_id IS NULL",
+      case {task.dispatch_id, task_for_dispatch(dispatch_id)} do
+        {^dispatch_id, %{id: ^task_id}} ->
+          refresh!(task.mission_id)
+
+        {nil, nil} ->
+          SQL.exec(
+            "UPDATE chat_mission_tasks SET dispatch_id=?,updated_at=datetime('now') WHERE id=? AND dispatch_id IS NULL",
             [dispatch_id, task_id]
           )
 
-        if changed > 0 do
           record_event(task.mission_id, %{
             task_id: task.id,
             kind: "task_dispatched",
@@ -405,10 +406,19 @@ defmodule Cascade.Missions.Store do
             to_status: task.status,
             attempt: task.attempt
           })
-        end
 
-        refresh(task.mission_id)
-    end
+          refresh!(task.mission_id)
+
+        {_current, %{id: owner_id}} ->
+          raise "Dispatch already belongs to mission task #{owner_id}"
+
+        {_current, nil} ->
+          raise "Mission task already has a different dispatch"
+      end
+    end)
+    |> then(&{:ok, &1})
+  rescue
+    error -> {:error, Exception.message(error)}
   end
 
   def attach_run(dispatch_id, run_id) when is_integer(run_id) and run_id > 0 do
@@ -595,6 +605,24 @@ defmodule Cascade.Missions.Store do
               raise "Mission still has active workers"
             end
 
+            if status == "completed" and
+                 not Enum.any?(tasks, fn task ->
+                   task.status == "completed" and
+                     (completion_evidence_ready?(task, mission) or
+                        current_primary?(task, mission, current_run_id))
+                 end) do
+              raise "Mission has no completed worker evidence"
+            end
+
+            if status == "completed" and
+                 Enum.any?(tasks, fn task ->
+                   task.status == "completed" and
+                     not completion_evidence_ready?(task, mission) and
+                     not current_primary?(task, mission, current_run_id)
+                 end) do
+              raise "Mission task evidence is incomplete"
+            end
+
             SQL.exec(
               "UPDATE chat_missions SET status=?,summary=?,wake_sent=1,updated_at=datetime('now') WHERE id=?",
               [status, summary, mission.id]
@@ -679,10 +707,12 @@ defmodule Cascade.Missions.Store do
 
         result =
           SQL.transaction(fn ->
-            unless task.status in @terminal_task_statuses do
-              next = if status == "completed", do: "completed", else: status
-              cleaned = clean(summary, 4_000)
+            next = if status == "completed", do: "completed", else: status
+            cleaned = clean(summary, 4_000)
 
+            if task.status not in @terminal_task_statuses or
+                 (next == "completed" and task.status == "completed" and
+                    task.summary != cleaned) do
               SQL.exec(
                 "UPDATE chat_mission_tasks SET status=?,summary=?,updated_at=datetime('now') WHERE id=?",
                 [next, cleaned, task.id]
@@ -702,7 +732,13 @@ defmodule Cascade.Missions.Store do
 
             mission = mission_row(task.mission_id)
             settled = task_row(task.id)
-            sync_work_item(mission.created_by, mission, settled, run_id: run_id, release: true)
+
+            sync_work_item(mission.created_by, mission, settled,
+              run_id: run_id,
+              release: true,
+              verification: if(settled.status == "completed", do: settled.summary, else: nil)
+            )
+
             update = refresh!(task.mission_id)
             {:ok, wake} = claim_wake(task.mission_id)
             %{update: wake || update, wake: wake}
@@ -829,7 +865,7 @@ defmodule Cascade.Missions.Store do
   defp derive_status(%{status: "completed"}, _tasks), do: "completed"
   defp derive_status(_mission, []), do: "active"
 
-  defp derive_status(_mission, tasks) do
+  defp derive_status(mission, tasks) do
     by_id = Map.new(tasks, &{&1.id, &1})
 
     cond do
@@ -840,7 +876,11 @@ defmodule Cascade.Missions.Store do
         "attention"
 
       Enum.all?(tasks, &(&1.status in ~w(completed canceled))) ->
-        "reviewing"
+        completed = Enum.filter(tasks, &(&1.status == "completed"))
+
+        if completed != [] and Enum.all?(completed, &completion_evidence_ready?(&1, mission)),
+          do: "reviewing",
+          else: "attention"
 
       true ->
         "active"
@@ -1044,11 +1084,12 @@ defmodule Cascade.Missions.Store do
     end
 
     reset = Keyword.get(opts, :reset, false)
+    verification = Keyword.get(opts, :verification)
 
     WorkItems.update(user_id, item.id, %{
       status: task_to_work_item_status(task.status),
       summary: if(reset, do: "", else: nonblank(task.summary, item.summary)),
-      verification: if(reset, do: "", else: item.verification),
+      verification: if(reset, do: "", else: nonblank(verification, item.verification)),
       stopReason: if(reset, do: "", else: item.stopReason),
       assigneeRegistrationId: task.assignee_registration_id
     })
@@ -1069,10 +1110,49 @@ defmodule Cascade.Missions.Store do
   defp task_to_work_item_status("canceled"), do: "canceled"
   defp task_to_work_item_status(_), do: "open"
 
+  defp completion_evidence_ready?(%{status: status}, _mission) when status != "completed",
+    do: true
+
+  defp completion_evidence_ready?(task, mission) do
+    run_produced =
+      is_integer(task.run_id) and task.run_id > 0 and task.dispatch_id not in [nil, ""] and
+        SQL.one(
+          "SELECT COUNT(*) FROM runs WHERE id=? AND chat_dispatch_id=? AND status='completed'",
+          [task.run_id, task.dispatch_id]
+        ) == [1]
+
+    primary =
+      (mission && task.title == "Primary task") and
+        task.assignee_registration_id == mission.coordinator_registration_id
+
+    workspace_bound =
+      case task.work_item_id do
+        nil ->
+          false
+
+        "" ->
+          false
+
+        work_item_id ->
+          SQL.one(
+            "SELECT COUNT(*) FROM work_items WHERE id=? AND base_commit<>'' AND worktree_path<>'' AND verification<>''",
+            [work_item_id]
+          ) == [1]
+      end
+
+    run_produced and task.summary not in [nil, ""] and (primary or workspace_bound)
+  end
+
+  defp current_primary?(task, mission, run_id) do
+    is_integer(run_id) and task.run_id == run_id and task.title == "Primary task" and
+      task.assignee_registration_id == mission.coordinator_registration_id
+  end
+
   defp maybe_bind_primary(update, user_id, channel_id, opts) do
     run_id = Keyword.get(opts, :current_run_id)
 
-    if Keyword.get(opts, :agent, false) and is_integer(run_id) and run_id > 0 do
+    if Keyword.get(opts, :agent, false) and not Keyword.get(opts, :control_plane, false) and
+         is_integer(run_id) and run_id > 0 do
       mission = mission_row(update.mission.id)
 
       active =
@@ -1087,25 +1167,29 @@ defmodule Cascade.Missions.Store do
 
       case active do
         [dispatch_id] ->
-          {:ok, added} =
-            add_task(
-              user_id,
-              channel_id,
-              mission.id,
-              %{
-                coordinatorRegistrationId: mission.coordinator_registration_id,
-                title: "Primary task",
-                assignee: mission.coordinator_registration_id,
-                prompt: update.mission.objective
-              },
-              primary: true
-            )
+          if task_for_dispatch(dispatch_id) do
+            {:ok, update}
+          else
+            {:ok, added} =
+              add_task(
+                user_id,
+                channel_id,
+                mission.id,
+                %{
+                  coordinatorRegistrationId: mission.coordinator_registration_id,
+                  title: "Primary task",
+                  assignee: mission.coordinator_registration_id,
+                  prompt: update.mission.objective
+                },
+                primary: true
+              )
 
-          {:ok, linked} = link_dispatch(added.task.id, dispatch_id)
-
-          case attach_run(dispatch_id, run_id) do
-            {:ok, nil} -> {:ok, linked}
-            result -> result
+            with {:ok, linked} <- link_dispatch(added.task.id, dispatch_id) do
+              case attach_run(dispatch_id, run_id) do
+                {:ok, nil} -> {:ok, linked}
+                result -> result
+              end
+            end
           end
 
         nil ->
@@ -1397,6 +1481,13 @@ defmodule Cascade.Missions.Store do
 
   defp task_row(id) do
     SQL.one("SELECT #{@task_select} FROM chat_mission_tasks WHERE id=?", [id])
+    |> task_from_nullable_row()
+  end
+
+  defp task_for_dispatch(dispatch_id) when dispatch_id in [nil, ""], do: nil
+
+  defp task_for_dispatch(dispatch_id) do
+    SQL.one("SELECT #{@task_select} FROM chat_mission_tasks WHERE dispatch_id=?", [dispatch_id])
     |> task_from_nullable_row()
   end
 

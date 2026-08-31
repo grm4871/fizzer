@@ -3,6 +3,7 @@ defmodule CascadeWeb.MissionRouter do
 
   use Plug.Router
   import Plug.Conn
+  require Logger
 
   alias Cascade.Chat.Events
   alias Cascade.Missions.{Dispatches, Scheduler, Store}
@@ -34,11 +35,15 @@ defmodule CascadeWeb.MissionRouter do
         rootMessageId: string_body(conn, "rootMessageId"),
         coordinatorRegistrationId: string_body(conn, "coordinatorRegistrationId"),
         title: string_body(conn, "title"),
-        objective: string_body(conn, "objective")
+        objective: string_body(conn, "objective"),
+        controlPlane: js_truthy?(body(conn, "controlPlane", false))
       }
 
       opts =
-        [agent: conn.assigns.auth_access == "agent"] ++
+        [
+          agent: conn.assigns.auth_access == "agent",
+          control_plane: input.controlPlane
+        ] ++
           case run_id(conn) do
             nil -> []
             id -> [current_run_id: id]
@@ -205,7 +210,25 @@ defmodule CascadeWeb.MissionRouter do
   end
 
   defp safe_schedule(mission_id, conn) do
-    {:ok, Scheduler.schedule(mission_id, events: callback(conn, :events))}
+    scheduled = Scheduler.schedule(mission_id, events: callback(conn, :events))
+
+    Enum.each(scheduled.dispatches, fn item ->
+      update = item.update
+
+      case CascadeWeb.OrchestrationController.claim_mission_dispatch(
+             update.createdBy,
+             update.channelId,
+             item.dispatch.id
+           ) do
+        {:ok, _run} ->
+          :ok
+
+        {:retry, reason} ->
+          Logger.warning("mission dispatch queued for retry: #{inspect(reason)}")
+      end
+    end)
+
+    {:ok, scheduled}
   rescue
     error -> {:error, Exception.message(error)}
   end

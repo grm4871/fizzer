@@ -49,7 +49,7 @@ defmodule Cascade.Runs.ChatProjection do
       end
 
     target = target(run_id, owner_id) || restore_target(run_id, owner_id)
-    projection = content(state, target && target.final_reply_only)
+    projection = content(state, not is_nil(target) and target.final_reply_only)
     persisted = cursor.persisted
     fingerprint = persist_fingerprint(projection)
 

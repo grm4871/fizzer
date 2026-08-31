@@ -193,10 +193,10 @@ async function getToken(url, args, config) {
   return body.token;
 }
 
-async function api(url, token, method, path, body, { omitRunId = false } = {}) {
+async function api(url, token, method, path, body) {
   const headers = { authorization: `Bearer ${token}` };
   const runId = String(process.env.CASCADE_RUN_ID || '').trim();
-  if (runId && !omitRunId) headers['x-cascade-run-id'] = runId;
+  if (runId) headers['x-cascade-run-id'] = runId;
   if (body !== undefined) headers['content-type'] = 'application/json';
   const res = await fetch(`${url}${path}`, {
     method,
@@ -500,8 +500,8 @@ async function main() {
           coordinatorRegistrationId: registrationId,
           title,
           objective: String(args.objective || '').trim(),
+          controlPlane: args['control-plane'] === true,
         },
-        { omitRunId: args['control-plane'] === true },
       );
       if (args.json) process.stdout.write(JSON.stringify(result.mission) + '\n');
       else process.stdout.write(`mission ${result.mission.id} started: ${result.mission.title}\n`);

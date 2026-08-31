@@ -264,12 +264,20 @@ defmodule Cascade.Missions.MissionStateTest do
         title: "Runner settlement"
       })
 
-    {:ok, _task} =
+    {:ok, added} =
       Store.add_task(ctx.user.id, ctx.channel.id, created.mission.id, %{
         coordinatorRegistrationId: ctx.coordinator.id,
         title: "Finish from runner",
         assignee: ctx.worker.id
       })
+
+    assert {:ok, _bound} =
+             Cascade.WorkItems.bind_workspace(ctx.user.id, added.task.workItemId, %{
+               repository: "/repo/#{ctx.suffix}",
+               baseCommit: String.duplicate("a", 40),
+               branch: added.task.branch,
+               worktreePath: "/work/#{ctx.suffix}"
+             })
 
     scheduled = Scheduler.schedule(created.mission.id)
     assert [%{dispatch: dispatch}] = scheduled.dispatches
@@ -313,6 +321,147 @@ defmodule Cascade.Missions.MissionStateTest do
              pending,
              &String.starts_with?(&1.messageId, "sys-mission-#{created.mission.id}-")
            )
+  end
+
+  test "two anonymous missions run concurrently and wake only from bound worker evidence", ctx do
+    {:ok, second_root} =
+      Messages.create(ctx.user, ctx.vault.id, ctx.channel.id, %{
+        id: "parallel-root-#{ctx.suffix}",
+        body: "Run independently.",
+        createdAt: "2026-08-10T12:01:00.000Z"
+      })
+
+    {:ok, first_mission} = mission(ctx, "Parallel A")
+
+    {:ok, second_mission} =
+      Store.create(ctx.user.id, ctx.vault.id, ctx.channel.id, %{
+        rootMessageId: second_root.id,
+        coordinatorRegistrationId: ctx.coordinator.id,
+        title: "Parallel B"
+      })
+
+    task_input = fn title ->
+      %{
+        coordinatorRegistrationId: ctx.coordinator.id,
+        title: title,
+        assignee: ctx.coordinator.id,
+        anonymous: true
+      }
+    end
+
+    {:ok, first} =
+      Store.add_task(
+        ctx.user.id,
+        ctx.channel.id,
+        first_mission.mission.id,
+        task_input.("Worker A")
+      )
+
+    {:ok, second} =
+      Store.add_task(
+        ctx.user.id,
+        ctx.channel.id,
+        second_mission.mission.id,
+        task_input.("Worker B")
+      )
+
+    scheduled = Scheduler.schedule()
+    dispatch_by_task = Map.new(scheduled.dispatches, &{&1.message.missionTaskId, &1.dispatch})
+    assert Map.has_key?(dispatch_by_task, first.task.id)
+    assert Map.has_key?(dispatch_by_task, second.task.id)
+
+    runs =
+      for task <- [first.task, second.task] do
+        assert {:ok, _bound} =
+                 Cascade.WorkItems.bind_workspace(ctx.user.id, task.workItemId, %{
+                   repository: "/repo/#{ctx.suffix}",
+                   baseCommit: String.duplicate("b", 40),
+                   branch: task.branch,
+                   worktreePath: "/work/#{task.id}"
+                 })
+
+        dispatch = Map.fetch!(dispatch_by_task, task.id)
+
+        assert {:ok, run} =
+                 RunStore.start(ctx.vault.id, nil, task.title, "codex",
+                   conversation_id: "parallel-#{task.id}",
+                   chat_dispatch_id: dispatch.id
+                 )
+
+        assert :ok = Dispatches.attach_run(dispatch.id, run.id)
+        assert {:ok, running} = Store.attach_run(dispatch.id, run.id)
+        assert Enum.find(running.mission.tasks, &(&1.id == task.id)).status == "running"
+        {task, run}
+      end
+
+    [{first_task, first_run}, {second_task, second_run}] = runs
+    assert :ok = RunStore.finish(first_run.id, "completed", "Evidence A")
+    assert {:ok, first_done} = Scheduler.settle_run(first_run.id, "completed", "Evidence A")
+    assert first_done.settled.update.mission.status == "reviewing"
+
+    assert {:ok, still_running} =
+             Store.get(ctx.user.id, ctx.channel.id, second_mission.mission.id)
+
+    assert Enum.find(still_running.mission.tasks, &(&1.id == second_task.id)).status == "running"
+    assert still_running.mission.status == "active"
+
+    assert :ok = RunStore.finish(second_run.id, "completed", "Evidence B")
+    assert {:ok, second_done} = Scheduler.settle_run(second_run.id, "completed", "Evidence B")
+    assert second_done.settled.update.mission.status == "reviewing"
+    assert second_done.wakeDispatch.dispatch.runId == nil
+
+    for {task, _run} <- [{first_task, first_run}, {second_task, second_run}] do
+      {:ok, update} =
+        Store.get(
+          ctx.user.id,
+          ctx.channel.id,
+          if(task.id == first_task.id,
+            do: first_mission.mission.id,
+            else: second_mission.mission.id
+          )
+        )
+
+      [projected] = update.mission.tasks
+      assert projected.baseCommit == String.duplicate("b", 40)
+      assert projected.verification in ["Evidence A", "Evidence B"]
+    end
+  end
+
+  test "manual completion without a bound worker run cannot enter review or finish", ctx do
+    {:ok, created} = mission(ctx, "No borrowed evidence")
+    {:ok, added} = task(ctx, created.mission.id, "Pending worker")
+
+    assert {:ok, updated} =
+             Store.update_task(ctx.user.id, ctx.channel.id, added.task.id, %{
+               status: "completed",
+               summary: "Unrelated preexisting commit deadbeef"
+             })
+
+    assert updated.mission.status == "attention"
+
+    assert {:error, "Mission has no completed worker evidence"} =
+             Store.finish(ctx.user.id, ctx.channel.id, created.mission.id, %{
+               coordinatorRegistrationId: ctx.coordinator.id,
+               status: "completed",
+               summary: "Looks done"
+             })
+  end
+
+  test "canceling every task does not manufacture review or completed evidence", ctx do
+    {:ok, created} = mission(ctx, "Canceled without evidence")
+    {:ok, added} = task(ctx, created.mission.id, "Never ran")
+
+    assert {:ok, update} =
+             Store.update_task(ctx.user.id, ctx.channel.id, added.task.id, %{status: "canceled"})
+
+    assert update.mission.status == "attention"
+
+    assert {:error, "Mission has no completed worker evidence"} =
+             Store.finish(ctx.user.id, ctx.channel.id, created.mission.id, %{
+               coordinatorRegistrationId: ctx.coordinator.id,
+               status: "completed",
+               summary: "Nothing ran"
+             })
   end
 
   test "completion cannot cover active work and cancellation removes pending dispatches", ctx do
