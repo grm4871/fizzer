@@ -133,6 +133,7 @@ export type AgentPromptRegistration = {
   displayName: string;
   contextPrompt: string;
   orchestrator?: boolean;
+  finalReplyOnly?: boolean;
 };
 
 /**
@@ -210,6 +211,9 @@ export function formatAgentChatPrompt(
   const coordinatorContinuationGuidance = registration.orchestrator
     ? ` Continue coordinating: handle clear work directly; clarify only a user-requested mission/kanban or a genuinely material ambiguity.${ORCHESTRATOR_VIRTUAL_WORKERS} Keep replies short. Ship only after \`npm run build\` + green Deploy; open chat images via \`cascade-chat attachment\` (never “cannot see”).`
     : '';
+  const finalReplyGuidance = registration.finalReplyOnly
+    ? ' Write one normal group-chat message, never a work log: no planning, status, reasoning, tool narration, or generic agreement. Respond to concrete claims in the triggering message. If you have no new evidence, correction, question, or decision, output exactly [no-reply].'
+    : '';
 
   // Keep persistence available without turning every task into extra tool turns.
   // Cold-start injection supplies the fuller policy only when a new session needs it.
@@ -219,18 +223,18 @@ export function formatAgentChatPrompt(
 
   if (continuation) {
     if (compactNativeCli) {
-      const header = `Cascade #${channelName}: you are @${selfHandle}, replying to ${triggeringAuthor}. Complete and verify the request. ${CHAT_REPLY_BREVITY} Keep progress in the run trace.${coordinatorContinuationGuidance}`;
+      const header = `Cascade #${channelName}: you are @${selfHandle}, replying to ${triggeringAuthor}. Complete and verify the request. ${CHAT_REPLY_BREVITY} Keep progress in the run trace.${finalReplyGuidance}${coordinatorContinuationGuidance}`;
       return `${header}\n\n${request}`;
     }
-    const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. Finish the request with judgment; don't over-research. ${CHAT_REPLY_BREVITY} Keep progress in the run trace; do not post separate chat messages.${coordinatorContinuationGuidance}`;
+    const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. Finish the request with judgment; don't over-research. ${CHAT_REPLY_BREVITY} Keep progress in the run trace; do not post separate chat messages.${finalReplyGuidance}${coordinatorContinuationGuidance}`;
     return `${header}\n\n${request}`;
   }
 
   const channelNote = registration.contextPrompt ? ` Channel note: ${registration.contextPrompt}` : '';
   if (compactNativeCli) {
-    const header = `Cascade #${channelName}: you are @${selfHandle}, replying to ${triggeringAuthor}. Complete and verify the request. ${CHAT_REPLY_BREVITY} Keep progress in the run trace.${coordinatorGuidance}${channelNote}`;
+    const header = `Cascade #${channelName}: you are @${selfHandle}, replying to ${triggeringAuthor}. Complete and verify the request. ${CHAT_REPLY_BREVITY} Keep progress in the run trace.${finalReplyGuidance}${coordinatorGuidance}${channelNote}`;
     return `${header}\n\n${request}`;
   }
-  const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. Use recent context; fetch more history only when needed. Complete requested work and verification before replying.${scratchpadGuidance} ${CHAT_REPLY_BREVITY} Keep progress in the run trace; do not post separate chat messages.${coordinatorGuidance}${channelNote}`;
+  const header = `You are ${selfName} (@${selfHandle}) in #${channelName}, replying to ${triggeringAuthor}. Use recent context; fetch more history only when needed. Complete requested work and verification before replying.${scratchpadGuidance} ${CHAT_REPLY_BREVITY} Keep progress in the run trace; do not post separate chat messages.${finalReplyGuidance}${coordinatorGuidance}${channelNote}`;
   return `${header}\n\n${request}`;
 }

@@ -3,6 +3,7 @@ import {
   applyRemoteChatMessage,
   captureChatMessageSnapshotBaseline,
   honestAgentChatBody,
+  isNoReplyAgentChatBody,
   mergeRemoteChatMessage,
   reconcileChatMessageSnapshot,
   sortChatMessages,
@@ -97,6 +98,13 @@ describe('honestAgentChatBody', () => {
       { suppressChatBody: true },
     )).toBe('');
   });
+  it('recognizes only explicit no-reply sentinels', () => {
+    expect(isNoReplyAgentChatBody('[no-reply]')).toBe(true);
+    expect(isNoReplyAgentChatBody('<no-reply/>')).toBe(true);
+    expect(isNoReplyAgentChatBody('NO_REPLY')).toBe(true);
+    expect(isNoReplyAgentChatBody('No reply is needed because I agree.')).toBe(false);
+  });
+
 });
 
 describe('mergeRemoteChatMessage media hydration', () => {

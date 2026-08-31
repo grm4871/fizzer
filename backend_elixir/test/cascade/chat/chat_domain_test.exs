@@ -55,6 +55,7 @@ defmodule Cascade.ChatDomainTest do
       ["orchestrator", "INTEGER", 1, "0", 0],
       ["pingable_by_others", "INTEGER", 1, "0", 0],
       ["ambient_group_chat", "INTEGER", 1, "0", 0],
+      ["final_reply_only", "INTEGER", 1, "0", 0],
       ["yolo", "INTEGER", 1, "0", 0],
       ["conversation_id", "TEXT", 1, "''", 0],
       ["created_at", "TEXT", 1, "datetime('now')", 0],
@@ -563,11 +564,13 @@ defmodule Cascade.ChatDomainTest do
              Agents.add_to_channel(1, home.id, channel.id, network.id, %{
                mention: "room-sol",
                model: "room-model",
-               pingableByOthers: false
+               pingableByOthers: false,
+               finalReplyOnly: true
              })
 
     assert member.mention == "sol"
     refute member.pingableByOthers
+    assert member.finalReplyOnly
 
     assert {:ok, renamed} =
              Agents.upsert_identity(1, home.id, %{

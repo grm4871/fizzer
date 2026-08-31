@@ -214,6 +214,10 @@ export function honestAgentChatBody(
   // (same path as dual-post suppress after cascade-chat send).
   return '';
 }
+/** Deliberate silence from a final-reply-only agent. The shell is removed and cannot fan out. */
+export function isNoReplyAgentChatBody(body: string): boolean {
+  return /^(?:\[no-reply\]|<no-reply\s*\/?>|NO_REPLY)$/i.test(body.trim());
+}
 
 /** Runner/protocol placeholders — not a real assistant answer. Never surface these. */
 export function isGenericAgentRunSummary(summary: string): boolean {

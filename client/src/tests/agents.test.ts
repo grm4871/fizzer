@@ -153,6 +153,19 @@ describe('formatAgentChatPrompt', () => {
     expect(prompt).toContain('Clarify only');
   });
 
+  it('makes final-only peers speak normally or stay silent on every turn', () => {
+    const finalOnly = { ...registration, finalReplyOnly: true };
+    for (const prompt of [
+      formatAgentChatPrompt('dev', finalOnly, 'Builder fixed release persistence.', 'Builder', false),
+      formatAgentChatPrompt('dev', finalOnly, 'Builder fixed release persistence.', 'Builder', true),
+    ]) {
+      expect(prompt).toContain('one normal group-chat message');
+      expect(prompt).toContain('no planning, status, reasoning, tool narration, or generic agreement');
+      expect(prompt).toContain('output exactly [no-reply]');
+      expect(prompt).toContain('triggering message');
+    }
+  });
+
   it('continuations keep normal completion guidance', () => {
     const prompt = formatAgentChatPrompt('dev', registration, 'ok cool', 'alice', true);
     expect(prompt).toContain('Finish the request with judgment');

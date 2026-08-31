@@ -40,6 +40,7 @@ defmodule Cascade.Chat.Schema do
     {"orchestrator", "INTEGER NOT NULL DEFAULT 0"},
     {"pingable_by_others", "INTEGER NOT NULL DEFAULT 0"},
     {"ambient_group_chat", "INTEGER NOT NULL DEFAULT 0"},
+    {"final_reply_only", "INTEGER NOT NULL DEFAULT 0"},
     {"yolo", "INTEGER NOT NULL DEFAULT 0"},
     {"conversation_id", "TEXT NOT NULL DEFAULT ''"},
     {"created_at", "TEXT"},
@@ -106,11 +107,12 @@ defmodule Cascade.Chat.Schema do
       [14, "orchestrator", "INTEGER", 1, "0", 0],
       [15, "pingable_by_others", "INTEGER", 1, "0", 0],
       [16, "ambient_group_chat", "INTEGER", 1, "0", 0],
-      [17, "yolo", "INTEGER", 1, "0", 0],
-      [18, "conversation_id", "TEXT", 1, "''", 0],
-      [19, "created_at", "TEXT", 1, "datetime('now')", 0],
-      [20, "updated_at", "TEXT", 1, "datetime('now')", 0],
-      [21, "vault_agent_id", "TEXT", 1, "''", 0]
+      [17, "final_reply_only", "INTEGER", 1, "0", 0],
+      [18, "yolo", "INTEGER", 1, "0", 0],
+      [19, "conversation_id", "TEXT", 1, "''", 0],
+      [20, "created_at", "TEXT", 1, "datetime('now')", 0],
+      [21, "updated_at", "TEXT", 1, "datetime('now')", 0],
+      [22, "vault_agent_id", "TEXT", 1, "''", 0]
     ],
     "chat_channel_links" => [
       [0, "local_channel_id", "TEXT", 0, nil, 1],
@@ -214,7 +216,7 @@ defmodule Cascade.Chat.Schema do
         context_prompt TEXT NOT NULL DEFAULT '', taggable_by_agents INTEGER NOT NULL DEFAULT 0,
         reply_to_every_message INTEGER NOT NULL DEFAULT 0, orchestrator INTEGER NOT NULL DEFAULT 0,
         pingable_by_others INTEGER NOT NULL DEFAULT 0, ambient_group_chat INTEGER NOT NULL DEFAULT 0,
-        yolo INTEGER NOT NULL DEFAULT 0,
+        final_reply_only INTEGER NOT NULL DEFAULT 0, yolo INTEGER NOT NULL DEFAULT 0,
         conversation_id TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT (datetime('now')),
         updated_at TEXT NOT NULL DEFAULT (datetime('now')), vault_agent_id TEXT NOT NULL DEFAULT ''
       )
@@ -364,13 +366,13 @@ defmodule Cascade.Chat.Schema do
         context_prompt TEXT NOT NULL DEFAULT '', taggable_by_agents INTEGER NOT NULL DEFAULT 0,
         reply_to_every_message INTEGER NOT NULL DEFAULT 0, orchestrator INTEGER NOT NULL DEFAULT 0,
         pingable_by_others INTEGER NOT NULL DEFAULT 0, ambient_group_chat INTEGER NOT NULL DEFAULT 0,
-        yolo INTEGER NOT NULL DEFAULT 0,
+        final_reply_only INTEGER NOT NULL DEFAULT 0, yolo INTEGER NOT NULL DEFAULT 0,
         conversation_id TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT (datetime('now')),
         updated_at TEXT NOT NULL DEFAULT (datetime('now')), vault_agent_id TEXT NOT NULL DEFAULT ''
       )
       """,
-      ~w(id channel_id vault_id agent_id display_name avatar_url mention model reasoning_effort priority_service_tier cwd context_prompt taggable_by_agents reply_to_every_message orchestrator pingable_by_others ambient_group_chat yolo conversation_id created_at updated_at vault_agent_id),
-      "id,channel_id,vault_id,COALESCE(agent_id,'agent'),COALESCE(display_name,''),COALESCE(avatar_url,''),COALESCE(mention,''),COALESCE(model,''),COALESCE(reasoning_effort,''),COALESCE(priority_service_tier,0),COALESCE(cwd,''),COALESCE(context_prompt,''),COALESCE(taggable_by_agents,0),COALESCE(reply_to_every_message,0),COALESCE(orchestrator,0),COALESCE(pingable_by_others,0),COALESCE(ambient_group_chat,0),COALESCE(yolo,0),COALESCE(conversation_id,''),COALESCE(created_at,datetime('now')),COALESCE(updated_at,datetime('now')),COALESCE(vault_agent_id,'')"
+      ~w(id channel_id vault_id agent_id display_name avatar_url mention model reasoning_effort priority_service_tier cwd context_prompt taggable_by_agents reply_to_every_message orchestrator pingable_by_others ambient_group_chat final_reply_only yolo conversation_id created_at updated_at vault_agent_id),
+      "id,channel_id,vault_id,COALESCE(agent_id,'agent'),COALESCE(display_name,''),COALESCE(avatar_url,''),COALESCE(mention,''),COALESCE(model,''),COALESCE(reasoning_effort,''),COALESCE(priority_service_tier,0),COALESCE(cwd,''),COALESCE(context_prompt,''),COALESCE(taggable_by_agents,0),COALESCE(reply_to_every_message,0),COALESCE(orchestrator,0),COALESCE(pingable_by_others,0),COALESCE(ambient_group_chat,0),COALESCE(final_reply_only,0),COALESCE(yolo,0),COALESCE(conversation_id,''),COALESCE(created_at,datetime('now')),COALESCE(updated_at,datetime('now')),COALESCE(vault_agent_id,'')"
     )
   end
 

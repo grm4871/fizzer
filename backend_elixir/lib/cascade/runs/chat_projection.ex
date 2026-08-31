@@ -16,20 +16,20 @@ defmodule Cascade.Runs.ChatProjection do
   @harness_max 512_000
   @cursor_table :cascade_chat_projection
 
-  def build(events) do
-    {content, _cursor} = project(events)
+  def build(events, final_reply_only \\ false) do
+    {content, _cursor} = project(events, nil, final_reply_only)
     content
   end
 
   @doc """
-  Fold `events` onto an optional cursor from a previous `project/2` call.
+  Fold `events` onto an optional cursor from a previous `project/3` call.
 
-  `build/1` is this from an empty cursor. Live sync keeps the cursor so each
+  `build/2` is this from an empty cursor. Live sync keeps the cursor so each
   tick only applies `seq > last_seq` instead of rereading the whole log.
   """
-  def project(events, cursor \\ nil) do
+  def project(events, cursor \\ nil, final_reply_only \\ false) do
     {state, last_seq} = advance(cursor || new_cursor(), events)
-    {content(state), %{state: state, last_seq: last_seq}}
+    {content(state, final_reply_only), %{state: state, last_seq: last_seq}}
   end
 
   def sync(run_id, owner_id \\ nil) when is_integer(run_id) do
@@ -48,8 +48,8 @@ defmodule Cascade.Runs.ChatProjection do
           advance(cursor, events)
       end
 
-    projection = content(state)
     target = target(run_id, owner_id) || restore_target(run_id, owner_id)
+    projection = content(state, target && target.final_reply_only)
     persisted = cursor.persisted
     fingerprint = persist_fingerprint(projection)
 
@@ -88,6 +88,7 @@ defmodule Cascade.Runs.ChatProjection do
   defp empty_state do
     %{
       assistant_text: "",
+      latest_assistant_text: "",
       blocks: [],
       harness_log: "",
       status: "running",
@@ -184,6 +185,7 @@ defmodule Cascade.Runs.ChatProjection do
     %{
       state
       | assistant_text: state.assistant_text <> text,
+        latest_assistant_text: if(trim(text) == "", do: state.latest_assistant_text, else: text),
         blocks: append_blocks(state.blocks, normalize_blocks(content)),
         visible_text:
           state.visible_text or (value(payload, "chatVisible") == true and trim(text) != "")
@@ -250,14 +252,20 @@ defmodule Cascade.Runs.ChatProjection do
 
   defp fold(state, _type, _payload), do: state
 
-  defp content(state) do
-    text = trim(state.assistant_text)
+  defp content(state, final_reply_only) do
+    text =
+      if final_reply_only,
+        do: trim(state.latest_assistant_text),
+        else: trim(state.assistant_text)
+
     done = state.status != "running"
 
     body =
       cond do
         not done ->
-          if state.visible_text and text != "", do: text, else: "Thinking..."
+          if not final_reply_only and state.visible_text and text != "",
+            do: text,
+            else: "Thinking..."
 
         state.suppress_chat_body ->
           ""
@@ -281,9 +289,9 @@ defmodule Cascade.Runs.ChatProjection do
       end
 
     %{
-      body: body,
-      blocks: state.blocks,
-      harnessLog: state.harness_log,
+      body: if(final_reply_only and no_reply?(body), do: "", else: body),
+      blocks: if(final_reply_only, do: [], else: state.blocks),
+      harnessLog: if(final_reply_only, do: "", else: state.harness_log),
       status: state.status,
       terminal_status: state.terminal_status,
       done: done
@@ -292,10 +300,15 @@ defmodule Cascade.Runs.ChatProjection do
 
   defp target(run_id, owner_id) do
     case SQL.one(
-           "SELECT id,vault_id,channel_id,actor_user_id FROM chat_messages WHERE run_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1",
+           """
+           SELECT cm.id,cm.vault_id,cm.channel_id,cm.actor_user_id,COALESCE(m.final_reply_only,0)
+           FROM chat_messages cm
+           LEFT JOIN chat_agent_members m ON m.id=cm.registration_id
+           WHERE cm.run_id=? ORDER BY cm.created_at DESC,cm.rowid DESC LIMIT 1
+           """,
            [run_id]
          ) do
-      [message_id, source_vault_id, source_channel_id, actor_user_id] ->
+      [message_id, source_vault_id, source_channel_id, actor_user_id, final_reply_only] ->
         owner_id = owner_id || actor_user_id
 
         with owner when is_integer(owner) <- owner_id,
@@ -307,7 +320,8 @@ defmodule Cascade.Runs.ChatProjection do
             channel_id: route.localChannelId,
             source_vault_id: route.sourceVaultId,
             source_channel_id: route.sourceChannelId,
-            message_id: message_id
+            message_id: message_id,
+            final_reply_only: final_reply_only != 0
           }
         else
           _ -> nil
@@ -325,7 +339,7 @@ defmodule Cascade.Runs.ChatProjection do
     case SQL.one(
            """
            SELECT r.chat_dispatch_id,d.channel_id,m.id,m.display_name,m.agent_id,
-                  va.owner_user_id,n.vault_id
+                  va.owner_user_id,n.vault_id,m.final_reply_only
            FROM runs r
            JOIN chat_agent_dispatches d ON d.id=r.chat_dispatch_id
            JOIN chat_agent_members m ON m.id=d.registration_id AND m.channel_id=d.channel_id
@@ -342,7 +356,8 @@ defmodule Cascade.Runs.ChatProjection do
         display_name,
         agent_id,
         agent_owner_id,
-        source_vault_id
+        source_vault_id,
+        final_reply_only
       ] ->
         owner_id = owner_id || agent_owner_id
 
@@ -380,7 +395,8 @@ defmodule Cascade.Runs.ChatProjection do
             channel_id: route.localChannelId,
             source_vault_id: route.sourceVaultId,
             source_channel_id: route.sourceChannelId,
-            message_id: message_id
+            message_id: message_id,
+            final_reply_only: final_reply_only != 0
           }
         else
           _ -> nil
@@ -442,6 +458,10 @@ defmodule Cascade.Runs.ChatProjection do
       _ ->
         :error
     end
+  end
+
+  defp no_reply?(body) do
+    Regex.match?(~r/^(?:\[no-reply\]|<no-reply\s*\/?>|NO_REPLY)$/i, trim(body))
   end
 
   defp emit_message(target, message, dispatches) do

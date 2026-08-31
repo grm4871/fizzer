@@ -114,6 +114,56 @@ defmodule Cascade.Runs.ChatProjectionTest do
     assert content.harnessLog == "log"
   end
 
+  test "final-reply-only hides live work and suppresses deliberate silence" do
+    live =
+      ChatProjection.build(
+        [
+          event("text", %{
+            chatVisible: true,
+            message: %{
+              content: [
+                %{type: "thinking", thinking: "checking"},
+                %{type: "text", text: "I am checking"}
+              ]
+            }
+          }),
+          event("harness", %{data: "tool trace"})
+        ],
+        true
+      )
+
+    assert live.body == "Thinking..."
+    assert live.blocks == []
+    assert live.harnessLog == ""
+
+    settled =
+      ChatProjection.build(
+        [
+          event("text", %{chatVisible: true, message: %{content: "I am checking"}}),
+          event("text", %{
+            chatVisible: true,
+            message: %{content: "The storage invariant is still violated."}
+          }),
+          event("status", %{status: "completed"})
+        ],
+        true
+      )
+
+    assert settled.body == "The storage invariant is still violated."
+
+    silent =
+      ChatProjection.build(
+        [
+          event("text", %{chatVisible: true, message: %{content: "[no-reply]"}}),
+          event("status", %{status: "completed", summary: "[no-reply]"})
+        ],
+        true
+      )
+
+    assert silent.body == ""
+    assert silent.done
+  end
+
   defp event(type, payload, seq \\ nil) do
     base = %{type: type, payload_json: Jason.encode!(payload)}
     if seq, do: Map.put(base, :seq, seq), else: base

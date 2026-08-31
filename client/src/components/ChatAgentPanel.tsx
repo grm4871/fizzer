@@ -230,6 +230,7 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
       taggableByAgents: false,
       replyToEveryMessage: false,
       ambientGroupChat: false,
+      finalReplyOnly: false,
       orchestrator: false,
       pingableByOthers: false,
       yolo: false,
@@ -252,6 +253,7 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
     taggableByAgents: false,
     replyToEveryMessage: false,
     ambientGroupChat: false,
+    finalReplyOnly: false,
     orchestrator: false,
     pingableByOthers: false,
     yolo: false,
@@ -424,6 +426,7 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
           taggableByAgents: false,
           replyToEveryMessage: false,
           ambientGroupChat: false,
+          finalReplyOnly: false,
           orchestrator: false,
           pingableByOthers: false,
           yolo: false,
@@ -960,6 +963,12 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
                 onChange={(event) => setAgentForm((value) => ({ ...value, ambientGroupChat: event.target.checked }))}
                 name="Ambient group chat"
                 hint="Takes turns naturally with other ambient agents, with a bounded conversation length."
+              />
+              <ChatAgentToggle
+                checked={agentForm.finalReplyOnly === true}
+                onChange={(event) => setAgentForm((value) => ({ ...value, finalReplyOnly: event.target.checked }))}
+                name="Final replies only"
+                hint="Hides live reasoning, tools, and progress from chat; publishes only the settled reply."
               />
             </div>
             <div className="chat-agent-group">

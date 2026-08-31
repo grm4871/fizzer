@@ -207,6 +207,8 @@ export interface ChatAgentRegistration {
   replyToEveryMessage: boolean;
   /** Join serialized, bounded ambient conversation in this channel. */
   ambientGroupChat?: boolean;
+  /** Keep live reasoning, tools, and progress out of chat; publish only the settled reply. */
+  finalReplyOnly?: boolean;
   orchestrator: boolean;
   /** Allow users other than the owner to @mention/trigger this agent in a
    * shared channel. The run still executes on the owner's desktop runner. */

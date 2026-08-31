@@ -40,6 +40,7 @@ import {
   appendHarnessLog,
   hasChatRunToolBlock,
   honestAgentChatBody,
+  isNoReplyAgentChatBody,
   afterChatTimestamp,
   mergeRemoteChatMessage,
   newId,
@@ -577,6 +578,7 @@ export function useChatDispatch({
       // Conversation id groups runs for backend session resume (findPriorSession).
       // The actual CLI session_id is resolved server-side — not this value.
       const conversationId = conversation.conversationId;
+      const finalReplyOnly = registration.finalReplyOnly === true;
       let assistantText = '';
       let bufferedBlocks: ChatBlock[] = [];
       const processedSeqs = new Set<number>();
@@ -621,10 +623,12 @@ export function useChatDispatch({
                 terminal,
                 { suppressChatBody },
               );
+              const suppressFinalReply = suppressChatBody
+                || (finalReplyOnly && isNoReplyAgentChatBody(finalBody));
               const nextStatus = terminal === 'completed' ? undefined : terminal;
-              // Suppressed terminal lifecycle events (dual-post completion or
-              // automatic cleanup) drop the Thinking placeholder entirely.
-              if (suppressChatBody) {
+              // Suppressed lifecycle events and deliberate final-only silence
+              // remove the shell, preventing an empty ambient reply from fanning out.
+              if (suppressFinalReply) {
                 chatMessageStore.update(channelId, (existing) => {
                   const next = existing.filter((message) => message.id !== agentMessageId);
                   return next.length === existing.length ? existing : next;
@@ -656,21 +660,25 @@ export function useChatDispatch({
             // Accumulate final-answer candidates. Only adapters that explicitly
             // distinguish assistant-visible prose from reasoning may stream the
             // text into the chat body; everything else stays in the trace.
-            if (text) assistantText += text;
-            bufferedBlocks = appendChatRunBlocks(bufferedBlocks, blocks);
-            const chatVisible = payload.chatVisible === true && Boolean(text.trim());
+            if (text) assistantText = finalReplyOnly ? text : assistantText + text;
+            if (!finalReplyOnly) {
+              bufferedBlocks = appendChatRunBlocks(bufferedBlocks, blocks);
+            }
+            const chatVisible = !finalReplyOnly
+              && payload.chatVisible === true
+              && Boolean(text.trim());
             queueMessageUpdate((message) => ({
               ...message,
-              // Reasoning remains in the trace. Codex agent_message and Claude
-              // text_delta events opt in to immediate chat rendering so the
-              // user does not wait for the full run to finish before reading.
+              // Final-reply-only members keep all live prose and run structure
+              // out of chat; the terminal event publishes one settled answer.
               body: chatVisible && assistantText.trim()
                 ? assistantText.trimStart()
                 : message.body || 'Thinking...',
-              blocks: appendChatRunBlocks(message.blocks, blocks),
+              blocks: finalReplyOnly ? message.blocks : appendChatRunBlocks(message.blocks, blocks),
               runId,
             }));
           } else if (event.type === 'user') {
+            if (finalReplyOnly) return;
             const payload = JSON.parse(event.payload_json);
             const blocks = normalizeChatRunBlocks(payload.message?.content);
             if (blocks.length === 0) return;
@@ -681,6 +689,7 @@ export function useChatDispatch({
               runId,
             }));
           } else if (event.type === 'harness') {
+            if (finalReplyOnly) return;
             const payload = JSON.parse(event.payload_json);
             const chunk = typeof payload?.data === 'string' ? payload.data : '';
             if (!chunk) return;
