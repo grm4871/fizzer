@@ -56,9 +56,11 @@ describe('shouldSteerActiveSession', () => {
 });
 
 describe('chat session turn serialization', () => {
-  it('queues mission workers and coordinator wakeups instead of steering active work', () => {
+  it('queues peer and mission work while keeping human follow-ups as steers', () => {
     expect(queuesBehindActiveSession({ id: 'mission-task-message', missionTaskId: 'task-1' })).toBe(true);
     expect(queuesBehindActiveSession({ id: 'sys-mission-mission-1-wake' })).toBe(true);
+    expect(queuesBehindActiveSession({ id: 'agent-message', registrationId: 'peer-reg' })).toBe(true);
+    expect(queuesBehindActiveSession({ id: 'agent-dispatch-peer-without-hydrated-registration' })).toBe(true);
     expect(queuesBehindActiveSession({ id: 'human-message' })).toBe(false);
   });
 

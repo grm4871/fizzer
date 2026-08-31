@@ -39,9 +39,19 @@ export function shouldSteerActiveSession(opts: {
   return opts.hasPrecedingTurn || opts.hasLocalActiveRun || opts.projectedRunId != null;
 }
 
-/** Mission work is a queued assignment, never a correction to the active turn. */
-export function queuesBehindActiveSession(message: { id?: string; missionTaskId?: string }): boolean {
-  return Boolean(message.missionTaskId || String(message.id || '').startsWith('sys-mission-'));
+/** Peer and mission work queue behind a busy session; only humans steer it. */
+export function queuesBehindActiveSession(message: {
+  id?: string;
+  missionTaskId?: string;
+  registrationId?: string;
+}): boolean {
+  const id = String(message.id || '');
+  return Boolean(
+    message.registrationId
+    || id.startsWith('agent-dispatch-')
+    || message.missionTaskId
+    || id.startsWith('sys-mission-'),
+  );
 }
 
 /**
