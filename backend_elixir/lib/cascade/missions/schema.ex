@@ -140,7 +140,6 @@ defmodule Cascade.Missions.Schema do
     repair_legacy_dependencies!()
     backfill_history!()
     repair_worker_evidence!()
-    refresh_open_projections!()
     :ok
   end
 
@@ -152,6 +151,14 @@ defmodule Cascade.Missions.Schema do
       AND dispatch_id IS NULL
       AND run_id IS NULL
       AND summary LIKE 'Dependency “%” ended %.'
+    """)
+
+    SQL.exec("""
+    UPDATE chat_missions SET status='active'
+    WHERE status='blocked' AND NOT EXISTS (
+      SELECT 1 FROM chat_mission_tasks t
+      WHERE t.mission_id=chat_missions.id AND t.status IN ('failed','blocked')
+    )
     """)
 
     SQL.exec("UPDATE chat_missions SET status='attention' WHERE status='blocked'")
@@ -225,15 +232,6 @@ defmodule Cascade.Missions.Schema do
           SELECT 1 FROM chat_mission_tasks task WHERE task.run_id=chat_messages.run_id
         )
       """)
-    end
-  end
-
-  defp refresh_open_projections! do
-    if Code.ensure_loaded?(Cascade.Missions.Store) do
-      SQL.all(
-        "SELECT id FROM chat_missions WHERE status IN ('active','reviewing','attention','blocked')"
-      )
-      |> Enum.each(fn [id] -> Cascade.Missions.Store.refresh(id) end)
     end
   end
 end

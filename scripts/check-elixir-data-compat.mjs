@@ -15,7 +15,7 @@ const FTS5_SHADOW_SUFFIXES = ['config', 'data', 'docsize', 'idx'];
 // compare equal: the resulting schema must be the reviewed Node-compatible
 // shape as well.
 const NORMALIZED_TABLE_SQL_SHA256 = new Map([
-  ['chat_agent_members', '47958f4df6d7c4133c1a4d0841d2f061a18aa79f9d62bf861b1d423eb18ef7a1'],
+  ['chat_agent_members', '30fe78099a2ac07b54f147ed25e4032966f9b0a1187852e5a5aece9cca765b43'],
   ['chat_channel_links', '5c044d64e74a55bae505e0dc14fa0943d8f2ec550a3a4ee0c8cee6098b8b2f51'],
   ['chat_messages', 'c0ec7be003cb9470e0854022dd4197394b8b52e5b6d81369ab274151ccaf7ae4'],
   ['chat_messages_fts', 'a0537f09f6a0d235e2c50e090ce48214ddd0efa80544131812ccd37822e501a1'],
@@ -48,6 +48,8 @@ const ROLLING_SCHEMA_TRANSITIONS = new Map([
   ['table:chat_agent_members', new Map([
     ['caa0376559c9e2b1327b414bea0b8c92c110f093b2d83277ffbc0778367cd59c',
       '47958f4df6d7c4133c1a4d0841d2f061a18aa79f9d62bf861b1d423eb18ef7a1'],
+    ['47958f4df6d7c4133c1a4d0841d2f061a18aa79f9d62bf861b1d423eb18ef7a1',
+      '30fe78099a2ac07b54f147ed25e4032966f9b0a1187852e5a5aece9cca765b43'],
   ])],
 ]);
 
@@ -566,10 +568,11 @@ function exactChatAgentMemberAdditiveMigration(before, after) {
   const newTable = after.tables.chat_agent_members;
   if (!oldTable || !newTable) return false;
   const oldNames = new Set(oldTable.columns.map((column) => column.name));
-  if (oldNames.has('ambient_group_chat')) return false;
-  const ambient = newTable.columns.find((column) => column.name === 'ambient_group_chat');
-  if (!ambient || ambient.type !== 'INTEGER' || Number(ambient.notnull) !== 1
-      || ambient.dflt_value !== '0' || Number(ambient.pk) !== 0) return false;
+  const expectedName = oldNames.has('ambient_group_chat') ? 'final_reply_only' : 'ambient_group_chat';
+  if (oldNames.has(expectedName)) return false;
+  const added = newTable.columns.find((column) => column.name === expectedName);
+  if (!added || added.type !== 'INTEGER' || Number(added.notnull) !== 1
+      || added.dflt_value !== '0' || Number(added.pk) !== 0) return false;
   const oldColumns = oldTable.rows.columns;
   if (oldTable.rows.count !== newTable.rows.count
       || oldTable.rows.includesRowid !== newTable.rows.includesRowid
