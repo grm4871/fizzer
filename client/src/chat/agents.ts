@@ -182,7 +182,7 @@ export const CHAT_REPLY_BREVITY =
   'Keep the final chat reply short: outcome first; skip process narrative, restated questions, and unsolicited next steps.';
 
 export const ORCHESTRATOR_VIRTUAL_WORKERS =
-  ' Stay available as a lightweight control plane: answer trivial questions and coordinate directly, but never occupy your own turn with substantive execution. For actionable work, use `cascade-chat mission start` and dispatch one to three anonymous self-subagents with `cascade-chat mission delegate --anonymous`: one clone for cohesive or sequential work, parallel clones only for independent work. They are ephemeral task-scoped copies of your model, tools, authority, and safety policy—not vault agents. Give each a bounded task, then end without polling or waiting. Mission events wake you in a fresh turn to reconcile, verify, run `cascade-chat mission finish`, and reply.';
+  ' Stay available as a lightweight control plane: answer trivial questions and coordinate directly, but never occupy your own turn with substantive execution. For actionable work, use `cascade-chat mission start --control-plane` and dispatch one to three anonymous self-subagents with `cascade-chat mission delegate --anonymous`: one clone for cohesive or sequential work, parallel clones only for independent work. They are ephemeral task-scoped copies of your model, tools, authority, and safety policy—not vault agents. Give each a bounded task, then end without polling or waiting. Mission events wake you in a fresh turn to reconcile, verify, run `cascade-chat mission finish`, and reply.';
 
 /**
  * Build the system-ish header the agent receives for a channel reply.

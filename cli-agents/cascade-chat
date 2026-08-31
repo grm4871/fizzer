@@ -25,7 +25,7 @@ Usage:
   cascade-chat send --to @agent --reply-to <message-id> --relation <type> --message <instruction>
                                         create a typed single-agent handoff
   cascade-chat members                  list people-callable agent teammates
-  cascade-chat mission start --title T [--objective O]
+  cascade-chat mission start --title T [--objective O] [--control-plane]
   cascade-chat mission list
   cascade-chat mission status [--mission <id|current>]
   cascade-chat mission history --mission <id>
@@ -54,6 +54,7 @@ Options:
   --priority <-100..100>    schedule higher-priority ready work first
   --effort <level>          per-task reasoning effort override
   --anonymous               parallel subagent of --to (same agent, no occupancy)
+  --control-plane           start without binding the coordinator run as a task
   --root <message-id>       mission root (defaults to triggering chat message)
   --changes-file <path>     JSON change request metadata for send
   --raw-message             preserve literal backslash-n sequences in --message
@@ -192,10 +193,10 @@ async function getToken(url, args, config) {
   return body.token;
 }
 
-async function api(url, token, method, path, body) {
+async function api(url, token, method, path, body, { omitRunId = false } = {}) {
   const headers = { authorization: `Bearer ${token}` };
   const runId = String(process.env.CASCADE_RUN_ID || '').trim();
-  if (runId) headers['x-cascade-run-id'] = runId;
+  if (runId && !omitRunId) headers['x-cascade-run-id'] = runId;
   if (body !== undefined) headers['content-type'] = 'application/json';
   const res = await fetch(`${url}${path}`, {
     method,
@@ -500,6 +501,7 @@ async function main() {
           title,
           objective: String(args.objective || '').trim(),
         },
+        { omitRunId: args['control-plane'] === true },
       );
       if (args.json) process.stdout.write(JSON.stringify(result.mission) + '\n');
       else process.stdout.write(`mission ${result.mission.id} started: ${result.mission.title}\n`);

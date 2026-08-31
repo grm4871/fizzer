@@ -162,11 +162,11 @@ test('coordinator helper starts and delegates a mission with structured API call
 });
 
 test('mission start always posts a coordinator shell as the mission root', async (t) => {
-  const requests: Array<{ method: string; path: string; body: Record<string, unknown> | null }> = [];
+  const requests: Array<{ method: string; path: string; body: Record<string, unknown> | null; runId?: string }> = [];
   const server = http.createServer(async (req, res) => {
     let raw = '';
     for await (const chunk of req) raw += chunk;
-    requests.push({ method: req.method || '', path: req.url || '', body: raw ? JSON.parse(raw) : null });
+    requests.push({ method: req.method || '', path: req.url || '', body: raw ? JSON.parse(raw) : null, runId:req.headers['x-cascade-run-id'] as string | undefined });
     res.setHeader('content-type', 'application/json');
     if (req.url?.endsWith('/messages')) return res.end(JSON.stringify({ message: { id: 'sys-mission-root-new' } }));
     if (req.url?.endsWith('/missions')) return res.end(JSON.stringify({ mission: { id: 'second', title: 'Second task' } }));
@@ -187,6 +187,30 @@ test('mission start always posts a coordinator shell as the mission root', async
   assert.equal(requests[0].body?.registrationId, 'reg-sol');
   assert.equal(requests[0].body?.author, 'Sol');
   assert.equal(requests[1].body?.rootMessageId, 'sys-mission-root-new');
+});
+
+test('control-plane mission start does not bind the coordinator run as a primary task', async (t) => {
+  const runHeaders: Array<string | undefined> = [];
+  const server = http.createServer(async (req, res) => {
+    for await (const _chunk of req) { /* consume request */ }
+    runHeaders.push(req.headers['x-cascade-run-id'] as string | undefined);
+    res.setHeader('content-type', 'application/json');
+    if (req.url?.endsWith('/messages')) return res.end(JSON.stringify({ message:{ id:'control-root' } }));
+    if (req.url?.endsWith('/missions')) return res.end(JSON.stringify({ mission:{ id:'control-mission', title:'Control' } }));
+    res.statusCode = 404; res.end(JSON.stringify({ error:'not found' }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const address = server.address(); assert(address && typeof address === 'object');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-chat-control-plane-'));
+  const config = path.join(dir, 'helper.json');
+  fs.writeFileSync(config, JSON.stringify({ registrationId:'reg-sol', displayName:'Sol' }));
+  t.after(() => fs.rmSync(dir, { recursive:true, force:true }));
+  await execFileAsync(process.execPath, [cli, 'mission', 'start', '--control-plane', '--title', 'Control', '--url', `http://127.0.0.1:${address.port}`, '--token', 'token', '--vault', 'vault-1', '--channel', 'channel-1'], {
+    env:{ ...process.env, CASCADE_HELPER_CONFIG:config, CASCADE_RUN_ID:'4242' },
+  });
+  assert.equal(runHeaders[0], '4242');
+  assert.equal(runHeaders[1], undefined);
 });
 
 test('send creates a typed single-agent handoff without suppressing the caller reply', async (t) => {

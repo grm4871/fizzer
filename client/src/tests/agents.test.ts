@@ -136,6 +136,7 @@ describe('formatAgentChatPrompt', () => {
     expect(prompt).toContain('Treat clear actionable requests as implementation authority');
     expect(prompt).toMatch(/Clarify only/i);
     expect(prompt).toContain('cascade-chat mission start');
+    expect(prompt).toContain('mission start --control-plane');
     expect(prompt).toContain('cascade-chat mission delegate');
     expect(prompt).toContain('--after');
     expect(prompt).toContain('--anonymous');
