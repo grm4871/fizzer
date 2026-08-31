@@ -87,7 +87,7 @@ defmodule CascadeWeb.ChatRouter do
   post "/api/vaults/:vault_id/channels/:channel_id/messages" do
     authenticated(conn, :any, :vault, fn conn, user ->
       with {:ok, prior} <- Messages.list(channel_id, user.id, limit: 48),
-           {:ok, members} <- Agents.list_members(channel_id, user.id),
+           {:ok, members} <- Agents.ensure_vault_wide(user.id, vault_id, channel_id),
            input <- RoomContext.infer_natural_link(conn.body_params, prior, members),
            {:ok, result} <-
              serialized_create_and_emit(
@@ -333,7 +333,7 @@ defmodule CascadeWeb.ChatRouter do
 
   get "/api/vaults/:vault_id/channels/:channel_id/agents" do
     authenticated(conn, :any, nil, fn conn, user ->
-      respond(conn, Agents.list_members(channel_id, user.id), :agents)
+      respond(conn, Agents.ensure_vault_wide(user.id, vault_id, channel_id), :agents)
     end)
   end
 
