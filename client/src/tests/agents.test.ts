@@ -8,6 +8,7 @@ import {
   formatAgentChatPrompt,
   needsCascadeWorkspaceContext,
   needsRecentChatContext,
+  ORCHESTRATOR_VIRTUAL_WORKERS,
 } from '../chat/agents';
 
 const registration = {
@@ -132,18 +133,23 @@ describe('formatAgentChatPrompt', () => {
       'alice',
       false,
     );
-    expect(prompt).toContain('Handle clear requests directly');
-    expect(prompt).toMatch(/clarification card/i);
+    expect(prompt).toContain('Treat clear actionable requests as implementation authority');
+    expect(prompt).toMatch(/Clarify only/i);
     expect(prompt).toContain('cascade-chat mission start');
     expect(prompt).toContain('cascade-chat mission delegate');
     expect(prompt).toContain('--after');
     expect(prompt).toContain('--anonymous');
-    expect(prompt).toContain('parallel clones');
-    expect(prompt).toContain('user responsive while workers run');
+    expect(prompt).toContain('one to three anonymous self-subagents');
+    expect(prompt).toContain('not vault agents');
+    expect(prompt).toContain('never occupy your own turn with substantive execution');
+    expect(prompt).toContain('one clone for cohesive or sequential work');
+    expect(prompt).toContain('end without polling or waiting');
+    expect(prompt).toContain('Mission events wake you in a fresh turn');
+    expect(prompt).toContain('stay responsive');
     expect(prompt).toContain('cascade-chat mission finish');
     expect(prompt).toContain('Keep mission summaries short');
     expect(prompt).toContain('implementation authority');
-    expect(prompt).toContain('clarification');
+    expect(prompt).toContain('Clarify only');
   });
 
   it('continuations keep normal completion guidance', () => {
@@ -153,20 +159,21 @@ describe('formatAgentChatPrompt', () => {
     expect(prompt).not.toContain('cascade-chat send');
   });
 
-  it('does not repay the full coordinator contract on a resumed session', () => {
+  it('keeps virtual-worker control on continuations without repaying the full cold-start contract', () => {
     const coordinator = { ...registration, orchestrator: true };
     const fresh = formatAgentChatPrompt('dev', coordinator, 'take care of the release', 'alice', false);
     const continued = formatAgentChatPrompt('dev', coordinator, 'and publish android', 'alice', true);
     expect(continued).toMatch(/clarify only a user-requested mission\/kanban|material ambiguity/i);
-    expect(continued).toMatch(/Delegate when another session adds value/i);
+    expect(continued).toContain(ORCHESTRATOR_VIRTUAL_WORKERS.trim());
+    expect(continued).toContain('--anonymous');
     expect(continued).toContain('Keep replies short');
-    expect(continued).not.toContain('cascade-chat mission delegate');
+    expect(continued).toContain('cascade-chat mission delegate');
     // Compact ship/attachment reminders stay on continuation; the long mission contract does not.
     expect(continued).toMatch(/green Deploy|Ship only after/i);
-    expect(fresh).toMatch(/wait for green Deploy/i);
-    expect(fresh).toMatch(/clarification/i);
+    expect(fresh).toMatch(/green Deploy/i);
+    expect(fresh).toMatch(/Clarify only/i);
     expect(fresh).toMatch(/cascade-chat attachment/i);
-    expect(fresh.length - continued.length).toBeGreaterThan(400);
+    expect(fresh.length - continued.length).toBeGreaterThan(250);
     expect(fresh.length - 'take care of the release'.length).toBeLessThan(1_600);
   });
 

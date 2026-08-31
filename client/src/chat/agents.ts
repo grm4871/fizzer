@@ -181,6 +181,9 @@ export function needsCascadeWorkspaceContext(request: string): boolean {
 export const CHAT_REPLY_BREVITY =
   'Keep the final chat reply short: outcome first; skip process narrative, restated questions, and unsolicited next steps.';
 
+export const ORCHESTRATOR_VIRTUAL_WORKERS =
+  ' Stay available as a lightweight control plane: answer trivial questions and coordinate directly, but never occupy your own turn with substantive execution. For actionable work, use `cascade-chat mission start` and dispatch one to three anonymous self-subagents with `cascade-chat mission delegate --anonymous`: one clone for cohesive or sequential work, parallel clones only for independent work. They are ephemeral task-scoped copies of your model, tools, authority, and safety policy—not vault agents. Give each a bounded task, then end without polling or waiting. Mission events wake you in a fresh turn to reconcile, verify, run `cascade-chat mission finish`, and reply.';
+
 /**
  * Build the system-ish header the agent receives for a channel reply.
  * When `continuation` is true the CLI session already holds earlier turns —
@@ -199,13 +202,13 @@ export function formatAgentChatPrompt(
   const nativeScratchpad = registration.agentId === 'akron-grok';
   const compactNativeCli = registration.agentId === 'hermes' || registration.agentId === 'omp' || registration.agentId === 'pi';
   const coordinatorGuidance = registration.orchestrator
-    ? ' You are this channel’s coordinator. Handle clear requests directly and treat actionable requests as implementation authority; complete and verify them. Use a tiny prefilled clarification card only when the user asks for a mission/kanban contract or a material scope, authority, or product choice is genuinely unclear. Then use `cascade-chat mission start`, `cascade-chat mission delegate` only for independent work (use `--after`, `--priority`, `--effort`, or `--anonymous` for parallel clones), reconcile it, and `cascade-chat mission finish`. Keep mission summaries short and the user responsive while workers run. Before shipping run `npm run build`; after push, wait for green Deploy with `gh run watch`. Open chat images with `cascade-chat attachment --message-id <id>`.'
+    ? ` You coordinate this channel. Treat clear actionable requests as implementation authority. Clarify only a requested mission/kanban or a material scope, authority, or product choice.${ORCHESTRATOR_VIRTUAL_WORKERS} Use \`--after\`, \`--priority\`, or \`--effort\` when needed. Keep mission summaries short and stay responsive. Ship only after \`npm run build\` and green Deploy; open images with \`cascade-chat attachment --message-id <id>\`.`
     : '';
   // A resumed provider session already contains the full contract above. Do
   // not pay to restate it on every manager turn; retain only the behavioral
   // invariant that matters for the next request.
   const coordinatorContinuationGuidance = registration.orchestrator
-    ? ' Continue coordinating: handle clear work directly; clarify only a user-requested mission/kanban or a genuinely material ambiguity. Delegate when another session adds value. Keep replies short; close missions after integration. Ship only after `npm run build` + green Deploy; open chat images via `cascade-chat attachment` (never “cannot see”).'
+    ? ` Continue coordinating: handle clear work directly; clarify only a user-requested mission/kanban or a genuinely material ambiguity.${ORCHESTRATOR_VIRTUAL_WORKERS} Keep replies short. Ship only after \`npm run build\` + green Deploy; open chat images via \`cascade-chat attachment\` (never “cannot see”).`
     : '';
 
   // Keep persistence available without turning every task into extra tool turns.
