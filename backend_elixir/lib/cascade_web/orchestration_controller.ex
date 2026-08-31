@@ -14,6 +14,72 @@ defmodule CascadeWeb.OrchestrationController do
   alias Cascade.WorkItems
   alias CascadeWeb.JSON
 
+  def claim_mission_dispatch(user_id, channel_id, dispatch_id) do
+    with [username] <- SQL.one("SELECT username FROM users WHERE id=?", [user_id]),
+         user <- %{id: user_id, username: username},
+         {:ok, dispatch} <- Dispatches.get(user_id, channel_id, dispatch_id),
+         task_id when task_id != "" <- dispatch_message_value(dispatch, :missionTaskId, ""),
+         registration_id <- dispatch_registration_id(dispatch, ""),
+         {:ok, execution} <-
+           resolve_chat_execution(user, nil, channel_id, registration_id, dispatch, %{}),
+         true <- RunnerLifecycle.online?(execution.runner_user_id),
+         {:ok, execution} <- prepare_work_item(execution),
+         conversation_id <- "mission:#{task_id}",
+         resume <-
+           Store.find_conversation_session(%{
+             vault_id: execution.vault.id,
+             note_id: nil,
+             agent: execution.agent,
+             conversation_id: conversation_id
+           }),
+         prompt <- mission_dispatch_prompt(dispatch),
+         {context, inline_svgs} <-
+           chat_context(
+             execution,
+             registration_id,
+             "agent-dispatch-#{dispatch_id}",
+             dispatch.messageId,
+             resume
+           ),
+         effective_prompt <-
+           PromptContext.enrich_prompt(
+             execution.vault.id,
+             execution.runner_user_id,
+             prompt,
+             execution.agent,
+             resume
+           )
+           |> PromptContext.append_context(context),
+         :ok <- release_sticky_registration(registration_id, dispatch_id),
+         {:ok, run} <-
+           start_chat_run(execution, nil, effective_prompt, conversation_id, resume, dispatch_id) do
+      attach_dispatch(dispatch_id, run.id)
+      message_id = "agent-dispatch-#{dispatch_id}"
+      ensure_agent_message(execution, message_id, task_id, run, nil)
+
+      payload =
+        chat_delegate_payload(
+          execution,
+          run,
+          effective_prompt,
+          resume,
+          %{},
+          message_id,
+          dispatch.messageId,
+          inline_svgs
+        )
+
+      if RunnerLifecycle.delegate(execution.runner_user_id, payload),
+        do: {:ok, run},
+        else: {:error, "Desktop agent runner disconnected"}
+    else
+      {:reused, run} -> {:ok, run}
+      _ -> :retry
+    end
+  rescue
+    _ -> :retry
+  end
+
   def list_runs(conn, vault_id) do
     authenticated(conn, fn conn, user ->
       with_vault(conn, vault_id, user.id, fn ->
@@ -845,30 +911,15 @@ defmodule CascadeWeb.OrchestrationController do
          context_inline_svgs
        ) do
     payload =
-      PromptContext.delegate_payload(
+      chat_delegate_payload(
+        execution,
         run,
-        execution.vault.root_path,
-        execution.agent,
         prompt,
-        params,
         resume,
-        %{
-          cwd: execution.cwd,
-          model: execution.model,
-          reasoning_effort: execution.reasoning_effort,
-          priority_service_tier: execution.priority_service_tier,
-          chat_channel_id: execution.target_channel_id,
-          chat_message_id: message_id,
-          chat_triggering_message_id: triggering_message_id,
-          chat_author: execution.chat_author,
-          agent_memory_key: execution.memory_key,
-          chat_registration_id: execution.registration_id,
-          work_item_id: execution.work_item_id,
-          inline_svgs: context_inline_svgs,
-          yolo: execution.yolo,
-          hermes_profile: execution.hermes_profile,
-          hermes_safe_mode: execution.hermes_safe_mode
-        }
+        params,
+        message_id,
+        triggering_message_id,
+        context_inline_svgs
       )
 
     if RunnerLifecycle.delegate(execution.runner_user_id, payload) do
@@ -881,6 +932,52 @@ defmodule CascadeWeb.OrchestrationController do
       Store.publish(run.id, "status", %{status: "failed", summary: error})
       JSON.send(conn, 503, %{error: error})
     end
+  end
+
+  defp chat_delegate_payload(
+         execution,
+         run,
+         prompt,
+         resume,
+         params,
+         message_id,
+         triggering_message_id,
+         inline_svgs
+       ) do
+    PromptContext.delegate_payload(
+      run,
+      execution.vault.root_path,
+      execution.agent,
+      prompt,
+      params,
+      resume,
+      %{
+        cwd: execution.cwd,
+        model: execution.model,
+        reasoning_effort: execution.reasoning_effort,
+        priority_service_tier: execution.priority_service_tier,
+        chat_channel_id: execution.target_channel_id,
+        chat_message_id: message_id,
+        chat_triggering_message_id: triggering_message_id,
+        chat_author: execution.chat_author,
+        agent_memory_key: execution.memory_key,
+        chat_registration_id: execution.registration_id,
+        work_item_id: execution.work_item_id,
+        inline_svgs: inline_svgs,
+        yolo: execution.yolo,
+        hermes_profile: execution.hermes_profile,
+        hermes_safe_mode: execution.hermes_safe_mode
+      }
+    )
+  end
+
+  defp mission_dispatch_prompt(dispatch) do
+    mention = dispatch.registration.mention |> to_string() |> Regex.escape()
+
+    dispatch.message.body
+    |> to_string()
+    |> String.replace(~r/^\s*@\s*#{mention}(?=$|[\s.,:;!?\])}])/iu, "")
+    |> String.trim()
   end
 
   defp dispatch_registration(nil), do: nil
