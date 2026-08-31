@@ -2954,8 +2954,8 @@ export default function App() {
               type="button"
               className="btn-icon"
               onClick={() => setOrbitOpen(true)}
-              title="Orbit"
-              aria-label="Orbit"
+              title="Graph"
+              aria-label="Graph"
             >
               <svg width="16" height="16" viewBox="0 0 200 200" fill="none" stroke="currentColor" strokeWidth={10} aria-hidden="true">
                 <mask id="orbit-cut">
@@ -3129,7 +3129,7 @@ export default function App() {
           <ModalShell
             backdropClassName="overlay-backdrop orbit-backdrop"
             dialogClassName="orbit-modal"
-            ariaLabel="Orbit"
+            ariaLabel="Graph"
             onClose={() => setOrbitOpen(false)}
           >
             <OrbitGraph

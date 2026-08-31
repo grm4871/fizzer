@@ -1860,13 +1860,13 @@ button:focus-visible,
 }
 .orbit-modal {
   position: relative;
-  width: min(900px, 100%);
-  height: min(700px, calc(100vh - 40px));
+  width: min(1120px, 100%);
+  height: min(780px, calc(100vh - 36px));
   overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--border));
-  border-radius: 13px;
-  background: var(--bg-base);
-  box-shadow: 0 24px 80px hsla(228, 30%, 2%, 0.6), var(--bevel);
+  border: 1px solid color-mix(in srgb, var(--text-tertiary) 35%, var(--border));
+  border-radius: 2px;
+  background: #0b0c10;
+  box-shadow: 0 24px 80px hsla(228, 30%, 2%, 0.6);
   animation: slideDown var(--transition-normal) ease;
 }
 .orbit-graph {
@@ -1875,9 +1875,9 @@ button:focus-visible,
   overflow: hidden;
   cursor: grab;
   touch-action: none;
-  background-color: var(--bg-base);
-  background-image: radial-gradient(color-mix(in srgb, var(--text-tertiary) 48%, transparent) 1.3px, transparent 1.3px);
-  background-size: 20px 20px;
+  background-color: #0b0c10;
+  background-image: radial-gradient(hsla(220, 12%, 70%, 0.16) 1px, transparent 1.2px);
+  background-size: 18px 18px;
 }
 .orbit-graph:active { cursor: grabbing; }
 .orbit-graph-header {
@@ -1893,6 +1893,16 @@ button:focus-visible,
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
+.orbit-graph-hint {
+  position: absolute;
+  z-index: 3;
+  right: 16px;
+  bottom: 14px;
+  color: color-mix(in srgb, var(--text-tertiary) 80%, transparent);
+  font: 0.62rem/1 var(--font-mono);
+  letter-spacing: 0.04em;
+  pointer-events: none;
+}
 .orbit-empty {
   position: absolute;
   inset: 0;
@@ -1902,7 +1912,14 @@ button:focus-visible,
   font-size: 0.82rem;
   pointer-events: none;
 }
-.orbit-edges,
+.orbit-edges {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
 .orbit-layer {
   position: absolute;
   left: 50%;
@@ -1910,53 +1927,74 @@ button:focus-visible,
   width: 0;
   height: 0;
 }
-.orbit-edges { overflow: visible; }
 .orbit-edge-line {
-  stroke: color-mix(in srgb, var(--accent) 80%, var(--border));
-  stroke-width: 2;
+  stroke: hsla(220, 12%, 62%, 0.42);
+  stroke-width: 1.15;
   stroke-linecap: round;
 }
+.orbit-edge-line.is-hot {
+  stroke: color-mix(in srgb, var(--accent) 70%, #d7dde8);
+  stroke-width: 1.7;
+}
+.orbit-edge-line.is-dim { stroke-opacity: 0.18; }
 .orbit-node {
   position: absolute;
   transform: translate(-50%, -50%);
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   width: max-content;
-  max-width: none;
-  padding: 8px;
+  padding: 10px 8px 4px;
   cursor: grab;
   user-select: none;
   text-align: center;
 }
 .orbit-node:active { cursor: grabbing; }
-.orbit-node-icon { display: grid; place-items: center; color: var(--accent); }
-.orbit-node.is-codex .orbit-node-icon { color: color-mix(in srgb, var(--accent) 40%, #7dd3fc); }
-.orbit-claude-art {
-  margin: 0;
-  font-family: var(--font-mono, monospace);
-  font-size: 11px;
-  line-height: 1.02;
-  letter-spacing: -0.5px;
-  white-space: pre;
+.orbit-dot {
+  display: block;
+  border-radius: 50%;
+  background: #d8c39a;
+  box-shadow: 0 0 0 3px hsla(38, 70%, 62%, 0.12), 0 0 16px hsla(38, 80%, 55%, 0.28);
 }
-.orbit-node.is-child { opacity: 0.92; }
-.orbit-node.is-child .orbit-claude-art { font-size: 8px; }
-.orbit-node.is-child .orbit-codex-mark { width: 24px; height: 24px; }
-.orbit-node-meta { display: flex; flex-direction: column; gap: 1px; width: max-content; max-width: none; }
-/* Keep both title and generated caption intact on one line. */
-.orbit-node-label { color: var(--text-primary); font-size: 0.74rem; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.orbit-node-status { color: var(--text-secondary); font-size: 0.66rem; white-space: nowrap; line-height: 1.25; }
-/* Secondary heuristic action line, shown under the qwen caption. */
-.orbit-node-action { color: var(--text-tertiary); font-size: 0.58rem; letter-spacing: 0.03em; text-transform: uppercase; margin-top: 2px; }
-/* Idle agents dim out and desaturate. */
-.orbit-node.is-idle { opacity: 0.5; }
-.orbit-node.is-idle .orbit-node-icon { filter: grayscale(0.8); }
+.orbit-node.is-codex .orbit-dot {
+  background: #8ec8e8;
+  box-shadow: 0 0 0 3px hsla(198, 70%, 62%, 0.14), 0 0 16px hsla(198, 80%, 60%, 0.3);
+}
+.orbit-node.is-idle .orbit-dot {
+  background: #6d7380;
+  box-shadow: none;
+}
+.orbit-node.is-focus .orbit-dot {
+  box-shadow: 0 0 0 4px hsla(38, 80%, 62%, 0.22), 0 0 22px hsla(38, 90%, 58%, 0.45);
+}
+.orbit-node-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: max-content;
+  max-width: 220px;
+}
+.orbit-node-label {
+  color: #e7e4dc;
+  font-size: 0.68rem;
+  font-weight: 550;
+  letter-spacing: 0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.orbit-node-status {
+  color: #8b909a;
+  font-size: 0.6rem;
+  white-space: nowrap;
+  line-height: 1.25;
+}
+.orbit-node.is-idle { opacity: 0.55; }
 .orbit-node.is-idle .orbit-node-status { font-style: italic; }
-/* Cascade-spawned sessions are clickable — they open their activity view. */
+.orbit-node.is-dim { opacity: 0.16; }
 .orbit-node.is-linked { cursor: pointer; }
-.orbit-node.is-linked:hover .orbit-node-label { text-decoration: underline; }
+.orbit-node.is-linked:hover .orbit-node-label { color: #fff; }
 .updates-header {
   padding: 16px 18px 13px;
 }
