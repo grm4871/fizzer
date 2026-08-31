@@ -502,7 +502,8 @@ defmodule Cascade.ChatDomainTest do
 
     assert projected_member.vaultAgentId == identity.id
 
-    assert {:ok, true} = Agents.unlink_from_vault(1, test_vault.id, identity.id)
+    assert {:ok, true} =
+             Agents.remove_member(1, test_vault.id, test_channel_two.id, projected_member.id)
 
     assert {:ok, []} = Agents.list_members(test_channel.id, 1)
     assert {:ok, []} = Agents.ensure_vault_wide(1, test_vault.id, test_channel_two.id)

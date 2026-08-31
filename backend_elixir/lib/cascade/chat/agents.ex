@@ -330,20 +330,16 @@ defmodule Cascade.Chat.Agents do
 
   def remove_member(user_id, vault_id, channel_id, registration_id) do
     with {:ok, route} <- Channel.assert_vault_channel(vault_id, channel_id, user_id),
-         [owner_id] <-
+         [identity_id, owner_id] <-
            SQL.one(
              """
-               SELECT va.owner_user_id FROM chat_agent_members m JOIN vault_agents va ON va.id=m.vault_agent_id
+               SELECT m.vault_agent_id,va.owner_user_id FROM chat_agent_members m JOIN vault_agents va ON va.id=m.vault_agent_id
                WHERE m.id=? AND m.channel_id=?
              """,
              [registration_id, route.sourceChannelId]
            ),
          :ok <- manage_identity(owner_id, user_id) do
-      {:ok,
-       SQL.changes("DELETE FROM chat_agent_members WHERE id=? AND channel_id=?", [
-         registration_id,
-         route.sourceChannelId
-       ]) > 0}
+      unlink_from_vault(user_id, route.localVaultId, identity_id)
     else
       nil -> {:error, "Agent member not found"}
       {:error, _} = error -> error
