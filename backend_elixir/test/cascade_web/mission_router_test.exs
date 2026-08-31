@@ -8,6 +8,7 @@ defmodule CascadeWeb.MissionRouterTest do
   alias Cascade.Auth.Token
   alias Cascade.Chat.{Agents, Messages, Schema}
   alias Cascade.Content.Store, as: ContentStore
+  alias Cascade.Missions.Scheduler
   alias Cascade.Missions.Schema, as: MissionSchema
   alias Cascade.Runs.Schema, as: RunSchema
 
@@ -133,6 +134,12 @@ defmodule CascadeWeb.MissionRouterTest do
     assert [dispatch] = json(pending)["dispatches"]
     assert dispatch["messageId"] == delegated_body["message"]["id"]
     assert dispatch["reasoningEffort"] == "high"
+
+    assert Scheduler.reannounce_pending(events: fn event -> send(self(), {:event, event}) end) ==
+             1
+
+    assert_receive {:event, %{event: "vault:chatMessageUpdated", dispatches: [replayed]}}
+    assert replayed.id == dispatch["id"]
 
     completed =
       request(

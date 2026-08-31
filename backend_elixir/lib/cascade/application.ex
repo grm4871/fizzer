@@ -19,7 +19,8 @@ defmodule Cascade.Application do
       ] ++
         qmd_children() ++
         [
-          {Cascade.Realtime.Supervisor, runner_callbacks: Cascade.Runs.RunnerLifecycle}
+          {Cascade.Realtime.Supervisor, runner_callbacks: Cascade.Runs.RunnerLifecycle},
+          Cascade.Missions.DispatchReannouncer
         ] ++ http_children()
 
     # Every child after the repository and write coordinator depends on their
