@@ -1,13 +1,6 @@
-/** Obsidian-style graph of currently-running local Claude Code and Codex sessions. */
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import {
-  api,
-  appendOrbitCaption,
-  fetchLocalAgents,
-  type LocalAgentGraph,
-  type LocalAgentNode,
-  type Note,
-} from '../api';
+/** Obsidian-style graph of notes and chats in the active vault. */
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { fetchVaultGraph, type VaultGraph, type VaultGraphKind, type VaultGraphNode } from '../api';
 import { kineticEnergy, neighborIds, stepForce, type ForceBody } from '../orbitForce';
 
 type Pos = { x: number; y: number };
@@ -15,34 +8,38 @@ type DragState =
   | { mode: 'pan'; startX: number; startY: number; origin: Pos }
   | { mode: 'node'; id: string; startX: number; startY: number; origin: Pos }
   | null;
+type Filter = 'all' | 'note' | 'chat';
 
-const POLL_MS = 750;
-const MIN_ZOOM = 0.45;
+const MIN_ZOOM = 0.35;
 const MAX_ZOOM = 2.8;
 
-function seedPosition(node: LocalAgentNode, parent: Pos | undefined, index: number): Pos {
-  if (node.role === 'child' && parent) {
-    const angle = (index % 6) * (Math.PI / 3);
-    return { x: parent.x + Math.cos(angle) * 120, y: parent.y + Math.sin(angle) * 120 };
-  }
+function seedPosition(index: number): Pos {
   const angle = index * (Math.PI * 2 * 0.61803398875);
-  const radius = 70 + index * 38;
+  const radius = 48 + Math.sqrt(index + 1) * 36;
   return { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius };
 }
 
-function nodeRadius(node: LocalAgentNode, degree: number) {
-  const base = node.role === 'parent' ? 7 : 5.5;
-  const live = node.state === 'active' ? 1.6 : 0;
-  return base + Math.min(4, degree) * 0.8 + live;
+function nodeRadius(node: VaultGraphNode, degree: number) {
+  const base = node.kind === 'chat' ? 6.5 : node.kind === 'missing' ? 4.5 : 6;
+  return base + Math.min(8, degree) * 0.7 + Math.min(4, (node.wordCount || 0) / 180);
 }
 
-type ActivityRef = { sessionId: string; title: string };
+function normalizeGraph(raw: VaultGraph): VaultGraph {
+  const nodes = (raw.nodes || []).map((node) => ({
+    ...node,
+    kind: (node.kind === 'chat' || node.kind === 'missing' ? node.kind : 'note') as VaultGraphKind,
+    title: node.title || 'Untitled',
+  }));
+  const known = new Set(nodes.map((node) => node.id));
+  const edges = (raw.edges || []).filter((edge) => known.has(edge.source) && known.has(edge.target));
+  return { nodes, edges };
+}
 
-export function OrbitGraph({ promptNoteId, captionLogNoteId, onOpenActivity }: { promptNoteId?: string; captionLogNoteId?: string; onOpenActivity?: (activity: ActivityRef) => void }) {
-  const [template, setTemplate] = useState('');
-  const [promptReady, setPromptReady] = useState(false);
-  const [graph, setGraph] = useState<LocalAgentGraph | null>(null);
+export function OrbitGraph({ vaultId, onOpenNote }: { vaultId?: string | null; onOpenNote?: (id: string) => void }) {
+  const [graph, setGraph] = useState<VaultGraph>({ nodes: [], edges: [] });
   const [error, setError] = useState('');
+  const [filter, setFilter] = useState<Filter>('all');
+  const [query, setQuery] = useState('');
   const [pan, setPan] = useState<Pos>({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   const [hoverId, setHoverId] = useState<string | null>(null);
@@ -54,7 +51,6 @@ export function OrbitGraph({ promptNoteId, captionLogNoteId, onOpenActivity }: {
   const panRef = useRef(pan);
   const zoomRef = useRef(zoom);
   const graphRef = useRef(graph);
-  const loggedCaptionsRef = useRef(new Map<string, string>());
   const frameRef = useRef(0);
   const surfaceRef = useRef<HTMLDivElement>(null);
   bodiesRef.current = bodies;
@@ -63,85 +59,49 @@ export function OrbitGraph({ promptNoteId, captionLogNoteId, onOpenActivity }: {
   graphRef.current = graph;
 
   useEffect(() => {
-    let alive = true;
-    setPromptReady(false);
-    if (!promptNoteId) {
-      setTemplate('');
-      setPromptReady(true);
-      return () => { alive = false; };
+    if (!vaultId) {
+      setGraph({ nodes: [], edges: [] });
+      return;
     }
-    void api<{ note: Note }>(`/api/notes/${encodeURIComponent(promptNoteId)}`)
-      .then(({ note }) => {
-        if (!alive) return;
-        setTemplate(note.content);
-        setError('');
-      })
-      .catch((cause) => {
-        if (alive) setError(cause instanceof Error ? cause.message : 'Could not load prompt note');
-      })
-      .finally(() => {
-        if (alive) setPromptReady(true);
-      });
-    return () => { alive = false; };
-  }, [promptNoteId]);
-
-  useEffect(() => {
-    if (!promptReady) return;
     let alive = true;
-    const load = async () => {
-      try {
-        const next = await fetchLocalAgents(template);
+    void fetchVaultGraph(vaultId)
+      .then((next) => {
         if (!alive) return;
-        setGraph(next);
+        const normalized = normalizeGraph(next);
+        setGraph(normalized);
         setError('');
-        if (captionLogNoteId) {
-          for (const node of next.nodes) {
-            if (!node.captioned || !node.status.trim()) continue;
-            if (loggedCaptionsRef.current.get(node.id) === node.status) continue;
-            loggedCaptionsRef.current.set(node.id, node.status);
-            void appendOrbitCaption(captionLogNoteId, node).catch(() => {
-              loggedCaptionsRef.current.delete(node.id);
-            });
-          }
-        }
         setBodies((previous) => {
           const kept = new Map(previous.map((body) => [body.id, body]));
-          return next.nodes.map((node, index) => {
-            const existing = kept.get(node.id);
-            if (existing) return existing;
-            const parentEdge = next.edges.find((edge) => edge.to === node.id);
-            const parent = parentEdge ? kept.get(parentEdge.from) : undefined;
-            const seed = seedPosition(node, parent, index);
-            return { id: node.id, x: seed.x, y: seed.y, vx: 0, vy: 0 };
+          return normalized.nodes.map((node, index) => kept.get(node.id) || {
+            id: node.id,
+            ...seedPosition(index),
+            vx: 0,
+            vy: 0,
           });
         });
-      } catch (cause) {
-        if (alive) setError(cause instanceof Error ? cause.message : 'Could not load agents');
-      }
-    };
-    void load();
-    const timer = window.setInterval(load, POLL_MS);
-    return () => {
-      alive = false;
-      window.clearInterval(timer);
-    };
-  }, [captionLogNoteId, promptReady, template]);
+      })
+      .catch((cause) => {
+        if (alive) setError(cause instanceof Error ? cause.message : 'Could not load graph');
+      });
+    return () => { alive = false; };
+  }, [vaultId]);
 
   useEffect(() => {
     const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
     if (reduceMotion) {
       let current = bodiesRef.current;
-      for (let i = 0; i < 60; i += 1) current = stepForce(current, graphRef.current?.edges || []);
+      for (let i = 0; i < 60; i += 1) current = stepForce(current, graphRef.current.edges.map((edge) => ({ from: edge.source, to: edge.target })));
       setBodies(current);
       return;
     }
     const tick = () => {
       const drag = dragRef.current;
       const pinnedId = drag?.mode === 'node' ? drag.id : null;
+      const links = graphRef.current.edges.map((edge) => ({ from: edge.source, to: edge.target }));
       const current = bodiesRef.current.map((body) => (
         body.id === pinnedId ? { ...body, pinned: true, vx: 0, vy: 0 } : { ...body, pinned: false }
       ));
-      const stepped = stepForce(current, graphRef.current?.edges || []);
+      const stepped = stepForce(current, links);
       if (kineticEnergy(stepped) > 0.04 || pinnedId) setBodies(stepped);
       frameRef.current = window.requestAnimationFrame(tick);
     };
@@ -225,13 +185,24 @@ export function OrbitGraph({ promptNoteId, captionLogNoteId, onOpenActivity }: {
     return () => observer.disconnect();
   }, []);
 
-  const nodes = graph?.nodes || [];
-  const edges = graph?.edges || [];
-  const hoverNeighbors = hoverId ? neighborIds(edges, hoverId) : null;
+  const visible = useMemo(() => {
+    const needle = query.trim().toLocaleLowerCase();
+    const nodes = graph.nodes.filter((node) => {
+      if (filter !== 'all' && node.kind !== filter && node.kind !== 'missing') return false;
+      if (filter === 'chat' && node.kind === 'missing') return false;
+      if (!needle) return true;
+      return node.title.toLocaleLowerCase().includes(needle);
+    });
+    const ids = new Set(nodes.map((node) => node.id));
+    const edges = graph.edges.filter((edge) => ids.has(edge.source) && ids.has(edge.target));
+    return { nodes, edges };
+  }, [filter, graph, query]);
+
+  const hoverNeighbors = hoverId ? neighborIds(visible.edges.map((edge) => ({ from: edge.source, to: edge.target })), hoverId) : null;
   const degrees = new Map<string, number>();
-  for (const edge of edges) {
-    degrees.set(edge.from, (degrees.get(edge.from) || 0) + 1);
-    degrees.set(edge.to, (degrees.get(edge.to) || 0) + 1);
+  for (const edge of visible.edges) {
+    degrees.set(edge.source, (degrees.get(edge.source) || 0) + 1);
+    degrees.set(edge.target, (degrees.get(edge.target) || 0) + 1);
   }
 
   return (
@@ -243,29 +214,51 @@ export function OrbitGraph({ promptNoteId, captionLogNoteId, onOpenActivity }: {
       style={{ backgroundPosition: `${pan.x}px ${pan.y}px` }}
     >
       <div className="orbit-graph-header">
-        <span className="surface-kicker">Live activity</span>
+        <span className="surface-kicker">Vault</span>
         <h2>Graph</h2>
+        <div className="orbit-graph-controls">
+          <input
+            className="orbit-graph-search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Filter notes"
+            aria-label="Filter graph"
+            onPointerDown={(event) => event.stopPropagation()}
+          />
+          {(['all', 'note', 'chat'] as const).map((value) => (
+            <button
+              key={value}
+              type="button"
+              className={`orbit-graph-filter${filter === value ? ' is-active' : ''}`}
+              aria-pressed={filter === value}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={() => setFilter(value)}
+            >
+              {value === 'all' ? 'All' : value === 'note' ? 'Notes' : 'Chats'}
+            </button>
+          ))}
+        </div>
       </div>
       <div className="orbit-graph-hint">Scroll to zoom · drag to pan</div>
 
-      {nodes.length === 0 && <div className="orbit-empty">{error || 'No agents running'}</div>}
+      {visible.nodes.length === 0 && <div className="orbit-empty">{error || 'No notes in this vault'}</div>}
 
       <svg className="orbit-edges" aria-hidden="true">
         <g transform={`translate(${surfaceSize.w / 2 + pan.x}, ${surfaceSize.h / 2 + pan.y}) scale(${zoom})`}>
-          {edges.map((edge) => {
-            const from = bodies.find((body) => body.id === edge.from);
-            const to = bodies.find((body) => body.id === edge.to);
+          {visible.edges.map((edge) => {
+            const from = bodies.find((body) => body.id === edge.source);
+            const to = bodies.find((body) => body.id === edge.target);
             if (!from || !to) return null;
-            const hot = Boolean(hoverId && (edge.from === hoverId || edge.to === hoverId));
+            const hot = Boolean(hoverId && (edge.source === hoverId || edge.target === hoverId));
             const dim = Boolean(hoverId && !hot);
             return (
               <line
-                key={`${edge.from}->${edge.to}`}
+                key={`${edge.source}->${edge.target}->${edge.kind || 'wikilink'}`}
                 x1={from.x}
                 y1={from.y}
                 x2={to.x}
                 y2={to.y}
-                className={`orbit-edge-line${hot ? ' is-hot' : ''}${dim ? ' is-dim' : ''}`}
+                className={`orbit-edge-line${edge.kind === 'chat' ? ' is-chat' : ''}${hot ? ' is-hot' : ''}${dim ? ' is-dim' : ''}`}
               />
             );
           })}
@@ -273,7 +266,7 @@ export function OrbitGraph({ promptNoteId, captionLogNoteId, onOpenActivity }: {
       </svg>
 
       <div className="orbit-layer" style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}>
-        {nodes.map((node) => {
+        {visible.nodes.map((node) => {
           const body = bodies.find((entry) => entry.id === node.id);
           if (!body) return null;
           const dim = Boolean(hoverId && hoverId !== node.id && !hoverNeighbors?.has(node.id));
@@ -281,19 +274,19 @@ export function OrbitGraph({ promptNoteId, captionLogNoteId, onOpenActivity }: {
           return (
             <div
               key={node.id}
-              className={`orbit-node is-${node.kind} is-${node.role} is-${node.state}${node.activity ? ' is-linked' : ''}${dim ? ' is-dim' : ''}${hoverId === node.id ? ' is-focus' : ''}`}
+              className={`orbit-node is-${node.kind}${node.archived ? ' is-idle' : ''}${node.kind !== 'missing' ? ' is-linked' : ''}${dim ? ' is-dim' : ''}${hoverId === node.id ? ' is-focus' : ''}`}
               style={{ left: body.x, top: body.y }}
               onPointerDown={(event) => startNodeDrag(event, node.id)}
               onPointerEnter={() => setHoverId(node.id)}
               onPointerLeave={() => setHoverId((current) => current === node.id ? null : current)}
               onClick={() => {
-                if (!nodeMovedRef.current && node.activity) onOpenActivity?.(node.activity);
+                if (!nodeMovedRef.current && node.kind !== 'missing') onOpenNote?.(node.id);
               }}
             >
               <span className="orbit-dot" style={{ width: radius * 2, height: radius * 2 }} />
               <span className="orbit-node-meta">
-                <span className="orbit-node-label">{node.label}</span>
-                <span className="orbit-node-status" title={node.status}>{node.status}</span>
+                <span className="orbit-node-label">{node.title}</span>
+                <span className="orbit-node-status">{node.kind === 'chat' ? 'chat' : node.kind === 'missing' ? 'unresolved' : ''}</span>
               </span>
             </div>
           );

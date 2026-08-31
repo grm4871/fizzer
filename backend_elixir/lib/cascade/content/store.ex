@@ -941,24 +941,105 @@ defmodule Cascade.Content.Store do
   end
 
   def graph(vault_id) do
+    notes =
+      Query.maps(
+        """
+        SELECT id, title, word_count, is_archived,
+          CASE WHEN trim(COALESCE(content_preview, content, '')) LIKE 'cascade://chat-channel%'
+            THEN 'chat' ELSE 'note' END AS kind
+        FROM notes
+        WHERE vault_id = ?
+        """,
+        [vault_id],
+        [:id, :title, :wordCount, :archived, :kind]
+      )
+
+    resolved =
+      Query.maps(
+        """
+        SELECT nl.source_id, nl.target_id
+        FROM note_links nl
+        JOIN notes n ON n.id = nl.source_id
+        WHERE n.vault_id = ? AND nl.target_id IS NOT NULL
+        """,
+        [vault_id],
+        [:source, :target]
+      )
+      |> Enum.map(&Map.put(&1, :kind, "wikilink"))
+
+    unresolved =
+      Query.maps(
+        """
+        SELECT nl.source_id, nl.target_title
+        FROM note_links nl
+        JOIN notes n ON n.id = nl.source_id
+        WHERE n.vault_id = ? AND nl.target_id IS NULL AND trim(nl.target_title) != ''
+        """,
+        [vault_id],
+        [:source, :title]
+      )
+
+    {chat_edges, chat_missing} = chat_graph_links(vault_id)
+    missing = missing_nodes(unresolved ++ chat_missing)
+
+    unresolved_edges =
+      Enum.map(unresolved, fn row ->
+        %{source: row.source, target: missing_id(row.title), kind: "wikilink"}
+      end)
+
     %{
-      nodes:
-        Query.maps("SELECT id, title, folder_id FROM notes WHERE vault_id = ?", [vault_id], [
-          :id,
-          :title,
-          :folder_id
-        ]),
-      edges:
+      nodes: notes ++ missing,
+      edges: resolved ++ unresolved_edges ++ chat_edges
+    }
+  end
+
+  defp chat_graph_links(vault_id) do
+    rows =
+      try do
         Query.maps(
           """
-          SELECT nl.source_id, nl.target_id FROM note_links nl
-          JOIN notes n ON n.id = nl.source_id
-          WHERE n.vault_id = ? AND nl.target_id IS NOT NULL
+          SELECT channel_id, note_id, target_title
+          FROM chat_note_backlinks
+          WHERE vault_id = ? AND COALESCE(deleted, 0) = 0
           """,
           [vault_id],
-          [:source, :target]
+          [:channelId, :noteId, :title]
         )
-    }
+      rescue
+        _ -> []
+      end
+
+    edges =
+      rows
+      |> Enum.filter(&(is_binary(&1.channelId) and &1.channelId != ""))
+      |> Enum.map(fn row ->
+        target =
+          if is_binary(row.noteId) and row.noteId != "",
+            do: row.noteId,
+            else: missing_id(row.title)
+
+        %{source: row.channelId, target: target, kind: "chat"}
+      end)
+      |> Enum.uniq()
+
+    missing =
+      rows
+      |> Enum.filter(&(is_nil(&1.noteId) or &1.noteId == ""))
+      |> Enum.map(&%{source: &1.channelId, title: &1.title})
+
+    {edges, missing}
+  end
+
+  defp missing_id(title), do: "missing:" <> String.downcase(String.trim(to_string(title || "")))
+
+  defp missing_nodes(rows) do
+    rows
+    |> Enum.map(& &1.title)
+    |> Enum.reject(&(is_nil(&1) or String.trim(to_string(&1)) == ""))
+    |> Enum.uniq_by(&String.downcase(String.trim(to_string(&1))))
+    |> Enum.map(fn title ->
+      %{id: missing_id(title), title: title, kind: "missing", wordCount: 0, archived: 0}
+    end)
   end
 
   def search(vault_id, query, opts \\ %{}) do

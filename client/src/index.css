@@ -1887,6 +1887,41 @@ button:focus-visible,
   z-index: 3;
   pointer-events: none;
 }
+.orbit-graph-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  pointer-events: auto;
+}
+.orbit-graph-search {
+  width: 160px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--bg-base) 70%, transparent);
+  color: var(--text-primary);
+  font-size: 0.68rem;
+}
+.orbit-graph-filter {
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.orbit-graph-filter:hover { color: var(--text-secondary); }
+.orbit-graph-filter.is-active {
+  border-color: color-mix(in srgb, var(--border) 80%, transparent);
+  color: var(--text-primary);
+}
 .orbit-graph-header h2 {
   margin-top: 2px;
   font: italic 750 1rem/1.2 var(--font-display);
@@ -1932,6 +1967,7 @@ button:focus-visible,
   stroke-width: 1.15;
   stroke-linecap: round;
 }
+.orbit-edge-line.is-chat { stroke: hsla(262, 28%, 62%, 0.5); }
 .orbit-edge-line.is-hot {
   stroke: color-mix(in srgb, var(--accent) 70%, #d7dde8);
   stroke-width: 1.7;
@@ -1957,9 +1993,13 @@ button:focus-visible,
   background: #d8c39a;
   box-shadow: 0 0 0 3px hsla(38, 70%, 62%, 0.12), 0 0 16px hsla(38, 80%, 55%, 0.28);
 }
-.orbit-node.is-codex .orbit-dot {
-  background: #8ec8e8;
-  box-shadow: 0 0 0 3px hsla(198, 70%, 62%, 0.14), 0 0 16px hsla(198, 80%, 60%, 0.3);
+.orbit-node.is-chat .orbit-dot {
+  background: #a99ad6;
+  box-shadow: 0 0 0 3px hsla(262, 40%, 62%, 0.16), 0 0 16px hsla(262, 50%, 60%, 0.28);
+}
+.orbit-node.is-missing .orbit-dot {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px #6d7380;
 }
 .orbit-node.is-idle .orbit-dot {
   background: #6d7380;

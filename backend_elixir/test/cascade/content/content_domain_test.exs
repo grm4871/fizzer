@@ -117,8 +117,23 @@ defmodule Cascade.ContentDomainTest do
 
     assert Store.get_backlinks(target.id) |> Enum.map(& &1.id) == [linking.id]
     assert %{nodes: nodes, edges: edges} = Store.graph(vault.id)
-    assert Enum.any?(nodes, &(&1.id == target.id))
-    assert Enum.any?(edges, &(&1.source == linking.id and &1.target == target.id))
+    assert Enum.any?(nodes, &(&1.id == target.id and &1.kind == "note"))
+    assert Enum.any?(nodes, &(&1.kind == "chat"))
+    assert Enum.any?(edges, &(&1.source == linking.id and &1.target == target.id and &1.kind == "wikilink"))
+
+    chat = Enum.find(Store.list_notes(vault.id), &String.starts_with?(&1.content_preview, "cascade://chat-channel"))
+    assert chat
+    Cascade.Evolution.ensure_schema()
+    Query.execute(
+      """
+      INSERT INTO chat_note_backlinks
+        (id, vault_id, note_id, target_title, message_id, channel_id, author, snippet, created_at, deleted)
+      VALUES ('bl-1', ?, ?, ?, 'msg-1', ?, 'alice', 'see the note', datetime('now'), 0)
+      """,
+      [vault.id, target.id, target.title, chat.id]
+    )
+    graph_with_chat = Store.graph(vault.id)
+    assert Enum.any?(graph_with_chat.edges, &(&1.source == chat.id and &1.target == target.id and &1.kind == "chat"))
 
     renamed = Store.rename_note(target.id, "Renamed Target")
     assert renamed.title == "Renamed Target"

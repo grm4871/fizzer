@@ -247,6 +247,21 @@ export type LocalAgentGraph = {
   scannedAt: number;
 };
 
+export type VaultGraphKind = 'note' | 'chat' | 'missing';
+export type VaultGraphNode = {
+  id: string;
+  title: string;
+  kind: VaultGraphKind;
+  wordCount?: number;
+  archived?: number;
+};
+export type VaultGraphEdge = { source: string; target: string; kind?: 'wikilink' | 'chat' };
+export type VaultGraph = { nodes: VaultGraphNode[]; edges: VaultGraphEdge[] };
+
+export async function fetchVaultGraph(vaultId: string): Promise<VaultGraph> {
+  return api<VaultGraph>(`/api/vaults/${encodeURIComponent(vaultId)}/graph`);
+}
+
 /**
  * Fetch the running-agent graph. Scanning local logs + Ollama runs server-side
  * (the host that shares a machine with the agents); the editable prompt-note

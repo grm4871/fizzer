@@ -7,42 +7,25 @@ vi.mock('../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api')>();
   return {
     ...actual,
-    fetchLocalAgents: vi.fn(async () => ({
+    fetchVaultGraph: vi.fn(async () => ({
       nodes: [
-        {
-          id: 'a',
-          kind: 'codex',
-          role: 'parent',
-          label: 'jt',
-          status: 'Running a command',
-          action: '',
-          state: 'active',
-          updatedAt: 1,
-        },
-        {
-          id: 'b',
-          kind: 'claude',
-          role: 'parent',
-          label: 'claude',
-          status: 'Idle',
-          action: '',
-          state: 'idle',
-          updatedAt: 1,
-        },
+        { id: 'n1', title: 'Roadmap', kind: 'note', wordCount: 40, archived: 0 },
+        { id: 'c1', title: 'new-channel', kind: 'chat', wordCount: 0, archived: 0 },
       ],
-      edges: [{ from: 'a', to: 'b' }],
-      scannedAt: 1,
+      edges: [{ source: 'c1', target: 'n1', kind: 'chat' }],
     })),
   };
 });
 
 describe('Orbit graph view', () => {
-  it('renders the graph chrome without agent logos', () => {
-    const markup = renderToStaticMarkup(createElement(OrbitGraph, {}));
+  it('renders vault graph chrome with note and chat filters', () => {
+    const markup = renderToStaticMarkup(createElement(OrbitGraph, { vaultId: 'vault-1' }));
     expect(markup).toContain('orbit-graph');
     expect(markup).toContain('>Graph<');
-    expect(markup).toContain('Scroll to zoom');
+    expect(markup).toContain('Notes');
+    expect(markup).toContain('Chats');
+    expect(markup).toContain('Filter notes');
     expect(markup).not.toContain('orbit-codex-mark');
-    expect(markup).not.toContain('▐▛███▜▌');
+    expect(markup).not.toContain('Running agents');
   });
 });

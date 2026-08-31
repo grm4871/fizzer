@@ -3133,12 +3133,10 @@ export default function App() {
             onClose={() => setOrbitOpen(false)}
           >
             <OrbitGraph
-              promptNoteId={notes.find((note) => note.title.toLowerCase() === 'prompt')?.id}
-              captionLogNoteId={notes.find((note) => note.title.toLowerCase() === 'orbit caption log')?.id}
-              onOpenActivity={(activity) => {
+              vaultId={activeVaultId}
+              onOpenNote={(id) => {
                 setOrbitOpen(false);
-                setFocusSessionId(activity.sessionId);
-                setSessionManagerOpen(true);
+                openNote(id);
               }}
             />
           </ModalShell>
