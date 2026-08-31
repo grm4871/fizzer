@@ -33,6 +33,7 @@ defmodule CascadeWeb.AuthController do
     case Session.authenticate(conn) do
       {:ok, %{access: "user"} = authenticated} ->
         conn
+        |> Session.maybe_renew_user_cookie(authenticated)
         |> maybe_migrate_bearer(authenticated)
         |> JSON.send(200, %{
           authenticated: true,

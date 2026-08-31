@@ -35,6 +35,7 @@ defmodule CascadeWeb.Auth do
         |> assign(:auth_access, session.access)
         |> assign(:auth_source, session.source)
         |> assign(:auth_token, session.token)
+        |> Session.maybe_renew_user_cookie(session)
         |> maybe_migrate_bearer(session)
         |> maybe_register_agent_redaction(session)
 

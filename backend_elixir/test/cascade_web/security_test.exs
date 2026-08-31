@@ -111,6 +111,34 @@ defmodule CascadeWeb.SecurityTest do
     assert Enum.any?(clear_headers, &String.starts_with?(&1, "cascade_session="))
   end
 
+  test "active browser sessions renew before their seven-day expiry" do
+    Application.put_env(:cascade_elixir, :network_mode, true)
+    user = %{id: 42, username: "sol", auth_version: 0}
+    now = System.system_time(:second)
+
+    near_expiry =
+      Session.maybe_renew_user_cookie(conn(:get, "/api/session"), %{
+        source: :cookie,
+        access: "user",
+        expires_at: now + 60,
+        user: user
+      })
+
+    assert [cookie] = get_resp_header(near_expiry, "set-cookie")
+    assert cookie =~ "__Host-cascade_session="
+    assert cookie =~ "Max-Age=604800"
+
+    fresh =
+      Session.maybe_renew_user_cookie(conn(:get, "/api/session"), %{
+        source: :cookie,
+        access: "user",
+        expires_at: now + 6 * 24 * 60 * 60,
+        user: user
+      })
+
+    assert get_resp_header(fresh, "set-cookie") == []
+  end
+
   test "network mode refuses the legacy development JWT secret" do
     previous_secret = System.get_env("JWT_SECRET")
     Application.put_env(:cascade_elixir, :network_mode, true)

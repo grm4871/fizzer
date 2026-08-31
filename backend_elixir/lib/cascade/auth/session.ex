@@ -7,6 +7,7 @@ defmodule Cascade.Auth.Session do
 
   @secure_cookie "__Host-cascade_session"
   @local_cookie "cascade_session"
+  @renewal_window_seconds 3 * 24 * 60 * 60
 
   def authenticate(conn) do
     conn = fetch_cookies(conn)
@@ -51,6 +52,18 @@ defmodule Cascade.Auth.Session do
     |> prepend_resp_headers([{"set-cookie", local}])
   end
 
+  def maybe_renew_user_cookie(
+        conn,
+        %{source: :cookie, access: "user", expires_at: expires_at, user: user}
+      )
+      when is_integer(expires_at) do
+    if expires_at - System.system_time(:second) <= @renewal_window_seconds,
+      do: put_user_cookie(conn, Token.sign_user(user)),
+      else: conn
+  end
+
+  def maybe_renew_user_cookie(conn, _session), do: conn
+
   def bearer?(conn), do: bearer_candidate(conn) != nil
 
   defp bearer_candidate(conn) do
@@ -68,11 +81,18 @@ defmodule Cascade.Auth.Session do
   end
 
   defp verify_candidate({source, token}) do
-    with {:ok, claims} <- Token.verify(token),
+    with {:ok, claims, expires_at} <- Token.verify_with_expiration(token),
          {:ok, user} <- Accounts.fetch_by_id(claims.id),
          true <- user.username == claims.username,
          true <- user.auth_version == claims.auth_version do
-      {:ok, %{source: source, token: token, user: user, access: claims.access}}
+      {:ok,
+       %{
+         source: source,
+         token: token,
+         user: user,
+         access: claims.access,
+         expires_at: expires_at
+       }}
     else
       _ -> false
     end
