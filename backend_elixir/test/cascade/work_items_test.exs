@@ -87,6 +87,32 @@ defmodule Cascade.WorkItemsTest do
     assert stopped.leaseHolder == nil
   end
 
+  test "unused isolated workspaces can rebind onto a newer base commit", context do
+    assert {:ok, item} =
+             WorkItems.create(context.user_id, context.vault_id, %{
+               title: "Fresh worker",
+               workspaceMode: "isolated"
+             })
+
+    old = String.duplicate("d", 40)
+    new = String.duplicate("e", 40)
+
+    binding = %{
+      repository: "org/repo",
+      baseCommit: old,
+      branch: "cascade/fresh-worker",
+      worktreePath: "/tmp/fresh-worker"
+    }
+
+    assert {:ok, bound} = WorkItems.bind_workspace(context.user_id, item.id, binding)
+    assert bound.baseCommit == old
+
+    assert {:ok, moved} =
+             WorkItems.bind_workspace(context.user_id, item.id, %{binding | baseCommit: new})
+
+    assert moved.baseCommit == new
+  end
+
   test "review evidence is tied to the bound base and reported head", context do
     base = String.duplicate("b", 40)
     head = String.duplicate("c", 40)

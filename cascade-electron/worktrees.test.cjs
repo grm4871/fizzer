@@ -109,6 +109,76 @@ test('prepares one exact task branch and recovers it idempotently by work item',
   assert.match(hijack.error, /owned by another workspace|already exists/);
 });
 
+test('mission worktrees start from current HEAD, not a stale local master', async () => {
+  const repo = makeRepo('stale-master');
+  execFileSync('git', ['branch', 'master'], { cwd: repo, stdio: 'pipe' });
+  execFileSync('git', ['checkout', '-b', 'fizzer-main'], { cwd: repo, stdio: 'pipe' });
+  fs.writeFileSync(path.join(repo, 'README.md'), '# current\n');
+  execFileSync('git', ['commit', '-am', 'current work'], { cwd: repo, stdio: 'pipe' });
+  const current = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo }).toString().trim();
+  const master = execFileSync('git', ['rev-parse', 'master'], { cwd: repo }).toString().trim();
+  assert.notEqual(current, master);
+
+  const created = await wt.createWorkspace({ dir: repo, slug: 'artifact' });
+  assert.equal(created.ok, true, created.error);
+  assert.equal(created.baseCommit, current);
+  const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: created.path }).toString().trim();
+  assert.equal(head, current);
+});
+
+test('unused prepared worktrees move onto current HEAD instead of staying misbased', async () => {
+  const repo = makeRepo('rebase-empty');
+  const branch = 'cascade/mission-a/task-1';
+  const first = await wt.prepareWorkspace({
+    dir: repo,
+    branch,
+    workItemId: 'work-item-stale',
+  });
+  assert.equal(first.ok, true, first.error);
+
+  fs.writeFileSync(path.join(repo, 'README.md'), '# moved\n');
+  execFileSync('git', ['commit', '-am', 'move primary'], { cwd: repo, stdio: 'pipe' });
+  const current = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo }).toString().trim();
+  assert.notEqual(first.baseCommit, current);
+
+  const prepared = await wt.prepareWorkspace({
+    dir: repo,
+    branch,
+    workItemId: 'work-item-stale',
+  });
+  assert.equal(prepared.ok, true, prepared.error);
+  assert.equal(prepared.rebased, true);
+  assert.equal(prepared.baseCommit, current);
+  const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: prepared.path }).toString().trim();
+  assert.equal(head, current);
+});
+
+test('prepared worktrees with worker commits keep their original base', async () => {
+  const repo = makeRepo('keep-base');
+  const branch = 'cascade/mission-b/task-1';
+  const first = await wt.prepareWorkspace({
+    dir: repo,
+    branch,
+    workItemId: 'work-item-busy',
+  });
+  assert.equal(first.ok, true, first.error);
+  fs.writeFileSync(path.join(first.path, 'worker.txt'), 'edits\n');
+  execFileSync('git', ['add', 'worker.txt'], { cwd: first.path, stdio: 'pipe' });
+  execFileSync('git', ['commit', '-m', 'worker progress'], { cwd: first.path, stdio: 'pipe' });
+
+  fs.writeFileSync(path.join(repo, 'README.md'), '# later primary\n');
+  execFileSync('git', ['commit', '-am', 'later primary'], { cwd: repo, stdio: 'pipe' });
+
+  const prepared = await wt.prepareWorkspace({
+    dir: repo,
+    branch,
+    workItemId: 'work-item-busy',
+  });
+  assert.equal(prepared.ok, true, prepared.error);
+  assert.equal(prepared.rebased, false);
+  assert.equal(prepared.baseCommit, first.baseCommit);
+});
+
 test('status separates uncommitted changes from unpushed commits', async () => {
   const repo = makeRepo('beta');
   const created = await wt.createWorkspace({ dir: repo, slug: 'work' });

@@ -172,7 +172,8 @@ defmodule Cascade.WorkItems do
            same_or_blank(
              item.baseCommit,
              values.baseCommit,
-             "Prepared base commit does not match this work item"
+             "Prepared base commit does not match this work item",
+             rebindable_base?(item)
            ),
          :ok <-
            same_or_blank(
@@ -186,16 +187,21 @@ defmodule Cascade.WorkItems do
              values.worktreePath,
              "Prepared path does not match this work item"
            ) do
+      base_commit =
+        if item.baseCommit in [nil, ""] or rebindable_base?(item),
+          do: values.baseCommit,
+          else: item.baseCommit
+
       SQL.exec(
         """
         UPDATE work_items SET
           repository=CASE WHEN repository='' THEN ? ELSE repository END,
-          base_commit=CASE WHEN base_commit='' THEN ? ELSE base_commit END,
+          base_commit=?,
           branch=CASE WHEN branch='' THEN ? ELSE branch END,
           worktree_path=CASE WHEN worktree_path='' THEN ? ELSE worktree_path END,
           updated_at=datetime('now') WHERE id=?
         """,
-        [values.repository, values.baseCommit, values.branch, values.worktreePath, id]
+        [values.repository, base_commit, values.branch, values.worktreePath, id]
       )
 
       get(user_id, id)
@@ -867,8 +873,26 @@ defmodule Cascade.WorkItems do
 
   defp holder_can_release(_item, _holder), do: :ok
 
-  defp same_or_blank(existing, next, message),
-    do: if(existing in [nil, ""] or existing == next, do: :ok, else: {:error, message})
+  defp same_or_blank(existing, next, message, allow_rebind \\ false),
+    do:
+      if(existing in [nil, ""] or existing == next or allow_rebind,
+        do: :ok,
+        else: {:error, message}
+      )
+
+  defp rebindable_base?(item) do
+    item.verification in [nil, ""] and item.status in ~w(open leased in_progress) and
+      unused_git_state?(item.gitState)
+  end
+
+  defp unused_git_state?(nil), do: true
+
+  defp unused_git_state?(state) when is_map(state) do
+    field(state, :dirty) != true and integer(field(state, :ahead)) == 0 and
+      integer(field(state, :changedFiles)) == 0
+  end
+
+  defp unused_git_state?(_), do: false
 
   defp review_evidence_error(item, input) do
     base = clean(field(input, :baseCommit), 80)
