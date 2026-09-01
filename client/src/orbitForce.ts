@@ -8,14 +8,18 @@ export type ForceBody = {
   vy: number;
   pinned?: boolean;
   mass?: number;
+  radius?: number;
+  anchorX?: number;
+  anchorY?: number;
 };
 
 export type ForceLink = { from: string; to: string };
 
-const REPULSION = 2800;
-const SPRING = 0.045;
-const REST_LENGTH = 118;
-const GRAVITY = 0.012;
+const REPULSION = 3600;
+const SPRING = 0.018;
+const REST_LENGTH = 150;
+const ANCHOR = 0.008;
+const CENTER_GRAVITY = 0.0004;
 const DAMPING = 0.86;
 const MAX_SPEED = 9;
 
@@ -29,8 +33,8 @@ export function neighborIds(edges: ForceLink[], id: string) {
 }
 
 export function stepForce(bodies: ForceBody[], links: ForceLink[]): ForceBody[] {
-  const byId = new Map(bodies.map((body) => [body.id, { ...body }]));
   const next = bodies.map((body) => ({ ...body }));
+  const byId = new Map(next.map((body) => [body.id, body]));
 
   for (let i = 0; i < next.length; i += 1) {
     for (let j = i + 1; j < next.length; j += 1) {
@@ -45,7 +49,9 @@ export function stepForce(bodies: ForceBody[], links: ForceLink[]): ForceBody[] 
         distSq = dx * dx + dy * dy;
       }
       const dist = Math.sqrt(distSq);
-      const force = REPULSION / distSq;
+      const separation = (a.radius || 8) + (b.radius || 8) + 34;
+      const overlap = Math.max(0, separation - dist);
+      const force = REPULSION / distSq + overlap * 0.08;
       const fx = (dx / dist) * force;
       const fy = (dy / dist) * force;
       if (!a.pinned) {
@@ -60,11 +66,8 @@ export function stepForce(bodies: ForceBody[], links: ForceLink[]): ForceBody[] 
   }
 
   for (const link of links) {
-    const a = byId.get(link.from);
-    const b = byId.get(link.to);
-    if (!a || !b) continue;
-    const left = next.find((body) => body.id === a.id);
-    const right = next.find((body) => body.id === b.id);
+    const left = byId.get(link.from);
+    const right = byId.get(link.to);
     if (!left || !right) continue;
     const dx = right.x - left.x;
     const dy = right.y - left.y;
@@ -88,8 +91,8 @@ export function stepForce(bodies: ForceBody[], links: ForceLink[]): ForceBody[] 
       body.vy = 0;
       continue;
     }
-    body.vx -= body.x * GRAVITY;
-    body.vy -= body.y * GRAVITY;
+    body.vx += ((body.anchorX ?? 0) - body.x) * ANCHOR - body.x * CENTER_GRAVITY;
+    body.vy += ((body.anchorY ?? 0) - body.y) * ANCHOR - body.y * CENTER_GRAVITY;
     body.vx *= DAMPING;
     body.vy *= DAMPING;
     const speed = Math.hypot(body.vx, body.vy);

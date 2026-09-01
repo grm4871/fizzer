@@ -83,6 +83,7 @@
     "test:release:desktop": "npm run test:electron",
     "test:release": "npm run test:release:backend && npm run test:release:frontend && npm run test:release:desktop",
     "verify:client-runtime": "node scripts/verify-client-runtime.mjs",
+    "verify:orbit-graph-ui": "node scripts/verify-orbit-graph-ui.mjs",
     "verify:client-performance": "node scripts/verify-client-performance.mjs",
     "verify:notes-ui": "node scripts/verify-notes-ui.mjs",
     "verify:chat-forward-ui": "node scripts/verify-chat-forward-ui.mjs",
