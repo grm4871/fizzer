@@ -3,6 +3,8 @@
  * Keep in sync with server AgentId / CLI agent lists where applicable.
  */
 
+import type { ChatAgentRegistration } from './types';
+
 export type AgentId = 'claude-code' | 'codex' | 'grok' | 'antigravity' | 'copilot' | 'hermes' | 'akron-grok' | 'omp' | 'pi';
 
 export const CHAT_AGENTS: Array<{ id: AgentId; label: string }> = [
@@ -20,6 +22,14 @@ export const CHAT_AGENTS: Array<{ id: AgentId; label: string }> = [
 /** Preserve authoritative in-memory members across a transient hydration error. */
 export function agentsAfterLoadFailure<T>(cached?: T[]): T[] {
   return cached ?? [];
+}
+
+/** Preserve channel-only launch settings when seating a new persistent identity. */
+export function vaultAgentMembershipPayload(
+  vaultAgentId: string,
+  registration: Partial<ChatAgentRegistration> = {},
+) {
+  return { ...registration, vaultAgentId };
 }
 
 /**

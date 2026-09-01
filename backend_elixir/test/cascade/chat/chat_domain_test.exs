@@ -1164,7 +1164,7 @@ defmodule Cascade.ChatDomainTest do
     assert {:ok, []} = Dispatches.create_for_message(user.id, channel.id, human_reply)
   end
 
-  test "ambient group chat serializes peer-aware dispatches instead of fanning out" do
+  test "ambient five-agent launch persists identities and serializes an idempotent peer exchange" do
     {vault, channel} = chat_vault(1, "Ambient", "Ambient room")
     user = %{id: 1, username: "alice"}
 
@@ -1172,7 +1172,9 @@ defmodule Cascade.ChatDomainTest do
       for {name, mention} <- [
             {"Skeptic", "skeptic"},
             {"Builder", "builder"},
-            {"Herald", "herald"}
+            {"Herald", "herald"},
+            {"Warden", "warden"},
+            {"Broker", "broker"}
           ] do
         {:ok, identity} =
           Agents.upsert_identity(1, vault.id, %{
@@ -1184,12 +1186,18 @@ defmodule Cascade.ChatDomainTest do
         {:ok, registration} =
           Agents.add_to_channel(1, vault.id, channel.id, identity.id, %{
             ambientGroupChat: true,
-            taggableByAgents: true
+            finalReplyOnly: true,
+            taggableByAgents: true,
+            contextPrompt: "Converse naturally as #{name}."
           })
 
         assert registration.ambientGroupChat
+        assert registration.finalReplyOnly
         registration
       end
+
+    assert Enum.uniq_by(registrations, & &1.vaultAgentId) == registrations
+    assert registrations |> Enum.map(& &1.conversationId) |> Enum.uniq() |> length() == 5
 
     {:ok, root} =
       Messages.create(user, vault.id, channel.id, %{
@@ -1197,58 +1205,54 @@ defmodule Cascade.ChatDomainTest do
         body: "Begin the experiment."
       })
 
-    assert {:ok, [first_dispatch]} = Dispatches.create_for_message(user.id, channel.id, root)
-    assert first_dispatch.registration.id == Enum.at(registrations, 0).id
+    replies = [
+      "I think the evidence matters.",
+      "That evidence needs a falsifier.",
+      "Agreed; what observation would disprove it?",
+      "A restart losing the transcript would disprove persistence.",
+      "Then preserve the transcript and test the restart boundary."
+    ]
 
-    assert {:ok, first_run} =
-             RunStore.start(vault.id, nil, "first ambient turn", "codex",
-               owner_user_id: user.id,
-               chat_dispatch_id: first_dispatch.id
-             )
+    final_message =
+      Enum.zip(registrations, replies)
+      |> Enum.with_index(1)
+      |> Enum.reduce(root, fn {{registration, body}, index}, triggering_message ->
+        assert {:ok, [dispatch]} =
+                 Dispatches.create_for_message(user.id, channel.id, triggering_message)
 
-    {:ok, first_reply} =
-      Messages.create(
-        user,
-        vault.id,
-        channel.id,
-        %{
-          id: "ambient-first-reply",
-          body: "I think the evidence matters.",
-          registrationId: first_dispatch.registration.id,
-          runId: first_run.id
-        },
-        access: :agent
-      )
+        assert dispatch.registration.id == registration.id
 
-    assert {:ok, [second_dispatch]} =
-             Dispatches.create_for_message(user.id, channel.id, first_reply)
+        assert {:ok, [duplicate]} =
+                 Dispatches.create_for_message(user.id, channel.id, triggering_message)
 
-    assert second_dispatch.registration.id == Enum.at(registrations, 1).id
+        assert duplicate.id == dispatch.id
 
-    assert {:ok, second_run} =
-             RunStore.start(vault.id, nil, "second ambient turn", "codex",
-               owner_user_id: user.id,
-               chat_dispatch_id: second_dispatch.id
-             )
+        assert {:ok, run} =
+                 RunStore.start(vault.id, nil, "ambient turn #{index}", "codex",
+                   owner_user_id: user.id,
+                   chat_dispatch_id: dispatch.id
+                 )
 
-    {:ok, second_reply} =
-      Messages.create(
-        user,
-        vault.id,
-        channel.id,
-        %{
-          id: "ambient-second-reply",
-          body: "That evidence needs a falsifier.",
-          registrationId: second_dispatch.registration.id,
-          runId: second_run.id
-        },
-        access: :agent
-      )
+        {:ok, reply} =
+          Messages.create(
+            user,
+            vault.id,
+            channel.id,
+            %{
+              id: "ambient-reply-#{index}",
+              body: body,
+              registrationId: registration.id,
+              runId: run.id
+            },
+            access: :agent
+          )
 
-    assert {:ok, [third_dispatch]} =
-             Dispatches.create_for_message(user.id, channel.id, second_reply)
+        reply
+      end)
 
-    assert third_dispatch.registration.id == Enum.at(registrations, 2).id
+    assert final_message.body == List.last(replies)
+    assert {:ok, transcript} = Messages.list(channel.id, user.id, limit: 10)
+    assert Enum.map(transcript, & &1.body) == ["Begin the experiment." | replies]
   end
 
   test "exhausted Claude and Codex skip reply-to-all without blocking explicit mentions" do

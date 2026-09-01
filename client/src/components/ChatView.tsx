@@ -95,7 +95,11 @@ interface ChatViewProps {
   onUpsertVaultAgent?: (agent: Partial<VaultAgent> & { agentId: string }) => Promise<VaultAgent | void> | VaultAgent | void;
   onDeleteVaultAgent?: (vaultAgentId: string) => Promise<void> | void;
   onDeleteAgentProfile?: (vaultAgentId: string) => Promise<void> | void;
-  onAddVaultAgentToChannel?: (channelId: string, vaultAgentId: string) => Promise<void> | void;
+  onAddVaultAgentToChannel?: (
+    channelId: string,
+    vaultAgentId: string,
+    membership?: ChatAgentRegistration,
+  ) => Promise<void> | void;
   onInviteUser: (channelId: string, username: string) => Promise<void>;
   onRemoveParticipant?: (channelId: string, username: string) => Promise<void>;
   onLeaveChannel?: (channelId: string) => Promise<void>;

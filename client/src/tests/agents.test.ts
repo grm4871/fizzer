@@ -9,6 +9,7 @@ import {
   needsCascadeWorkspaceContext,
   needsRecentChatContext,
   ORCHESTRATOR_VIRTUAL_WORKERS,
+  vaultAgentMembershipPayload,
 } from '../chat/agents';
 
 const registration = {
@@ -26,6 +27,25 @@ describe('agent member hydration', () => {
 
   it('does not resurrect removed registrations from legacy local state', () => {
     expect(agentsAfterLoadFailure(undefined)).toEqual([]);
+  });
+});
+
+describe('persistent agent launch', () => {
+  it('carries ambient and final-only membership settings into the seating request', () => {
+    const payload = vaultAgentMembershipPayload('adags-builder', {
+      ambientGroupChat: true,
+      finalReplyOnly: true,
+      taggableByAgents: true,
+      conversationId: 'builder-conversation',
+    });
+
+    expect(payload).toMatchObject({
+      vaultAgentId: 'adags-builder',
+      ambientGroupChat: true,
+      finalReplyOnly: true,
+      taggableByAgents: true,
+      conversationId: 'builder-conversation',
+    });
   });
 });
 

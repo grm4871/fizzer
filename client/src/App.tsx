@@ -58,6 +58,7 @@ import type {
   SharedChatNote,
   VaultAgent,
 } from './chat/types';
+import { vaultAgentMembershipPayload } from './chat/agents';
 import {
   CHAT_NOTE_MARKER,
   createChatAgentRegistrationId,
@@ -1529,14 +1530,18 @@ export default function App() {
     });
   }, []);
 
-  const handleAddVaultAgentToChannel = useCallback(async (channelId: string, vaultAgentId: string) => {
+  const handleAddVaultAgentToChannel = useCallback(async (
+    channelId: string,
+    vaultAgentId: string,
+    membership?: ChatAgentRegistration,
+  ) => {
     const vaultId = activeVaultIdRef.current;
     if (!vaultId) throw new Error('No active vault');
     const data = await api<{ registration: ChatAgentRegistration }>(
       `/api/vaults/${vaultId}/channels/${channelId}/agents/from-vault`,
       {
         method: 'POST',
-        body: JSON.stringify({ vaultAgentId }),
+        body: JSON.stringify(vaultAgentMembershipPayload(vaultAgentId, membership)),
       },
     );
     const reg = data.registration;

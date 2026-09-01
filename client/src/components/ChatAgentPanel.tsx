@@ -2,6 +2,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useSt
 import { ChevronRight, X } from 'lucide-react';
 import { formatChatTime } from '../chat/time';
 import { createChatAgentRegistrationId } from '../chat/shared';
+import { vaultAgentMembershipPayload } from '../chat/agents';
 import { normalizeMention } from '../chat/mentions';
 import type {
   ChatAgentOption,
@@ -177,7 +178,11 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
   onUpsertVaultAgent?: (agent: Partial<VaultAgent> & { agentId: string }) => Promise<VaultAgent | void> | VaultAgent | void;
   onDeleteVaultAgent?: (vaultAgentId: string) => Promise<void> | void;
   onDeleteAgentProfile?: (vaultAgentId: string) => Promise<void> | void;
-  onAddVaultAgentToChannel?: (channelId: string, vaultAgentId: string) => Promise<void> | void;
+  onAddVaultAgentToChannel?: (
+    channelId: string,
+    vaultAgentId: string,
+    membership?: ChatAgentRegistration,
+  ) => Promise<void> | void;
   onInviteUser: (channelId: string, username: string) => Promise<void>;
   canManageRegistration: (registration: ChatAgentRegistration) => boolean;
   onExpandRail: () => void;
@@ -516,7 +521,18 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
         });
         const vaultAgentId = va?.id || agentForm.vaultAgentId || '';
         if (vaultAgentId && onAddVaultAgentToChannel) {
-          await onAddVaultAgentToChannel(channelId, vaultAgentId);
+          await onAddVaultAgentToChannel(
+            channelId,
+            vaultAgentId,
+            vaultAgentMembershipPayload(vaultAgentId, {
+              ...agentForm,
+              displayName: agentForm.displayName.trim(),
+              mention,
+              model,
+              cwd: agentForm.cwd.trim(),
+              contextPrompt: agentForm.contextPrompt.trim(),
+            }) as ChatAgentRegistration,
+          );
         }
       } else {
         if (agentForm.vaultAgentId && onUpsertVaultAgent) {
