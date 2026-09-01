@@ -44,12 +44,12 @@ Where a row above has a command, run the command instead of reasoning about the 
 | Agent start and run lifecycle | `npm run test:desktop-runner` | Run reclaim, replay, duplicate-process avoidance |
 | Vault switcher, vault settings | `npm run verify:vault-rename-ui` | Rename reaches `PATCH /api/vaults/:id` and updates the switcher, non-owners get neither the control nor the API, and the agent-memory preference lives in account settings |
 | API, persistence, migrations | `npm run test:elixir:mix-check` and `npm run test:elixir:data-parity` | Fresh **and** upgraded databases: every column the writers use exists after migration, legacy rows survive, and writes still work against a migrated table. Routine deploys classify rolling-safe from `sqlite_master` only; full row/corpus compare runs only when that schema changes. |
-| Elixir backend | `npm run test:release:backend` | Elixir tests plus contract, route, data, and CLI-agent compatibility |
+| Elixir backend | `npm run test:release:backend` plus focused tests for changed modules | Compile/type safety plus contract, route, and data compatibility |
 | Deployment/configuration | Watch the update process on your host, then inspect the served bundle | Deploy completion plus the asset your configured domain really serves |
 
 Still manual, by nature: Electron lifecycle (`Ctrl/Cmd+R` during an active run), Android/foldable layouts, background/resume and offline behavior, and any production exercise requiring a real account.
 
-The routine checkout gate is intentionally bounded. Use `npm run test:elixir-release:full` only for cross-cutting backend releases or changes to persistence, deployment, realtime infrastructure, or the test machinery itself. Production-shaped capacity and soak runs are exceptional checks for material capacity changes, not routine release gates. The deploy watcher builds a missing image from the exact committed Git object on the host; `remote-update.sh` still validates its revision and digest before cutover.
+The routine checkout gate is intentionally fast; pair it with the focused test file for the code changed. Use `npm run test:release:backend:full` only for genuinely cross-cutting backend releases or changes to persistence, deployment, realtime infrastructure, or the test machinery itself. Production-shaped capacity and soak runs are exceptional checks for material capacity changes, not routine release gates. The deploy watcher builds a missing image from the exact committed Git object on the host; `remote-update.sh` still validates its revision and digest before cutover.
 
 `npm run build:vps` still does not type-check the renderer. Frontend release coverage starts with `npm run typecheck:client`. Backend coverage is `mix check` plus the Elixir e2e and contract scripts, not `npm test`.
 
