@@ -99,7 +99,9 @@ cascade-chat mission finish --mission <id> --summary "..."
 Named assignees still get at most one active mission task at a time.
 `--anonymous` creates a parallel clone of that agent (isolated session, no
 extra channel membership) so a coordinator can fan out several sols at
-different effort levels without registering duplicate members.
+different effort levels without registering duplicate members. Workers inherit
+that agent's tools and authority, not its coordinator role: they execute one
+task and cannot start or delegate missions.
 
 `chat_missions` and `chat_mission_tasks` are authoritative, while
 `chat_mission_events` is an append-only timeline with no retention window. A compact mission

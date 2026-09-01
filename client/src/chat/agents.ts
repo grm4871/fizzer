@@ -196,6 +196,10 @@ export const CHAT_REPLY_BREVITY =
 export const ORCHESTRATOR_VIRTUAL_WORKERS =
   ' Stay available as a lightweight control plane: answer trivial questions and coordinate directly, but never occupy your own turn with substantive execution. For actionable work, use `cascade-chat mission start --control-plane` and dispatch one to three anonymous self-subagents with `cascade-chat mission delegate --anonymous`: one clone for cohesive or sequential work, parallel clones only for independent work. They are ephemeral task-scoped copies of your model, tools, authority, and safety policy—not vault agents. Give each a bounded task, then end without polling or waiting. Mission events wake you in a fresh turn to reconcile, verify, run `cascade-chat mission finish`, and reply.';
 
+/** Anonymous clones keep the coordinator's registration; they must not inherit its role. */
+export const ORCHESTRATOR_WORKER_ROLE =
+  ' You are a mission worker, not the channel control plane. Execute only this assigned task. Do not run `cascade-chat mission start` or `cascade-chat mission delegate`, and do not spawn subagents. If blocked, mark the task blocked with `cascade-chat mission update` and stop. The mission card updates when this run ends.';
+
 /**
  * Build the system-ish header the agent receives for a channel reply.
  * When `continuation` is true the CLI session already holds earlier turns —
@@ -207,6 +211,7 @@ export function formatAgentChatPrompt(
   request: string,
   triggeringAuthor: string,
   continuation = false,
+  missionTaskId?: string,
 ) {
   const selfAgent = CHAT_AGENTS.find((candidate) => candidate.id === registration.agentId);
   const selfHandle = registration.mention || registration.agentId;
@@ -225,15 +230,20 @@ export function formatAgentChatPrompt(
 
   const nativeScratchpad = registration.agentId === 'akron-grok';
   const compactNativeCli = registration.agentId === 'hermes' || registration.agentId === 'omp' || registration.agentId === 'pi';
-  const coordinatorGuidance = registration.orchestrator
-    ? ` You coordinate this channel. Treat clear actionable requests as implementation authority. Clarify only a requested mission/kanban or a material scope, authority, or product choice.${ORCHESTRATOR_VIRTUAL_WORKERS} Use \`--after\`, \`--priority\`, or \`--effort\` when needed. Keep mission summaries short and stay responsive. Ship only after \`npm run build\` and green Deploy; open images with \`cascade-chat attachment --message-id <id>\`.`
-    : '';
+  const worker = Boolean(String(missionTaskId || '').trim());
+  const coordinatorGuidance = worker
+    ? ORCHESTRATOR_WORKER_ROLE
+    : registration.orchestrator
+      ? ` You coordinate this channel. Treat clear actionable requests as implementation authority. Clarify only a requested mission/kanban or a material scope, authority, or product choice.${ORCHESTRATOR_VIRTUAL_WORKERS} Use \`--after\`, \`--priority\`, or \`--effort\` when needed. Keep mission summaries short and stay responsive. Ship only after \`npm run build\` and green Deploy; open images with \`cascade-chat attachment --message-id <id>\`.`
+      : '';
   // A resumed provider session already contains the full contract above. Do
   // not pay to restate it on every manager turn; retain only the behavioral
   // invariant that matters for the next request.
-  const coordinatorContinuationGuidance = registration.orchestrator
-    ? ` Continue coordinating: handle clear work directly; clarify only a user-requested mission/kanban or a genuinely material ambiguity.${ORCHESTRATOR_VIRTUAL_WORKERS} Keep replies short. Ship only after \`npm run build\` + green Deploy; open chat images via \`cascade-chat attachment\` (never “cannot see”).`
-    : '';
+  const coordinatorContinuationGuidance = worker
+    ? ORCHESTRATOR_WORKER_ROLE
+    : registration.orchestrator
+      ? ` Continue coordinating: handle clear work directly; clarify only a user-requested mission/kanban or a genuinely material ambiguity.${ORCHESTRATOR_VIRTUAL_WORKERS} Keep replies short. Ship only after \`npm run build\` + green Deploy; open chat images via \`cascade-chat attachment\` (never “cannot see”).`
+      : '';
   const finalReplyGuidance = registration.finalReplyOnly
     ? ' Write one normal group-chat message, never a work log: no planning, status, reasoning, tool narration, or generic agreement. Respond to concrete claims in the triggering message. If you have no new evidence, correction, question, or decision, output exactly [no-reply].'
     : '';

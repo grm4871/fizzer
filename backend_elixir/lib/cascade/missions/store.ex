@@ -39,6 +39,7 @@ defmodule Cascade.Missions.Store do
              channel_id,
              field(input, :coordinatorRegistrationId)
            ),
+         :ok <- reject_worker_control(opts, :start),
          {:ok, root} <- Messages.get(channel_id, user_id, field(input, :rootMessageId)),
          title when title != "" <- clean(field(input, :title), 180) do
       objective = clean(nonblank(field(input, :objective), root.body), 4_000)
@@ -203,6 +204,7 @@ defmodule Cascade.Missions.Store do
          :ok <- ensure_mission_open(mission.status),
          {:ok, coordinator} <- assert_coordinator(user_id, channel_id, coordinator_id),
          true <- mission.coordinator_registration_id == coordinator.id,
+         :ok <- reject_worker_control(opts, :delegate),
          {:ok, assignee} <- find_assignee(user_id, channel_id, field(input, :assignee)),
          anonymous <- truthy?(field(input, :anonymous)),
          :ok <- validate_self_assignment(assignee, coordinator, anonymous, opts),
@@ -580,6 +582,7 @@ defmodule Cascade.Missions.Store do
          mission <- mission_row(update.mission.id),
          {:ok, coordinator} <- assert_coordinator(user_id, channel_id, coordinator_id),
          true <- mission.coordinator_registration_id == coordinator.id,
+         :ok <- reject_worker_control(opts, :finish),
          status when status in ~w(completed canceled) <- field(input, :status) do
       if mission.status in ~w(completed canceled) do
         if mission.status == status,
@@ -1154,6 +1157,35 @@ defmodule Cascade.Missions.Store do
     is_integer(run_id) and task.run_id == run_id and task.title == "Primary task" and
       task.assignee_registration_id == mission.coordinator_registration_id
   end
+
+  defp reject_worker_control(opts, action) do
+    case worker_task_for_run(Keyword.get(opts, :current_run_id)) do
+      nil ->
+        :ok
+
+      _task ->
+        {:error,
+         case action do
+           :finish -> "Mission workers cannot finish the mission"
+           _ -> "Mission workers cannot start or delegate missions"
+         end}
+    end
+  end
+
+  defp worker_task_for_run(run_id) when is_integer(run_id) and run_id > 0 do
+    case SQL.one("SELECT #{@task_select} FROM chat_mission_tasks WHERE run_id=? LIMIT 1", [run_id]) do
+      nil ->
+        nil
+
+      row ->
+        task = task_from_row(row)
+        mission = mission_row(task.mission_id)
+
+        if current_primary?(task, mission, run_id), do: nil, else: task
+    end
+  end
+
+  defp worker_task_for_run(_run_id), do: nil
 
   defp maybe_bind_primary(update, user_id, channel_id, opts) do
     run_id = Keyword.get(opts, :current_run_id)

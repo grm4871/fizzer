@@ -323,6 +323,82 @@ defmodule Cascade.Missions.MissionStateTest do
            )
   end
 
+  test "a bound mission worker cannot start, delegate, or finish missions", ctx do
+    {:ok, created} = mission(ctx, "Control plane")
+
+    {:ok, added} =
+      Store.add_task(ctx.user.id, ctx.channel.id, created.mission.id, %{
+        coordinatorRegistrationId: ctx.coordinator.id,
+        title: "Do the work",
+        assignee: ctx.coordinator.id,
+        anonymous: true
+      })
+
+    scheduled = Scheduler.schedule(created.mission.id)
+    assert [%{dispatch: dispatch}] = scheduled.dispatches
+
+    assert {:ok, worker_run} =
+             RunStore.start(ctx.vault.id, nil, "anonymous worker", "codex",
+               conversation_id: "worker-#{added.task.id}",
+               chat_dispatch_id: dispatch.id
+             )
+
+    assert :ok = Dispatches.attach_run(dispatch.id, worker_run.id)
+    assert {:ok, _} = Store.attach_run(dispatch.id, worker_run.id)
+
+    {:ok, nested_root} =
+      Messages.create(ctx.user, ctx.vault.id, ctx.channel.id, %{
+        id: "nested-root-#{ctx.suffix}",
+        body: "Worker trying to clone the control plane."
+      })
+
+    assert {:error, "Mission workers cannot start or delegate missions"} =
+             Store.create(
+               ctx.user.id,
+               ctx.vault.id,
+               ctx.channel.id,
+               %{
+                 rootMessageId: nested_root.id,
+                 coordinatorRegistrationId: ctx.coordinator.id,
+                 title: "Nested clone"
+               },
+               current_run_id: worker_run.id,
+               agent: true,
+               control_plane: true
+             )
+
+    assert {:error, "Mission workers cannot start or delegate missions"} =
+             Store.add_task(
+               ctx.user.id,
+               ctx.channel.id,
+               created.mission.id,
+               %{
+                 coordinatorRegistrationId: ctx.coordinator.id,
+                 title: "Another clone",
+                 assignee: ctx.coordinator.id,
+                 anonymous: true
+               },
+               current_run_id: worker_run.id
+             )
+
+    assert {:error, "Mission workers cannot finish the mission"} =
+             Store.finish(
+               ctx.user.id,
+               ctx.channel.id,
+               created.mission.id,
+               %{
+                 coordinatorRegistrationId: ctx.coordinator.id,
+                 status: "completed",
+                 summary: "Worker closed the parent"
+               },
+               current_run_id: worker_run.id
+             )
+
+    assert {:ok, still_open} = Store.get(ctx.user.id, ctx.channel.id, created.mission.id)
+    assert still_open.mission.status == "active"
+    assert length(still_open.mission.tasks) == 1
+  end
+
   test "two anonymous missions run concurrently and wake only from bound worker evidence", ctx do
     {:ok, second_root} =
       Messages.create(ctx.user, ctx.vault.id, ctx.channel.id, %{

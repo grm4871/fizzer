@@ -9,6 +9,7 @@ import {
   needsCascadeWorkspaceContext,
   needsRecentChatContext,
   ORCHESTRATOR_VIRTUAL_WORKERS,
+  ORCHESTRATOR_WORKER_ROLE,
   vaultAgentMembershipPayload,
 } from '../chat/agents';
 
@@ -230,6 +231,35 @@ describe('formatAgentChatPrompt', () => {
     expect(fresh).toMatch(/cascade-chat attachment/i);
     expect(fresh.length - continued.length).toBeGreaterThan(250);
     expect(fresh.length - 'take care of the release'.length).toBeLessThan(1_600);
+  });
+
+  it('does not give mission workers the control-plane clone contract', () => {
+    const coordinator = { ...registration, orchestrator: true };
+    const fresh = formatAgentChatPrompt(
+      'dev',
+      coordinator,
+      'verify reload and reconnect',
+      'Sol',
+      false,
+      'task-worker-1',
+    );
+    const continued = formatAgentChatPrompt(
+      'dev',
+      coordinator,
+      'keep going',
+      'Sol',
+      true,
+      'task-worker-1',
+    );
+
+    for (const prompt of [fresh, continued]) {
+      expect(prompt).toContain(ORCHESTRATOR_WORKER_ROLE.trim());
+      expect(prompt).toContain('mission worker');
+      expect(prompt).not.toContain(ORCHESTRATOR_VIRTUAL_WORKERS.trim());
+      expect(prompt).not.toContain('mission start --control-plane');
+      expect(prompt).not.toContain('mission delegate --anonymous');
+      expect(prompt).not.toContain('never occupy your own turn');
+    }
   });
 
   it('leaves Akron scratchpad guidance to the native harness tool', () => {

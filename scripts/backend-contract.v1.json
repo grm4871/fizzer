@@ -908,13 +908,13 @@
       "method": "PATCH",
       "path": "/api/vaults/:vault_id/channels/:channel_id/missions/tasks/:task_id",
       "source": "backend_elixir/lib/cascade_web/mission_router.ex",
-      "line": 124
+      "line": 126
     },
     {
       "method": "POST",
       "path": "/api/vaults/:vault_id/channels/:channel_id/missions/:mission_id/finish",
       "source": "backend_elixir/lib/cascade_web/mission_router.ex",
-      "line": 142
+      "line": 144
     },
     {
       "method": "GET",
@@ -1351,7 +1351,7 @@
         "namespace": "/vault",
         "event": "vault:chatMessageDeleted",
         "source": "backend_elixir/lib/cascade_web/mission_router.ex",
-        "line": 173
+        "line": 175
       },
       {
         "namespace": "/vault",

@@ -8,9 +8,10 @@ defmodule CascadeWeb.MissionRouterTest do
   alias Cascade.Auth.Token
   alias Cascade.Chat.{Agents, Messages, Schema}
   alias Cascade.Content.Store, as: ContentStore
-  alias Cascade.Missions.Scheduler
+  alias Cascade.Missions.{Dispatches, Scheduler, Store}
   alias Cascade.Missions.Schema, as: MissionSchema
   alias Cascade.Runs.Schema, as: RunSchema
+  alias Cascade.Runs.Store, as: RunStore
 
   setup do
     suffix = System.unique_integer([:positive])
@@ -197,14 +198,92 @@ defmodule CascadeWeb.MissionRouterTest do
     assert json(invalid) == %{"error" => "Mission title is required"}
   end
 
-  defp request(ctx, method, path, body \\ nil) do
+  test "a worker run cannot start or delegate nested missions", ctx do
+    base = "/api/vaults/#{ctx.vault.id}/channels/#{ctx.channel.id}"
+
+    created =
+      request(ctx, :post, base <> "/missions", %{
+        rootMessageId: ctx.root.id,
+        coordinatorRegistrationId: ctx.coordinator.id,
+        title: "Parent mission",
+        controlPlane: true
+      })
+
+    assert created.status == 201
+    mission_id = json(created)["mission"]["id"]
+
+    delegated =
+      request(ctx, :post, base <> "/missions/#{mission_id}/tasks", %{
+        coordinatorRegistrationId: ctx.coordinator.id,
+        title: "Execute parent work",
+        assignee: ctx.coordinator.id,
+        anonymous: true
+      })
+
+    assert delegated.status == 201
+    task_id = json(delegated)["task"]["id"]
+    {:ok, pending} = Dispatches.list_pending(ctx.user.id, ctx.channel.id)
+    dispatch = Enum.find(pending, &(&1.message[:missionTaskId] == task_id))
+    assert dispatch
+
+    {:ok, worker_run} =
+      RunStore.start(ctx.vault.id, nil, "worker clone", "codex",
+        conversation_id: "http-worker-#{task_id}",
+        chat_dispatch_id: dispatch.id
+      )
+
+    :ok = Dispatches.attach_run(dispatch.id, worker_run.id)
+    {:ok, _} = Store.attach_run(dispatch.id, worker_run.id)
+
+    nested =
+      request(
+        ctx,
+        :post,
+        base <> "/missions",
+        %{
+          rootMessageId: ctx.root.id,
+          coordinatorRegistrationId: ctx.coordinator.id,
+          title: "Worker clone",
+          controlPlane: true
+        },
+        worker_run.id
+      )
+
+    assert nested.status == 400
+    assert json(nested) == %{"error" => "Mission workers cannot start or delegate missions"}
+
+    nested_task =
+      request(
+        ctx,
+        :post,
+        base <> "/missions/#{mission_id}/tasks",
+        %{
+          coordinatorRegistrationId: ctx.coordinator.id,
+          title: "Another clone",
+          assignee: ctx.coordinator.id,
+          anonymous: true
+        },
+        worker_run.id
+      )
+
+    assert nested_task.status == 400
+    assert json(nested_task) == %{"error" => "Mission workers cannot start or delegate missions"}
+  end
+
+  defp request(ctx, method, path, body \\ nil, run_id \\ nil) do
     payload = if is_nil(body), do: nil, else: Jason.encode!(body)
 
     conn(method, path, payload)
     |> put_req_header("authorization", "Bearer #{ctx.token}")
+    |> maybe_run_id(run_id)
     |> maybe_json(body)
     |> CascadeWeb.MissionRouter.call(CascadeWeb.MissionRouter.init([]))
   end
+
+  defp maybe_run_id(conn, run_id) when is_integer(run_id) and run_id > 0,
+    do: put_req_header(conn, "x-cascade-run-id", Integer.to_string(run_id))
+
+  defp maybe_run_id(conn, _run_id), do: conn
 
   defp maybe_json(conn, nil), do: conn
   defp maybe_json(conn, _body), do: put_req_header(conn, "content-type", "application/json")

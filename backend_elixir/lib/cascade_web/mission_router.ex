@@ -100,7 +100,9 @@ defmodule CascadeWeb.MissionRouter do
         anonymous: js_truthy?(body(conn, "anonymous", false))
       }
 
-      with {:ok, added} <- Store.add_task(user.id, channel_id, mission_id, input),
+      task_opts = if run_id(conn), do: [current_run_id: run_id(conn)], else: []
+
+      with {:ok, added} <- Store.add_task(user.id, channel_id, mission_id, input, task_opts),
            {:ok, scheduled} <- safe_schedule(added.update.mission.id, conn),
            {:ok, latest} <- Store.get(user.id, channel_id, added.update.mission.id) do
         dispatched =

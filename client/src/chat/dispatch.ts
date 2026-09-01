@@ -574,7 +574,14 @@ export function useChatDispatch({
         : prompt;
       const runPrompt = agentId === 'claude-code' && isCompactCommand(prompt, [registration])
         ? '/compact'
-        : formatAgentChatPrompt(channelName, registration, steeredPrompt, triggeringMessage.author, continuation);
+        : formatAgentChatPrompt(
+          channelName,
+          registration,
+          steeredPrompt,
+          triggeringMessage.author,
+          continuation,
+          triggeringMessage.missionTaskId,
+        );
       // Conversation id groups runs for backend session resume (findPriorSession).
       // The actual CLI session_id is resolved server-side — not this value.
       const conversationId = conversation.conversationId;
@@ -905,7 +912,7 @@ export function useChatDispatch({
       ? ''
       : precedingMessageBatchText(contextMessages, triggeringMessage);
     const taskGuidance = triggeringMessage.missionTaskId
-      ? `Cascade mission task id: ${triggeringMessage.missionTaskId}. The mission card updates automatically when this run ends. If you are blocked rather than finished, run \`cascade-chat mission update --task ${triggeringMessage.missionTaskId} --status blocked --summary "<what is needed>"\` before replying.`
+      ? `Cascade mission task id: ${triggeringMessage.missionTaskId}. Execute this task only; do not start a mission or delegate further. The mission card updates when this run ends. If blocked, run \`cascade-chat mission update --task ${triggeringMessage.missionTaskId} --status blocked --summary "<what is needed>"\` before replying.`
       : '';
     // Built per recipient: the reply chain can carry asks aimed at other agents,
     // and only a recipient-specific prompt can say which ones are not theirs.
