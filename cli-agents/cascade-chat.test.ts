@@ -151,6 +151,7 @@ test('coordinator helper starts and delegates a mission with structured API call
     priority: 7,
     reasoningEffort: 'high',
     anonymous: true,
+    workspaceMode: 'shared',
   });
   assert.deepEqual(requests[6]?.body, { status: 'blocked', summary: 'Needs a credential' });
   assert.deepEqual(requests[7]?.body, { status: 'pending', summary: 'Try again' });

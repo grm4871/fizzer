@@ -338,6 +338,7 @@ async function main() {
           assignee: '@sol',
           prompt: `SYSTEM_PARALLEL_${label.toUpperCase()}`,
           anonymous: true,
+          workspaceMode: 'isolated',
         }),
       });
       parallel.push({ mission: parallelMission, task: delegatedTask.task });

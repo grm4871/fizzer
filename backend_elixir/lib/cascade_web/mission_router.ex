@@ -97,7 +97,8 @@ defmodule CascadeWeb.MissionRouter do
         dependsOn: string_list(body(conn, "dependsOn", [])),
         priority: numeric_body(conn, "priority"),
         reasoningEffort: string_body(conn, "reasoningEffort"),
-        anonymous: js_truthy?(body(conn, "anonymous", false))
+        anonymous: js_truthy?(body(conn, "anonymous", false)),
+        workspaceMode: string_body(conn, "workspaceMode", "shared")
       }
 
       task_opts = if run_id(conn), do: [current_run_id: run_id(conn)], else: []

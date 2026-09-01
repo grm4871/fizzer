@@ -16,13 +16,13 @@ defmodule Cascade.Missions.Store do
 
   @task_select """
   id,mission_id,title,assignee_registration_id,status,summary,prompt,depends_on_json,
-  priority,reasoning_effort,anonymous,dispatch_id,run_id,attempt,work_item_id,
+  priority,reasoning_effort,anonymous,workspace_mode,dispatch_id,run_id,attempt,work_item_id,
   created_at,updated_at
   """
 
   @qualified_task_select """
   t.id,t.mission_id,t.title,t.assignee_registration_id,t.status,t.summary,t.prompt,
-  t.depends_on_json,t.priority,t.reasoning_effort,t.anonymous,t.dispatch_id,t.run_id,
+  t.depends_on_json,t.priority,t.reasoning_effort,t.anonymous,t.workspace_mode,t.dispatch_id,t.run_id,
   t.attempt,t.work_item_id,t.created_at,t.updated_at
   """
 
@@ -211,7 +211,9 @@ defmodule Cascade.Missions.Store do
          title when title != "" <- clean(field(input, :title), 240),
          dependencies <- clean_ids(field(input, :dependsOn)),
          :ok <- validate_dependencies(mission.id, dependencies),
-         {:ok, effort} <- validate_effort(assignee, field(input, :reasoningEffort)) do
+         {:ok, effort} <- validate_effort(assignee, field(input, :reasoningEffort)),
+         workspace_mode when workspace_mode in ~w(shared isolated) <-
+           clean(nonblank(field(input, :workspaceMode), "shared"), 20) do
       priority = field(input, :priority) |> integer(0) |> max(-100) |> min(100)
       prompt = clean(nonblank(field(input, :prompt), title), 12_000)
       dependency_json = Jason.encode!(dependencies)
@@ -246,8 +248,8 @@ defmodule Cascade.Missions.Store do
               """
               INSERT INTO chat_mission_tasks
                 (id,mission_id,title,assignee_registration_id,prompt,depends_on_json,
-                 priority,reasoning_effort,anonymous)
-              VALUES (?,?,?,?,?,?,?,?,?)
+                 priority,reasoning_effort,anonymous,workspace_mode)
+              VALUES (?,?,?,?,?,?,?,?,?,?)
               """,
               [
                 task_id,
@@ -258,7 +260,8 @@ defmodule Cascade.Missions.Store do
                 dependency_json,
                 priority,
                 effort,
-                anonymous_int
+                anonymous_int,
+                workspace_mode
               ]
             )
 
@@ -749,9 +752,34 @@ defmodule Cascade.Missions.Store do
               verification: if(settled.status == "completed", do: settled.summary, else: nil)
             )
 
-            update = refresh!(task.mission_id)
-            {:ok, wake} = claim_wake(task.mission_id)
-            %{update: wake || update, wake: wake}
+            tasks = task_rows(task.mission_id)
+
+            thin_success =
+              settled.status == "completed" and settled.workspace_mode == "shared" and
+                length(tasks) == 1
+
+            if thin_success do
+              SQL.exec(
+                "UPDATE chat_missions SET status='completed',summary=?,wake_sent=1,updated_at=datetime('now') WHERE id=?",
+                [settled.summary, task.mission_id]
+              )
+
+              if mission.status != "completed" do
+                record_event(task.mission_id, %{
+                  kind: "mission_completed",
+                  title: mission.title,
+                  from_status: mission.status,
+                  to_status: "completed",
+                  summary: settled.summary
+                })
+              end
+
+              %{update: refresh!(task.mission_id), wake: nil}
+            else
+              update = refresh!(task.mission_id)
+              {:ok, wake} = claim_wake(task.mission_id)
+              %{update: wake || update, wake: wake}
+            end
           end)
 
         {:ok, result}
@@ -1068,8 +1096,12 @@ defmodule Cascade.Missions.Store do
         sourceId: task.id,
         dependsOn: dependency_work_items,
         assigneeRegistrationId: task.assignee_registration_id,
-        workspaceMode: "isolated",
-        branch: work_item_branch(mission.id, task.id, task.title)
+        workspaceMode: task.workspace_mode,
+        branch:
+          if(task.workspace_mode == "isolated",
+            do: work_item_branch(mission.id, task.id, task.title),
+            else: ""
+          )
       }
 
       case WorkItems.create(user_id, mission.vault_id, input) do
@@ -1552,7 +1584,7 @@ defmodule Cascade.Missions.Store do
         nil
 
       row ->
-        {task_values, [channel_id, created_by, mission_status]} = Enum.split(row, 17)
+        {task_values, [channel_id, created_by, mission_status]} = Enum.split(row, 18)
 
         task_values
         |> task_from_row()
@@ -1614,6 +1646,7 @@ defmodule Cascade.Missions.Store do
          priority,
          reasoning_effort,
          anonymous,
+         workspace_mode,
          dispatch_id,
          run_id,
          attempt,
@@ -1633,6 +1666,7 @@ defmodule Cascade.Missions.Store do
       priority: priority || 0,
       reasoning_effort: reasoning_effort || "",
       anonymous: anonymous || 0,
+      workspace_mode: workspace_mode || "shared",
       dispatch_id: dispatch_id,
       run_id: run_id,
       attempt: attempt || 0,

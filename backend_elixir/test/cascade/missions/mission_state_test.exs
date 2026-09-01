@@ -91,7 +91,8 @@ defmodule Cascade.Missions.MissionStateTest do
         assignee: ctx.worker.id,
         prompt: "Implement the native state machine.",
         priority: 20,
-        reasoningEffort: "high"
+        reasoningEffort: "high",
+        workspaceMode: "isolated"
       })
 
     {:ok, second} =
@@ -256,7 +257,43 @@ defmodule Cascade.Missions.MissionStateTest do
              SQL.one("SELECT mission_task_id FROM chat_messages WHERE id=?", [ctx.root.id])
   end
 
-  test "a terminal runner event settles its mission task and materializes the review wake", ctx do
+  test "a successful shared worker completes its mission without a review wake", ctx do
+    {:ok, created} = mission(ctx, "Thin delegation")
+
+    {:ok, added} =
+      Store.add_task(ctx.user.id, ctx.channel.id, created.mission.id, %{
+        coordinatorRegistrationId: ctx.coordinator.id,
+        title: "Run directly",
+        assignee: ctx.worker.id
+      })
+
+    assert added.task.workspaceMode == "shared"
+    scheduled = Scheduler.schedule(created.mission.id)
+    assert [%{dispatch: dispatch}] = scheduled.dispatches
+
+    assert {:ok, run} =
+             RunStore.start(ctx.vault.id, nil, "thin worker", "codex",
+               conversation_id: "thin-worker-session",
+               chat_dispatch_id: dispatch.id
+             )
+
+    assert :ok = Dispatches.attach_run(dispatch.id, run.id)
+    assert {:ok, _running} = Store.attach_run(dispatch.id, run.id)
+    assert :ok = RunStore.finish(run.id, "completed", "Finished directly.")
+
+    assert {:ok, result} = Scheduler.settle_run(run.id, "completed", "Finished directly.")
+    assert result.settled.update.mission.status == "completed"
+    assert result.settled.update.mission.summary == "Finished directly."
+    assert result.settled.wake == nil
+    assert result.wakeDispatch == nil
+    assert result.scheduled.wakeDispatches == []
+
+    assert {:ok, replay} = Scheduler.settle_run(run.id, "completed", "Finished directly.")
+    assert replay.settled.update.mission.status == "completed"
+    assert replay.wakeDispatch == nil
+  end
+
+  test "a terminal isolated runner event settles its mission task and materializes the review wake", ctx do
     {:ok, created} =
       Store.create(ctx.user.id, ctx.vault.id, ctx.channel.id, %{
         rootMessageId: ctx.root.id,
@@ -268,7 +305,8 @@ defmodule Cascade.Missions.MissionStateTest do
       Store.add_task(ctx.user.id, ctx.channel.id, created.mission.id, %{
         coordinatorRegistrationId: ctx.coordinator.id,
         title: "Finish from runner",
-        assignee: ctx.worker.id
+        assignee: ctx.worker.id,
+        workspaceMode: "isolated"
       })
 
     assert {:ok, _bound} =
@@ -421,7 +459,8 @@ defmodule Cascade.Missions.MissionStateTest do
         coordinatorRegistrationId: ctx.coordinator.id,
         title: title,
         assignee: ctx.coordinator.id,
-        anonymous: true
+        anonymous: true,
+        workspaceMode: "isolated"
       }
     end
 

@@ -29,7 +29,7 @@ Usage:
   cascade-chat mission list
   cascade-chat mission status [--mission <id|current>]
   cascade-chat mission history --mission <id>
-  cascade-chat mission delegate --mission <id> --to @agent --task T --message P [--after <task-id,...>] [--priority N] [--effort E] [--anonymous]
+  cascade-chat mission delegate --mission <id> --to @agent --task T --message P [--after <task-id,...>] [--priority N] [--effort E] [--anonymous] [--isolated]
   cascade-chat mission update --task <id> --status <status> [--summary S]
   cascade-chat mission retry --task <id> [--summary S]
   cascade-chat mission finish --mission <id> [--summary S]
@@ -54,6 +54,7 @@ Options:
   --priority <-100..100>    schedule higher-priority ready work first
   --effort <level>          per-task reasoning effort override
   --anonymous               parallel subagent of --to (same agent, no occupancy)
+  --isolated                prepare a dedicated worktree instead of the channel cwd
   --control-plane           start without binding the coordinator run as a task
   --root <message-id>       mission root (defaults to triggering chat message)
   --changes-file <path>     JSON change request metadata for send
@@ -590,6 +591,7 @@ async function main() {
           priority: Number(args.priority) || 0,
           reasoningEffort: String(args.effort || '').trim().toLowerCase(),
           anonymous: args.anonymous === true,
+          workspaceMode: args.isolated === true ? 'isolated' : 'shared',
         },
       );
       if (args.json) process.stdout.write(JSON.stringify({ mission: result.mission, task: result.task }) + '\n');

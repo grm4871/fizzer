@@ -9,6 +9,7 @@ defmodule Cascade.Missions.Schema do
     {"priority", "INTEGER NOT NULL DEFAULT 0"},
     {"reasoning_effort", "TEXT NOT NULL DEFAULT ''"},
     {"anonymous", "INTEGER NOT NULL DEFAULT 0"},
+    {"workspace_mode", "TEXT NOT NULL DEFAULT 'shared'"},
     {"dispatch_id", "TEXT"},
     {"run_id", "INTEGER"},
     {"attempt", "INTEGER NOT NULL DEFAULT 0"},
