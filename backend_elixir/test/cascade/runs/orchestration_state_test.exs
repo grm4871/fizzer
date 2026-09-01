@@ -207,6 +207,27 @@ defmodule Cascade.Runs.OrchestrationStateTest do
     assert Store.get(run.id).status == "queued"
   end
 
+  test "transport disconnect expires an unreclaimed run", context do
+    previous_state = :sys.get_state(RunnerLifecycle)
+    :sys.replace_state(RunnerLifecycle, &%{&1 | orphan_reclaim: 25})
+    on_exit(fn -> :sys.replace_state(RunnerLifecycle, fn _state -> previous_state end) end)
+
+    assert {:ok, run} = Store.start(context.vault_id, nil, "expire after disconnect", "codex")
+    :ok = Store.record_delegated(run.id, context.user_id)
+
+    assert {:ok, [run_id]} =
+             RunnerLifecycle.register(context.user_id, "expired-runner", %{
+               activeRunIds: [run.id],
+               runnerInstanceId: "desktop-expired"
+             })
+
+    assert run_id == run.id
+    RunnerLifecycle.disconnected(context.user_id, "expired-runner", %{}, :transport_close)
+
+    assert %{status: "failed", summary: summary} = eventually_status(run.id, "failed")
+    assert summary == "Desktop agent runner disconnected and did not reclaim this run."
+  end
+
   test "mass transport disconnects do not scan or settle delegated runs", context do
     previous_state = :sys.get_state(RunnerLifecycle)
     :sys.replace_state(RunnerLifecycle, &%{&1 | runners: %{}})

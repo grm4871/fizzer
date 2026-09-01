@@ -135,6 +135,7 @@ defmodule Cascade.Runs.RunnerLifecycle do
       last_error: %{},
       plan_usage: %{},
       last_seen: %{},
+      disconnect_timers: %{},
       orphan_reclaim: Keyword.get(opts, :orphan_reclaim_ms, @orphan_reclaim)
     }
 
@@ -173,6 +174,8 @@ defmodule Cascade.Runs.RunnerLifecycle do
     do: {:reply, state.plan_usage[owner_id] || %{}, state}
 
   defp register_runner(owner_id, sid, metadata, active_ids, previous, next_instance, state) do
+    state = cancel_disconnect_timer(state, owner_id)
+
     reclaimed =
       active_ids
       |> Enum.filter(&(Store.delegated_owner(&1) == owner_id))
@@ -247,12 +250,52 @@ defmodule Cascade.Runs.RunnerLifecycle do
      }}
   end
 
-  def handle_cast({:disconnected, _owner_id, _sid, _reason}, state) do
+  def handle_cast({:disconnected, owner_id, sid, _reason}, state) do
     # A Socket.IO disconnect only proves transport loss. Electron main owns the
     # child and buffers its events; keep the last instance metadata so a same-
     # instance reconnect can reclaim, while a changed instance can fail omitted
     # children authoritatively in register/3.
-    {:noreply, state}
+    case state.runners[owner_id] do
+      %{sid: ^sid} ->
+        state = cancel_disconnect_timer(state, owner_id)
+        token = make_ref()
+
+        timer =
+          Process.send_after(
+            self(),
+            {:disconnect_expired, owner_id, sid, token},
+            state.orphan_reclaim
+          )
+
+        {:noreply,
+         put_in(state, [:disconnect_timers, owner_id], %{timer: timer, token: token, sid: sid})}
+
+      _ ->
+        {:noreply, state}
+    end
+  end
+
+  def handle_info({:disconnect_expired, owner_id, sid, token}, state) do
+    case state.disconnect_timers[owner_id] do
+      %{sid: ^sid, token: ^token} ->
+        state = update_in(state.disconnect_timers, &Map.delete(&1, owner_id))
+
+        if online?(owner_id) do
+          {:noreply, state}
+        else
+          summary = "Desktop agent runner disconnected and did not reclaim this run."
+
+          Store.open_delegated()
+          |> Enum.filter(&(&1.owner_user_id == owner_id))
+          |> Enum.map(& &1.run_id)
+          |> fail_runs(summary)
+
+          {:noreply, put_error(state, owner_id, summary)}
+        end
+
+      _ ->
+        {:noreply, state}
+    end
   end
 
   @impl true
@@ -295,6 +338,17 @@ defmodule Cascade.Runs.RunnerLifecycle do
       Store.finish(run_id, "failed", reason)
       Store.publish(run_id, "status", %{status: "failed", summary: reason})
     end)
+  end
+
+  defp cancel_disconnect_timer(state, owner_id) do
+    case state.disconnect_timers[owner_id] do
+      %{timer: timer} ->
+        Process.cancel_timer(timer)
+        update_in(state.disconnect_timers, &Map.delete(&1, owner_id))
+
+      _ ->
+        state
+    end
   end
 
   defp put_error(state, owner_id, message) do
