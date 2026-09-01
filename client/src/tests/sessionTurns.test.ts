@@ -31,6 +31,17 @@ describe('findProjectedActiveSessionRun', () => {
       { agentId: 'grok', runId: 55, status: 'running' },
     ], 'reg-supagrok', 'grok')).toBe(55);
   });
+
+  it('never projects mission workers into the coordinator steering scope', () => {
+    const messages = [
+      { registrationId: 'sol', runId: 40, status: 'running' },
+      { registrationId: 'sol', runId: 41, status: 'running', missionTaskId: 'task-alpha' },
+      { registrationId: 'sol', runId: 42, status: 'running', missionTaskId: 'task-beta' },
+    ];
+
+    expect(findProjectedActiveSessionRun(messages, 'sol')).toBe(40);
+    expect(findProjectedActiveSessionRun(messages.slice(1), 'sol')).toBeUndefined();
+  });
 });
 
 describe('shouldSteerActiveSession', () => {

@@ -517,14 +517,16 @@ try {
     method: 'PATCH', headers: auth,
     body: JSON.stringify({ status: 'completed', summary: 'Reload and multiplayer projection passed.' }),
   });
-  await page.waitForFunction(() => document.querySelector('.chat-mission-card.is-reviewing') !== null, null, { timeout: 10_000 });
-  check('worker completion waits for coordinator review', (await card.locator('.chat-mission-toggle').innerText()).includes('reviewing'));
+  await page.waitForFunction(() => document.querySelector('.chat-mission-card.is-attention') !== null, null, { timeout: 10_000 });
+  check('provider-free completion asks for evidence review', (await card.locator('.chat-mission-toggle').innerText()).includes('needs review'));
 
   await page.reload({ waitUntil: 'networkidle' });
   await openChannel();
   const reloadedCard = page.locator('.chat-mission-card', { hasText: 'Chat-first orchestration' });
   await reloadedCard.waitFor({ timeout: 20_000 });
-  await reloadedCard.locator('.chat-mission-toggle').click();
+  if (!(await reloadedCard.evaluate((node) => node.classList.contains('is-open')))) {
+    await reloadedCard.locator('.chat-mission-toggle').click();
+  }
   check('reload retains task status and evidence', (await reloadedCard.innerText()).includes('Reload and multiplayer projection passed.'));
 
   await page.locator('.sidebar-footer .user-info').click();
@@ -593,6 +595,11 @@ try {
   agents = await waitForCoordinator(vault.id, channel.id, auth, sol.id, true);
   check('re-enabling coordination persists', agents.find((item) => item.id === sol.id)?.orchestrator === true);
 
+  await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/missions/tasks/${task.id}`, {
+    method: 'PATCH', headers: auth,
+    body: JSON.stringify({ status: 'running', summary: 'Stop control fixture is active.' }),
+  });
+  await page.waitForFunction(() => document.querySelector('.chat-mission-card.is-active') !== null, null, { timeout: 10_000 });
   const stopCard = page.locator('.chat-mission-card', { hasText: 'Chat-first orchestration' });
   await stopCard.getByRole('button', { name: 'Stop', exact: true }).click();
   await page.waitForFunction(() => document.querySelector('.chat-mission-card.is-canceled') !== null, null, { timeout: 10_000 });

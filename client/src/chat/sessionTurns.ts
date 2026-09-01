@@ -11,13 +11,23 @@ let sessionTurnGeneration = 0;
 
 /** Recover the active run identity from durable chat projection after reload. */
 export function findProjectedActiveSessionRun(
-  messages: Array<{ registrationId?: string; agentId?: string; runId?: number; status?: string }>,
+  messages: Array<{
+    registrationId?: string;
+    agentId?: string;
+    runId?: number;
+    status?: string;
+    missionTaskId?: string;
+  }>,
   registrationId: string,
   agentId?: string,
 ): number | undefined {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
     if (message.status !== 'running' || message.runId == null) continue;
+    // Anonymous mission workers deliberately retain the coordinator's
+    // registration for authority and attribution, but their task-scoped run is
+    // not the coordinator's replaceable foreground turn.
+    if (message.missionTaskId) continue;
     if (message.registrationId === registrationId) return message.runId;
     // Optimistic shells sometimes only carry agentId before registration is linked.
     if (agentId && message.agentId === agentId && !message.registrationId) return message.runId;
