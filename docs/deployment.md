@@ -11,9 +11,13 @@ public HTTP and TLS boundary.
 
 ## Immutable release artifact
 
-Production never rebuilds a release candidate. Build from a clean, committed
-checkout, run the capacity gates against that image ID, then certify and stage
-the same artifact before pushing the commit:
+Routine autodeploy builds a missing revision-labelled image on the production
+host from the exact committed Git object, then verifies its revision and digest
+before cutover. A pushed commit and one deploy request are therefore sufficient
+for ordinary releases.
+
+Capacity-sensitive releases may still be built, certified, and staged ahead of
+time so the exact image tested under load is the image deployed:
 
 ```bash
 npm run release:image:build
@@ -104,13 +108,11 @@ local to each BuildKit builder; they provide incremental compiler reuse when a
 builder handles successive source changes. The release image is still built in
 a Linux environment because its bundled OTP runtime and native NIFs must match
 the target OS and architecture.
-Production should consume the already-certified image with `--no-build`; a CI
-or release builder should populate this shared cache rather than compiling on
-the production host. If a builder is pruned, the registry
-cache remains available to the next build.
+Pre-staged images are reused without rebuilding. Otherwise the host uses its
+local BuildKit cache, so routine incremental builds are typically small.
 
-Run `npm run test:elixir:release-safety` before certification. It is already
-included once by `npm run test:elixir-release`; the component scripts are
+Run `npm run test:elixir:release-safety` before capacity certification. It is
+included by `npm run test:elixir-release:full`; the component scripts are
 available for focused work:
 
 - `npm run test:elixir:deploy-safety` exercises certification, rollback, and
@@ -123,8 +125,8 @@ available for focused work:
 
 ## Routine release
 
-Fizzer does not include or operate a production deployment workflow. After
-staging a certified image, run the update on infrastructure you control:
+On an installed autodeploy host, queue the update after pushing. For manual
+self-hosted updates, run:
 
 ```bash
 bash deploy/remote-update.sh

@@ -6,6 +6,7 @@ import test from 'node:test';
 
 const deployDirectory = path.dirname(fileURLToPath(import.meta.url));
 const source = fs.readFileSync(path.join(deployDirectory, 'remote-update.sh'), 'utf8');
+const watcher = fs.readFileSync(path.join(deployDirectory, 'deploy-watcher.sh'), 'utf8');
 const compose = fs.readFileSync(path.join(deployDirectory, '../docker-compose.yml'), 'utf8');
 const dockerfile = fs.readFileSync(path.join(deployDirectory, '../Dockerfile'), 'utf8');
 const nginxTemplate = fs.readFileSync(path.join(deployDirectory, 'nginx.conf.template'), 'utf8');
@@ -106,6 +107,18 @@ test('production promotes an exact staged image without requiring capacity certi
   assert.match(source, /running_image_id" != "\$CERTIFIED_IMAGE_ID/);
   assert.doesNotMatch(source, /^\s*docker (?:compose )?build(?:\s|$)/mu);
   assert.doesNotMatch(source, /BUILD_ARGS/);
+});
+
+test('routine deploys build a missing immutable image on the host', () => {
+  assert.match(watcher, /REVISION="\$\(git rev-parse HEAD\)"/);
+  assert.match(watcher, /IMAGE="cascade:certified-\$REVISION"/);
+  assert.match(watcher, /docker image inspect "\$IMAGE"/);
+  assert.match(watcher, /\.\/deploy\/build-release-image\.sh/);
+  assert.match(watcher, /write_result error "release image build failed"/);
+  assert.ok(
+    watcher.indexOf('git reset --hard "$TARGET"') < watcher.indexOf('./deploy/build-release-image.sh'),
+    'the host must resolve the requested commit before building it',
+  );
 });
 
 test('preflight, rolling bridge, Compose, and the canonical candidate share the resource envelope', () => {

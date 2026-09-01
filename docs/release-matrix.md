@@ -11,7 +11,7 @@ Run the scoped suite from the exact commit being shipped: `npm run test:release:
 - [ ] Review `git status` and the committed diff; confirm every intended file is in the commit and unrelated work is not.
 - [ ] Run the applicable scoped release suite(s); any failure in a touched boundary blocks release.
 - [ ] For frontend changes, confirm the runtime check reports no console errors, uncaught exceptions, or failed module loads.
-- [ ] For backend changes, require contract, route, data, deploy/rollback/edge, and load-harness unit parity.
+- [ ] For backend changes, require backend tests plus contract, route, and data parity. Add deploy/load checks only when those boundaries changed.
 - [ ] For a source release, confirm the GitHub workflow passes on the exact commit.
 - [ ] For an installer release, verify each native package and its published SHA-256 checksum.
 - [ ] Self-hosted deployments must define and verify their own health, rollback, and served-bundle checks.
@@ -44,12 +44,12 @@ Where a row above has a command, run the command instead of reasoning about the 
 | Agent start and run lifecycle | `npm run test:desktop-runner` | Run reclaim, replay, duplicate-process avoidance |
 | Vault switcher, vault settings | `npm run verify:vault-rename-ui` | Rename reaches `PATCH /api/vaults/:id` and updates the switcher, non-owners get neither the control nor the API, and the agent-memory preference lives in account settings |
 | API, persistence, migrations | `npm run test:elixir:mix-check` and `npm run test:elixir:data-parity` | Fresh **and** upgraded databases: every column the writers use exists after migration, legacy rows survive, and writes still work against a migrated table. Routine deploys classify rolling-safe from `sqlite_master` only; full row/corpus compare runs only when that schema changes. |
-| Elixir backend | `npm run test:release:backend` | Sequential, fail-closed `mix check`; Elixir contract and route inventories; data compatibility; e2es; rollback, nginx edge, load-driver, monitor, and protocol regression suites |
+| Elixir backend | `npm run test:release:backend` | Elixir tests plus contract, route, data, and CLI-agent compatibility |
 | Deployment/configuration | Watch the update process on your host, then inspect the served bundle | Deploy completion plus the asset your configured domain really serves |
 
 Still manual, by nature: Electron lifecycle (`Ctrl/Cmd+R` during an active run), Android/foldable layouts, background/resume and offline behavior, and any production exercise requiring a real account.
 
-The checkout gate proves behavioral parity and data preservation; it does not certify production capacity. Run the production-shaped 10,000-user capacity test and 5,000-user two-hour durability soak only when changing concurrency, dispatch, realtime/presence, runner lifecycle, database contention, runtime resource limits, or deployment infrastructure. Those gates remain additive and bind to one exact image ID. UI presentation, Electron packaging, documentation, and ordinary contract/route parity fixes use the routine staged-image path. `deploy/remote-update.sh` never rebuilds: it validates the revision label, embedded route gate, production-shaped preflight, snapshot/rollback, authenticated smoke, and reopened edge on every cutover; when capacity certification is present it must match the exact image.
+The routine checkout gate is intentionally bounded. Use `npm run test:elixir-release:full` only for cross-cutting backend releases or changes to persistence, deployment, realtime infrastructure, or the test machinery itself. Production-shaped capacity and soak runs are exceptional checks for material capacity changes, not routine release gates. The deploy watcher builds a missing image from the exact committed Git object on the host; `remote-update.sh` still validates its revision and digest before cutover.
 
 `npm run build:vps` still does not type-check the renderer. Frontend release coverage starts with `npm run typecheck:client`. Backend coverage is `mix check` plus the Elixir e2e and contract scripts, not `npm test`.
 

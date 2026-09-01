@@ -73,6 +73,21 @@ if ! git reset --hard "$TARGET"; then
   exit 1
 fi
 
+# The host is the routine release builder. Build from the committed Git object
+# only when this exact revision is not already present; remote-update still
+# verifies the resulting image ID and embedded revision before cutover.
+REVISION="$(git rev-parse HEAD)"
+IMAGE="cascade:certified-$REVISION"
+if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+  echo "==> Building missing release image $IMAGE"
+  if ! ./deploy/build-release-image.sh; then
+    write_result error "release image build failed"
+    exit 1
+  fi
+else
+  echo "==> Reusing release image $IMAGE"
+fi
+
 # Routine updates only rebuild/swap the app container. First-time nginx/TLS
 # bootstrap remains deploy/deploy.sh (run by hand on a new host).
 echo "==> Running remote-update.sh"
