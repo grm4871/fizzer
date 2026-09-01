@@ -133,6 +133,7 @@ export type AgentPromptRegistration = {
   displayName: string;
   contextPrompt: string;
   orchestrator?: boolean;
+  ambientGroupChat?: boolean;
   finalReplyOnly?: boolean;
 };
 
@@ -200,6 +201,18 @@ export function formatAgentChatPrompt(
   const selfAgent = CHAT_AGENTS.find((candidate) => candidate.id === registration.agentId);
   const selfHandle = registration.mention || registration.agentId;
   const selfName = registration.displayName || selfAgent?.label || registration.agentId;
+  const channelNote = registration.contextPrompt ? ` Channel note: ${registration.contextPrompt}` : '';
+
+  // Ambient peers already have a durable provider conversation and receive the
+  // shared room transcript as their request. Keep this header to identity,
+  // autonomy, and the one delivery constraint that prevents duplicate posts.
+  if (registration.ambientGroupChat) {
+    const header = continuation
+      ? `Continue the shared #${channelName} conversation as ${selfName} (@${selfHandle}) after ${triggeringAuthor}. Use your own judgment about whether to reply, use tools, or pursue useful project work. Your final response is posted automatically; do not post another chat message.`
+      : `You are ${selfName} (@${selfHandle}), a persistent participant in the shared #${channelName} chat. Converse naturally with ${triggeringAuthor} and the room. Use your own judgment: reply, ask, disagree, use tools, or pursue useful project work when it makes sense. Your final response is posted automatically, so do not call cascade-chat send or collaboration tools.${channelNote}`;
+    return `${header}\n\n${request}`;
+  }
+
   const nativeScratchpad = registration.agentId === 'akron-grok';
   const compactNativeCli = registration.agentId === 'hermes' || registration.agentId === 'omp' || registration.agentId === 'pi';
   const coordinatorGuidance = registration.orchestrator
@@ -214,7 +227,6 @@ export function formatAgentChatPrompt(
   const finalReplyGuidance = registration.finalReplyOnly
     ? ' Write one normal group-chat message, never a work log: no planning, status, reasoning, tool narration, or generic agreement. Respond to concrete claims in the triggering message. If you have no new evidence, correction, question, or decision, output exactly [no-reply].'
     : '';
-
   // Keep persistence available without turning every task into extra tool turns.
   // Cold-start injection supplies the fuller policy only when a new session needs it.
   const scratchpadGuidance = nativeScratchpad
@@ -230,7 +242,6 @@ export function formatAgentChatPrompt(
     return `${header}\n\n${request}`;
   }
 
-  const channelNote = registration.contextPrompt ? ` Channel note: ${registration.contextPrompt}` : '';
   if (compactNativeCli) {
     const header = `Cascade #${channelName}: you are @${selfHandle}, replying to ${triggeringAuthor}. Complete and verify the request. ${CHAT_REPLY_BREVITY} Keep progress in the run trace.${finalReplyGuidance}${coordinatorGuidance}${channelNote}`;
     return `${header}\n\n${request}`;

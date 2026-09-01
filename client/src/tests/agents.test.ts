@@ -153,17 +153,38 @@ describe('formatAgentChatPrompt', () => {
     expect(prompt).toContain('Clarify only');
   });
 
-  it('makes final-only peers speak normally or stay silent on every turn', () => {
+  it('keeps the existing final-only contract for non-ambient assistants', () => {
     const finalOnly = { ...registration, finalReplyOnly: true };
-    for (const prompt of [
-      formatAgentChatPrompt('dev', finalOnly, 'Builder fixed release persistence.', 'Builder', false),
-      formatAgentChatPrompt('dev', finalOnly, 'Builder fixed release persistence.', 'Builder', true),
-    ]) {
-      expect(prompt).toContain('one normal group-chat message');
-      expect(prompt).toContain('no planning, status, reasoning, tool narration, or generic agreement');
-      expect(prompt).toContain('output exactly [no-reply]');
-      expect(prompt).toContain('triggering message');
-    }
+    const prompt = formatAgentChatPrompt('dev', finalOnly, 'Check the release.', 'Builder', false);
+    expect(prompt).toContain('one normal group-chat message');
+    expect(prompt).toContain('output exactly [no-reply]');
+  });
+
+  it('gives ambient peers a minimal autonomous conversation header', () => {
+    const ambient = {
+      ...registration,
+      displayName: 'Builder',
+      mention: 'builder',
+      ambientGroupChat: true,
+      finalReplyOnly: true,
+      contextPrompt: 'Stay inside the Builder clone.',
+    };
+    const fresh = formatAgentChatPrompt('lab', ambient, 'Skeptic found a race.', 'Skeptic', false);
+    const continued = formatAgentChatPrompt('lab', ambient, 'What should we try next?', 'Herald', true);
+
+    expect(fresh).toContain('persistent participant');
+    expect(fresh).toContain('Use your own judgment');
+    expect(fresh).toContain('reply, ask, disagree, use tools, or pursue useful project work');
+    expect(fresh).toContain('Stay inside the Builder clone.');
+    expect(fresh).toContain('posted automatically');
+    expect(fresh).not.toContain(CHAT_REPLY_BREVITY);
+    expect(fresh).not.toContain('Keep progress in the run trace');
+    expect(fresh).not.toContain('Complete requested work');
+    expect(fresh).not.toContain('one normal group-chat message');
+    expect(fresh).not.toContain('output exactly [no-reply]');
+    expect(continued).toContain('Continue the shared #lab conversation');
+    expect(continued).toContain('Use your own judgment');
+    expect(continued).not.toContain('Stay inside the Builder clone.');
   });
 
   it('continuations keep normal completion guidance', () => {

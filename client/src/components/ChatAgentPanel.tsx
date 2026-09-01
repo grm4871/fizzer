@@ -968,7 +968,7 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
                 checked={agentForm.finalReplyOnly === true}
                 onChange={(event) => setAgentForm((value) => ({ ...value, finalReplyOnly: event.target.checked }))}
                 name="Final replies only"
-                hint="Hides live reasoning, tools, and progress from chat; publishes only the settled reply."
+                hint="Keeps ordinary run status visible, but hides live reasoning, tools, and progress; publishes the settled reply."
               />
             </div>
             <div className="chat-agent-group">
