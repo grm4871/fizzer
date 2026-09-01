@@ -570,7 +570,7 @@ export function useChatDispatch({
       // framing into the resumed transcript.
       const continuation = steeringTurn || Boolean(watermark);
       const steeredPrompt = steeringTurn
-        ? `Mid-session steering from ${triggeringMessage.author}:\n${prompt}`
+        ? `Follow-up from ${triggeringMessage.author}:\n${prompt}`
         : prompt;
       const runPrompt = agentId === 'claude-code' && isCompactCommand(prompt, [registration])
         ? '/compact'

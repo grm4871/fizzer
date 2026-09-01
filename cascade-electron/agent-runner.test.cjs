@@ -58,6 +58,12 @@ test('chat triggering message id follows the mission root through runner payload
   assert.equal(chatTriggeringMessageId({ chatMessageId: 'worker-placeholder' }), '');
 });
 
+test('active local runs emit a bounded worker heartbeat', () => {
+  const source = fs.readFileSync(path.join(__dirname, 'agent-runner.cjs'), 'utf8');
+  assert.match(source, /setInterval\(\(\) => emit\('heartbeat', \{\}\), 15_000\)/);
+  assert.equal((source.match(/clearInterval\(heartbeat\)/g) || []).length, 2);
+});
+
 test('durable work item identity reaches both the provider env and helper context', () => {
   const runId = 91991;
   const env = buildRunHelperEnv({

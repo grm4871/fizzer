@@ -600,12 +600,18 @@ defmodule Cascade.Missions.Store do
                 summary
               )
 
-            if status == "completed" and
+            final_status =
+              if status == "completed" and tasks != [] and
+                   Enum.all?(tasks, &(&1.status == "canceled")),
+                 do: "canceled",
+                 else: status
+
+            if final_status == "completed" and
                  Enum.any?(tasks, &(&1.status in ~w(pending running))) do
               raise "Mission still has active workers"
             end
 
-            if status == "completed" and
+            if final_status == "completed" and
                  not Enum.any?(tasks, fn task ->
                    task.status == "completed" and
                      (completion_evidence_ready?(task, mission) or
@@ -614,7 +620,7 @@ defmodule Cascade.Missions.Store do
               raise "Mission has no completed worker evidence"
             end
 
-            if status == "completed" and
+            if final_status == "completed" and
                  Enum.any?(tasks, fn task ->
                    task.status == "completed" and
                      not completion_evidence_ready?(task, mission) and
@@ -625,18 +631,19 @@ defmodule Cascade.Missions.Store do
 
             SQL.exec(
               "UPDATE chat_missions SET status=?,summary=?,wake_sent=1,updated_at=datetime('now') WHERE id=?",
-              [status, summary, mission.id]
+              [final_status, summary, mission.id]
             )
 
             record_event(mission.id, %{
-              kind: if(status == "completed", do: "mission_completed", else: "mission_canceled"),
+              kind:
+                if(final_status == "completed", do: "mission_completed", else: "mission_canceled"),
               title: mission.title,
               from_status: mission.status,
-              to_status: status,
+              to_status: final_status,
               summary: summary
             })
 
-            if status == "canceled", do: cancel_open_tasks(mission, tasks)
+            if final_status == "canceled", do: cancel_open_tasks(mission, tasks)
             cleanup = cleanup_stale_wakes(mission, current_run_id)
 
             Enum.each(task_rows(mission.id), fn task ->

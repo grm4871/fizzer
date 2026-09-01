@@ -918,6 +918,8 @@ async function startLocalAgentRun(opts, sendEvent) {
   };
 
   emit('status', { status: 'running' });
+  const heartbeat = setInterval(() => emit('heartbeat', {}), 15_000);
+  heartbeat.unref?.();
 
   if (agent === 'claude-code') {
     let resume = typeof opts.resumeSessionId === 'string' ? opts.resumeSessionId : undefined;
@@ -958,6 +960,7 @@ async function startLocalAgentRun(opts, sendEvent) {
         }
       }
     } finally {
+      clearInterval(heartbeat);
       canceledClaudeRuns.delete(runId);
       cleanupRunHelperConfig(runId);
       preparedPrompt.cleanup();
@@ -1000,6 +1003,7 @@ async function startLocalAgentRun(opts, sendEvent) {
     emitTerminalStatus(emit, runId, 'failed', message);
     throw error;
   } finally {
+    clearInterval(heartbeat);
     if (activeCliAgentModules.get(runId) === cliModule) activeCliAgentModules.delete(runId);
     clearRunHelperEnv(runId);
     cleanupRunHelperConfig(runId);

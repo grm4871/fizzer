@@ -17,6 +17,9 @@ defmodule Cascade.Runs.RunnerLifecycle do
   def report_plan_usage(owner_id, usage),
     do: GenServer.cast(__MODULE__, {:plan_usage, owner_id, clean_usage(usage)})
 
+  def heartbeat(run_id, owner_id),
+    do: GenServer.cast(__MODULE__, {:heartbeat, run_id, owner_id})
+
   def plan_usage(owner_id), do: GenServer.call(__MODULE__, {:plan_usage, owner_id})
 
   def health(owner_id) do
@@ -136,11 +139,14 @@ defmodule Cascade.Runs.RunnerLifecycle do
       plan_usage: %{},
       last_seen: %{},
       disconnect_timers: %{},
-      orphan_reclaim: Keyword.get(opts, :orphan_reclaim_ms, @orphan_reclaim)
+      run_leases: %{},
+      orphan_reclaim: Keyword.get(opts, :orphan_reclaim_ms, @orphan_reclaim),
+      run_lease: Keyword.get(opts, :run_lease_ms, @orphan_reclaim)
     }
 
     timer = Process.send_after(self(), :orphan_reclaim, state.orphan_reclaim)
-    {:ok, Map.put(state, :orphan_timer, timer)}
+    lease_timer = Process.send_after(self(), :lease_sweep, lease_sweep_ms(state.run_lease))
+    {:ok, state |> Map.put(:orphan_timer, timer) |> Map.put(:lease_timer, lease_timer)}
   end
 
   @impl true
@@ -250,6 +256,15 @@ defmodule Cascade.Runs.RunnerLifecycle do
      }}
   end
 
+  def handle_cast({:heartbeat, run_id, owner_id}, state) do
+    if Store.delegated_owner(run_id) == owner_id do
+      lease = %{owner_id: owner_id, touched_at: System.monotonic_time(:millisecond)}
+      {:noreply, put_in(state, [:run_leases, run_id], lease)}
+    else
+      {:noreply, update_in(state.run_leases, &Map.delete(&1, run_id))}
+    end
+  end
+
   def handle_cast({:disconnected, owner_id, sid, _reason}, state) do
     # A Socket.IO disconnect only proves transport loss. Electron main owns the
     # child and buffers its events; keep the last instance metadata so a same-
@@ -296,6 +311,26 @@ defmodule Cascade.Runs.RunnerLifecycle do
       _ ->
         {:noreply, state}
     end
+  end
+
+  def handle_info(:lease_sweep, state) do
+    now = System.monotonic_time(:millisecond)
+
+    {expired, retained} =
+      Enum.split_with(state.run_leases, fn {run_id, lease} ->
+        Store.delegated_owner(run_id) != lease.owner_id or
+          now - lease.touched_at >= state.run_lease
+      end)
+
+    summary = "Agent worker heartbeat expired before the run completed."
+
+    expired
+    |> Enum.filter(fn {run_id, lease} -> Store.delegated_owner(run_id) == lease.owner_id end)
+    |> Enum.map(&elem(&1, 0))
+    |> fail_runs(summary)
+
+    timer = Process.send_after(self(), :lease_sweep, lease_sweep_ms(state.run_lease))
+    {:noreply, %{state | run_leases: Map.new(retained), lease_timer: timer}}
   end
 
   @impl true
@@ -350,6 +385,8 @@ defmodule Cascade.Runs.RunnerLifecycle do
         state
     end
   end
+
+  defp lease_sweep_ms(run_lease), do: min(30_000, max(10, div(run_lease, 4)))
 
   defp put_error(state, owner_id, message) do
     %{state | last_error: Map.put(state.last_error, owner_id, %{message: message, at: iso_now()})}

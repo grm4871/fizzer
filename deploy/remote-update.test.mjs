@@ -121,6 +121,12 @@ test('routine deploys build a missing immutable image on the host', () => {
   );
 });
 
+test('the host build reads an image identity supported by older Docker engines', () => {
+  const build = fs.readFileSync(path.join(deployDirectory, 'build-release-image.sh'), 'utf8');
+  assert.match(build, /docker image inspect --format '\{\{\.Id\}\}'/);
+  assert.doesNotMatch(build, /\.Descriptor/);
+});
+
 test('preflight, rolling bridge, Compose, and the canonical candidate share the resource envelope', () => {
   assert.match(source, /cpus: 2,[\s\S]*cpuset: "0-1"[\s\S]*memory: 3 \* 1024 \*\* 3/);
   assert.match(source, /memorySwap: 3 \* 1024 \*\* 3,[\s\S]*pids: 100_000/);

@@ -378,7 +378,7 @@ const WORK_TRACE_DECALS: Record<WorkTracePhase, WorkTraceDecal> = {
   routing: { phase: 'routing', label: 'route', mark: '↗' },
   working: { phase: 'working', label: 'work', mark: '◌' },
   waiting: { phase: 'waiting', label: 'wait', mark: '⋯' },
-  steering: { phase: 'steering', label: 'steer', mark: '↪' },
+  steering: { phase: 'steering', label: 'continued', mark: '↪' },
   reviewing: { phase: 'reviewing', label: 'review', mark: '◇' },
   testing: { phase: 'testing', label: 'test', mark: '✓' },
   deploying: { phase: 'deploying', label: 'deploy', mark: '↑' },

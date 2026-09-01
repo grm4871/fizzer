@@ -228,6 +228,21 @@ defmodule Cascade.Runs.OrchestrationStateTest do
     assert summary == "Desktop agent runner disconnected and did not reclaim this run."
   end
 
+  test "an enrolled run expires when its worker heartbeat stops", context do
+    previous_state = :sys.get_state(RunnerLifecycle)
+    :sys.replace_state(RunnerLifecycle, &%{&1 | run_lease: 25})
+    on_exit(fn -> :sys.replace_state(RunnerLifecycle, fn _state -> previous_state end) end)
+
+    assert {:ok, run} = Store.start(context.vault_id, nil, "expire heartbeat", "codex")
+    :ok = Store.record_delegated(run.id, context.user_id)
+    RunnerLifecycle.heartbeat(run.id, context.user_id)
+    Process.sleep(30)
+    send(RunnerLifecycle, :lease_sweep)
+
+    assert %{status: "failed", summary: summary} = eventually_status(run.id, "failed")
+    assert summary == "Agent worker heartbeat expired before the run completed."
+  end
+
   test "mass transport disconnects do not scan or settle delegated runs", context do
     previous_state = :sys.get_state(RunnerLifecycle)
     :sys.replace_state(RunnerLifecycle, &%{&1 | runners: %{}})

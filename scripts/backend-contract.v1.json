@@ -1211,13 +1211,13 @@
         "namespace": "/vault",
         "event": "connection",
         "source": "backend_elixir/lib/cascade/realtime/domain_adapter.ex",
-        "line": 114
+        "line": 118
       },
       {
         "namespace": "/vault",
         "event": "disconnect",
         "source": "backend_elixir/lib/cascade/realtime/domain_adapter.ex",
-        "line": 120
+        "line": 124
       }
     ],
     "outbound": [

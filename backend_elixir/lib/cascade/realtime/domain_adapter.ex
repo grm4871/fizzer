@@ -100,7 +100,11 @@ defmodule Cascade.Realtime.DomainAdapter do
          type when is_binary(type) and type != "" <- field(data, :type),
          true <- RunnerLifecycle.accept_event?(run_id, identity.id) do
       payload = field(data, :payload) || %{}
-      persist_runner_event(run_id, type, payload, identity.id)
+
+      if type == "heartbeat",
+        do: RunnerLifecycle.heartbeat(run_id, identity.id),
+        else: persist_runner_event(run_id, type, payload, identity.id)
+
       {:ok, []}
     else
       _ -> {:error, "Run event rejected"}

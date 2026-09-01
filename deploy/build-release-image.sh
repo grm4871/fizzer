@@ -49,7 +49,7 @@ git archive --format=tar "$REVISION" | DOCKER_BUILDKIT=1 docker build --pull \
   "${BUILD_ARGS[@]}" \
   --tag "$IMAGE" -
 
-IMAGE_ID="$(docker image inspect --format '{{if .Descriptor}}{{index .Descriptor.Annotations "config.digest"}}{{else}}{{.Id}}{{end}}' "$IMAGE")"
+IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
 LABEL_REVISION="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$IMAGE")"
 if [[ ! "$IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ || "$LABEL_REVISION" != "$REVISION" ]]; then
   echo "Error: built image identity or revision label is invalid." >&2

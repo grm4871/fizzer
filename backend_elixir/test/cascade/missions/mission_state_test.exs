@@ -447,7 +447,7 @@ defmodule Cascade.Missions.MissionStateTest do
              })
   end
 
-  test "canceling every task does not manufacture review or completed evidence", ctx do
+  test "canceling every task closes the mission without manufacturing completion evidence", ctx do
     {:ok, created} = mission(ctx, "Canceled without evidence")
     {:ok, added} = task(ctx, created.mission.id, "Never ran")
 
@@ -456,12 +456,15 @@ defmodule Cascade.Missions.MissionStateTest do
 
     assert update.mission.status == "attention"
 
-    assert {:error, "Mission has no completed worker evidence"} =
+    assert {:ok, closed} =
              Store.finish(ctx.user.id, ctx.channel.id, created.mission.id, %{
                coordinatorRegistrationId: ctx.coordinator.id,
                status: "completed",
                summary: "Nothing ran"
              })
+
+    assert closed.mission.status == "canceled"
+    assert closed.mission.summary == "Nothing ran"
   end
 
   test "completion cannot cover active work and cancellation removes pending dispatches", ctx do

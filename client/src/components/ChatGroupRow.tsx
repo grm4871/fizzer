@@ -245,14 +245,14 @@ export const ChatGroupRow = memo(function ChatGroupRow({
               {avatarKind === 'agent' && ownerLabel && <span className="chat-agent-owner">{ownerLabel}'s agent</span>}
               <time dateTime={tail.createdAt}>{formatChatTime(tail.createdAt)}</time>
               {avatarKind === 'agent' && tail.status === 'running' && latestRunningMessageId === tail.id && runningSiblingCount > 1 && (
-                <span className="chat-message-status is-steering">steering · latest</span>
+                <span className="chat-message-status is-steering">working</span>
               )}
               {avatarKind === 'agent' && tail.status === 'running' && latestRunningMessageId === tail.id && runningSiblingCount <= 1 && <span className="chat-message-status">working</span>}
               {avatarKind === 'agent' && tail.status === 'running' && latestRunningMessageId !== tail.id && <span className="chat-message-status is-steered">continued below</span>}
               {avatarKind === 'agent' && tail.status === 'sending' && <span className="chat-message-status">queued</span>}
               {avatarKind === 'agent' && tail.status === 'failed' && <span className="chat-message-status is-error">failed</span>}
               {avatarKind === 'agent' && tail.status === 'canceled' && isSteeringContinuationMessage(tail) && (
-                <span className="chat-message-status is-steered">steered</span>
+                <span className="chat-message-status is-steered">continued</span>
               )}
               {avatarKind === 'agent' && tail.status === 'canceled' && !isSteeringContinuationMessage(tail) && (
                 <span className="chat-message-status is-error">canceled</span>
@@ -284,7 +284,7 @@ export const ChatGroupRow = memo(function ChatGroupRow({
                   />
                   {steeringPromptLabels.has(message.id) && (
                     <div className="chat-steering-prompt">
-                      ↳ Steering @{steeringPromptLabels.get(message.id)} into the active session
+                      ↳ Follow-up to @{steeringPromptLabels.get(message.id)}
                     </div>
                   )}
                   {message.images && message.images.length > 0 && (
@@ -459,4 +459,3 @@ export const ChatGroupRow = memo(function ChatGroupRow({
   && prev.contextMenuMessage === next.contextMenuMessage
   && prev.traceContent === next.traceContent;
 });
-
