@@ -224,13 +224,12 @@ describe('formatAgentChatPrompt', () => {
     expect(continued).toContain('--anonymous');
     expect(continued).toContain('Keep replies short');
     expect(continued).toContain('cascade-chat mission delegate');
-    // Compact ship/attachment reminders stay on continuation; the long mission contract does not.
-    expect(continued).toMatch(/green Deploy|Ship only after/i);
-    expect(fresh).toMatch(/green Deploy/i);
+    // Compact proof/attachment reminders stay on continuation; the long mission contract does not.
+    expect(continued).toMatch(/smallest test that would have caught it/i);
+    expect(fresh).toMatch(/smallest test that would have caught it/i);
+    expect(fresh).not.toMatch(/green Deploy|Ship only after/i);
     expect(fresh).toMatch(/Clarify only/i);
     expect(fresh).toMatch(/cascade-chat attachment/i);
-    expect(fresh.length - continued.length).toBeGreaterThan(250);
-    expect(fresh.length - 'take care of the release'.length).toBeLessThan(1_600);
   });
 
   it('does not give mission workers the control-plane clone contract', () => {

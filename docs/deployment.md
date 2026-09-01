@@ -111,9 +111,8 @@ the target OS and architecture.
 Pre-staged images are reused without rebuilding. Otherwise the host uses its
 local BuildKit cache, so routine incremental builds are typically small.
 
-Run `npm run test:elixir:release-safety` before capacity certification. It is
-included by `npm run test:elixir-release:full`; the component scripts are
-available for focused work:
+Capacity certification is an operator workflow, not a routine commit gate. When
+changing that workflow, run only the affected component checks:
 
 - `npm run test:elixir:deploy-safety` exercises certification, rollback, and
   the exact nginx edge policy.

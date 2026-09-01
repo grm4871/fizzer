@@ -8,13 +8,12 @@ consolidating behavior.
 
 ## Verification
 
+- Fix the issue and run the smallest test that would have failed before the fix.
 - Run `npm run build` before pushing to `master`.
-- For client changes, run `npm run test:release:frontend` and load the built app
-  with `npm run verify:client-runtime`.
-- For backend or agent-server changes, run `npm run test:release:backend`.
-- For Electron main-process, runner, or packaging changes, run
-  `npm run test:release:desktop`.
-- Use `docs/release-matrix.md` to select any additional flow-specific checks.
+- Use a boundary release suite only for broad or release-boundary changes:
+  `test:release:frontend`, `test:release:backend`, or `test:release:desktop`.
+- Deployment, rollback, capacity, soak, and browser sweeps are operator or
+  flow-specific checks, not routine commit gates. See `docs/release-matrix.md`.
 
 The public repository does not contain or operate a production deployment.
 Self-hosters should adapt `docs/deployment.md` to their own infrastructure and

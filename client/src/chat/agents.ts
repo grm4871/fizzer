@@ -234,7 +234,7 @@ export function formatAgentChatPrompt(
   const coordinatorGuidance = worker
     ? ORCHESTRATOR_WORKER_ROLE
     : registration.orchestrator
-      ? ` You coordinate this channel. Treat clear actionable requests as implementation authority. Clarify only a requested mission/kanban or a material scope, authority, or product choice.${ORCHESTRATOR_VIRTUAL_WORKERS} Use \`--after\`, \`--priority\`, or \`--effort\` when needed. Keep mission summaries short and stay responsive. Ship only after \`npm run build\` and green Deploy; open images with \`cascade-chat attachment --message-id <id>\`.`
+      ? ` You coordinate this channel. Treat clear actionable requests as implementation authority. Clarify only a requested mission/kanban or a material scope, authority, or product choice.${ORCHESTRATOR_VIRTUAL_WORKERS} Use \`--after\`, \`--priority\`, or \`--effort\` when needed. Keep mission summaries short and stay responsive. Fix it with the smallest test that would have caught it. Open images with \`cascade-chat attachment --message-id <id>\`.`
       : '';
   // A resumed provider session already contains the full contract above. Do
   // not pay to restate it on every manager turn; retain only the behavioral
@@ -242,7 +242,7 @@ export function formatAgentChatPrompt(
   const coordinatorContinuationGuidance = worker
     ? ORCHESTRATOR_WORKER_ROLE
     : registration.orchestrator
-      ? ` Continue coordinating: handle clear work directly; clarify only a user-requested mission/kanban or a genuinely material ambiguity.${ORCHESTRATOR_VIRTUAL_WORKERS} Keep replies short. Ship only after \`npm run build\` + green Deploy; open chat images via \`cascade-chat attachment\` (never “cannot see”).`
+      ? ` Continue coordinating: handle clear work directly; clarify only a user-requested mission/kanban or a genuinely material ambiguity.${ORCHESTRATOR_VIRTUAL_WORKERS} Keep replies short. Fix it with the smallest test that would have caught it. Open chat images via \`cascade-chat attachment\` (never “cannot see”).`
       : '';
   const finalReplyGuidance = registration.finalReplyOnly
     ? ' Write one normal group-chat message, never a work log: no planning, status, reasoning, tool narration, or generic agreement. Respond to concrete claims in the triggering message. If you have no new evidence, correction, question, or decision, output exactly [no-reply].'

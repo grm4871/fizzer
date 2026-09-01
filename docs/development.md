@@ -5,7 +5,6 @@
 ```bash
 npm run dev                 # API + Vite + Electron
 npm run dev-headless        # API + Vite
-npm run dev-debug           # full stack with backend debug mode
 npm run build               # TypeScript CLI helper/agent build
 npm run build:client        # production renderer bundle
 npm run build:desktop-runtime # native OTP release + client for Electron
@@ -15,7 +14,8 @@ npm run rebuild:native      # rebuild helper better-sqlite3 if the ABI drifted
 npm run test:desktop-runner # desktop runner integration test
 ```
 
-Additional focused integration scripts live in `scripts/`. See
+The mission and desktop-runner integration scripts cover the two retained
+cross-boundary flows. See
 `docs/getting-started.md` for ABI mismatch recovery after Node upgrades.
 
 ## Change workflow
@@ -57,7 +57,8 @@ both source and `client/dist` for stale references after rebuilding.
 - `backend_elixir/test/` — Elixir backend domain and HTTP tests;
 - `cascade-electron/*.test.cjs` — Electron runner and usage tests;
 - `cli-agents/*.test.mjs` — helper command tests;
-- `scripts/test-*.mjs` — integration and cross-boundary checks.
+- `scripts/test-chat-mission-e2e.mjs` and `scripts/test-desktop-runner-e2e.mjs`
+  — retained cross-boundary checks.
 
 ## Data safety
 
