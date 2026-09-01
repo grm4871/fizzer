@@ -60,6 +60,7 @@ type DelegatedRunPayload = {
 const TERMINAL_REPLAY_MS = 5 * 60 * 1000;
 const PLAN_USAGE_REFRESH_MS = 5 * 60 * 1000;
 const PLAN_USAGE_MIN_REFRESH_MS = 4 * 60 * 1000;
+const RUN_HEARTBEAT_MS = 15_000;
 
 export const DESKTOP_RUNNER_SOCKET_OPTIONS = {
   forceNew: true,
@@ -72,6 +73,7 @@ let currentToken = '';
 let apiBase = '';
 let agentEventUnsub: (() => void) | null = null;
 let planUsageTimer: number | null = null;
+let runHeartbeatTimer: number | null = null;
 let planUsageInFlight: Promise<void> | null = null;
 let lastPlanUsageAt = 0;
 let lastPlanUsage: Record<string, unknown> | null = null;
@@ -253,6 +255,22 @@ async function publishPlanUsage(activeSocket: Socket, force = false): Promise<vo
   return planUsageInFlight;
 }
 
+async function publishRunHeartbeats(activeSocket: Socket): Promise<void> {
+  const api = runnerElectronAPI();
+  if (!api?.getAgentRunState || !activeSocket.connected) return;
+  try {
+    const state = await api.getAgentRunState(bridgeCursor);
+    for (const event of state?.events || []) processAgentEvent(event);
+    const live = new Set((state?.activeRunIds || []).map(Number).filter(Number.isFinite));
+    for (const runId of live) {
+      activeRunIds.add(runId);
+      activeSocket.emit('runner:runEvent', { runId, type: 'heartbeat', payload: {} });
+    }
+  } catch {
+    // Older bridges remain on terminal-event and runner-disconnect recovery.
+  }
+}
+
 async function registerWithServer(activeSocket: Socket): Promise<void> {
   const bufferedEvents = await restoreMainProcessRuns();
   const ids = [...activeRunIds].filter((id) => Number.isFinite(id));
@@ -265,6 +283,7 @@ async function registerWithServer(activeSocket: Socket): Promise<void> {
     processAgentEvent,
   );
   void publishPlanUsage(activeSocket);
+  void publishRunHeartbeats(activeSocket);
   pruneRecentTerminals();
   for (const [runId, entry] of recentTerminalEvents.entries()) {
     if (activeRunIds.has(runId)) continue;
@@ -309,6 +328,10 @@ function detachSocket(): void {
     window.clearInterval(planUsageTimer);
     planUsageTimer = null;
   }
+  if (runHeartbeatTimer != null) {
+    window.clearInterval(runHeartbeatTimer);
+    runHeartbeatTimer = null;
+  }
   if (!socket) return;
   socket.removeAllListeners();
   socket.disconnect();
@@ -330,6 +353,11 @@ function wireSocketHandlers(activeSocket: Socket): void {
     planUsageTimer = window.setInterval(
       () => void publishPlanUsage(activeSocket),
       PLAN_USAGE_REFRESH_MS,
+    );
+    if (runHeartbeatTimer != null) window.clearInterval(runHeartbeatTimer);
+    runHeartbeatTimer = window.setInterval(
+      () => void publishRunHeartbeats(activeSocket),
+      RUN_HEARTBEAT_MS,
     );
     console.info(
       `[DesktopRunner] Connected to ${apiBase}/runners`
