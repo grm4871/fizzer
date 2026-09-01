@@ -245,9 +245,15 @@ function databaseSnapshotFromCopy(filename) {
       `).all();
     }
     if (tables.chat_mission_tasks) {
+      const hasWorkspaceMode = tables.chat_mission_tasks.columns
+        .some((column) => column.name === 'workspace_mode');
       compatibility.missionTaskRuns = db.prepare(`
         SELECT id,run_id AS runId FROM chat_mission_tasks
         WHERE run_id IS NOT NULL ORDER BY rowid
+      `).all();
+      compatibility.missionTaskWorkspaces = db.prepare(`
+        SELECT rowid,id,${hasWorkspaceMode ? 'workspace_mode' : "'shared'"} AS workspaceMode
+        FROM chat_mission_tasks ORDER BY rowid
       `).all();
     }
     if (tables.runs) {
@@ -449,6 +455,38 @@ function exactRowsOrMissionTaskBackfill(table, before, after) {
     if (newLink.missionTaskId !== expected) return false;
   }
   return true;
+}
+
+function exactMissionWorkspaceModeMigration(before, after) {
+  const oldTable = before.tables.chat_mission_tasks;
+  const newTable = after.tables.chat_mission_tasks;
+  const oldColumnNames = oldTable.columns.map((column) => column.name);
+  const newColumnNames = newTable.columns.map((column) => column.name);
+  const workspace = newTable.columns.find((column) => column.name === 'workspace_mode');
+  if (oldColumnNames.includes('workspace_mode')
+      || !workspace
+      || workspace.type !== 'TEXT'
+      || Number(workspace.notnull) !== 1
+      || workspace.dflt_value !== "'shared'"
+      || Number(workspace.pk) !== 0
+      || !same(newColumnNames, [...oldColumnNames, 'workspace_mode'])
+      || !same(oldTable.normalizedForeignKeys, newTable.normalizedForeignKeys)) return false;
+
+  const expectedSql = oldTable.schema.sql.replace(
+    /\)$/u,
+    ", workspace_mode TEXT NOT NULL DEFAULT 'shared')",
+  );
+  if (newTable.schema.sql !== expectedSql) return false;
+
+  const oldRows = oldTable.rows;
+  const newRows = newTable.rows;
+  if (oldRows.count !== newRows.count || oldRows.includesRowid !== newRows.includesRowid) return false;
+  for (const column of oldRows.columns) {
+    if (oldRows.columnSha256[column] !== newRows.columnSha256[column]) return false;
+  }
+  const workspaces = after.compatibility.missionTaskWorkspaces || [];
+  return workspaces.length === newRows.count
+    && workspaces.every((row) => row.workspaceMode === 'shared');
 }
 
 function exactRunOwnershipSchema(before, after) {
@@ -701,6 +739,9 @@ export function compareDatabaseSnapshots(before, after, allowedAdditions = DEFAU
           `table changed outside pinned agent identity migration: ${table} (rows ${oldRows.count}/${oldRows.sha256.slice(0, 12)} -> ${newRows.count}/${newRows.sha256.slice(0, 12)})`,
         );
       }
+    } else if (table === 'chat_mission_tasks'
+        && exactMissionWorkspaceModeMigration(before, after)) {
+      // workspace_mode is an additive, default-shared mission task migration.
     } else if (table === 'chat_agent_members'
         && exactChatAgentMemberAdditiveMigration(before, after)) {
       // The ambient participation flag is an additive, default-false migration.

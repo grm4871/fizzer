@@ -15,39 +15,11 @@ defmodule CascadeWeb.SystemRouterTest do
       CascadeWeb.SystemRouter.init(
         data_dir: data,
         client_dir: client,
-        downloads_dir: downloads,
-        deploy_secret: "deploy-test-secret"
+        downloads_dir: downloads
       )
 
     on_exit(fn -> File.rm_rf!(root) end)
     {:ok, data: data, downloads: downloads, options: options}
-  end
-
-  test "deploy queue uses constant-time bearer/header auth and preserves status", context do
-    missing = request(context, :post, "/api/deploy", %{ref: "main"})
-    assert missing.status == 401
-    assert Jason.decode!(missing.resp_body) == %{"error" => "Deploy token required"}
-
-    invalid = request(context, :post, "/api/deploy", %{ref: "main"}, "wrong")
-    assert invalid.status == 401
-
-    queued =
-      request(context, :post, "/api/admin/deploy", %{ref: "  main  "}, "deploy-test-secret")
-
-    assert queued.status == 202
-    assert Jason.decode!(queued.resp_body) == %{"ref" => "main", "status" => "queued"}
-
-    File.write!(
-      Path.join(context.data, "deploy.result"),
-      Jason.encode!(%{status: "ok", commit: "abc123"})
-    )
-
-    status = request(context, :get, "/api/deploy/status", nil, "deploy-test-secret")
-
-    assert Jason.decode!(status.resp_body) == %{
-             "pending" => true,
-             "last" => %{"status" => "ok", "commit" => "abc123"}
-           }
   end
 
   test "installer routes serve fixed files and clear missing-build errors", context do
@@ -90,7 +62,7 @@ defmodule CascadeWeb.SystemRouterTest do
     assert Jason.decode!(available.resp_body)["available"] == true
   end
 
-  defp request(context, method, path, body \\ nil, token \\ nil) do
+  defp request(context, method, path, body \\ nil) do
     conn =
       if is_nil(body) do
         conn(method, path)
@@ -98,8 +70,6 @@ defmodule CascadeWeb.SystemRouterTest do
         conn(method, path, Jason.encode!(body))
         |> put_req_header("content-type", "application/json")
       end
-
-    conn = if token, do: put_req_header(conn, "authorization", "Bearer #{token}"), else: conn
 
     conn
     |> assign(:domain_options, context.options)

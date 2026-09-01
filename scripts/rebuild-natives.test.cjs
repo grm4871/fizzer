@@ -2,19 +2,20 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const path = require('node:path');
 
 const {
-  findElectronRebuildCli,
   isAbiMismatchError,
   preferMacSystemPython,
   rootLoadOk,
 } = require('./rebuild-natives.cjs');
 
-test('Electron rebuild resolves the portable JavaScript CLI, not an npm shell shim', () => {
-  const cli = findElectronRebuildCli();
-  assert.ok(cli);
-  assert.match(cli.replaceAll('\\', '/'), /@electron\/rebuild\/lib\/cli\.js$/);
+test('desktop runtime invokes Windows batch tools through cmd.exe', () => {
+  const source = fs.readFileSync(path.join(__dirname, 'build-desktop-runtime.mjs'), 'utf8');
+  assert.match(source, /process\.env\.ComSpec \|\| 'cmd\.exe'/);
+  assert.match(source, /\['\/d', '\/s', '\/c', command, \.\.\.args\]/);
+  assert.match(source, /spawnSync\(executable, executableArgs/);
 });
 
 test('isAbiMismatchError detects NODE_MODULE_VERSION failures', () => {

@@ -135,6 +135,40 @@ test('permits only pinned additive agent identity columns with default values', 
   }
 });
 
+test('permits only the additive default-shared mission workspace migration', () => {
+  const files = fixture();
+  try {
+    const before = new Database(files.before);
+    before.exec(`
+      CREATE TABLE chat_mission_tasks (
+        id TEXT PRIMARY KEY,
+        run_id INTEGER,
+        status TEXT NOT NULL DEFAULT 'pending'
+      );
+      INSERT INTO chat_mission_tasks VALUES
+        ('task-1', 900, 'running'),
+        ('task-2', NULL, 'pending');
+    `);
+    before.close();
+    fs.copyFileSync(files.before, files.after);
+
+    const after = new Database(files.after);
+    after.exec("ALTER TABLE chat_mission_tasks ADD COLUMN workspace_mode TEXT NOT NULL DEFAULT 'shared'");
+    after.close();
+    assert.equal(runComparison(files).ok, true, runComparison(files).failures.join('\n'));
+
+    const changed = new Database(files.after);
+    changed.prepare('UPDATE chat_mission_tasks SET workspace_mode = ? WHERE id = ?')
+      .run('isolated', 'task-1');
+    changed.close();
+    assert.ok(runComparison(files).failures.some((failure) => (
+      failure.startsWith('table changed: chat_mission_tasks')
+    )));
+  } finally {
+    fs.rmSync(files.directory, { recursive: true, force: true });
+  }
+});
+
 test('rolling eligibility requires exact data and corpus identity', () => {
   const files = fixture();
   try {

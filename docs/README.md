@@ -28,7 +28,7 @@ reviewed with the code they describe.
 | `cascade-electron/` | Electron main process, preload bridge, and local runner |
 | `cli-agents/` | Agent adapters and the `cascade-*` helper commands |
 | `android/` | Capacitor Android wrapper |
-| `deploy/` | Production bootstrap, update, locking, and nginx configuration |
+| `deploy/` | Production host command, snapshot-safe cutover, locking, and nginx configuration |
 | `scripts/` | Verification, development instances, and integration utilities |
 
 ## Documentation rules
@@ -45,4 +45,5 @@ reviewed with the code they describe.
 
 The code and checked-in configuration remain authoritative. In particular,
 `package.json`, `.github/workflows/`, `docker-compose.yml`, and
-`deploy/remote-update.sh` should be checked before performing operational work.
+`.github/workflows/deploy-production.yml`, `deploy/github-actions-host.sh`, and
+`deploy/remote-update.sh` should be checked before production operational work.

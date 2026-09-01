@@ -15,9 +15,11 @@ consolidating behavior.
 - Deployment, rollback, capacity, soak, and browser sweeps are operator or
   flow-specific checks, not routine commit gates. See `docs/release-matrix.md`.
 
-The public repository does not contain or operate a production deployment.
-Self-hosters should adapt `docs/deployment.md` to their own infrastructure and
-must not assume the maintainers' hosting configuration or credentials.
+GitHub Actions is the only production deploy entrypoint. A push to the public
+Fizzer repository's `master` branch deploys that exact revision through the
+protected `production` environment. Self-hosters should use
+`docs/self-hosting.md`; maintainer host identities and credentials stay outside
+the repository.
 
 ## Compatibility names
 

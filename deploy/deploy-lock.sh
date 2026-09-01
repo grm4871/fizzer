@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 
-# Shared host-side deployment lock. GitHub Actions and the agent-triggered
-# systemd watcher run as different users, so lock the checkout directory itself
-# instead of a user-owned file. Keep the descriptor open in the caller for the
+# Host-side defense in depth behind GitHub Actions concurrency. Lock the
+# checkout directory itself and keep the descriptor open in the caller for the
 # duration of the deploy.
 acquire_cascade_deploy_lock() {
   local root="${1:?checkout root is required}"

@@ -12,7 +12,11 @@ const clientDist = path.join(root, 'client', 'dist');
 const runtimeRoot = path.join(root, 'cascade-electron', 'embedded-runtime');
 
 function run(command, args, cwd = root) {
-  const result = spawnSync(command, args, {
+  const executable = process.platform === 'win32' ? (process.env.ComSpec || 'cmd.exe') : command;
+  const executableArgs = process.platform === 'win32'
+    ? ['/d', '/s', '/c', command, ...args]
+    : args;
+  const result = spawnSync(executable, executableArgs, {
     cwd,
     env: { ...process.env, MIX_ENV: 'prod' },
     stdio: 'inherit',

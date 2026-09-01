@@ -86,4 +86,4 @@ Do not commit:
 | Provider adapter | `cli-agents/cli-agent.ts` |
 | Electron IPC or desktop lifecycle | `cascade-electron/main.cjs`, `preload.cjs` |
 | Desktop agent execution | `cascade-electron/agent-runner.cjs` |
-| Production release | `.github/workflows/deploy.yml`, `deploy/remote-update.sh` |
+| Production release | `.github/workflows/deploy-production.yml`, `deploy/github-actions-host.sh`, `deploy/remote-update.sh` |

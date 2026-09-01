@@ -11,10 +11,11 @@ public HTTP and TLS boundary.
 
 ## Immutable release artifact
 
-Routine autodeploy builds a missing revision-labelled image on the production
-host from the exact committed Git object, then verifies its revision and digest
-before cutover. A pushed commit and one deploy request are therefore sufficient
-for ordinary releases.
+The `Deploy Production` GitHub Actions workflow builds a missing
+revision-labelled image on the production host from the exact triggering Git
+object, then verifies its revision and digest before cutover. A push to
+`master` in the public Fizzer repository is the only production release
+trigger.
 
 Capacity-sensitive releases may still be built, certified, and staged ahead of
 time so the exact image tested under load is the image deployed:
@@ -122,16 +123,28 @@ changing that workflow, run only the affected component checks:
 - `npm run test:elixir:load-harness` exercises the load driver, monitor, edge
   limit proof, and protocol codec.
 
-## Routine release
+## Routine production release
 
-On an installed autodeploy host, queue the update after pushing. For manual
-self-hosted updates, run:
+Push the intended commit to `master` in `grm4871/fizzer`, then watch the
+`Deploy Production` workflow. The workflow serializes releases, sends
+`github.sha` through a dedicated forced-command SSH identity, and fails unless
+the host checkout, immutable image label and ID, internal health, and public
+health all match that exact revision.
 
-```bash
-bash deploy/remote-update.sh
-```
+The protected `production` environment contains only these host credentials:
+`PRODUCTION_DEPLOY_HOST`, `PRODUCTION_DEPLOY_PORT`,
+`PRODUCTION_DEPLOY_USER`, `PRODUCTION_DEPLOY_SSH_KEY`, and
+`PRODUCTION_DEPLOY_KNOWN_HOSTS`. The SSH account can invoke only the root-owned
+copy of `deploy/github-actions-host.sh`; it has no interactive or forwarding
+access. The host checkout's only remote is
+`https://github.com/grm4871/fizzer.git`.
 
-That script uses two fail-closed cutover modes:
+Do not add a deploy API, webhook listener, polling timer, request-file watcher,
+or second workflow. `deploy/remote-update.sh` remains the internal cutover
+primitive invoked by the forced host command, not an additional production
+entrypoint.
+
+The cutover script uses two fail-closed modes:
 
 1. acquires the shared deploy lock;
 2. requires the root-owned certification manifest for the exact full commit;
@@ -157,8 +170,9 @@ not receive public traffic until the previous primary stops accepting a
 connection. Rollback starts the previous image against the same live state, so
 writes accepted during the rolling handoff are preserved rather than rewound.
 
-Always watch the host update and verify the expected commit and image ID. A
-successful push is not proof that a self-hosted production instance changed.
+The Actions run is green only after the host and public checks pass. A pushed
+commit or a healthy endpoint without matching revision evidence is not a
+successful release.
 
 ## Infrastructure security boundary
 
@@ -203,16 +217,22 @@ errors. The repository helper accepts a production URL:
 node scripts/verify-client-runtime.mjs --no-preview "https://$FIZZER_DOMAIN/app.html"
 ```
 
-## First-time host setup
+## First-time production host setup
 
 `deploy/deploy.sh <domain>` bootstraps nginx, certificates, environment, and the
 Compose application. It requires the exact revision's certified image to have
 been staged first, starts it with `--no-build`, and refuses to replace an
-existing Cascade container. It is not the routine update path; existing hosts
-must use the snapshot-backed `deploy/remote-update.sh` cutover.
+existing Cascade container. Install a root-owned copy of
+`deploy/github-actions-host.sh` at `/usr/local/sbin/fizzer-github-deploy`, then
+bind the dedicated locked SSH key to that forced command. Existing production
+hosts release only through `Deploy Production`; the forced command invokes the
+snapshot-backed `deploy/remote-update.sh` cutover.
 
 Use `deploy/.env.example` as the minimal environment template and generate a
 strong `JWT_SECRET`.
+
+Private self-hosted instances are separate from this maintainer workflow; see
+`docs/self-hosting.md` for their lifecycle.
 
 ## Client refresh behavior
 

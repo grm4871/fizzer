@@ -1,5 +1,5 @@
 defmodule CascadeWeb.SystemRouter do
-  @moduledoc "Deploy-control and installer-download routes retained across the backend swap."
+  @moduledoc "Installer download routes retained across the backend swap."
 
   use Plug.Router
 
@@ -28,11 +28,6 @@ defmodule CascadeWeb.SystemRouter do
 
   plug :dispatch
 
-  post "/api/deploy", do: queue_deploy(conn)
-  post "/api/admin/deploy", do: queue_deploy(conn)
-  get "/api/deploy/status", do: deploy_status(conn)
-  get "/api/admin/deploy/status", do: deploy_status(conn)
-
   get "/download/android", do: android_download(conn)
   get "/api/system/android-update", do: android_update(conn)
   get "/download/mac", do: chooser(conn, "Download Fizzer for macOS", mac_choices())
@@ -41,49 +36,12 @@ defmodule CascadeWeb.SystemRouter do
 
   match _, do: JSON.send(conn, 404, %{error: "Not found"})
 
-  defp queue_deploy(conn) do
-    with :ok <- deploy_auth(conn) do
-      ref = body(conn, "ref") |> clean_ref()
-
-      payload =
-        Jason.encode!(%{requestedAt: DateTime.utc_now() |> DateTime.to_iso8601(), ref: ref})
-
-      case File.write(request_file(conn), payload <> "\n") do
-        :ok -> JSON.send(conn, 202, %{status: "queued", ref: ref})
-        {:error, reason} -> JSON.send(conn, 500, %{error: file_error(reason)})
-      end
-    else
-      {:error, message} -> JSON.send(conn, 401, %{error: message})
-    end
-  end
-
-  defp deploy_status(conn) do
-    with :ok <- deploy_auth(conn) do
-      last =
-        case File.read(result_file(conn)) do
-          {:ok, body} ->
-            case Jason.decode(body) do
-              {:ok, value} -> value
-              _ -> nil
-            end
-
-          _ ->
-            nil
-        end
-
-      JSON.send(conn, 200, %{pending: File.exists?(request_file(conn)), last: last})
-    else
-      {:error, message} -> JSON.send(conn, 401, %{error: message})
-    end
-  end
-
   defp android_download(conn) do
     case Enum.find(android_candidates(conn), &File.regular?/1) do
       nil ->
         JSON.send(conn, 404, %{
           error: "Android build is not available",
-          hint:
-            "Sideload APK is published to the host data volume by deploy; rebuild with npm run android:apk"
+          hint: "No Android sideload package is staged on this host"
         })
 
       filename ->
@@ -140,23 +98,6 @@ defmodule CascadeWeb.SystemRouter do
     |> send_file(200, path)
   end
 
-  defp deploy_auth(conn) do
-    expected = option(conn, :deploy_secret, &Cascade.Config.deploy_secret!/0)
-
-    supplied =
-      case get_req_header(conn, "authorization") do
-        ["Bearer " <> token] when token != "" -> token
-        _ -> List.first(get_req_header(conn, "x-deploy-token"))
-      end
-
-    cond do
-      is_nil(supplied) -> {:error, "Deploy token required"}
-      byte_size(supplied) != byte_size(expected) -> {:error, "Invalid deploy token"}
-      Plug.Crypto.secure_compare(supplied, expected) -> :ok
-      true -> {:error, "Invalid deploy token"}
-    end
-  end
-
   defp android_candidates(conn) do
     data = data_dir(conn)
     client = client_dir(conn)
@@ -184,13 +125,6 @@ defmodule CascadeWeb.SystemRouter do
     ]
   end
 
-  defp request_file(conn) do
-    data = data_dir(conn)
-    File.mkdir_p!(data)
-    Path.join(data, "deploy.request")
-  end
-
-  defp result_file(conn), do: Path.join(data_dir(conn), "deploy.result")
   defp data_dir(conn), do: option(conn, :data_dir, &Cascade.Config.data_dir/0)
 
   defp client_dir(conn),
@@ -213,16 +147,6 @@ defmodule CascadeWeb.SystemRouter do
     end
   end
 
-  defp clean_ref(value) when is_binary(value) do
-    case String.trim(value) do
-      "" -> nil
-      ref -> ref
-    end
-  end
-
-  defp clean_ref(_), do: nil
-  defp file_error(reason), do: "Could not queue deploy: #{:file.format_error(reason)}"
-  defp body(conn, key), do: Map.get(conn.body_params, key)
   defp put_domain_options(%{assigns: %{domain_options: _options}} = conn, _compiled), do: conn
   defp put_domain_options(conn, options), do: assign(conn, :domain_options, options)
 end

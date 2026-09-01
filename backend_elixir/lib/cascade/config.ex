@@ -25,13 +25,6 @@ defmodule Cascade.Config do
     end
   end
 
-  def deploy_secret! do
-    case System.get_env("CASCADE_DEPLOY_TOKEN") do
-      value when is_binary(value) and value != "" -> value
-      _ -> persisted_secret!("deploy-secret")
-    end
-  end
-
   def data_dir do
     System.get_env("CASCADE_DATA_DIR") ||
       Cascade.DB.Repo.config() |> Keyword.fetch!(:database) |> Path.dirname()

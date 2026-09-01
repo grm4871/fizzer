@@ -2173,8 +2173,7 @@ test('release build binds a clean full revision to one canonical image tag and l
   assert.match(build, /--provenance=false/);
   assert.match(build, /IMAGE="cascade:certified-\$REVISION"/);
   assert.match(build, /--build-arg "CASCADE_REVISION=\$REVISION"/);
-  assert.match(build, /IMAGE_ID="\$\(docker image inspect/);
-  assert.match(build, /Descriptor\.Annotations "config\.digest"/);
+  assert.match(build, /IMAGE_ID="\$\(docker image inspect --format '\{\{\.Id\}\}'/);
   assert.match(build, /org\.opencontainers\.image\.revision/);
   assert.match(build, /--tag "\$IMAGE" -/);
   assert.doesNotMatch(build, /cascade:latest/);
@@ -2233,9 +2232,8 @@ test('first-time deployment starts only the verified staged image without rebuil
   assert.doesNotMatch(deploy, /^\s*docker (?:compose )?build(?:\s|$)/mu);
 });
 
-test('public source does not contain a production deployment workflow', () => {
-  assert.equal(fs.existsSync(path.join(root, '.github/workflows/deploy.yml')), false);
-
+test('public source documents its single production deployment boundary', () => {
+  assert.equal(fs.existsSync(path.join(root, '.github/workflows/deploy-production.yml')), true);
   const contributorDocs = fs.readFileSync(path.join(root, 'AGENTS.md'), 'utf8');
-  assert.match(contributorDocs, /does not contain or operate a production deployment/u);
+  assert.match(contributorDocs, /GitHub Actions is the only production deploy entrypoint/u);
 });

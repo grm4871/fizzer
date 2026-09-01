@@ -1,6 +1,6 @@
 # Fizzer user guide
 
-Fizzer is a shared workspace for people, notes, conversations, and locally-run AI agents. The repository is named `cascade-browser`, but the current product branding is **Fizzer**.
+Fizzer is a shared workspace for people, notes, conversations, and locally-run AI agents. Its public source repository is `grm4871/fizzer`.
 
 Use Fizzer when you want one place where:
 

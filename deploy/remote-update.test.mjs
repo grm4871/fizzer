@@ -6,7 +6,11 @@ import test from 'node:test';
 
 const deployDirectory = path.dirname(fileURLToPath(import.meta.url));
 const source = fs.readFileSync(path.join(deployDirectory, 'remote-update.sh'), 'utf8');
-const watcher = fs.readFileSync(path.join(deployDirectory, 'deploy-watcher.sh'), 'utf8');
+const hostDeploy = fs.readFileSync(path.join(deployDirectory, 'github-actions-host.sh'), 'utf8');
+const workflow = fs.readFileSync(
+  path.join(deployDirectory, '../.github/workflows/deploy-production.yml'),
+  'utf8',
+);
 const compose = fs.readFileSync(path.join(deployDirectory, '../docker-compose.yml'), 'utf8');
 const dockerfile = fs.readFileSync(path.join(deployDirectory, '../Dockerfile'), 'utf8');
 const nginxTemplate = fs.readFileSync(path.join(deployDirectory, 'nginx.conf.template'), 'utf8');
@@ -109,16 +113,33 @@ test('production promotes an exact staged image without requiring capacity certi
   assert.doesNotMatch(source, /BUILD_ARGS/);
 });
 
-test('routine deploys build a missing immutable image on the host', () => {
-  assert.match(watcher, /REVISION="\$\(git rev-parse HEAD\)"/);
-  assert.match(watcher, /IMAGE="cascade:certified-\$REVISION"/);
-  assert.match(watcher, /docker image inspect "\$IMAGE"/);
-  assert.match(watcher, /\.\/deploy\/build-release-image\.sh/);
-  assert.match(watcher, /write_result error "release image build failed"/);
+test('GitHub Actions is the only exact-revision production deploy entrypoint', () => {
+  assert.match(workflow, /name: Deploy Production/);
+  assert.match(workflow, /push:\s+branches: \[master\]/);
+  assert.match(workflow, /group: deploy-production\s+cancel-in-progress: false/);
+  assert.match(workflow, /environment: production/);
+  assert.match(workflow, /REVISION: \$\{\{ github\.sha \}\}/);
+  assert.match(workflow, /"deploy \$REVISION"/);
+  assert.match(workflow, /"verify \$REVISION"/);
+  assert.match(workflow, /https:\/\/cscd\.online\/api\/health/);
+
+  assert.match(hostDeploy, /REMOTE=https:\/\/github\.com\/grm4871\/fizzer\.git/);
+  assert.match(hostDeploy, /git fetch --force --no-tags origin refs\/heads\/master/);
+  assert.match(hostDeploy, /git merge-base --is-ancestor "\$revision" "\$master_revision"/);
+  assert.match(hostDeploy, /git reset --hard "\$revision"/);
+  assert.match(hostDeploy, /image="cascade:certified-\$revision"/);
+  assert.match(hostDeploy, /bash deploy\/build-release-image\.sh/);
+  assert.match(hostDeploy, /CASCADE_DEPLOY_DOMAIN="\$DOMAIN" bash deploy\/remote-update\.sh/);
+  assert.match(hostDeploy, /running_revision" == "\$revision"/);
+  assert.match(hostDeploy, /running_image" == "\$certified_image"/);
+  assert.match(hostDeploy, /http:\/\/127\.0\.0\.1:3000\/api\/health/);
   assert.ok(
-    watcher.indexOf('git reset --hard "$TARGET"') < watcher.indexOf('./deploy/build-release-image.sh'),
-    'the host must resolve the requested commit before building it',
+    hostDeploy.indexOf('git reset --hard "$revision"')
+      < hostDeploy.indexOf('bash deploy/build-release-image.sh'),
+    'the host must resolve the exact triggering commit before building it',
   );
+  assert.equal(fs.existsSync(path.join(deployDirectory, 'deploy-watcher.sh')), false);
+  assert.equal(fs.existsSync(path.join(deployDirectory, 'install-deploy-watcher.sh')), false);
 });
 
 test('the host build reads an image identity supported by older Docker engines', () => {

@@ -21,6 +21,6 @@ changes or when performing that release. Self-hosters must verify their own
 revision, image identity, health, rollback, and served assets.
 
 Before pushing, inspect the diff and run `npm run build`. Before claiming a
-deployment complete, verify the exact live revision and image plus internal and
-public health; a successful local build or queued deploy is not deployment
-evidence.
+deployment complete, require a green `Deploy Production` run proving the exact
+live revision and image plus internal and public health; a successful local
+build or push is not deployment evidence.
