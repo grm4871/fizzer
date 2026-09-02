@@ -328,7 +328,7 @@ export const Sidebar = memo(function Sidebar({
       sidebar.removeEventListener('scroll', scheduleConnectorUpdate, true);
       window.removeEventListener('resize', scheduleConnectorUpdate);
     };
-  }, [activeNoteId, activeVaultId, expandedFolders, folders, notes]);
+  }, [activeNoteId, activeVaultId, expandedFolders, folders, notes, vaults]);
 
   const visibleFolders = useMemo(() => {
     if (showAgentMemory) return folders;
