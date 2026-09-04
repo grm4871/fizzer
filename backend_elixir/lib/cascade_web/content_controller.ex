@@ -360,7 +360,7 @@ defmodule CascadeWeb.ContentController do
 
         cond do
           from != "" and to != "" ->
-            case Versions.diff_versions(from, to) do
+            case Versions.diff_versions(note_id, from, to) do
               nil -> JSON.send(conn, 404, %{error: "Version not found"})
               text -> JSON.send(conn, 200, %{diff: text})
             end

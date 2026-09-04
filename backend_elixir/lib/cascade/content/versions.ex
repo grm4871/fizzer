@@ -33,9 +33,9 @@ defmodule Cascade.Content.Versions do
     )
   end
 
-  def diff_versions(from_id, to_id) do
-    with from when not is_nil(from) <- get(from_id),
-         to when not is_nil(to) <- get(to_id) do
+  def diff_versions(note_id, from_id, to_id) do
+    with %{note_id: ^note_id} = from <- get(from_id),
+         %{note_id: ^note_id} = to <- get(to_id) do
       diff_text(
         from.content,
         to.content,

@@ -6,6 +6,7 @@ defmodule Cascade.Content.Privacy do
   @start ~r/^[\t ]*:::private[\t ]*$/iu
   @finish ~r/^[\t ]*:::[\t ]*$/u
   @placeholder ~r/\[Private block hidden from agents\. id=([a-z0-9-]+)\]/iu
+  @redacted_block ~r/\A[\t ]*:::private[\t ]*\r?\n\[Private block hidden from agents\. id=[a-z0-9-]+\]\r?\n[\t ]*:::[\t ]*\z/iu
 
   def redact_note(nil, _agent?), do: nil
 
@@ -23,7 +24,7 @@ defmodule Cascade.Content.Privacy do
 
   def redact_blocks(content) do
     replace_blocks(to_string(content), fn block ->
-      if Regex.match?(@placeholder, block.raw), do: block.raw, else: placeholder(block)
+      if Regex.match?(@redacted_block, block.raw), do: block.raw, else: placeholder(block)
     end)
   end
 

@@ -3,6 +3,22 @@ defmodule Cascade.PrivacyTest do
 
   alias Cascade.Privacy
 
+  test "placeholder text does not exempt surrounding private content from redaction" do
+    marker = "[Private block hidden from agents. id=p123-1]"
+
+    for redact <- [&Privacy.redact_private_blocks/1, &Cascade.Content.Privacy.redact_blocks/1] do
+      placeholder = ":::private\n#{marker}\n:::"
+      assert redact.(placeholder) == placeholder
+
+      for body <- ["secret\n#{marker}", "#{marker}\nsecret", "#{marker} secret"],
+          closing <- ["\n:::", ""] do
+        redacted = redact.(":::private\n#{body}#{closing}")
+        refute redacted =~ "secret"
+        assert redact.(redacted) == redacted
+      end
+    end
+  end
+
   test "matches Node placeholder IDs including UTF-16 surrogate pairs" do
     content = "before\n:::private\nsecret 🚀\n:::\nafter"
 

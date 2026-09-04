@@ -228,7 +228,7 @@ defmodule Cascade.ContentDomainTest do
     assert second.label == nil
     assert Enum.map(Versions.list(note.id), & &1.id) == [second.id, first.id]
 
-    assert Versions.diff_versions(first.id, second.id) ==
+    assert Versions.diff_versions(note.id, first.id, second.id) ==
              "--- version-#{String.slice(first.id, 0, 8)}\n+++ version-#{String.slice(second.id, 0, 8)}\n@@\n one\n-two\n+three"
   end
 
@@ -318,6 +318,57 @@ defmodule Cascade.ContentDomainTest do
     missing = request(:get, "/api/vaults/missing", nil, owner_token)
     assert missing.status == 404
     assert Jason.decode!(missing.resp_body) == %{"error" => "Vault not found"}
+  end
+
+  test "mounted diff route only accepts versions belonging to the authorized note" do
+    vault = Store.create_vault(1, %{name: "Readable"})
+    other_vault = Store.create_vault(2, %{name: "Private"})
+    note = Store.create_note(vault.id, 1, %{title: "Plan", content: ""})
+    other = Store.create_note(other_vault.id, 2, %{title: "Secret", content: ""})
+    first = Versions.create(note.id, "before", "manual")
+    second = Versions.create(note.id, "after", "manual")
+    secret = Versions.create(other.id, "private secret", "manual")
+    token = Token.sign_user(%{id: 1, username: "alice", auth_version: 0})
+
+    for {from, to, status} <- [
+          {first.id, second.id, 200},
+          {secret.id, second.id, 404},
+          {first.id, secret.id, 404},
+          {secret.id, secret.id, 404},
+          {first.id, "missing", 404}
+        ] do
+      response =
+        conn(:get, "/api/notes/#{note.id}/diff?from=#{from}&to=#{to}")
+        |> put_req_header("authorization", "Bearer #{token}")
+        |> CascadeWeb.Router.call(CascadeWeb.Router.init([]))
+
+      assert response.status == status
+      refute response.resp_body =~ "private secret"
+    end
+  end
+
+  test "mounted router accepts media above the former global JSON limit" do
+    vault = Store.create_vault(1, %{name: "Large upload"})
+    note = Store.create_note(vault.id, 1, %{title: "Audio", content: ""})
+    token = Token.sign_user(%{id: 1, username: "alice", auth_version: 0})
+    bytes = "ID3" <> String.duplicate("x", 10 * 1024 * 1024)
+
+    response =
+      conn(
+        :post,
+        "/api/notes/#{note.id}/assets",
+        Jason.encode!(%{
+          media_type: "audio/mpeg",
+          data: Base.encode64(bytes)
+        })
+      )
+      |> put_req_header("content-type", "application/json")
+      |> put_req_header("authorization", "Bearer #{token}")
+      |> CascadeWeb.Router.call(CascadeWeb.Router.init([]))
+
+    assert response.status == 201
+    asset = Jason.decode!(response.resp_body)
+    assert File.read!(Assets.resolve_path(note.id, asset["asset_id"])) == bytes
   end
 
   defp request(method, path, body, token) do

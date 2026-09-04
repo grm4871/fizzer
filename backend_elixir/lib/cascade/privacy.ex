@@ -5,7 +5,7 @@ defmodule Cascade.Privacy do
 
   @private_start ~r/^[\t ]*:::private[\t ]*\r?$/m
   @private_end ~r/^[\t ]*:::[\t ]*\r?$/m
-  @placeholder ~r/\[Private block hidden from agents\. id=[a-z0-9-]+\]/i
+  @placeholder ~r/\A[\t ]*:::private[\t ]*\r?\n\[Private block hidden from agents\. id=[a-z0-9-]+\]\r?\n[\t ]*:::[\t ]*\z/i
 
   def sanitize_agent_json(value) when is_binary(value), do: redact_private_blocks(value)
   def sanitize_agent_json(value) when is_list(value), do: Enum.map(value, &sanitize_agent_json/1)

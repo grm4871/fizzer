@@ -28,11 +28,12 @@ defmodule CascadeWeb.Router do
   plug CascadeWeb.Security
   plug :match
 
-  plug Plug.Parsers,
-    parsers: [:json],
-    pass: ["*/*"],
-    json_decoder: Jason,
-    length: 12 * 1_024 * 1_024
+  @login_parser Plug.Parsers.init(
+                  parsers: [:json],
+                  pass: ["*/*"],
+                  json_decoder: Jason,
+                  length: 12 * 1_024 * 1_024
+                )
 
   plug :dispatch
 
@@ -43,7 +44,10 @@ defmodule CascadeWeb.Router do
     end
   end
 
-  post "/api/auth/login", do: AuthController.login(conn)
+  post "/api/auth/login" do
+    conn |> Plug.Parsers.call(@login_parser) |> AuthController.login()
+  end
+
   post "/api/auth/logout", do: AuthController.logout(conn)
   get "/api/session", do: AuthController.session(conn)
   get "/api/me", do: AuthController.me(conn)
