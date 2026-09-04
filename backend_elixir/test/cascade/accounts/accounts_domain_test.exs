@@ -1,8 +1,7 @@
 defmodule Cascade.AccountsDomainTest do
   use ExUnit.Case, async: false
 
-  import Plug.Conn
-  import Plug.Test
+  import Cascade.TestHelpers
 
   alias Cascade.Accounts.{
     AndroidBattery,
@@ -44,8 +43,6 @@ defmodule Cascade.AccountsDomainTest do
     previous_root = System.get_env("CASCADE_VAULTS_BASE_DIR")
     System.put_env("CASCADE_VAULTS_BASE_DIR", root)
 
-    ensure_chat_schema()
-    Cascade.Accounts.Schema.ensure!()
     reset_database()
 
     SQL.exec("""
@@ -329,51 +326,8 @@ defmodule Cascade.AccountsDomainTest do
   end
 
   defp request(method, path, body, token) do
-    conn =
-      if is_nil(body) do
-        conn(method, path)
-      else
-        conn(method, path, Jason.encode!(body))
-        |> put_req_header("content-type", "application/json")
-      end
-
-    conn
-    |> put_req_header("authorization", "Bearer #{token}")
+    json_conn(method, path, body, token)
     |> CascadeWeb.AccountRouter.call(@router_options)
-  end
-
-  defp ensure_chat_schema do
-    SQL.exec("""
-    CREATE TABLE IF NOT EXISTS chat_channel_links (
-      local_channel_id TEXT PRIMARY KEY REFERENCES notes(id) ON DELETE CASCADE,
-      local_vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
-      source_channel_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
-      source_vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
-      created_by INTEGER NOT NULL REFERENCES users(id),
-      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-      UNIQUE(local_vault_id,source_channel_id)
-    )
-    """)
-
-    SQL.exec("""
-    CREATE TABLE IF NOT EXISTS vault_agents (
-      id TEXT PRIMARY KEY,vault_id TEXT,owner_user_id INTEGER,mention TEXT
-    )
-    """)
-
-    SQL.exec("""
-    CREATE TABLE IF NOT EXISTS chat_agent_members (
-      id TEXT PRIMARY KEY,channel_id TEXT,vault_agent_id TEXT
-    )
-    """)
-
-    SQL.exec("""
-    CREATE TABLE IF NOT EXISTS chat_messages (
-      id TEXT PRIMARY KEY,channel_id TEXT,vault_id TEXT,author TEXT,body TEXT DEFAULT '',
-      status TEXT,created_at TEXT DEFAULT (datetime('now')),activity_at TEXT,reply_to_json TEXT,
-      registration_id TEXT,actor_user_id INTEGER,agent_id TEXT
-    )
-    """)
   end
 
   defp reset_database do

@@ -152,13 +152,11 @@ defmodule Cascade.Scratchpad do
   end
 
   def delete_note_stats(note_id) do
-    ensure_schema()
     Query.execute("DELETE FROM scratchpad_note_stats WHERE note_id = ?", [note_id])
     :ok
   end
 
   def append_journal_entry(user_id, vault_id, input) do
-    ensure_schema()
     vault = Store.get_vault(vault_id, user_id) || raise(ArgumentError, "Vault not found")
 
     body =
@@ -183,7 +181,6 @@ defmodule Cascade.Scratchpad do
   end
 
   def list_journal_entries(user_id, vault_id, opts \\ []) do
-    ensure_schema()
     vault = Store.get_vault(vault_id, user_id) || raise(ArgumentError, "Vault not found")
     limit = opts |> Keyword.get(:limit, 100) |> bounded(1, 500)
     key = normalize_agent_key(Keyword.get(opts, :agent_key, ""))
@@ -213,7 +210,6 @@ defmodule Cascade.Scratchpad do
   end
 
   def mark_journal_consolidated(user_id, vault_id, opts) do
-    ensure_schema()
     vault = Store.get_vault(vault_id, user_id) || raise(ArgumentError, "Vault not found")
 
     through_id =
@@ -245,7 +241,6 @@ defmodule Cascade.Scratchpad do
   end
 
   def status(vault_id, agent_key \\ nil) do
-    ensure_schema()
     key = normalize_agent_key(agent_key)
     filter = if key == "", do: "", else: "AND agent_key = ?"
     params = if key == "", do: [vault_id], else: [vault_id, key]
@@ -278,7 +273,6 @@ defmodule Cascade.Scratchpad do
   end
 
   def list_open_threads(user_id, vault_id, opts \\ []) do
-    ensure_schema()
     vault = Store.get_vault(vault_id, user_id) || raise(ArgumentError, "Vault not found")
     key = normalize_agent_key(Keyword.get(opts, :agent_key, ""))
     limit = opts |> Keyword.get(:limit, 50) |> bounded(1, 200)
@@ -299,7 +293,6 @@ defmodule Cascade.Scratchpad do
   end
 
   def open_thread(user_id, vault_id, input) do
-    ensure_schema()
     vault = Store.get_vault(vault_id, user_id) || raise(ArgumentError, "Vault not found")
     key = normalize_agent_key(value(input, :agent_key, ""))
     intent = clip_thread(value(input, :intent, ""), "intent", true)
@@ -338,7 +331,6 @@ defmodule Cascade.Scratchpad do
   end
 
   def close_open_thread(user_id, vault_id, opts) do
-    ensure_schema()
     vault = Store.get_vault(vault_id, user_id) || raise(ArgumentError, "Vault not found")
 
     thread_id =
@@ -376,7 +368,6 @@ defmodule Cascade.Scratchpad do
   end
 
   def recall(user_id, vault_id, input) do
-    ensure_schema()
     vault = Store.get_vault(vault_id, user_id) || raise(ArgumentError, "Vault not found")
     query = input |> value(:query, "") |> to_string() |> String.trim()
 
@@ -408,7 +399,6 @@ defmodule Cascade.Scratchpad do
   end
 
   def create_skill_note(user_id, vault_id, input) do
-    ensure_schema()
     Store.get_vault(vault_id, user_id) || raise(ArgumentError, "Vault not found")
     title = input |> value(:title, "") |> to_string() |> String.trim() |> String.slice(0, 120)
     body = input |> value(:body, "") |> to_string() |> String.trim()
@@ -437,7 +427,6 @@ defmodule Cascade.Scratchpad do
   end
 
   def list_skill_notes(user_id, vault_id, agent_key \\ nil) do
-    ensure_schema()
     Store.get_vault(vault_id, user_id) || raise(ArgumentError, "Vault not found")
     folders = skill_scope(vault_id, normalize_agent_key(agent_key))
 
@@ -479,7 +468,6 @@ defmodule Cascade.Scratchpad do
   end
 
   def record_note_outcome(user_id, vault_id, input) do
-    ensure_schema()
     Store.get_vault(vault_id, user_id) || raise(ArgumentError, "Vault not found")
     ref = input |> value(:note_ref, "") |> to_string()
 
@@ -517,8 +505,6 @@ defmodule Cascade.Scratchpad do
   end
 
   def note_stats(vault_id) do
-    ensure_schema()
-
     Query.maps(
       "SELECT note_id, uses, wins, losses FROM scratchpad_note_stats WHERE vault_id = ?",
       [vault_id],
@@ -528,7 +514,6 @@ defmodule Cascade.Scratchpad do
   end
 
   def promote_note(user_id, vault_id, input) do
-    ensure_schema()
     Store.get_vault(vault_id, user_id) || raise(ArgumentError, "Vault not found")
     ref = input |> value(:note_ref, "") |> to_string()
 

@@ -1,7 +1,7 @@
 defmodule CascadeWeb.SystemRouter do
   @moduledoc "Installer download routes retained across the backend swap."
 
-  use Plug.Router
+  use CascadeWeb.DomainDispatch
 
   import Plug.Conn
 

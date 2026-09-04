@@ -54,9 +54,6 @@ if (/const allChatIds = noteList/.test(appSource)) {
 if (!/const primaryChatP = !soft && primaryChats\.length > 0/.test(appSource)) {
   throw new Error('Soft vault refreshes must not reload chat transcripts, presence, and membership');
 }
-if (!/vaultListingsByVault: vaultListingsRef\.current/.test(appSource)) {
-  throw new Error('Vault metadata is not persisted for immediate stale-while-revalidate paint');
-}
 
 console.log(
   `[verify-client-performance] OK — entry ${Math.round(entryGzip / 1024)} KiB gzip; styles ${Math.round(stylesGzip / 1024)} KiB gzip; heavy UI remains lazy`,

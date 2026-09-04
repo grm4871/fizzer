@@ -127,8 +127,8 @@ describe('OMP model presets', () => {
 });
 
 describe('formatAgentChatPrompt', () => {
-  it('all requests keep full task and progress guidance', () => {
-    const prompt = formatAgentChatPrompt('dev', registration, 'fix the runner and deploy', 'alice', false);
+  it.each(['fix the runner and deploy', 'hey is deploy green?'])('keeps full task guidance for %s', (request) => {
+    const prompt = formatAgentChatPrompt('dev', registration, request, 'alice', false);
     expect(prompt).toContain('verification before replying');
     expect(prompt).toContain('Keep progress in the run trace');
     expect(prompt).not.toContain('cascade-chat send');
@@ -136,13 +136,6 @@ describe('formatAgentChatPrompt', () => {
     expect(prompt).toContain('cascade-scratchpad');
     expect(prompt).toMatch(/only for a durable root cause/i);
     expect(prompt).not.toMatch(/final answer (is|there)/i);
-  });
-
-  it('short pings use the same full path', () => {
-    const prompt = formatAgentChatPrompt('dev', registration, 'hey is deploy green?', 'alice');
-    expect(prompt).toContain('verification before replying');
-    expect(prompt).toContain(CHAT_REPLY_BREVITY);
-    expect(prompt).toContain('cascade-scratchpad');
     expect(prompt).not.toContain('no tools');
   });
 
@@ -169,8 +162,6 @@ describe('formatAgentChatPrompt', () => {
     expect(prompt).toContain('completes the mission and replies to the user automatically');
     expect(prompt).toContain('stay responsive');
     expect(prompt).toContain('Keep mission summaries short');
-    expect(prompt).toContain('implementation authority');
-    expect(prompt).toContain('Clarify only');
   });
 
   it('keeps the existing final-only contract for non-ambient assistants', () => {

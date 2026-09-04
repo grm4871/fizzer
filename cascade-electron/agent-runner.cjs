@@ -173,38 +173,6 @@ function chatTriggeringMessageId(opts) {
   return String(opts && opts.chatTriggeringMessageId || opts?.chat?.triggeringMessageId || '').trim();
 }
 
-function buildAgentEnv(opts) {
-  ensureWrapperOnPath();
-  const env = { ...process.env };
-  if (noteApi.configured) {
-    env.CASCADE_NOTE_URL = noteApi.url;
-    env.CASCADE_NOTE_TOKEN = noteApi.token;
-    delete env.CASCADE_NOTE_USER;
-    delete env.CASCADE_NOTE_PASS;
-  } else {
-    if (noteApi.url) env.CASCADE_NOTE_URL = noteApi.url;
-    if (noteApi.token) env.CASCADE_NOTE_TOKEN = noteApi.token;
-  }
-  const vaultId = String(opts && opts.vaultId || '').trim();
-  if (vaultId) env.CASCADE_NOTE_VAULT = vaultId;
-  const channelId = String(opts && opts.chatChannelId || opts?.chat?.channelId || '').trim();
-  if (channelId) env.CASCADE_CHAT_CHANNEL = channelId;
-  const messageId = String(opts && opts.chatMessageId || opts?.chat?.messageId || '').trim();
-  if (messageId) env.CASCADE_CHAT_MESSAGE = messageId;
-  const triggeringMessageId = chatTriggeringMessageId(opts);
-  if (triggeringMessageId) env.CASCADE_CHAT_TRIGGERING_MESSAGE = triggeringMessageId;
-  env.CASCADE_HELPER_DIR = resolveWrapperDir();
-  env.CASCADE_HELPER_CONFIG = HELPER_CONFIG_PATH;
-  const pathParts = String(env.PATH || '').split(path.delimiter).filter(Boolean);
-  if (!pathParts.includes(env.CASCADE_HELPER_DIR)) {
-    env.PATH = [env.CASCADE_HELPER_DIR, ...pathParts].join(path.delimiter);
-  }
-  if (!pathParts.includes(USER_BIN_DIR)) {
-    env.PATH = [USER_BIN_DIR, env.PATH].filter(Boolean).join(path.delimiter);
-  }
-  return { env, vaultId, channelId, messageId };
-}
-
 /** Set the live API target/token the wrapper should use (call on runner connect). */
 function setNoteApiConfig({ url, token } = {}) {
   if (typeof url === 'string') {
@@ -967,17 +935,16 @@ async function startLocalAgentRun(opts, sendEvent) {
     }
   }
 
-  const cliModule = await loadCliAgentModule();
-  const { runCliAgent, setRunHelperEnv, clearRunHelperEnv } = cliModule;
-  activeCliAgentModules.set(runId, cliModule);
-  const selfContained = opts.contextMode === 'self-contained';
-  const helperEnv = selfContained ? {} : buildRunHelperEnv(opts);
-  setRunHelperEnv(runId, helperEnv);
-  const cwd = resolveAgentCwd(opts.cwd, opts.vaultRoot);
-
-  const env = { ...process.env, ...helperEnv };
-
+  let cliModule;
   try {
+    cliModule = await loadCliAgentModule();
+    const { runCliAgent } = cliModule;
+    activeCliAgentModules.set(runId, cliModule);
+    const selfContained = opts.contextMode === 'self-contained';
+    const helperEnv = selfContained ? {} : buildRunHelperEnv(opts);
+    const cwd = resolveAgentCwd(opts.cwd, opts.vaultRoot);
+    const env = { ...process.env, ...helperEnv };
+
     const result = await runCliAgent({
       agent,
       context: isChatRun(opts) || selfContained ? '' : `${CLAUDE_AGENT_CONTEXT} ${noteCapabilityContext(opts)}`,
@@ -1005,7 +972,6 @@ async function startLocalAgentRun(opts, sendEvent) {
   } finally {
     clearInterval(heartbeat);
     if (activeCliAgentModules.get(runId) === cliModule) activeCliAgentModules.delete(runId);
-    clearRunHelperEnv(runId);
     cleanupRunHelperConfig(runId);
     preparedPrompt.cleanup();
   }

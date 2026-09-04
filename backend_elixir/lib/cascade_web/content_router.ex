@@ -1,7 +1,7 @@
 defmodule CascadeWeb.ContentRouter do
   @moduledoc "Isolated Plug router for the content domain; mount before the main API catch-all."
 
-  use Plug.Router
+  use CascadeWeb.DomainDispatch
 
   alias CascadeWeb.{ContentController, JSON}
 

@@ -31,11 +31,11 @@ defmodule Cascade.Content.Privacy do
   def redact_preview(content) do
     value = to_string(content)
 
-    case :binary.match(String.downcase(value), ":::private") do
-      :nomatch ->
+    case Regex.run(~r/:::private/iu, value, return: :index) do
+      nil ->
         value
 
-      {offset, _length} ->
+      [{offset, _length}] ->
         String.trim(binary_part(value, 0, offset) <> "[Private block hidden from agents]")
     end
   end
@@ -56,35 +56,47 @@ defmodule Cascade.Content.Privacy do
   def sanitize_json(value), do: value
 
   def restore_blocks(existing, incoming) do
-    blocks = private_blocks(existing)
     incoming = to_string(incoming)
 
-    if blocks == [] do
-      if Regex.match?(@placeholder, incoming),
-        do: raise(ArgumentError, "Unknown private block placeholder.")
+    markers =
+      Enum.map(private_blocks(existing), fn block ->
+        marker =
+          if Regex.match?(@redacted_block, block.raw), do: block.raw, else: placeholder(block)
 
-      incoming
-    else
-      expected = blocks |> Enum.map(& &1.id) |> MapSet.new()
+        [_, id] = Regex.run(@placeholder, marker)
+        # Both engines have emitted these hash casings; the raw block is never normalized.
+        aliases =
+          [id, String.downcase(id), String.upcase(id) |> String.replace_prefix("P", "p")]
+          |> Enum.uniq()
+          |> Enum.map(&String.replace(marker, "id=#{id}", "id=#{&1}"))
 
-      @placeholder
-      |> Regex.scan(incoming, capture: :all_but_first)
-      |> Enum.each(fn [id] ->
-        if not MapSet.member?(expected, id),
-          do: raise(ArgumentError, "Unknown private block placeholder.")
+        {String.downcase(id), aliases, block.raw}
       end)
 
-      Enum.reduce(blocks, incoming, fn block, restored ->
-        marker = placeholder(block)
+    expected = MapSet.new(markers, fn {id, _, _} -> id end)
+    ids = Regex.scan(@placeholder, incoming, capture: :all_but_first)
 
-        if length(:binary.matches(restored, marker)) != 1 do
+    Enum.each(ids, fn [id] ->
+      if not MapSet.member?(expected, String.downcase(id)),
+        do: raise(ArgumentError, "Unknown private block placeholder.")
+    end)
+
+    replacements =
+      Enum.reduce(markers, %{}, fn {id, aliases, raw}, replacements ->
+        occurrences = Enum.flat_map(aliases, &:binary.matches(incoming, &1))
+
+        if length(occurrences) != 1 or
+             Enum.count(ids, fn [found] -> String.downcase(found) == id end) != 1 do
           raise ArgumentError,
                 "Agent edits must preserve every private block placeholder exactly once."
         end
 
-        String.replace(restored, marker, block.raw, global: false)
+        Enum.reduce(aliases, replacements, &Map.put(&2, &1, raw))
       end)
-    end
+
+    if map_size(replacements) == 0,
+      do: incoming,
+      else: String.replace(incoming, Map.keys(replacements), &Map.fetch!(replacements, &1))
   end
 
   defp private_blocks(content) do
@@ -92,69 +104,45 @@ defmodule Cascade.Content.Privacy do
     parse_blocks(lines, to_string(content), 0, [])
   end
 
-  defp parse_blocks(lines, _content, index, blocks) when index >= length(lines),
-    do: Enum.reverse(blocks)
+  defp parse_blocks([], _content, _index, blocks), do: Enum.reverse(blocks)
 
-  defp parse_blocks(lines, content, index, blocks) do
-    line = Enum.at(lines, index)
-
+  defp parse_blocks([line | rest], content, index, blocks) do
     if Regex.match?(@start, line.text) do
-      {finish, closing_index} = find_finish(lines, index + 1, byte_size(content))
+      {finish, remaining} = find_finish(rest, byte_size(content))
       raw = binary_part(content, line.from, finish - line.from)
-      block = %{from: line.from, to: finish, raw: raw, id: stable_id(raw, length(blocks))}
-
-      if closing_index >= length(lines) do
-        Enum.reverse([block | blocks])
-      else
-        parse_blocks(lines, content, closing_index + 1, [block | blocks])
-      end
+      block = %{from: line.from, to: finish, raw: raw, id: stable_id(raw, index)}
+      parse_blocks(remaining, content, index + 1, [block | blocks])
     else
-      parse_blocks(lines, content, index + 1, blocks)
+      parse_blocks(rest, content, index, blocks)
     end
   end
 
-  defp find_finish(lines, index, default) when index >= length(lines),
-    do: {default, length(lines)}
+  defp find_finish([], default), do: {default, []}
 
-  defp find_finish(lines, index, default) do
-    line = Enum.at(lines, index)
-
+  defp find_finish([line | rest], default) do
     if Regex.match?(@finish, line.text),
-      do: {line.to, index},
-      else: find_finish(lines, index + 1, default)
+      do: {line.to, rest},
+      else: find_finish(rest, default)
   end
 
-  defp content_lines(""), do: []
+  defp content_lines(content), do: content_lines(content, 0, [])
 
-  defp content_lines(content) do
-    do_content_lines(content, 0, [])
-  end
-
-  defp do_content_lines(content, from, lines) when from >= byte_size(content),
+  defp content_lines(content, from, lines) when from >= byte_size(content),
     do: Enum.reverse(lines)
 
-  defp do_content_lines(content, from, lines) do
+  defp content_lines(content, from, lines) do
     rest = binary_part(content, from, byte_size(content) - from)
 
-    case :binary.match(rest, "\n") do
-      :nomatch ->
-        raw = rest
+    size =
+      case :binary.match(rest, "\n") do
+        :nomatch -> byte_size(rest)
+        {relative, 1} -> relative
+      end
 
-        text =
-          if String.ends_with?(raw, "\r"), do: binary_part(raw, 0, byte_size(raw) - 1), else: raw
-
-        Enum.reverse([%{from: from, to: byte_size(content), text: text} | lines])
-
-      {relative, 1} ->
-        raw = binary_part(content, from, relative)
-
-        text =
-          if String.ends_with?(raw, "\r"), do: binary_part(raw, 0, byte_size(raw) - 1), else: raw
-
-        do_content_lines(content, from + relative + 1, [
-          %{from: from, to: from + relative, text: text} | lines
-        ])
-    end
+    raw = binary_part(rest, 0, size)
+    text = if String.ends_with?(raw, "\r"), do: binary_part(raw, 0, size - 1), else: raw
+    line = %{from: from, to: from + size, text: text}
+    content_lines(content, from + size + 1, [line | lines])
   end
 
   defp stable_id(raw, index) do
@@ -167,7 +155,7 @@ defmodule Cascade.Content.Privacy do
         current -> band(bxor(current, unit) * 16_777_619, 0xFFFFFFFF)
       end
 
-    "p#{Integer.to_string(hash, 36)}-#{index + 1}"
+    "p#{hash |> Integer.to_string(36) |> String.downcase()}-#{index + 1}"
   end
 
   defp placeholder(block) do

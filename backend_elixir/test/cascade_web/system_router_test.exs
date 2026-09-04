@@ -62,16 +62,8 @@ defmodule CascadeWeb.SystemRouterTest do
     assert Jason.decode!(available.resp_body)["available"] == true
   end
 
-  defp request(context, method, path, body \\ nil) do
-    conn =
-      if is_nil(body) do
-        conn(method, path)
-      else
-        conn(method, path, Jason.encode!(body))
-        |> put_req_header("content-type", "application/json")
-      end
-
-    conn
+  defp request(context, method, path) do
+    conn(method, path)
     |> assign(:domain_options, context.options)
     |> CascadeWeb.SystemRouter.call(context.options)
   end

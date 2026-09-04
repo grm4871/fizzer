@@ -23,7 +23,6 @@ const fakePiBin = path.join(scratch, 'fake-pi');
 const piArgLog = path.join(scratch, 'pi-args.jsonl');
 const hermesArgLog = path.join(scratch, 'hermes-args.jsonl');
 const hermes503Log = path.join(scratch, 'hermes-503-attempts.txt');
-const hermes503Counter = path.join(scratch, 'hermes-503-count');
 const akronChildPid = path.join(scratch, 'akron-child.pid');
 const akronAttemptLog = path.join(scratch, 'akron-attempts.txt');
 const agentProcessLeaseDir = path.join(scratch, 'agent-processes');
@@ -32,6 +31,10 @@ fs.writeFileSync(fakeBin, `#!/usr/bin/env node
 const fs = require('fs');
 const args = process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(argLog)}, JSON.stringify(args) + '\\n');
+if (process.env.FAKE_RUNTIME_ENV) {
+  process.stdout.write(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: process.env.FAKE_RUNTIME_ENV + ':' + process.env.PATH } }));
+  process.exit(0);
+}
 if (process.env.FAKE_CODEX_BROKEN) {
   process.stderr.write('Error: disk on fire\\n');
   process.exit(1);
@@ -84,6 +87,11 @@ const args = process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(hermesArgLog)}, JSON.stringify(args) + '\\n');
 const resumeAt = args.indexOf('--resume');
 const session = resumeAt >= 0 ? args[resumeAt + 1] : '20260806_140649_084b24';
+if (process.env.FAKE_RUNTIME_ENV) {
+  process.stdout.write(process.env.FAKE_RUNTIME_ENV + ':' + process.env.PATH);
+  process.stderr.write('session_id: trailing-session');
+  process.exit(0);
+}
 if (process.env.FAKE_HERMES_503) {
   // Hermes exhausts its own retries, prints the capacity error as its answer,
   // and still exits 0. Recover on the attempt named by FAKE_HERMES_503.
@@ -93,7 +101,7 @@ if (process.env.FAKE_HERMES_503) {
   fs.writeFileSync(${JSON.stringify(hermes503Log)}, String(n));
   if (n < Number(process.env.FAKE_HERMES_503)) {
     process.stdout.write('API call failed after 3 retries: HTTP 503: The requested model is temporarily unavailable due to upstream capacity limits. Please try again in a moment.\\n');
-    process.stderr.write('\\nsession_id: ' + session + '\\n');
+    if (process.env.FAKE_HERMES_503 !== '2') process.stderr.write('\\nsession_id: ' + session + '\\n');
     process.exit(0);
   }
   process.stdout.write('recovered after capacity error\\n');
@@ -102,22 +110,6 @@ if (process.env.FAKE_HERMES_503) {
 }
 if (process.env.FAKE_HERMES_TALKS_ABOUT_503) {
   process.stdout.write('To handle this, retry when the API returns HTTP 503 with backoff.\\n');
-  process.stderr.write('\\nsession_id: ' + session + '\\n');
-  process.exit(0);
-}
-const prompt = args[args.indexOf('-q') + 1] || '';
-// Sentinel prompt: exhaust internal retries and exit 0 with a bare 503 on the
-// first call, then answer normally, so the Cascade-side retry can be exercised.
-if (prompt.includes('TRIGGER_503')) {
-  const counter = ${JSON.stringify(hermes503Counter)};
-  let n = 0;
-  try { n = Number(fs.readFileSync(counter, 'utf8')) || 0; } catch {}
-  fs.writeFileSync(counter, String(n + 1));
-  if (n === 0) {
-    process.stdout.write('API call failed after 3 retries: HTTP 503: The requested model is temporarily unavailable due to upstream capacity limits. Please try again in a moment.\\n');
-    process.exit(0);
-  }
-  process.stdout.write('recovered answer\\n');
   process.stderr.write('\\nsession_id: ' + session + '\\n');
   process.exit(0);
 }
@@ -166,6 +158,27 @@ function resetArgs() {
 }
 
 const emit = () => {};
+
+test('shared drivers isolate concurrent env overrides and flush partial provider lines', async () => {
+  for (const agent of ['codex', 'hermes'] as const) {
+    const results = await Promise.all(['first', 'second'].map((value, index) => runCliAgent({
+      agent, context: '', userPrompt: 'env', cwd: scratch, emit,
+      runId: 93000 + index,
+      env: { FAKE_RUNTIME_ENV: value },
+    })));
+    assert.deepEqual(results.map((result) => result.summary), [
+      `first:${process.env.PATH}`, `second:${process.env.PATH}`,
+    ]);
+    if (agent === 'hermes') {
+      assert.ok(results.every((result) => result.sessionId === 'trailing-session'));
+    }
+    for (const runId of [93000, 93001]) {
+      assert.equal(activeCliProcesses.has(runId), false);
+      assert.equal(fs.existsSync(path.join(agentProcessLeaseDir, `${runId}.json`)), false);
+    }
+  }
+  assert.equal(process.env.FAKE_RUNTIME_ENV, undefined);
+});
 
 test('Pi uses JSON mode, resumes by session id, and translates native events', async () => {
   fs.writeFileSync(piArgLog, '');
@@ -354,17 +367,24 @@ test('reaper still kills token-bearing descendants after the group leader dies',
   assert.equal(fs.existsSync(path.join(agentProcessLeaseDir, '9101.json')), false);
 });
 
-test('Akron emits launch metadata and native reasoning events through the harness bridge', async () => {
+test('Akron resolves BIN after import and emits launch metadata and native reasoning', async () => {
+  const prior = process.env.AKRON_BIN;
+  delete process.env.AKRON_BIN;
+  const { getCliAgentBin, runCliAgent } = await import(`./cli-agent.js?bin-regression=${Date.now()}`);
+  assert.equal(getCliAgentBin('akron-grok'), 'akron');
+  process.env.AKRON_BIN = fakeAkronBin;
   process.env.FAKE_AKRON_EVENTS = '1';
   const events: Array<{ type: string; payload: any }> = [];
   try {
     const result = await runCliAgent({
       agent: 'akron-grok', context: '', userPrompt: 'exercise the bridge', cwd: scratch, runId: 8081,
-      emit: (type, payload) => events.push({ type, payload }),
+      emit: (type: string, payload: unknown) => events.push({ type, payload }),
     });
     assert.equal(result.summary, 'native answer');
   } finally {
     delete process.env.FAKE_AKRON_EVENTS;
+    if (prior === undefined) delete process.env.AKRON_BIN;
+    else process.env.AKRON_BIN = prior;
   }
 
   const harness = events
@@ -554,17 +574,6 @@ test('Hermes reasoning is kept out of the answer instead of rendered as the repl
   );
 });
 
-test('Hermes retries when the provider hands back a transient 503 instead of an answer', async () => {
-  fs.rmSync(hermes503Counter, { force: true });
-  const result = await runCliAgent({
-    agent: 'hermes', context: '', userPrompt: 'do the thing TRIGGER_503', cwd: scratch, emit,
-  });
-
-  assert.equal(Number(fs.readFileSync(hermes503Counter, 'utf8')), 2, 'should invoke Hermes twice: the 503 then the retry');
-  assert.equal(result.summary, 'recovered answer', 'the 503 must be swallowed and the retry answer returned');
-  assert.ok(!/503|upstream capacity/.test(result.summary), 'the capacity error must not surface as the reply');
-});
-
 test('an explicit model selection reaches Hermes', async () => {
   fs.writeFileSync(hermesArgLog, '');
   await runCliAgent({
@@ -579,23 +588,22 @@ test('an explicit model selection reaches Hermes', async () => {
   assert.ok(!readHermesArgs()[0].includes('-m'), 'no model picked must not send an empty -m');
 });
 
-test('a Hermes 503 is retried until it succeeds, instead of becoming the reply', async () => {
-  fs.writeFileSync(hermesArgLog, '');
-  fs.rmSync(hermes503Log, { force: true });
-  process.env.FAKE_HERMES_503 = '3';
-  process.env.RUNNER_HERMES_UPSTREAM_BACKOFF_MS = '10';
-  try {
-    const result = await runCliAgent({
-      agent: 'hermes', context: '', userPrompt: 'are you there?', cwd: scratch, emit,
-    });
-    assert.equal(readHermesArgs().length, 3, 'should retry twice, then succeed');
-    assert.equal(result.summary, 'recovered after capacity error');
-    assert.ok(!/503/.test(result.summary), 'the capacity error must never be the reply');
-  } finally {
-    delete process.env.FAKE_HERMES_503;
-    delete process.env.RUNNER_HERMES_UPSTREAM_BACKOFF_MS;
-  }
-});
+for (const attempts of [2, 3]) {
+  test(`Hermes recovers after ${attempts - 1} capacity failures ${attempts === 2 ? 'without' : 'with'} a session id`, async () => {
+    fs.writeFileSync(hermesArgLog, '');
+    fs.rmSync(hermes503Log, { force: true });
+    process.env.FAKE_HERMES_503 = String(attempts);
+    try {
+      const result = await runCliAgent({
+        agent: 'hermes', context: '', userPrompt: 'are you there?', cwd: scratch, emit,
+      });
+      assert.equal(readHermesArgs().length, attempts);
+      assert.equal(result.summary, 'recovered after capacity error');
+    } finally {
+      delete process.env.FAKE_HERMES_503;
+    }
+  });
+}
 
 test('an answer that merely discusses HTTP 503 is not mistaken for a capacity failure', async () => {
   fs.writeFileSync(hermesArgLog, '');

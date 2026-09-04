@@ -1,7 +1,7 @@
 defmodule CascadeWeb.AccountRouter do
   @moduledoc "Mountable HTTP surface for account, vault membership, discovery, moderation, DM, activity, and battery domains."
 
-  use Plug.Router
+  use CascadeWeb.DomainDispatch
 
   import Plug.Conn
 

@@ -4,6 +4,7 @@ defmodule Cascade.ContentDomainTest do
   import Bitwise
   import Plug.Conn
   import Plug.Test
+  import Cascade.TestHelpers
 
   alias Cascade.Auth.Token
   alias Cascade.Content.{Assets, Privacy, Query, Store, Versions}
@@ -16,7 +17,6 @@ defmodule Cascade.ContentDomainTest do
 
     previous_root = System.get_env("CASCADE_VAULTS_BASE_DIR")
     System.put_env("CASCADE_VAULTS_BASE_DIR", root)
-    ensure_support_schema()
     reset_database()
 
     Query.execute(
@@ -132,7 +132,6 @@ defmodule Cascade.ContentDomainTest do
       )
 
     assert chat
-    Cascade.Evolution.ensure_schema()
 
     Query.execute(
       """
@@ -372,28 +371,8 @@ defmodule Cascade.ContentDomainTest do
   end
 
   defp request(method, path, body, token) do
-    conn =
-      if is_nil(body) do
-        conn(method, path)
-      else
-        conn(method, path, Jason.encode!(body))
-        |> put_req_header("content-type", "application/json")
-      end
-
-    conn
-    |> put_req_header("authorization", "Bearer #{token}")
+    json_conn(method, path, body, token)
     |> CascadeWeb.ContentRouter.call(@router_options)
-  end
-
-  defp ensure_support_schema do
-    for statement <- [
-          "CREATE TABLE IF NOT EXISTS vault_members (vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, role TEXT NOT NULL, invited_by INTEGER, created_at TEXT DEFAULT (datetime('now')), PRIMARY KEY (vault_id, user_id))",
-          "CREATE TABLE IF NOT EXISTS chat_messages (id TEXT PRIMARY KEY, channel_id TEXT REFERENCES notes(id) ON DELETE CASCADE, vault_id TEXT, author TEXT, body TEXT DEFAULT '', status TEXT, created_at TEXT DEFAULT (datetime('now')))",
-          "CREATE TABLE IF NOT EXISTS chat_agent_members (id TEXT PRIMARY KEY, channel_id TEXT REFERENCES notes(id) ON DELETE CASCADE)",
-          "CREATE TABLE IF NOT EXISTS chat_channel_links (local_channel_id TEXT, source_channel_id TEXT)",
-          "CREATE TABLE IF NOT EXISTS chat_note_backlinks (id TEXT PRIMARY KEY, vault_id TEXT, note_id TEXT, target_title TEXT, message_id TEXT, channel_id TEXT, author TEXT, snippet TEXT DEFAULT '', created_at TEXT DEFAULT (datetime('now')), deleted INTEGER DEFAULT 0)"
-        ],
-        do: Query.execute(statement)
   end
 
   defp reset_database do

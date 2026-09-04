@@ -99,8 +99,6 @@ defmodule Cascade.Publishing do
   end
 
   def get_info(note_id) do
-    ensure_schema()
-
     Query.map(
       """
       SELECT slug, title, author_username, published_at, updated_at
@@ -112,8 +110,6 @@ defmodule Cascade.Publishing do
   end
 
   def get_by_slug(slug) do
-    ensure_schema()
-
     Query.map(
       """
       SELECT slug, note_id, title, content, author_username, published_at, updated_at, revoked_at
@@ -134,7 +130,6 @@ defmodule Cascade.Publishing do
   end
 
   def publish(note_id, user_id, username, _snapshot \\ nil) do
-    ensure_schema()
     note = Store.get_note(note_id)
 
     cond do
@@ -183,7 +178,6 @@ defmodule Cascade.Publishing do
   end
 
   def unpublish(note_id, user_id) do
-    ensure_schema()
     note = Store.get_note(note_id)
 
     if note && Store.get_writable_vault(note.vault_id, user_id) do

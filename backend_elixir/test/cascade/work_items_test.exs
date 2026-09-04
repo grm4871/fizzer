@@ -1,41 +1,10 @@
 defmodule Cascade.WorkItemsTest do
   use ExUnit.Case, async: false
 
-  alias Cascade.Accounts.SQL
   alias Cascade.WorkItems
 
   setup do
-    Cascade.Accounts.Schema.ensure!()
-    Cascade.Runs.Schema.ensure!()
-    suffix = System.unique_integer([:positive])
-    username = "work-items-#{suffix}"
-    vault_id = "work-items-vault-#{suffix}"
-
-    SQL.exec(
-      "INSERT INTO users (username,password_hash,display_name,avatar_url) VALUES (?,?,?,?)",
-      [username, "x", username, ""]
-    )
-
-    user_id = SQL.last_insert_id()
-
-    SQL.exec("INSERT INTO vaults (id,name,root_path,created_by) VALUES (?,?,?,?)", [
-      vault_id,
-      "Work items",
-      "/tmp/#{vault_id}",
-      user_id
-    ])
-
-    SQL.exec(
-      "INSERT INTO vault_members (vault_id,user_id,role,invited_by) VALUES (?,?,?,?)",
-      [vault_id, user_id, "owner", user_id]
-    )
-
-    on_exit(fn ->
-      SQL.exec("DELETE FROM vaults WHERE id=?", [vault_id])
-      SQL.exec("DELETE FROM users WHERE id=?", [user_id])
-    end)
-
-    %{user_id: user_id, vault_id: vault_id}
+    Cascade.TestHelpers.owner_vault("work-items")
   end
 
   test "dependencies, immutable workspace binding, leases, and token stops are durable",

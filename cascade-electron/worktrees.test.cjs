@@ -73,6 +73,47 @@ test('creates an isolated workspace on its own branch, outside the checkout', as
   assert.equal(listed.workspaces.find((w) => w.isPrimary).managed, false);
 });
 
+test('listing uses the first normalized registry match and leaves unmanaged worktrees unowned', async (t) => {
+  const repo = makeRepo('listing');
+  const managedPath = path.join(scratch, 'listing-managed');
+  const unmanagedPath = path.join(scratch, 'listing-unmanaged');
+  execFileSync('git', ['worktree', 'add', '-b', 'managed', managedPath], { cwd: repo, stdio: 'pipe' });
+  execFileSync('git', ['worktree', 'add', '--detach', unmanagedPath], { cwd: repo, stdio: 'pipe' });
+
+  const file = path.join(wt.workspacesRoot(), 'workspaces.json');
+  fs.mkdirSync(wt.workspacesRoot(), { recursive: true });
+  const previous = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null;
+  t.after(() => previous === null ? fs.rmSync(file) : fs.writeFileSync(file, previous));
+  const first = {
+    path: `${path.relative(process.cwd(), managedPath)}/../listing-managed/.`,
+    channelId: 'first-channel',
+    workItemId: 'first-item',
+    baseBranch: 'main',
+    createdAt: '2026-01-01T00:00:00.000Z',
+  };
+  fs.writeFileSync(file, JSON.stringify([
+    first,
+    { path: managedPath, channelId: 'last-channel', workItemId: 'last-item', baseBranch: 'other', createdAt: 'later' },
+  ]));
+
+  const listed = await wt.listWorkspaces(managedPath);
+  const unowned = { managed: false, channelId: null, workItemId: null, baseBranch: null, createdAt: null, exists: true };
+  assert.deepEqual(listed, {
+    ok: true,
+    repo: 'listing',
+    primaryRoot: repo,
+    workspaces: [
+      { path: repo, branch: 'main', isPrimary: true, ...unowned },
+      {
+        path: managedPath, branch: 'managed', isPrimary: false, managed: true,
+        channelId: first.channelId, workItemId: first.workItemId,
+        baseBranch: first.baseBranch, createdAt: first.createdAt, exists: true,
+      },
+      { path: unmanagedPath, branch: '(detached)', isPrimary: false, ...unowned },
+    ],
+  });
+});
+
 test('prepares one exact task branch and recovers it idempotently by work item', async () => {
   const repo = makeRepo('mission-owned');
   const branch = 'cascade/mission-123/fix-renderer-task-9';

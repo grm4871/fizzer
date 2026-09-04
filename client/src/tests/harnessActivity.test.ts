@@ -47,6 +47,52 @@ describe('normalizeChatRunBlocks', () => {
 });
 
 describe('buildHarnessActivity', () => {
+  it.each([false, true])('retains tail usage after a truncated JSON head (structured: %s)', (structured) => {
+    const message = msg({
+      blocks: structured ? [
+        { type: 'thinking', text: 'Checking' },
+        { type: 'tool_use', id: 't1', name: 'Read', input: {} },
+      ] : [],
+      harnessLog: [
+        '# cwd /project',
+        JSON.stringify({ type: 'assistant', text: 'x'.repeat(structured ? 12_000 : 44_000) }),
+        JSON.stringify({ type: 'result', usage: { input_tokens: 1234, output_tokens: 56 } }),
+      ].join('\n'),
+    });
+    expect(buildHarnessActivity(message).stats).toMatchObject({
+      cwd: '/project', inputTokens: 1234, outputTokens: 56,
+    });
+  });
+
+  it('reflects same-length replacements instead of reusing stale activity', () => {
+    const first = msg({ status: 'running', blocks: [{ type: 'tool_use', id: 't1', name: 'Read', input: { path: 'old.ts' } }] });
+    expect(buildHarnessActivity(first).items[0].text).toBe('old.ts');
+    const next = { ...first, blocks: [{ ...first.blocks![0], input: { path: 'new.ts' } }] };
+    expect(buildHarnessActivity(next).items[0].text).toBe('new.ts');
+    first.blocks![0].input = { path: 'now.ts' };
+    expect(buildHarnessActivity(first).items[0].text).toBe('now.ts');
+  });
+
+  it('retains fallback tools and usage when only reasoning is structured', () => {
+    const activity = buildHarnessActivity(msg({
+      status: 'running',
+      blocks: [{ type: 'thinking', text: 'Checking' }],
+      harnessLog: [
+        JSON.stringify({ type: 'item.completed', item: { id: 't1', type: 'command_execution', command: 'npm test', aggregated_output: 'failed assertion', exit_code: 1 } }),
+        JSON.stringify({ type: 'result', usage: { input_tokens: 123, output_tokens: 45 } }),
+      ].join('\n'),
+    }));
+    expect(activity.stats).toMatchObject({ toolCount: 1, inputTokens: 123, outputTokens: 45 });
+    expect(activity.items.find((item) => item.tool)?.tool).toMatchObject({ status: 'error', result: 'failed assertion' });
+  });
+
+  it('retains fallback reasoning when only tools are structured', () => {
+    const activity = buildHarnessActivity(msg({
+      blocks: [{ type: 'tool_use', id: 't1', name: 'Read', input: {} }],
+      harnessLog: '# thinking\nchecking fallback reasoning\n# result',
+    }));
+    expect(activity.thinkingText).toBe('checking fallback reasoning');
+  });
   it('builds timeline from structured blocks', () => {
     const activity = buildHarnessActivity(msg({
       blocks: [
@@ -82,7 +128,8 @@ describe('buildHarnessActivity', () => {
       .toBe('checking the deploy configuration');
   });
 
-  it('parses cascade-stats and meta from harness log', () => {
+  it('parses cascade-stats and builds token, context, and cost chips', async () => {
+    const { buildHeaderStatChips } = await import('../chat/harnessActivity');
     const activity = buildHarnessActivity(msg({
       harnessLog: [
         '# claude-code claude-sonnet-4 · /home/jt/proj',
@@ -105,13 +152,6 @@ describe('buildHarnessActivity', () => {
     expect(activity.stats.contextPct).toBeCloseTo(21, 0);
     expect(activity.stats.rateLimitType).toBe('five_hour');
     expect(activity.stats.rateLimitUtilization).toBe(62);
-  });
-
-  it('builds header chips for tokens, context, and cost', async () => {
-    const { buildHeaderStatChips } = await import('../chat/harnessActivity');
-    const activity = buildHarnessActivity(msg({
-      harnessLog: '# cascade-stats {"inputTokens":1200,"outputTokens":80,"totalCostUsd":0.012,"contextWindow":200000,"contextUsed":42000}\n',
-    }));
     const chips = buildHeaderStatChips(activity.stats);
     expect(chips.some((c) => c.id === 'tok' && /tok/.test(c.label))).toBe(true);
     expect(chips.some((c) => c.id === 'ctx' && /ctx/.test(c.label))).toBe(true);

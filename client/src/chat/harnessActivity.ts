@@ -82,10 +82,157 @@ export interface HarnessActivity {
   rawLog: string;
 }
 
-const ANSI_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?/g;
+function shortPath(value: unknown): string {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const parts = raw.split(/[/\\]/).filter(Boolean);
+  if (parts.length <= 2) return raw;
+  return parts.slice(-2).join('/');
+}
 
-function stripAnsi(text: string): string {
-  return text.replace(ANSI_RE, '');
+function previewText(value: unknown, max = 90): string {
+  const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
+}
+
+const TERMINAL_SEQUENCE_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?/g;
+// Harness logs are capped at 512 KiB and grow several times per second. Status
+// chrome only needs recent activity; rescanning the full retained terminal on
+// every chunk consumed most of a frame on long runs.
+const ACTIVITY_SCAN_MAX_CHARS = 16_384;
+const ACTIVITY_SCAN_MAX_LINES = 160;
+
+/** Remove terminal protocol bytes before any text reaches ordinary DOM copy. */
+export function stripTerminalNoise(value: unknown): string {
+  return String(value ?? '')
+    .replace(TERMINAL_SEQUENCE_RE, '')
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '');
+}
+
+export function recentActivityText(value: unknown, maxChars = ACTIVITY_SCAN_MAX_CHARS): string {
+  const text = String(value ?? '');
+  if (text.length <= maxChars) return text;
+  const tail = text.slice(-maxChars);
+  // Discard only the first partial line. If there is no newline, retaining the
+  // fragment is more useful than blanking one unusually long provider event.
+  const firstBreak = tail.search(/[\r\n]/);
+  return firstBreak >= 0 ? tail.slice(firstBreak + 1) : tail;
+}
+
+export function recentActivityLines(value: unknown): string[] {
+  return stripTerminalNoise(recentActivityText(value))
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .split('\n')
+    .slice(-ACTIVITY_SCAN_MAX_LINES)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+export function previewStructuredDetail(value: unknown, max = 60): string {
+  if (typeof value === 'string' && value.trim().startsWith('{')) {
+    try {
+      return previewStructuredDetail(JSON.parse(value), max);
+    } catch {
+      return '';
+    }
+  }
+  if (!value || typeof value !== 'object') return previewText(value, max);
+  const record = value as Record<string, unknown>;
+  return previewText(
+    record.command ?? record.file_path ?? record.path ?? record.pattern
+      ?? record.query ?? record.url ?? record.description,
+    max,
+  );
+}
+
+/**
+ * Turn a single harness/body line into operator-facing prose.
+ * Protocol JSONL (Codex/Claude/Grok) becomes short status phrases instead of
+ * raw `{"type":...}` dumps in peeks and work-trace previews.
+ */
+export function humanizeActivityLine(line: string): string {
+  const trimmed = stripTerminalNoise(line).trim();
+  if (!trimmed || isHarnessPromptDump(trimmed)) return '';
+  // Skip our own meta comments unless they already read as status.
+  if (trimmed.startsWith('# ')) {
+    if (/^#\s*(thinking|cwd |exit |claude-code|cascade-stats|result|system)/i.test(trimmed)) return '';
+    return trimmed.replace(/^#\s*/, '');
+  }
+  if (trimmed.startsWith('$ ')) return `Bash ${previewText(trimmed.slice(2), 80)}`.trim();
+  if (/^[▶>]\s+\S/.test(trimmed)) return trimmed.replace(/^[▶>]\s+/, '');
+  if (!trimmed.startsWith('{')) return trimmed;
+
+  try {
+    const ev = JSON.parse(trimmed) as Record<string, unknown>;
+    const type = String(ev.type || ev.event || '').trim();
+    const item = (ev.item && typeof ev.item === 'object')
+      ? ev.item as Record<string, unknown>
+      : undefined;
+    const data = (ev.data && typeof ev.data === 'object')
+      ? ev.data as Record<string, unknown>
+      : undefined;
+
+    if (type === 'thread.started' || type === 'session.created') return 'session started';
+    if (type === 'thread.completed' || type === 'session.completed') return 'session finished';
+    if (type === 'thought' || type === 'reasoning') {
+      return previewText(ev.data ?? ev.text ?? ev.content, 90) || 'thinking…';
+    }
+    if (type === 'message' || type === 'agent_message' || type === 'assistant') {
+      return previewText(ev.text ?? ev.content ?? ev.message ?? data?.text, 90) || 'replying…';
+    }
+    if (type === 'item.started' || type === 'item.completed') {
+      const itemType = String(item?.type || '');
+      const done = type === 'item.completed';
+      if (itemType === 'reasoning') {
+        return previewText(item?.text, 90) || (done ? 'thought' : 'thinking…');
+      }
+      if (itemType === 'agent_message') {
+        return previewText(item?.text, 90) || (done ? 'replied' : 'replying…');
+      }
+      if (itemType === 'command_execution') {
+        const cmd = previewText(item?.command, 70);
+        return done
+          ? (cmd ? `ran ${cmd}` : 'command done')
+          : (cmd ? `Bash ${cmd}` : 'running command…');
+      }
+      if (itemType === 'file_change' || itemType === 'file_edit') {
+        const path = shortPath(item?.path ?? item?.file ?? item?.filename);
+        return done
+          ? (path ? `edited ${path}` : 'edited file')
+          : (path ? `Edit ${path}` : 'editing…');
+      }
+      if (itemType === 'web_search' || itemType === 'search') {
+        const q = previewText(item?.query ?? item?.pattern, 60);
+        return q ? `Search ${q}` : 'searching…';
+      }
+      if (itemType) {
+        const label = itemType.replace(/[_-]+/g, ' ');
+        return done ? `${label} done` : `${label}…`;
+      }
+      return done ? 'step done' : 'working…';
+    }
+    if (type === 'tool.execution_start' || type === 'tool_use') {
+      const name = String(data?.toolName ?? ev.name ?? 'tool');
+      const detail = previewStructuredDetail(data?.arguments ?? ev.input ?? data?.command, 60);
+      return detail ? `${name} ${detail}` : `${name}…`;
+    }
+    if (type === 'tool.execution_complete' || type === 'tool_result') {
+      const name = String(data?.toolName ?? ev.name ?? 'tool');
+      return data?.success === false ? `${name} failed` : `${name} done`;
+    }
+    if (type === 'error') {
+      return previewText(ev.message ?? ev.error ?? data?.message, 90) || 'error';
+    }
+    if (type === 'result' || type === 'message_end') return 'finishing…';
+    // Unknown protocol object — never dump the whole JSON blob into the UI.
+    if (type) return type.replace(/[._]+/g, ' ');
+    return 'working…';
+  } catch {
+    // Live JSON frames can end mid-object.
+    return '';
+  }
 }
 
 function truncate(text: string, max = 4000): string {
@@ -264,7 +411,7 @@ interface HarnessMeta {
  * blocks are thin). Not a full multi-agent parser — just useful breadcrumbs.
  */
 function parseHarnessLog(raw: string, hasStructuredTools: boolean, hasStructuredThinking: boolean): HarnessMeta {
-  const plain = stripAnsi(raw || '');
+  const plain = stripTerminalNoise(raw || '');
   const lines = plain.split(/\r?\n/);
   const meta: HarnessMeta = { fallbackItems: [], fallbackThinking: '' };
   let inThinking = false;
@@ -334,6 +481,8 @@ function parseHarnessLog(raw: string, hasStructuredTools: boolean, hasStructured
       continue;
     }
     if (trimmed.startsWith('# result') || trimmed.startsWith('# system') || trimmed.startsWith('# ')) {
+      // An omitted middle cannot complete a JSON frame started in the head.
+      if (trimmed === '# older harness output omitted') jsonBuf = '';
       flushThinking();
       continue;
     }
@@ -377,7 +526,7 @@ function parseHarnessLog(raw: string, hasStructuredTools: boolean, hasStructured
     // JSONL fallback (Codex / Copilot / Grok) when we lack structured blocks.
     // Pretty-printed or split frames start as `{` and must be buffered until
     // JSON.parse succeeds — dropping them swallows the rest of the turn.
-    if ((jsonBuf || trimmed.startsWith('{')) && (!hasStructuredTools || !hasStructuredThinking)) {
+    if (jsonBuf || trimmed.startsWith('{')) {
       jsonBuf = jsonBuf ? `${jsonBuf}\n${trimmed}` : trimmed;
       try {
         const ev = JSON.parse(jsonBuf) as Record<string, unknown>;
@@ -585,91 +734,18 @@ function parseJsonlEvent(
   }
 }
 
-/** Pull only `# cascade-stats` / meta headers — O(tail lines), not full JSONL. */
-function extractHarnessMetaFast(raw: string): Pick<HarnessMeta, 'model' | 'cwd' | 'command' | 'exitCode' | 'stats'> {
-  const plain = stripAnsi(raw || '');
-  // Prefer recent stats; keep a small head slice for model/cwd launch lines.
-  const head = plain.length > 3_000 ? plain.slice(0, 3_000) : plain;
-  const tail = plain.length > 8_000 ? plain.slice(-8_000) : plain;
-  const sample = head === tail ? head : `${head}\n${tail}`;
-  const meta: Pick<HarnessMeta, 'model' | 'cwd' | 'command' | 'exitCode' | 'stats'> = {};
-  for (const line of sample.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    const claudeHdr = trimmed.match(/^#\s*claude-code\s+(\S+)(?:\s*·\s*(.+))?$/i);
-    if (claudeHdr) {
-      meta.model = claudeHdr[1];
-      if (claudeHdr[2]) meta.cwd = claudeHdr[2].trim();
-      continue;
-    }
-    if (trimmed.startsWith('# cwd ')) {
-      meta.cwd = trimmed.slice(6).trim();
-      continue;
-    }
-    if (trimmed.startsWith('# exit ')) {
-      meta.exitCode = trimmed.slice(7).trim();
-      continue;
-    }
-    if (trimmed.startsWith('$ ') && !meta.command) {
-      meta.command = trimmed.slice(2).trim();
-      continue;
-    }
-    const statsIdx = trimmed.indexOf('# cascade-stats ');
-    if (statsIdx >= 0) {
-      try {
-        const json = JSON.parse(trimmed.slice(statsIdx + '# cascade-stats '.length)) as Record<string, unknown>;
-        meta.stats = mergeRunStats(meta.stats, parseCascadeStatsJson(json));
-      } catch { /* ignore */ }
-    }
-  }
-  return meta;
-}
-
-// Cache last activity per message id to skip re-parse when fingerprints match.
-const activityCache = new Map<string, { fp: string; activity: HarnessActivity }>();
-const ACTIVITY_CACHE_MAX = 40;
-
-function activityFingerprint(message: ChatMessage): string {
-  const blocks = message.blocks;
-  const lastBlock = blocks && blocks.length ? blocks[blocks.length - 1] : null;
-  const lastText = lastBlock?.text?.length ?? 0;
-  const lastContent = typeof lastBlock?.content === 'string' ? lastBlock.content.length : 0;
-  return [
-    message.status || '',
-    message.body?.length ?? 0,
-    blocks?.length ?? 0,
-    lastText,
-    lastContent,
-    message.harnessLog?.length ?? 0,
-    // Sample end of harness so stats-only growth still invalidates.
-    (message.harnessLog || '').slice(-120),
-  ].join('|');
-}
-
 export function buildHarnessActivity(message: ChatMessage): HarnessActivity {
-  const msgId = message.id || '';
-  const fp = activityFingerprint(message);
-  if (msgId) {
-    const hit = activityCache.get(msgId);
-    if (hit && hit.fp === fp) return hit.activity;
-  }
-
   const rawLog = message.harnessLog || '';
   const fromBlocks = itemsFromBlocks(message.blocks);
   const hasStructuredTools = fromBlocks.tools.size > 0;
   const hasStructuredThinking = fromBlocks.thinkingText.trim().length > 0;
-  // When structured blocks already carry thinking+tools (Claude stream path),
-  // skip full JSONL/tool scrape — only harvest cascade-stats for header chips.
-  // Otherwise parse a bounded head+tail of the harness transcript.
-  const structuredEnough = hasStructuredThinking || hasStructuredTools;
-  const harness: HarnessMeta = structuredEnough
-    ? { ...extractHarnessMetaFast(rawLog), fallbackItems: [], fallbackThinking: '' }
-    : (() => {
-        const parseLog = rawLog.length > 48_000
-          ? `${rawLog.slice(0, 3_000)}\n# older harness output omitted from structured parser\n${rawLog.slice(-40_000)}`
-          : rawLog;
-        return parseHarnessLog(parseLog, hasStructuredTools, hasStructuredThinking);
-      })();
+  // Bound before terminal cleanup; structured runs only need launch/recent metadata.
+  const structuredEnough = hasStructuredThinking && hasStructuredTools;
+  const tailLimit = structuredEnough ? 8_000 : 40_000;
+  const parseLog = rawLog.length > tailLimit + 3_000
+    ? `${rawLog.slice(0, 3_000)}\n# older harness output omitted\n${recentActivityText(rawLog, tailLimit)}`
+    : rawLog;
+  const harness = parseHarnessLog(parseLog, hasStructuredTools, hasStructuredThinking);
 
   let items = fromBlocks.items;
   let thinkingText = fromBlocks.thinkingText;
@@ -755,13 +831,6 @@ export function buildHarnessActivity(message: ChatMessage): HarnessActivity {
     stats,
     rawLog,
   };
-  if (msgId) {
-    activityCache.set(msgId, { fp, activity });
-    if (activityCache.size > ACTIVITY_CACHE_MAX) {
-      const oldest = activityCache.keys().next().value;
-      if (oldest) activityCache.delete(oldest);
-    }
-  }
   return activity;
 }
 
@@ -911,38 +980,14 @@ export function formatRateLimitWindowLines(stats: RunStats): string[] {
 }
 
 function compactLiveDetail(text: string | undefined, max = 88): string {
-  const collapsed = String(text || '').replace(/\s+/g, ' ').trim();
+  if (isHarnessPromptDump(text)) return '';
+  const collapsed = stripTerminalNoise(text).replace(/\s+/g, ' ').trim();
   if (!collapsed) return '';
   if (collapsed.startsWith('{')) {
-    try {
-      const ev = JSON.parse(collapsed) as Record<string, unknown>;
-      const human = headlineFromProtocolEvent(ev);
-      if (human) return compactLiveDetail(human, max);
-    } catch { /* incomplete or non-event JSON */ }
-    return '';
+    return compactLiveDetail(humanizeActivityLine(collapsed), max);
   }
   if (collapsed.length <= max) return collapsed;
   return `${collapsed.slice(0, max - 1)}…`;
-}
-
-function headlineFromProtocolEvent(ev: Record<string, unknown>): string {
-  const type = String(ev.type || ev.event || '').trim();
-  const item = (ev.item && typeof ev.item === 'object')
-    ? ev.item as Record<string, unknown>
-    : undefined;
-  if (type === 'thought' || type === 'reasoning') {
-    return String(ev.data ?? ev.text ?? ev.content ?? '').replace(/\s+/g, ' ').trim();
-  }
-  if (type === 'item.started' || type === 'item.completed') {
-    const itemType = String(item?.type || '');
-    const text = String(item?.text ?? item?.command ?? item?.path ?? '').replace(/\s+/g, ' ').trim();
-    if (itemType === 'reasoning') return text || 'thinking…';
-    if (itemType === 'agent_message') return text || 'replying…';
-    if (itemType === 'command_execution') return text ? `Bash ${text}` : 'running command…';
-    if (itemType) return text || `${itemType.replace(/[_-]+/g, ' ')}…`;
-  }
-  if (type) return type.replace(/[._]+/g, ' ');
-  return '';
 }
 
 /** System/user prompt blobs must not leak into the live header or thinking well. */
@@ -1100,5 +1145,5 @@ export function hasUsageStats(stats: RunStats): boolean {
 
 export function toolResultPreview(result: string | undefined, max = 600): string {
   if (!result) return '';
-  return truncate(stripAnsi(result).trim(), max);
+  return truncate(stripTerminalNoise(result).trim(), max);
 }

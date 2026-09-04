@@ -17,7 +17,6 @@ end
 defmodule Cascade.Realtime.NativeRunnerIntegrationTest do
   use ExUnit.Case, async: false
 
-  alias Cascade.Accounts.SQL
   alias Cascade.Auth.Token
   alias Cascade.Realtime.{Hub, Session}
   alias Cascade.Runs.{RunnerLifecycle, Store}
@@ -25,13 +24,6 @@ defmodule Cascade.Realtime.NativeRunnerIntegrationTest do
   @runner Path.expand("../../support/native_runner_flow.mjs", __DIR__)
 
   setup_all do
-    Cascade.Accounts.Schema.ensure!()
-    Cascade.Runs.Schema.ensure!()
-
-    if is_nil(Process.whereis(RunnerLifecycle)) do
-      start_supervised!({RunnerLifecycle, orphan_reclaim_ms: 3_600_000})
-    end
-
     port = available_port()
 
     start_supervised!(
@@ -47,36 +39,9 @@ defmodule Cascade.Realtime.NativeRunnerIntegrationTest do
   end
 
   setup do
-    suffix = System.unique_integer([:positive])
-    username = "native-runner-#{suffix}"
-    vault_id = "native-runner-vault-#{suffix}"
-
-    SQL.exec(
-      "INSERT INTO users (username,password_hash,display_name,avatar_url) VALUES (?,?,?,?)",
-      [username, "x", username, ""]
-    )
-
-    user_id = SQL.last_insert_id()
-
-    SQL.exec("INSERT INTO vaults (id,name,root_path,created_by) VALUES (?,?,?,?)", [
-      vault_id,
-      "Native runner",
-      "/tmp/#{vault_id}",
-      user_id
-    ])
-
-    SQL.exec(
-      "INSERT INTO vault_members (vault_id,user_id,role,invited_by) VALUES (?,?,?,?)",
-      [vault_id, user_id, "owner", user_id]
-    )
-
-    on_exit(fn ->
-      SQL.exec("DELETE FROM vaults WHERE id=?", [vault_id])
-      SQL.exec("DELETE FROM users WHERE id=?", [user_id])
-    end)
-
-    token = Token.sign_user(%{id: user_id, username: username, auth_version: 0})
-    %{user_id: user_id, vault_id: vault_id, token: token}
+    context = Cascade.TestHelpers.owner_vault("native-runner")
+    token = Token.sign_user(%{id: context.user_id, username: context.username, auth_version: 0})
+    Map.put(context, :token, token)
   end
 
   @tag timeout: 30_000

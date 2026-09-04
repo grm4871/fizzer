@@ -1,7 +1,7 @@
 defmodule CascadeWeb.ExtendedContentRouter do
   @moduledoc "Isolated router; mount before the original content router and invite oEmbed fallback."
 
-  use Plug.Router
+  use CascadeWeb.DomainDispatch
 
   alias CascadeWeb.{ExtendedContentController, JSON}
 

@@ -55,6 +55,15 @@ describe('session manager activity folding', () => {
     expect(timeline[3].text).toBe('Fixed and verified.');
   });
 
+  it('preserves tool errors as timeline results and removes OSC hyperlinks', () => {
+    const result = '\u001b]8;;https://example.com\u0007failed\u001b]8;;\u0007';
+    const timeline = buildSessionTimeline([
+      runEvent(1, 'user', { message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: result, is_error: true }] } }),
+    ]);
+    expect(timeline).toMatchObject([{ kind: 'result', label: 'Tool error', text: 'failed', error: true }]);
+    expect(sessionConsoleText([runEvent(2, 'harness', { data: result })])).toBe('failed');
+  });
+
   it('keeps raw harness output in the console and strips terminal escapes', () => {
     const events = [
       runEvent(1, 'harness', { data: '\u001b[32m✓ build\u001b[0m\r\n' }),

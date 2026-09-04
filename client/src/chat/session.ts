@@ -170,6 +170,18 @@ export function restorePersistedSession(value: unknown): PersistedSession {
   return { activeVaultId, workspacesByVault, vaultListingsByVault, ...activeWorkspace };
 }
 
+/** Project only persistent fields; workspace note bodies must never reach disk. */
+export function workspaceSession(
+  activeVaultId: string | null,
+  workspaces: Record<string, PersistedWorkspace>,
+  vaultListingsByVault: Record<string, PersistedVaultListing>,
+): PersistedSession {
+  const workspacesByVault = Object.fromEntries(Object.entries(workspaces).map(([id, { openTabs, layout, focusedPaneId }]) =>
+    [id, { openTabs, layout, focusedPaneId }]));
+  return { activeVaultId, workspacesByVault, vaultListingsByVault,
+    ...(activeVaultId ? workspacesByVault[activeVaultId] ?? emptyWorkspace() : emptyWorkspace()) };
+}
+
 export function loadPersistedSession(): PersistedSession {
   try {
     const raw = localStorage.getItem(SESSION_STORAGE_KEY);

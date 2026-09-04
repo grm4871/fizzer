@@ -1,7 +1,7 @@
 defmodule CascadeWeb.ChatRouter do
   @moduledoc "Mountable native HTTP surface for messages, linked channels, invitations, and chat agents."
 
-  use Plug.Router
+  use CascadeWeb.DomainDispatch
   import Plug.Conn
 
   alias Cascade.Accounts.VaultMembers

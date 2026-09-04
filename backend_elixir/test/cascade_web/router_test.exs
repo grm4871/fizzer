@@ -2,6 +2,7 @@ defmodule CascadeWeb.RouterTest do
   use ExUnit.Case, async: false
   import Plug.Conn
   import Plug.Test
+  import Cascade.TestHelpers
 
   alias Cascade.Auth.{Password, Token}
   alias Cascade.DB.Repo
@@ -276,15 +277,7 @@ defmodule CascadeWeb.RouterTest do
     assert get_resp_header(asset, "cache-control") == ["public, max-age=31536000, immutable"]
   end
 
-  defp request(method, path, body \\ nil)
-
-  defp request(method, path, nil) do
-    conn(method, path) |> CascadeWeb.Router.call(@options)
-  end
-
-  defp request(method, path, body) do
-    conn(method, path, Jason.encode!(body))
-    |> put_req_header("content-type", "application/json")
-    |> CascadeWeb.Router.call(@options)
+  defp request(method, path, body \\ nil) do
+    json_conn(method, path, body) |> CascadeWeb.Router.call(@options)
   end
 end

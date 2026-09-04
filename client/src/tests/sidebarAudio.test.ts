@@ -72,29 +72,15 @@ describe('twitterEmbedResizeHeight', () => {
 });
 
 describe('ChatMediaEmbed', () => {
-  it('requires a click before loading YouTube embeds', () => {
-    const markup = renderToStaticMarkup(
-      createElement(ChatMediaEmbed, { href: 'https://youtu.be/jK-tt-3XJ7c', label: 'Video' }),
-    );
-    expect(markup).toContain('class="chat-media-embed is-video is-youtube"');
+  it.each([
+    { provider: 'youtube', href: 'https://youtu.be/jK-tt-3XJ7c', embed: 'youtube.com/embed/jK-tt-3XJ7c' },
+    { provider: 'spotify', href: 'https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy', embed: 'open.spotify.com/embed/album/' },
+    { provider: 'twitter', href: 'https://x.com/user/status/123456789', embed: 'platform.twitter.com/embed/Tweet.html' },
+  ])('requires opt-in before loading $provider embeds', ({ provider, href, embed }) => {
+    const markup = renderToStaticMarkup(createElement(ChatMediaEmbed, { href, label: 'Media' }));
+    expect(markup).toContain(`is-${provider}`);
     expect(markup).toContain('Load external embed');
     expect(markup).not.toContain('<iframe');
-    expect(markup).not.toContain('youtube.com/embed/jK-tt-3XJ7c');
-  });
-
-  it('does not contact Spotify or X until the user opts in', () => {
-    const spotify = renderToStaticMarkup(
-      createElement(ChatMediaEmbed, { href: 'https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy', label: 'Album' }),
-    );
-    const twitter = renderToStaticMarkup(
-      createElement(ChatMediaEmbed, { href: 'https://x.com/user/status/123456789', label: 'Post' }),
-    );
-    expect(spotify).toContain('Load external embed');
-    expect(spotify).not.toContain('<iframe');
-    expect(spotify).not.toContain('open.spotify.com/embed/album/');
-    expect(twitter).toContain('chat-media-embed is-social is-twitter');
-    expect(twitter).toContain('Load external embed');
-    expect(twitter).not.toContain('<iframe');
-    expect(twitter).not.toContain('platform.twitter.com/embed/Tweet.html');
+    expect(markup).not.toContain(embed);
   });
 });

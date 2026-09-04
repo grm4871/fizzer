@@ -327,18 +327,26 @@ async function listWorkspaces(dir) {
   const listed = await git(['worktree', 'list', '--porcelain'], repo.primaryRoot);
   if (!listed.ok) return { ok: false, error: listed.stderr || 'git worktree list failed' };
 
-  const registry = readRegistry();
+  const registryByPath = new Map();
+  for (const entry of readRegistry()) {
+    const resolvedPath = path.resolve(entry.path);
+    // Preserve the first matching registry row, as Array.find did.
+    if (!registryByPath.has(resolvedPath)) registryByPath.set(resolvedPath, entry);
+  }
+  const primaryRoot = path.resolve(repo.primaryRoot);
   const workspaces = [];
   for (const block of listed.stdout.split('\n\n')) {
-    const line = block.split('\n').find((l) => l.startsWith('worktree '));
+    const lines = block.split('\n');
+    const line = lines.find((l) => l.startsWith('worktree '));
     if (!line) continue;
     const wtPath = line.slice('worktree '.length).trim();
-    const branchLine = block.split('\n').find((l) => l.startsWith('branch '));
-    const entry = registry.find((e) => path.resolve(e.path) === path.resolve(wtPath));
+    const resolvedPath = path.resolve(wtPath);
+    const branchLine = lines.find((l) => l.startsWith('branch '));
+    const entry = registryByPath.get(resolvedPath);
     workspaces.push({
       path: wtPath,
       branch: branchLine ? branchLine.slice('branch refs/heads/'.length).trim() : '(detached)',
-      isPrimary: path.resolve(wtPath) === path.resolve(repo.primaryRoot),
+      isPrimary: resolvedPath === primaryRoot,
       managed: Boolean(entry),
       channelId: entry?.channelId || null,
       workItemId: entry?.workItemId || null,

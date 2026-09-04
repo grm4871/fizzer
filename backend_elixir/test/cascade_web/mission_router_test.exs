@@ -3,14 +3,13 @@ defmodule CascadeWeb.MissionRouterTest do
 
   import Plug.Conn
   import Plug.Test
+  import Cascade.TestHelpers
 
   alias Cascade.Accounts.SQL
   alias Cascade.Auth.Token
-  alias Cascade.Chat.{Agents, Messages, Schema}
+  alias Cascade.Chat.{Agents, Messages}
   alias Cascade.Content.Store, as: ContentStore
   alias Cascade.Missions.{Dispatches, Scheduler, Store}
-  alias Cascade.Missions.Schema, as: MissionSchema
-  alias Cascade.Runs.Schema, as: RunSchema
   alias Cascade.Runs.Store, as: RunStore
 
   setup do
@@ -30,10 +29,6 @@ defmodule CascadeWeb.MissionRouterTest do
         title: "Mission HTTP room",
         content: "cascade://chat-channel"
       })
-
-    Schema.ensure!()
-    RunSchema.ensure!()
-    MissionSchema.ensure!()
 
     {:ok, coordinator_identity} =
       Agents.upsert_identity(user_id, vault.id, %{
@@ -271,12 +266,8 @@ defmodule CascadeWeb.MissionRouterTest do
   end
 
   defp request(ctx, method, path, body \\ nil, run_id \\ nil) do
-    payload = if is_nil(body), do: nil, else: Jason.encode!(body)
-
-    conn(method, path, payload)
-    |> put_req_header("authorization", "Bearer #{ctx.token}")
+    json_conn(method, path, body, ctx.token)
     |> maybe_run_id(run_id)
-    |> maybe_json(body)
     |> CascadeWeb.MissionRouter.call(CascadeWeb.MissionRouter.init([]))
   end
 
@@ -285,7 +276,5 @@ defmodule CascadeWeb.MissionRouterTest do
 
   defp maybe_run_id(conn, _run_id), do: conn
 
-  defp maybe_json(conn, nil), do: conn
-  defp maybe_json(conn, _body), do: put_req_header(conn, "content-type", "application/json")
   defp json(conn), do: Jason.decode!(conn.resp_body)
 end

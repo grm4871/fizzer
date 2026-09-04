@@ -9,47 +9,8 @@ defmodule Cascade.Runs.OrchestrationStateTest do
   alias Cascade.Runs.{RunnerLifecycle, Store}
   alias CascadeWeb.DomainDispatch
 
-  setup_all do
-    Cascade.Accounts.Schema.ensure!()
-    Cascade.Runs.Schema.ensure!()
-
-    if is_nil(Process.whereis(RunnerLifecycle)) do
-      start_supervised!({RunnerLifecycle, orphan_reclaim_ms: 3_600_000})
-    end
-
-    :ok
-  end
-
   setup do
-    suffix = System.unique_integer([:positive])
-    username = "orchestration-#{suffix}"
-    vault_id = "orchestration-vault-#{suffix}"
-
-    SQL.exec(
-      "INSERT INTO users (username,password_hash,display_name,avatar_url) VALUES (?,?,?,?)",
-      [username, "x", username, ""]
-    )
-
-    user_id = SQL.last_insert_id()
-
-    SQL.exec("INSERT INTO vaults (id,name,root_path,created_by) VALUES (?,?,?,?)", [
-      vault_id,
-      "Orchestration",
-      "/tmp/#{vault_id}",
-      user_id
-    ])
-
-    SQL.exec(
-      "INSERT INTO vault_members (vault_id,user_id,role,invited_by) VALUES (?,?,?,?)",
-      [vault_id, user_id, "owner", user_id]
-    )
-
-    on_exit(fn ->
-      SQL.exec("DELETE FROM vaults WHERE id=?", [vault_id])
-      SQL.exec("DELETE FROM users WHERE id=?", [user_id])
-    end)
-
-    %{user_id: user_id, username: username, vault_id: vault_id}
+    Cascade.TestHelpers.owner_vault("orchestration")
   end
 
   test "run events remain append-only and strictly ordered under concurrent writers", context do

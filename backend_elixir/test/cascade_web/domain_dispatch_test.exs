@@ -6,65 +6,93 @@ defmodule CascadeWeb.DomainDispatchTest do
 
   alias CascadeWeb.DomainDispatch
 
-  defmodule ExampleCatalog do
-    def catalog,
-      do: [
-        {"GET", "/api/vaults/:id"},
-        {"POST", "/api/vaults/:id/notes"}
-      ]
-  end
-
   defmodule ExampleRouter do
-    use Plug.Router
+    use CascadeWeb.DomainDispatch
 
     plug :match
+    plug Plug.Parsers, parsers: [:json], json_decoder: Jason
     plug :dispatch
 
     get "/api/vaults/:id", do: send_resp(conn, 200, id)
     post "/api/vaults/:id/notes", do: send_resp(conn, 201, id)
+    get "/p/:slug.json", do: send_resp(conn, 200, "json:" <> slug)
+    get "/p/:slug", do: send_resp(conn, 200, "page:" <> slug)
+    get "/files/*rest", do: send_resp(conn, 200, Enum.join(rest, "/"))
+    match _, do: send_resp(conn, 404, "not found")
   end
 
   defmodule OptionRouter do
-    def init(options), do: options
-    def call(conn, options), do: send_resp(conn, 200, Keyword.fetch!(options, :body))
+    use CascadeWeb.DomainDispatch
+
+    plug :match
+    plug :dispatch
+
+    get "/api/vaults/:id", do: send_resp(conn, 200, conn.assigns.domain_options[:body])
+    match _, do: send_resp(conn, 404, "not found")
   end
 
-  test "matches exact methods and dynamic path segments" do
-    assert DomainDispatch.matches?("GET", "/api/vaults/v1", {"GET", "/api/vaults/:id"})
-    refute DomainDispatch.matches?("POST", "/api/vaults/v1", {"GET", "/api/vaults/:id"})
+  @domains [{ExampleRouter, ExampleRouter}]
 
-    refute DomainDispatch.matches?(
-             "GET",
-             "/api/vaults/v1/notes",
-             {"GET", "/api/vaults/:id"}
-           )
+  test "catalog comes from declarations in matching order and excludes fallback" do
+    assert ExampleRouter.catalog() == [
+             {"GET", "/api/vaults/:id"},
+             {"POST", "/api/vaults/:id/notes"},
+             {"GET", "/p/:slug.json"},
+             {"GET", "/p/:slug"},
+             {"GET", "/files/*rest"}
+           ]
   end
 
-  test "delegates only a declared route and preserves path params" do
+  test "delegates declared paths with Plug decoding, suffix, wildcard, and precedence semantics" do
+    for {method, path} <- [delete: "/api/vaults/v1", get: "/api/vaults/v1/notes"] do
+      assert :not_found = DomainDispatch.dispatch(conn(method, path), @domains)
+    end
+
+    for {path, body} <- [
+          {"/api/vaults/v%201", "v 1"},
+          {"/p/example.json", "json:example"},
+          {"/p/example", "page:example"},
+          {"/files/a/b", "a/b"},
+          {"/files", ""}
+        ] do
+      assert {:handled, response} = DomainDispatch.dispatch(conn(:get, path), @domains)
+      assert response.status == 200
+      assert response.resp_body == body
+    end
+  end
+
+  test "first matching domain wins and receives its runtime options" do
     assert {:handled, response} =
-             conn(:get, "/api/vaults/v1")
-             |> DomainDispatch.dispatch([{ExampleCatalog, ExampleRouter}])
-
-    assert response.status == 200
-    assert response.resp_body == "v1"
-
-    assert :not_found =
-             conn(:delete, "/api/vaults/v1")
-             |> DomainDispatch.dispatch([{ExampleCatalog, ExampleRouter}])
-  end
-
-  test "supports an explicit terminal wildcard contract" do
-    assert DomainDispatch.matches?("GET", "/anything/here", {"GET", "*"})
-    refute DomainDispatch.matches?("POST", "/anything/here", {"GET", "*"})
-  end
-
-  test "passes isolated router options without leaking them into dispatch" do
-    assert {:handled, response} =
-             conn(:get, "/api/vaults/v1")
-             |> DomainDispatch.dispatch([
-               {ExampleCatalog, OptionRouter, body: "configured"}
+             DomainDispatch.dispatch(conn(:get, "/api/vaults/v1"), [
+               {OptionRouter, OptionRouter, body: "configured"},
+               {ExampleRouter, ExampleRouter}
              ])
 
     assert response.resp_body == "configured"
+  end
+
+  test "skips an unmatched domain without leaking its fallback params" do
+    request =
+      conn(:get, "/p/example.json")
+      |> put_private(:plug_route, {"/*_path", fn conn, _ -> conn end})
+
+    assert {:handled, response} =
+             DomainDispatch.dispatch(request, [
+               {OptionRouter, OptionRouter},
+               {ExampleRouter, ExampleRouter}
+             ])
+
+    assert response.resp_body == "json:example"
+    assert response.path_params == %{"slug" => "example"}
+  end
+
+  test "selection does not parse unmatched bodies or leak speculative path params" do
+    request =
+      conn(:post, "/missing", "invalid json")
+      |> put_req_header("content-type", "application/json")
+
+    assert :not_found = DomainDispatch.dispatch(request, @domains)
+    assert request.path_params == %{}
+    assert {:ok, "invalid json", _conn} = read_body(request)
   end
 end

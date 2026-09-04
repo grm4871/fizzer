@@ -27,7 +27,7 @@ test('coordinator helper starts and delegates a mission with structured API call
     if (req.method === 'POST' && req.url === '/api/vaults/vault-1/channels/channel-1/messages') {
       const body = raw ? JSON.parse(raw) : {};
       res.statusCode = 201;
-      res.end(JSON.stringify({ message: { id: body.id || 'sys-mission-root', body: body.body || '' } }));
+      res.end(JSON.stringify({ message: { id: 'sys-mission-root-new', body: body.body || '' } }));
       return;
     }
     if (req.method === 'GET' && req.url === '/api/vaults/vault-1/channels/channel-1/missions?coordinator=reg-sol') {
@@ -84,6 +84,7 @@ test('coordinator helper starts and delegates a mission with structured API call
   fs.writeFileSync(config, JSON.stringify({
     registrationId: 'reg-sol',
     chatTriggeringMessageId: 'root-message',
+    displayName: 'Sol',
   }));
   t.after(() => fs.rmSync(fixtureDir, { recursive: true, force: true }));
   const withCoordinator = { ...process.env, CASCADE_HELPER_CONFIG: config, CASCADE_RUN_ID: '777' };
@@ -134,9 +135,10 @@ test('coordinator helper starts and delegates a mission with structured API call
   ]);
   assert.ok(requests.every((request) => request.runId === '777'));
   assert.equal(requests[0]?.body?.registrationId, 'reg-sol');
-  assert.equal(requests[1]?.body?.rootMessageId, requests[0]?.body?.id);
+  assert.equal(requests[0]?.body?.author, 'Sol');
+  assert.notEqual(requests[0]?.body?.id, 'root-message');
   assert.deepEqual(requests[1]?.body, {
-    rootMessageId: requests[0]?.body?.id,
+    rootMessageId: 'sys-mission-root-new',
     coordinatorRegistrationId: 'reg-sol',
     title: 'Release',
     objective: 'Ship safely',
@@ -161,34 +163,6 @@ test('coordinator helper starts and delegates a mission with structured API call
     summary: 'Integrated',
   });
   assert.equal(JSON.parse(fs.readFileSync(config, 'utf8')).usedChatSend, undefined);
-});
-
-test('mission start always posts a coordinator shell as the mission root', async (t) => {
-  const requests: Array<{ method: string; path: string; body: Record<string, unknown> | null; runId?: string }> = [];
-  const server = http.createServer(async (req, res) => {
-    let raw = '';
-    for await (const chunk of req) raw += chunk;
-    requests.push({ method: req.method || '', path: req.url || '', body: raw ? JSON.parse(raw) : null, runId:req.headers['x-cascade-run-id'] as string | undefined });
-    res.setHeader('content-type', 'application/json');
-    if (req.url?.endsWith('/messages')) return res.end(JSON.stringify({ message: { id: 'sys-mission-root-new' } }));
-    if (req.url?.endsWith('/missions')) return res.end(JSON.stringify({ mission: { id: 'second', title: 'Second task' } }));
-    res.statusCode = 404; res.end(JSON.stringify({ error: 'not found' }));
-  });
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  t.after(() => server.close());
-  const address = server.address(); assert(address && typeof address === 'object');
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-chat-multi-mission-'));
-  const config = path.join(dir, 'helper.json');
-  fs.writeFileSync(config, JSON.stringify({ registrationId: 'reg-sol', chatTriggeringMessageId: 'root-message', displayName: 'Sol' }));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  await execFileAsync(process.execPath, [cli, 'mission', 'start', '--title', 'Second task', '--objective', 'Do it too', '--url', `http://127.0.0.1:${address.port}`, '--token', 'token', '--vault', 'vault-1', '--channel', 'channel-1'], { env: { ...process.env, CASCADE_HELPER_CONFIG: config } });
-  assert.deepEqual(requests.map((request) => `${request.method} ${request.path}`), [
-    'POST /api/vaults/vault-1/channels/channel-1/messages',
-    'POST /api/vaults/vault-1/channels/channel-1/missions',
-  ]);
-  assert.equal(requests[0].body?.registrationId, 'reg-sol');
-  assert.equal(requests[0].body?.author, 'Sol');
-  assert.equal(requests[1].body?.rootMessageId, 'sys-mission-root-new');
 });
 
 test('control-plane mission start explicitly asks the server not to bind a primary task', async (t) => {

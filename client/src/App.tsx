@@ -1,4 +1,5 @@
-import { useEffect, useState, useCallback, useRef, useMemo, lazy, Suspense, type CSSProperties, type ReactNode } from 'react';
+import { WorkspaceStore } from './workspace';
+import { useEffect, useSyncExternalStore, useState, useCallback, useRef, useMemo, lazy, Suspense, type CSSProperties, type ReactNode } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { type Tab } from './components/TabBar';
 import {
@@ -95,14 +96,13 @@ import {
 } from './chat/runBlocks';
 import {
   CHAT_STORAGE_KEY,
-  emptyWorkspace,
   loadChatState,
   loadPersistedSession,
   readLegacyLocalChatMessages,
   SESSION_STORAGE_KEY,
+  workspaceSession,
   type ChatState,
   type PersistedSession,
-  type PersistedWorkspace,
 } from './chat/session';
 import { chatMessageStore, useAgentActivity } from './chat/messageStore';
 import { Activity, Bell, Download, PanelLeftOpen, Sparkles, Users } from 'lucide-react';
@@ -123,16 +123,11 @@ import { FizzerMark } from './components/FizzerMark';
  * @component
  */
 
-type NoteEntry = { note: Note; draft: string };
-
 function isMobileViewport(): boolean {
   return typeof window !== 'undefined' && window.matchMedia('(max-width: 900px)').matches;
 }
 
-// Module-level (not useRef): survives StrictMode remount and shares across any
-// rapid remount so concurrent loadVaultData / message fetches coalesce to one
-// network round-trip instead of stacking.
-const loadVaultDataInflight = new Map<string, Promise<void>>();
+// Share transcript fetches across rapid remounts.
 const loadChatMessagesInflight = new Map<string, Promise<{
   channelId: string;
   messages: ChatMessage[];
@@ -181,7 +176,10 @@ export default function App() {
 
   // App data state
   const [vaults, setVaults] = useState<Vault[]>([]);
-  const [activeVaultId, setActiveVaultIdState] = useState<string | null>(persistedSessionRef.current.activeVaultId);
+  const [workspaceStore] = useState(() => new WorkspaceStore(persistedSessionRef.current));
+  const [loadVaultDataInflight] = useState(() => new Map<string, Promise<void>>());
+  const workspaceRevision = useSyncExternalStore(workspaceStore.subscribe, workspaceStore.getSnapshot);
+  const activeVaultId = workspaceStore.activeVaultId;
   const initialVaultListing = persistedSessionRef.current.activeVaultId
     ? persistedSessionRef.current.vaultListingsByVault[persistedSessionRef.current.activeVaultId]
     : undefined;
@@ -197,12 +195,11 @@ export default function App() {
   const [showAgentMemory, setShowAgentMemory] = useState(() => localStorage.getItem('cascade_show_agent_memory') === '1');
   const agentActivity = useAgentActivity();
 
-  // Tabs + tiling layout
-  const [openTabs, setOpenTabs] = useState<Tab[]>(persistedSessionRef.current.openTabs);
-  const [layout, setLayout] = useState<LayoutNode>(persistedSessionRef.current.layout);
-  const [focusedPaneId, setFocusedPaneId] = useState<string>(persistedSessionRef.current.focusedPaneId);
-  // Note bodies, keyed by tab id, so each note pane edits independently.
-  const [noteContents, setNoteContents] = useState<Record<string, NoteEntry>>({});
+  const { openTabs, layout, focusedPaneId, noteContents } = workspaceStore.active;
+  const setOpenTabs = useCallback((value: React.SetStateAction<Tab[]>) => workspaceStore.set('openTabs', value), [workspaceStore]);
+  const setLayout = useCallback((value: React.SetStateAction<LayoutNode>) => workspaceStore.set('layout', value), [workspaceStore]);
+  const setFocusedPaneId = useCallback((value: string) => workspaceStore.set('focusedPaneId', value), [workspaceStore]);
+  const setNoteContents = useCallback((value: React.SetStateAction<typeof noteContents>) => workspaceStore.set('noteContents', value), [workspaceStore]);
   const [superkanbanNotes, setSuperkanbanNotes] = useState<Note[]>([]);
   const [superkanbanLiveWork, setSuperkanbanLiveWork] = useState<WorkItem[]>([]);
   const [superkanbanLoading, setSuperkanbanLoading] = useState(false);
@@ -251,11 +248,7 @@ export default function App() {
   const currentUsername = user?.username ?? '';
   // Refs mirror the latest state so event handlers stay stable (no dep churn)
   // and never read a stale closure during drags / async work.
-  const layoutRef = useRef(layout); layoutRef.current = layout;
-  const focusedPaneRef = useRef(focusedPane); focusedPaneRef.current = focusedPane;
-  const openTabsRef = useRef(openTabs); openTabsRef.current = openTabs;
-  const noteContentsRef = useRef(noteContents); noteContentsRef.current = noteContents;
-  const activeVaultIdRef = useRef(activeVaultId); activeVaultIdRef.current = activeVaultId;
+  const activeVaultIdRef = useMemo(() => ({ get current() { return workspaceStore.activeVaultId; } }), [workspaceStore]);
   const notesRef = useRef(notes); notesRef.current = notes;
   const chatStateRef = useRef(chatState); chatStateRef.current = chatState;
   const vaultSocketRef = useRef<ReturnType<typeof connectVaultSocket> | null>(null);
@@ -294,101 +287,33 @@ export default function App() {
   // Debounce socket-driven soft vault reloads (note create/change/delete bursts).
   const socketVaultReloadTimerRef = useRef<number | null>(null);
   const communityRefreshTimerRef = useRef<number | null>(null);
-  const vaultWorkspacesRef = useRef<Record<string, PersistedWorkspace>>({
-    ...persistedSessionRef.current.workspacesByVault,
-  });
   const vaultListingsRef = useRef({ ...persistedSessionRef.current.vaultListingsByVault });
-  // Draft bodies stay isolated with their vault while the app is open. They are
-  // deliberately not written to localStorage; persisted tabs re-fetch bodies.
-  const vaultNoteContentsRef = useRef<Record<string, Record<string, NoteEntry>>>({});
+
+  const clearWorkspacePanels = useCallback(() => {
+    const listing = workspaceStore.activeVaultId ? vaultListingsRef.current[workspaceStore.activeVaultId] : undefined;
+    notesRef.current = listing?.notes ?? [];
+    setFolders(listing?.folders ?? []);
+    setNotes(listing?.notes ?? []);
+    setVaultAgents([]);
+    setSuperkanbanNotes([]);
+    setSuperkanbanLiveWork([]);
+    setSuperkanbanLoading(false);
+    setSuperkanbanError(null);
+    setChatJumpTarget(null);
+  }, [workspaceStore]);
 
   const switchVaultWorkspace = useCallback((nextVaultId: string | null) => {
-    const previousVaultId = activeVaultIdRef.current;
-    if (previousVaultId === nextVaultId) return;
-
-    if (previousVaultId) {
-      vaultWorkspacesRef.current = {
-        ...vaultWorkspacesRef.current,
-        [previousVaultId]: {
-          openTabs: openTabsRef.current,
-          layout: layoutRef.current,
-          focusedPaneId: focusedPaneRef.current.id,
-        },
-      };
-      vaultNoteContentsRef.current = {
-        ...vaultNoteContentsRef.current,
-        [previousVaultId]: noteContentsRef.current,
-      };
-    }
-
-    const workspace = nextVaultId
-      ? vaultWorkspacesRef.current[nextVaultId] ?? emptyWorkspace()
-      : emptyWorkspace();
-    if (nextVaultId && !vaultWorkspacesRef.current[nextVaultId]) {
-      vaultWorkspacesRef.current = { ...vaultWorkspacesRef.current, [nextVaultId]: workspace };
-    }
-    const nextNoteContents = nextVaultId ? vaultNoteContentsRef.current[nextVaultId] ?? {} : {};
-    const nextFocusedPane = Layout.findPane(workspace.layout, workspace.focusedPaneId)
-      ?? Layout.getFirstPane(workspace.layout);
-
-    // Update the mirrors synchronously: invite/deep-link flows load the new
-    // vault immediately after switching and must not read the previous tabs.
-    activeVaultIdRef.current = nextVaultId;
-    openTabsRef.current = workspace.openTabs;
-    layoutRef.current = workspace.layout;
-    focusedPaneRef.current = nextFocusedPane;
-    noteContentsRef.current = nextNoteContents;
-    const nextListing = nextVaultId ? vaultListingsRef.current[nextVaultId] : undefined;
-    notesRef.current = nextListing?.notes ?? [];
-
-    setActiveVaultIdState(nextVaultId);
-    setOpenTabs(workspace.openTabs);
-    setLayout(workspace.layout);
-    setFocusedPaneId(nextFocusedPane.id);
-    setNoteContents(nextNoteContents);
-    setFolders(nextListing?.folders ?? []);
-    setNotes(nextListing?.notes ?? []);
-    setVaultAgents([]);
-    setSuperkanbanNotes([]);
-    setSuperkanbanLiveWork([]);
-    setSuperkanbanLoading(false);
-    setSuperkanbanError(null);
-    setChatJumpTarget(null);
-  }, []);
+    if (workspaceStore.activeVaultId === nextVaultId) return;
+    workspaceStore.switchVault(nextVaultId);
+    clearWorkspacePanels();
+  }, [workspaceStore, clearWorkspacePanels]);
 
   const resetVaultWorkspaces = useCallback(() => {
-    const workspace = emptyWorkspace();
-    const firstPane = Layout.getFirstPane(workspace.layout);
-    vaultWorkspacesRef.current = {};
+    workspaceStore.reset();
+    loadVaultDataInflight.clear();
     vaultListingsRef.current = {};
-    vaultNoteContentsRef.current = {};
-    activeVaultIdRef.current = null;
-    openTabsRef.current = [];
-    layoutRef.current = workspace.layout;
-    focusedPaneRef.current = firstPane;
-    noteContentsRef.current = {};
-    notesRef.current = [];
-    setActiveVaultIdState(null);
-    setOpenTabs([]);
-    setLayout(workspace.layout);
-    setFocusedPaneId(firstPane.id);
-    setNoteContents({});
-    setFolders([]);
-    setNotes([]);
-    setVaultAgents([]);
-    setSuperkanbanNotes([]);
-    setSuperkanbanLiveWork([]);
-    setSuperkanbanLoading(false);
-    setSuperkanbanError(null);
-    setChatJumpTarget(null);
-  }, []);
-
-  // Repair focus if the focused pane disappears (e.g. after collapsing a split).
-  useEffect(() => {
-    if (!Layout.findPane(layout, focusedPaneId)) {
-      setFocusedPaneId(Layout.getFirstPane(layout).id);
-    }
-  }, [layout, focusedPaneId]);
+    clearWorkspacePanels();
+  }, [workspaceStore, clearWorkspacePanels]);
 
   useEffect(() => {
     const id = window.setTimeout(() => localStorage.setItem('cascade_sidebar_w_vault_rail', String(sidebarWidth)), 150);
@@ -411,24 +336,7 @@ export default function App() {
   }, [chatMembersOpen]);
 
   const persistWorkspaceSession = useCallback(() => {
-    const currentVaultId = activeVaultIdRef.current;
-    const activeWorkspace: PersistedWorkspace = {
-      openTabs: openTabsRef.current,
-      layout: layoutRef.current,
-      focusedPaneId: focusedPaneRef.current.id,
-    };
-    if (currentVaultId) {
-      vaultWorkspacesRef.current = {
-        ...vaultWorkspacesRef.current,
-        [currentVaultId]: activeWorkspace,
-      };
-    }
-    const session: PersistedSession = {
-      activeVaultId: currentVaultId,
-      ...activeWorkspace,
-      workspacesByVault: vaultWorkspacesRef.current,
-      vaultListingsByVault: vaultListingsRef.current,
-    };
+    const session = workspaceSession(workspaceStore.activeVaultId, workspaceStore.workspaces, vaultListingsRef.current);
     localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
   }, []);
 
@@ -437,7 +345,7 @@ export default function App() {
   useEffect(() => {
     const id = window.setTimeout(persistWorkspaceSession, 250);
     return () => clearTimeout(id);
-  }, [activeVaultId, openTabs, layout, focusedPaneId, persistWorkspaceSession]);
+  }, [workspaceRevision, persistWorkspaceSession]);
 
   useEffect(() => {
     window.addEventListener('pagehide', persistWorkspaceSession);
@@ -517,14 +425,17 @@ export default function App() {
   // ═══════════════════════════════════════════════════════════════
 
   const loadVaults = useCallback(async () => {
+    const epoch = workspaceStore.epoch;
     try {
       const data = await api<{ vaults: Vault[] }>('/api/vaults');
+      if (workspaceStore.epoch !== epoch) return;
       let nextVaults = data.vaults;
       if (nextVaults.length === 0) {
         const created = await api<{ vault: Vault }>('/api/vaults', {
           method: 'POST',
           body: JSON.stringify({ name: 'My Vault' }),
         });
+        if (workspaceStore.epoch !== epoch) return;
         nextVaults = [created.vault];
       }
       setVaults(nextVaults);
@@ -537,27 +448,24 @@ export default function App() {
       // Drop workspaces the signed-in account can no longer access. This also
       // prevents an invalid persisted vault from surviving an account change.
       const accessibleIds = new Set(nextVaults.map((vault) => vault.id));
-      vaultWorkspacesRef.current = Object.fromEntries(
-        Object.entries(vaultWorkspacesRef.current).filter(([vaultId]) => accessibleIds.has(vaultId)),
-      );
-      vaultNoteContentsRef.current = Object.fromEntries(
-        Object.entries(vaultNoteContentsRef.current).filter(([vaultId]) => accessibleIds.has(vaultId)),
-      );
+      workspaceStore.retain(accessibleIds);
     } catch (error) {
       console.error('Error loading vaults:', error);
     }
   }, [switchVaultWorkspace]);
 
   const loadCommunityUpdates = useCallback(async (quiet = false) => {
+    const epoch = workspaceStore.epoch;
     if (!quiet) setCommunityUpdatesLoading(true);
     try {
       const data = await api<CommunityUpdates>(`/api/community/updates?limit=80${showAgentMemory ? '&includeAgentMemory=1' : ''}`);
+      if (workspaceStore.epoch !== epoch) return;
       setCommunityUpdates(data);
       setCommunityUpdatesError('');
     } catch (error) {
-      if (!quiet) setCommunityUpdatesError(error instanceof Error ? error.message : 'Could not load updates');
+      if (workspaceStore.epoch === epoch && !quiet) setCommunityUpdatesError(error instanceof Error ? error.message : 'Could not load updates');
     } finally {
-      if (!quiet) setCommunityUpdatesLoading(false);
+      if (workspaceStore.epoch === epoch && !quiet) setCommunityUpdatesLoading(false);
     }
   }, [showAgentMemory]);
 
@@ -575,13 +483,14 @@ export default function App() {
   }, [loadCommunityUpdates]);
 
   const markCommunityTargetRead = useCallback(async (targetId: string) => {
+    const epoch = workspaceStore.epoch;
     if (!targetId) return;
     try {
       await api('/api/community/updates/read', {
         method: 'POST',
         body: JSON.stringify({ targetId }),
       });
-      await loadCommunityUpdates(true);
+      if (workspaceStore.epoch === epoch) await loadCommunityUpdates(true);
     } catch (error) {
       if (!(error instanceof ApiError && error.status === 404)) {
         console.error('Could not mark update read:', error);
@@ -811,7 +720,7 @@ export default function App() {
 
   /** Chat channels currently open as tabs (not every chat note in the vault). */
   const openChatTabIds = useCallback((): string[] => {
-    return openTabsRef.current.filter((tab) => tab.type === 'chat').map((tab) => tab.id);
+    return workspaceStore.active.openTabs.filter((tab) => tab.type === 'chat').map((tab) => tab.id);
   }, []);
 
   /**
@@ -837,6 +746,7 @@ export default function App() {
     noteList: NoteSummary[],
     opts?: { channelIds?: string[] },
   ) => {
+    const epoch = workspaceStore.epoch;
     // Membership hydrates on demand for open channels. The server projects the
     // vault roster during this request, so touching every unopened room turned
     // one vault refresh into an expensive mutation-heavy request fan-out.
@@ -859,6 +769,7 @@ export default function App() {
       }
     }));
 
+    if (workspaceStore.epoch !== epoch) return;
     setChatState((prev) => {
       const registeredAgentsByChannel = { ...prev.registeredAgentsByChannel };
       for (const { channelId, agents } of results) {
@@ -873,6 +784,7 @@ export default function App() {
     noteList: NoteSummary[],
     opts?: { channelIds?: string[] },
   ) => {
+    const epoch = workspaceStore.epoch;
     const finalIds = resolveChatChannelIds(noteList, opts?.channelIds);
     if (finalIds.length === 0) return;
 
@@ -885,6 +797,7 @@ export default function App() {
       }
     }));
 
+    if (workspaceStore.epoch !== epoch) return;
     setChatPresenceByChannel((prev) => {
       const next = { ...prev };
       for (const { channelId, participants, online, owner, profiles } of results) {
@@ -899,6 +812,7 @@ export default function App() {
     noteList: NoteSummary[],
     opts?: { silent?: boolean; channelIds?: string[] },
   ) => {
+    const epoch = workspaceStore.epoch;
     const channelIds = resolveChatChannelIds(noteList, opts?.channelIds);
     if (channelIds.length === 0) return;
     setChannelVaultIds((previous) => {
@@ -970,6 +884,7 @@ export default function App() {
         }
 
         const { messages, baseline } = await fetchOne;
+        if (workspaceStore.epoch !== epoch) return;
         chatMessageStore.update(channelId, (existing) => {
           if (existing === messages) return existing;
           // Reconnect reconciliation intentionally fetches the slim transcript,
@@ -988,7 +903,7 @@ export default function App() {
     };
 
     // Focused channel first so progressive apply paints the visible tab ASAP.
-    const focusedId = focusedPaneRef.current.activeTabId;
+    const focusedId = workspaceStore.focusedPane.activeTabId;
     const ordered = focusedId && channelIds.includes(focusedId)
       ? [focusedId, ...channelIds.filter((id) => id !== focusedId)]
       : channelIds;
@@ -1025,15 +940,17 @@ export default function App() {
   }, []);
 
   const loadVaultAgents = useCallback(async (vaultId: string) => {
+    const epoch = workspaceStore.epoch;
     try {
       const data = await api<{ agents: VaultAgent[] }>(`/api/vaults/${vaultId}/vault-agents`);
-      if (activeVaultIdRef.current === vaultId) setVaultAgents(data.agents ?? []);
+      if (workspaceStore.epoch === epoch && activeVaultIdRef.current === vaultId) setVaultAgents(data.agents ?? []);
     } catch {
-      if (activeVaultIdRef.current === vaultId) setVaultAgents([]);
+      if (workspaceStore.epoch === epoch && activeVaultIdRef.current === vaultId) setVaultAgents([]);
     }
   }, []);
 
   const loadVaultData = useCallback(async (vaultId: string, opts?: { soft?: boolean }) => {
+    const epoch = workspaceStore.epoch;
     const soft = opts?.soft === true;
     // Soft can ride a hard load already in flight (hard is a superset). Hard
     // only joins another hard — a soft in flight may have skipped loading UI.
@@ -1052,7 +969,7 @@ export default function App() {
         // Prefer the focused chat tab first so cold start paints useful
         // transcript ASAP; other open tabs hydrate after the shell settles.
         const openChats = openChatTabIds();
-        const focusedChatId = openTabsRef.current.find((t) => t.type === 'chat' && t.id === focusedPaneRef.current.activeTabId)?.id
+        const focusedChatId = workspaceStore.active.openTabs.find((t) => t.type === 'chat' && t.id === workspaceStore.focusedPane.activeTabId)?.id
           ?? openChats[0];
         const primaryChats = focusedChatId ? [focusedChatId] : [];
         const secondaryChats = openChats.filter((id) => id !== focusedChatId);
@@ -1071,6 +988,7 @@ export default function App() {
         const vaultAgentsP = soft ? Promise.resolve() : loadVaultAgents(vaultId);
 
         const [folderData, noteData] = await Promise.all([foldersP, notesP]);
+        if (workspaceStore.epoch !== epoch) return;
         const nextNotes = noteData.notes || [];
         const nextFolders = folderData.folders || [];
         vaultListingsRef.current = {
@@ -1098,7 +1016,7 @@ export default function App() {
         if (!soft && secondaryChats.length > 0) {
           // Defer background tabs one frame so the active channel can paint.
           window.setTimeout(() => {
-            if (activeVaultIdRef.current !== vaultId) return;
+            if (workspaceStore.epoch !== epoch || activeVaultIdRef.current !== vaultId) return;
             void loadChatMessages(vaultId, nextNotes, { silent: true, channelIds: secondaryChats }).catch(() => undefined);
             void loadChatAgentMembers(vaultId, nextNotes, { channelIds: secondaryChats }).catch(() => undefined);
             void loadChatPresence(vaultId, nextNotes, { channelIds: secondaryChats }).catch(() => undefined);
@@ -1107,7 +1025,7 @@ export default function App() {
       } catch (error) {
         console.error('Error loading vault data:', error);
       } finally {
-        loadVaultDataInflight.delete(inflightKey);
+        if (workspaceStore.epoch === epoch) loadVaultDataInflight.delete(inflightKey);
       }
     })();
 
@@ -1137,7 +1055,7 @@ export default function App() {
     const notesList = notesRef.current;
     // Restored chat tabs are typed in session before notes hydrate — don't wait
     // for the notes list to admit this is a channel.
-    const isOpenChatTab = openTabsRef.current.some((t) => t.id === channelId && t.type === 'chat');
+    const isOpenChatTab = workspaceStore.active.openTabs.some((t) => t.id === channelId && t.type === 'chat');
     const isChatNote = notesList.some(
       (n) => n.id === channelId && n.content_preview.trim().startsWith(CHAT_NOTE_MARKER),
     );
@@ -1240,8 +1158,8 @@ export default function App() {
       // Chat transcripts aren't in localStorage; a cold/backgrounded resume can
       // restore the tab with an empty channel. ensureChatChannelLoaded is a
       // no-op when messages+agents are already cached.
-      const activeId = focusedPaneRef.current.activeTabId;
-      if (activeId && openTabsRef.current.some((t) => t.id === activeId && t.type === 'chat')) {
+      const activeId = workspaceStore.focusedPane.activeTabId;
+      if (activeId && workspaceStore.active.openTabs.some((t) => t.id === activeId && t.type === 'chat')) {
         ensureChatChannelLoaded(activeId);
       }
     };
@@ -1305,34 +1223,9 @@ export default function App() {
     const name = title.trim() || 'chat';
     const tab: Tab = { id: channelId, title: name, type: 'chat', dirty: false };
 
-    setOpenTabs((prev) =>
-      prev.some((t) => t.id === channelId)
-        ? prev.map((t) => (t.id === channelId ? { ...t, title: tab.title, type: 'chat' } : t))
-        : [...prev, tab],
-    );
-
-    const prev = layoutRef.current;
-    const focused = focusedPaneRef.current;
-    const existingPane = Layout.findPaneByTab(prev, channelId);
-
-    if (existingPane) {
-      setLayout(Layout.setActiveTab(prev, existingPane.id, channelId));
-      setFocusedPaneId(existingPane.id);
-      ensureChatChannelLoaded(channelId);
-      return;
-    }
-
-    let next = Layout.addTabToPane(Layout.removeTab(prev, channelId), focused.id, channelId);
-    const oldId = focused.activeTabId;
-    if (mode === 'replace' && oldId && oldId !== channelId) {
-      next = Layout.removeTab(next, oldId);
-      setOpenTabs((p) => p.filter((t) => t.id !== oldId || t.id === channelId));
-      setNoteContents((p) => { const copy = { ...p }; delete copy[oldId]; return copy; });
-    }
-    setLayout(Layout.simplify(next));
-    setFocusedPaneId(focused.id);
+    workspaceStore.openTab(tab, mode);
     ensureChatChannelLoaded(channelId);
-  }, [ensureChatChannelLoaded]);
+  }, [ensureChatChannelLoaded, workspaceStore]);
 
   const acceptVaultInvite = useCallback(async (token: string): Promise<boolean> => {
     try {
@@ -1591,10 +1484,7 @@ export default function App() {
     if (!vaultId || !user || !window.confirm('Leave this vault?')) return;
     await api(`/api/vaults/${vaultId}/members/${user.id}`, { method: 'DELETE' });
     switchVaultWorkspace(null);
-    const { [vaultId]: _removedWorkspace, ...remainingWorkspaces } = vaultWorkspacesRef.current;
-    const { [vaultId]: _removedDrafts, ...remainingDrafts } = vaultNoteContentsRef.current;
-    vaultWorkspacesRef.current = remainingWorkspaces;
-    vaultNoteContentsRef.current = remainingDrafts;
+    workspaceStore.retain(new Set(Object.keys(workspaceStore.workspaces).filter((id) => id !== vaultId)));
     await loadVaults();
   }, [user, loadVaults, switchVaultWorkspace]);
 
@@ -1627,27 +1517,10 @@ export default function App() {
     startingChatDispatchesRef,
   });
 
-  /** Close a tab from anywhere: drop it from the registry, content, and tree. */
-  const closeTab = useCallback((tabId: string) => {
-    setOpenTabs((prev) => prev.filter((t) => t.id !== tabId));
-    setNoteContents((prev) => { const next = { ...prev }; delete next[tabId]; return next; });
-    setLayout(Layout.simplify(Layout.removeTab(layoutRef.current, tabId)));
-  }, []);
-
-  /** Keep the chosen tab and close every sibling in its current pane. */
+  const closeTab = useCallback((tabId: string) => workspaceStore.closeTabs([tabId]), [workspaceStore]);
   const closeOtherTabs = useCallback((tabIds: string[], keepTabId: string) => {
-    const closingIds = new Set(tabIds.filter((id) => id !== keepTabId));
-    if (closingIds.size === 0) return;
-    setOpenTabs((prev) => prev.filter((tab) => !closingIds.has(tab.id)));
-    setNoteContents((prev) => {
-      const next = { ...prev };
-      closingIds.forEach((id) => delete next[id]);
-      return next;
-    });
-    setLayout((prev) => Layout.simplify(
-      [...closingIds].reduce((next, id) => Layout.removeTab(next, id), prev),
-    ));
-  }, []);
+    workspaceStore.closeTabs(tabIds.filter((id) => id !== keepTabId));
+  }, [workspaceStore]);
 
   // Stable handle so socket/delete callbacks can close tabs without re-subscribing.
   const closeTabRef = useRef(closeTab); closeTabRef.current = closeTab;
@@ -1660,9 +1533,11 @@ export default function App() {
   const loadNoteContent = useCallback(async (noteId: string) => {
     const vaultId = activeVaultIdRef.current;
     if (!vaultId) return;
+    const epoch = workspaceStore.epoch;
     try {
       const data = await api<{ note: Note }>(`/api/notes/${noteId}`);
-      if (activeVaultIdRef.current !== vaultId) return;
+      if (workspaceStore.epoch !== epoch || activeVaultIdRef.current !== vaultId
+        || !workspaceStore.active.openTabs.some((tab) => tab.id === noteId)) return;
 
       // Shortcut URL check
       const content = data.note.content.trim();
@@ -1679,11 +1554,9 @@ export default function App() {
       });
       setOpenTabs((prev) => prev.map((t) => (t.id === noteId ? { ...t, title: data.note.title, type: 'note' } : t)));
     } catch (error) {
-      if (activeVaultIdRef.current !== vaultId) return;
+      if (workspaceStore.epoch !== epoch || activeVaultIdRef.current !== vaultId) return;
       console.error('Error loading note:', error);
-      setOpenTabs((prev) => prev.filter((t) => t.id !== noteId));
-      setNoteContents((prev) => { const next = { ...prev }; delete next[noteId]; return next; });
-      setLayout((prev) => Layout.simplify(Layout.removeTab(prev, noteId)));
+      workspaceStore.closeTabs([noteId]);
       setNotice('That note could not be opened — it may have been moved or deleted. Refreshing the list.');
       if (activeVaultIdRef.current) void loadVaultData(activeVaultIdRef.current);
     }
@@ -1727,9 +1600,7 @@ export default function App() {
   const openSuperkanban = useCallback((paneId: string) => {
     const id = `superkanban:${activeVaultIdRef.current ?? 'current'}`;
     const tab: Tab = { id, title: 'Superkanban', type: 'superkanban', dirty: false };
-    setOpenTabs((prev) => prev.some((item) => item.id === id) ? prev : [...prev, tab]);
-    setLayout(Layout.simplify(Layout.addTabToPane(Layout.removeTab(layoutRef.current, id), paneId, id)));
-    setFocusedPaneId(paneId);
+    workspaceStore.openTab(tab, 'open', paneId);
     void loadSuperkanban();
   }, [loadSuperkanban]);
 
@@ -1749,28 +1620,7 @@ export default function App() {
       }
     }
 
-    setOpenTabs((prev) =>
-      prev.some((t) => t.id === noteId) ? prev : [...prev, { id: noteId, title: 'Untitled Note', type: 'note', dirty: false }],
-    );
-
-    const prev = layoutRef.current;
-    const focused = focusedPaneRef.current;
-    const existingPane = Layout.findPaneByTab(prev, noteId);
-
-    if (existingPane) {
-      setLayout(Layout.setActiveTab(prev, existingPane.id, noteId));
-      setFocusedPaneId(existingPane.id);
-    } else {
-      let next = Layout.addTabToPane(Layout.removeTab(prev, noteId), focused.id, noteId);
-      const oldId = focused.activeTabId;
-      if (mode === 'replace' && oldId && oldId !== noteId) {
-        next = Layout.removeTab(next, oldId);
-        setOpenTabs((p) => p.filter((t) => t.id !== oldId));
-        setNoteContents((p) => { const copy = { ...p }; delete copy[oldId]; return copy; });
-      }
-      setLayout(Layout.simplify(next));
-      setFocusedPaneId(focused.id);
-    }
+    workspaceStore.openTab({ id: noteId, title: summary?.title || 'Untitled Note', type: 'note', dirty: false }, mode);
 
     void loadNoteContent(noteId);
   }, [loadNoteContent, openChatChannel]);
@@ -1782,14 +1632,14 @@ export default function App() {
   useEffect(() => {
     if (!activeVaultId || notes.length === 0) return;
     const availableIds = new Set(notes.map((note) => note.id));
-    const hasSelectedPage = Layout.getActiveTabIds(layoutRef.current)
+    const hasSelectedPage = Layout.getActiveTabIds(workspaceStore.active.layout)
       .some((id) => {
-        const tab = openTabsRef.current.find((candidate) => candidate.id === id);
+        const tab = workspaceStore.active.openTabs.find((candidate) => candidate.id === id);
         return Boolean(tab && (tab.type === 'new' || tab.type === 'superkanban' || availableIds.has(id)));
       });
     if (hasSelectedPage) return;
 
-    const lastOpenTab = [...openTabsRef.current].reverse().find((tab) => availableIds.has(tab.id));
+    const lastOpenTab = [...workspaceStore.active.openTabs].reverse().find((tab) => availableIds.has(tab.id));
     const fallback = lastOpenTab
       ? notes.find((note) => note.id === lastOpenTab.id)
       : notes.find((note) => note.content_preview.trim().startsWith(CHAT_NOTE_MARKER)) ?? notes[0];
@@ -1804,12 +1654,16 @@ export default function App() {
   }, [agentActivity, communityUpdates.counts.byTarget, focusedTab?.id, focusedTab?.type, markCommunityTargetRead, user]);
 
   const openCommunityUpdate = useCallback(async (item: CommunityUpdateItem) => {
+    const epoch = workspaceStore.epoch;
+    const sourceVaultId = workspaceStore.activeVaultId;
     await markCommunityTargetRead(item.targetId);
+    if (workspaceStore.epoch !== epoch || workspaceStore.activeVaultId !== sourceVaultId) return;
     setUpdatesOpen(false);
     if (activeVaultIdRef.current !== item.vaultId) {
       switchVaultWorkspace(item.vaultId);
       await loadVaultData(item.vaultId);
     }
+    if (workspaceStore.epoch !== epoch || workspaceStore.activeVaultId !== item.vaultId) return;
     if (item.kind === 'note') {
       openNote(item.targetId);
       return;
@@ -1821,36 +1675,16 @@ export default function App() {
   /** Save a specific note tab's draft. */
   const saveNoteTab = useCallback(async (tabId: string) => {
     const vaultId = activeVaultIdRef.current;
-    const entry = noteContentsRef.current[tabId];
+    const entry = workspaceStore.active.noteContents[tabId];
     if (!vaultId || !entry) return;
+    const epoch = workspaceStore.epoch;
     try {
       const data = await api<{ note: Note }>(`/api/notes/${tabId}`, {
         method: 'PUT',
         body: JSON.stringify({ content: entry.draft }),
       });
-      if (activeVaultIdRef.current !== vaultId) {
-        const cachedNotes = vaultNoteContentsRef.current[vaultId] ?? {};
-        vaultNoteContentsRef.current = {
-          ...vaultNoteContentsRef.current,
-          [vaultId]: { ...cachedNotes, [tabId]: { note: data.note, draft: data.note.content } },
-        };
-        const cachedWorkspace = vaultWorkspacesRef.current[vaultId];
-        if (cachedWorkspace) {
-          vaultWorkspacesRef.current = {
-            ...vaultWorkspacesRef.current,
-            [vaultId]: {
-              ...cachedWorkspace,
-              openTabs: cachedWorkspace.openTabs.map((tab) => (
-                tab.id === tabId ? { ...tab, title: data.note.title, dirty: false } : tab
-              )),
-            },
-          };
-        }
-        return data.note;
-      }
-      setNoteContents((prev) => ({ ...prev, [tabId]: { note: data.note, draft: data.note.content } }));
-      setOpenTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, title: data.note.title, dirty: false } : t)));
-      void loadVaultData(vaultId);
+      workspaceStore.completeSave(vaultId, tabId, entry.draft, data.note, epoch);
+      if (workspaceStore.epoch === epoch && workspaceStore.activeVaultId === vaultId) void loadVaultData(vaultId);
       return data.note;
     } catch (error) {
       console.error('Error saving note:', error);
@@ -1860,7 +1694,7 @@ export default function App() {
 
   /** Save whichever note is in the focused pane (Ctrl+S, AI panel). */
   const handleSaveActiveNote = useCallback(() => {
-    const tabId = focusedPaneRef.current.activeTabId;
+    const tabId = workspaceStore.focusedPane.activeTabId;
     return tabId ? saveNoteTab(tabId) : Promise.resolve(undefined);
   }, [saveNoteTab]);
 
@@ -1871,23 +1705,24 @@ export default function App() {
       if (!entry) return prev;
       return { ...prev, [tabId]: { ...entry, draft: newContent } };
     });
-    setOpenTabs((prev) => prev.map((t) => {
-      if (t.id !== tabId) return t;
-      const entry = noteContentsRef.current[tabId];
-      return { ...t, dirty: entry ? newContent !== entry.note.content : false };
-    }));
   }, []);
 
   /** Rename a note tab (title + on-disk file + wikilink references). */
   const renameNoteTab = useCallback(async (tabId: string, title: string) => {
+    const vaultId = workspaceStore.activeVaultId;
+    const epoch = workspaceStore.epoch;
+    if (!vaultId) return;
     try {
       const data = await api<{ note: Note }>(`/api/notes/${tabId}/rename`, {
         method: 'POST',
         body: JSON.stringify({ title }),
       });
-      setNoteContents((prev) => (prev[tabId] ? { ...prev, [tabId]: { ...prev[tabId], note: data.note } } : prev));
-      setOpenTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, title: data.note.title } : t)));
-      if (activeVaultIdRef.current) void loadVaultData(activeVaultIdRef.current);
+      if (workspaceStore.epoch !== epoch) return;
+      workspaceStore.update((workspace) => ({ ...workspace,
+        noteContents: workspace.noteContents[tabId] ? { ...workspace.noteContents, [tabId]: { ...workspace.noteContents[tabId], note: data.note } } : workspace.noteContents,
+        openTabs: workspace.openTabs.map((tab) => tab.id === tabId ? { ...tab, title: data.note.title } : tab),
+      }), vaultId);
+      if (workspaceStore.activeVaultId === vaultId) void loadVaultData(vaultId);
     } catch (error) {
       window.alert(error instanceof Error ? error.message : 'Could not rename note');
       throw error; // let the editor revert its title draft
@@ -2004,7 +1839,7 @@ export default function App() {
       if (data.vaultId !== activeVaultId) return;
       scheduleSoftVaultReload();
       // Refresh the body only if the note is open and has no unsaved edits.
-      const entry = noteContentsRef.current[data.noteId];
+      const entry = workspaceStore.active.noteContents[data.noteId];
       if (entry && entry.draft === entry.note.content) void loadNoteContent(data.noteId);
     };
     const handleNoteCreated = (data: { vaultId: string }) => {
@@ -2242,12 +2077,10 @@ export default function App() {
       });
       await loadVaultData(vaultId);
       if (activeVaultIdRef.current !== vaultId) return data.note;
-      const targetPane = paneId ?? focusedPaneRef.current.id;
+      const targetPane = paneId ?? workspaceStore.focusedPane.id;
       const tab: Tab = { id: data.note.id, title: data.note.title, type: 'note', dirty: false };
       setNoteContents((prev) => ({ ...prev, [data.note.id]: { note: data.note, draft: data.note.content } }));
-      setOpenTabs((prev) => prev.some((item) => item.id === tab.id) ? prev : [...prev, tab]);
-      setLayout(Layout.simplify(Layout.addTabToPane(Layout.removeTab(layoutRef.current, tab.id), targetPane, tab.id)));
-      setFocusedPaneId(targetPane);
+      workspaceStore.openTab(tab, 'open', targetPane);
       return data.note;
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Could not create note');
@@ -2262,9 +2095,7 @@ export default function App() {
   const handleCreateTabInPane = useCallback((paneId: string) => {
     const id = `new:${crypto.randomUUID()}`;
     const tab: Tab = { id, title: 'New tab', type: 'new', dirty: false };
-    setOpenTabs((prev) => [...prev, tab]);
-    setLayout(Layout.simplify(Layout.addTabToPane(layoutRef.current, paneId, id)));
-    setFocusedPaneId(paneId);
+    workspaceStore.openTab(tab, 'open', paneId);
   }, []);
 
   const handleCreateChatInPane = useCallback(async (paneId: string) => {
@@ -2278,13 +2109,7 @@ export default function App() {
       await loadVaultData(vaultId);
       if (activeVaultIdRef.current !== vaultId) return;
       const tab: Tab = { id: data.note.id, title: data.note.title || 'new-channel', type: 'chat', dirty: false };
-      setOpenTabs((prev) =>
-        prev.some((t) => t.id === tab.id)
-          ? prev.map((t) => (t.id === tab.id ? { ...t, ...tab } : t))
-          : [...prev, tab],
-      );
-      setLayout(Layout.simplify(Layout.addTabToPane(Layout.removeTab(layoutRef.current, tab.id), paneId, tab.id)));
-      setFocusedPaneId(paneId);
+      workspaceStore.openTab(tab, 'open', paneId);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Could not create channel');
     }
@@ -2410,17 +2235,17 @@ export default function App() {
 
   /** Select a tab inside a specific pane (per-pane strip click). */
   const selectTabInPane = useCallback((paneId: string, tabId: string) => {
-    setLayout(Layout.setActiveTab(layoutRef.current, paneId, tabId));
+    setLayout(Layout.setActiveTab(workspaceStore.active.layout, paneId, tabId));
     setFocusedPaneId(paneId);
-    const tab = openTabsRef.current.find((t) => t.id === tabId);
-    if (tab?.type === 'note' && !noteContentsRef.current[tabId]) void loadNoteContent(tabId);
+    const tab = workspaceStore.active.openTabs.find((t) => t.id === tabId);
+    if (tab?.type === 'note' && !workspaceStore.active.noteContents[tabId]) void loadNoteContent(tabId);
     if (tab?.type === 'chat') ensureChatChannelLoaded(tabId);
     if (tab?.type === 'superkanban') void loadSuperkanban();
   }, [loadNoteContent, ensureChatChannelLoaded, loadSuperkanban]);
 
   /** Handle a tab dropped onto a pane (drag-tile). */
   const handleDropTab = useCallback((payload: TabDragPayload, targetPaneId: string, side: Layout.DropSide, index?: number) => {
-    const prev = layoutRef.current;
+    const prev = workspaceStore.active.layout;
     const next = side === 'center'
       ? Layout.moveTab(prev, payload.tabId, targetPaneId, index)
       : Layout.splitPaneWithTab(prev, targetPaneId, side, payload.tabId);
@@ -2438,7 +2263,7 @@ export default function App() {
     setOpenTabs((prev) => prev.some((item) => item.id === noteId)
       ? prev.map((item) => item.id === noteId ? { ...item, ...tab } : item)
       : [...prev, tab]);
-    const prev = layoutRef.current;
+    const prev = workspaceStore.active.layout;
     const next = side === 'center'
       ? Layout.addTabToPane(Layout.removeTab(prev, noteId), targetPaneId, noteId, index)
       : Layout.splitPaneWithTab(prev, targetPaneId, side, noteId);
@@ -2450,7 +2275,7 @@ export default function App() {
   }, [ensureChatChannelLoaded, loadNoteContent]);
 
   const handleResizeSplit = useCallback((splitId: string, sizes: number[]) => {
-    setLayout(Layout.setSplitSizes(layoutRef.current, splitId, sizes));
+    setLayout(Layout.setSplitSizes(workspaceStore.active.layout, splitId, sizes));
   }, []);
 
   /**
@@ -2463,14 +2288,12 @@ export default function App() {
       electronAPI?: { popOutTab?: (input: { tab: Tab; screenX: number; screenY: number }) => Promise<{ success: boolean; popped?: boolean }> };
     }).electronAPI;
     if (!electronAPI?.popOutTab) return;
-    const tab = openTabsRef.current.find((t) => t.id === tabId);
+    const tab = workspaceStore.active.openTabs.find((t) => t.id === tabId);
     if (!tab) return;
     if (tab.type !== 'note') return;
     void electronAPI.popOutTab({ tab, screenX, screenY }).then((res) => {
       if (!res?.popped) return;
-      setOpenTabs((prev) => prev.filter((t) => t.id !== tabId));
-      setNoteContents((prev) => { const next = { ...prev }; delete next[tabId]; return next; });
-      setLayout(Layout.simplify(Layout.removeTab(layoutRef.current, tabId)));
+      workspaceStore.closeTabs([tabId]);
     });
   }, []);
 
@@ -2484,21 +2307,16 @@ export default function App() {
     return electronAPI.onAdoptTab((tab) => {
       if (!tab || typeof tab.id !== 'string') return;
       if (tab.type !== 'note') return;
-      setOpenTabs((prev) =>
-        prev.some((t) => t.id === tab.id) ? prev.map((t) => (t.id === tab.id ? { ...t, ...tab } : t)) : [...prev, tab],
-      );
-      const paneId = focusedPaneRef.current.id;
-      setLayout(Layout.simplify(Layout.addTabToPane(Layout.removeTab(layoutRef.current, tab.id), paneId, tab.id)));
-      setFocusedPaneId(paneId);
+      workspaceStore.openTab(tab);
       if (tab.type === 'note') void loadNoteContent(tab.id);
     });
   }, [loadNoteContent]);
 
   /** Split the focused pane to the right (Ctrl/Cmd+Shift+\). */
   const splitFocusedPane = useCallback(() => {
-    const focused = focusedPaneRef.current;
+    const focused = workspaceStore.focusedPane;
     if (!focused.activeTabId) return;
-    const next = Layout.splitPaneWithTab(layoutRef.current, focused.id, 'right', focused.activeTabId);
+    const next = Layout.splitPaneWithTab(workspaceStore.active.layout, focused.id, 'right', focused.activeTabId);
     setLayout(next);
     const landed = Layout.findPaneByTab(next, focused.activeTabId);
     if (landed) setFocusedPaneId(landed.id);
@@ -2508,8 +2326,8 @@ export default function App() {
   // that vault's restored workspace.
   useEffect(() => {
     if (!activeVaultId) return;
-    Layout.getActiveTabIds(layoutRef.current).forEach((id) => {
-      if (openTabsRef.current.find((t) => t.id === id)?.type === 'note') void loadNoteContent(id);
+    Layout.getActiveTabIds(workspaceStore.active.layout).forEach((id) => {
+      if (workspaceStore.active.openTabs.find((t) => t.id === id)?.type === 'note') void loadNoteContent(id);
     });
   }, [activeVaultId, loadNoteContent]);
 
@@ -2589,7 +2407,7 @@ export default function App() {
       if (mod && e.shiftKey && e.key.toLowerCase() === 's') { e.preventDefault(); void handleSaveActiveNote(); }
       if (mod && e.key.toLowerCase() === 'w') {
         e.preventDefault();
-        const id = focusedPaneRef.current.activeTabId;
+        const id = workspaceStore.focusedPane.activeTabId;
         if (id) closeTab(id);
       }
       if (mod && (e.altKey || e.shiftKey) && (e.key === '\\' || e.key === '|')) { e.preventDefault(); splitFocusedPane(); }

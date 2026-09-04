@@ -246,6 +246,12 @@ describe('workTrace', () => {
     expect(workTraceSummary(trace)).toContain('Sol');
   });
 
+  it('suppresses prompt dumps and incomplete protocol in compact previews', () => {
+    expect(workTraceHarnessPreview('# thinking\nYou are grok (@grok) in #dev\n[Context: secret]')).toBe('thinking…');
+    expect(workTraceHarnessPreview('{"type":"item.started","item":')).toBe('');
+    expect(workTracePreview('{"type":"item.started","item":')).toBe('');
+  });
+
   it('humanizes protocol JSONL instead of dumping raw objects', () => {
     expect(humanizeActivityLine('{"type":"thread.started","thread_id":"abc"}')).toBe('session started');
     expect(humanizeActivityLine(JSON.stringify({

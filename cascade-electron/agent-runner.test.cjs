@@ -58,12 +58,6 @@ test('chat triggering message id follows the mission root through runner payload
   assert.equal(chatTriggeringMessageId({ chatMessageId: 'worker-placeholder' }), '');
 });
 
-test('active local runs emit a bounded worker heartbeat', () => {
-  const source = fs.readFileSync(path.join(__dirname, 'agent-runner.cjs'), 'utf8');
-  assert.match(source, /setInterval\(\(\) => emit\('heartbeat', \{\}\), 15_000\)/);
-  assert.equal((source.match(/clearInterval\(heartbeat\)/g) || []).length, 2);
-});
-
 test('durable work item identity reaches both the provider env and helper context', () => {
   const runId = 91991;
   const env = buildRunHelperEnv({
@@ -95,21 +89,6 @@ test('Claude effort overrides support every Claude CLI level and reject ultra', 
   assert.equal(normalizeClaudeEffort('ultra', 'medium'), 'medium');
 });
 
-test('Claude chat uses adaptive effort with no fixed thinking budget', () => {
-  const source = fs.readFileSync(path.join(__dirname, 'agent-runner.cjs'), 'utf8');
-  assert.match(source, /const CLAUDE_CHAT_EFFORT = process\.env\.RUNNER_CHAT_EFFORT \|\| CLAUDE_EFFORT/);
-  assert.match(source, /'--effort', effort/);
-  assert.doesNotMatch(source, /CLAUDE_CHAT_THINKING_TOKENS/);
-  assert.doesNotMatch(source, /budgetTokens: thinkingTokens/);
-});
-
-test('Claude keeps the append-only chat cursor tool in its stable system prompt', () => {
-  const source = fs.readFileSync(path.join(__dirname, 'agent-runner.cjs'), 'utf8');
-  assert.match(source, /const CHAT_CONTEXT_TOOL_CONTEXT = 'Your channel transcript is append-only\./);
-  assert.match(source, /'--append-system-prompt', chatRun[\s\S]*?CHAT_CONTEXT_TOOL_CONTEXT/);
-  assert.match(source, /cascade-chat history --around-message-id <id> --include-reply-context/);
-});
-
 test('Claude runs through a separately installed CLI and streams its result', async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-fake-claude-'));
   const bin = path.join(dir, 'claude');
@@ -120,6 +99,10 @@ fs.writeFileSync(process.env.FAKE_CLAUDE_ARGS, JSON.stringify(process.argv.slice
 const send = (value) => process.stdout.write(JSON.stringify(value) + '\\n');
 send({ type: 'system', subtype: 'init', session_id: 'claude-session-1' });
 send({ type: 'stream_event', event: { type: 'message_start' } });
+send({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'thinking_delta', thinking: 'CLI thought' } } });
+send({ type: 'stream_event', event: { type: 'content_block_start', content_block: { type: 'tool_use', id: 'tool-1', name: 'Bash' } } });
+send({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'input_json_delta', partial_json: '{"command":"pwd"}' } } });
+send({ type: 'stream_event', event: { type: 'content_block_stop' } });
 send({ type: 'stream_event', event: { type: 'content_block_start', content_block: { type: 'text' } } });
 send({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'CLI answer' } } });
 send({ type: 'stream_event', event: { type: 'content_block_stop' } });
@@ -136,12 +119,14 @@ send({ type: 'result', subtype: 'success', result: 'CLI answer', session_id: 'cl
   });
 
   const events = [];
+  const intervals = t.mock.method(global, 'setInterval');
   const result = await startLocalAgentRun({
     runId: 91992,
     agent: 'claude-code',
     prompt: 'Say hello',
     cwd: dir,
     model: 'claude-test',
+    chatChannelId: 'channel-1',
   }, (event) => events.push(event));
 
   assert.equal(result.sessionId, 'claude-session-1');
@@ -149,18 +134,23 @@ send({ type: 'result', subtype: 'success', result: 'CLI answer', session_id: 'cl
   assert.ok(args.includes('--output-format'));
   assert.ok(args.includes('stream-json'));
   assert.equal(args.at(-1), 'Say hello');
-  assert.ok(events.some((event) => event.type === 'text' && event.payload_json.includes('CLI answer')));
-});
-
-test('Claude keeps reasoning structured and tool JSON out of the harness trace', () => {
-  const source = fs.readFileSync(path.join(__dirname, 'agent-runner.cjs'), 'utf8');
-  const thinkingBranch = source.match(/if \(delta\?\.type === 'thinking_delta'[\s\S]*?else if \(delta\?\.type === 'text_delta'/)?.[0] || '';
-  const inputBranch = source.match(/else if \(delta\?\.type === 'input_json_delta'[\s\S]*?\n\s*}/)?.[0] || '';
-  assert.match(thinkingBranch, /type: 'thinking'/);
-  assert.match(thinkingBranch, /emitHarness/);
-  assert.doesNotMatch(inputBranch, /emitHarness/);
-  assert.match(source, /formatToolHarnessPreview\(input\)/);
-  assert.match(source, /text_delta[\s\S]*emit\('text', \{ chatVisible: true/);
+  assert.equal(args[args.indexOf('--effort') + 1], process.env.RUNNER_CHAT_EFFORT || process.env.RUNNER_EFFORT || 'medium');
+  assert.doesNotMatch(args.join(' '), /thinking.?tokens|budget.?tokens/i);
+  const systemPrompt = args[args.indexOf('--append-system-prompt') + 1];
+  assert.match(systemPrompt, /Your channel transcript is append-only\./);
+  assert.match(systemPrompt, /cascade-chat history --around-message-id <id> --include-reply-context/);
+  const payloads = events.filter((event) => event.type === 'text').map((event) => JSON.parse(event.payload_json));
+  assert.ok(payloads.some((payload) => payload.chatVisible && payload.message.content[0].text === 'CLI answer'));
+  assert.ok(payloads.some((payload) => payload.message.content[0].thinking === 'CLI thought'));
+  const harness = events.filter((event) => event.type === 'harness').map((event) => JSON.parse(event.payload_json).data).join('');
+  assert.match(harness, /CLI thought/);
+  assert.match(harness, /pwd/);
+  assert.doesNotMatch(harness, /\{"command":/);
+  const heartbeat = intervals.mock.calls.find(({ arguments: args }) => args[1] === 15_000);
+  assert.ok(heartbeat);
+  assert.equal(heartbeat.result._destroyed, true);
+  heartbeat.arguments[0]();
+  assert.equal(events.at(-1).type, 'heartbeat');
 });
 
 test('Claude tool previews are readable one-line progress instead of JSON/control payloads', () => {
@@ -249,4 +239,35 @@ process.stdout.write('bridged answer\\n');
   await new Promise((resolve) => setTimeout(resolve, 50));
   assert.throws(() => process.kill(orphanLease.processGroupId, 0));
   assert.equal(JSON.parse(recoveredEvents.at(-1).payload_json).status, 'completed');
+});
+
+test('non-Claude setup failure cleans helper context, SVG attachments, and heartbeat', async (t) => {
+  const runId = 92004;
+  const directories = [];
+  const intervals = t.mock.method(global, 'setInterval');
+  const mkdtempSync = fs.mkdtempSync;
+  t.mock.method(fs, 'mkdtempSync', (...args) => {
+    const dir = mkdtempSync(...args);
+    if (String(args[0]).includes('fizzer-inline-svg-')) directories.push(dir);
+    return dir;
+  });
+  t.after(() => {
+    intervals.mock.calls.forEach(({ result }) => clearInterval(result));
+    directories.forEach((dir) => fs.rmSync(dir, { recursive: true, force: true }));
+    cleanupRunHelperConfig(runId);
+  });
+  const events = [];
+  await assert.rejects(startLocalAgentRun({
+    runId,
+    agent: 'codex',
+    prompt: '[[FIZZER_INLINE_SVG:1]]',
+    inlineSvgs: ['<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>'],
+    get cwd() { throw new Error('setup failed'); },
+  }, (event) => events.push(event)), /setup failed/);
+  assert.equal(directories.length, 1);
+  assert.equal(fs.existsSync(directories[0]), false);
+  assert.equal(fs.existsSync(path.join(runnerStateDir, 'run-contexts', `${runId}.json`)), false);
+  assert.equal(intervals.mock.callCount(), 1);
+  assert.equal(intervals.mock.calls[0].result._destroyed, true);
+  assert.equal(JSON.parse(events.at(-1).payload_json).status, 'failed');
 });

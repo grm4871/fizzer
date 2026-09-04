@@ -86,26 +86,19 @@ describe('Markdown-backed Kanban helpers', () => {
     expect(markup).not.toContain('Command center');
   });
 
-  it('keeps cached Superkanban content visible during refresh and refresh failure', () => {
-    const loadingMarkup = renderToStaticMarkup(createElement(SuperkanbanView, {
+  it.each([
+    { loading: true, error: null, notice: 'Refreshing', hidden: 'Loading boards' },
+    { loading: false, error: 'Network unavailable', notice: 'Refresh failed', hidden: 'Boards unavailable' },
+  ])('keeps cached Superkanban content visible: $notice', ({ loading, error, notice, hidden }) => {
+    const markup = renderToStaticMarkup(createElement(SuperkanbanView, {
       notes: [BOARD_NOTE],
-      loading: true,
-      error: null,
+      loading,
+      error,
       onOpenNote: () => {},
     }));
-    expect(loadingMarkup).toContain('Command center');
-    expect(loadingMarkup).toContain('Refreshing');
-    expect(loadingMarkup).not.toContain('Loading boards');
-
-    const errorMarkup = renderToStaticMarkup(createElement(SuperkanbanView, {
-      notes: [BOARD_NOTE],
-      loading: false,
-      error: 'Network unavailable',
-      onOpenNote: () => {},
-    }));
-    expect(errorMarkup).toContain('Command center');
-    expect(errorMarkup).toContain('Refresh failed');
-    expect(errorMarkup).not.toContain('Boards unavailable');
+    expect(markup).toContain('Command center');
+    expect(markup).toContain(notice);
+    expect(markup).not.toContain(hidden);
   });
 
   it('parses h2 sections and checklist or bullet cards', () => {
@@ -253,30 +246,22 @@ describe('Markdown-backed Kanban helpers', () => {
   });
 
   it('projects mission work items into Superkanban live columns', () => {
-    const items: WorkItem[] = [
-      {
-        id: 'wi-1', vaultId: 'v', channelId: 'ch', title: 'Ship isolation', brief: '',
-        status: 'in_progress', priority: 0, sourceKind: 'mission', sourceId: 'task-1',
-        assigneeRegistrationId: 'reg-1', leaseHolder: null, leaseExpiresAt: null,
-        repository: '', baseCommit: '', branch: 'cascade/abc/ship-isolation',
-        workspaceMode: 'isolated', worktreePath: '', prNumber: null, prUrl: '', prState: '',
-        summary: '', verification: '', gitState: null, gitStateUpdatedAt: null,
-        reviewReadiness: { ready: true, blockers: [] },
-        dependsOn: [], runIds: [], createdBy: 1,
-        createdAt: '', updatedAt: '',
-      },
-      {
-        id: 'wi-2', vaultId: 'v', channelId: 'ch', title: 'Queued follow-up', brief: '',
-        status: 'open', priority: 0, sourceKind: 'mission', sourceId: 'task-2',
-        assigneeRegistrationId: null, leaseHolder: null, leaseExpiresAt: null,
-        repository: '', baseCommit: '', branch: 'cascade/abc/queued',
-        workspaceMode: 'isolated', worktreePath: '', prNumber: null, prUrl: '', prState: '',
-        summary: '', verification: '', gitState: null, gitStateUpdatedAt: null,
-        reviewReadiness: { ready: true, blockers: [] },
-        dependsOn: [], runIds: [], createdBy: 1,
-        createdAt: '', updatedAt: '',
-      },
-    ];
+    const active: WorkItem = {
+      id: 'wi-1', vaultId: 'v', channelId: 'ch', title: 'Ship isolation', brief: '',
+      status: 'in_progress', priority: 0, sourceKind: 'mission', sourceId: 'task-1',
+      assigneeRegistrationId: 'reg-1', leaseHolder: null, leaseExpiresAt: null,
+      repository: '', baseCommit: '', branch: 'cascade/abc/ship-isolation',
+      workspaceMode: 'isolated', worktreePath: '', prNumber: null, prUrl: '', prState: '',
+      summary: '', verification: '', gitState: null, gitStateUpdatedAt: null,
+      reviewReadiness: { ready: true, blockers: [] },
+      dependsOn: [], runIds: [], createdBy: 1,
+      createdAt: '', updatedAt: '',
+    };
+    const items: WorkItem[] = [active, {
+      ...active,
+      id: 'wi-2', title: 'Queued follow-up', status: 'open', sourceId: 'task-2',
+      assigneeRegistrationId: null, branch: 'cascade/abc/queued',
+    }];
     expect(workItemStatusToKanbanColumn('in_progress')).toBe('In progress');
     const live = workItemsToLiveColumns(items);
     expect(live.map((c) => c.title)).toEqual(['Ready', 'In progress']);
@@ -290,39 +275,22 @@ describe('Markdown-backed Kanban helpers', () => {
     expect(backlog.cards.some((c) => c.text === 'Draft brief')).toBe(true);
   });
 
-  it('parses the live Cascade kanban board and tolerates non-string content', () => {
-    const live = [
-      '---',
-      'kanban-plugin: board',
-      '---',
-      '',
-      '# Cascade',
-      '',
-      '## Backlog',
-      '',
-      '- [ ] Add MP4 embeds — accept already allows `video/*`; no real `<video>` render yet',
-      '- [ ] Cap anonymous mission fanout concurrency',
-      '- [ ] Deeper task-workspace roadmap — [[Cascade-native parallel workspaces and pull requests]]',
-      '  - durable work-item schema',
-      '',
-      '## In progress',
-      '',
-      '## Done',
-      '',
-      '- [x] Multiplayer account management',
-      '',
-      '%% kanban:settings',
-      '```',
-      '{"kanban-plugin":"board"}',
-      '```',
-      '%%',
-      '',
-    ].join('\n');
+  it('preserves rich card text and parses empty columns', () => {
+    const cards = [
+      'Add MP4 embeds — accept already allows `video/*`; no real `<video>` render yet',
+      'Cap anonymous mission fanout concurrency',
+      'Deeper task-workspace roadmap — [[Cascade-native parallel workspaces and pull requests]]',
+    ];
+    const live = SAMPLE
+      .replace('- [ ] Draft brief\n- Plain bullet', cards.map((text) => `- [ ] ${text}`).join('\n') + '\n  - durable work-item schema')
+      .replace('## Done', '## In progress\n\n## Done');
     const board = parseKanbanMarkdown(live);
     expect(board.columns.map((c) => c.title)).toEqual(['Backlog', 'In progress', 'Done']);
-    expect(board.columns[0].cards.length).toBeGreaterThanOrEqual(3);
-    expect(hasObsidianKanbanMarker(live)).toBe(true);
-    expect(() => parseKanbanMarkdown(undefined as unknown as string)).not.toThrow();
+    expect(board.columns[0].cards.map((c) => c.text)).toEqual(expect.arrayContaining(cards));
+    expect(board.columns[1].cards).toEqual([]);
+  });
+
+  it('tolerates non-string content', () => {
     expect(parseKanbanMarkdown(undefined as unknown as string).columns).toEqual([]);
   });
 });

@@ -4,16 +4,7 @@ defmodule Cascade.Runs.PromptContextTest do
   alias Cascade.Accounts.SQL
   alias Cascade.Content.Query
   alias Cascade.Runs.PromptContext
-  alias Cascade.{Evolution, Scratchpad}
-
-  setup_all do
-    Cascade.Accounts.Schema.ensure!()
-    Cascade.Chat.Schema.ensure!()
-    Cascade.Runs.Schema.ensure!()
-    Evolution.ensure_schema()
-    Scratchpad.ensure_schema()
-    :ok
-  end
+  alias Cascade.Evolution
 
   setup do
     suffix = System.unique_integer([:positive])

@@ -60,14 +60,10 @@ import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type Database from 'better-sqlite3';
-
-type Db = Database.Database;
 
 export const activeCliProcesses = new Map<number, ChildProcess>();
 const activePersistentCancels = new Map<number, () => void>();
 const groupedCliProcesses = new Set<number>();
-const runHelperEnvByRunId = new Map<number, NodeJS.ProcessEnv>();
 const agentProcessLeaseDir = process.env.CASCADE_AGENT_PROCESS_DIR
   || path.join(os.homedir(), '.cascade', 'agent-processes');
 
@@ -309,22 +305,6 @@ export function cancelCliAgentRun(runId: number): boolean {
   return true;
 }
 
-export function setRunHelperEnv(runId: number, env: NodeJS.ProcessEnv): void {
-  runHelperEnvByRunId.set(runId, env);
-}
-
-export function clearRunHelperEnv(runId: number): void {
-  runHelperEnvByRunId.delete(runId);
-}
-
-function spawnEnv(runId?: number): NodeJS.ProcessEnv {
-  if (runId !== undefined) {
-    const runEnv = runHelperEnvByRunId.get(runId);
-    if (runEnv) return { ...process.env, ...runEnv };
-  }
-  return process.env;
-}
-
 // ═══════════════════════════════════════════════════════════════
 // TYPES
 // ═══════════════════════════════════════════════════════════════
@@ -451,11 +431,16 @@ function createIdleTimer(
   return { bump, clear };
 }
 
-/** Binary names are overridable in case they are not on the runner machine's PATH. */
-const CODEX_BIN = process.env.CODEX_BIN || 'codex';
-const GROK_BIN = process.env.GROK_BIN || 'grok';
-const COPILOT_BIN = process.env.COPILOT_BIN || 'copilot';
-const HERMES_BIN = process.env.HERMES_BIN || 'hermes';
+/**
+ * Binary names are overridable via env for tests and non-PATH installs.
+ * Resolved at call time — not module load — so `process.env.AKRON_BIN = fake`
+ * after `import('./cli-agent.js')` still wins (Electron loads this module once
+ * and caches it across runs).
+ */
+function resolveCliBin(envKey: string, fallback: string): string {
+  const value = process.env[envKey];
+  return (typeof value === 'string' && value.trim()) ? value : fallback;
+}
 /** Borders of the box-drawn reasoning panel Hermes prints on stdout under `-Q`. */
 const HERMES_REASONING_OPEN = /^┌─+\s*Reasoning\s*─/;
 const HERMES_REASONING_CLOSE = /^└─+┘?$/;
@@ -484,10 +469,6 @@ const HERMES_UPSTREAM_BACKOFF_MS = Math.max(250, Number(process.env.RUNNER_HERME
 // Cap the escalating backoff so a long retry streak keeps polling on a steady
 // cadence instead of stretching to minutes between attempts.
 const HERMES_UPSTREAM_BACKOFF_CAP_MS = Math.max(HERMES_UPSTREAM_BACKOFF_MS, Number(process.env.RUNNER_HERMES_UPSTREAM_BACKOFF_CAP_MS || 30_000));
-const AKRON_BIN = process.env.AKRON_BIN || 'akron';
-const OMP_BIN = process.env.OMP_BIN || 'omp';
-const PI_BIN = process.env.PI_BIN || 'pi';
-
 export type CliAgentId = 'codex' | 'grok' | 'antigravity' | 'copilot' | 'hermes' | 'akron-grok' | 'omp' | 'pi';
 
 const CLI_AGENT_LABELS: Record<CliAgentId, string> = {
@@ -504,19 +485,19 @@ const CLI_AGENT_LABELS: Record<CliAgentId, string> = {
 export function getCliAgentBin(agent: CliAgentId): string {
   switch (agent) {
     case 'codex':
-      return CODEX_BIN;
+      return resolveCliBin('CODEX_BIN', 'codex');
     case 'grok':
-      return GROK_BIN;
+      return resolveCliBin('GROK_BIN', 'grok');
     case 'copilot':
-      return COPILOT_BIN;
+      return resolveCliBin('COPILOT_BIN', 'copilot');
     case 'hermes':
-      return HERMES_BIN;
+      return resolveCliBin('HERMES_BIN', 'hermes');
     case 'akron-grok':
-      return AKRON_BIN;
+      return resolveCliBin('AKRON_BIN', 'akron');
     case 'omp':
-      return OMP_BIN;
+      return resolveCliBin('OMP_BIN', 'omp');
     case 'pi':
-      return PI_BIN;
+      return resolveCliBin('PI_BIN', 'pi');
     case 'antigravity':
       return process.env.ANTIGRAVITY_BIN || path.join(os.homedir(), '.gemini', 'antigravity', 'bin', 'agentapi');
   }
@@ -589,7 +570,6 @@ interface CliAgentOpts {
   images?: CliImage[];
   emit: AgentEmit;
   runId?: number;
-  db?: Db;
   model?: string;
   /** Codex-only reasoning effort override. */
   reasoningEffort?: string;
@@ -658,7 +638,7 @@ export async function runCliAgent(opts: CliAgentOpts): Promise<CliAgentResult> {
     return runPi(prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.images || [], opts.runId, opts.model, opts.env);
   } else {
     return runAntigravity(
-      prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.runId, opts.db, opts.model, opts.yolo, opts.env,
+      prompt, opts.cwd, opts.emit, opts.resumeSessionId, opts.runId, opts.model, opts.yolo, opts.env,
     );
   }
 }
@@ -705,7 +685,7 @@ function driveProcess(
   bin: string,
   args: string[],
   cwd: string,
-  onLine: (line: string) => void,
+  onLine: (line: string, carriageReturn?: boolean) => void,
   getSummary: () => string,
   label: string,
   runId?: number,
@@ -714,19 +694,55 @@ function driveProcess(
   /** Tee of stderr, for callers that must inspect a CLI's diagnostics after a
    *  zero-exit failure (e.g. Codex reporting a dead session). */
   onStderr?: (chunk: string) => void,
+  hermes?: { onStderrLine: (line: string) => void; idleTimeoutMs: number },
 ): Promise<string> {
+  const idleTimeoutMs = hermes?.idleTimeoutMs ?? CLI_IDLE_TIMEOUT_MS;
+
   return new Promise((resolve, reject) => {
     let child;
+    const leaseToken = hermes ? randomBytes(16).toString('hex') : undefined;
+    if (hermes) emitHarness(emit, `\x1b[2m# launching ${label} harness\x1b[0m\r\n`);
     try {
       child = spawn(bin, args, {
         cwd,
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: env ? { ...spawnEnv(runId), ...env } : spawnEnv(runId),
+        // Hermes launchers own provider bridges and tool descendants.
+        detached: Boolean(hermes) && process.platform !== 'win32',
+        env: {
+          ...(env ? { ...process.env, ...env } : process.env),
+          ...(hermes ? {
+            HERMES_CASCADE_EVENTS: '1',
+            CASCADE_AGENT_PROCESS_TOKEN: leaseToken,
+            ...(runId !== undefined ? { CASCADE_RUN_ID: String(runId) } : {}),
+          } : {}),
+        },
       });
       if (runId !== undefined) {
         activeCliProcesses.set(runId, child);
+        if (hermes && process.platform !== 'win32') {
+          groupedCliProcesses.add(runId);
+          if (child.pid && process.platform === 'linux') {
+            writeAgentProcessLease({
+              version: 1,
+              runId,
+              ownerPid: process.pid,
+              ownerStartTicks: processStartTicks(process.pid),
+              processGroupId: child.pid,
+              token: leaseToken!,
+              label,
+            });
+          }
+        }
       }
     } catch (err) {
+      if (hermes && child) terminateCliProcessWithEscalation(child, process.platform !== 'win32');
+      if (runId !== undefined) {
+        activeCliProcesses.delete(runId);
+        if (hermes) {
+          groupedCliProcesses.delete(runId);
+          clearAgentProcessLease(runId);
+        }
+      }
       reject(new Error(`Failed to launch ${label} ('${bin}'): ${err instanceof Error ? err.message : String(err)}`));
       return;
     }
@@ -734,6 +750,10 @@ function driveProcess(
     const cleanUpProcess = () => {
       if (runId !== undefined) {
         activeCliProcesses.delete(runId);
+        if (hermes) {
+          groupedCliProcesses.delete(runId);
+          clearAgentProcessLease(runId);
+        }
       }
     };
 
@@ -742,20 +762,37 @@ function driveProcess(
 
     let stderr = '';
     let stdoutBuf = '';
+    let stderrBuf = '';
+    const consumeStderrLine = (line: string) => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      if (hermes && (trimmed.startsWith('{') || /^session_id:\s*/i.test(trimmed))) {
+        try { hermes.onStderrLine(trimmed); } catch { /* ignore a single malformed event */ }
+      } else {
+        stderr += trimmed + '\n';
+      }
+    };
     let settled = false;
+    let quietSince = Date.now();
+    const heartbeat = hermes ? setInterval(() => {
+      if (settled || Date.now() - quietSince < CLI_PROGRESS_HEARTBEAT_MS) return;
+      const quietSeconds = Math.max(1, Math.round((Date.now() - quietSince) / 1_000));
+      emitHarness(emit, `\x1b[2m# ${label} still working · ${quietSeconds}s without provider output\x1b[0m\r\n`);
+    }, CLI_PROGRESS_HEARTBEAT_MS) : undefined;
     const idle = createIdleTimer(() => {
       if (!settled) {
         settled = true;
+        if (heartbeat) clearInterval(heartbeat);
         cleanUpProcess();
-        child.kill('SIGTERM');
-        reject(new Error(`${label} produced no output for ${CLI_IDLE_TIMEOUT_MS}ms and was stopped.`));
+        if (hermes) terminateCliProcessWithEscalation(child, process.platform !== 'win32');
+        else child.kill('SIGTERM');
+        reject(new (hermes ? CliIdleTimeoutError : Error)(`${label} produced no output for ${idleTimeoutMs}ms and was stopped.`));
       }
-    });
+    }, idleTimeoutMs);
 
-    // Single stdout consumer: tee raw bytes to the harness terminal and split
-    // lines for JSONL parsing (readline would contend for the same stream).
     child.stdout.on('data', (d: Buffer | string) => {
       const chunk = d.toString();
+      quietSince = Date.now();
       idle.bump();
       emitHarness(emit, chunk);
       stdoutBuf += chunk;
@@ -763,9 +800,13 @@ function driveProcess(
       while (nl >= 0) {
         const line = stdoutBuf.slice(0, nl);
         stdoutBuf = stdoutBuf.slice(nl + 1);
+        // Hermes renders its reasoning box with CR-terminated lines (they are
+        // meant to be redrawn in place) while the final answer ends with a bare
+        // LF. trim() destroys that distinction, so report it separately.
+        const carriageReturn = line.endsWith('\r');
         const trimmed = line.trim();
         if (trimmed) {
-          try { onLine(trimmed); } catch { /* ignore a single malformed line */ }
+          try { onLine(trimmed, carriageReturn); } catch { /* ignore a single malformed line */ }
         }
         nl = stdoutBuf.indexOf('\n');
       }
@@ -773,17 +814,27 @@ function driveProcess(
 
     child.stderr.on('data', (d: Buffer | string) => {
       const chunk = d.toString();
+      quietSince = Date.now();
       idle.bump();
-      stderr += chunk;
+      if (!hermes) stderr += chunk;
       onStderr?.(chunk);
-      // Dim red for stderr so it is distinguishable in the terminal pane.
       emitHarness(emit, `\x1b[31m${chunk}\x1b[0m`);
+      if (!hermes) return;
+      stderrBuf += chunk;
+      let nl = stderrBuf.indexOf('\n');
+      while (nl >= 0) {
+        const line = stderrBuf.slice(0, nl);
+        stderrBuf = stderrBuf.slice(nl + 1);
+        consumeStderrLine(line);
+        nl = stderrBuf.indexOf('\n');
+      }
     });
 
     child.on('error', (err) => {
       if (settled) return;
       settled = true;
       idle.clear();
+      if (heartbeat) clearInterval(heartbeat);
       cleanUpProcess();
       reject(new Error(`${label} ('${bin}') could not be started: ${err.message}. Is it installed and on PATH?`));
     });
@@ -792,12 +843,13 @@ function driveProcess(
       if (settled) return;
       settled = true;
       idle.clear();
+      if (heartbeat) clearInterval(heartbeat);
       cleanUpProcess();
-      // Flush a trailing partial stdout line (no final newline).
-      const trailing = stdoutBuf.trim();
-      if (trailing) {
-        try { onLine(trailing); } catch { /* ignore */ }
+      const trailingOut = stdoutBuf.trim();
+      if (trailingOut) {
+        try { onLine(trailingOut); } catch { /* ignore */ }
       }
+      consumeStderrLine(stderrBuf);
       emitHarness(emit, `\x1b[2m# exit ${code ?? '?'}\x1b[0m\r\n`);
       if (code === 0) {
         resolve(getSummary());
@@ -1050,8 +1102,8 @@ class CodexAppServerClient {
     this.initialized = new Promise<void>((resolve, reject) => {
       let child: ChildProcessWithoutNullStreams;
       try {
-        child = spawn(CODEX_BIN, ['app-server', '--stdio'], {
-          cwd: os.homedir(), env: spawnEnv(), stdio: ['pipe', 'pipe', 'pipe'],
+        child = spawn(getCliAgentBin('codex'), ['app-server', '--stdio'], {
+          cwd: os.homedir(), env: process.env, stdio: ['pipe', 'pipe', 'pipe'],
         });
       } catch (error) {
         reject(new Error(`Failed to launch Codex app-server: ${error instanceof Error ? error.message : String(error)}`));
@@ -1213,7 +1265,7 @@ function codexAppToolUseBlock(item: JsonObject): JsonObject {
 }
 
 function persistentCodexEnabled(): boolean {
-  return process.env.RUNNER_CODEX_PERSISTENT !== '0' && path.basename(CODEX_BIN) === 'codex';
+  return process.env.RUNNER_CODEX_PERSISTENT !== '0' && path.basename(getCliAgentBin('codex')) === 'codex';
 }
 
 /**
@@ -1263,7 +1315,7 @@ async function runCodex(
         priorityServiceTier,
         yolo,
         sandbox,
-        env: env ? { ...spawnEnv(runId), ...env } : spawnEnv(runId),
+        env: env ? { ...process.env, ...env } : process.env,
       });
     } finally {
       cleanup();
@@ -1396,7 +1448,7 @@ async function runCodex(
   let stderrText = '';
   const collectStderr = (chunk: string) => { stderrText += chunk; };
   const drive = (attemptArgs: string[]) => driveProcess(
-    CODEX_BIN, attemptArgs, cwd, onLine,
+    getCliAgentBin('codex'), attemptArgs, cwd, onLine,
     () => summary || '',
     'Codex', runId, emit, env, collectStderr,
   );
@@ -1520,7 +1572,7 @@ async function runGrok(
   };
 
   try {
-    const summaryText = await driveProcess(GROK_BIN, args, cwd, onLine, () => text || '', 'Grok', runId, emit, env);
+    const summaryText = await driveProcess(getCliAgentBin('grok'), args, cwd, onLine, () => text || '', 'Grok', runId, emit, env);
     return { summary: summaryText, sessionId };
   } catch (error) {
     const diagnostic = extractGrokDiagnostic(debugFile);
@@ -1871,7 +1923,7 @@ function runCommand(
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     const discoveredEnv = discoverAntigravityEnv(cwd);
-    const env = { ...(baseEnv || spawnEnv(runId)), ...discoveredEnv };
+    const env = { ...(baseEnv || process.env), ...discoveredEnv };
 
     if (!env.ANTIGRAVITY_LS_ADDRESS || !env.ANTIGRAVITY_CSRF_TOKEN) {
       reject(new Error(
@@ -1942,7 +1994,6 @@ async function runAntigravity(
   emit: AgentEmit,
   resumeId?: string,
   runId?: number,
-  db?: Db,
   model?: string,
   yolo?: boolean,
   env?: NodeJS.ProcessEnv,
@@ -1979,7 +2030,7 @@ async function runAntigravity(
 
   let stdoutStr: string;
   try {
-    stdoutStr = await runCommand(bin, args, cwd, runId, emit, env ? { ...spawnEnv(runId), ...env } : undefined);
+    stdoutStr = await runCommand(bin, args, cwd, runId, emit, env ? { ...process.env, ...env } : undefined);
   } catch (err) {
     throw new Error(`Failed to run agentapi: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -2016,7 +2067,7 @@ async function runAntigravity(
     if (Date.now() > waitDeadline) {
       throw new Error(`Transcript file was not created at ${transcriptPath}`);
     }
-    if (runId !== undefined && isAntigravityRunCanceled(runId, db)) {
+    if (runId !== undefined && antigravityCancelFlags.has(runId)) {
       return { summary: 'Run canceled by user.', sessionId: conversationId };
     }
     await sleep(AGY_POLL_MS);
@@ -2179,7 +2230,7 @@ async function runAntigravity(
   };
 
   while (!done) {
-    if (runId !== undefined && isAntigravityRunCanceled(runId, db)) {
+    if (runId !== undefined && antigravityCancelFlags.has(runId)) {
       return { summary: summary || 'Run canceled by user.', sessionId: conversationId };
     }
     // Desktop cancel kills the agentapi child; after that we only poll. Also
@@ -2204,20 +2255,6 @@ async function runAntigravity(
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function isAntigravityRunCanceled(runId: number, db?: Db): boolean {
-  // Cancel path: cancelLocalAgentRun kills the child; desktop also finishes
-  // the run as canceled. Check DB when available; otherwise check process map
-  // was force-cleared with a sentinel — we use a side map.
-  if (antigravityCancelFlags.has(runId)) return true;
-  if (!db) return false;
-  try {
-    const row = db.prepare('SELECT status FROM runs WHERE id = ?').get(runId) as { status?: string } | undefined;
-    return row?.status === 'canceled' || row?.status === 'failed';
-  } catch {
-    return false;
-  }
 }
 
 /** Set by cancel hooks so transcript polling stops promptly. */
@@ -2379,7 +2416,7 @@ async function runCopilot(prompt: string, cwd: string, emit: AgentEmit, resumeId
     }
   };
 
-  const summaryText = await driveProcess(COPILOT_BIN, args, cwd, onLine, () => summary || '', 'Copilot', runId, emit, env);
+  const summaryText = await driveProcess(getCliAgentBin('copilot'), args, cwd, onLine, () => summary || '', 'Copilot', runId, emit, env);
   return { summary: summaryText, sessionId: sessionId || resumeId };
 }
 
@@ -2465,7 +2502,7 @@ async function runHermes(prompt: string, cwd: string, emit: AgentEmit, resumeId?
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     try {
       summaryText = await driveHermesProcess(
-        HERMES_BIN,
+        getCliAgentBin('hermes'),
         args,
         cwd,
         onStdoutLine,
@@ -2540,7 +2577,7 @@ async function runAkronGrok(prompt: string, cwd: string, emit: AgentEmit, _resum
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       summaryText = await driveHermesProcess(
-        AKRON_BIN,
+        getCliAgentBin('akron-grok'),
         args,
         cwd,
         onStdoutLine,
@@ -2579,169 +2616,8 @@ function driveHermesProcess(
   env?: NodeJS.ProcessEnv,
   idleTimeoutMs = CLI_IDLE_TIMEOUT_MS,
 ): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let child;
-    const leaseToken = randomBytes(16).toString('hex');
-    // A launcher can spend time constructing its provider bridge before it
-    // writes its first byte. Give the run panel an unambiguous lifecycle event
-    // first, so a live process is never presented as a blank harness.
-    emitHarness(emit, `\x1b[2m# launching ${label} harness\x1b[0m\r\n`);
-    try {
-      child = spawn(bin, args, {
-        cwd,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        // Akron's launcher owns a bridge plus Hermes/tool descendants. Give
-        // Hermes-family runs their own process group so Stop reaches the whole
-        // tree instead of only terminating the outer bash wrapper.
-        detached: process.platform !== 'win32',
-        env: {
-          ...(env ? { ...spawnEnv(runId), ...env } : spawnEnv(runId)),
-          HERMES_CASCADE_EVENTS: '1',
-          CASCADE_AGENT_PROCESS_TOKEN: leaseToken,
-          ...(runId !== undefined ? { CASCADE_RUN_ID: String(runId) } : {}),
-        },
-      });
-      if (runId !== undefined) {
-        activeCliProcesses.set(runId, child);
-        if (process.platform !== 'win32') {
-          groupedCliProcesses.add(runId);
-          if (child.pid && process.platform === 'linux') {
-            writeAgentProcessLease({
-              version: 1,
-              runId,
-              ownerPid: process.pid,
-              ownerStartTicks: processStartTicks(process.pid),
-              processGroupId: child.pid,
-              token: leaseToken,
-              label,
-            });
-          }
-        }
-      }
-    } catch (err) {
-      if (child) terminateCliProcessWithEscalation(child, process.platform !== 'win32');
-      if (runId !== undefined) {
-        activeCliProcesses.delete(runId);
-        groupedCliProcesses.delete(runId);
-        clearAgentProcessLease(runId);
-      }
-      reject(new Error(`Failed to launch ${label} ('${bin}'): ${err instanceof Error ? err.message : String(err)}`));
-      return;
-    }
-
-    const cleanUpProcess = () => {
-      if (runId !== undefined) {
-        activeCliProcesses.delete(runId);
-        groupedCliProcesses.delete(runId);
-        clearAgentProcessLease(runId);
-      }
-    };
-
-    emitHarness(emit, `\x1b[2m$ ${bin} ${args.map((a) => (/\s/.test(a) ? JSON.stringify(a) : a)).join(' ')}\x1b[0m\r\n`);
-    emitHarness(emit, `\x1b[2m# cwd ${cwd}\x1b[0m\r\n`);
-
-    let stderr = '';
-    let stdoutBuf = '';
-    let stderrBuf = '';
-    let settled = false;
-    let quietSince = Date.now();
-    const heartbeat = setInterval(() => {
-      if (settled || Date.now() - quietSince < CLI_PROGRESS_HEARTBEAT_MS) return;
-      const quietSeconds = Math.max(1, Math.round((Date.now() - quietSince) / 1_000));
-      emitHarness(emit, `\x1b[2m# ${label} still working · ${quietSeconds}s without provider output\x1b[0m\r\n`);
-    }, CLI_PROGRESS_HEARTBEAT_MS);
-    const idle = createIdleTimer(() => {
-      if (!settled) {
-        settled = true;
-        clearInterval(heartbeat);
-        cleanUpProcess();
-        terminateCliProcessWithEscalation(child, process.platform !== 'win32');
-        reject(new CliIdleTimeoutError(`${label} produced no output for ${idleTimeoutMs}ms and was stopped.`));
-      }
-    }, idleTimeoutMs);
-
-    child.stdout.on('data', (d: Buffer | string) => {
-      const chunk = d.toString();
-      quietSince = Date.now();
-      idle.bump();
-      emitHarness(emit, chunk);
-      stdoutBuf += chunk;
-      let nl = stdoutBuf.indexOf('\n');
-      while (nl >= 0) {
-        const line = stdoutBuf.slice(0, nl);
-        stdoutBuf = stdoutBuf.slice(nl + 1);
-        // Hermes renders its reasoning box with CR-terminated lines (they are
-        // meant to be redrawn in place) while the final answer ends with a bare
-        // LF. trim() destroys that distinction, so report it separately.
-        const carriageReturn = line.endsWith('\r');
-        const trimmed = line.trim();
-        if (trimmed) {
-          try { onStdoutLine(trimmed, carriageReturn); } catch { /* ignore a single malformed line */ }
-        }
-        nl = stdoutBuf.indexOf('\n');
-      }
-    });
-
-    child.stderr.on('data', (d: Buffer | string) => {
-      const chunk = d.toString();
-      quietSince = Date.now();
-      idle.bump();
-      emitHarness(emit, `\x1b[31m${chunk}\x1b[0m`);
-      stderrBuf += chunk;
-      let nl = stderrBuf.indexOf('\n');
-      while (nl >= 0) {
-        const line = stderrBuf.slice(0, nl);
-        stderrBuf = stderrBuf.slice(nl + 1);
-        const trimmed = line.trim();
-        if (!trimmed) {
-          nl = stderrBuf.indexOf('\n');
-          continue;
-        }
-        if (trimmed.startsWith('{') || /^session_id:\s*/i.test(trimmed)) {
-          try { onStderrLine(trimmed); } catch { /* ignore a single malformed event */ }
-        } else {
-          stderr += trimmed + '\n';
-        }
-        nl = stderrBuf.indexOf('\n');
-      }
-    });
-
-    child.on('error', (err) => {
-      if (settled) return;
-      settled = true;
-      idle.clear();
-      clearInterval(heartbeat);
-      cleanUpProcess();
-      reject(new Error(`${label} ('${bin}') could not be started: ${err.message}. Is it installed and on PATH?`));
-    });
-
-    child.on('close', (code) => {
-      if (settled) return;
-      settled = true;
-      idle.clear();
-      clearInterval(heartbeat);
-      cleanUpProcess();
-      const trailingOut = stdoutBuf.trim();
-      if (trailingOut) {
-        try { onStdoutLine(trailingOut); } catch { /* ignore */ }
-      }
-      const trailingErr = stderrBuf.trim();
-      if (trailingErr) {
-        if (trailingErr.startsWith('{') || /^session_id:\s*/i.test(trailingErr)) {
-          try { onStderrLine(trailingErr); } catch { /* ignore */ }
-        } else {
-          stderr += trailingErr + '\n';
-        }
-      }
-      emitHarness(emit, `\x1b[2m# exit ${code ?? '?'}\x1b[0m\r\n`);
-      if (code === 0) {
-        resolve(getSummary());
-      } else {
-        const detail = stderr.trim().split('\n').slice(-5).join('\n');
-        reject(new Error(`${label} exited with code ${code}.${detail ? `\n${detail}` : ''}`));
-      }
-    });
-  });
+  return driveProcess(bin, args, cwd, onStdoutLine, getSummary, label, runId, emit, env,
+    undefined, { onStderrLine, idleTimeoutMs });
 }
 // ═══════════════════════════════════════════════════════════════
 // PI-FAMILY JSON EVENT AGENTS
@@ -2877,7 +2753,7 @@ async function runOmp(
   const { paths, cleanup } = writeTempImages(images);
   const baseArgs = [prompt, '--mode', 'json', '--allow-home', ...paths.map((file) => `@${file}`), ...(model ? ['--model', model] : [])];
   try {
-    const result = await runPiJsonAgent(OMP_BIN, 'OMP', resumeId ? ['--resume', resumeId, ...baseArgs] : baseArgs, cwd, emit, runId, env);
+    const result = await runPiJsonAgent(getCliAgentBin('omp'), 'OMP', resumeId ? ['--resume', resumeId, ...baseArgs] : baseArgs, cwd, emit, runId, env);
     return { ...result, sessionId: result.sessionId || resumeId };
   } finally {
     cleanup();
@@ -2897,7 +2773,7 @@ async function runPi(
     prompt,
   ];
   try {
-    const result = await runPiJsonAgent(PI_BIN, 'Pi', args, cwd, emit, runId, env);
+    const result = await runPiJsonAgent(getCliAgentBin('pi'), 'Pi', args, cwd, emit, runId, env);
     return { ...result, sessionId: result.sessionId || resumeId };
   } finally {
     cleanup();

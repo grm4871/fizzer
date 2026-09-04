@@ -79,7 +79,6 @@ defmodule Cascade.Evolution do
   end
 
   def index_chat_message_backlinks(vault_id, channel_id, message) do
-    ensure_schema()
     titles = extract_wiki_titles(value(message, :body, ""))
     snippet = truncate_snippet(value(message, :body, ""))
     created_at = value(message, :created_at, nil) || value(message, :createdAt, nil) || now()
@@ -113,14 +112,11 @@ defmodule Cascade.Evolution do
   end
 
   def tombstone_chat_message_backlinks(message_id) do
-    ensure_schema()
     Query.execute("UPDATE chat_note_backlinks SET deleted = 1 WHERE message_id = ?", [message_id])
     :ok
   end
 
   def reresolve_chat_backlinks(vault_id, note_id, title) do
-    ensure_schema()
-
     Query.execute(
       "UPDATE chat_note_backlinks SET note_id = ? WHERE vault_id = ? AND note_id IS NULL AND target_title = ? COLLATE NOCASE AND deleted = 0",
       [note_id, vault_id, title]
@@ -128,7 +124,6 @@ defmodule Cascade.Evolution do
   end
 
   def list_chat_note_backlinks(note_id, opts \\ []) do
-    ensure_schema()
     limit = opts |> Keyword.get(:limit, 50) |> bounded(1, 200)
     offset = opts |> Keyword.get(:offset, 0) |> bounded(0, 2_147_483_647)
     note = Store.get_note(note_id)
@@ -166,7 +161,6 @@ defmodule Cascade.Evolution do
   end
 
   def backfill_chat_note_backlinks(vault_id, opts \\ []) do
-    ensure_schema()
     limit = opts |> Keyword.get(:limit, 500) |> bounded(1, 5_000)
     after_rowid = opts |> Keyword.get(:after_rowid, 0) |> number(0) |> trunc()
 
@@ -190,7 +184,6 @@ defmodule Cascade.Evolution do
   end
 
   def distill_chat_to_note(user_id, vault_id, channel_id, input) do
-    ensure_schema()
     vault = Store.get_vault(vault_id, user_id) || raise(ArgumentError, "Vault not found")
     route = assert_chat_channel(channel_id, user_id)
     if route.local_vault_id != vault.id, do: raise(ArgumentError, "Chat channel not found")
@@ -262,8 +255,6 @@ defmodule Cascade.Evolution do
   end
 
   def agent_memory_enabled?(vault_id) do
-    ensure_schema()
-
     case Query.one("SELECT agent_memory_enabled FROM vault_settings WHERE vault_id = ?", [
            vault_id
          ]) do
@@ -273,8 +264,6 @@ defmodule Cascade.Evolution do
   end
 
   def set_agent_memory_enabled(vault_id, enabled) do
-    ensure_schema()
-
     Query.execute(
       """
       INSERT INTO vault_settings (vault_id, agent_memory_enabled, updated_at) VALUES (?, ?, datetime('now'))

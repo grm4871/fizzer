@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { api, formatRelativeDate } from '../api';
 import { agentLabel } from '../chat/agents';
+import { stripTerminalNoise } from '../chat/harnessActivity';
 import { normalizeChatRunBlocks } from '../chat/runBlocks';
 import { ModalShell } from './ModalShell';
 
@@ -78,8 +79,6 @@ type Props = {
   onInterrogate: (vaultId: string, channelId: string, message: string) => void | Promise<void>;
 };
 
-const ANSI_RE = /\u001b\[[0-?]*[ -/]*[@-~]/g;
-const CONTROL_RE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g;
 const MOBILE_QUERY = '(max-width: 720px)';
 
 function parsePayload(event: RunEvent): Record<string, unknown> {
@@ -102,7 +101,7 @@ function readableJson(value: unknown): string {
 }
 
 function trimActivityText(value: string, max = 16_000): string {
-  const cleaned = value.replace(ANSI_RE, '').replace(CONTROL_RE, '').trim();
+  const cleaned = stripTerminalNoise(value).trim();
   return cleaned.length > max ? `${cleaned.slice(0, max)}\n…` : cleaned;
 }
 

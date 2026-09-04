@@ -1,6 +1,6 @@
 defmodule CascadeWeb.OrchestrationRouter do
   @moduledoc "Mountable native run, runner, work-item, and managed-agent HTTP surface."
-  use Plug.Router
+  use CascadeWeb.DomainDispatch
 
   alias CascadeWeb.{JSON, OrchestrationController, OrchestrationRoutes}
 

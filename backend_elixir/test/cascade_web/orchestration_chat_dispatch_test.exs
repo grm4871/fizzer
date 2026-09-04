@@ -14,11 +14,6 @@ defmodule CascadeWeb.OrchestrationChatDispatchTest do
   alias Cascade.Runs.Store
 
   setup do
-    Cascade.Accounts.Schema.ensure!()
-    Cascade.Runs.Schema.ensure!()
-    Cascade.Chat.Schema.ensure!()
-    Cascade.Missions.Schema.ensure!()
-
     suffix = System.unique_integer([:positive])
     owner = user!(900_000 + suffix, "dispatch_owner_#{suffix}")
     guest = user!(1_900_000 + suffix, "dispatch_guest_#{suffix}")

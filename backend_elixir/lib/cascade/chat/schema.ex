@@ -194,82 +194,104 @@ defmodule Cascade.Chat.Schema do
   end
 
   defp create_tables! do
-    [
-      """
-      CREATE TABLE IF NOT EXISTS chat_messages (
-        id TEXT PRIMARY KEY, channel_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
-        vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE, author TEXT NOT NULL,
-        body TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT (datetime('now')),
-        activity_at TEXT, actor_user_id INTEGER REFERENCES users(id), status TEXT, agent_id TEXT,
-        registration_id TEXT, run_id INTEGER, blocks_json TEXT, harness_log TEXT, images_json TEXT,
-        attachments_json TEXT, reply_to_json TEXT, forwarded_from_json TEXT, change_request_json TEXT,
-        mission_json TEXT, mission_task_id TEXT, clarification_json TEXT
-      )
-      """,
-      """
-      CREATE TABLE IF NOT EXISTS chat_agent_members (
-        id TEXT PRIMARY KEY, channel_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
-        vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE, agent_id TEXT NOT NULL,
-        display_name TEXT NOT NULL DEFAULT '', avatar_url TEXT NOT NULL DEFAULT '',
-        mention TEXT NOT NULL DEFAULT '', model TEXT NOT NULL DEFAULT '', reasoning_effort TEXT NOT NULL DEFAULT '',
-        priority_service_tier INTEGER NOT NULL DEFAULT 0, cwd TEXT NOT NULL DEFAULT '',
-        context_prompt TEXT NOT NULL DEFAULT '', taggable_by_agents INTEGER NOT NULL DEFAULT 0,
-        reply_to_every_message INTEGER NOT NULL DEFAULT 0, orchestrator INTEGER NOT NULL DEFAULT 0,
-        pingable_by_others INTEGER NOT NULL DEFAULT 0, ambient_group_chat INTEGER NOT NULL DEFAULT 0,
-        final_reply_only INTEGER NOT NULL DEFAULT 0, yolo INTEGER NOT NULL DEFAULT 0,
-        conversation_id TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT (datetime('now')),
-        updated_at TEXT NOT NULL DEFAULT (datetime('now')), vault_agent_id TEXT NOT NULL DEFAULT ''
-      )
-      """,
-      """
-      CREATE TABLE IF NOT EXISTS vault_agents (
-        id TEXT PRIMARY KEY, vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
-        agent_id TEXT NOT NULL, display_name TEXT NOT NULL, avatar_url TEXT NOT NULL DEFAULT '',
-        mention TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', cwd TEXT NOT NULL DEFAULT '',
-        context_prompt TEXT NOT NULL DEFAULT '', hermes_profile TEXT NOT NULL DEFAULT '',
-        hermes_safe_mode INTEGER NOT NULL DEFAULT 0, identity_scope TEXT NOT NULL DEFAULT 'network',
-        expires_at TEXT, owner_user_id INTEGER REFERENCES users(id),
-        created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-        UNIQUE(owner_user_id,mention)
-      )
-      """,
-      """
-      CREATE TABLE IF NOT EXISTS vault_agent_exclusions (
-        vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
-        vault_agent_id TEXT NOT NULL REFERENCES vault_agents(id) ON DELETE CASCADE,
-        created_at TEXT NOT NULL DEFAULT (datetime('now')), PRIMARY KEY(vault_id,vault_agent_id)
-      )
-      """,
-      """
-      CREATE TABLE IF NOT EXISTS chat_channel_links (
-        local_channel_id TEXT PRIMARY KEY REFERENCES notes(id) ON DELETE CASCADE,
-        local_vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
-        source_channel_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
-        source_vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
-        created_by INTEGER NOT NULL REFERENCES users(id),
-        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-        UNIQUE(local_vault_id,source_channel_id)
-      )
-      """,
-      """
-      CREATE TABLE IF NOT EXISTS chat_channel_settings (
-        channel_id TEXT PRIMARY KEY REFERENCES notes(id) ON DELETE CASCADE, cwd TEXT NOT NULL DEFAULT '',
-        kanban_note_id TEXT REFERENCES notes(id) ON DELETE SET NULL,
-        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-      )
-      """,
-      """
-      CREATE TABLE IF NOT EXISTS chat_note_grants (
-        message_id TEXT NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
-        channel_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
-        note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
-        granted_by INTEGER NOT NULL REFERENCES users(id), created_at TEXT NOT NULL DEFAULT (datetime('now')),
-        title_snapshot TEXT, content_snapshot TEXT, preview_snapshot TEXT,
-        PRIMARY KEY(message_id,note_id)
-      )
-      """
-    ]
-    |> Enum.each(&SQL.exec/1)
+    for table <-
+          ~w(chat_messages chat_agent_members vault_agents vault_agent_exclusions chat_channel_links chat_channel_settings chat_note_grants) do
+      SQL.exec(create_table_sql(table, table))
+    end
+  end
+
+  defp create_table_sql("chat_messages", name) do
+    """
+    CREATE TABLE IF NOT EXISTS #{name} (
+      id TEXT PRIMARY KEY, channel_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+      vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE, author TEXT NOT NULL,
+      body TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      activity_at TEXT, actor_user_id INTEGER REFERENCES users(id), status TEXT, agent_id TEXT,
+      registration_id TEXT, run_id INTEGER, blocks_json TEXT, harness_log TEXT, images_json TEXT,
+      attachments_json TEXT, reply_to_json TEXT, forwarded_from_json TEXT, change_request_json TEXT,
+      mission_json TEXT, mission_task_id TEXT, clarification_json TEXT
+    )
+    """
+  end
+
+  defp create_table_sql("chat_agent_members", name) do
+    """
+    CREATE TABLE IF NOT EXISTS #{name} (
+      id TEXT PRIMARY KEY, channel_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+      vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE, agent_id TEXT NOT NULL,
+      display_name TEXT NOT NULL DEFAULT '', avatar_url TEXT NOT NULL DEFAULT '',
+      mention TEXT NOT NULL DEFAULT '', model TEXT NOT NULL DEFAULT '', reasoning_effort TEXT NOT NULL DEFAULT '',
+      priority_service_tier INTEGER NOT NULL DEFAULT 0, cwd TEXT NOT NULL DEFAULT '',
+      context_prompt TEXT NOT NULL DEFAULT '', taggable_by_agents INTEGER NOT NULL DEFAULT 0,
+      reply_to_every_message INTEGER NOT NULL DEFAULT 0, orchestrator INTEGER NOT NULL DEFAULT 0,
+      pingable_by_others INTEGER NOT NULL DEFAULT 0, ambient_group_chat INTEGER NOT NULL DEFAULT 0,
+      final_reply_only INTEGER NOT NULL DEFAULT 0, yolo INTEGER NOT NULL DEFAULT 0,
+      conversation_id TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')), vault_agent_id TEXT NOT NULL DEFAULT ''
+    )
+    """
+  end
+
+  defp create_table_sql("vault_agents", name) do
+    """
+    CREATE TABLE IF NOT EXISTS #{name} (
+      id TEXT PRIMARY KEY, vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
+      agent_id TEXT NOT NULL, display_name TEXT NOT NULL, avatar_url TEXT NOT NULL DEFAULT '',
+      mention TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', cwd TEXT NOT NULL DEFAULT '',
+      context_prompt TEXT NOT NULL DEFAULT '', hermes_profile TEXT NOT NULL DEFAULT '',
+      hermes_safe_mode INTEGER NOT NULL DEFAULT 0, identity_scope TEXT NOT NULL DEFAULT 'network',
+      expires_at TEXT, owner_user_id INTEGER REFERENCES users(id),
+      created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(owner_user_id,mention)
+    )
+    """
+  end
+
+  defp create_table_sql("vault_agent_exclusions", name) do
+    """
+    CREATE TABLE IF NOT EXISTS #{name} (
+      vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
+      vault_agent_id TEXT NOT NULL REFERENCES vault_agents(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')), PRIMARY KEY(vault_id,vault_agent_id)
+    )
+    """
+  end
+
+  defp create_table_sql("chat_channel_links", name) do
+    """
+    CREATE TABLE IF NOT EXISTS #{name} (
+      local_channel_id TEXT PRIMARY KEY REFERENCES notes(id) ON DELETE CASCADE,
+      local_vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
+      source_channel_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+      source_vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
+      created_by INTEGER NOT NULL REFERENCES users(id),
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      UNIQUE(local_vault_id,source_channel_id)
+    )
+    """
+  end
+
+  defp create_table_sql("chat_channel_settings", name) do
+    """
+    CREATE TABLE IF NOT EXISTS #{name} (
+      channel_id TEXT PRIMARY KEY REFERENCES notes(id) ON DELETE CASCADE, cwd TEXT NOT NULL DEFAULT '',
+      kanban_note_id TEXT REFERENCES notes(id) ON DELETE SET NULL,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+    """
+  end
+
+  defp create_table_sql("chat_note_grants", name) do
+    """
+    CREATE TABLE IF NOT EXISTS #{name} (
+      message_id TEXT NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
+      channel_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+      note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+      granted_by INTEGER NOT NULL REFERENCES users(id), created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      title_snapshot TEXT, content_snapshot TEXT, preview_snapshot TEXT,
+      PRIMARY KEY(message_id,note_id)
+    )
+    """
   end
 
   defp repair_node_schema_parity! do
@@ -335,96 +357,24 @@ defmodule Cascade.Chat.Schema do
       foreign_keys == Enum.sort(Map.fetch!(@node_foreign_keys, table)) and constraints?
   end
 
-  defp rebuild_node_table!("chat_messages") do
-    rebuild_node_table!(
-      "chat_messages",
-      """
-      CREATE TABLE chat_messages_node_compat (
-        id TEXT PRIMARY KEY, channel_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
-        vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE, author TEXT NOT NULL,
-        body TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT (datetime('now')),
-        activity_at TEXT, actor_user_id INTEGER REFERENCES users(id), status TEXT, agent_id TEXT,
-        registration_id TEXT, run_id INTEGER, blocks_json TEXT, harness_log TEXT, images_json TEXT,
-        attachments_json TEXT, reply_to_json TEXT, forwarded_from_json TEXT, change_request_json TEXT,
-        mission_json TEXT, mission_task_id TEXT, clarification_json TEXT
-      )
-      """,
-      ~w(id channel_id vault_id author body created_at activity_at actor_user_id status agent_id registration_id run_id blocks_json harness_log images_json attachments_json reply_to_json forwarded_from_json change_request_json mission_json mission_task_id clarification_json)
-    )
-  end
-
-  defp rebuild_node_table!("chat_agent_members") do
-    rebuild_node_table!(
-      "chat_agent_members",
-      """
-      CREATE TABLE chat_agent_members_node_compat (
-        id TEXT PRIMARY KEY, channel_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
-        vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE, agent_id TEXT NOT NULL,
-        display_name TEXT NOT NULL DEFAULT '', avatar_url TEXT NOT NULL DEFAULT '',
-        mention TEXT NOT NULL DEFAULT '', model TEXT NOT NULL DEFAULT '', reasoning_effort TEXT NOT NULL DEFAULT '',
-        priority_service_tier INTEGER NOT NULL DEFAULT 0, cwd TEXT NOT NULL DEFAULT '',
-        context_prompt TEXT NOT NULL DEFAULT '', taggable_by_agents INTEGER NOT NULL DEFAULT 0,
-        reply_to_every_message INTEGER NOT NULL DEFAULT 0, orchestrator INTEGER NOT NULL DEFAULT 0,
-        pingable_by_others INTEGER NOT NULL DEFAULT 0, ambient_group_chat INTEGER NOT NULL DEFAULT 0,
-        final_reply_only INTEGER NOT NULL DEFAULT 0, yolo INTEGER NOT NULL DEFAULT 0,
-        conversation_id TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT (datetime('now')),
-        updated_at TEXT NOT NULL DEFAULT (datetime('now')), vault_agent_id TEXT NOT NULL DEFAULT ''
-      )
-      """,
-      ~w(id channel_id vault_id agent_id display_name avatar_url mention model reasoning_effort priority_service_tier cwd context_prompt taggable_by_agents reply_to_every_message orchestrator pingable_by_others ambient_group_chat final_reply_only yolo conversation_id created_at updated_at vault_agent_id),
-      "id,channel_id,vault_id,COALESCE(agent_id,'agent'),COALESCE(display_name,''),COALESCE(avatar_url,''),COALESCE(mention,''),COALESCE(model,''),COALESCE(reasoning_effort,''),COALESCE(priority_service_tier,0),COALESCE(cwd,''),COALESCE(context_prompt,''),COALESCE(taggable_by_agents,0),COALESCE(reply_to_every_message,0),COALESCE(orchestrator,0),COALESCE(pingable_by_others,0),COALESCE(ambient_group_chat,0),COALESCE(final_reply_only,0),COALESCE(yolo,0),COALESCE(conversation_id,''),COALESCE(created_at,datetime('now')),COALESCE(updated_at,datetime('now')),COALESCE(vault_agent_id,'')"
-    )
-  end
-
-  defp rebuild_node_table!("chat_channel_links") do
-    rebuild_node_table!(
-      "chat_channel_links",
-      """
-      CREATE TABLE chat_channel_links_node_compat (
-        local_channel_id TEXT PRIMARY KEY REFERENCES notes(id) ON DELETE CASCADE,
-        local_vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
-        source_channel_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
-        source_vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
-        created_by INTEGER NOT NULL REFERENCES users(id),
-        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-        UNIQUE(local_vault_id,source_channel_id)
-      )
-      """,
-      ~w(local_channel_id local_vault_id source_channel_id source_vault_id created_by created_at)
-    )
-  end
-
-  defp rebuild_node_table!("chat_note_grants") do
-    rebuild_node_table!(
-      "chat_note_grants",
-      """
-      CREATE TABLE chat_note_grants_node_compat (
-        message_id TEXT NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
-        channel_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
-        note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
-        granted_by INTEGER NOT NULL REFERENCES users(id),
-        created_at TEXT NOT NULL DEFAULT (datetime('now')),
-        title_snapshot TEXT, content_snapshot TEXT, preview_snapshot TEXT,
-        PRIMARY KEY(message_id,note_id)
-      )
-      """,
-      ~w(message_id channel_id note_id granted_by created_at title_snapshot content_snapshot preview_snapshot)
-    )
-  end
-
-  defp rebuild_node_table!(table, create_statement, columns, select \\ nil) do
+  defp rebuild_node_table!(table) do
     replacement = table <> "_node_compat"
     SQL.exec("DROP TABLE IF EXISTS #{replacement}")
-    SQL.exec(create_statement)
-    target = Enum.join(columns, ",")
+    SQL.exec(create_table_sql(table, replacement))
+    target = Enum.map_join(Map.fetch!(@node_table_columns, table), ",", &Enum.at(&1, 1))
+
+    select =
+      if table == "chat_agent_members" do
+        "id,channel_id,vault_id,COALESCE(agent_id,'agent'),COALESCE(display_name,''),COALESCE(avatar_url,''),COALESCE(mention,''),COALESCE(model,''),COALESCE(reasoning_effort,''),COALESCE(priority_service_tier,0),COALESCE(cwd,''),COALESCE(context_prompt,''),COALESCE(taggable_by_agents,0),COALESCE(reply_to_every_message,0),COALESCE(orchestrator,0),COALESCE(pingable_by_others,0),COALESCE(ambient_group_chat,0),COALESCE(final_reply_only,0),COALESCE(yolo,0),COALESCE(conversation_id,''),COALESCE(created_at,datetime('now')),COALESCE(updated_at,datetime('now')),COALESCE(vault_agent_id,'')"
+      else
+        target
+      end
 
     # `chat_messages.rowid` is the public message sequence used by the HTTP and
     # realtime contracts. Preserve rowids while normalizing the Node table
     # layout; compacting them during an upgrade would silently rewrite every
     # historical cursor even when message order happened to remain unchanged.
-    SQL.exec(
-      "INSERT INTO #{replacement}(rowid,#{target}) SELECT rowid,#{select || target} FROM #{table}"
-    )
+    SQL.exec("INSERT INTO #{replacement}(rowid,#{target}) SELECT rowid,#{select} FROM #{table}")
 
     SQL.exec("DROP TABLE #{table}")
     SQL.exec("ALTER TABLE #{replacement} RENAME TO #{table}")
@@ -492,18 +442,7 @@ defmodule Cascade.Chat.Schema do
             SQL.transaction(fn ->
               SQL.exec("DROP TABLE IF EXISTS vault_agent_exclusions")
 
-              SQL.exec("""
-              CREATE TABLE vault_agents_owner_scoped (
-                id TEXT PRIMARY KEY, vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
-                agent_id TEXT NOT NULL, display_name TEXT NOT NULL, avatar_url TEXT NOT NULL DEFAULT '',
-                mention TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', cwd TEXT NOT NULL DEFAULT '',
-                context_prompt TEXT NOT NULL DEFAULT '', hermes_profile TEXT NOT NULL DEFAULT '',
-                hermes_safe_mode INTEGER NOT NULL DEFAULT 0, identity_scope TEXT NOT NULL DEFAULT 'network',
-                expires_at TEXT, owner_user_id INTEGER REFERENCES users(id),
-                created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-                UNIQUE(owner_user_id,mention)
-              )
-              """)
+              SQL.exec(create_table_sql("vault_agents", "vault_agents_owner_scoped"))
 
               SQL.exec(
                 "INSERT INTO vault_agents_owner_scoped SELECT id,vault_id,agent_id,display_name,avatar_url,mention,model,cwd,context_prompt,hermes_profile,hermes_safe_mode,identity_scope,expires_at,owner_user_id,created_at,updated_at FROM vault_agents"
@@ -512,13 +451,7 @@ defmodule Cascade.Chat.Schema do
               SQL.exec("DROP TABLE vault_agents")
               SQL.exec("ALTER TABLE vault_agents_owner_scoped RENAME TO vault_agents")
 
-              SQL.exec("""
-              CREATE TABLE vault_agent_exclusions (
-                vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
-                vault_agent_id TEXT NOT NULL REFERENCES vault_agents(id) ON DELETE CASCADE,
-                created_at TEXT NOT NULL DEFAULT (datetime('now')), PRIMARY KEY(vault_id,vault_agent_id)
-              )
-              """)
+              SQL.exec(create_table_sql("vault_agent_exclusions", "vault_agent_exclusions"))
 
               Enum.each(exclusions, fn [vault_id, agent_id, created_at] ->
                 SQL.exec(

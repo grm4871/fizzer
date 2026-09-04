@@ -39,8 +39,8 @@ end
 defmodule Cascade.ExtendedContentDomainTest do
   use ExUnit.Case, async: false
 
-  import Plug.Conn
   import Plug.Test
+  import Cascade.TestHelpers
 
   alias Cascade.Auth.Token
   alias Cascade.Content.{Query, Store}
@@ -59,10 +59,6 @@ defmodule Cascade.ExtendedContentDomainTest do
     System.put_env("CASCADE_VAULTS_BASE_DIR", root)
     System.put_env("CASCADE_QMD_DIR", qmd)
     Application.put_env(:cascade_elixir, :qmd_adapter, Cascade.Search.QMD.TestAdapter)
-    ensure_chat_schema()
-    Publishing.ensure_schema()
-    Evolution.ensure_schema()
-    Scratchpad.ensure_schema()
     QMD.clear_cache()
 
     user_id = suffix + 10_000
@@ -87,6 +83,36 @@ defmodule Cascade.ExtendedContentDomainTest do
       username: username,
       token: Token.sign_user(%{id: user_id, username: username, auth_version: 0})
     }
+  end
+
+  test "bootstrapped domain reads do not repeat schema or maintenance queries" do
+    assert Process.whereis(Cascade.DomainBootstrap)
+    key = {__MODULE__, make_ref()}
+
+    :ok =
+      :telemetry.attach(
+        key,
+        [:cascade, :db, :repo, :query],
+        fn _event, _measurements, metadata, {owner, key} ->
+          if self() == owner, do: Process.put(key, [metadata.query | Process.get(key, [])])
+        end,
+        {self(), key}
+      )
+
+    try do
+      Publishing.get_info("missing")
+      Publishing.get_by_slug("missing")
+      Evolution.index_chat_message_backlinks("missing", "missing", %{body: ""})
+      Evolution.agent_memory_enabled?("missing")
+      Scratchpad.status("missing")
+      Scratchpad.note_stats("missing")
+      queries = Process.get(key)
+      assert queries != []
+      assert Enum.all?(queries, &Regex.match?(~r/^\s*SELECT\b/i, &1)), inspect(queries)
+    after
+      :telemetry.detach(key)
+      Process.delete(key)
+    end
   end
 
   test "MDEx plus sanitizer is DOM-equivalent to marked plus sanitize-html golden fixtures" do
@@ -457,16 +483,8 @@ defmodule Cascade.ExtendedContentDomainTest do
   end
 
   defp request(method, path, body, token) do
-    conn =
-      if is_nil(body) do
-        conn(method, path)
-      else
-        conn(method, path, Jason.encode!(body))
-        |> put_req_header("content-type", "application/json")
-      end
-
-    conn = if token, do: put_req_header(conn, "authorization", "Bearer #{token}"), else: conn
-    CascadeWeb.ExtendedContentRouter.call(conn, @router_options)
+    json_conn(method, path, body, token)
+    |> CascadeWeb.ExtendedContentRouter.call(@router_options)
   end
 
   defp canonical_html(html) do
@@ -491,45 +509,6 @@ defmodule Cascade.ExtendedContentDomainTest do
 
   defp canonical_node(nodes) when is_list(nodes) do
     nodes |> Enum.map(&canonical_node/1) |> Enum.reject(&(&1 == ""))
-  end
-
-  defp ensure_chat_schema do
-    Query.execute("""
-    CREATE TABLE IF NOT EXISTS chat_messages (
-      id TEXT PRIMARY KEY, channel_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
-      vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
-      author TEXT NOT NULL, body TEXT NOT NULL DEFAULT '', status TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    )
-    """)
-
-    Query.execute("""
-    CREATE TABLE IF NOT EXISTS chat_channel_links (
-      local_channel_id TEXT PRIMARY KEY, local_vault_id TEXT NOT NULL,
-      source_channel_id TEXT NOT NULL, source_vault_id TEXT NOT NULL,
-      created_by INTEGER, created_at TEXT
-    )
-    """)
-
-    Enum.each(
-      [
-        {"chat_messages", "vault_id", "TEXT"},
-        {"chat_messages", "author", "TEXT NOT NULL DEFAULT ''"},
-        {"chat_messages", "body", "TEXT NOT NULL DEFAULT ''"},
-        {"chat_messages", "status", "TEXT"},
-        {"chat_messages", "created_at", "TEXT NOT NULL DEFAULT (datetime('now'))"},
-        {"chat_channel_links", "local_vault_id", "TEXT"},
-        {"chat_channel_links", "source_vault_id", "TEXT"}
-      ],
-      fn {table, column, definition} -> ensure_column(table, column, definition) end
-    )
-  end
-
-  defp ensure_column(table, column, definition) do
-    columns = Query.all("PRAGMA table_info(#{table})")
-
-    unless Enum.any?(columns, fn [_cid, name | _] -> name == column end),
-      do: Query.execute("ALTER TABLE #{table} ADD COLUMN #{column} #{definition}")
   end
 
   defp restore_env(name, nil), do: System.delete_env(name)

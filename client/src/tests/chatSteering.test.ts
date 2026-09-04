@@ -118,7 +118,7 @@ describe('agent steering presentation', () => {
     expect(getSteeringPromptLabels(messages, [agent]).get('2')).toBe('sol');
   });
 
-  it('opens a standalone live continuation instead of showing only its route badge', () => {
+  it.each([false, true])('opens standalone live traces but collapses mission traces (embedded: %s)', (embedded) => {
     const live = message('3', {
       author: 'Sol', agentId: 'codex', registrationId: agent.id,
       status: 'running', body: 'Applying the steering advice now.',
@@ -130,28 +130,12 @@ describe('agent steering presentation', () => {
       onContextMenu: () => {},
       onReply: () => {},
       runningMessageState: new Map([[agent.id, { latestId: live.id, count: 1 }]]),
+      embedded,
     }));
-    expect(markup).toMatch(/chat-work-trace phase-\w+ is-open is-live/);
-    expect(markup).toContain('Applying the steering advice now.');
-  });
-
-  it('keeps live traces embedded in mission cards collapsed', () => {
-    const live = message('3', {
-      author: 'Sol', agentId: 'codex', registrationId: agent.id,
-      status: 'running', body: 'Working inside the mission.',
-    });
-    const markup = renderToStaticMarkup(createElement(ChatWorkTrace, {
-      trace: [live],
-      selectedMessageId: null,
-      onCancelRun: () => {},
-      onContextMenu: () => {},
-      onReply: () => {},
-      runningMessageState: new Map([[agent.id, { latestId: live.id, count: 1 }]]),
-      embedded: true,
-    }));
-    expect(markup).toContain('is-live is-embedded');
-    expect(markup).not.toContain('is-open');
-    expect(markup).not.toContain('Working inside the mission.');
+    expect(markup).toContain('is-live');
+    expect(markup.includes('is-embedded')).toBe(embedded);
+    expect(markup.includes('is-open')).toBe(!embedded);
+    expect(markup.includes(live.body)).toBe(!embedded);
   });
 });
 
@@ -257,15 +241,9 @@ describe('dataUrlsToRunImages', () => {
 describe('mergeChatPresence', () => {
   const alice = { id: 1, username: 'alice', displayName: 'Alice', avatarUrl: 'https://a/alice.png' };
 
-  it('keeps cached profiles when an emit omits them', () => {
+  it.each([{}, { profiles: {} }])('keeps cached profiles with incoming fields %j', (incoming) => {
     const prior = { participants: ['alice'], online: ['alice'], owner: 'alice', profiles: { alice } };
-    const merged = mergeChatPresence(prior, { participants: ['alice'], online: [] });
-    expect(merged.profiles).toEqual({ alice });
-  });
-
-  it('does not wipe cached profiles with an explicit empty object', () => {
-    const prior = { participants: ['alice'], online: ['alice'], owner: 'alice', profiles: { alice } };
-    const merged = mergeChatPresence(prior, { participants: ['alice'], online: [], profiles: {} });
+    const merged = mergeChatPresence(prior, { participants: ['alice'], online: [], ...incoming });
     expect(merged.profiles).toEqual({ alice });
   });
 

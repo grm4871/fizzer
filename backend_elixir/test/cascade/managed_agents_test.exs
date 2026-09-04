@@ -1,43 +1,13 @@
 defmodule Cascade.ManagedAgentsTest do
   use ExUnit.Case, async: false
 
-  alias Cascade.Accounts.SQL
   alias Cascade.ManagedAgents
   alias Cascade.Runs.Store
 
   setup do
-    Cascade.Accounts.Schema.ensure!()
-    Cascade.Runs.Schema.ensure!()
-    suffix = System.unique_integer([:positive])
-    username = "managed-#{suffix}"
-    vault_id = "managed-vault-#{suffix}"
-
-    SQL.exec(
-      "INSERT INTO users (username,password_hash,display_name,avatar_url) VALUES (?,?,?,?)",
-      [username, "x", username, ""]
-    )
-
-    user_id = SQL.last_insert_id()
-
-    SQL.exec("INSERT INTO vaults (id,name,root_path,created_by) VALUES (?,?,?,?)", [
-      vault_id,
-      "Managed",
-      "/tmp/#{vault_id}",
-      user_id
-    ])
-
-    SQL.exec(
-      "INSERT INTO vault_members (vault_id,user_id,role,invited_by) VALUES (?,?,?,?)",
-      [vault_id, user_id, "owner", user_id]
-    )
-
-    on_exit(fn ->
-      SQL.exec("DELETE FROM vaults WHERE id=?", [vault_id])
-      SQL.exec("DELETE FROM users WHERE id=?", [user_id])
-    end)
-
-    assert {:ok, run} = Store.start(vault_id, nil, "managed run", "codex")
-    %{user_id: user_id, vault_id: vault_id, run: run}
+    context = Cascade.TestHelpers.owner_vault("managed")
+    assert {:ok, run} = Store.start(context.vault_id, nil, "managed run", "codex")
+    Map.put(context, :run, run)
   end
 
   test "entitlements fail closed and reservations are idempotent and hard-capped", context do

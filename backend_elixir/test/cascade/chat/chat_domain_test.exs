@@ -114,10 +114,6 @@ defmodule Cascade.ChatDomainTest do
     previous = System.get_env("CASCADE_VAULTS_BASE_DIR")
     System.put_env("CASCADE_VAULTS_BASE_DIR", root)
 
-    Cascade.Accounts.Schema.ensure!()
-    Cascade.Runs.Schema.ensure!()
-    Schema.ensure!()
-    Cascade.Missions.Schema.ensure!()
     reset_database()
 
     SQL.exec("""
@@ -336,6 +332,31 @@ defmodule Cascade.ChatDomainTest do
                "SELECT source_channel_id,created_at FROM chat_channel_links WHERE local_channel_id=?",
                [local_channel.id]
              )
+
+    assert :ok = Schema.ensure!()
+    assert [41] == SQL.one("SELECT rowid FROM chat_messages WHERE id='schema-message'")
+
+    SQL.exec("UPDATE chat_messages SET body='updated search token' WHERE id='schema-message'")
+
+    assert [[41]] =
+             SQL.all(
+               "SELECT rowid FROM chat_messages_fts WHERE chat_messages_fts MATCH 'updated'"
+             )
+
+    assert [] =
+             SQL.all(
+               "SELECT rowid FROM chat_messages_fts WHERE chat_messages_fts MATCH 'preserve'"
+             )
+
+    SQL.exec("DELETE FROM chat_messages WHERE id='schema-message'")
+
+    assert [] =
+             SQL.all(
+               "SELECT rowid FROM chat_messages_fts WHERE chat_messages_fts MATCH 'updated'"
+             )
+
+    assert [] =
+             SQL.all("SELECT message_id FROM chat_note_grants WHERE message_id='schema-message'")
 
     assert [] = SQL.all("PRAGMA foreign_key_check")
   end

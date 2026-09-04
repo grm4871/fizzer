@@ -2,12 +2,11 @@ defmodule Cascade.Missions.MissionStateTest do
   use ExUnit.Case, async: false
 
   alias Cascade.Accounts.SQL
-  alias Cascade.Chat.{Agents, Channel, Messages, Schema}
+  alias Cascade.Chat.{Agents, Channel, Messages}
   alias Cascade.Content.Store, as: ContentStore
   alias Cascade.Missions.{Dispatches, Scheduler, Store}
   alias Cascade.Missions.Schema, as: MissionSchema
   alias Cascade.Runs.Store, as: RunStore
-  alias Cascade.Runs.Schema, as: RunSchema
 
   setup do
     suffix = System.unique_integer([:positive])
@@ -26,10 +25,6 @@ defmodule Cascade.Missions.MissionStateTest do
         title: "Mission room",
         content: "cascade://chat-channel"
       })
-
-    Schema.ensure!()
-    RunSchema.ensure!()
-    MissionSchema.ensure!()
 
     {:ok, coordinator_identity} =
       Agents.upsert_identity(user_id, vault.id, %{
@@ -293,7 +288,8 @@ defmodule Cascade.Missions.MissionStateTest do
     assert replay.wakeDispatch == nil
   end
 
-  test "a terminal isolated runner event settles its mission task and materializes the review wake", ctx do
+  test "a terminal isolated runner event settles its mission task and materializes the review wake",
+       ctx do
     {:ok, created} =
       Store.create(ctx.user.id, ctx.vault.id, ctx.channel.id, %{
         rootMessageId: ctx.root.id,

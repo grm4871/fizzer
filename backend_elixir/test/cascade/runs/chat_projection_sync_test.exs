@@ -5,12 +5,6 @@ defmodule Cascade.Runs.ChatProjectionSyncTest do
   alias Cascade.Runs.ChatProjection
   alias Cascade.Runs.Store
 
-  setup_all do
-    Cascade.Accounts.Schema.ensure!()
-    Cascade.Runs.Schema.ensure!()
-    :ok
-  end
-
   setup do
     suffix = System.unique_integer([:positive])
     username = "proj-#{suffix}"

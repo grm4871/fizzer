@@ -1,7 +1,7 @@
 defmodule CascadeWeb.MissionRouter do
   @moduledoc "Mountable native HTTP surface for missions, task scheduling, and pending dispatches."
 
-  use Plug.Router
+  use CascadeWeb.DomainDispatch
   import Plug.Conn
   require Logger
 
