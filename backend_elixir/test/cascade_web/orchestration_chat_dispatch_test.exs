@@ -334,6 +334,7 @@ defmodule CascadeWeb.OrchestrationChatDispatchTest do
     assert is_integer(run_id)
     assert Store.get(run_id).prompt =~ "You must evaluate the next useful step"
     refute Store.get(run_id).prompt =~ "Do not offer a new proactive suggestion"
+    refute Store.get(run_id).prompt =~ "start a durable mission"
     assert {:ok, transcript} = Messages.list(ctx.owner_channel.id, ctx.owner.id)
     refute Enum.any?(transcript, &(&1.id == source))
     assert {:ok, internal} = Messages.get(ctx.owner_channel.id, ctx.owner.id, source)
