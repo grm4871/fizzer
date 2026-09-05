@@ -37,6 +37,13 @@ function isFinishedAgent(message: ChatMessage): boolean {
     && !/^Thinking(?:\.{3}|…)$/.test(message.body.trim());
 }
 
+// Checkpoint envelopes still reach the dispatcher; they are never conversation.
+function visibleMessages(messages: ChatMessage[]): ChatMessage[] {
+  return messages.some((message) => message.id.startsWith('sys-next-'))
+    ? messages.filter((message) => !message.id.startsWith('sys-next-'))
+    : messages;
+}
+
 class ChatMessageStore {
   private channels = new Map<string, ChatMessage[]>();
   private listeners = new Map<string, Set<Listener>>();
@@ -62,7 +69,8 @@ class ChatMessageStore {
   update(channelId: string, updater: (prev: ChatMessage[]) => ChatMessage[]): void {
     const hadChannel = this.channels.has(channelId);
     const prev = this.getChannel(channelId);
-    const next = updater(prev);
+    const updated = updater(prev);
+    const next = visibleMessages(updated);
     if (next === prev) return;
     this.channels.set(channelId, next);
     this.reconcileAgentActivity(channelId, prev, next, hadChannel);
@@ -83,6 +91,7 @@ class ChatMessageStore {
 
   /** Set a channel's list outright (used by the load/reconcile path). */
   set(channelId: string, messages: ChatMessage[]): void {
+    messages = visibleMessages(messages);
     if (this.channels.get(channelId) === messages) return;
     const hadChannel = this.channels.has(channelId);
     const previous = this.getChannel(channelId);

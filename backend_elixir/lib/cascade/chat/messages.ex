@@ -18,7 +18,7 @@ defmodule Cascade.Chat.Messages do
 
       messages =
         SQL.all(
-          "SELECT #{columns} FROM chat_messages WHERE channel_id=? ORDER BY rowid DESC LIMIT ?",
+          "SELECT #{columns} FROM chat_messages WHERE channel_id=? AND id NOT LIKE 'sys-next-%' ORDER BY rowid DESC LIMIT ?",
           [route.sourceChannelId, limit]
         )
         |> Enum.reverse()
@@ -1002,9 +1002,10 @@ defmodule Cascade.Chat.Messages do
 
   defp countable?(message),
     do:
-      is_nil(message[:agentId]) or
-        (message[:status] not in ["sending", "running"] and
-           String.trim(message.body || "") not in ["", "Thinking..."])
+      not String.starts_with?(message.id, "sys-next-") and
+        (is_nil(message[:agentId]) or
+           (message[:status] not in ["sending", "running"] and
+              String.trim(message.body || "") not in ["", "Thinking..."]))
 
   defp terminal_shell?(message),
     do:

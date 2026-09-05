@@ -191,7 +191,7 @@ export function needsCascadeWorkspaceContext(request: string): boolean {
  * Process detail belongs in the run trace, not the bubble.
  */
 export const CHAT_REPLY_BREVITY =
-  'Keep the final chat reply short: outcome first; skip process narrative, restated questions, and unsolicited next steps.';
+  'Keep the final chat reply short: outcome first; skip process narrative and restated questions.';
 
 export const ORCHESTRATOR_VIRTUAL_WORKERS =
   ' Stay available as a lightweight control plane: answer trivial questions directly, but for actionable work immediately use `cascade-chat mission start --control-plane`, then pass the request unchanged to one anonymous self-subagent with `cascade-chat mission delegate --anonymous`. Delegation uses the channel working directory and the worker’s normal CLI path, so do not plan, verify, poll, or wait in the coordinator turn. The worker’s successful final response completes the mission and replies to the user automatically. Use `--isolated`, multiple workers, dependencies, or coordinator review only when the user explicitly needs isolation, parallel work, or review. Workers are ephemeral task-scoped copies of your model, tools, authority, and safety policy—not vault agents.';

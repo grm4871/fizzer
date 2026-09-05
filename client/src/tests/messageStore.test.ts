@@ -7,6 +7,16 @@ function message(id: string, channelId: string): ChatMessage {
 }
 
 describe('chatMessageStore', () => {
+  it('keeps checkpoint dispatch envelopes out of loaded and realtime conversation', () => {
+    const channel = 'internal-checkpoints';
+    const checkpoint = { ...message('sys-next-completed-mission', channel), agentId: 'codex', body: 'Next-step checkpoint (completion). Evaluate permitted evidence.' };
+    const reply = { ...message('agent-dispatch-checkpoint', channel), agentId: 'codex', body: 'Should fixing the packaging failure be next?' };
+    chatMessageStore.set(channel, [checkpoint]);
+    expect(chatMessageStore.getChannel(channel)).toEqual([]);
+    chatMessageStore.update(channel, (prev) => [...prev, checkpoint, reply]);
+    expect(chatMessageStore.getChannel(channel)).toEqual([reply]);
+  });
+
   it('distinguishes an unloaded channel from a loaded-empty one', () => {
     expect(chatMessageStore.hasChannel('never')).toBe(false);
     chatMessageStore.set('loaded-empty', []);

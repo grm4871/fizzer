@@ -1584,6 +1584,7 @@ defmodule Cascade.Content.Store do
         SELECT m.id, m.author, m.channel_id, m.body, -bm25(chat_messages_fts), m.created_at
         FROM chat_messages_fts JOIN chat_messages m ON m.rowid = chat_messages_fts.rowid
         WHERE chat_messages_fts MATCH ? AND m.vault_id = ? AND m.body != '' AND m.status IS NULL
+          AND m.id NOT LIKE 'sys-next-%'
         ORDER BY bm25(chat_messages_fts) LIMIT ?
         """,
         [fts_query, vault_id, limit],

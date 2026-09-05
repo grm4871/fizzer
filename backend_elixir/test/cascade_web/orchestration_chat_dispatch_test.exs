@@ -282,6 +282,23 @@ defmodule CascadeWeb.OrchestrationChatDispatchTest do
   end
 
   test "enabled obligation is claimed without a chat page and retains owner authority", ctx do
+    # A stalled historical mission must not suppress all later consideration.
+    {:ok, stalled} =
+      Cascade.Missions.Store.create(ctx.owner.id, ctx.owner_vault.id, ctx.owner_channel.id, %{
+        rootMessageId: ctx.dispatch.messageId,
+        coordinatorRegistrationId: ctx.registration.id,
+        title: "Old repair awaiting attention"
+      })
+
+    SQL.exec(
+      "INSERT INTO chat_mission_tasks(id,mission_id,title,assignee_registration_id,status) VALUES(?,?,?,?, 'failed')",
+      ["stalled-#{stalled.mission.id}", stalled.mission.id, "Failed repair", ctx.registration.id]
+    )
+
+    SQL.exec("UPDATE chat_missions SET status='attention',wake_sent=1 WHERE id=?", [
+      stalled.mission.id
+    ])
+
     {:ok, registration} =
       Agents.add_to_channel(
         ctx.owner.id,
@@ -316,6 +333,23 @@ defmodule CascadeWeb.OrchestrationChatDispatchTest do
     [run_id] = SQL.one("SELECT run_id FROM chat_agent_dispatches WHERE id=?", [dispatch.id])
     assert is_integer(run_id)
     assert Store.get(run_id).prompt =~ "You must evaluate the next useful step"
+    refute Store.get(run_id).prompt =~ "Do not offer a new proactive suggestion"
+    assert {:ok, transcript} = Messages.list(ctx.owner_channel.id, ctx.owner.id)
+    refute Enum.any?(transcript, &(&1.id == source))
+    assert {:ok, internal} = Messages.get(ctx.owner_channel.id, ctx.owner.id, source)
+    assert internal.body =~ "Next-step checkpoint"
+
+    reply =
+      complete_checkpoint(
+        ctx,
+        dispatch.id,
+        run_id,
+        "<!-- fizzer-next:#{source} --> The old repair is stalled. Should reviewing its saved evidence be next?"
+      )
+
+    assert reply.body =~ "Should reviewing its saved evidence be next?"
+    assert {:ok, transcript} = Messages.list(ctx.owner_channel.id, ctx.owner.id)
+    assert Enum.any?(transcript, &(&1.id == reply.id))
     assert Store.get(run_id).prompt =~ "This checkpoint grants no authority to start work"
 
     assert {:ok, same} =
@@ -328,7 +362,7 @@ defmodule CascadeWeb.OrchestrationChatDispatchTest do
     assert same.id == run_id
 
     assert SQL.one("SELECT COUNT(*) FROM chat_missions WHERE channel_id=?", [ctx.owner_channel.id]) ==
-             [0]
+             [1]
   end
 
   for outcome <- [:proposal, :none] do

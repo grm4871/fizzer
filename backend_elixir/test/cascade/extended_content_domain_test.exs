@@ -207,7 +207,13 @@ defmodule Cascade.ExtendedContentDomainTest do
       [channel.id, vault.id]
     )
 
+    Query.execute(
+      "INSERT INTO chat_messages (id, channel_id, vault_id, author, body, status) VALUES ('sys-next-search', ?, ?, 'Astra', 'deploy production checkpoint instructions', NULL)",
+      [channel.id, vault.id]
+    )
+
     all = QMD.search(vault.id, "deploy production", scope: "all", limit: 10)
+    refute Enum.any?(all, &(&1.id == "sys-next-search"))
     assert Enum.any?(all, &(&1.type == "note" and &1.id == alpha.id and &1.score > 0))
 
     assert Enum.any?(

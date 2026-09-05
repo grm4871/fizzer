@@ -267,7 +267,11 @@ For owner feedback on a recorded proposal, prefix your ordinary reply with <!-- 
 
   defp active_work?(channel, registration) do
     SQL.one(
-      "SELECT 1 FROM chat_missions WHERE channel_id=? AND coordinator_registration_id=? AND status NOT IN ('completed','canceled') LIMIT 1",
+      """
+      SELECT 1 FROM chat_missions m WHERE channel_id=? AND coordinator_registration_id=?
+      AND (status NOT IN ('completed','canceled','attention') OR (status='attention' AND EXISTS (
+        SELECT 1 FROM chat_mission_tasks t WHERE t.mission_id=m.id AND t.status IN ('pending','running')))) LIMIT 1
+      """,
       [channel, registration]
     ) == [1]
   end

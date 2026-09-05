@@ -78,7 +78,7 @@ defmodule Cascade.Search.QMD do
     chats =
       if table_exists?("chat_messages") do
         Query.maps(
-          "SELECT id, channel_id, author, body, created_at FROM chat_messages WHERE vault_id = ? AND body != '' AND status IS NULL",
+          "SELECT id, channel_id, author, body, created_at FROM chat_messages WHERE vault_id = ? AND body != '' AND status IS NULL AND id NOT LIKE 'sys-next-%'",
           [vault_id],
           [:id, :channel_id, :author, :body, :created_at]
         )
