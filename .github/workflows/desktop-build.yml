@@ -17,6 +17,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
+  actions: write
   contents: write
 
 jobs:
@@ -130,6 +131,14 @@ jobs:
             gh release create desktop-beta --title "Fizzer Desktop Beta" --notes "Current unsigned technical-beta installers for macOS, Windows, and Linux."
           fi
           gh release upload desktop-beta release/* --clobber
+
+      # The push-triggered production deploy precedes this native matrix. Run
+      # the same exact revision once its verified release assets exist so the
+      # host refreshes /download/* from SHA256SUMS-checked files.
+      - name: Refresh production download routes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run deploy-production.yml --ref "${GITHUB_SHA}"
 
       - name: Attach installers to a versioned release
         if: startsWith(github.ref, 'refs/tags/')

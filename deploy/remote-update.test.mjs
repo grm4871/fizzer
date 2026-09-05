@@ -11,6 +11,10 @@ const workflow = fs.readFileSync(
   path.join(deployDirectory, '../.github/workflows/deploy-production.yml'),
   'utf8',
 );
+const desktopWorkflow = fs.readFileSync(
+  path.join(deployDirectory, '../.github/workflows/desktop-build.yml'),
+  'utf8',
+);
 const compose = fs.readFileSync(path.join(deployDirectory, '../docker-compose.yml'), 'utf8');
 const dockerfile = fs.readFileSync(path.join(deployDirectory, '../Dockerfile'), 'utf8');
 const nginxTemplate = fs.readFileSync(path.join(deployDirectory, 'nginx.conf.template'), 'utf8');
@@ -140,6 +144,20 @@ test('GitHub Actions is the only exact-revision production deploy entrypoint', (
   );
   assert.equal(fs.existsSync(path.join(deployDirectory, 'deploy-watcher.sh')), false);
   assert.equal(fs.existsSync(path.join(deployDirectory, 'install-deploy-watcher.sh')), false);
+});
+
+test('the post-cutover installer sync verifies a release manifest before replacing routes', () => {
+  const sync = fs.readFileSync(path.join(deployDirectory, 'sync-desktop-installers.sh'), 'utf8');
+  assert.match(source, /bash "\$ROOT\/deploy\/sync-desktop-installers\.sh"/);
+  assert.match(desktopWorkflow, /Refresh production download routes/);
+  assert.match(desktopWorkflow, /gh workflow run deploy-production\.yml --ref "\$\{GITHUB_SHA\}"/);
+  assert.match(sync, /Fizzer-mac-arm64\.dmg/);
+  assert.match(sync, /Fizzer-mac-x64\.dmg/);
+  assert.match(sync, /Fizzer-Setup\.exe/);
+  assert.match(sync, /Fizzer-linux-x64\.deb/);
+  assert.match(sync, /Fizzer-linux-x64\.rpm/);
+  assert.match(sync, /sha256sum --check --status SHA256SUMS/);
+  assert.match(sync, /mv -f "\$staging\/\$file" "\$DOWNLOADS_DIR\/\$file"/);
 });
 
 test('the host build reads an image identity supported by older Docker engines', () => {

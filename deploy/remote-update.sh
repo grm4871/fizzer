@@ -1047,6 +1047,11 @@ else
   echo "==> Deployed $REVISION_SHORT ($CERTIFIED_IMAGE_ID); rolling rollback preserved live state"
 fi
 
+# The desktop workflow publishes its release after the push-triggered deploy.
+# A subsequent exact-revision deploy (requested by that workflow) reaches this
+# point only after its release assets and SHA256SUMS are available.
+bash "$ROOT/deploy/sync-desktop-installers.sh"
+
 echo "==> Pruning dangling images and old build cache"
 docker image prune -f >/dev/null || true
 docker builder prune -af --filter "until=72h" >/dev/null || true
