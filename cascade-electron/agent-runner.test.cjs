@@ -21,6 +21,7 @@ const {
   renderInlineSvgAttachments,
   normalizeClaudeEffort,
   startLocalAgentRun,
+  cancelLocalAgentRun,
 } = require('./agent-runner.cjs');
 
 test('inline SVG prompt markup becomes a PNG attachment plus a temporary source note', (t) => {
@@ -270,4 +271,53 @@ test('non-Claude setup failure cleans helper context, SVG attachments, and heart
   assert.equal(intervals.mock.callCount(), 1);
   assert.equal(intervals.mock.calls[0].result._destroyed, true);
   assert.equal(JSON.parse(events.at(-1).payload_json).status, 'failed');
+});
+
+
+test('canceling a persistent Codex turn emits canceled instead of failed', {timeout: 5000}, async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fizzer-codex-cancel-'));
+  const bin = path.join(dir, 'codex');
+  fs.writeFileSync(bin, `#!/usr/bin/env node
+const readline = require('readline');
+const send = value => process.stdout.write(JSON.stringify(value) + '\\n');
+readline.createInterface({input: process.stdin}).on('line', line => {
+  const m = JSON.parse(line);
+  if (m.method === 'initialize') send({id: m.id, result: {}});
+  if (m.method === 'thread/start') send({id: m.id, result: {thread: {id: 'cancel-thread'}}});
+  if (m.method === 'turn/start') send({id: m.id, result: {turn: {id: 'cancel-turn'}}});
+  if (m.method === 'turn/interrupt') {
+    send({method: 'turn/completed', params: {turn: {id: 'cancel-turn', status: 'interrupted'}}});
+    send({id: m.id, result: {}});
+  }
+  if (m.method === 'thread/unsubscribe') send({id: m.id, result: {}});
+});
+`);
+  fs.chmodSync(bin, 0o755);
+  const modulePath = path.join(__dirname, '..', 'dist', 'cli-agents', 'cli-agent.js');
+  t.after(async () => {
+    const mod = await import(pathToFileURL(modulePath).href + `?t=${fs.statSync(modulePath).mtimeMs}`);
+    mod.shutdownPersistentCliAgents();
+  });
+  const previous = process.env.CODEX_BIN;
+  process.env.CODEX_BIN = bin;
+  process.env.RUNNER_CODEX_PERSISTENT = '1';
+  t.after(() => {
+    if (previous === undefined) delete process.env.CODEX_BIN;
+    else process.env.CODEX_BIN = previous;
+    fs.rmSync(dir, {recursive: true, force: true});
+  });
+  const events = [];
+  let ready;
+  const started = new Promise(resolve => { ready = resolve; });
+  const run = startLocalAgentRun({runId: 92005, agent: 'codex', prompt: 'wait', cwd: dir}, event => {
+    events.push(event);
+    if (event.type === 'session') ready();
+  });
+  await started;
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(await cancelLocalAgentRun(92005), true);
+  await run;
+  const statuses = events.filter(event => event.type === 'status').map(event => JSON.parse(event.payload_json).status);
+  assert.equal(statuses.at(-1), 'canceled');
+  assert.ok(!statuses.includes('failed'));
 });

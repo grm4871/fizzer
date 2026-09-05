@@ -322,14 +322,16 @@ defmodule Cascade.Runs.Store do
           value -> value
         end
 
-      :ok = finish(run_id, "canceled", summary)
+      result = finish(run_id, "canceled", summary)
 
-      publish(run_id, "status", %{
-        status: "canceled",
-        summary: summary,
-        steering: steering?,
-        suppressChatBody: Keyword.get(opts, :suppress_chat_body, false)
-      })
+      if result == :ok or match?(%{status: "canceled"}, get(run_id)) do
+        publish(run_id, "status", %{
+          status: "canceled",
+          summary: summary,
+          steering: steering?,
+          suppressChatBody: Keyword.get(opts, :suppress_chat_body, false)
+        })
+      end
 
       true
     end

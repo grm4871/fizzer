@@ -415,7 +415,11 @@ defmodule CascadeWeb.OrchestrationController do
       triggering_message_id = dispatch_value(dispatch, :messageId, triggering_message_id)
       mission_task_id = dispatch_message_value(dispatch, :missionTaskId, "")
       note_id = blank_nil(params["note_id"])
-      conversation_id = blank_nil(params["conversation_id"])
+
+      conversation_id =
+        if mission_task_id == "",
+          do: blank_nil(params["conversation_id"]),
+          else: "mission:#{mission_task_id}"
 
       resume_session_id =
         if conversation_id do
@@ -446,7 +450,10 @@ defmodule CascadeWeb.OrchestrationController do
         )
         |> PromptContext.append_context(chat_context)
 
-      case release_sticky_registration(execution.registration_id, dispatch_id) do
+      case if(mission_task_id == "",
+             do: release_sticky_registration(execution.registration_id, dispatch_id),
+             else: :ok
+           ) do
         :ok ->
           case start_chat_run(
                  execution,

@@ -111,6 +111,37 @@ defmodule CascadeWeb.OrchestrationChatDispatchTest do
     }
   end
 
+  for terminal <- ["canceled", "completed", "failed"] do
+    @race_terminal terminal
+    test "cancel tolerates #{@race_terminal} arriving before its acknowledgment", ctx do
+      {:ok, run} = Store.start(ctx.owner_vault.id, nil, "Cancel race", "codex")
+      :ok = Store.record_delegated(run.id, ctx.owner.id)
+      cancel = Task.async(fn -> Store.cancel(run.id, steering: true) end)
+      assert {:ok, packet} = Session.poll(ctx.sid, 1_000)
+      {:ok, [%{data: encoded}]} = EngineIO.decode_payload(packet)
+      {:ok, %{id: ack_id, data: ["run:cancel", _]}} = SocketIO.decode(encoded)
+      :ok = Store.finish(run.id, @race_terminal, "Provider settled first")
+
+      send_socket!(ctx.sid, %{
+        type: :ack,
+        namespace: "/runners",
+        id: ack_id,
+        data: [%{success: true}]
+      })
+
+      assert Task.await(cancel)
+      assert Store.get(run.id).status == @race_terminal
+
+      terminal_events =
+        Store.events(run.id)
+        |> Enum.filter(
+          &(&1.type == "status" and Jason.decode!(&1.payload_json)["status"] == "canceled")
+        )
+
+      assert length(terminal_events) == if(@race_terminal == "canceled", do: 1, else: 0)
+    end
+  end
+
   test "worker steering resumes its provider session and cwd without stopping the coordinator",
        ctx do
     SQL.exec("UPDATE chat_agent_members SET orchestrator=1 WHERE id=?", [ctx.registration.id])
@@ -145,12 +176,17 @@ defmodule CascadeWeb.OrchestrationChatDispatchTest do
     Dispatches.attach_run(ctx.dispatch.id, coordinator_run.id)
     [item] = Cascade.Missions.Scheduler.schedule(mission.mission.id).dispatches
 
-    {:ok, worker} =
-      CascadeWeb.OrchestrationController.claim_mission_dispatch(
-        ctx.owner.id,
-        ctx.owner_channel.id,
-        item.dispatch.id
-      )
+    response =
+      request(ctx, %{
+        prompt: "Execute the worker task",
+        conversation_id: ctx.registration.conversationId,
+        chatDispatchId: item.dispatch.id,
+        chat: %{channelId: ctx.guest_channel.id, messageId: "worker-http-#{added.task.id}"}
+      })
+
+    assert response.status == 200
+    worker = Store.get(Jason.decode!(response.resp_body)["run"]["id"])
+    assert worker.conversation_id == "mission:#{added.task.id}"
 
     assert Store.get(coordinator_run.id).status == "queued"
     assert {:ok, initial_packet} = Session.poll(ctx.sid, 1_000)
@@ -181,6 +217,9 @@ defmodule CascadeWeb.OrchestrationChatDispatchTest do
       SocketIO.decode(encoded)
 
     assert canceled_id == worker.id
+
+    # The provider can report cancellation before the desktop acknowledges Stop.
+    :ok = Store.finish(worker.id, "canceled", "Run canceled.")
 
     send_socket!(ctx.sid, %{
       type: :ack,

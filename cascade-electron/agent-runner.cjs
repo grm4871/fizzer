@@ -967,15 +967,22 @@ async function startLocalAgentRun(opts, sendEvent) {
     return { sessionId: result.sessionId };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    if (canceledCliRuns.has(runId)) {
+      emitTerminalStatus(emit, runId, 'canceled', 'Run canceled.');
+      return {};
+    }
     emitTerminalStatus(emit, runId, 'failed', message);
     throw error;
   } finally {
+    canceledCliRuns.delete(runId);
     clearInterval(heartbeat);
     if (activeCliAgentModules.get(runId) === cliModule) activeCliAgentModules.delete(runId);
     cleanupRunHelperConfig(runId);
     preparedPrompt.cleanup();
   }
 }
+
+const canceledCliRuns = new Set();
 
 async function cancelLocalAgentRun(runId) {
   const id = Number(runId);
@@ -990,6 +997,7 @@ async function cancelLocalAgentRun(runId) {
   }
 
   const mod = activeCliAgentModules.get(id) || await loadCliAgentModule();
+  if (activeCliAgentModules.has(id)) canceledCliRuns.add(id);
   // Antigravity keeps polling transcript.jsonl after agentapi exits — flag it.
   let flagged = false;
   if (typeof mod.cancelAntigravityRun === 'function') {
