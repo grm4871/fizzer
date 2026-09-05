@@ -173,7 +173,7 @@ test('mission recovery migration preserves rows and cannot backfill authority or
   const files = fixture();
   try {
     const before = new Database(files.before);
-    before.exec("CREATE TABLE chat_missions (id TEXT PRIMARY KEY, summary TEXT); INSERT INTO chat_missions VALUES ('m1','pending review')");
+    before.exec("CREATE TABLE chat_missions (id TEXT PRIMARY KEY, summary TEXT, UNIQUE(id,summary)); INSERT INTO chat_missions VALUES ('m1','pending review')");
     before.close();
     fs.copyFileSync(files.before, files.after);
     const after = new Database(files.after);

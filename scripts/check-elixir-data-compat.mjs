@@ -481,7 +481,8 @@ function exactMissionRecoveryMigration(before, after) {
   const suffix = additions.map(({ name, type, dflt_value }) => (
     `, ${name} ${type} NOT NULL DEFAULT ${dflt_value}`
   )).join('');
-  return newTable.schema.sql === oldTable.schema.sql.replace(/\)$/u, `${suffix})`)
+  // SQLite inserts columns before table constraints, not necessarily before the closing parenthesis.
+  return newTable.schema.sql.replace(suffix, '') === oldTable.schema.sql
     && same(oldTable.columns, newTable.columns.slice(0, oldTable.columns.length))
     && same(oldTable.normalizedForeignKeys, newTable.normalizedForeignKeys)
     && oldTable.rows.count === newTable.rows.count
