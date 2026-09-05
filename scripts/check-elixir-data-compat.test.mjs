@@ -27,6 +27,16 @@ test('rolling schema classification permits only the pinned agent flag transitio
     { objects: [finalOnly], migrations: [] },
   ), []);
 
+  const suggestions = { ...finalOnly, sql: finalOnly.sql.replace("conversation_id TEXT", "next_step_suggestions INTEGER NOT NULL DEFAULT 0, conversation_id TEXT") };
+  assert.deepEqual(compareSchemaFingerprints(
+    { objects: [finalOnly], migrations: [] },
+    { objects: [suggestions], migrations: [] },
+  ), []);
+  assert.deepEqual(compareSchemaFingerprints(
+    { objects: [suggestions], migrations: [] },
+    { objects: [finalOnly], migrations: [] },
+  ), ['database schema changed']);
+
   const unknown = { ...finalOnly, sql: finalOnly.sql.replace('DEFAULT 0, yolo', 'DEFAULT 1, yolo') };
   assert.deepEqual(compareSchemaFingerprints(
     { objects: [ambient], migrations: [] },
@@ -736,6 +746,35 @@ test('fails on row, schema, integrity, or vault-file drift', () => {
     assert.equal(result.ok, false);
     assert.ok(result.failures.some((failure) => failure.startsWith('table changed: notes')));
     assert.ok(result.failures.includes('vault file tree changed'));
+  } finally {
+    fs.rmSync(files.directory, { recursive: true, force: true });
+  }
+});
+
+test('child migration preserves existing tasks and starts with empty ownership and join state', () => {
+  const files = fixture();
+  try {
+    const before = new Database(files.before);
+    before.exec("CREATE TABLE chat_mission_tasks(id TEXT PRIMARY KEY,run_id INTEGER,status TEXT); INSERT INTO chat_mission_tasks VALUES('parent',9,'running')");
+    before.close();
+    fs.copyFileSync(files.before, files.after);
+    const after = new Database(files.after);
+    after.exec('ALTER TABLE chat_mission_tasks ADD COLUMN parent_task_id TEXT');
+    after.exec('ALTER TABLE chat_mission_tasks ADD COLUMN child_result_delivered INTEGER NOT NULL DEFAULT 0');
+    after.exec('ALTER TABLE chat_mission_tasks ADD COLUMN joining_children INTEGER NOT NULL DEFAULT 0');
+    after.exec('CREATE INDEX chat_mission_tasks_parent_idx ON chat_mission_tasks(parent_task_id)');
+    after.close();
+    assert.equal(runComparison(files).ok, true, runComparison(files).failures.join('\n'));
+    for (const [column, value] of [['parent_task_id', 'invented'], ['joining_children', 1], ['child_result_delivered', 1], ['status', 'completed']]) {
+      const changed = new Database(files.after);
+      const original = changed.prepare(`SELECT ${column} AS value FROM chat_mission_tasks`).get().value;
+      changed.prepare(`UPDATE chat_mission_tasks SET ${column}=?`).run(value);
+      changed.close();
+      assert.equal(runComparison(files).ok, false, column);
+      const restore = new Database(files.after);
+      restore.prepare(`UPDATE chat_mission_tasks SET ${column}=?`).run(original);
+      restore.close();
+    }
   } finally {
     fs.rmSync(files.directory, { recursive: true, force: true });
   }

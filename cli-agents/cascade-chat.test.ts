@@ -31,7 +31,7 @@ test('coordinator helper starts and delegates a mission with structured API call
       return;
     }
     if (req.method === 'GET' && req.url === '/api/vaults/vault-1/channels/channel-1/missions?coordinator=reg-sol') {
-      res.end(JSON.stringify({ missions: [{ id: 'mission-1', title: 'Release', status: 'attention', tasks: [{ id: 'task-1' }] }] }));
+      res.end(JSON.stringify({ missions: [{ id: 'mission-1', title: 'Release', status: 'attention', tasks: [{ id: 'task-1', attempt: 2, runId: 42 }] }] }));
       return;
     }
     if (req.method === 'GET' && req.url === '/api/vaults/vault-1/channels/channel-1/missions/mission-1/history') {
@@ -56,6 +56,10 @@ test('coordinator helper starts and delegates a mission with structured API call
       res.end(JSON.stringify({
         mission: { id: 'mission-1', title: 'Release', status: 'reviewing', tasks: [] },
       }));
+      return;
+    }
+    if (req.url === '/api/vaults/vault-1/channels/channel-1/missions/tasks/task-1/steer') {
+      res.end(JSON.stringify({ steering: { id: 7, status: 'queued', detail: 'Waiting for provider stop acknowledgment' } }));
       return;
     }
     if (req.url === '/api/vaults/vault-1/channels/channel-1/missions/tasks/task-1') {
@@ -93,6 +97,15 @@ test('coordinator helper starts and delegates a mission with structured API call
   t.after(() => fs.rmSync(fixtureDir, { recursive: true, force: true }));
   const withCoordinator = { ...process.env, CASCADE_HELPER_CONFIG: config, CASCADE_RUN_ID: '777' };
 
+  const steered = await execFileAsync(process.execPath, [
+    cli, 'mission', 'steer', '--task', 'task-1', '--message', 'Keep edits; narrow the test.', ...common,
+  ], { env: withCoordinator });
+  assert.match(steered.stdout, /queued steering 7: Waiting for provider stop acknowledgment/);
+  assert.deepEqual(requests.find((request) => request.path.endsWith('/steer'))?.body, {
+    coordinatorRegistrationId: 'reg-sol', message: 'Keep edits; narrow the test.', attempt: 2, runId: 42,
+  });
+
+  requests.length = 0;
   const started = await execFileAsync(process.execPath, [
     cli, 'mission', 'start', '--title', 'Release', '--objective', 'Ship safely',
     ...common,
@@ -272,4 +285,26 @@ test('avatar --file uploads image data to the current registration only', async 
   });
   assert.match(result.stdout, /profile picture updated/);
   assert.deepEqual(requests, [['PUT', '/api/vaults/vault/channels/room/agents/reg-astra/avatar', '777', { avatarUrl: `data:image/png;base64,${bytes.toString('base64')}` }]]);
+});
+
+test('worker child and join use bounded endpoints with current run identity', async (t) => {
+  const requests: Array<{ path: string; run: string; body: Record<string, unknown> }> = [];
+  const server = http.createServer(async (req, res) => {
+    let raw = '';
+    for await (const chunk of req) raw += chunk;
+    requests.push({ path: req.url || '', run: String(req.headers['x-cascade-run-id'] || ''), body: JSON.parse(raw) });
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify(req.url?.endsWith('/join') ? { children: [], instruction: 'End turn to join' } : { task: { id: 'child-1', title: 'Parser' } }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const address = server.address() as { port: number };
+  const common = ['--url', `http://127.0.0.1:${address.port}`, '--token', 'token', '--vault', 'vault-1', '--channel', 'channel-1'];
+  const env = { ...process.env, CASCADE_RUN_ID: '51', CASCADE_HELPER_CONFIG: '/nonexistent' };
+  await execFileAsync(process.execPath, [cli, 'mission', 'child', '--task', 'Parser', '--message', 'Implement parser only', ...common], { env });
+  await execFileAsync(process.execPath, [cli, 'mission', 'join', ...common], { env });
+  assert.deepEqual(requests, [
+    { path: '/api/vaults/vault-1/channels/channel-1/missions/current/children', run: '51', body: { title: 'Parser', prompt: 'Implement parser only', reasoningEffort: '' } },
+    { path: '/api/vaults/vault-1/channels/channel-1/missions/children/join', run: '51', body: {} },
+  ]);
 });

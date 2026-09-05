@@ -170,6 +170,9 @@ defmodule Cascade.Missions.ChildrenTest do
                )
     end
 
+    assert {:ok, duplicate} = Children.add(ctx.user.id, ctx.channel.id, mission.id, input, run.id)
+    assert duplicate.task.id == child.task.id
+
     assert {:error, _} =
              Children.add(ctx.user.id, ctx.channel.id, mission.id, %{title: "Ninth"}, run.id)
 
@@ -226,6 +229,86 @@ defmodule Cascade.Missions.ChildrenTest do
 
     assert Enum.find(result.settled.update.mission.tasks, &(&1.id == parent.id)).status ==
              "blocked"
+  end
+
+  test "steering a parent preserves its live children and join resumes the same task", ctx do
+    {mission, parent, run} = parent(ctx)
+
+    SQL.exec("UPDATE runs SET session_id='parent-session',conversation_id=? WHERE id=?", [
+      "mission:#{parent.id}",
+      run.id
+    ])
+
+    {:ok, child} =
+      Children.add(ctx.user.id, ctx.channel.id, mission.id, %{title: "Independent child"}, run.id)
+
+    [%{dispatch: dispatch}] = Scheduler.schedule(mission.id).dispatches
+    child_run = start(ctx, dispatch)
+
+    {:ok, request} =
+      Store.request_steering(ctx.user.id, ctx.channel.id, parent.id, %{
+        coordinatorRegistrationId: ctx.coordinator.id,
+        message: "Keep children; fix integration",
+        attempt: 0,
+        runId: run.id
+      })
+
+    Cascade.Missions.Steering.deliver(request,
+      cancel: fn _, id ->
+        :ok = RunStore.finish(id, "canceled", "steering")
+        assert {:ok, nil} = Scheduler.settle_run(id, "canceled", "steering")
+        true
+      end,
+      schedule: fn _ -> :ok end
+    )
+
+    assert ["running", child_run.id] ==
+             SQL.one("SELECT status,run_id FROM chat_mission_tasks WHERE id=?", [child.task.id])
+
+    [%{dispatch: dispatch, message: message}] = Scheduler.schedule(mission.id).dispatches
+    assert message.missionTaskId == parent.id
+    assert message.body =~ "fix integration"
+
+    assert RunStore.find_conversation_session(%{
+             vault_id: ctx.vault.id,
+             note_id: nil,
+             agent: "codex",
+             conversation_id: "mission:#{parent.id}"
+           }) == "parent-session"
+
+    resumed = start(ctx, dispatch)
+    :ok = RunStore.finish(resumed.id, "completed", "join")
+    {:ok, waiting} = Scheduler.settle_run(resumed.id, "completed", "join")
+    assert waiting.scheduled.dispatches == []
+    :ok = RunStore.finish(child_run.id, "completed", "Child artifact")
+    {:ok, joined} = Scheduler.settle_run(child_run.id, "completed", "Child artifact")
+    assert [%{message: integrated}] = joined.scheduled.dispatches
+    assert integrated.body =~ "Child artifact"
+    assert integrated.body =~ "fix integration"
+    assert integrated.missionTaskId == parent.id
+  end
+
+  test "steering a waiting join can resume independent parent work", ctx do
+    {mission, parent, run} = parent(ctx)
+    {:ok, _} = Children.add(ctx.user.id, ctx.channel.id, mission.id, %{title: "Child"}, run.id)
+    Scheduler.schedule(mission.id)
+    :ok = RunStore.finish(run.id, "completed", "joining")
+    {:ok, _} = Scheduler.settle_run(run.id, "completed", "joining")
+
+    {:ok, request} =
+      Store.request_steering(ctx.user.id, ctx.channel.id, parent.id, %{
+        coordinatorRegistrationId: ctx.coordinator.id,
+        message: "Do independent correction while waiting",
+        attempt: 0,
+        runId: nil
+      })
+
+    Cascade.Missions.Steering.deliver(request, schedule: fn _ -> :ok end)
+    refute Children.joining?(parent.id)
+    assert [%{message: message}] = Scheduler.schedule(mission.id).dispatches
+    assert message.body =~ "independent correction"
+    assert message.missionTaskId == parent.id
+    assert Children.unresolved?(parent.id)
   end
 
   defp parent(ctx) do

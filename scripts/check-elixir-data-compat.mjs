@@ -16,7 +16,7 @@ const FTS5_SHADOW_SUFFIXES = ['config', 'data', 'docsize', 'idx'];
 // compare equal: the resulting schema must be the reviewed Node-compatible
 // shape as well.
 const NORMALIZED_TABLE_SQL_SHA256 = new Map([
-  ['chat_agent_members', '30fe78099a2ac07b54f147ed25e4032966f9b0a1187852e5a5aece9cca765b43'],
+  ['chat_agent_members', 'cbad10329484a7a611ef7c9c5789bc88987431279e0fdd44d51817579d693676'],
   ['chat_channel_links', '5c044d64e74a55bae505e0dc14fa0943d8f2ec550a3a4ee0c8cee6098b8b2f51'],
   ['chat_messages', 'c0ec7be003cb9470e0854022dd4197394b8b52e5b6d81369ab274151ccaf7ae4'],
   ['chat_messages_fts', 'a0537f09f6a0d235e2c50e090ce48214ddd0efa80544131812ccd37822e501a1'],
@@ -24,6 +24,7 @@ const NORMALIZED_TABLE_SQL_SHA256 = new Map([
 ]);
 
 const NORMALIZED_OBJECT_SQL_SHA256 = new Map([
+  ['index:chat_mission_tasks_parent_idx', '7f97ee4f014dd90c75c5256385a9fb24806dfb35328915cf9d17b4c06eff4c47'],
   ['index:chat_messages_activity_idx', '57b71e5d8f446140a9ea1a97fdd9b06bf02943fc0c09c38e2a7208ba49dc9fd1'],
   ['index:chat_messages_channel_idx', 'cf59031cf62c9ad6b72e763f899a42bc683db9547811618c25b71720948f4bf2'],
   ['trigger:chat_messages_ai', 'fe4b388168890405a812c0baa7c785d19637612a642546e67820ecb975c9ce0e'],
@@ -51,6 +52,8 @@ const ROLLING_SCHEMA_TRANSITIONS = new Map([
       '47958f4df6d7c4133c1a4d0841d2f061a18aa79f9d62bf861b1d423eb18ef7a1'],
     ['47958f4df6d7c4133c1a4d0841d2f061a18aa79f9d62bf861b1d423eb18ef7a1',
       '30fe78099a2ac07b54f147ed25e4032966f9b0a1187852e5a5aece9cca765b43'],
+    ['30fe78099a2ac07b54f147ed25e4032966f9b0a1187852e5a5aece9cca765b43',
+      'cbad10329484a7a611ef7c9c5789bc88987431279e0fdd44d51817579d693676'],
   ])],
 ]);
 
@@ -256,6 +259,11 @@ function databaseSnapshotFromCopy(filename) {
     if (tables.chat_missions?.columns.some((column) => column.name === 'review_fingerprint')) {
       compatibility.missionFingerprintNonDefaults = db.prepare(
         "SELECT COUNT(*) AS count FROM chat_missions WHERE review_fingerprint <> ''",
+      ).get().count;
+    }
+    if (tables.chat_mission_tasks?.columns.some((column) => column.name === 'joining_children')) {
+      compatibility.missionChildNonDefaults = db.prepare(
+        'SELECT COUNT(*) AS count FROM chat_mission_tasks WHERE parent_task_id IS NOT NULL OR child_result_delivered <> 0 OR joining_children <> 0',
       ).get().count;
     }
     if (tables.chat_mission_tasks) {
@@ -503,6 +511,28 @@ function exactMissionRecoveryMigration(before, after, fingerprintOnly = false) {
       : after.compatibility.missionRecoveryNonDefaults) === 0;
 }
 
+function exactMissionChildMigration(before, after) {
+  const oldTable = before.tables.chat_mission_tasks;
+  const newTable = after.tables.chat_mission_tasks;
+  const additions = [
+    { name: 'parent_task_id', type: 'TEXT', notnull: 0, dflt_value: null, pk: 0 },
+    { name: 'child_result_delivered', type: 'INTEGER', notnull: 1, dflt_value: '0', pk: 0 },
+    { name: 'joining_children', type: 'INTEGER', notnull: 1, dflt_value: '0', pk: 0 },
+  ];
+  if (oldTable.columns.some((column) => additions.some(({ name }) => column.name === name))) return false;
+  if (!same(newTable.columns.slice(oldTable.columns.length).map(({ name, type, notnull, dflt_value, pk }) => (
+    { name, type, notnull, dflt_value, pk }
+  )), additions)) return false;
+  const suffix = ', parent_task_id TEXT, child_result_delivered INTEGER NOT NULL DEFAULT 0, joining_children INTEGER NOT NULL DEFAULT 0';
+  return newTable.schema.sql.replace(suffix, '') === oldTable.schema.sql
+    && same(oldTable.columns, newTable.columns.slice(0, oldTable.columns.length))
+    && same(oldTable.normalizedForeignKeys, newTable.normalizedForeignKeys)
+    && oldTable.rows.count === newTable.rows.count
+    && oldTable.rows.includesRowid === newTable.rows.includesRowid
+    && oldTable.rows.columns.every((column) => oldTable.rows.columnSha256[column] === newTable.rows.columnSha256[column])
+    && after.compatibility.missionChildNonDefaults === 0;
+}
+
 function exactMissionWorkspaceModeMigration(before, after) {
   const oldTable = before.tables.chat_mission_tasks;
   const newTable = after.tables.chat_mission_tasks;
@@ -652,7 +682,8 @@ function exactChatAgentMemberAdditiveMigration(before, after) {
   const newTable = after.tables.chat_agent_members;
   if (!oldTable || !newTable) return false;
   const oldNames = new Set(oldTable.columns.map((column) => column.name));
-  const expectedName = oldNames.has('ambient_group_chat') ? 'final_reply_only' : 'ambient_group_chat';
+  const expectedName = oldNames.has('final_reply_only') ? 'next_step_suggestions'
+    : oldNames.has('ambient_group_chat') ? 'final_reply_only' : 'ambient_group_chat';
   if (oldNames.has(expectedName)) return false;
   const added = newTable.columns.find((column) => column.name === expectedName);
   if (!added || added.type !== 'INTEGER' || Number(added.notnull) !== 1
@@ -788,6 +819,8 @@ export function compareDatabaseSnapshots(before, after, allowedAdditions = DEFAU
     } else if (table === 'chat_missions' && (exactMissionRecoveryMigration(before, after)
         || exactMissionRecoveryMigration(before, after, true))) {
       // Add only pinned empty defaults; preserve all existing mission values.
+    } else if (table === 'chat_mission_tasks' && exactMissionChildMigration(before, after)) {
+      // Existing tasks retain their values; new child state starts empty.
     } else if (table === 'chat_mission_tasks'
         && exactMissionWorkspaceModeMigration(before, after)) {
       // workspace_mode is an additive, default-shared mission task migration.

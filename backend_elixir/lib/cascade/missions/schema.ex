@@ -157,6 +157,10 @@ defmodule Cascade.Missions.Schema do
     ON chat_mission_events(mission_id, id)
     """)
 
+    SQL.exec(
+      "CREATE INDEX IF NOT EXISTS chat_mission_tasks_parent_idx ON chat_mission_tasks(parent_task_id)"
+    )
+
     repair_legacy_dependencies!()
     backfill_history!()
     repair_worker_evidence!()

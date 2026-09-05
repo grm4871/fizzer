@@ -631,7 +631,7 @@ export function useChatDispatch({
                 { suppressChatBody },
               );
               const suppressFinalReply = suppressChatBody
-                || (finalReplyOnly && isNoReplyAgentChatBody(finalBody));
+                || isNoReplyAgentChatBody(finalBody);
               const nextStatus = terminal === 'completed' ? undefined : terminal;
               // Suppressed lifecycle events and deliberate final-only silence
               // remove the shell, preventing an empty ambient reply from fanning out.
@@ -640,6 +640,13 @@ export function useChatDispatch({
                   const next = existing.filter((message) => message.id !== agentMessageId);
                   return next.length === existing.length ? existing : next;
                 });
+                agentContextWatermarkRef.current.set(watermarkKey, agentMessageId);
+                finishRun(runId, cleanup);
+                return;
+              }
+              // Proactive replies are validated and published by the server.
+              // Do not race its current-setting/cooldown decision with local text.
+              if (!isLocalRunId(runId) && finalBody.startsWith('<!-- fizzer-next:')) {
                 agentContextWatermarkRef.current.set(watermarkKey, agentMessageId);
                 finishRun(runId, cleanup);
                 return;
@@ -671,7 +678,8 @@ export function useChatDispatch({
             if (!finalReplyOnly) {
               bufferedBlocks = appendChatRunBlocks(bufferedBlocks, blocks);
             }
-            const chatVisible = !finalReplyOnly
+            const suggestion = assistantText.startsWith('<!-- fizzer-next:');
+            const chatVisible = !suggestion && !finalReplyOnly
               && payload.chatVisible === true
               && Boolean(text.trim());
             queueMessageUpdate((message) => ({
@@ -681,7 +689,7 @@ export function useChatDispatch({
               body: chatVisible && assistantText.trim()
                 ? assistantText.trimStart()
                 : message.body || 'Thinking...',
-              blocks: finalReplyOnly ? message.blocks : appendChatRunBlocks(message.blocks, blocks),
+              blocks: finalReplyOnly || suggestion ? message.blocks : appendChatRunBlocks(message.blocks, blocks),
               runId,
             }));
           } else if (event.type === 'user') {

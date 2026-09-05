@@ -13,7 +13,10 @@ defmodule Cascade.Missions.Children do
            [nil] <-
              SQL.one("SELECT parent_task_id FROM chat_mission_tasks WHERE id=?", [parent.id]),
            [count] when count < @max_children <-
-             SQL.one("SELECT COUNT(*) FROM chat_mission_tasks WHERE parent_task_id=?", [parent.id]) do
+             SQL.one(
+               "SELECT COUNT(*) FROM chat_mission_tasks WHERE parent_task_id=? AND title<>?",
+               [parent.id, input[:title] |> to_string() |> String.trim() |> String.slice(0, 240)]
+             ) do
         # Identity, scope, depth and workspace are server-owned. A child gets no
         # coordinator authority and cannot create children of its own.
         bounded = %{
@@ -90,6 +93,19 @@ defmodule Cascade.Missions.Children do
   end
 
   defp owner(_, _, _), do: {:error, "A current worker run is required"}
+
+  def guidance(id) do
+    case SQL.one("SELECT parent_task_id FROM chat_mission_tasks WHERE id=?", [id]) do
+      [nil] ->
+        "You own this task and integration. For authorized parallel work use `cascade-chat mission child --task \"Title\" --message \"Bounded piece\"` (up to eight direct children in isolated worktrees). Keep working independently, then `cascade-chat mission join` and end the turn to resume with child results. Do not start or finish missions or spawn provider subagents."
+
+      [_parent] ->
+        "You are a bounded child worker. Return artifacts and verification to your parent. Do not delegate, integrate other tasks, start or finish missions."
+
+      _ ->
+        ""
+    end
+  end
 
   def projection(id) do
     [parent, joining] =

@@ -237,6 +237,7 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
       ambientGroupChat: false,
       finalReplyOnly: false,
       orchestrator: false,
+      nextStepSuggestions: false,
       pingableByOthers: false,
       yolo: false,
       hermesProfile: '',
@@ -260,6 +261,7 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
     ambientGroupChat: false,
     finalReplyOnly: false,
     orchestrator: false,
+    nextStepSuggestions: false,
     pingableByOthers: false,
     yolo: false,
     hermesProfile: '',
@@ -433,6 +435,7 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
           ambientGroupChat: false,
           finalReplyOnly: false,
           orchestrator: false,
+          nextStepSuggestions: false,
           pingableByOthers: false,
           yolo: false,
           hermesProfile: va.hermesProfile || '',
@@ -959,11 +962,20 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
                 onChange={(event) => setAgentForm((value) => ({
                   ...value,
                   orchestrator: event.target.checked,
+                  nextStepSuggestions: event.target.checked && value.nextStepSuggestions,
                   replyToEveryMessage: event.target.checked,
                 }))}
                 name="Coordinate this channel"
                 hint="Reads every human message and can delegate durable work."
               />
+              {agentForm.orchestrator && (
+                <ChatAgentToggle
+                  checked={agentForm.nextStepSuggestions === true}
+                  onChange={(event) => setAgentForm((value) => ({ ...value, nextStepSuggestions: event.target.checked }))}
+                  name="Suggest what to work on next"
+                  hint="Occasionally suggests a grounded next step during conversations or task updates. Off by default. Work starts only when you accept."
+                />
+              )}
               <ChatAgentToggle
                 stateClass={agentForm.orchestrator ? ' is-locked' : ''}
                 checked={agentForm.replyToEveryMessage}

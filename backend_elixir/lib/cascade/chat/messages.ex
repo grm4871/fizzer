@@ -381,6 +381,7 @@ defmodule Cascade.Chat.Messages do
   end
 
   defp insert_message(route, message) do
+    message = Cascade.Chat.NextSteps.prepare(message, route.sourceChannelId)
     activity = if countable?(message), do: now(), else: nil
 
     SQL.exec(
@@ -403,6 +404,7 @@ defmodule Cascade.Chat.Messages do
   end
 
   defp persist(route, message) do
+    message = Cascade.Chat.NextSteps.prepare(message, route.sourceChannelId)
     activity = if countable?(message), do: now(), else: nil
 
     rows =

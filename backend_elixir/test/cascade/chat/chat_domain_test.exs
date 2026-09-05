@@ -57,6 +57,7 @@ defmodule Cascade.ChatDomainTest do
       ["ambient_group_chat", "INTEGER", 1, "0", 0],
       ["final_reply_only", "INTEGER", 1, "0", 0],
       ["yolo", "INTEGER", 1, "0", 0],
+      ["next_step_suggestions", "INTEGER", 1, "0", 0],
       ["conversation_id", "TEXT", 1, "''", 0],
       ["created_at", "TEXT", 1, "datetime('now')", 0],
       ["updated_at", "TEXT", 1, "datetime('now')", 0],

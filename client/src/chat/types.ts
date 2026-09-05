@@ -212,6 +212,8 @@ export interface ChatAgentRegistration {
   /** Keep live reasoning, tools, and progress out of chat; publish only the settled reply. */
   finalReplyOnly?: boolean;
   orchestrator: boolean;
+  /** Opt-in suggestions by this owner’s coordinator in this channel. */
+  nextStepSuggestions?: boolean;
   /** Allow users other than the owner to @mention/trigger this agent in a
    * shared channel. The run still executes on the owner's desktop runner. */
   pingableByOthers: boolean;

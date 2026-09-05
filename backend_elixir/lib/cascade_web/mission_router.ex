@@ -157,6 +157,28 @@ defmodule CascadeWeb.MissionRouter do
     end)
   end
 
+  post "/api/vaults/:vault_id/channels/:channel_id/missions/tasks/:task_id/steer" do
+    authenticated(conn, :vault, fn conn, user ->
+      input = %{
+        coordinatorRegistrationId: string_body(conn, "coordinatorRegistrationId"),
+        message: string_body(conn, "message"),
+        attempt: body(conn, "attempt", nil),
+        runId: body(conn, "runId", nil)
+      }
+
+      opts = if run_id(conn), do: [current_run_id: run_id(conn)], else: []
+
+      case Store.request_steering(user.id, channel_id, task_id, input, opts) do
+        {:ok, id} ->
+          result = Cascade.Missions.Steering.deliver(id)
+          JSON.send(conn, 202, %{steering: result})
+
+        error ->
+          route_error(conn, 409, error, "Could not steer mission task")
+      end
+    end)
+  end
+
   patch "/api/vaults/:vault_id/channels/:channel_id/missions/tasks/:task_id" do
     authenticated(conn, :vault, fn conn, user ->
       input = %{

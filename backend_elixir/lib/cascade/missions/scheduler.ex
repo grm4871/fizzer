@@ -14,6 +14,7 @@ defmodule Cascade.Missions.Scheduler do
     result =
       SQL.transaction(fn ->
         Cascade.Missions.Recovery.reconcile(mission_id)
+        Cascade.Missions.Children.resume_ready(mission_id)
         scheduled = Store.schedulable(mission_id)
         dispatches = Enum.map(scheduled.candidates, &materialize_candidate!/1)
 
@@ -198,7 +199,7 @@ defmodule Cascade.Missions.Scheduler do
         %{
           id: message_id,
           body:
-            "@#{assignee_mention} #{candidate.prompt}\n\n#{Cascade.Missions.Authority.context(candidate.missionId)}",
+            "@#{assignee_mention} #{candidate.prompt}\n\n#{Cascade.Missions.Children.guidance(candidate.taskId)}\n\n#{Cascade.Missions.Authority.context(candidate.missionId)}",
           createdAt: now(),
           registrationId: candidate.coordinatorRegistrationId,
           missionTaskId: candidate.taskId

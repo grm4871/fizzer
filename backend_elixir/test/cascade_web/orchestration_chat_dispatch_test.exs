@@ -111,9 +111,101 @@ defmodule CascadeWeb.OrchestrationChatDispatchTest do
     }
   end
 
-  test "coordinator reviews are claimed without a chat page and repeated claims reuse the run",
+  test "worker steering resumes its provider session and cwd without stopping the coordinator",
        ctx do
     SQL.exec("UPDATE chat_agent_members SET orchestrator=1 WHERE id=?", [ctx.registration.id])
+
+    {:ok, root} =
+      Messages.create(ctx.owner, ctx.owner_vault.id, ctx.owner_channel.id, %{
+        id: "steer-root-#{ctx.registration.id}",
+        body: "Implement steering"
+      })
+
+    {:ok, mission} =
+      Cascade.Missions.Store.create(ctx.owner.id, ctx.owner_vault.id, ctx.owner_channel.id, %{
+        rootMessageId: root.id,
+        coordinatorRegistrationId: ctx.registration.id,
+        title: "Steer wire"
+      })
+
+    {:ok, added} =
+      Cascade.Missions.Store.add_task(ctx.owner.id, ctx.owner_channel.id, mission.mission.id, %{
+        coordinatorRegistrationId: ctx.registration.id,
+        assignee: ctx.registration.id,
+        anonymous: true,
+        title: "Worker",
+        prompt: "Keep a file edit and remember a context marker."
+      })
+
+    {:ok, coordinator_run} =
+      Store.start(ctx.owner_vault.id, nil, "Coordinator", "codex",
+        chat_dispatch_id: ctx.dispatch.id
+      )
+
+    Dispatches.attach_run(ctx.dispatch.id, coordinator_run.id)
+    [item] = Cascade.Missions.Scheduler.schedule(mission.mission.id).dispatches
+
+    {:ok, worker} =
+      CascadeWeb.OrchestrationController.claim_mission_dispatch(
+        ctx.owner.id,
+        ctx.owner_channel.id,
+        item.dispatch.id
+      )
+
+    assert Store.get(coordinator_run.id).status == "queued"
+    assert {:ok, initial_packet} = Session.poll(ctx.sid, 1_000)
+    assert initial_packet =~ "run:delegate"
+    refute initial_packet =~ "run:cancel"
+    refute worker.prompt =~ "start a durable mission"
+    SQL.exec("UPDATE runs SET session_id='retained-provider-context' WHERE id=?", [worker.id])
+
+    {:ok, request} =
+      Cascade.Missions.Store.request_steering(
+        ctx.owner.id,
+        ctx.owner_channel.id,
+        added.task.id,
+        %{
+          coordinatorRegistrationId: ctx.registration.id,
+          message: "Use the remembered marker and keep that file edit.",
+          attempt: 0,
+          runId: worker.id
+        }
+      )
+
+    delivery = Task.async(fn -> Cascade.Missions.Steering.deliver(request) end)
+    assert {:ok, cancel_packet} = Session.poll(ctx.sid, 1_000)
+    {:ok, packets} = EngineIO.decode_payload(cancel_packet)
+    [%{data: encoded}] = packets
+
+    {:ok, %{id: ack_id, data: ["run:cancel", %{"runId" => canceled_id}]}} =
+      SocketIO.decode(encoded)
+
+    assert canceled_id == worker.id
+
+    send_socket!(ctx.sid, %{
+      type: :ack,
+      namespace: "/runners",
+      id: ack_id,
+      data: [%{success: true}]
+    })
+
+    assert %{status: "dispatched", runId: resumed_id} = Task.await(delivery)
+    assert {:ok, resumed_packet} = Session.poll(ctx.sid, 1_000)
+    assert resumed_packet =~ "retained-provider-context"
+    assert resumed_packet =~ "resumeSessionId"
+    assert resumed_packet =~ "Use the remembered marker"
+    assert resumed_packet =~ "/owner/channel"
+    refute resumed_packet =~ "run:cancel"
+    assert Store.get(resumed_id).conversation_id == "mission:#{added.task.id}"
+    assert Store.get(coordinator_run.id).status == "queued"
+    assert Store.get(worker.id).status == "canceled"
+  end
+
+  test "coordinator reviews are claimed without a chat page and repeated claims reuse the run",
+       ctx do
+    SQL.exec("UPDATE chat_agent_members SET orchestrator=1,next_step_suggestions=1 WHERE id=?", [
+      ctx.registration.id
+    ])
 
     {:ok, root} =
       Messages.create(ctx.owner, ctx.owner_vault.id, ctx.owner_channel.id, %{
@@ -162,6 +254,7 @@ defmodule CascadeWeb.OrchestrationChatDispatchTest do
 
     assert duplicate.id == run.id
     assert Store.get(run.id).prompt =~ "Finish with --verification"
+    assert Store.get(run.id).prompt =~ "You may offer at most one timely next-step suggestion"
 
     assert SQL.one("SELECT COUNT(*) FROM runs WHERE chat_dispatch_id=?", [dispatch_id]) == [
              1

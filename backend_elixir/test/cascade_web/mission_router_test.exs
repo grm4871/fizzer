@@ -82,6 +82,7 @@ defmodule CascadeWeb.MissionRouterTest do
              {"POST", "/api/vaults/:vault_id/channels/:channel_id/missions/:mission_id/tasks"},
              {"POST", "/api/vaults/:vault_id/channels/:channel_id/missions/:mission_id/children"},
              {"POST", "/api/vaults/:vault_id/channels/:channel_id/missions/children/join"},
+             {"POST", "/api/vaults/:vault_id/channels/:channel_id/missions/tasks/:task_id/steer"},
              {"PATCH", "/api/vaults/:vault_id/channels/:channel_id/missions/tasks/:task_id"},
              {"POST",
               "/api/vaults/:vault_id/channels/:channel_id/missions/tasks/:task_id/recovery-evidence"},
@@ -284,6 +285,82 @@ defmodule CascadeWeb.MissionRouterTest do
 
     assert rejected.status == 400
     assert json(rejected)["error"] == "Mission workers cannot finish the mission"
+  end
+
+  test "worker HTTP child and join routes preserve identity and reject cross-task updates", ctx do
+    base = "/api/vaults/#{ctx.vault.id}/channels/#{ctx.channel.id}"
+
+    {:ok, created} =
+      Store.create(ctx.user.id, ctx.vault.id, ctx.channel.id, %{
+        rootMessageId: ctx.root.id,
+        coordinatorRegistrationId: ctx.coordinator.id,
+        title: "Children"
+      })
+
+    {:ok, parent} =
+      Store.add_task(ctx.user.id, ctx.channel.id, created.mission.id, %{
+        coordinatorRegistrationId: ctx.coordinator.id,
+        assignee: ctx.worker.id,
+        title: "Parent"
+      })
+
+    [%{dispatch: dispatch}] = Scheduler.schedule(created.mission.id).dispatches
+
+    {:ok, run} =
+      RunStore.start(ctx.vault.id, nil, "parent", "codex", chat_dispatch_id: dispatch.id)
+
+    :ok = Dispatches.attach_run(dispatch.id, run.id)
+    {:ok, _} = Store.attach_run(dispatch.id, run.id)
+
+    response =
+      request(
+        ctx,
+        :post,
+        base <> "/missions/current/children",
+        %{
+          title: "HTTP child",
+          prompt: "Bounded work",
+          assignee: ctx.coordinator.id,
+          workspaceMode: "shared"
+        },
+        run.id
+      )
+
+    assert response.status == 201
+    child = json(response)["task"]
+    assert child["parentTaskId"] == parent.task.id
+    assert child["workspaceMode"] == "isolated"
+    assert child["assigneeMention"] == ctx.worker.mention <> "·sub"
+
+    assert request(ctx, :post, base <> "/missions/current/children", %{title: "No run"}).status ==
+             400
+
+    joined = request(ctx, :post, base <> "/missions/children/join", %{}, run.id)
+    assert joined.status == 200
+    assert hd(json(joined)["children"])["id"] == child["id"]
+
+    assert request(
+             ctx,
+             :patch,
+             base <> "/missions/tasks/#{parent.task.id}",
+             %{status: "completed"},
+             run.id
+           ).status == 400
+
+    {:ok, unrelated} =
+      Store.add_task(ctx.user.id, ctx.channel.id, created.mission.id, %{
+        coordinatorRegistrationId: ctx.coordinator.id,
+        assignee: ctx.worker.id,
+        title: "Other task"
+      })
+
+    assert request(
+             ctx,
+             :patch,
+             base <> "/missions/tasks/#{unrelated.task.id}",
+             %{status: "canceled"},
+             run.id
+           ).status == 400
   end
 
   defp request(ctx, method, path, body \\ nil, run_id \\ nil) do

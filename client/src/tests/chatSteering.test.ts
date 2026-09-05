@@ -18,6 +18,7 @@ import { applyLocalUserProfile } from '../chat/shared';
 import type { ChatAgentRegistration, ChatMessage } from '../chat/types';
 import { chatMessageStore } from '../chat/messageStore';
 import { ChatWorkTrace } from '../components/ChatWorkTrace';
+import { ChatMessageText } from '../components/ChatMarkdown';
 
 const agent: ChatAgentRegistration = {
   id: 'reg-sol',
@@ -294,4 +295,14 @@ describe('mergeChatPresence', () => {
     expect(painted.profiles?.alice.avatarUrl).toBe('data:image/jpeg;base64,abc');
     expect(presence.profiles?.alice.avatarUrl).toBeUndefined();
   });
+});
+
+it('renders a next-step question without exposing its durable evidence marker', () => {
+  const html = renderToStaticMarkup(createElement(ChatMessageText, {
+    messageId: 'proposal', mentionableAliases: [],
+    body: '<!-- fizzer-next:source-123 -->\n\nThis keeps interrupting you. Should fixing it be next?',
+  }));
+  expect(html).toContain('Should fixing it be next?');
+  expect(html).not.toContain('fizzer-next');
+  expect(html).not.toContain('source-123');
 });

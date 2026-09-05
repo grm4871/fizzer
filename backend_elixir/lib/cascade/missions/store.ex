@@ -330,7 +330,6 @@ defmodule Cascade.Missions.Store do
   end
 
   def schedulable(mission_id \\ nil) do
-    Cascade.Missions.Children.resume_ready(mission_id)
     {filter, params} = if mission_id, do: {"AND id=?", [mission_id]}, else: {"", []}
 
     missions =
@@ -484,6 +483,65 @@ defmodule Cascade.Missions.Store do
 
   def attach_run(_dispatch_id, _run_id), do: {:error, "Invalid run id"}
 
+  def request_steering(user_id, channel_id, task_id, input, opts \\ []) do
+    with {:ok, route} <- Channel.assert_channel(channel_id, user_id),
+         row when not is_nil(row) <- task_with_mission(task_id),
+         :ok <- authorize_task_row(row, route, user_id),
+         :ok <- reject_worker_control(opts, :steer),
+         {:ok, coordinator} <-
+           assert_coordinator(user_id, channel_id, field(input, :coordinatorRegistrationId)) do
+      SQL.transaction(fn ->
+        task = task_row(task_id)
+        mission = mission_row(task.mission_id)
+        instruction = clean(field(input, :message), 8_000)
+        caller_run = Keyword.get(opts, :current_run_id)
+
+        if caller_run &&
+             SQL.one(
+               "SELECT d.registration_id FROM runs r JOIN chat_agent_dispatches d ON d.id=r.chat_dispatch_id WHERE r.id=? AND d.channel_id=?",
+               [caller_run, mission.channel_id]
+             ) != [coordinator.id],
+           do: raise("Only this mission's coordinator can steer its workers")
+
+        unless SQL.one(
+                 "SELECT va.owner_user_id FROM chat_agent_members m JOIN vault_agents va ON va.id=m.vault_agent_id WHERE m.id=?",
+                 [task.assignee_registration_id]
+               ) == [user_id],
+               do: raise("Only the worker owner can steer this task")
+
+        unless mission.coordinator_registration_id == coordinator.id,
+          do: raise("Mission belongs to another coordinator")
+
+        unless mission.status not in ~w(completed canceled) and task.status in ~w(pending running),
+          do: raise("Task is already finished; steering was not delivered")
+
+        unless task.attempt == field(input, :attempt) and task.run_id == field(input, :runId),
+          do: raise("Task changed; refresh its status before steering")
+
+        if instruction == "", do: raise("Steering needs a message")
+
+        if Cascade.Missions.Steering.pending_for_task?(task_id),
+          do: raise("Task already has queued steering; inspect mission history")
+
+        record_event(mission.id, %{
+          task_id: task.id,
+          kind: "steering_requested",
+          title: task.title,
+          summary: instruction,
+          run_id: task.run_id,
+          attempt: task.attempt
+        })
+
+        {:ok, SQL.last_insert_id()}
+      end)
+    else
+      nil -> {:error, "Mission task not found"}
+      {:error, _} = error -> error
+    end
+  rescue
+    error -> {:error, Exception.message(error)}
+  end
+
   def update_task(user_id, channel_id, task_id, input) do
     with {:ok, route} <- Channel.assert_channel(channel_id, user_id),
          row when not is_nil(row) <- task_with_mission(task_id),
@@ -515,7 +573,7 @@ defmodule Cascade.Missions.Store do
                 SQL.exec(
                   """
                   UPDATE chat_mission_tasks
-                  SET status='pending',summary=?,dispatch_id=NULL,run_id=NULL,child_result_delivered=0,
+                  SET status='pending',summary=?,dispatch_id=NULL,run_id=NULL,child_result_delivered=0,joining_children=0,
                     attempt=attempt+1,updated_at=datetime('now') WHERE id=?
                   """,
                   [summary, task_id]
@@ -752,6 +810,12 @@ defmodule Cascade.Missions.Store do
   end
 
   def settle_run(run_id, status, summary) when status in ~w(completed failed canceled) do
+    if status == "canceled" and Cascade.Missions.Steering.interrupting?(run_id),
+      do: {:ok, nil},
+      else: do_settle_run(run_id, status, summary)
+  end
+
+  defp do_settle_run(run_id, status, summary) do
     case SQL.one("SELECT #{@task_select} FROM chat_mission_tasks WHERE run_id=? LIMIT 1", [run_id]) do
       nil ->
         {:ok, nil}
@@ -1398,6 +1462,7 @@ defmodule Cascade.Missions.Store do
         {:error,
          case action do
            :finish -> "Mission workers cannot finish the mission"
+           :steer -> "Mission workers cannot steer other workers"
            _ -> "Mission workers cannot start or delegate missions"
          end}
     end
