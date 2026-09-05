@@ -360,7 +360,30 @@ defmodule CascadeWeb.OrchestrationChatDispatchTest do
 
     assert before_clear.requesterUserId == ctx.guest.id
     assert before_clear.requesterChannelId == ctx.guest_channel.id
+
+    before_rows =
+      SQL.all(
+        "SELECT id,error,failed_at,run_id FROM chat_agent_dispatches WHERE channel_id=? ORDER BY id",
+        [ctx.owner_channel.id]
+      )
+
+    before_messages =
+      SQL.all("SELECT id,body,status FROM chat_messages WHERE channel_id=? ORDER BY id", [
+        ctx.owner_channel.id
+      ])
+
+    Cascade.Missions.DispatchReannouncer.wake()
     Process.sleep(60)
+
+    assert SQL.all(
+             "SELECT id,error,failed_at,run_id FROM chat_agent_dispatches WHERE channel_id=? ORDER BY id",
+             [ctx.owner_channel.id]
+           ) == before_rows
+
+    assert SQL.all("SELECT id,body,status FROM chat_messages WHERE channel_id=? ORDER BY id", [
+             ctx.owner_channel.id
+           ]) == before_messages
+
     refute Store.find_by_chat_dispatch(before_clear.id)
 
     assert [nil] ==
@@ -470,6 +493,8 @@ defmodule CascadeWeb.OrchestrationChatDispatchTest do
     Store.finish(first["runId"], "completed", "done")
     Hub.unregister_runner(ctx.owner.id, ctx.sid)
     dispatch = admit(ctx, "must not run")
+    # Preserve coverage for a queued shell created by an earlier server.
+    CascadeWeb.OrchestrationController.prepare_dispatch(dispatch.id)
 
     eventually(fn ->
       assert {:ok, %{status: "queued"}} =
@@ -507,6 +532,8 @@ defmodule CascadeWeb.OrchestrationChatDispatchTest do
     Store.finish(first["runId"], "completed", "done")
     Hub.unregister_runner(ctx.owner.id, ctx.sid)
     dispatch = admit(ctx, "interrupted startup")
+    # Preserve coverage for a queued shell created by an earlier server.
+    CascadeWeb.OrchestrationController.prepare_dispatch(dispatch.id)
 
     eventually(fn ->
       assert {:ok, %{status: "queued"}} =
@@ -520,6 +547,7 @@ defmodule CascadeWeb.OrchestrationChatDispatchTest do
       )
 
     SQL.exec("UPDATE runs SET started_at=datetime('now','-1 minute') WHERE id=?", [run.id])
+    register_runner!(ctx.sid)
     Cascade.Missions.DispatchReannouncer.wake()
 
     eventually(fn ->

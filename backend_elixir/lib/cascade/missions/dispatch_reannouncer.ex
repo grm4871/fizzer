@@ -53,7 +53,13 @@ defmodule Cascade.Missions.DispatchReannouncer do
     maintenance =
       if recover, do: Map.merge(state.maintenance, mission_jobs()), else: state.maintenance
 
-    pending = Dispatches.pending() |> Enum.group_by(&{:dispatch, &1.group}, & &1.id)
+    # Offline outbox rows stay untouched, including during maintenance cutover.
+    # Runner registration wakes the queue after the owner can actually execute.
+    pending =
+      Dispatches.pending()
+      |> Enum.filter(&RunnerLifecycle.online?(&1.owner))
+      |> Enum.group_by(&{:dispatch, &1.group}, & &1.id)
+
     entries = Map.merge(pending, maintenance) |> Enum.sort()
     offset = if entries == [], do: 0, else: rem(state.cursor, length(entries))
     {before, after_offset} = Enum.split(entries, offset)

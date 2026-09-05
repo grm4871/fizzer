@@ -132,8 +132,10 @@ defmodule Cascade.Missions.Dispatches do
   @doc "Returns durable pending work in message sequence, then admission order."
   def pending do
     SQL.all("""
-    SELECT d.id,d.registration_id,m.mission_task_id
+    SELECT d.id,d.registration_id,m.mission_task_id,COALESCE(d.target_owner_user_id,va.owner_user_id)
     FROM chat_agent_dispatches d JOIN chat_messages m ON m.id=d.message_id
+    JOIN chat_agent_members member ON member.id=d.registration_id
+    JOIN vault_agents va ON va.id=member.vault_agent_id
     LEFT JOIN runs r ON r.chat_dispatch_id=d.id
     LEFT JOIN delegated_runs lease ON lease.run_id=r.id
     WHERE d.failed_at IS NULL AND
@@ -141,9 +143,10 @@ defmodule Cascade.Missions.Dispatches do
        (r.status='queued' AND lease.run_id IS NULL AND r.started_at < datetime('now','-30 seconds')))
     ORDER BY m.rowid,d.rowid
     """)
-    |> Enum.map(fn [id, registration_id, task_id] ->
+    |> Enum.map(fn [id, registration_id, task_id, owner_id] ->
       %{
         id: id,
+        owner: owner_id,
         group:
           if(task_id in [nil, ""],
             do: {:registration, registration_id},

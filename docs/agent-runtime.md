@@ -137,9 +137,11 @@ target survive renderer reloads and reconnects. The server admits and starts
 ordinary chat, worker, and review turns without an open chat page. It preserves
 requester and owner identity and rechecks access before starting a run. A unique
 run key prevents duplicate starts. Bounded jobs serialize each agent session while
-other sessions continue through slow desktop acknowledgments. Interrupted startups
-with no delegation lease settle as failed after 30 seconds so their tasks can be
-retried.
+other sessions continue through slow desktop acknowledgments. Offline owners'
+requests remain untouched until their runner reconnects, preserving maintenance
+cutover checks. Interrupted startups with no delegation lease settle as failed
+once they are at least 30 seconds old and the owner reconnects, so their tasks can
+be retried.
 
 Electron main retains terminal events separately from its bounded event history
 until the server acknowledges persisted settlement. Renderer reloads and unrelated
