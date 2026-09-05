@@ -225,13 +225,19 @@ defmodule Cascade.Chat.NextStepsTest do
     authority = Authority.context(mission.mission.id)
     assert authority =~ "Yes, fix it, but keep my editor open."
     assert authority =~ accepted.id
-    refute authority =~ "Should fixing it be next?"
+    assert authority =~ "Should fixing it be next?"
+    assert authority =~ "bounded_proposal_context"
+    assert authority =~ "not independent authority"
   end
 
-  test "later completed work permits fresh evidence but never repeats the same evidence", c do
+  test "accepted feedback permits fresh evidence but never repeats the same evidence", c do
     enable(c)
     first = proposal(c)
-    age(first)
+
+    {:ok, accepted} =
+      Messages.create(c.user, c.vault_id, c.channel.id, %{body: "Yes, fix only that issue."})
+
+    assert feedback(c, first, accepted, "accepted").body == "Understood."
 
     {:ok, mission} =
       Missions.create(c.user.id, c.vault_id, c.channel.id, %{
@@ -250,6 +256,291 @@ defmodule Cascade.Chat.NextStepsTest do
     assert NextSteps.context(c.channel.id, c.member.id, fresh.id) =~ "You may offer"
     assert proposal(c).body == ""
     assert proposal(%{c | source: fresh}).body != ""
+  end
+
+  test "enablement queues one durable check per transition and disablement removes pending wakes",
+       c do
+    assert checks(c) == []
+    enable(c)
+    [[source, "enable", "pending"]] = checks(c)
+    assert {:ok, pending} = Dispatches.list_pending(c.user.id, c.channel.id)
+    assert Enum.count(pending, &(&1.messageId == source)) == 1
+    enable(c)
+    Schema.ensure!()
+    assert checks(c) == [[source, "enable", "pending"]]
+    assert NextSteps.context(c.channel.id, c.member.id, source) =~ "must evaluate"
+    assert SQL.one("SELECT COUNT(*) FROM chat_missions WHERE channel_id=?", [c.channel.id]) == [0]
+    enable(c, false)
+    assert {:ok, []} = Dispatches.list_pending(c.user.id, c.channel.id)
+    enable(c)
+    assert length(checks(c)) == 2
+  end
+
+  test "no-suggestion reasons settle the checkpoint durably and survive projection retries", c do
+    enable(c)
+
+    input = %{
+      proposal_input(c)
+      | body:
+          "<!-- fizzer-next-none:#{c.source.id} --> No unresolved need is supported by the available evidence."
+    }
+
+    {:ok, saved} = Messages.create(c.user, c.vault_id, c.channel.id, input, access: :agent)
+    assert saved.body == "No unresolved need is supported by the available evidence."
+
+    assert SQL.one("SELECT outcome,reason FROM chat_next_step_checks WHERE source_id=?", [
+             c.source.id
+           ]) == ["none", saved.body]
+
+    Schema.ensure!()
+    assert context(c) =~ "already checked"
+    assert proposal(c).body == ""
+    enable(c, false)
+
+    {:ok, replay} =
+      Messages.update(c.user, c.vault_id, c.channel.id, saved.id, %{body: input.body},
+        access: :agent
+      )
+
+    assert replay.body == saved.body
+  end
+
+  test "owner return uses the existing dispatch and deduplicates its checkpoint", c do
+    enable(c)
+    {:ok, first} = Dispatches.create_for_message(c.user.id, c.channel.id, c.source)
+    {:ok, second} = Dispatches.create_for_message(c.user.id, c.channel.id, c.source)
+    assert Enum.map(first, & &1.id) == Enum.map(second, & &1.id)
+
+    assert SQL.one("SELECT kind,outcome FROM chat_next_step_checks WHERE source_id=?", [
+             c.source.id
+           ]) == ["user_return", "pending"]
+
+    agent_message = proposal(c)
+    NextSteps.user_return(c.channel.id, c.member.id, agent_message.id)
+
+    assert SQL.one("SELECT 1 FROM chat_next_step_checks WHERE source_id=?", [agent_message.id]) ==
+             nil
+  end
+
+  test "completion checkpoint is durable, emitted through the scheduler, and has no hour gate",
+       c do
+    enable(c)
+
+    {:ok, mission} =
+      Missions.create(c.user.id, c.vault_id, c.channel.id, %{
+        rootMessageId: c.source.id,
+        coordinatorRegistrationId: c.member.id,
+        title: "Finished work"
+      })
+
+    # Isolate the scheduling boundary; mission closure evidence is tested by the mission suite.
+    SQL.exec(
+      "UPDATE chat_missions SET status='completed',summary='Verified the repair' WHERE id=?",
+      [mission.mission.id]
+    )
+
+    {:ok, update} = Missions.refresh(mission.mission.id)
+    receiver = self()
+    events = fn event -> send(receiver, {:event, event}) end
+    Cascade.Missions.Scheduler.emit_projection(update, events)
+    source = "sys-next-completed-#{mission.mission.id}"
+    assert_receive {:event, %{message: %{id: ^source}, dispatches: [dispatch]}}
+    Cascade.Missions.Scheduler.emit_projection(update, events)
+
+    assert SQL.one("SELECT COUNT(*) FROM chat_agent_dispatches WHERE message_id=?", [source]) == [
+             1
+           ]
+
+    assert SQL.one("SELECT kind FROM chat_next_step_checks WHERE source_id=?", [source]) == [
+             "completion"
+           ]
+
+    assert NextSteps.context(c.channel.id, c.member.id, source) =~ "must evaluate"
+    assert proposal(%{c | source: %{id: source}}).body != ""
+    assert dispatch.registration.id == c.member.id
+  end
+
+  test "decline feedback is durable and not cleared by time or unrelated completion", c do
+    enable(c)
+    first = proposal(c)
+
+    {:ok, declined} =
+      Messages.create(c.user, c.vault_id, c.channel.id, %{
+        body: "No, keep this stable for the demo."
+      })
+
+    reply = feedback(c, first, declined, "declined")
+    assert reply.body == "Understood."
+
+    assert SQL.one(
+             "SELECT feedback,feedback_message_id FROM chat_next_step_checks WHERE message_id=?",
+             [first.id]
+           ) == ["declined", declined.id]
+
+    age(first)
+    Schema.ensure!()
+
+    {:ok, mission} =
+      Missions.create(c.user.id, c.vault_id, c.channel.id, %{
+        rootMessageId: c.source.id,
+        coordinatorRegistrationId: c.member.id,
+        title: "Unrelated"
+      })
+
+    SQL.exec("UPDATE chat_missions SET status='completed' WHERE id=?", [mission.mission.id])
+    {:ok, fresh} = Messages.create(c.user, c.vault_id, c.channel.id, %{body: "I am back."})
+    assert proposal(%{c | source: fresh}).body == ""
+    assert NextSteps.context(c.channel.id, c.member.id, fresh.id) =~ "Recorded declined"
+  end
+
+  test "acceptance and redirect settle proposal feedback without starting work or waiting an hour",
+       c do
+    for decision <- ["accepted", "redirected"] do
+      enable(c)
+
+      {:ok, source} =
+        Messages.create(c.user, c.vault_id, c.channel.id, %{
+          body: "A new concrete issue blocks my work."
+        })
+
+      first = proposal(%{c | source: source})
+      assert first.body != ""
+
+      {:ok, accepted} =
+        Messages.create(c.user, c.vault_id, c.channel.id, %{
+          body: "Yes, only that bounded repair, and keep the editor open."
+        })
+
+      assert feedback(c, first, accepted, decision).body == "Understood."
+
+      assert SQL.one("SELECT feedback FROM chat_next_step_checks WHERE message_id=?", [first.id]) ==
+               [decision]
+
+      assert SQL.one("SELECT COUNT(*) FROM chat_missions WHERE channel_id=?", [c.channel.id]) == [
+               0
+             ]
+    end
+  end
+
+  test "agent evidence, workers and another channel cannot record owner feedback", c do
+    enable(c)
+    first = proposal(c)
+    assert feedback(c, first, first, "accepted").body == ""
+
+    other =
+      Store.create_note(c.vault_id, c.user.id, %{
+        title: "Other feedback",
+        content: "cascade://chat-channel"
+      })
+
+    {:ok, foreign} = Messages.create(c.user, c.vault_id, other.id, %{body: "Yes"})
+    assert feedback(c, first, foreign, "accepted").body == ""
+
+    assert SQL.one("SELECT feedback FROM chat_next_step_checks WHERE message_id=?", [first.id]) ==
+             [nil]
+
+    {:ok, owner} = Messages.create(c.user, c.vault_id, c.channel.id, %{body: "Yes"})
+
+    input =
+      Map.put(proposal_input(c), :missionTaskId, "worker")
+      |> Map.put(
+        :body,
+        "<!-- fizzer-next-feedback:#{first.id}:#{owner.id}:accepted --> Understood."
+      )
+
+    assert NextSteps.prepare(input, c.channel.id).body == ""
+  end
+
+  test "completion never silently resolves an unanswered proposal", c do
+    enable(c)
+    first = proposal(c)
+    age(first)
+
+    {:ok, mission} =
+      Missions.create(c.user.id, c.vault_id, c.channel.id, %{
+        rootMessageId: c.source.id,
+        coordinatorRegistrationId: c.member.id,
+        title: "Other work"
+      })
+
+    SQL.exec("UPDATE chat_missions SET status='completed' WHERE id=?", [mission.mission.id])
+    {:ok, update} = Missions.refresh(mission.mission.id)
+    item = NextSteps.completion(update)
+    assert proposal(%{c | source: item.message}).body == ""
+    assert NextSteps.context(c.channel.id, c.member.id, item.message.id) =~ "outstanding"
+  end
+
+  test "one feedback event cannot be reinterpreted on retry and terminal text is preserved", c do
+    enable(c)
+    first = proposal(c)
+
+    {:ok, owner} =
+      Messages.create(c.user, c.vault_id, c.channel.id, %{body: "No, leave it alone."})
+
+    recorded = feedback(c, first, owner, "declined")
+    assert feedback(c, first, owner, "accepted").body == ""
+
+    assert SQL.one("SELECT feedback FROM chat_next_step_checks WHERE message_id=?", [first.id]) ==
+             ["declined"]
+
+    assert SQL.one("SELECT outcome FROM chat_next_step_checks WHERE source_id=?", [owner.id]) == [
+             "feedback"
+           ]
+
+    enable(c, false)
+
+    {:ok, replay} =
+      Messages.update(
+        c.user,
+        c.vault_id,
+        c.channel.id,
+        recorded.id,
+        %{body: "<!-- fizzer-next-feedback:#{first.id}:#{owner.id}:declined --> Understood."},
+        access: :agent
+      )
+
+    assert replay.body == recorded.body
+  end
+
+  test "enable HTTP boundary publishes the recoverable dispatch immediately", c do
+    token = Cascade.Auth.Token.sign_user(Map.put(c.user, :auth_version, 0))
+    receiver = self()
+
+    response =
+      Cascade.TestHelpers.json_conn(
+        :post,
+        "/api/vaults/#{c.vault_id}/channels/#{c.channel.id}/agents/from-vault",
+        %{vaultAgentId: c.identity.id, nextStepSuggestions: true},
+        token
+      )
+      |> Plug.Conn.assign(:domain_options,
+        events: fn event -> send(receiver, {:enabled, event}) end
+      )
+      |> CascadeWeb.ChatRouter.call(CascadeWeb.ChatRouter.init([]))
+
+    assert response.status == 201
+    assert_receive {:enabled, %{event: "vault:chatMessageCreated", dispatches: [dispatch]}}
+    assert dispatch.registration.id == c.member.id
+    assert String.starts_with?(dispatch.messageId, "sys-next-enable-")
+    assert NextSteps.checkpoint_dispatch?(c.user.id, dispatch)
+  end
+
+  defp checks(c),
+    do:
+      SQL.all(
+        "SELECT source_id,kind,outcome FROM chat_next_step_checks WHERE channel_id=? AND registration_id=? ORDER BY rowid",
+        [c.channel.id, c.member.id]
+      )
+
+  defp feedback(c, proposed, owner, disposition) do
+    input = %{
+      proposal_input(c)
+      | body:
+          "<!-- fizzer-next-feedback:#{proposed.id}:#{owner.id}:#{disposition} --> Understood."
+    }
+
+    {:ok, message} = Messages.create(c.user, c.vault_id, c.channel.id, input, access: :agent)
+    message
   end
 
   defp age(message),

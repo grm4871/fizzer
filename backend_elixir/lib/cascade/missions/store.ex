@@ -759,7 +759,9 @@ defmodule Cascade.Missions.Store do
               sync_work_item(user_id, mission, task, release: true)
             end)
 
-            refresh!(mission.id) |> Map.merge(cleanup)
+            update = refresh!(mission.id) |> Map.merge(cleanup)
+            Cascade.Chat.NextSteps.completion(update)
+            update
           end)
 
         {:ok, result}

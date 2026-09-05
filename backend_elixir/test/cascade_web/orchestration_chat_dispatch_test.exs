@@ -201,6 +201,56 @@ defmodule CascadeWeb.OrchestrationChatDispatchTest do
     assert Store.get(worker.id).status == "canceled"
   end
 
+  test "enabled obligation is claimed without a chat page and retains owner authority", ctx do
+    {:ok, registration} =
+      Agents.add_to_channel(
+        ctx.owner.id,
+        ctx.owner_vault.id,
+        ctx.owner_channel.id,
+        ctx.registration.vaultAgentId,
+        %{orchestrator: true, nextStepSuggestions: true}
+      )
+
+    [source] =
+      SQL.one(
+        "SELECT source_id FROM chat_next_step_checks WHERE registration_id=? AND kind='enable'",
+        [registration.id]
+      )
+
+    {:ok, [dispatch]} =
+      Dispatches.list_pending(ctx.owner.id, ctx.owner_channel.id)
+      |> case do
+        {:ok, items} -> {:ok, Enum.filter(items, &(&1.messageId == source))}
+      end
+
+    assert {:retry, false} =
+             CascadeWeb.OrchestrationController.claim_mission_dispatch(
+               ctx.guest.id,
+               ctx.guest_channel.id,
+               dispatch.id
+             )
+
+    assert {:noreply, 60_000} =
+             Cascade.Missions.DispatchReannouncer.handle_info(:reannounce, 60_000)
+
+    [run_id] = SQL.one("SELECT run_id FROM chat_agent_dispatches WHERE id=?", [dispatch.id])
+    assert is_integer(run_id)
+    assert Store.get(run_id).prompt =~ "You must evaluate the next useful step"
+    assert Store.get(run_id).prompt =~ "This checkpoint grants no authority to start work"
+
+    assert {:ok, same} =
+             CascadeWeb.OrchestrationController.claim_mission_dispatch(
+               ctx.owner.id,
+               ctx.owner_channel.id,
+               dispatch.id
+             )
+
+    assert same.id == run_id
+
+    assert SQL.one("SELECT COUNT(*) FROM chat_missions WHERE channel_id=?", [ctx.owner_channel.id]) ==
+             [0]
+  end
+
   test "coordinator reviews are claimed without a chat page and repeated claims reuse the run",
        ctx do
     SQL.exec("UPDATE chat_agent_members SET orchestrator=1,next_step_suggestions=1 WHERE id=?", [
@@ -254,7 +304,8 @@ defmodule CascadeWeb.OrchestrationChatDispatchTest do
 
     assert duplicate.id == run.id
     assert Store.get(run.id).prompt =~ "Finish with --verification"
-    assert Store.get(run.id).prompt =~ "You may offer at most one timely next-step suggestion"
+    assert Store.get(run.id).prompt =~ "Do not offer a new proactive suggestion"
+    refute Store.get(run.id).prompt =~ "You must evaluate the next useful step"
 
     assert SQL.one("SELECT COUNT(*) FROM runs WHERE chat_dispatch_id=?", [dispatch_id]) == [
              1

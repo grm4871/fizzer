@@ -115,11 +115,33 @@ defmodule Cascade.Missions.Scheduler do
       OR EXISTS (SELECT 1 FROM chat_mission_tasks t WHERE t.mission_id=m.id
         AND t.dispatch_id=d.id AND t.status='pending' AND t.run_id IS NULL))
     WHERE d.run_id IS NULL AND m.status NOT IN ('completed','canceled')
+    UNION
+    SELECT d.id,va.owner_user_id,m.vault_id,d.channel_id
+    FROM chat_agent_dispatches d
+    JOIN chat_next_step_checks c ON c.source_id=d.message_id AND c.channel_id=d.channel_id
+      AND c.registration_id=d.registration_id
+    JOIN chat_agent_members m ON m.id=d.registration_id AND m.channel_id=d.channel_id
+    JOIN vault_agents va ON va.id=m.vault_agent_id
+    WHERE d.run_id IS NULL AND c.outcome='pending' AND m.orchestrator=1 AND m.next_step_suggestions=1
     """)
   end
 
   def emit_projection(update, events \\ Cascade.Chat.Events.Noop) do
     events = events || Cascade.Chat.Events.Noop
+
+    case Cascade.Chat.NextSteps.completion(update) do
+      nil ->
+        :ok
+
+      item ->
+        Events.emit(events, %{
+          event: "vault:chatMessageCreated",
+          vaultId: item.vaultId,
+          channelId: item.channelId,
+          message: item.message,
+          dispatches: [item.dispatch]
+        })
+    end
 
     case Store.root_message(update) do
       {:ok, message} -> emit_message(update, "vault:chatMessageUpdated", message, [], events)

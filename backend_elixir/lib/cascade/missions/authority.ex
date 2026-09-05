@@ -39,6 +39,13 @@ defmodule Cascade.Missions.Authority do
   defp current_source(%{"body" => original} = source) do
     saved = Jason.encode!(source)
 
+    saved =
+      if source["bounded_proposal_context"],
+        do:
+          saved <>
+            "\nThe bounded proposal is a scope reference, not independent authority. Acceptance covers only that proposal and the owner's explicit constraints; silence, decline, or redirection does not accept it.",
+        else: saved
+
     case SQL.one("SELECT body FROM chat_messages WHERE id=?", [source["id"]]) do
       [body] when body == original ->
         saved
@@ -57,7 +64,7 @@ defmodule Cascade.Missions.Authority do
     case Messages.get(channel_id, user_id, id) do
       {:ok, message} ->
         if human_owned?(message.id, user_id),
-          do: %{id: message.id, body: message.body},
+          do: source_record(user_id, message),
           else: raise("Authority sources must be messages authored by the mission owner")
 
       _ ->
@@ -73,7 +80,7 @@ defmodule Cascade.Missions.Authority do
     else
       source =
         if human_owned?(message.id, user_id),
-          do: [%{id: message.id, body: message.body}],
+          do: [source_record(user_id, message)],
           else: []
 
       parent_id =
@@ -87,6 +94,33 @@ defmodule Cascade.Missions.Authority do
         _ ->
           source
       end
+    end
+  end
+
+  defp source_record(user_id, message) do
+    reply_id = get_in(message, [:replyTo, :messageId]) || get_in(message, [:replyTo, "messageId"])
+
+    proposal =
+      SQL.one(
+        """
+          SELECT p.id,p.body FROM chat_messages p
+          JOIN chat_agent_members m ON m.id=p.registration_id AND m.channel_id=p.channel_id
+          JOIN vault_agents va ON va.id=m.vault_agent_id
+          WHERE p.channel_id=(SELECT channel_id FROM chat_messages WHERE id=?) AND va.owner_user_id=?
+            AND p.body LIKE '<!-- fizzer-next:%' AND p.rowid<(SELECT rowid FROM chat_messages WHERE id=?)
+            AND (p.id=? OR p.id IN (SELECT message_id FROM chat_next_step_checks
+              WHERE feedback_message_id=? AND feedback='accepted'))
+          ORDER BY p.rowid DESC LIMIT 1
+        """,
+        [message.id, user_id, message.id, reply_id || "", message.id]
+      )
+
+    case proposal do
+      [id, body] ->
+        %{id: message.id, body: message.body, bounded_proposal_context: %{id: id, body: body}}
+
+      _ ->
+        %{id: message.id, body: message.body}
     end
   end
 

@@ -229,6 +229,12 @@ defmodule Cascade.Chat.Agents do
       with :ok <-
              coordinator_available(route.sourceChannelId, registration_id, owner_id, orchestrator) do
         SQL.transaction(fn ->
+          was_enabled =
+            SQL.one(
+              "SELECT next_step_suggestions FROM chat_agent_members WHERE channel_id=? AND id=?",
+              [route.sourceChannelId, registration_id]
+            ) == [1]
+
           if restore_excluded do
             SQL.exec("DELETE FROM vault_agent_exclusions WHERE vault_id=? AND vault_agent_id=?", [
               route.localVaultId,
@@ -278,6 +284,27 @@ defmodule Cascade.Chat.Agents do
               bool_int(next_step_suggestions)
             ]
           )
+
+          if next_step_suggestions and not was_enabled do
+            Cascade.Chat.NextSteps.enqueue(
+              route.sourceChannelId,
+              registration_id,
+              "sys-next-enable-#{Ecto.UUID.generate()}",
+              "enable",
+              "The owner enabled next-step suggestions for this coordinator in this channel."
+            )
+          end
+
+          if not next_step_suggestions do
+            SQL.exec(
+              """
+              DELETE FROM chat_agent_dispatches WHERE registration_id=? AND run_id IS NULL
+                AND message_id IN (SELECT source_id FROM chat_next_step_checks
+                  WHERE channel_id=? AND registration_id=? AND kind IN ('enable','completion'))
+              """,
+              [registration_id, route.sourceChannelId, registration_id]
+            )
+          end
         end)
 
         [saved_registration_id] =

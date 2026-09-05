@@ -31,6 +31,8 @@ defmodule Cascade.Missions.Dispatches do
          {:ok, members} <- Agents.list_members(channel_id, user_id),
          registration when not is_nil(registration) <-
            Enum.find(members, &(&1.id == registration_id)) do
+      Cascade.Chat.NextSteps.user_return(route.sourceChannelId, registration.id, message.id)
+
       effort = opts |> Keyword.get(:reasoning_effort, "") |> clean(20) |> String.downcase()
 
       SQL.exec(

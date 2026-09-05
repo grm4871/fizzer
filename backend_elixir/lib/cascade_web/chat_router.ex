@@ -558,6 +558,8 @@ defmodule CascadeWeb.ChatRouter do
   defp registration(conn, mutation, vault_id, channel_id, status)
        when is_function(mutation, 0) do
     case serialized_mutation_and_emit(conn, mutation, fn value ->
+           Cascade.Chat.NextSteps.announce_pending(value.id, callback(conn, :events))
+
            %{
              event: "vault:chatAgentMemberUpserted",
              vaultId: vault_id,

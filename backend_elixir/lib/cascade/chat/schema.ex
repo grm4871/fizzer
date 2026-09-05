@@ -164,6 +164,21 @@ defmodule Cascade.Chat.Schema do
   def ensure! do
     create_tables!()
 
+    SQL.exec("""
+    CREATE TABLE IF NOT EXISTS chat_next_step_checks (
+      channel_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+      registration_id TEXT NOT NULL,
+      source_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      outcome TEXT NOT NULL DEFAULT 'pending',
+      message_id TEXT,
+      reason TEXT NOT NULL DEFAULT '',
+      feedback TEXT,
+      feedback_message_id TEXT,
+      PRIMARY KEY(channel_id,registration_id,source_id)
+    )
+    """)
+
     Enum.each(@message_columns, fn {name, definition} ->
       SQL.ensure_column("chat_messages", name, definition)
     end)

@@ -21,7 +21,9 @@ defmodule CascadeWeb.OrchestrationController do
          user <- %{id: user_id, username: username},
          {:ok, dispatch} <- Dispatches.get(user_id, channel_id, dispatch_id),
          task_id <- dispatch_message_value(dispatch, :missionTaskId, ""),
-         true <- task_id != "" or String.starts_with?(dispatch.messageId, "sys-mission-"),
+         true <-
+           task_id != "" or String.starts_with?(dispatch.messageId, "sys-mission-") or
+             Cascade.Chat.NextSteps.checkpoint_dispatch?(user_id, dispatch),
          registration_id <- dispatch_registration_id(dispatch, ""),
          {:ok, execution} <-
            resolve_chat_execution(user, nil, channel_id, registration_id, dispatch, %{}),
