@@ -314,7 +314,8 @@ export const ChatMessageText = memo(function ChatMessageText({
   onOpenNote?: (id: string) => void;
   onOpenSharedNote?: (messageId: string, title: string) => void;
 }) {
-  const paintBody = useThrottledStreamBody(body, streaming);
+  // Suggestion evidence stays in the durable transcript, outside the chat prose.
+  const paintBody = useThrottledStreamBody(body.replace(/^<!-- fizzer-next:[^\s<>]+ -->\s*/, ''), streaming);
 
   const withInlineMarkup = useCallback((children: ReactNode): ReactNode => {
     const decorate = (value: string): ReactNode[] => {

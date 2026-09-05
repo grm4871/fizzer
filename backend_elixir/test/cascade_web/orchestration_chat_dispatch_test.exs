@@ -113,7 +113,9 @@ defmodule CascadeWeb.OrchestrationChatDispatchTest do
 
   test "coordinator reviews are claimed without a chat page and repeated claims reuse the run",
        ctx do
-    SQL.exec("UPDATE chat_agent_members SET orchestrator=1 WHERE id=?", [ctx.registration.id])
+    SQL.exec("UPDATE chat_agent_members SET orchestrator=1,next_step_suggestions=1 WHERE id=?", [
+      ctx.registration.id
+    ])
 
     {:ok, root} =
       Messages.create(ctx.owner, ctx.owner_vault.id, ctx.owner_channel.id, %{
@@ -162,6 +164,7 @@ defmodule CascadeWeb.OrchestrationChatDispatchTest do
 
     assert duplicate.id == run.id
     assert Store.get(run.id).prompt =~ "Finish with --verification"
+    assert Store.get(run.id).prompt =~ "You may offer at most one timely next-step suggestion"
 
     assert SQL.one("SELECT COUNT(*) FROM runs WHERE chat_dispatch_id=?", [dispatch_id]) == [
              1

@@ -27,6 +27,16 @@ test('rolling schema classification permits only the pinned agent flag transitio
     { objects: [finalOnly], migrations: [] },
   ), []);
 
+  const suggestions = { ...finalOnly, sql: finalOnly.sql.replace("conversation_id TEXT", "next_step_suggestions INTEGER NOT NULL DEFAULT 0, conversation_id TEXT") };
+  assert.deepEqual(compareSchemaFingerprints(
+    { objects: [finalOnly], migrations: [] },
+    { objects: [suggestions], migrations: [] },
+  ), []);
+  assert.deepEqual(compareSchemaFingerprints(
+    { objects: [suggestions], migrations: [] },
+    { objects: [finalOnly], migrations: [] },
+  ), ['database schema changed']);
+
   const unknown = { ...finalOnly, sql: finalOnly.sql.replace('DEFAULT 0, yolo', 'DEFAULT 1, yolo') };
   assert.deepEqual(compareSchemaFingerprints(
     { objects: [ambient], migrations: [] },

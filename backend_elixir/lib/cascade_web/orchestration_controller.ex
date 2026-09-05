@@ -770,7 +770,25 @@ defmodule CascadeWeb.OrchestrationController do
           ""
         end
 
-      {[mission_context, room.text], room.inlineSvgs}
+      worker? =
+        case Messages.get(
+               execution.target_channel_id,
+               execution.runner_user_id,
+               triggering_message_id
+             ) do
+          {:ok, message} -> message[:missionTaskId] not in [nil, ""]
+          _ -> false
+        end
+
+      suggestions =
+        Cascade.Chat.NextSteps.context(
+          execution.target_channel_id,
+          registration_id,
+          triggering_message_id,
+          worker?
+        )
+
+      {[mission_context, room.text, suggestions], room.inlineSvgs}
     end
   rescue
     _ -> {[], []}
