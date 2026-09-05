@@ -230,6 +230,94 @@ defmodule Cascade.Chat.NextStepsTest do
     assert authority =~ "not independent authority"
   end
 
+  test "mission authority reconciles missing feedback through completion and context", c do
+    enable(c)
+    proposed = proposal(c)
+
+    {:ok, accepted} =
+      Messages.create(c.user, c.vault_id, c.channel.id, %{
+        body: "Yes, fix it, but keep my editor open.",
+        replyTo: %{messageId: proposed.id, author: "Astra", body: proposed.body}
+      })
+
+    {:ok, mission} =
+      Missions.create(c.user.id, c.vault_id, c.channel.id, %{
+        rootMessageId: accepted.id,
+        coordinatorRegistrationId: c.member.id,
+        title: "Fix updater"
+      })
+
+    # No simulated provider feedback marker: exercise the actual mission link.
+    assert SQL.one("SELECT feedback FROM chat_next_step_checks WHERE message_id=?", [proposed.id]) ==
+             [nil]
+
+    assert NextSteps.context(c.channel.id, c.member.id, accepted.id) =~ "Recorded accepted"
+
+    {:ok, worker_identity} =
+      Agents.upsert_identity(c.user.id, c.vault_id, %{agentId: "codex", mention: "worker"})
+
+    {:ok, worker} = Agents.add_to_channel(c.user.id, c.vault_id, c.channel.id, worker_identity.id)
+
+    {:ok, _} =
+      Missions.add_task(c.user.id, c.channel.id, mission.mission.id, %{
+        coordinatorRegistrationId: c.member.id,
+        title: "Repair updater",
+        prompt: "Accepted proposal unchanged:\n" <> proposed.body,
+        assignee: worker.id
+      })
+
+    [%{dispatch: dispatch}] = Cascade.Missions.Scheduler.schedule(mission.mission.id).dispatches
+
+    {:ok, run} =
+      Cascade.Runs.Store.start(c.vault_id, nil, "repair", "codex", chat_dispatch_id: dispatch.id)
+
+    :ok = Dispatches.attach_run(dispatch.id, run.id)
+    {:ok, _} = Missions.attach_run(dispatch.id, run.id)
+    :ok = Cascade.Runs.Store.finish(run.id, "completed", "Fixture worker result")
+    {:ok, _} = Cascade.Missions.Scheduler.settle_run(run.id, "completed", "Fixture worker result")
+    # Reproduce the pre-obligation deployment: plain owner authority and no check
+    # row, with the accepted proposal carried unchanged in the worker handoff.
+    SQL.exec("UPDATE chat_missions SET authority_json=? WHERE id=?", [
+      Jason.encode!([%{id: accepted.id, body: accepted.body}]),
+      mission.mission.id
+    ])
+
+    SQL.exec("DELETE FROM chat_next_step_checks WHERE message_id=?", [proposed.id])
+
+    {:ok, completed} =
+      Missions.finish(c.user.id, c.channel.id, mission.mission.id, %{
+        summary: "Updater repaired",
+        status: "completed",
+        coordinatorRegistrationId: c.member.id,
+        verification: "Regression passed"
+      })
+
+    assert completed.mission.status == "completed"
+    trigger = "sys-next-completed-#{mission.mission.id}"
+    prompt = NextSteps.context(c.channel.id, c.member.id, trigger)
+    assert prompt =~ "You may offer"
+    assert prompt =~ "Linked mission #{mission.mission.id}: completed"
+    assert prompt =~ "keep my editor open"
+    assert NextSteps.context(c.channel.id, c.member.id, trigger) == prompt
+    assert SQL.one("SELECT COUNT(*) FROM chat_missions WHERE channel_id=?", [c.channel.id]) == [1]
+    assert proposal(c).body == ""
+
+    {:ok, deferred} =
+      Messages.create(
+        c.user,
+        c.vault_id,
+        c.channel.id,
+        %{proposal_input(c) | body: "<!-- fizzer-next-none:#{trigger} --> No unresolved need."},
+        access: :agent
+      )
+
+    assert deferred.body == "No unresolved need."
+
+    assert SQL.one("SELECT outcome FROM chat_next_step_checks WHERE source_id=?", [trigger]) == [
+             "none"
+           ]
+  end
+
   test "accepted feedback permits fresh evidence but never repeats the same evidence", c do
     enable(c)
     first = proposal(c)

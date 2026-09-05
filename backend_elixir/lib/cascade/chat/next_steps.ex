@@ -134,6 +134,8 @@ For owner feedback on a recorded proposal, prefix your ordinary reply with <!-- 
   end
 
   defp eligible?(channel, registration, source_id, exclude_id) do
+    reconcile(channel, registration)
+
     check =
       SQL.one(
         "SELECT outcome,message_id FROM chat_next_step_checks WHERE channel_id=? AND registration_id=? AND source_id=?",
@@ -474,7 +476,63 @@ For owner feedback on a recorded proposal, prefix your ordinary reply with <!-- 
     end
   end
 
+  # Recover execution links, not authorization from natural-language guesses.
+  # Older missions kept the exact proposal in their task prompt rather than
+  # bounded_proposal_context. Both paths require unchanged owner authority.
+  defp linked_missions(channel, registration, proposal) do
+    SQL.all(
+      """
+      SELECT DISTINCT m.id,m.status,m.summary,u.id FROM chat_missions m,json_each(m.authority_json) a
+      JOIN chat_messages u ON u.id=json_extract(a.value,'$.id')
+      JOIN chat_messages p ON p.id=? AND p.channel_id=m.channel_id AND p.registration_id=m.coordinator_registration_id
+      WHERE m.channel_id=? AND m.coordinator_registration_id=?
+        AND u.channel_id=m.channel_id AND u.actor_user_id=m.created_by
+        AND u.agent_id IS NULL AND u.registration_id IS NULL AND u.rowid>p.rowid
+        AND u.body=json_extract(a.value,'$.body') AND p.body LIKE '<!-- fizzer-next:%'
+        AND (json_extract(a.value,'$.bounded_proposal_context.id')=p.id OR
+          (json_extract(a.value,'$.bounded_proposal_context') IS NULL AND EXISTS (
+            SELECT 1 FROM chat_mission_tasks t WHERE t.mission_id=m.id AND instr(t.prompt,p.body)>0)))
+      ORDER BY m.rowid,u.rowid
+      """,
+      [proposal, channel, registration]
+    )
+  end
+
+  defp reconcile(channel, registration) do
+    SQL.all(
+      """
+      SELECT p.id,p.body FROM chat_messages p
+      WHERE p.channel_id=? AND p.registration_id=? AND p.body LIKE '<!-- fizzer-next:%'
+        AND NOT EXISTS (SELECT 1 FROM chat_next_step_checks c WHERE c.channel_id=p.channel_id
+          AND c.registration_id=p.registration_id AND c.message_id=p.id AND c.feedback IS NOT NULL)
+      """,
+      [channel, registration]
+    )
+    |> Enum.each(fn [proposal, body] ->
+      with [_, evidence] <- Regex.run(@marker, body),
+           [_, _, _, owner_source] <-
+             Enum.find(linked_missions(channel, registration, proposal), fn [_, status, _, _] ->
+               status != "canceled"
+             end) do
+        checkpoint(channel, registration, evidence, "user_return")
+
+        SQL.exec(
+          """
+          UPDATE chat_next_step_checks SET outcome='proposed',message_id=?,feedback='accepted',feedback_message_id=?
+          WHERE channel_id=? AND registration_id=? AND source_id=? AND feedback IS NULL
+            AND (message_id=? OR outcome='pending')
+          """,
+          [proposal, owner_source, channel, registration, evidence, proposal]
+        )
+      else
+        _ ->
+          :ok
+      end
+    end)
+  end
+
   defp history(channel, registration, owner) do
+    reconcile(channel, registration)
     # Include old proposals even after noisy room activity and provider resets.
     proposals =
       SQL.all(
@@ -518,8 +576,16 @@ For owner feedback on a recorded proposal, prefix your ordinary reply with <!-- 
             ""
         end
 
+      missions =
+        linked_missions(channel, registration, id)
+        |> Enum.map_join("\n", fn [mission, status, summary, _] ->
+          "Linked mission #{mission}: #{status}. #{String.slice(summary || "", 0, 600)}"
+        end)
+
       "Proposal #{id}: #{String.slice(body, 0, 900)}\n" <>
         decision <>
+        missions <>
+        "\n" <>
         Enum.map_join(replies, "\n", fn [id, body] ->
           "Owner #{id}: #{String.slice(body, 0, 600)}"
         end)
