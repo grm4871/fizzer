@@ -1,7 +1,7 @@
 defmodule Cascade.Missions.Steering do
   @moduledoc "Task-scoped interrupt/resume using the mission event outbox and provider session."
   alias Cascade.Accounts.SQL
-  alias Cascade.Missions.{Scheduler, Store}
+  alias Cascade.Missions.Scheduler
   alias Cascade.Runs.Store, as: Runs
   alias Cascade.Runs.RunnerLifecycle
 
@@ -27,8 +27,11 @@ defmodule Cascade.Missions.Steering do
     |> Enum.each(&reject(&1, "Worker stopped; queued steering was canceled"))
   end
 
-  def replay do
-    SQL.all(@pending) |> Enum.each(fn [id | _] -> deliver(id) end)
+  def replay(mission_id \\ nil) do
+    filter = if mission_id, do: " AND e.mission_id=?", else: ""
+
+    SQL.all(@pending <> filter, if(mission_id, do: [mission_id], else: []))
+    |> Enum.each(fn [id | _] -> deliver(id) end)
   end
 
   def deliver(id, opts \\ []) do
@@ -161,18 +164,8 @@ defmodule Cascade.Missions.Steering do
   end
 
   defp schedule(mission) do
-    result = Scheduler.schedule(mission, events: Cascade.Realtime.Events)
-
-    Enum.each(result.dispatches, fn item ->
-      update = item.update
-      {:ok, route} = Store.owner_route(update.createdBy, update.vaultId, update.channelId)
-
-      CascadeWeb.OrchestrationController.claim_mission_dispatch(
-        update.createdBy,
-        route.localChannelId,
-        item.dispatch.id
-      )
-    end)
+    Scheduler.schedule(mission, events: Cascade.Realtime.Events)
+    Cascade.Missions.DispatchReannouncer.wake()
   end
 
   def acknowledgment(id) do

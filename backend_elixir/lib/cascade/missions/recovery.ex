@@ -61,12 +61,17 @@ defmodule Cascade.Missions.Recovery do
   end
 
   # Retry provider cancellation after crashes/disconnects, outside SQL locks.
-  def replay_cancellations(cancel \\ &cancel_run/2) do
-    SQL.all("""
-    SELECT r.id,m.created_by FROM chat_mission_tasks t
-    JOIN chat_missions m ON m.id=t.mission_id JOIN runs r ON r.id=t.run_id
-    WHERE t.status='canceled' AND r.status IN ('queued','running')
-    """)
+  def replay_cancellations(cancel \\ &cancel_run/2, mission_id \\ nil) do
+    filter = if mission_id, do: " AND m.id=?", else: ""
+
+    SQL.all(
+      """
+      SELECT r.id,m.created_by FROM chat_mission_tasks t
+      JOIN chat_missions m ON m.id=t.mission_id JOIN runs r ON r.id=t.run_id
+      WHERE t.status='canceled' AND r.status IN ('queued','running') #{filter}
+      """,
+      if(mission_id, do: [mission_id], else: [])
+    )
     |> Enum.each(fn [run, user] ->
       if cancel.(user, run) do
         Cascade.Runs.Store.finish(run, "canceled", "Mission task canceled.")

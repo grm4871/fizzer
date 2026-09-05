@@ -103,7 +103,9 @@ different effort levels without registering duplicate members. Workers inherit
 that agent's tools and authority, not its coordinator role: they execute one
 task and cannot start or delegate missions. A worker can create up to eight direct
 child tasks under its own task, using its own agent identity and the existing runner
-concurrency limits. Children use isolated worktrees and cannot delegate further:
+concurrency limits. Children start isolated worktrees from the parent's committed
+workspace state. Commit prerequisites before creating a child; uncommitted edits
+are not inherited. Children cannot delegate further:
 
 ```text
 cascade-chat mission child --task "Parser tests" --message "Implement only the parser regression tests"
@@ -131,9 +133,20 @@ integrates worker evidence, then explicitly finishes the mission; worker
 completion alone puts a mission in `reviewing`, not `completed`.
 
 Chat-to-agent intent is also an outbox (`chat_agent_dispatches`). Message and
-target survive renderer reloads and reconnects, and a unique run key ensures
-multiple clients recovering the same dispatch still launch only one provider
-process. Explicit mission delegation is the permission boundary that lets a
+target survive renderer reloads and reconnects. The server admits and starts
+ordinary chat, worker, and review turns without an open chat page. It preserves
+requester and owner identity and rechecks access before starting a run. A unique
+run key prevents duplicate starts. Bounded jobs serialize each agent session while
+other sessions continue through slow desktop acknowledgments. Interrupted startups
+with no delegation lease settle as failed after 30 seconds so their tasks can be
+retried.
+
+Electron main retains terminal events separately from its bounded event history
+until the server acknowledges persisted settlement. Renderer reloads and unrelated
+worker output cannot evict an unacknowledged completion. Duplicate receipts preserve
+the first terminal status, including a prior Stop.
+
+Explicit mission delegation is the permission boundary that lets a
 coordinator call a worker which has disabled ordinary agent-to-agent mentions.
 Shared-channel users can only launch registrations whose owner enabled
 multiplayer pings.

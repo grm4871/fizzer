@@ -96,16 +96,20 @@ defmodule Cascade.Realtime.DomainAdapter do
 
   def handle_event("/runners", "runner:runEvent", [data], identity, _context)
       when is_map(data) do
+    payload = field(data, :payload) || %{}
+
     with {:ok, run_id} <- positive_integer(field(data, :runId)),
          type when is_binary(type) and type != "" <- field(data, :type),
-         true <- RunnerLifecycle.accept_event?(run_id, identity.id) do
-      payload = field(data, :payload) || %{}
+         true <-
+           RunnerLifecycle.accept_event?(run_id, identity.id) or
+             (terminal_event?(type, payload) and Store.owned?(run_id, identity.id)) do
+      cond do
+        terminal_event?(type, payload) -> settle_runner_event(run_id, payload, identity.id)
+        type == "heartbeat" -> RunnerLifecycle.heartbeat(run_id, identity.id)
+        true -> persist_runner_event(run_id, type, payload, identity.id)
+      end
 
-      if type == "heartbeat",
-        do: RunnerLifecycle.heartbeat(run_id, identity.id),
-        else: persist_runner_event(run_id, type, payload, identity.id)
-
-      {:ok, []}
+      {:ok, if(field(data, :receipt) == true, do: [{:ack, [%{success: true}]}], else: [])}
     else
       _ -> {:error, "Run event rejected"}
     end
@@ -153,6 +157,39 @@ defmodule Cascade.Realtime.DomainAdapter do
 
   defp persist_runner_event(run_id, type, payload, _owner_id),
     do: Store.publish(run_id, type, payload)
+
+  defp terminal_event?("status", payload) when is_map(payload),
+    do: field(payload, :status) in ~w(completed failed canceled)
+
+  defp terminal_event?(_, _), do: false
+
+  defp settle_runner_event(run_id, payload, owner_id) do
+    Cascade.Realtime.OrderedPublisher.mutate(fn ->
+      Cascade.Accounts.SQL.transaction(fn ->
+        run = Store.get(run_id)
+
+        if Store.terminal?(run.status) do
+          # A lost ACK must not duplicate settlement or overwrite a prior Stop.
+          # Also repair the old finish-before-publish crash boundary.
+          if is_nil(
+               Cascade.Accounts.SQL.one(
+                 "SELECT 1 FROM run_events WHERE run_id=? AND type='status' AND json_extract(payload_json,'$.status') IN ('completed','failed','canceled') LIMIT 1",
+                 [run_id]
+               )
+             ) do
+            persist_runner_event(
+              run_id,
+              "status",
+              %{status: run.status, summary: run.summary, sessionId: run.session_id},
+              owner_id
+            )
+          end
+        else
+          persist_runner_event(run_id, "status", payload, owner_id)
+        end
+      end)
+    end)
+  end
 
   defp maybe_record_runner_error(_owner_id, _status, _summary), do: :ok
 

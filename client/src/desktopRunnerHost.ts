@@ -23,6 +23,7 @@ type RunnerElectronAPI = {
     cursor?: number;
   }>;
   onAgentEvent?: (callback: (payload: AgentEventPayload) => void) => () => void;
+  acknowledgeAgentEvent?: (receipt: { instanceId: string; seq: number }) => Promise<boolean>;
   getRunnerPlanUsage?: () => Promise<{ usage?: Record<string, unknown> }>;
 };
 
@@ -31,6 +32,7 @@ type AgentEventPayload = {
   type?: string;
   payload_json?: string;
   bridgeSeq?: number;
+  receiptRequired?: boolean;
 };
 
 type DelegatedRunPayload = {
@@ -112,6 +114,21 @@ export class LatestRunnerSetup {
 }
 
 const runnerCredentialSetup = new LatestRunnerSetup();
+const terminalReceiptsInFlight = new Set<number>();
+
+/** Keep main's terminal result until the server confirms durable settlement. */
+export function deliverTerminalWithReceipt(
+  activeSocket: Pick<Socket, 'timeout'>,
+  event: { runId: number; type: string; payload: unknown },
+  received: () => void,
+  settled: () => void,
+): void {
+  activeSocket.timeout(10_000).emit('runner:runEvent', { ...event, receipt: true },
+    (error: Error | null, response?: { success?: boolean }) => {
+      settled();
+      if (!error && response?.success === true) received();
+    });
+}
 
 /**
  * Main may report "not found" in the few milliseconds between child-registry
@@ -161,12 +178,19 @@ function processAgentEvent(event: AgentEventPayload): void {
   // connected server socket to receive it.
   if (!socket?.connected) return;
   const seq = Number(event?.bridgeSeq);
-  if (Number.isFinite(seq) && seq <= bridgeCursor) return;
+  const acknowledge = runnerElectronAPI()?.acknowledgeAgentEvent;
+  const receiptRequired = event.receiptRequired === true && Boolean(acknowledge);
+  if (Number.isFinite(seq) && seq <= bridgeCursor && !receiptRequired) return;
   const runId = Number(event?.runId);
   if (!Number.isFinite(runId) || !event?.type || typeof event.payload_json !== 'string') return;
   try {
     const payload = JSON.parse(event.payload_json);
-    emitRunEvent(runId, event.type, payload);
+    if (receiptRequired && terminalReceiptsInFlight.has(seq)) return;
+    const instanceId = bridgeInstanceId;
+    emitRunEvent(runId, event.type, payload, receiptRequired ? () => {
+      void acknowledge?.({ instanceId, seq }).catch(() => { /* Main retains the receipt for replay. */ });
+      recentTerminalEvents.delete(runId);
+    } : undefined, receiptRequired ? seq : undefined);
     if (Number.isFinite(seq)) {
       bridgeCursor = Math.max(bridgeCursor, seq);
       saveBridgeCursor();
@@ -217,7 +241,7 @@ function pruneRecentTerminals(): void {
   }
 }
 
-function emitRunEvent(runId: number, type: string, payload: unknown): void {
+function emitRunEvent(runId: number, type: string, payload: unknown, received?: () => void, receiptSeq?: number): void {
   if (type === 'status' && payload && typeof payload === 'object') {
     const status = (payload as { status?: string }).status;
     if (status === 'completed' || status === 'failed' || status === 'canceled') {
@@ -228,7 +252,13 @@ function emitRunEvent(runId: number, type: string, payload: unknown): void {
       if (activeSocket) window.setTimeout(() => void publishPlanUsage(activeSocket, true), 1_000);
     }
   }
-  socket?.emit('runner:runEvent', { runId, type, payload });
+  if (received && socket && receiptSeq !== undefined) {
+    terminalReceiptsInFlight.add(receiptSeq);
+    deliverTerminalWithReceipt(socket, { runId, type, payload }, received,
+      () => terminalReceiptsInFlight.delete(receiptSeq));
+  } else {
+    socket?.emit('runner:runEvent', { runId, type, payload });
+  }
 }
 
 async function publishPlanUsage(activeSocket: Socket, force = false): Promise<void> {

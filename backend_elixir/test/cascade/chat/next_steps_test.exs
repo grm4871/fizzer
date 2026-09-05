@@ -643,13 +643,9 @@ defmodule Cascade.Chat.NextStepsTest do
     NextSteps.announce_pending(c.member.id, fn event -> send(self(), {:deferred, event}) end)
     refute_receive {:deferred, _}
 
-    assert Cascade.Missions.Scheduler.reannounce_pending(
-             events: fn event -> send(self(), {:replay, event}) end
-           ) == 0
-
-    shell_id = "agent-dispatch-#{dispatch.id}"
-    assert_receive {:replay, %{event: "vault:chatMessageDeleted", messageId: ^shell_id}}
-    refute_receive {:replay, %{dispatches: _}}
+    assert {:deferred, _} = Dispatches.for_execution(dispatch.id)
+    CascadeWeb.OrchestrationController.prepare_dispatch(dispatch.id)
+    assert {:error, _} = Messages.get(c.channel.id, c.user.id, "agent-dispatch-#{dispatch.id}")
 
     assert SQL.one("SELECT outcome,reason FROM chat_next_step_checks WHERE source_id=?", [source]) ==
              ["pending", "Conversation/work state: waiting for active work to finish."]

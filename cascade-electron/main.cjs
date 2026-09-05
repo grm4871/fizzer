@@ -556,6 +556,9 @@ ipcMain.handle('agent:cancel', async (_event, runId) => {
 
 /** Restore main-owned runs and missed events after renderer reload/freeze. */
 ipcMain.handle('agent:getState', async (_event, afterSeq = 0) => agentRunState.snapshot(afterSeq));
+ipcMain.handle('agent:acknowledge', async (_event, { instanceId, seq } = {}) => (
+  agentRunState.acknowledge(instanceId, seq)
+));
 
 /** Configure helper env for local agent children (renderer owns /runners socket). */
 ipcMain.handle('runner:setToken', async (_event, { token, apiUrl } = {}) => {

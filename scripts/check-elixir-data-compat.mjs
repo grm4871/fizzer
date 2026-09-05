@@ -13,6 +13,15 @@ const EMPTY_TABLE_ADDITIONS = new Map([
   ['chat_next_step_checks', '975a576a29b23ab328602d5f3a7a888cc1f3624e89242bcb44f38ae0654fd6e5'],
 ]);
 const FTS5_SHADOW_SUFFIXES = ['config', 'data', 'docsize', 'idx'];
+const DISPATCH_ADMISSION_COLUMNS = [
+  ['requester_user_id', 'INTEGER REFERENCES users(id)'],
+  ['requester_channel_id', 'TEXT'],
+  ['target_owner_user_id', 'INTEGER REFERENCES users(id)'],
+  ['target_identity_id', 'TEXT'],
+  ['conversation_id', 'TEXT'],
+  ['error', 'TEXT'],
+  ['failed_at', 'TEXT'],
+];
 
 // These hashes pin the intentional one-time normalization performed by the
 // Elixir bootstrap. A table is not accepted merely because its rows happen to
@@ -280,6 +289,17 @@ function databaseSnapshotFromCopy(filename) {
         SELECT rowid,id,${hasWorkspaceMode ? 'workspace_mode' : "'shared'"} AS workspaceMode
         FROM chat_mission_tasks ORDER BY rowid
       `).all();
+    }
+    if (tables.chat_agent_dispatches) {
+      const added = DISPATCH_ADMISSION_COLUMNS.filter(([name]) => (
+        tables.chat_agent_dispatches.columns.some((column) => column.name === name)
+      ));
+      if (added.length) {
+        compatibility.dispatchAdmissionNonNullRows = db.prepare(`
+          SELECT COUNT(*) AS count FROM chat_agent_dispatches
+          WHERE ${added.map(([name]) => `${quoteIdentifier(name)} IS NOT NULL`).join(' OR ')}
+        `).get().count;
+      }
     }
     if (tables.runs) {
       const hasOwner = tables.runs.columns.some((column) => column.name === 'owner_user_id');
@@ -568,6 +588,41 @@ function exactMissionWorkspaceModeMigration(before, after) {
     && workspaces.every((row) => row.workspaceMode === 'shared');
 }
 
+function exactDispatchAdmissionMigration(before, after) {
+  const oldTable = before.tables.chat_agent_dispatches;
+  const newTable = after.tables.chat_agent_dispatches;
+  const additions = DISPATCH_ADMISSION_COLUMNS.map(([name, definition], index) => ({
+    cid: oldTable.columns.length + index,
+    name,
+    type: definition.split(' ')[0],
+    notnull: 0,
+    dflt_value: null,
+    pk: 0,
+  }));
+  if (additions.some(({ name }) => oldTable.columns.some((column) => column.name === name))
+      || !same(newTable.columns, [...oldTable.columns, ...additions])) return false;
+
+  const expectedForeignKeys = [
+    ...oldTable.normalizedForeignKeys,
+    ...['requester_user_id', 'target_owner_user_id'].map((from) => ({
+      table: 'users', from, to: 'id', onUpdate: 'NO ACTION', onDelete: 'NO ACTION', match: 'NONE',
+    })),
+  ].sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+  // SQLite inserts added columns before the trailing table constraint.
+  const expectedSql = oldTable.schema.sql.replace(
+    /, UNIQUE\(message_id, registration_id\) \)$/u,
+    `, ${DISPATCH_ADMISSION_COLUMNS.map(([name, definition]) => `${name} ${definition}`).join(', ')}, UNIQUE(message_id, registration_id) )`,
+  );
+  return newTable.schema.sql === expectedSql
+    && same(newTable.normalizedForeignKeys, expectedForeignKeys)
+    && oldTable.rows.count === newTable.rows.count
+    && oldTable.rows.includesRowid === newTable.rows.includesRowid
+    && oldTable.rows.columns.every((column) => (
+      oldTable.rows.columnSha256[column] === newTable.rows.columnSha256[column]
+    ))
+    && after.compatibility.dispatchAdmissionNonNullRows === 0;
+}
+
 function exactRunOwnershipSchema(before, after) {
   const oldTable = before.tables.runs;
   const newTable = after.tables.runs;
@@ -827,6 +882,9 @@ export function compareDatabaseSnapshots(before, after, allowedAdditions = DEFAU
     } else if (table === 'chat_mission_tasks'
         && exactMissionWorkspaceModeMigration(before, after)) {
       // workspace_mode is an additive, default-shared mission task migration.
+    } else if (table === 'chat_agent_dispatches'
+        && exactDispatchAdmissionMigration(before, after)) {
+      // Admission columns remain NULL for historical dispatches.
     } else if (table === 'chat_agent_members'
         && exactChatAgentMemberAdditiveMigration(before, after)) {
       // The ambient participation flag is an additive, default-false migration.

@@ -453,8 +453,12 @@ defmodule Cascade.Missions.MissionStateTest do
 
     before = SQL.one("SELECT COUNT(*) FROM chat_messages WHERE channel_id=?", [ctx.channel.id])
 
-    assert {:noreply, 60_000} =
-             Cascade.Missions.DispatchReannouncer.handle_info(:reannounce, 60_000)
+    {:ok, state} = Cascade.Missions.DispatchReannouncer.init(interval: 60_000)
+    {:noreply, state} = Cascade.Missions.DispatchReannouncer.handle_info(:dispatch, state)
+
+    Enum.each(state.jobs, fn {_key, {pid, ref}} ->
+      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 2_000
+    end)
 
     assert SQL.one("SELECT wake_sent FROM chat_missions WHERE id=?", [created.mission.id]) == [0]
 

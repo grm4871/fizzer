@@ -146,11 +146,7 @@ defmodule CascadeWeb.MissionRouterTest do
     assert dispatch["messageId"] == delegated_body["message"]["id"]
     assert dispatch["reasoningEffort"] == "high"
 
-    assert Scheduler.reannounce_pending(events: fn event -> send(self(), {:event, event}) end) ==
-             1
-
-    assert_receive {:event, %{event: "vault:chatMessageUpdated", dispatches: [replayed]}}
-    assert replayed.id == dispatch["id"]
+    assert Enum.any?(Cascade.Missions.Dispatches.pending(), &(&1.id == dispatch["id"]))
 
     completed =
       request(

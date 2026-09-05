@@ -86,34 +86,62 @@ defmodule CascadeWeb.ChatRouter do
 
   post "/api/vaults/:vault_id/channels/:channel_id/messages" do
     authenticated(conn, :any, :vault, fn conn, user ->
-      with {:ok, prior} <- Messages.list(channel_id, user.id, limit: 48),
-           {:ok, members} <- Agents.ensure_vault_wide(user.id, vault_id, channel_id),
-           input <- RoomContext.infer_natural_link(conn.body_params, prior, members),
-           {:ok, result} <-
+      with {:ok, result} <-
              serialized_create_and_emit(
                conn,
                fn ->
-                 with {:ok, message} <-
-                        Messages.create(user, vault_id, channel_id, input, access: access(conn)),
-                      {:ok, dispatches} <-
-                        Dispatches.create_for_message(user.id, channel_id, message) do
-                   {:ok, %{message: message, dispatches: dispatches}}
+                 with {:ok, prior} <- Messages.list(channel_id, user.id, limit: 48),
+                      {:ok, members} <- Agents.ensure_vault_wide(user.id, vault_id, channel_id) do
+                   case Dispatches.clear_targets(body(conn, "body", ""), members) do
+                     nil ->
+                       input = RoomContext.infer_natural_link(conn.body_params, prior, members)
+
+                       with {:ok, message} <-
+                              Messages.create(user, vault_id, channel_id, input,
+                                access: access(conn)
+                              ),
+                            {:ok, dispatches} <-
+                              Dispatches.create_for_message(user.id, channel_id, message) do
+                         {:ok, %{message: message, agents: members, dispatches: dispatches}}
+                       end
+
+                     targets ->
+                       clear_sessions(conn, user, vault_id, channel_id, targets)
+                   end
                  end
                end,
                fn result ->
-                 %{
+                 event = %{
                    event: "vault:chatMessageCreated",
                    vaultId: source(result.message, :vault, vault_id),
                    channelId: source(result.message, :channel, channel_id),
                    message: result.message,
                    dispatches: result.dispatches
                  }
+
+                 if result[:notice] do
+                   OrderedPublisher.chat(callback(conn, :events), event)
+
+                   for agent <- result.agents do
+                     OrderedPublisher.chat(callback(conn, :events), %{
+                       event: "vault:chatAgentMemberUpserted",
+                       vaultId: vault_id,
+                       channelId: channel_id,
+                       registration: agent
+                     })
+                   end
+
+                   %{event | message: result.notice}
+                 else
+                   event
+                 end
                end
              ) do
         JSON.send(conn, 201, %{
           message: result.message,
-          agents: members,
-          dispatches: result.dispatches
+          agents: result.agents,
+          dispatches: result.dispatches,
+          notice: result[:notice]
         })
       else
         error -> domain_error(conn, error)
@@ -173,7 +201,11 @@ defmodule CascadeWeb.ChatRouter do
     authenticated(conn, :user, :vault, fn conn, user ->
       case serialized_mutation_and_emit(
              conn,
-             fn -> Messages.delete(user, vault_id, channel_id, message_id) end,
+             fn ->
+               Messages.delete(user, vault_id, channel_id, message_id,
+                 queued_only: query(conn, "queuedOnly") == "true"
+               )
+             end,
              fn _route ->
                %{
                  event: "vault:chatMessageDeleted",
@@ -526,6 +558,74 @@ defmodule CascadeWeb.ChatRouter do
   defp mutation_option(nil), do: []
   defp mutation_option(:account), do: [mutation_gate: :not_vault_scoped]
   defp mutation_option(:vault), do: [mutation_gate: &VaultMembers.mutation_gate/2]
+
+  defp clear_sessions(_conn, _user, _vault_id, _channel_id, []),
+    do: {:error, "No agents in this channel to clear."}
+
+  defp clear_sessions(conn, user, vault_id, channel_id, targets) do
+    if Enum.any?(targets, &(&1.ownerUserId != user.id)) do
+      {:error, "You can only manage assistants in your own roster"}
+    else
+      Cascade.DB.WriteCoordinator.with_lock(fn ->
+        Cascade.DB.Repo.transaction(fn ->
+          result =
+            with {:ok, message} <-
+                   Messages.create(user, vault_id, channel_id, conn.body_params,
+                     access: access(conn)
+                   ) do
+              notice_id = "sys-clear-#{message.id}"
+
+              case Messages.get(channel_id, user.id, notice_id) do
+                {:ok, notice} ->
+                  {:ok, agents} = Agents.list_members(channel_id, user.id)
+                  {:ok, %{message: message, agents: agents, dispatches: [], notice: notice}}
+
+                {:error, _} ->
+                  cleared =
+                    Enum.reduce_while(targets, :ok, fn target, :ok ->
+                      case Agents.upsert_member(
+                             user.id,
+                             vault_id,
+                             channel_id,
+                             Map.put(target, :conversationId, Ecto.UUID.generate())
+                           ) do
+                        {:ok, _} -> {:cont, :ok}
+                        error -> {:halt, error}
+                      end
+                    end)
+
+                  names = Enum.map_join(targets, ", ", &"@#{&1.mention}")
+
+                  with :ok <- cleared,
+                       {:ok, notice} <-
+                         Messages.create(
+                           user,
+                           vault_id,
+                           channel_id,
+                           %{
+                             id: notice_id,
+                             # Legacy system-message discriminator.
+                             author: "Cascade",
+                             body:
+                               "🧹 Cleared the session for #{names}. The next message starts a fresh conversation."
+                           },
+                           access: :system
+                         ),
+                       {:ok, agents} <- Agents.list_members(channel_id, user.id) do
+                    {:ok, %{message: message, agents: agents, dispatches: [], notice: notice}}
+                  end
+              end
+            end
+
+          case result do
+            {:ok, result} -> result
+            {:error, error} -> Cascade.DB.Repo.rollback(error)
+          end
+        end)
+      end)
+    end
+  end
+
   defp access(conn), do: if(conn.assigns.auth_access == "agent", do: :agent, else: :user)
   defp respond(conn, {:ok, value}, key), do: JSON.send(conn, 200, %{key => value})
   defp respond(conn, error, _key), do: domain_error(conn, error)
