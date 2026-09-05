@@ -1300,12 +1300,12 @@ defmodule Cascade.Missions.MissionStateTest do
 
           {:ok, resumed} =
             RunStore.start(ctx.vault.id, nil, item.message.body, "codex",
-              owner_user_id: ctx.user.id,
               conversation_id: "mission:#{task.id}",
               chat_dispatch_id: item.dispatch.id,
               session_id: "saved-steering-session"
             )
 
+          :ok = RunStore.record_delegated(resumed.id, ctx.user.id)
           :ok = Dispatches.attach_run(item.dispatch.id, resumed.id)
           {:ok, _} = Store.attach_run(item.dispatch.id, resumed.id)
           send(parent, {:resumed, resumed.id})
@@ -1340,6 +1340,22 @@ defmodule Cascade.Missions.MissionStateTest do
 
     assert {:error, reason} = Store.request_steering(ctx.user.id, ctx.channel.id, task.id, input)
     assert reason =~ "already has queued"
+  end
+
+  test "stop revocation wins while the provider acknowledgment is in flight", ctx do
+    {_, task, run, input} = steering_fixture(ctx)
+    {:ok, request} = Store.request_steering(ctx.user.id, ctx.channel.id, task.id, input)
+
+    assert %{status: "rejected"} =
+             Cascade.Missions.Steering.deliver(request,
+               cancel: fn _, _ ->
+                 Cascade.Missions.Steering.cancel_pending(run.id)
+                 true
+               end
+             )
+
+    assert [run.id, 0] ==
+             SQL.one("SELECT run_id,attempt FROM chat_mission_tasks WHERE id=?", [task.id])
   end
 
   test "explicit stop revokes queued steering", ctx do

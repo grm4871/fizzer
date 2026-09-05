@@ -50,6 +50,9 @@ defmodule Cascade.Missions.Steering do
             run = run_id && Runs.get(run_id)
 
             cond do
+              not is_nil(run_id) and is_nil(run) ->
+                reject(request, "Worker run is missing; instructions were not delivered")
+
               run && run.status in ~w(completed failed) ->
                 reject(request, "Worker already finished; instructions were not delivered")
 
@@ -97,7 +100,8 @@ defmodule Cascade.Missions.Steering do
           when status in ~w(pending running) and mission_status not in ~w(completed canceled) ->
             run = run_id && Runs.get(run_id)
 
-            if run && run.status in ~w(completed failed) do
+            if is_nil(SQL.one(@pending <> " AND e.id=?", [id])) or
+                 (not is_nil(run) and run.status in ~w(completed failed)) do
               :stale
             else
               # Keep the work item, workspace, provider session and task identity.
@@ -182,14 +186,18 @@ defmodule Cascade.Missions.Steering do
                [task, attempt + 1]
              ) do
           [run, status, owner] when not is_nil(owner) ->
-            %{
-              id: id,
-              taskId: task,
-              runId: run,
-              status: "dispatched",
-              detail:
-                "Instructions assigned to worker run #{run} (#{status}); execution is not confirmed by dispatch alone"
-            }
+            if Runs.delegated_owner(run) || status in ~w(completed failed canceled) do
+              %{
+                id: id,
+                taskId: task,
+                runId: run,
+                status: "dispatched",
+                detail:
+                  "Instructions dispatched to worker run #{run} (#{status}); execution is not confirmed by dispatch alone"
+              }
+            else
+              queued(id, "Instructions assigned to run #{run}; waiting for runner delivery")
+            end
 
           _ ->
             queued(id, "Instructions saved; waiting for worker dispatch")

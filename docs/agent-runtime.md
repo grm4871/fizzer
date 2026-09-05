@@ -101,7 +101,21 @@ Named assignees still get at most one active mission task at a time.
 extra channel membership) so a coordinator can fan out several sols at
 different effort levels without registering duplicate members. Workers inherit
 that agent's tools and authority, not its coordinator role: they execute one
-task and cannot start or delegate missions.
+task and cannot start or delegate missions. A worker can create up to eight direct
+child tasks under its own task, using its own agent identity and the existing runner
+concurrency limits. Children use isolated worktrees and cannot delegate further:
+
+```text
+cascade-chat mission child --task "Parser tests" --message "Implement only the parser regression tests"
+cascade-chat mission join
+```
+
+The parent keeps doing independent work, then ends its turn to join. Once its
+children settle, the same parent task resumes with each child's summary, branch,
+workspace and verification for integration. Failed or blocked children must be
+resolved before parent completion. Stopping a parent cancels unfinished children;
+steering the parent preserves them. Children do not trigger a separate mission
+review. The parent owns integration and the coordinator performs the final review.
 
 `chat_missions` and `chat_mission_tasks` are authoritative, while
 `chat_mission_events` is an append-only timeline with no retention window. A compact mission
@@ -180,6 +194,22 @@ Dispatch/run uniqueness and task idempotency prevent duplicate admission. Shared
 workspaces still require agents to preserve unrelated files or use isolated
 worktrees; the mission scheduler cannot lock arbitrary external side effects.
 Production deployment serialization remains owned by GitHub Actions.
+
+A coordinator can redirect its own worker with
+`cascade-chat mission steer --task <id> --message "<correction>"` (stdin also works).
+The helper pins the current task attempt and run. The server records the instruction
+in mission history, waits for provider stop acknowledgment, and resumes the saved
+provider session in the same task/work item and workspace. The correction replaces
+repeated task instructions in the continuation; existing context and file edits
+remain. Worker dispatches never interrupt the coordinator's foreground session.
+
+The acknowledgment distinguishes queued instructions from a dispatched worker run;
+dispatch is not proof that the agent acted on them. Queued steering replays through
+the existing server outbox, including after reconnect. Only one outstanding correction
+per task is accepted. Steering waits if no provider session has been saved, rejects
+finished or changed tasks, and is revoked by an explicit stop. Mission history records
+the request and outcome; the following task-start event identifies the continuation.
+Workers cannot steer peers, and steering another owner's worker is rejected.
 
 ## Cancellation and recovery
 
