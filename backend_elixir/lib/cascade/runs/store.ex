@@ -288,6 +288,9 @@ defmodule Cascade.Runs.Store do
   end
 
   def cancel(run_id, opts \\ []) do
+    unless Keyword.get(opts, :steering, false),
+      do: Cascade.Missions.Steering.cancel_pending(run_id)
+
     case get(run_id) do
       nil -> false
       %{status: status} when status in @terminal -> true

@@ -181,6 +181,22 @@ workspaces still require agents to preserve unrelated files or use isolated
 worktrees; the mission scheduler cannot lock arbitrary external side effects.
 Production deployment serialization remains owned by GitHub Actions.
 
+A coordinator can redirect its own worker with
+`cascade-chat mission steer --task <id> --message "<correction>"` (stdin also works).
+The helper pins the current task attempt and run. The server records the instruction
+in mission history, waits for provider stop acknowledgment, and resumes the saved
+provider session in the same task/work item and workspace. The correction replaces
+repeated task instructions in the continuation; existing context and file edits
+remain. Worker dispatches never interrupt the coordinator's foreground session.
+
+The acknowledgment distinguishes queued instructions from a dispatched worker run;
+dispatch is not proof that the agent acted on them. Queued steering replays through
+the existing server outbox, including after reconnect. Only one outstanding correction
+per task is accepted. Steering waits if no provider session has been saved, rejects
+finished or changed tasks, and is revoked by an explicit stop. Mission history records
+the request and outcome; the following task-start event identifies the continuation.
+Workers cannot steer peers, and steering another owner's worker is rejected.
+
 ## Cancellation and recovery
 
 Cancellation is routed to the owning desktop and then persisted server-side.

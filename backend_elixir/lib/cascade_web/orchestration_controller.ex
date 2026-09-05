@@ -61,7 +61,11 @@ defmodule CascadeWeb.OrchestrationController do
              resume
            )
            |> PromptContext.append_context(context),
-         :ok <- release_sticky_registration(registration_id, dispatch_id),
+         :ok <-
+           if(task_id == "",
+             do: release_sticky_registration(registration_id, dispatch_id),
+             else: :ok
+           ),
          {:ok, run} <-
            start_chat_run(execution, nil, effective_prompt, conversation_id, resume, dispatch_id) do
       attach_dispatch(dispatch_id, run.id)
@@ -764,7 +768,8 @@ defmodule CascadeWeb.OrchestrationController do
         end
 
       mission_context =
-        if is_nil(resume) do
+        if is_nil(resume) and not String.starts_with?(triggering_message_id, "mission-task-") and
+             not String.starts_with?(triggering_message_id, "sys-mission-") do
           "For substantive multi-step work that should survive interruption, start a durable mission with `cascade-chat mission start --title \"...\" --objective \"...\"`; keep driving it until its review wake, then finish it. Use judgment: do not start a mission for simple questions, status checks, conversation, or a small one-step change. A mission does not grant authority over other users agents; only delegate when the user explicitly asks and the ownership boundary is valid."
         else
           ""

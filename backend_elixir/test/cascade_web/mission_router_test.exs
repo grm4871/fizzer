@@ -80,6 +80,7 @@ defmodule CascadeWeb.MissionRouterTest do
              {"GET", "/api/vaults/:vault_id/channels/:channel_id/missions/:mission_id/history"},
              {"GET", "/api/vaults/:vault_id/channels/:channel_id/missions/:mission_id"},
              {"POST", "/api/vaults/:vault_id/channels/:channel_id/missions/:mission_id/tasks"},
+             {"POST", "/api/vaults/:vault_id/channels/:channel_id/missions/tasks/:task_id/steer"},
              {"PATCH", "/api/vaults/:vault_id/channels/:channel_id/missions/tasks/:task_id"},
              {"POST",
               "/api/vaults/:vault_id/channels/:channel_id/missions/tasks/:task_id/recovery-evidence"},
@@ -282,6 +283,39 @@ defmodule CascadeWeb.MissionRouterTest do
 
     assert rejected.status == 400
     assert json(rejected)["error"] == "Mission workers cannot finish the mission"
+  end
+
+  test "steering HTTP route pins the task snapshot and acknowledges queued delivery", ctx do
+    {:ok, mission} =
+      Store.create(ctx.user.id, ctx.vault.id, ctx.channel.id, %{
+        rootMessageId: ctx.root.id,
+        coordinatorRegistrationId: ctx.coordinator.id,
+        title: "Steer HTTP"
+      })
+
+    {:ok, added} =
+      Store.add_task(ctx.user.id, ctx.channel.id, mission.mission.id, %{
+        coordinatorRegistrationId: ctx.coordinator.id,
+        assignee: ctx.worker.id,
+        title: "Queued work"
+      })
+
+    path =
+      "/api/vaults/#{ctx.vault.id}/channels/#{ctx.channel.id}/missions/tasks/#{added.task.id}/steer"
+
+    input = %{
+      coordinatorRegistrationId: ctx.coordinator.id,
+      message: "Narrow the work.",
+      attempt: 4,
+      runId: nil
+    }
+
+    assert request(ctx, :post, path, input).status == 409
+    response = request(ctx, :post, path, %{input | attempt: 0})
+    assert response.status == 202
+    assert json(response)["steering"]["status"] == "queued"
+    assert [prompt] = SQL.one("SELECT prompt FROM chat_mission_tasks WHERE id=?", [added.task.id])
+    assert prompt =~ "Narrow the work."
   end
 
   defp request(ctx, method, path, body \\ nil, run_id \\ nil) do

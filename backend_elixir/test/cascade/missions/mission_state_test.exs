@@ -1269,6 +1269,219 @@ defmodule Cascade.Missions.MissionStateTest do
     })
   end
 
+  test "steering stops only the bound worker and retains task, work item and provider context",
+       ctx do
+    {mission, task, run, input} = steering_fixture(ctx)
+    [work_item] = SQL.one("SELECT work_item_id FROM chat_mission_tasks WHERE id=?", [task.id])
+    {:ok, request} = Store.request_steering(ctx.user.id, ctx.channel.id, task.id, input)
+    parent = self()
+
+    result =
+      Cascade.Missions.Steering.deliver(request,
+        cancel: fn owner, id ->
+          assert owner == ctx.user.id
+          assert id == run.id
+          :ok = RunStore.finish(id, "canceled", "Run canceled.")
+          assert {:ok, nil} = Scheduler.settle_run(id, "canceled", "Run canceled.")
+          true
+        end,
+        schedule: fn mission_id ->
+          scheduled = Scheduler.schedule(mission_id)
+          [item] = scheduled.dispatches
+          assert item.message.body =~ "Keep the edits; change only the test."
+          refute item.message.body =~ "Original large instruction payload"
+
+          assert RunStore.find_conversation_session(%{
+                   vault_id: ctx.vault.id,
+                   note_id: nil,
+                   agent: "codex",
+                   conversation_id: "mission:#{task.id}"
+                 }) == "saved-steering-session"
+
+          {:ok, resumed} =
+            RunStore.start(ctx.vault.id, nil, item.message.body, "codex",
+              conversation_id: "mission:#{task.id}",
+              chat_dispatch_id: item.dispatch.id,
+              session_id: "saved-steering-session"
+            )
+
+          :ok = RunStore.record_delegated(resumed.id, ctx.user.id)
+          :ok = Dispatches.attach_run(item.dispatch.id, resumed.id)
+          {:ok, _} = Store.attach_run(item.dispatch.id, resumed.id)
+          send(parent, {:resumed, resumed.id})
+        end
+      )
+
+    assert result.status == "dispatched"
+    assert_receive {:resumed, resumed_id}
+    assert result.runId == resumed_id
+
+    assert [work_item, "running", 1] ==
+             SQL.one("SELECT work_item_id,status,attempt FROM chat_mission_tasks WHERE id=?", [
+               task.id
+             ])
+
+    assert {:ok, update} = Store.get(ctx.user.id, ctx.channel.id, mission.id)
+    assert length(update.mission.tasks) == 1
+    assert Cascade.Missions.Steering.deliver(request).runId == resumed_id
+  end
+
+  test "unacknowledged steering stays queued without replacing the worker", ctx do
+    {_, task, run, input} = steering_fixture(ctx)
+    {:ok, request} = Store.request_steering(ctx.user.id, ctx.channel.id, task.id, input)
+
+    assert %{status: "queued", detail: detail} =
+             Cascade.Missions.Steering.deliver(request, cancel: fn _, _ -> false end)
+
+    assert detail =~ "acknowledgment"
+
+    assert [run.id, 0] ==
+             SQL.one("SELECT run_id,attempt FROM chat_mission_tasks WHERE id=?", [task.id])
+
+    assert {:error, reason} = Store.request_steering(ctx.user.id, ctx.channel.id, task.id, input)
+    assert reason =~ "already has queued"
+  end
+
+  test "stop revocation wins while the provider acknowledgment is in flight", ctx do
+    {_, task, run, input} = steering_fixture(ctx)
+    {:ok, request} = Store.request_steering(ctx.user.id, ctx.channel.id, task.id, input)
+
+    assert %{status: "rejected"} =
+             Cascade.Missions.Steering.deliver(request,
+               cancel: fn _, _ ->
+                 Cascade.Missions.Steering.cancel_pending(run.id)
+                 true
+               end
+             )
+
+    assert [run.id, 0] ==
+             SQL.one("SELECT run_id,attempt FROM chat_mission_tasks WHERE id=?", [task.id])
+  end
+
+  test "explicit stop revokes queued steering", ctx do
+    {_, task, run, input} = steering_fixture(ctx)
+    {:ok, request} = Store.request_steering(ctx.user.id, ctx.channel.id, task.id, input)
+
+    assert %{status: "queued"} =
+             Cascade.Missions.Steering.deliver(request, cancel: fn _, _ -> false end)
+
+    assert RunStore.cancel(run.id, force: true)
+    assert %{status: "rejected", detail: reason} = Cascade.Missions.Steering.deliver(request)
+    assert reason =~ "Worker stopped"
+    assert [0] == SQL.one("SELECT attempt FROM chat_mission_tasks WHERE id=?", [task.id])
+  end
+
+  test "steering rejects stale snapshots and completion during provider interruption", ctx do
+    {_, task, run, input} = steering_fixture(ctx)
+
+    assert {:error, reason} =
+             Store.request_steering(ctx.user.id, ctx.channel.id, task.id, %{input | attempt: 7})
+
+    assert reason =~ "Task changed"
+    {:ok, request} = Store.request_steering(ctx.user.id, ctx.channel.id, task.id, input)
+
+    assert %{status: "rejected"} =
+             Cascade.Missions.Steering.deliver(request,
+               cancel: fn _, _ ->
+                 RunStore.finish(run.id, "completed", "Done")
+                 Scheduler.settle_run(run.id, "completed", "Done")
+                 true
+               end
+             )
+
+    assert [run.id, "completed", 0] ==
+             SQL.one("SELECT run_id,status,attempt FROM chat_mission_tasks WHERE id=?", [task.id])
+
+    assert {:error, reason} = Store.request_steering(ctx.user.id, ctx.channel.id, task.id, input)
+    assert reason =~ "already finished"
+  end
+
+  test "workers, wrong coordinators, and nonowners cannot steer", ctx do
+    {_, task, run, input} = steering_fixture(ctx)
+
+    assert {:error, reason} =
+             Store.request_steering(ctx.user.id, ctx.channel.id, task.id, input,
+               current_run_id: run.id
+             )
+
+    assert reason =~ "workers cannot steer"
+
+    assert {:error, reason} =
+             Store.request_steering(ctx.user.id, ctx.channel.id, task.id, %{
+               input
+               | coordinatorRegistrationId: ctx.worker.id
+             })
+
+    assert reason =~ "another coordinator"
+
+    assert {:error, _} =
+             Store.request_steering(ctx.user.id + 100_000_000, ctx.channel.id, task.id, input)
+
+    assert {:error, reason} =
+             Store.request_steering(ctx.user.id, ctx.channel.id, task.id, input,
+               current_run_id: 999_999_999
+             )
+
+    assert reason =~ "Only this mission's coordinator"
+  end
+
+  test "pending task steering changes the dispatched instructions without losing the original",
+       ctx do
+    {:ok, created} = mission(ctx, "Steer queued")
+    {:ok, added} = task(ctx, created.mission.id, "Original queued work")
+
+    input = %{
+      coordinatorRegistrationId: ctx.coordinator.id,
+      message: "Also preserve the fixture.",
+      attempt: 0,
+      runId: nil
+    }
+
+    {:ok, request} = Store.request_steering(ctx.user.id, ctx.channel.id, added.task.id, input)
+
+    assert %{status: "queued"} =
+             Cascade.Missions.Steering.deliver(request,
+               schedule: fn id ->
+                 [item] = Scheduler.schedule(id).dispatches
+                 assert item.message.body =~ "Original queued work"
+                 assert item.message.body =~ "Also preserve the fixture."
+               end
+             )
+  end
+
+  defp steering_fixture(ctx) do
+    {:ok, created} = mission(ctx, "Worker steering")
+
+    {:ok, added} =
+      Store.add_task(ctx.user.id, ctx.channel.id, created.mission.id, %{
+        coordinatorRegistrationId: ctx.coordinator.id,
+        title: "Steer worker",
+        assignee: ctx.worker.id,
+        prompt: "Original large instruction payload"
+      })
+
+    [item] = Scheduler.schedule(created.mission.id).dispatches
+
+    {:ok, run} =
+      RunStore.start(ctx.vault.id, nil, "Existing work", "codex",
+        chat_dispatch_id: item.dispatch.id,
+        conversation_id: "mission:#{added.task.id}",
+        session_id: "saved-steering-session"
+      )
+
+    :ok = Dispatches.attach_run(item.dispatch.id, run.id)
+    {:ok, _} = Store.attach_run(item.dispatch.id, run.id)
+
+    input = %{
+      coordinatorRegistrationId: ctx.coordinator.id,
+      message: "Keep the edits; change only the test.",
+      attempt: 0,
+      runId: run.id
+    }
+
+    {created.mission, added.task, run, input}
+  end
+
   defp mission(ctx, title) do
     Store.create(ctx.user.id, ctx.vault.id, ctx.channel.id, %{
       rootMessageId: ctx.root.id,
