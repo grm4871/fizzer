@@ -165,8 +165,9 @@ one minute, only with no running or dispatched tasks or active coordinator run. 
 review generation, never re-executes a worker, and stops after three retries with
 an `attention` state and a concrete mission-history explanation. Explicit canceled
 reviews and closed missions are not resumed. Adding or explicitly retrying work
-starts a new review budget. Recovery requires a running server and connected
-runner; schema-only boots do not schedule work.
+starts a new review budget. Periodic recovery waits for each mission owner’s runner to reconnect, so
+disconnected maintenance boots preserve the verification snapshot. It requires a
+running server; schema-only boots do not schedule work.
 
 Dispatch/run uniqueness and task idempotency prevent duplicate admission. Shared
 workspaces still require agents to preserve unrelated files or use isolated

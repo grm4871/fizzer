@@ -92,8 +92,8 @@ defmodule Cascade.Missions.Authority do
 
   defp human_owned?(id, user_id) do
     SQL.one(
-      "SELECT COUNT(*) FROM chat_messages WHERE id=? AND actor_user_id=? AND COALESCE(registration_id,'')='' AND COALESCE(agent_id,'')=''",
-      [id, user_id]
+      "SELECT COUNT(*) FROM chat_messages WHERE id=? AND actor_user_id=? AND COALESCE(registration_id,'')='' AND COALESCE(agent_id,'')='' AND author=(SELECT username FROM users WHERE id=?)",
+      [id, user_id, user_id]
     ) == [1]
   end
 end

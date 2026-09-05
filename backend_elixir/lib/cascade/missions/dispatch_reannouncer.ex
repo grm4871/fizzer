@@ -3,6 +3,8 @@ defmodule Cascade.Missions.DispatchReannouncer do
 
   use GenServer
 
+  alias Cascade.Accounts.SQL
+  alias Cascade.Runs.RunnerLifecycle
   alias Cascade.Missions.Scheduler
   alias CascadeWeb.OrchestrationController
 
@@ -21,7 +23,16 @@ defmodule Cascade.Missions.DispatchReannouncer do
 
   @impl true
   def handle_info(:reannounce, interval) do
-    Scheduler.schedule(nil, events: Cascade.Realtime.Events)
+    # No owner runner can act during a disconnected/maintenance boot. Preserve
+    # the database until reconnect, including the deploy snapshot verification.
+    SQL.all(
+      "SELECT id,created_by FROM chat_missions WHERE status NOT IN ('completed','canceled')"
+    )
+    |> Enum.each(fn [mission_id, owner_id] ->
+      if RunnerLifecycle.online?(owner_id),
+        do: Scheduler.schedule(mission_id, events: Cascade.Realtime.Events)
+    end)
+
     Scheduler.reannounce_pending(events: Cascade.Realtime.Events)
 
     Scheduler.pending_dispatches()

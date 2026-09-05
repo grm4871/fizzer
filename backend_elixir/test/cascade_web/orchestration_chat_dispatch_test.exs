@@ -142,26 +142,28 @@ defmodule CascadeWeb.OrchestrationChatDispatchTest do
         summary: "Needs review"
       })
 
-    [wake] = Cascade.Missions.Scheduler.schedule(mission.mission.id).wakeDispatches
+    assert {:noreply, 60_000} =
+             Cascade.Missions.DispatchReannouncer.handle_info(:reannounce, 60_000)
 
-    assert {:ok, run} =
-             CascadeWeb.OrchestrationController.claim_mission_dispatch(
-               ctx.owner.id,
-               ctx.owner_channel.id,
-               wake.dispatch.id
-             )
+    [dispatch_id, run_id] =
+      SQL.one("SELECT id,run_id FROM chat_agent_dispatches WHERE message_id LIKE ?", [
+        "sys-mission-#{mission.mission.id}-%"
+      ])
+
+    assert is_integer(run_id)
+    run = Store.get(run_id)
 
     assert {:ok, duplicate} =
              CascadeWeb.OrchestrationController.claim_mission_dispatch(
                ctx.owner.id,
                ctx.owner_channel.id,
-               wake.dispatch.id
+               dispatch_id
              )
 
     assert duplicate.id == run.id
     assert Store.get(run.id).prompt =~ "Finish with --verification"
 
-    assert SQL.one("SELECT COUNT(*) FROM runs WHERE chat_dispatch_id=?", [wake.dispatch.id]) == [
+    assert SQL.one("SELECT COUNT(*) FROM runs WHERE chat_dispatch_id=?", [dispatch_id]) == [
              1
            ]
 

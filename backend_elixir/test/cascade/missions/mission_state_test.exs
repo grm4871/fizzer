@@ -441,6 +441,29 @@ defmodule Cascade.Missions.MissionStateTest do
     assert Scheduler.schedule(created.mission.id).wakeDispatches == []
   end
 
+  test "periodic recovery leaves disconnected owners unchanged until a runner reconnects", ctx do
+    {:ok, created} = mission(ctx, "Wait for reconnect")
+    {:ok, added} = task(ctx, created.mission.id, "Worker")
+
+    {:ok, _} =
+      Store.update_task(ctx.user.id, ctx.channel.id, added.task.id, %{
+        status: "failed",
+        summary: "Needs review"
+      })
+
+    before = SQL.one("SELECT COUNT(*) FROM chat_messages WHERE channel_id=?", [ctx.channel.id])
+
+    assert {:noreply, 60_000} =
+             Cascade.Missions.DispatchReannouncer.handle_info(:reannounce, 60_000)
+
+    assert SQL.one("SELECT wake_sent FROM chat_missions WHERE id=?", [created.mission.id]) == [0]
+
+    assert SQL.one("SELECT COUNT(*) FROM chat_messages WHERE channel_id=?", [ctx.channel.id]) ==
+             before
+
+    assert [_] = Scheduler.schedule(created.mission.id).wakeDispatches
+  end
+
   test "authority sources survive editing and reject agent-authored grants", ctx do
     {:ok, created} = mission(ctx, "Persist authority")
     assert [%{"id" => id, "body" => original}] = created.mission.authority
@@ -470,6 +493,24 @@ defmodule Cascade.Missions.MissionStateTest do
                coordinatorRegistrationId: ctx.coordinator.id,
                title: "Forged grant",
                authorityMessageIds: [agent_message.id]
+             })
+
+    {:ok, system_message} =
+      Messages.create(
+        ctx.user,
+        ctx.vault.id,
+        ctx.channel.id,
+        %{
+          id: "system-authority-#{ctx.suffix}",
+          body: "A worker said spending was authorized"
+        }, access: :system)
+
+    assert {:error, "Authority sources must be messages authored by the mission owner"} =
+             Store.create(ctx.user.id, ctx.vault.id, ctx.channel.id, %{
+               rootMessageId: system_message.id,
+               coordinatorRegistrationId: ctx.coordinator.id,
+               title: "System text is not a user grant",
+               authorityMessageIds: [system_message.id]
              })
 
     assert SQL.one("SELECT COUNT(*) FROM chat_missions WHERE root_message_id=?", [
