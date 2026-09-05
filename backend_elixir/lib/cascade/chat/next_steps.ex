@@ -18,9 +18,9 @@ defmodule Cascade.Chat.NextSteps do
 
         guidance =
           if allowed do
-            "You must evaluate the next useful step at this checkpoint. You may offer at most one timely next-step suggestion if the supplied evidence shows a concrete unresolved need. Briefly explain why and ask whether it should be next; ordinary conversation is enough. Do not suggest for weak evidence, a resolved issue, or when it would interrupt the user's current request. Use only permitted project/chat/task evidence, verify uncertainty, and do not repeat a declined topic without materially new evidence. If suggesting, the entire final reply must be a short standalone suggestion beginning with <!-- fizzer-next:#{trigger_id} --> followed by a blank line (an invisible record linking its evidence). No tools that start work until acceptance. If there is no grounded suggestion, give one concise reason (for example: no unresolved need, insufficient evidence, or current work takes priority), beginning with <!-- fizzer-next-none:#{trigger_id} -->. Do not use [no-reply] to skip this obligation."
+            "You must evaluate the next useful step at this checkpoint. You may offer at most one timely next-step suggestion if the supplied evidence shows a concrete unresolved need. Briefly explain why and ask whether it should be next; ordinary conversation is enough. Do not suggest for weak evidence, a resolved issue, or when it would interrupt the user's current request. Use only permitted project/chat/task evidence, verify uncertainty, and do not repeat a declined topic without materially new evidence. If suggesting, the entire final reply must be a short standalone suggestion beginning with <!-- fizzer-next:#{trigger_id} --> followed by a blank line (an invisible record linking its evidence). No tools that start work until acceptance. If there is no grounded suggestion, give one concise reason (for example: no unresolved need, insufficient evidence, or current work takes priority), beginning with <!-- fizzer-next-none:#{trigger_id} -->. Do not use [no-reply] to skip this obligation. Always answer an active user request first; an ordinary answer records conversation/work state as the reason for deferring. Mission completion has its own separate checkpoint."
           else
-            "Do not offer a new proactive suggestion on this turn: this evidence was already checked, evidence is missing, or a suggestion is outstanding or declined. Answer the user's request or feedback normally. If this checkpoint is still pending, record one concise reason beginning with <!-- fizzer-next-none:#{trigger_id} --> (for example, awaiting feedback or respecting the owner's decline). Do not repeat a result already recorded."
+            "Do not offer a new proactive suggestion on this turn: this evidence was already checked, evidence is missing, an active mission takes priority, or a suggestion is outstanding. Answer the user's request or feedback normally. If this checkpoint is still pending, record one concise reason beginning with <!-- fizzer-next-none:#{trigger_id} --> (for example, awaiting feedback or respecting the owner's decline). Do not repeat a result already recorded."
           end
 
         "Next-step suggestions are enabled for this owner's coordinator in this channel. #{guidance}\n#{@feedback}\n" <>
@@ -43,6 +43,7 @@ For owner feedback on a recorded proposal, prefix your ordinary reply with <!-- 
         message
 
       String.trim(body) == "[no-reply]" ->
+        if not present?(message[:missionTaskId]), do: record_ordinary(message, channel_id)
         %{message | body: "", blocks: []}
 
       present?(message[:missionTaskId]) ->
@@ -95,6 +96,7 @@ For owner feedback on a recorded proposal, prefix your ordinary reply with <!-- 
              source when not is_nil(source) <-
                source(channel_id, source_id, owner, message[:registrationId]),
              true <- eligible?(channel_id, message[:registrationId], source_id, message.id),
+             false <- declined_repeat?(channel_id, message[:registrationId], body),
              true <- record(message, channel_id, source_id, "proposed", "") do
           message
         else
@@ -102,6 +104,7 @@ For owner feedback on a recorded proposal, prefix your ordinary reply with <!-- 
         end
       end
     else
+      record_ordinary(message, channel_id)
       message
     end
   end
@@ -137,7 +140,8 @@ For owner feedback on a recorded proposal, prefix your ordinary reply with <!-- 
         [channel, registration, source_id]
       )
 
-    (is_nil(check) or check == ["pending", nil] or check == ["proposed", exclude_id]) and
+    not active_work?(channel, registration) and
+      (is_nil(check) or check == ["pending", nil] or check == ["proposed", exclude_id]) and
       is_nil(
         SQL.one(
           """
@@ -147,7 +151,7 @@ For owner feedback on a recorded proposal, prefix your ordinary reply with <!-- 
             WHERE p.channel_id=? AND p.registration_id=? AND p.id!=?
               AND p.body LIKE '<!-- fizzer-next:%' AND (
                 substr(p.body,1,length(?))=? OR
-                COALESCE(c.feedback,'') NOT IN ('accepted','redirected')) LIMIT 1
+                COALESCE(c.feedback,'') NOT IN ('accepted','redirected','declined')) LIMIT 1
           """,
           [
             channel,
@@ -217,9 +221,83 @@ For owner feedback on a recorded proposal, prefix your ordinary reply with <!-- 
         JOIN chat_agent_dispatches d ON d.registration_id=c.registration_id
           AND d.channel_id=c.channel_id AND d.message_id=c.source_id
         WHERE d.id=? AND va.owner_user_id=? AND m.orchestrator=1 AND m.next_step_suggestions=1
+          AND c.kind IN ('enable','completion')
       """,
       [dispatch.id, owner]
     ) == [1]
+  end
+
+  # Check both browser and background claim paths before they can displace work.
+  def dispatch_ready?(nil), do: true
+
+  def dispatch_ready?(dispatch) do
+    case SQL.one(
+           "SELECT channel_id,registration_id FROM chat_next_step_checks WHERE source_id=? AND kind IN ('enable','completion')",
+           [dispatch.messageId]
+         ) do
+      [channel, registration_id] ->
+        case registration(channel, registration_id) do
+          [_, 1, 1] ->
+            ready =
+              not active_work?(channel, registration_id) and
+                is_nil(
+                  Cascade.Runs.Store.find_open_for_chat_registration(registration_id, dispatch.id)
+                )
+
+            if not ready do
+              SQL.exec(
+                "UPDATE chat_next_step_checks SET reason='Conversation/work state: waiting for active work to finish.' WHERE source_id=? AND outcome='pending'",
+                [dispatch.messageId]
+              )
+            end
+
+            ready
+
+          _ ->
+            false
+        end
+
+      _ ->
+        true
+    end
+  end
+
+  defp active_work?(channel, registration) do
+    SQL.one(
+      "SELECT 1 FROM chat_missions WHERE channel_id=? AND coordinator_registration_id=? AND status NOT IN ('completed','canceled') LIMIT 1",
+      [channel, registration]
+    ) == [1]
+  end
+
+  defp declined_repeat?(channel, registration, body) do
+    topic = fn text -> Regex.replace(@marker, text, "") |> String.trim() |> String.downcase() end
+
+    SQL.all(
+      "SELECT p.body FROM chat_next_step_checks c JOIN chat_messages p ON p.id=c.message_id WHERE c.channel_id=? AND c.registration_id=? AND c.feedback='declined'",
+      [channel, registration]
+    )
+    |> Enum.any?(fn [previous] -> topic.(previous) == topic.(body) end)
+  end
+
+  defp record_ordinary(message, channel) do
+    if message[:status] in [nil, "completed"] and present?(message[:runId]) do
+      with [_, 1, 1] <- registration(channel, message[:registrationId]),
+           [source] <-
+             SQL.one(
+               "SELECT d.message_id FROM chat_agent_dispatches d JOIN runs r ON r.chat_dispatch_id=d.id WHERE r.id=? AND d.channel_id=? AND d.registration_id=?",
+               [message.runId, channel, message[:registrationId]]
+             ) do
+        record(
+          message,
+          channel,
+          source,
+          "none",
+          "Conversation/work state: answered the current request without a new proposal."
+        )
+      else
+        _ -> :ok
+      end
+    end
   end
 
   def announce_pending(registration_id, events) do
@@ -399,8 +477,13 @@ For owner feedback on a recorded proposal, prefix your ordinary reply with <!-- 
     proposals =
       SQL.all(
         """
-          SELECT rowid,id,body FROM chat_messages WHERE channel_id=? AND registration_id=?
-          AND body LIKE '<!-- fizzer-next:%' ORDER BY rowid DESC LIMIT 4
+          SELECT p.rowid,p.id,p.body FROM chat_messages p WHERE p.channel_id=? AND p.registration_id=?
+          AND p.body LIKE '<!-- fizzer-next:%' AND (p.id IN (
+            SELECT id FROM chat_messages WHERE channel_id=p.channel_id AND registration_id=p.registration_id
+              AND body LIKE '<!-- fizzer-next:%' ORDER BY rowid DESC LIMIT 4)
+            OR EXISTS (SELECT 1 FROM chat_next_step_checks c WHERE c.message_id=p.id
+              AND c.channel_id=p.channel_id AND c.registration_id=p.registration_id AND c.feedback='declined'))
+          ORDER BY p.rowid DESC
         """,
         [channel, registration]
       )

@@ -391,6 +391,15 @@ defmodule Cascade.Chat.NextStepsTest do
     {:ok, fresh} = Messages.create(c.user, c.vault_id, c.channel.id, %{body: "I am back."})
     assert proposal(%{c | source: fresh}).body == ""
     assert NextSteps.context(c.channel.id, c.member.id, fresh.id) =~ "Recorded declined"
+
+    input = %{
+      proposal_input(%{c | source: fresh})
+      | body:
+          "<!-- fizzer-next:#{fresh.id} -->\n\nA separate build failure is blocking release. Should that repair be next?"
+    }
+
+    {:ok, unrelated} = Messages.create(c.user, c.vault_id, c.channel.id, input, access: :agent)
+    assert unrelated.body == input.body
   end
 
   test "acceptance and redirect settle proposal feedback without starting work or waiting an hour",
@@ -523,6 +532,28 @@ defmodule Cascade.Chat.NextStepsTest do
     assert dispatch.registration.id == c.member.id
     assert String.starts_with?(dispatch.messageId, "sys-next-enable-")
     assert NextSteps.checkpoint_dispatch?(c.user.id, dispatch)
+  end
+
+  test "active work defers background checkpoints and records why", c do
+    enable(c)
+    [[source, "enable", "pending"]] = checks(c)
+    {:ok, pending} = Dispatches.list_pending(c.user.id, c.channel.id)
+    dispatch = Enum.find(pending, &(&1.messageId == source))
+    assert NextSteps.dispatch_ready?(dispatch)
+
+    {:ok, _mission} =
+      Missions.create(c.user.id, c.vault_id, c.channel.id, %{
+        rootMessageId: c.source.id,
+        coordinatorRegistrationId: c.member.id,
+        title: "Current request"
+      })
+
+    refute NextSteps.dispatch_ready?(dispatch)
+
+    assert SQL.one("SELECT outcome,reason FROM chat_next_step_checks WHERE source_id=?", [source]) ==
+             ["pending", "Conversation/work state: waiting for active work to finish."]
+
+    assert proposal(c).body == ""
   end
 
   defp checks(c),

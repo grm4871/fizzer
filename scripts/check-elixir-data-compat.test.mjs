@@ -247,6 +247,29 @@ test('state-based recovery migration preserves failed history and rejects invent
   }
 });
 
+test('next-step checkpoint migration only permits the reviewed empty table', () => {
+  const files = fixture();
+  try {
+    const schema = fs.readFileSync(new URL('../backend_elixir/lib/cascade/chat/schema.ex', import.meta.url), 'utf8');
+    const ddl = schema.match(/CREATE TABLE IF NOT EXISTS chat_next_step_checks \([\s\S]*?\n    \)/)[0];
+    const after = new Database(files.after);
+    after.exec(ddl);
+    after.close();
+    assert.equal(runComparison(files).ok, true, runComparison(files).failures.join('\n'));
+    const changed = new Database(files.after);
+    changed.pragma('foreign_keys = OFF');
+    changed.exec("INSERT INTO chat_next_step_checks(channel_id,registration_id,source_id,kind) VALUES('note-1','r','s','enable')");
+    changed.close();
+    assert.equal(runComparison(files).ok, false);
+    const malformed = new Database(files.after);
+    malformed.exec('DELETE FROM chat_next_step_checks; ALTER TABLE chat_next_step_checks ADD COLUMN unreviewed TEXT');
+    malformed.close();
+    assert.equal(runComparison(files).ok, false);
+  } finally {
+    fs.rmSync(files.directory, { recursive: true, force: true });
+  }
+});
+
 test('rolling eligibility requires exact data and corpus identity', () => {
   const files = fixture();
   try {

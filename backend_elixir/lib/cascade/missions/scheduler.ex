@@ -122,7 +122,8 @@ defmodule Cascade.Missions.Scheduler do
       AND c.registration_id=d.registration_id
     JOIN chat_agent_members m ON m.id=d.registration_id AND m.channel_id=d.channel_id
     JOIN vault_agents va ON va.id=m.vault_agent_id
-    WHERE d.run_id IS NULL AND c.outcome='pending' AND m.orchestrator=1 AND m.next_step_suggestions=1
+    WHERE d.run_id IS NULL AND c.outcome='pending' AND c.kind IN ('enable','completion')
+      AND m.orchestrator=1 AND m.next_step_suggestions=1
     """)
   end
 

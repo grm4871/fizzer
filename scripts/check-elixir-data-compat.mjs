@@ -8,7 +8,10 @@ import process from 'node:process';
 import Database from 'better-sqlite3';
 
 const DEFAULT_ALLOWED_ADDITIONS = new Set(['cascade_elixir_schema_migrations']);
-const RECOVERY_EVIDENCE_SQL_SHA256 = '8039530f643ab926e1306c88d074dc731b6b5c248cd032ac3d591bbaf2ee185b';
+const EMPTY_TABLE_ADDITIONS = new Map([
+  ['chat_mission_recovery_evidence', '8039530f643ab926e1306c88d074dc731b6b5c248cd032ac3d591bbaf2ee185b'],
+  ['chat_next_step_checks', '975a576a29b23ab328602d5f3a7a888cc1f3624e89242bcb44f38ae0654fd6e5'],
+]);
 const FTS5_SHADOW_SUFFIXES = ['config', 'data', 'docsize', 'idx'];
 
 // These hashes pin the intentional one-time normalization performed by the
@@ -849,10 +852,10 @@ export function compareDatabaseSnapshots(before, after, allowedAdditions = DEFAU
   }
   for (const table of afterTables) {
     if (beforeTables.has(table)) continue;
-    if (table === 'chat_mission_recovery_evidence') {
+    if (EMPTY_TABLE_ADDITIONS.has(table)) {
       const added = after.tables[table];
-      if (added.schema.sqlSha256 !== RECOVERY_EVIDENCE_SQL_SHA256 || added.rows.count !== 0) {
-        failures.push('recovery evidence addition differs from pinned empty schema');
+      if (added.schema.sqlSha256 !== EMPTY_TABLE_ADDITIONS.get(table) || added.rows.count !== 0) {
+        failures.push(`${table} addition differs from pinned empty schema`);
       }
       continue;
     }

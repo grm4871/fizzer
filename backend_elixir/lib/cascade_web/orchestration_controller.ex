@@ -577,7 +577,8 @@ defmodule CascadeWeb.OrchestrationController do
     registration_id = dispatch_registration_id(dispatch, registration_id)
 
     if channel_id != "" and registration_id != "" do
-      with {:ok, projection} <-
+      with true <- Cascade.Chat.NextSteps.dispatch_ready?(dispatch),
+           {:ok, projection} <-
              Agents.resolve_owner_projection(user.id, channel_id, registration_id),
            {:ok, members} <- Agents.list_members(channel_id, user.id),
            registration when not is_nil(registration) <-
@@ -639,8 +640,14 @@ defmodule CascadeWeb.OrchestrationController do
            work_item_id: work_item_id
          }}
       else
-        {:error, status, message} -> {:error, status, message}
-        _ -> {:error, 404, "Agent not found"}
+        false ->
+          {:error, 409, "Next-step checkpoint is waiting for idle work state or was disabled"}
+
+        {:error, status, message} ->
+          {:error, status, message}
+
+        _ ->
+          {:error, 404, "Agent not found"}
       end
     else
       agent = if Store.valid_agent?(params["agent"]), do: params["agent"], else: "claude-code"

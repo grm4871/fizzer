@@ -109,10 +109,13 @@ defmodule Cascade.Missions.Authority do
           WHERE p.channel_id=(SELECT channel_id FROM chat_messages WHERE id=?) AND va.owner_user_id=?
             AND p.body LIKE '<!-- fizzer-next:%' AND p.rowid<(SELECT rowid FROM chat_messages WHERE id=?)
             AND (p.id=? OR p.id IN (SELECT message_id FROM chat_next_step_checks
-              WHERE feedback_message_id=? AND feedback='accepted'))
+              WHERE feedback_message_id=? AND feedback='accepted') OR
+              (?='' AND p.id=(SELECT message_id FROM chat_next_step_checks
+                WHERE channel_id=p.channel_id AND registration_id=p.registration_id
+                  AND outcome='proposed' AND feedback IS NULL ORDER BY rowid DESC LIMIT 1)))
           ORDER BY p.rowid DESC LIMIT 1
         """,
-        [message.id, user_id, message.id, reply_id || "", message.id]
+        [message.id, user_id, message.id, reply_id || "", message.id, reply_id || ""]
       )
 
     case proposal do
