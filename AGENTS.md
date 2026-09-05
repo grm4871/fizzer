@@ -27,3 +27,19 @@ The `CASCADE_*` environment variables, `~/.cascade` data directory, Elixir
 `Cascade` modules, `cascade-*` helper commands, and some internal paths are
 retained for compatibility. New user-facing text should use the Fizzer name;
 do not mechanically rename compatibility identifiers without a migration plan.
+
+## Iteration and delivery
+
+- Share the smallest usable development preview as soon as its focused check
+  passes. Include its location, tested revision and limitations; call it ready
+  for feedback. A preview or completed worker task is not evidence of deployment.
+- Keep handoffs to the outcome, essential constraints and artifact references.
+  Use task steering for corrections to an existing worker's saved context;
+  use child tasks only for independent pieces.
+- An implementation worker can return its commit, checks and preview to the
+  parent without waiting on deployment. The parent retains integration and
+  delivery ownership, including watching GitHub Actions and exact live checks.
+- Reuse recorded checks only for the same clean revision, command and relevant
+  environment. Changed code or inputs invalidate that evidence. Live health and
+  deployed revision must be checked again; a previous green workflow is not a
+  current health check.

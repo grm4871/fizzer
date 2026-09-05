@@ -131,6 +131,14 @@ Push the intended commit to `master` in `grm4871/fizzer`, then watch the
 the host checkout, immutable image label and ID, internal health, and public
 health all match that exact revision.
 
+Successful desktop builds also trigger installer refresh for the current master
+revision. Older desktop completions are skipped so they cannot roll production
+back. When the exact immutable image is already healthy and traffic is ungated,
+the update refreshes verified installers without repeating preflight, snapshots
+or container cutover. Failed health or mismatched image identity follows the
+normal deployment path. Installer failures still fail the workflow and can be
+retried; exact live and public health verification still run afterward.
+
 The protected `production` environment contains only these host credentials:
 `PRODUCTION_DEPLOY_HOST`, `PRODUCTION_DEPLOY_PORT`,
 `PRODUCTION_DEPLOY_USER`, `PRODUCTION_DEPLOY_SSH_KEY`, and

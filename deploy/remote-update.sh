@@ -993,6 +993,26 @@ maintenance_cutover() {
   verify_reopened_production_edge
 }
 
+# A desktop release or retried workflow may target the image already serving.
+# Reuse that exact artifact's completed cutover; mutable health is checked again.
+already_running_release() {
+  local running_image expected_image image_revision health
+  [[ ! -e "$MAINTENANCE_MARKER" && ! -L "$MAINTENANCE_MARKER" ]] || return 1
+  running_image="$(docker inspect --format '{{.Image}}' "$CONTAINER_NAME")" || return 1
+  expected_image="$(docker image inspect --format '{{.Id}}' "cascade:certified-$REVISION")" || return 1
+  [[ "$expected_image" =~ ^sha256:[0-9a-f]{64}$ && "$running_image" == "$expected_image" ]] || return 1
+  image_revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$running_image")" || return 1
+  [[ "$image_revision" == "$REVISION" ]] || return 1
+  health="$(curl --fail --silent --show-error --connect-timeout 3 --max-time 10 "$HEALTH_URL")" || return 1
+  [[ "$health" == *'"status":"ok"'* ]] || return 1
+}
+
+if already_running_release; then
+  echo "==> Exact revision $REVISION is already healthy; refreshing installers without cutover"
+  bash "$ROOT/deploy/sync-desktop-installers.sh"
+  exit 0
+fi
+
 AVAIL_KB="$(df -k / | awk 'NR==2 {print $4}')"
 if [[ "$AVAIL_KB" -lt 2097152 ]]; then
   echo "==> Low disk space — pruning unused Docker build cache"
@@ -1048,8 +1068,8 @@ else
 fi
 
 # The desktop workflow publishes its release after the push-triggered deploy.
-# A subsequent exact-revision deploy (requested by that workflow) reaches this
-# point only after its release assets and SHA256SUMS are available.
+# A repeated exact-revision deploy refreshes these assets through the fast path
+# above once the release assets and SHA256SUMS are available.
 bash "$ROOT/deploy/sync-desktop-installers.sh"
 
 echo "==> Pruning dangling images and old build cache"

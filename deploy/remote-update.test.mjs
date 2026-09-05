@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
+import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
@@ -352,4 +354,113 @@ test('production secrets are regular root-owned mode 0600 before candidate start
   );
   assert.match(functionBody('maintenance_cutover'), /CANDIDATE_DATA_TOUCHED=1/);
   assert.match(functionBody('rolling_cutover'), /start_rolling_container/);
+});
+
+
+test('repeat revision refreshes installers without cutover only with current live evidence', () => {
+  const start = source.indexOf('already_running_release() {');
+  const end = source.indexOf('AVAIL_KB=', start);
+  assert.ok(start > 0 && end > start, 'repeat deployment must have an early live-evidence guard');
+  const fastPath = source.slice(start, end);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fizzer-repeat-deploy-'));
+  const image = `sha256:${'a'.repeat(64)}`;
+  const revision = 'b'.repeat(40);
+  const script = `set -euo pipefail
+ROOT=/unused
+CONTAINER_NAME=cascade
+HEALTH_URL=http://unused
+REVISION=$TEST_REVISION
+docker() {
+  if [[ "$*" == "inspect --format {{.Image}} cascade" ]]; then
+    printf '%s' "$TEST_RUNNING_IMAGE"
+  elif [[ "$*" == *"{{.Id}}"* ]]; then
+    printf '%s' "$TEST_EXPECTED_IMAGE"
+  else
+    printf '%s' "$TEST_IMAGE_REVISION"
+  fi
+}
+curl() { printf '%s' "$TEST_HEALTH"; return "$TEST_CURL_STATUS"; }
+bash() { echo INSTALLERS; return "$TEST_INSTALLER_STATUS"; }
+${fastPath}
+echo CUTOVER
+`;
+  const run = (overrides = {}) => spawnSync('bash', ['-c', script], {
+    encoding: 'utf8',
+    env: { ...process.env, MAINTENANCE_MARKER: path.join(dir, 'maintenance'),
+      TEST_REVISION: revision, TEST_IMAGE_REVISION: revision,
+      TEST_RUNNING_IMAGE: image, TEST_EXPECTED_IMAGE: image,
+      TEST_HEALTH: '{"status":"ok"}', TEST_CURL_STATUS: '0', TEST_INSTALLER_STATUS: '0',
+      ...overrides },
+  });
+  try {
+    const healthy = run();
+    assert.equal(healthy.status, 0, healthy.stderr);
+    assert.match(healthy.stdout, /INSTALLERS/);
+    assert.doesNotMatch(healthy.stdout, /CUTOVER/);
+    for (const overrides of [
+      { TEST_RUNNING_IMAGE: `sha256:${'c'.repeat(64)}` },
+      { TEST_EXPECTED_IMAGE: '' },
+      { TEST_IMAGE_REVISION: 'd'.repeat(40) },
+      { TEST_HEALTH: '{"status":"error"}' },
+      { TEST_CURL_STATUS: '22' },
+    ]) {
+      const result = run(overrides);
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, /CUTOVER/);
+      assert.doesNotMatch(result.stdout, /INSTALLERS/);
+    }
+    const failedSync = run({ TEST_INSTALLER_STATUS: '17' });
+    assert.equal(failedSync.status, 17);
+    assert.doesNotMatch(failedSync.stdout, /CUTOVER/);
+    fs.writeFileSync(path.join(dir, 'maintenance'), '');
+    assert.match(run().stdout, /CUTOVER/);
+    fs.unlinkSync(path.join(dir, 'maintenance'));
+    fs.symlinkSync(path.join(dir, 'missing'), path.join(dir, 'maintenance'));
+    assert.match(run().stdout, /CUTOVER/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('late desktop completion cannot request an older production revision', () => {
+  assert.match(workflow, /gh api "repos\/\$GITHUB_REPOSITORY\/commits\/master" --jq .sha/);
+  assert.match(workflow, /"\$CURRENT_MASTER" != "\$REVISION"/);
+  assert.match(workflow, /echo "skipped=true" >> "\$GITHUB_OUTPUT"/);
+  assert.equal(workflow.match(/if: steps\.delivery\.outputs\.skipped != 'true'/g)?.length, 2);
+});
+
+
+test('desktop delivery checks current master after queueing and fails closed on lookup errors', () => {
+  const body = workflow.split('id: delivery')[1].split('        run: |\n')[1]
+    .split('\n      - name:')[0].replace(/^          /gm, '');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fizzer-desktop-delivery-'));
+  const revision = 'b'.repeat(40);
+  const run = (overrides = {}) => spawnSync('bash', ['-c', `
+    gh() { printf '%s' "$TEST_MASTER"; return "$TEST_LOOKUP_STATUS"; }
+    ssh() { echo SSH_CALLED; }
+${body}`], {
+    encoding: 'utf8',
+    env: { ...process.env, REVISION: revision, TEST_MASTER: revision,
+      TEST_LOOKUP_STATUS: '0', GITHUB_EVENT_NAME: 'workflow_run',
+      GITHUB_REPOSITORY: 'example/fizzer', GITHUB_OUTPUT: path.join(dir, 'output'),
+      GITHUB_STEP_SUMMARY: path.join(dir, 'summary'),
+      DEPLOY_PORT: '22', DEPLOY_USER: 'unused', DEPLOY_HOST: 'unused', ...overrides },
+  });
+  try {
+    const current = run();
+    assert.equal(current.status, 0, current.stderr);
+    assert.match(current.stdout, /SSH_CALLED/);
+    const stale = run({ TEST_MASTER: 'c'.repeat(40) });
+    assert.equal(stale.status, 0, stale.stderr);
+    assert.doesNotMatch(stale.stdout, /SSH_CALLED/);
+    assert.match(fs.readFileSync(path.join(dir, 'output'), 'utf8'), /skipped=true/);
+    const failed = run({ TEST_LOOKUP_STATUS: '1' });
+    assert.notEqual(failed.status, 0);
+    assert.doesNotMatch(failed.stdout, /SSH_CALLED/);
+    const push = run({ GITHUB_EVENT_NAME: 'push', TEST_MASTER: 'c'.repeat(40) });
+    assert.equal(push.status, 0, push.stderr);
+    assert.match(push.stdout, /SSH_CALLED/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

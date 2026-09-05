@@ -17,14 +17,14 @@ function missionTaskChangeChips(task: ChatMissionTask, fileCount?: number): Arra
   const reportedFiles = task.gitState?.changedFiles;
   const files = fileCount ?? reportedFiles;
   if (files != null) chips.push({ label: `${files} file${files === 1 ? '' : 's'}`, tone: files ? 'idle' : 'ok' });
-  if (task.verification) chips.push({ label: 'verified', tone: 'ok', title: task.verification });
+  if (task.verification) chips.push({ label: 'evidence recorded', tone: 'ok', title: task.verification });
   else if (task.workItemStatus === 'review' || task.workItemStatus === 'done') chips.push({ label: 'unverified', tone: 'warn' });
   if (task.reviewState === 'in_review') chips.push({ label: task.prState ? `PR ${task.prState}` : 'in review', tone: 'ok', href: task.prUrl });
   else if (task.reviewState === 'requested') chips.push({ label: 'review requested', tone: 'warn' });
   else if (task.reviewState === 'ready') chips.push({ label: 'reviewed', tone: 'ok' });
   if (task.workItemStatus === 'review' || task.workItemStatus === 'done') {
     chips.push(task.reviewReady
-      ? { label: 'review ready', tone: 'ok' }
+      ? { label: 'ready for feedback', tone: 'ok', title: 'Workspace review is ready. Deployment requires separate live revision verification.' }
       : { label: 'review blocked', tone: 'warn', title: task.reviewBlockers?.join('\n') });
   }
   return chips;
