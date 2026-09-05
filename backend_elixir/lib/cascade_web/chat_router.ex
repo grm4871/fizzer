@@ -375,13 +375,15 @@ defmodule CascadeWeb.ChatRouter do
       registration(
         conn,
         fn ->
-          Agents.set_avatar(
-            user.id,
-            vault_id,
-            channel_id,
-            registration_id,
-            body(conn, "avatarUrl", "")
-          )
+          with :ok <- authorize_self_avatar(conn, user.id, registration_id) do
+            Agents.set_avatar(
+              user.id,
+              vault_id,
+              channel_id,
+              registration_id,
+              body(conn, "avatarUrl", "")
+            )
+          end
         end,
         vault_id,
         channel_id,
@@ -486,6 +488,27 @@ defmodule CascadeWeb.ChatRouter do
 
   match _ do
     JSON.send(conn, 404, %{error: "Not found"})
+  end
+
+  defp authorize_self_avatar(%{assigns: %{auth_access: "user"}}, _user_id, _registration_id),
+    do: :ok
+
+  defp authorize_self_avatar(conn, user_id, registration_id) do
+    with [run_id] <- get_req_header(conn, "x-cascade-run-id"),
+         {run_id, ""} <- Integer.parse(run_id),
+         [^registration_id] <-
+           Cascade.Accounts.SQL.one(
+             """
+             SELECT d.registration_id FROM runs r
+             JOIN chat_agent_dispatches d ON d.id=r.chat_dispatch_id
+             WHERE r.id=? AND r.owner_user_id=? AND r.status IN ('queued','running')
+             """,
+             [run_id, user_id]
+           ) do
+      :ok
+    else
+      _ -> {:error, "Agents can only update their own running identity's profile picture"}
+    end
   end
 
   defp authenticated(conn, required, gate, fun) do

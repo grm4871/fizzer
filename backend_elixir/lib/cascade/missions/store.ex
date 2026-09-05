@@ -670,6 +670,7 @@ defmodule Cascade.Missions.Store do
     error -> {:error, Exception.message(error)}
   end
 
+  @doc "Returns a ready review wake without consuming it; the scheduler marks it with its outbox writes."
   def claim_wake(mission_id) do
     with {:ok, update} <- refresh(mission_id) do
       tasks = task_rows(mission_id)
@@ -688,22 +689,23 @@ defmodule Cascade.Missions.Store do
 
       stalled = update.mission.status in ~w(attention blocked) and not moving
 
-      if (all_settled or stalled) and update.mission.status in ~w(reviewing attention blocked) do
-        if SQL.changes(
-             "UPDATE chat_missions SET wake_sent=1,updated_at=datetime('now') WHERE id=? AND wake_sent=0",
-             [mission_id]
-           ) > 0 do
-          mission = mission_row(mission_id)
+      mission = mission_row(mission_id)
 
-          {:ok,
-           Map.put(
-             refresh!(mission_id),
-             :coordinatorRegistrationId,
-             mission.coordinator_registration_id
-           )}
-        else
-          {:ok, nil}
-        end
+      if mission.wake_sent == 0 and (all_settled or stalled) and
+           update.mission.status in ~w(reviewing attention blocked) do
+        generation =
+          tasks
+          |> Enum.map(&{&1.id, &1.attempt})
+          |> Enum.sort()
+          |> :erlang.term_to_binary()
+          |> then(&:crypto.hash(:sha256, &1))
+          |> Base.encode16(case: :lower)
+
+        {:ok,
+         Map.merge(update, %{
+           coordinatorRegistrationId: mission.coordinator_registration_id,
+           generation: generation
+         })}
       else
         {:ok, nil}
       end
@@ -752,34 +754,9 @@ defmodule Cascade.Missions.Store do
               verification: if(settled.status == "completed", do: settled.summary, else: nil)
             )
 
-            tasks = task_rows(task.mission_id)
-
-            thin_success =
-              settled.status == "completed" and settled.workspace_mode == "shared" and
-                length(tasks) == 1
-
-            if thin_success do
-              SQL.exec(
-                "UPDATE chat_missions SET status='completed',summary=?,wake_sent=1,updated_at=datetime('now') WHERE id=?",
-                [settled.summary, task.mission_id]
-              )
-
-              if mission.status != "completed" do
-                record_event(task.mission_id, %{
-                  kind: "mission_completed",
-                  title: mission.title,
-                  from_status: mission.status,
-                  to_status: "completed",
-                  summary: settled.summary
-                })
-              end
-
-              %{update: refresh!(task.mission_id), wake: nil}
-            else
-              update = refresh!(task.mission_id)
-              {:ok, wake} = claim_wake(task.mission_id)
-              %{update: wake || update, wake: wake}
-            end
+            update = refresh!(task.mission_id)
+            {:ok, wake} = claim_wake(task.mission_id)
+            %{update: wake || update, wake: wake}
           end)
 
         {:ok, result}
@@ -1182,7 +1159,8 @@ defmodule Cascade.Missions.Store do
           ) == [1]
       end
 
-    run_produced and task.summary not in [nil, ""] and (primary or workspace_bound)
+    run_produced and task.summary not in [nil, ""] and
+      (primary or task.workspace_mode == "shared" or workspace_bound)
   end
 
   defp current_primary?(task, mission, run_id) do

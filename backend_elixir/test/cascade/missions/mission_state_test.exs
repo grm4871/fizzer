@@ -126,6 +126,8 @@ defmodule Cascade.Missions.MissionStateTest do
     assert Enum.at(settled.update.mission.tasks, 1).status == "pending"
     assert Enum.at(settled.update.mission.tasks, 1).queueReason == "dependency-attention"
     assert settled.wake.coordinatorRegistrationId == ctx.coordinator.id
+    assert {:ok, ready} = Store.claim_wake(created.mission.id)
+    assert {:ok, _wake} = Scheduler.enqueue_wake(ready)
     assert {:ok, nil} == Store.claim_wake(created.mission.id)
 
     {:ok, retried} =
@@ -143,6 +145,130 @@ defmodule Cascade.Missions.MissionStateTest do
 
     {:ok, events} = Store.events(ctx.user.id, ctx.channel.id, created.mission.id)
     assert Enum.any?(events, &(&1.kind == "task_retried" and &1.taskId == first.task.id))
+  end
+
+  for path <- [:schedule, :settle_run] do
+    @wake_path path
+    test "#{path} rolls back the wake marker and messages when dispatch insertion fails", ctx do
+      {:ok, created} = mission(ctx, "Atomic review wake")
+      {:ok, added} = task(ctx, created.mission.id, "Fail then retry")
+      [%{dispatch: dispatch}] = Scheduler.schedule(created.mission.id).dispatches
+      run_id = 9_000_000 + ctx.suffix
+      :ok = Dispatches.attach_run(dispatch.id, run_id)
+      {:ok, _} = Store.attach_run(dispatch.id, run_id)
+
+      if @wake_path == :schedule,
+        do: Store.settle_run(run_id, "failed", "Needs review")
+
+      parent = self()
+
+      events = fn event ->
+        refute Cascade.DB.Repo.in_transaction?()
+
+        assert [1] ==
+                 SQL.one("SELECT wake_sent FROM chat_missions WHERE id=?", [created.mission.id])
+
+        send(parent, {:wake_event, event})
+      end
+
+      trigger = "fail_review_wake_#{ctx.suffix}"
+
+      SQL.exec("""
+      CREATE TRIGGER #{trigger} BEFORE INSERT ON chat_agent_dispatches
+      WHEN NEW.message_id LIKE 'sys-mission-#{created.mission.id}-%'
+      BEGIN SELECT RAISE(ABORT, 'injected review dispatch failure'); END
+      """)
+
+      on_exit(fn -> SQL.exec("DROP TRIGGER IF EXISTS #{trigger}") end)
+
+      assert_raise RuntimeError, ~r/injected review dispatch failure/, fn ->
+        if @wake_path == :schedule,
+          do: Scheduler.schedule(nil, events: events),
+          else: Scheduler.settle_run(run_id, "failed", "Needs review", events: events)
+      end
+
+      assert [0] ==
+               SQL.one("SELECT wake_sent FROM chat_missions WHERE id=?", [created.mission.id])
+
+      assert wake_rows(created.mission.id) == []
+      refute_receive {:wake_event, _}
+      assert {:ok, ready} = Store.claim_wake(created.mission.id)
+
+      SQL.exec("DROP TRIGGER #{trigger}")
+      scheduled = Scheduler.schedule(nil, events: events)
+
+      assert [wake] =
+               Enum.filter(scheduled.wakeDispatches, &(&1.message.channelId == ctx.channel.id))
+
+      assert wake.message.id == "sys-mission-#{created.mission.id}-#{ready.generation}"
+      assert length(wake_rows(created.mission.id)) == 2
+
+      carrier_id = wake.carrier.id
+      message_id = wake.message.id
+
+      assert_receive {:wake_event,
+                      %{event: "vault:chatMessageCreated", message: %{id: ^carrier_id}}}
+
+      assert_receive {:wake_event,
+                      %{
+                        event: "vault:chatMessageCreated",
+                        message: %{id: ^message_id},
+                        dispatches: [_]
+                      }}
+
+      assert {:ok, nil} = Scheduler.enqueue_wake(ready)
+      assert Scheduler.schedule(created.mission.id).wakeDispatches == []
+      assert {:ok, replay} = Scheduler.settle_run(run_id, "failed", "Needs review")
+      assert replay.wakeDispatch == nil
+      assert length(wake_rows(created.mission.id)) == 2
+
+      {:ok, _} =
+        Store.update_task(ctx.user.id, ctx.channel.id, added.task.id, %{status: "pending"})
+
+      {:ok, _} =
+        Store.update_task(ctx.user.id, ctx.channel.id, added.task.id, %{status: "failed"})
+
+      assert {:ok, retried} = Store.claim_wake(created.mission.id)
+      refute retried.generation == ready.generation
+      assert {:ok, nil} = Scheduler.enqueue_wake(ready)
+
+      assert [0] ==
+               SQL.one("SELECT wake_sent FROM chat_missions WHERE id=?", [created.mission.id])
+
+      assert {:ok, next_wake} = Scheduler.enqueue_wake(retried)
+      refute next_wake.message.id == wake.message.id
+      refute next_wake.dispatch.id == wake.dispatch.id
+      assert {:ok, nil} = Scheduler.enqueue_wake(retried)
+      assert length(wake_rows(created.mission.id)) == 4
+    end
+  end
+
+  test "a publication failure cannot lose or duplicate a committed review dispatch", ctx do
+    {:ok, created} = mission(ctx, "Committed review")
+    {:ok, added} = task(ctx, created.mission.id, "Needs attention")
+    {:ok, _} = Store.update_task(ctx.user.id, ctx.channel.id, added.task.id, %{status: "failed"})
+
+    assert_raise RuntimeError, "publication interrupted", fn ->
+      Scheduler.schedule(created.mission.id,
+        events: fn _ -> raise "publication interrupted" end
+      )
+    end
+
+    assert [1] == SQL.one("SELECT wake_sent FROM chat_missions WHERE id=?", [created.mission.id])
+    rows = wake_rows(created.mission.id)
+    assert length(rows) == 2
+    assert Enum.count(rows, fn [_, dispatch_id] -> not is_nil(dispatch_id) end) == 1
+    assert {:ok, [dispatch]} = Dispatches.list_pending(ctx.user.id, ctx.channel.id)
+    assert dispatch.message.id =~ "sys-mission-#{created.mission.id}-"
+    assert Scheduler.schedule(created.mission.id).wakeDispatches == []
+    assert wake_rows(created.mission.id) == rows
+  end
+
+  defp wake_rows(mission_id) do
+    SQL.all(
+      "SELECT m.id,d.id FROM chat_messages m LEFT JOIN chat_agent_dispatches d ON d.message_id=m.id WHERE m.id LIKE ? OR m.id LIKE ?",
+      ["sys-mission-#{mission_id}-%", "agent-trace-#{mission_id}-%"]
+    )
   end
 
   test "mission and task retries are idempotent while conflicting task options fail closed",
@@ -252,7 +378,7 @@ defmodule Cascade.Missions.MissionStateTest do
              SQL.one("SELECT mission_task_id FROM chat_messages WHERE id=?", [ctx.root.id])
   end
 
-  test "a successful shared worker completes its mission without a review wake", ctx do
+  test "a successful shared worker wakes its coordinator exactly once", ctx do
     {:ok, created} = mission(ctx, "Thin delegation")
 
     {:ok, added} =
@@ -277,15 +403,41 @@ defmodule Cascade.Missions.MissionStateTest do
     assert :ok = RunStore.finish(run.id, "completed", "Finished directly.")
 
     assert {:ok, result} = Scheduler.settle_run(run.id, "completed", "Finished directly.")
-    assert result.settled.update.mission.status == "completed"
-    assert result.settled.update.mission.summary == "Finished directly."
-    assert result.settled.wake == nil
-    assert result.wakeDispatch == nil
-    assert result.scheduled.wakeDispatches == []
+    assert result.settled.update.mission.status == "reviewing"
+    assert result.wakeDispatch.dispatch.registration.id == ctx.coordinator.id
+    assert length(result.scheduled.wakeDispatches) == 1
+    rows = wake_rows(created.mission.id)
 
     assert {:ok, replay} = Scheduler.settle_run(run.id, "completed", "Finished directly.")
-    assert replay.settled.update.mission.status == "completed"
+    assert replay.settled.update.mission.status == "reviewing"
     assert replay.wakeDispatch == nil
+    assert Scheduler.schedule(created.mission.id).wakeDispatches == []
+
+    review_dispatch = result.wakeDispatch.dispatch
+
+    {:ok, review_run} =
+      RunStore.start(ctx.vault.id, nil, "Coordinator follow-through", "codex",
+        chat_dispatch_id: review_dispatch.id
+      )
+
+    assert :ok = Dispatches.attach_run(review_dispatch.id, review_run.id)
+    assert :ok = RunStore.finish(review_run.id, "completed", "Integrated and verified.")
+
+    assert {:ok, nil} =
+             Scheduler.settle_run(review_run.id, "completed", "Integrated and verified.")
+
+    assert Scheduler.schedule(created.mission.id).wakeDispatches == []
+    assert wake_rows(created.mission.id) == rows
+
+    assert {:ok, finished} =
+             Store.finish(ctx.user.id, ctx.channel.id, created.mission.id, %{
+               coordinatorRegistrationId: ctx.coordinator.id,
+               status: "completed",
+               summary: "Integrated and verified."
+             })
+
+    assert finished.mission.status == "completed"
+    assert Scheduler.schedule(created.mission.id).wakeDispatches == []
   end
 
   test "a terminal isolated runner event settles its mission task and materializes the review wake",

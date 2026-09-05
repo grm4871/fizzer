@@ -230,3 +230,30 @@ test('send creates a typed single-agent handoff without suppressing the caller r
   assert.match(String(requests[0]?.body.requestId), /^collab-codex-/);
   assert.equal(JSON.parse(fs.readFileSync(config, 'utf8')).usedChatSend, undefined);
 });
+
+test('avatar --file uploads image data to the current registration only', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-avatar-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const config = path.join(dir, 'helper.json');
+  fs.writeFileSync(config, JSON.stringify({ registrationId: 'reg-astra' }));
+  const file = path.join(dir, 'avatar.png');
+  const bytes = Buffer.from('89504e470d0a1a0a', 'hex');
+  fs.writeFileSync(file, bytes);
+  const requests: unknown[] = [];
+  const server = http.createServer(async (req, res) => {
+    let raw = '';
+    for await (const chunk of req) raw += chunk;
+    requests.push([req.method, req.url, req.headers['x-cascade-run-id'], JSON.parse(raw)]);
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ registration: { avatarUrl: '/api/notes/agent-avatars/assets/astra' } }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const address = server.address();
+  assert(address && typeof address === 'object');
+  const result = await execFileAsync(process.execPath, [cli, 'avatar', '--file', file], {
+    env: { ...process.env, CASCADE_HELPER_CONFIG: config, CASCADE_NOTE_URL: `http://127.0.0.1:${address.port}`, CASCADE_NOTE_TOKEN: 'token', CASCADE_NOTE_VAULT: 'vault', CASCADE_CHAT_CHANNEL: 'room', CASCADE_RUN_ID: '777' },
+  });
+  assert.match(result.stdout, /profile picture updated/);
+  assert.deepEqual(requests, [['PUT', '/api/vaults/vault/channels/room/agents/reg-astra/avatar', '777', { avatarUrl: `data:image/png;base64,${bytes.toString('base64')}` }]]);
+});

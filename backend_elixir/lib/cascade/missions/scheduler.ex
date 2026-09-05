@@ -19,7 +19,14 @@ defmodule Cascade.Missions.Scheduler do
         affected =
           (Enum.map(scheduled.updates, & &1.mission.id) ++
              Enum.map(scheduled.candidates, & &1.missionId) ++
-             if(mission_id, do: [mission_id], else: []))
+             if(mission_id,
+               do: [mission_id],
+               else:
+                 SQL.all(
+                   "SELECT id FROM chat_missions WHERE wake_sent=0 AND status NOT IN ('completed','canceled')"
+                 )
+                 |> Enum.map(&hd/1)
+             ))
           |> Enum.uniq()
 
         wakes =
@@ -30,6 +37,8 @@ defmodule Cascade.Missions.Scheduler do
               _ -> []
             end
           end)
+
+        wake_dispatches = Enum.map(wakes, &materialize_wake!/1)
 
         final_update =
           if mission_id do
@@ -42,6 +51,7 @@ defmodule Cascade.Missions.Scheduler do
         Map.merge(scheduled, %{
           dispatches: dispatches,
           wakes: wakes,
+          wakeDispatches: wake_dispatches,
           finalUpdate: final_update
         })
       end)
@@ -54,16 +64,11 @@ defmodule Cascade.Missions.Scheduler do
       emit_projection(item.update, events)
     end)
 
-    wake_dispatches =
-      Enum.flat_map(result.wakes, fn wake ->
-        case materialize_wake(wake, events) do
-          {:ok, item} -> [item]
-          _ -> []
-        end
-      end)
+    Enum.zip(result.wakes, result.wakeDispatches)
+    |> Enum.each(fn {wake, item} -> emit_wake(wake, item, events) end)
 
     if result.finalUpdate, do: emit_projection(result.finalUpdate, events)
-    Map.put(result, :wakeDispatches, wake_dispatches)
+    result
   end
 
   def reannounce_pending(opts \\ []) do
@@ -111,34 +116,52 @@ defmodule Cascade.Missions.Scheduler do
     end
   end
 
-  @doc "Settles a terminal worker run, schedules newly-ready work, and preserves the claimed review wake."
+  @doc "Settles a terminal worker run and schedules newly-ready work and durable review wakes."
   def settle_run(run_id, status, summary, opts \\ []) do
-    with {:ok, settled} <- Store.settle_run(run_id, status, summary) do
-      if is_nil(settled) do
-        {:ok, nil}
-      else
-        events = Keyword.get(opts, :events) || Cascade.Chat.Events.Noop
-        emit_projection(settled.update, events)
-        scheduled = schedule(settled.update.mission.id, events: events)
+    OrderedPublisher.mutate(fn ->
+      with {:ok, settled} <- Store.settle_run(run_id, status, summary) do
+        if is_nil(settled) do
+          {:ok, nil}
+        else
+          scheduled = do_schedule(settled.update.mission.id, opts)
 
-        wake_dispatch =
-          if settled.wake && scheduled.dispatches == [] do
-            case enqueue_wake(settled.wake, events: events) do
-              {:ok, item} -> item
-              _ -> nil
-            end
-          end
-
-        {:ok, %{settled: settled, scheduled: scheduled, wakeDispatch: wake_dispatch}}
+          {:ok,
+           %{
+             settled: settled,
+             scheduled: scheduled,
+             wakeDispatch: List.first(scheduled.wakeDispatches)
+           }}
+        end
       end
-    end
+    end)
   end
 
-  @doc "Materializes a previously claimed coordinator review wake."
+  @doc "Atomically materializes a ready coordinator review wake, ignoring stale or repeated requests."
   def enqueue_wake(wake, opts \\ []) do
     OrderedPublisher.mutate(fn ->
-      materialize_wake(wake, Keyword.get(opts, :events) || Cascade.Chat.Events.Noop)
+      result =
+        SQL.transaction(fn ->
+          case Store.claim_wake(wake.mission.id) do
+            {:ok, current} when not is_nil(current) ->
+              if current.generation == wake.generation,
+                do: {current, materialize_wake!(current)}
+
+            _ ->
+              nil
+          end
+        end)
+
+      case result do
+        {current, item} ->
+          emit_wake(current, item, Keyword.get(opts, :events) || Cascade.Chat.Events.Noop)
+          {:ok, item}
+
+        nil ->
+          {:ok, nil}
+      end
     end)
+  rescue
+    error -> {:error, Exception.message(error)}
   end
 
   defp materialize_candidate!(candidate) do
@@ -185,10 +208,14 @@ defmodule Cascade.Missions.Scheduler do
     %{message: message, dispatch: dispatch, update: update}
   end
 
-  defp materialize_wake(wake, events) do
-    suffix = Ecto.UUID.generate() |> String.slice(0, 8)
-    carrier_id = "agent-trace-#{wake.mission.id}-#{suffix}"
-    message_id = "sys-mission-#{wake.mission.id}-#{suffix}"
+  defp materialize_wake!(wake) do
+    SQL.exec(
+      "UPDATE chat_missions SET wake_sent=1,updated_at=datetime('now') WHERE id=?",
+      [wake.mission.id]
+    )
+
+    carrier_id = "agent-trace-#{wake.mission.id}-#{wake.generation}"
+    message_id = "sys-mission-#{wake.mission.id}-#{wake.generation}"
     user = user!(wake.createdBy)
     {:ok, route} = Store.owner_route(wake.createdBy, wake.vaultId, wake.channelId)
 
@@ -212,7 +239,7 @@ defmodule Cascade.Missions.Scheduler do
       ]
       |> Kernel.++([
         "",
-        "Review the evidence, resolve or explain failures, perform any integration and verification still needed, then reply to the user with the outcome. Keep the mission state accurate."
+        "Continue this existing mission; do not start a new mission for this review. Review the evidence, resolve or explain failures, and perform any authorized integration and verification still needed. Finish this mission when the user request is fulfilled, then reply once with the outcome."
       ])
       |> Enum.join("\n")
 
@@ -249,12 +276,15 @@ defmodule Cascade.Missions.Scheduler do
              message,
              wake.coordinatorRegistrationId
            ) do
-      emit_message(wake, "vault:chatMessageCreated", carrier, [], events)
-      emit_message(wake, "vault:chatMessageCreated", message, [dispatch], events)
-      {:ok, %{carrier: carrier, message: message, dispatch: dispatch}}
+      %{carrier: carrier, message: message, dispatch: dispatch}
+    else
+      {:error, reason} -> raise "Mission coordinator wake could not be materialized: #{reason}"
     end
-  rescue
-    _ -> {:error, "Mission coordinator wake could not be materialized"}
+  end
+
+  defp emit_wake(wake, item, events) do
+    emit_message(wake, "vault:chatMessageCreated", item.carrier, [], events)
+    emit_message(wake, "vault:chatMessageCreated", item.message, [item.dispatch], events)
   end
 
   defp emit_message(update, event, message, dispatches, events) do

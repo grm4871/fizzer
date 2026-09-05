@@ -354,8 +354,9 @@ defmodule Cascade.Chat.Agents do
   def set_avatar(user_id, vault_id, channel_id, registration_id, avatar_url) do
     url = avatar_url |> to_string() |> String.trim()
 
-    with true <- url == "" or Regex.match?(~r{^https?://}i, url),
-         true <- String.length(url) <= 2_048,
+    with true <-
+           url == "" or String.starts_with?(url, "data:") or Regex.match?(~r{^https?://}i, url),
+         true <- String.starts_with?(url, "data:") or String.length(url) <= 2_048,
          {:ok, route} <- Channel.assert_vault_channel(vault_id, channel_id, user_id),
          [identity_id, ^user_id] <-
            SQL.one(

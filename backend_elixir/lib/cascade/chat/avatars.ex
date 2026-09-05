@@ -11,6 +11,22 @@ defmodule Cascade.Chat.Avatars do
     {:ok, ""}
   end
 
+  def persist(_user_id, agent_id, "data:" <> data) do
+    with [media_type, encoded] <- String.split(data, ";base64,", parts: 2),
+         true <- media_type in @image_types,
+         true <- byte_size(encoded) <= 2_796_204,
+         bytes <- Assets.decode_data(encoded),
+         true <- byte_size(bytes) <= 2 * 1_024 * 1_024,
+         true <- Assets.matches_media_type?(media_type, bytes) do
+      extension = "." <> String.replace_prefix(media_type, "image/", "")
+      write_image(agent_id, extension, bytes)
+    else
+      _ -> {:error, "Profile picture must be a PNG, JPEG, GIF or WebP image up to 2MB"}
+    end
+  rescue
+    ArgumentError -> {:error, "Profile picture data is not valid base64"}
+  end
+
   def persist(user_id, agent_id, url) do
     case internal_asset(url) do
       {:ok, note_id, asset_id} -> copy_asset(user_id, agent_id, note_id, asset_id)
@@ -53,24 +69,27 @@ defmodule Cascade.Chat.Avatars do
          source when not is_nil(source) <- Assets.resolve_path(note_id, asset_id),
          %{content_type: media_type} when media_type in @image_types <-
            Assets.response_metadata(source) do
-      extension = Path.extname(source)
-      File.mkdir_p!(directory())
-      purge(agent_id)
-      asset_id = "#{agent_id}-#{System.system_time(:microsecond)}"
-      destination = Path.join(directory(), asset_id <> extension)
-
-      temporary =
-        destination <> ".tmp-" <> Base.url_encode64(:crypto.strong_rand_bytes(6), padding: false)
-
-      File.cp!(source, temporary)
-      File.chmod!(temporary, 0o644)
-
-      File.rename!(temporary, destination)
-      {:ok, "/api/notes/agent-avatars/assets/#{asset_id}"}
+      write_image(agent_id, Path.extname(source), File.read!(source))
     else
       nil -> {:error, "Profile picture asset was not found"}
       _ -> {:error, "Profile picture must be a readable image asset"}
     end
+  end
+
+  defp write_image(agent_id, extension, bytes) do
+    File.mkdir_p!(directory())
+    asset_id = "#{agent_id}-#{System.system_time(:microsecond)}"
+    destination = Path.join(directory(), asset_id <> extension)
+
+    temporary =
+      Path.join(directory(), ".upload-") <>
+        Base.url_encode64(:crypto.strong_rand_bytes(6), padding: false)
+
+    File.write!(temporary, bytes)
+    File.chmod!(temporary, 0o644)
+    purge(agent_id)
+    File.rename!(temporary, destination)
+    {:ok, "/api/notes/agent-avatars/assets/#{asset_id}"}
   end
 
   defp internal_asset(url) do

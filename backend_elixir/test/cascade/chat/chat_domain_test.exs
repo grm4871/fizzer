@@ -133,6 +133,76 @@ defmodule Cascade.ChatDomainTest do
     :ok
   end
 
+  test "agent run uploads only its own avatar without note asset privileges" do
+    {vault, channel} = chat_vault(1, "Self avatar", "Room")
+    {:ok, identity} = Agents.upsert_identity(1, vault.id, %{agentId: "codex", mention: "astra"})
+    {:ok, member} = Agents.add_to_channel(1, vault.id, channel.id, identity.id)
+    {:ok, other} = Agents.upsert_identity(1, vault.id, %{agentId: "codex", mention: "other"})
+    {:ok, other_member} = Agents.add_to_channel(1, vault.id, channel.id, other.id)
+
+    {:ok, message} =
+      Messages.create(%{id: 1, username: "alice"}, vault.id, channel.id, %{
+        body: "Choose an avatar"
+      })
+
+    {:ok, dispatch} = Dispatches.create(1, channel.id, message, member.id)
+
+    {:ok, run} =
+      RunStore.start(vault.id, nil, "Choose an avatar", "codex",
+        owner_user_id: 1,
+        chat_dispatch_id: dispatch.id
+      )
+
+    token = Token.sign_agent(%{id: 1, username: "alice", auth_version: 0})
+    bytes = <<0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A>>
+    image = "data:image/png;base64," <> Base.encode64(bytes)
+
+    request = fn registration, avatar, run_id ->
+      conn(
+        :put,
+        "/api/vaults/#{vault.id}/channels/#{channel.id}/agents/#{registration}/avatar",
+        Jason.encode!(%{avatarUrl: avatar})
+      )
+      |> put_req_header("authorization", "Bearer " <> token)
+      |> put_req_header("content-type", "application/json")
+      |> put_req_header("x-cascade-run-id", to_string(run_id))
+      |> CascadeWeb.ChatRouter.call(CascadeWeb.ChatRouter.init([]))
+    end
+
+    response = request.(member.id, image, run.id)
+    assert response.status == 200
+    url = Jason.decode!(response.resp_body)["registration"]["avatarUrl"]
+    served = conn(:get, url) |> CascadeWeb.ContentRouter.call(CascadeWeb.ContentRouter.init([]))
+    assert served.status == 200
+    assert served.resp_body == bytes
+    assert request.(other_member.id, image, run.id).status == 403
+    assert request.(member.id, image, "").status == 403
+
+    for invalid <- [
+          "data:image/png;base64,aGVsbG8=",
+          "data:image/svg+xml;base64,aGVsbG8=",
+          "data:image/png;base64,???",
+          "data:image/png;base64," <> String.duplicate("A", 2_796_208)
+        ] do
+      assert request.(member.id, invalid, run.id).status == 400
+    end
+
+    assert SQL.one("SELECT avatar_url FROM vault_agents WHERE id=?", [other.id]) == [""]
+
+    upload =
+      conn(
+        :post,
+        "/api/notes/#{channel.id}/assets",
+        Jason.encode!(%{media_type: "image/png", data: Base.encode64(bytes)})
+      )
+      |> put_req_header("authorization", "Bearer " <> token)
+      |> put_req_header("content-type", "application/json")
+      |> CascadeWeb.ContentRouter.call(CascadeWeb.ContentRouter.init([]))
+
+    assert upload.status == 403
+    assert request.(member.id, "", run.id).status == 200
+  end
+
   test "fresh schema creates every table, index, FTS table, and trigger explicitly" do
     for trigger <- ~w(chat_messages_ai chat_messages_ad chat_messages_au),
         do: SQL.exec("DROP TRIGGER IF EXISTS #{trigger}")
