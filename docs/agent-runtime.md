@@ -159,15 +159,22 @@ artifacts or live revisions. The server checks presence and provenance of run
 records; the coordinator remains responsible for verifying external claims.
 
 The server replays unclaimed worker and review dispatches and reconciles terminal
-run records whose mission callback was missed. A failed review, a successful
-review that left its mission open, or a removed unclaimed review can recover after
-one minute, only with no running or dispatched tasks or active coordinator run. Recovery creates a new
-review generation, never re-executes a worker, and stops after three retries with
-an `attention` state and a concrete mission-history explanation. Explicit canceled
-reviews and closed missions are not resumed. Adding or explicitly retrying work
-starts a new review budget. Periodic recovery waits for each mission owner’s runner to reconnect, so
-disconnected maintenance boots preserve the verification snapshot. It requires a
-running server; schema-only boots do not schedule work.
+run records whose mission callback was missed. Consumed reviews wake again only
+when task evidence changes; an unchanged blocker or failed closure does not start
+another review. Missing outbox entries replay the same deterministic review.
+Legacy reviews adopt their current evidence fingerprint without a deployment wake.
+Canceled reviews and closed missions are not resumed. Periodic recovery waits for
+the mission owner's runner to reconnect and requires a running server.
+
+A coordinator can use `mission link-recovery` to attach successful recovery-task
+evidence to a settled original task, including across missions owned by the same
+user and coordinator in the same channel. Supply the exact original `--objective`,
+`--task`, `--target-attempt`, `--target-run` when bound, `--source-task`,
+`--source-run`, and observed `--verification`. The relationship pins the task,
+objective, authority, run binding, and evidence snapshots; later edits or retries
+invalidate it. It permits closure without changing the failed original run or task
+history. Workers cannot create this attestation or finish missions. Unchanged
+blockers should be reported, not assigned ceremonial verification workers.
 
 Dispatch/run uniqueness and task idempotency prevent duplicate admission. Shared
 workspaces still require agents to preserve unrelated files or use isolated

@@ -199,6 +199,44 @@ test('mission recovery migration preserves rows and cannot backfill authority or
   }
 });
 
+test('state-based recovery migration preserves failed history and rejects invented evidence', () => {
+  const files = fixture();
+  try {
+    const before = new Database(files.before);
+    before.exec("CREATE TABLE chat_missions (id TEXT PRIMARY KEY, summary TEXT, review_attempt INTEGER NOT NULL DEFAULT 0); INSERT INTO chat_missions VALUES ('m1','heartbeat expired',3); CREATE TABLE chat_mission_tasks (id TEXT PRIMARY KEY,run_id INTEGER); INSERT INTO chat_mission_tasks VALUES ('t',NULL),('s',NULL)");
+    before.close();
+    fs.copyFileSync(files.before, files.after);
+    const after = new Database(files.after);
+    after.exec("ALTER TABLE chat_missions ADD COLUMN review_fingerprint TEXT NOT NULL DEFAULT ''");
+    const schema = fs.readFileSync(new URL('../backend_elixir/lib/cascade/missions/schema.ex', import.meta.url), 'utf8');
+    const ddl = schema.match(/CREATE TABLE IF NOT EXISTS chat_mission_recovery_evidence \([\s\S]*?\n    \)/)[0];
+    after.exec(ddl);
+    after.close();
+    assert.equal(runComparison(files).ok, true, runComparison(files).failures.join('\n'));
+    for (const [column, value] of [['review_fingerprint', 'claimed'], ['summary', 'completed'], ['review_attempt', 0]]) {
+      const changed = new Database(files.after);
+      const original = changed.prepare(`SELECT ${column} AS value FROM chat_missions`).get().value;
+      changed.prepare(`UPDATE chat_missions SET ${column}=?`).run(value);
+      changed.close();
+      assert.equal(runComparison(files).ok, false, column);
+      const restored = new Database(files.after);
+      restored.prepare(`UPDATE chat_missions SET ${column}=?`).run(original);
+      restored.close();
+    }
+    const changed = new Database(files.after);
+    changed.pragma('foreign_keys = OFF');
+    changed.exec("INSERT INTO chat_mission_recovery_evidence (task_id,source_task_id,target_snapshot,source_snapshot,verification,coordinator_registration_id) VALUES ('t','s','t','s','invented','c')");
+    changed.close();
+    assert.equal(runComparison(files).ok, false);
+    const malformed = new Database(files.after);
+    malformed.exec('DELETE FROM chat_mission_recovery_evidence; ALTER TABLE chat_mission_recovery_evidence ADD COLUMN unreviewed TEXT');
+    malformed.close();
+    assert.equal(runComparison(files).ok, false);
+  } finally {
+    fs.rmSync(files.directory, { recursive: true, force: true });
+  }
+});
+
 test('rolling eligibility requires exact data and corpus identity', () => {
   const files = fixture();
   try {

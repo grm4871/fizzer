@@ -144,6 +144,30 @@ defmodule CascadeWeb.MissionRouter do
     end)
   end
 
+  post "/api/vaults/:vault_id/channels/:channel_id/missions/tasks/:task_id/recovery-evidence" do
+    authenticated(conn, :vault, fn conn, user ->
+      input = %{
+        coordinatorRegistrationId: string_body(conn, "coordinatorRegistrationId"),
+        sourceTaskId: string_body(conn, "sourceTaskId"),
+        sourceRunId: numeric_body(conn, "sourceRunId"),
+        targetRunId: body(conn, "targetRunId", nil),
+        targetAttempt: numeric_body(conn, "targetAttempt"),
+        objective: string_body(conn, "objective"),
+        verification: string_body(conn, "verification")
+      }
+
+      opts = if run_id(conn), do: [current_run_id: run_id(conn)], else: []
+
+      with {:ok, update} <- Store.link_recovery(user.id, channel_id, task_id, input, opts),
+           {:ok, _} <- safe_schedule(update.mission.id, conn) do
+        Scheduler.emit_projection(update, callback(conn, :events))
+        JSON.send(conn, 200, %{mission: update.mission})
+      else
+        error -> route_error(conn, 400, error, "Could not link recovery evidence")
+      end
+    end)
+  end
+
   post "/api/vaults/:vault_id/channels/:channel_id/missions/:mission_id/finish" do
     authenticated(conn, :vault, fn conn, user ->
       status =

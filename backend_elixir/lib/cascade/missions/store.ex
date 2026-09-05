@@ -280,7 +280,7 @@ defmodule Cascade.Missions.Store do
             )
 
             SQL.exec(
-              "UPDATE chat_missions SET status='active',wake_sent=0,review_attempt=0,updated_at=datetime('now') WHERE id=?",
+              "UPDATE chat_missions SET status='active',wake_sent=0,updated_at=datetime('now') WHERE id=?",
               [mission.id]
             )
 
@@ -516,7 +516,7 @@ defmodule Cascade.Missions.Store do
                 )
 
                 SQL.exec(
-                  "UPDATE chat_missions SET status='active',wake_sent=0,review_attempt=0,updated_at=datetime('now') WHERE id=?",
+                  "UPDATE chat_missions SET status='active',wake_sent=0,updated_at=datetime('now') WHERE id=?",
                   [row.mission_id]
                 )
 
@@ -622,7 +622,10 @@ defmodule Cascade.Missions.Store do
 
             final_status =
               if status == "completed" and tasks != [] and
-                   Enum.all?(tasks, &(&1.status == "canceled")),
+                   Enum.all?(
+                     tasks,
+                     &(&1.status == "canceled" and not recovered_evidence_ready?(&1, mission))
+                   ),
                  do: "canceled",
                  else: status
 
@@ -633,16 +636,15 @@ defmodule Cascade.Missions.Store do
 
             if final_status == "completed" and
                  not Enum.any?(tasks, fn task ->
-                   task.status == "completed" and
-                     (completion_evidence_ready?(task, mission) or
-                        current_primary?(task, mission, current_run_id))
+                   completion_evidence_ready?(task, mission) or
+                     current_primary?(task, mission, current_run_id)
                  end) do
               raise "Mission has no completed worker evidence"
             end
 
             if final_status == "completed" and
                  Enum.any?(tasks, fn task ->
-                   task.status == "completed" and
+                   task.status != "canceled" and
                      not completion_evidence_ready?(task, mission) and
                      not current_primary?(task, mission, current_run_id)
                  end) do
@@ -722,21 +724,7 @@ defmodule Cascade.Missions.Store do
 
       if mission.wake_sent == 0 and (all_settled or stalled) and
            update.mission.status in ~w(reviewing attention blocked) do
-        generation =
-          tasks
-          |> Enum.map(&{&1.id, &1.attempt})
-          |> Enum.sort()
-          |> :erlang.term_to_binary()
-          |> then(&:crypto.hash(:sha256, &1))
-          |> Base.encode16(case: :lower)
-
-        [review_attempt] =
-          SQL.one("SELECT review_attempt FROM chat_missions WHERE id=?", [mission_id])
-
-        generation =
-          if review_attempt == 0,
-            do: generation,
-            else: generation <> "-recovery-#{review_attempt}"
+        generation = review_fingerprint(mission_id)
 
         {:ok,
          Map.merge(update, %{
@@ -921,17 +909,21 @@ defmodule Cascade.Missions.Store do
     by_id = Map.new(tasks, &{&1.id, &1})
 
     cond do
-      SQL.one("SELECT review_attempt FROM chat_missions WHERE id=?", [mission.id]) == [4] ->
-        "attention"
-
-      Enum.any?(tasks, &(&1.status in ~w(failed blocked))) ->
+      Enum.any?(
+        tasks,
+        &(&1.status in ~w(failed blocked) and not completion_evidence_ready?(&1, mission))
+      ) ->
         "attention"
 
       Enum.any?(tasks, &(&1.status == "pending" and dependency_attention?(&1, by_id))) ->
         "attention"
 
-      Enum.all?(tasks, &(&1.status in ~w(completed canceled))) ->
-        completed = Enum.filter(tasks, &(&1.status == "completed"))
+      Enum.all?(
+        tasks,
+        &(&1.status in ~w(completed canceled) or completion_evidence_ready?(&1, mission))
+      ) ->
+        completed =
+          Enum.filter(tasks, &(&1.status != "canceled" or recovered_evidence_ready?(&1, mission)))
 
         if completed != [] and Enum.all?(completed, &completion_evidence_ready?(&1, mission)),
           do: "reviewing",
@@ -989,6 +981,21 @@ defmodule Cascade.Missions.Store do
           reasoningEffort: task.reasoning_effort || "",
           anonymous: anonymous,
           attempt: task.attempt || 0,
+          recoveryEvidence:
+            case SQL.one(
+                   "SELECT source_task_id,verification FROM chat_mission_recovery_evidence WHERE task_id=?",
+                   [task.id]
+                 ) do
+              [source, verification] ->
+                %{
+                  sourceTaskId: source,
+                  verification: verification,
+                  valid: recovered_evidence_ready?(task, mission)
+                }
+
+              _ ->
+                nil
+            end,
           queueReason: queue_reason(task, waiting_for, attention),
           updatedAt: task.updated_at
         }
@@ -1175,10 +1182,13 @@ defmodule Cascade.Missions.Store do
   defp task_to_work_item_status("canceled"), do: "canceled"
   defp task_to_work_item_status(_), do: "open"
 
-  defp completion_evidence_ready?(%{status: status}, _mission) when status != "completed",
-    do: true
+  defp completion_evidence_ready?(task, mission),
+    do: direct_evidence_ready?(task, mission) or recovered_evidence_ready?(task, mission)
 
-  defp completion_evidence_ready?(task, mission) do
+  defp direct_evidence_ready?(%{status: status}, _mission) when status != "completed",
+    do: false
+
+  defp direct_evidence_ready?(task, mission) do
     run_produced =
       is_integer(task.run_id) and task.run_id > 0 and task.dispatch_id not in [nil, ""] and
         SQL.one(
@@ -1208,6 +1218,150 @@ defmodule Cascade.Missions.Store do
     run_produced and task.summary not in [nil, ""] and
       (primary or task.workspace_mode == "shared" or workspace_bound)
   end
+
+  @doc "Coordinator attestation binds existing successful evidence to an unchanged original objective."
+  def link_recovery(user_id, channel_id, task_id, input, opts \\ []) do
+    with {:ok, route} <- Channel.assert_channel(channel_id, user_id),
+         target when not is_nil(target) <- task_with_mission(task_id),
+         :ok <- authorize_task_row(target, route, user_id),
+         :ok <- ensure_mission_open(target.mission_status),
+         :ok <- reject_worker_control(opts, :finish),
+         {:ok, coordinator} <-
+           assert_coordinator(user_id, channel_id, field(input, :coordinatorRegistrationId)) do
+      result =
+        SQL.transaction(fn ->
+          target = task_row(task_id)
+          mission = mission_row(target.mission_id)
+          source = task_row(field(input, :sourceTaskId))
+          source_mission = source && mission_row(source.mission_id)
+          verification = clean(field(input, :verification), 8_000)
+
+          unless ((mission.coordinator_registration_id == coordinator.id and source_mission) &&
+                    source_mission.created_by == user_id) and
+                   source_mission.vault_id == mission.vault_id and
+                   source_mission.channel_id == mission.channel_id and
+                   source_mission.coordinator_registration_id == coordinator.id,
+                 do: raise("Recovery evidence belongs to another owner, channel, or coordinator")
+
+          unless field(input, :objective) == mission.objective and verification != "",
+            do:
+              raise("Recovery requires the exact original objective and coordinator verification")
+
+          unless field(input, :sourceRunId) == source.run_id and
+                   field(input, :targetRunId) == target.run_id and
+                   field(input, :targetAttempt) == target.attempt and
+                   (is_nil(target.run_id) or source.run_id > target.run_id),
+                 do:
+                   raise(
+                     "Recovery evidence is stale: pin the current target attempt and recovery run"
+                   )
+
+          unless target.id != source.id and target.status in @terminal_task_statuses and
+                   not active_run?(target.run_id) and
+                   direct_evidence_ready?(source, source_mission),
+                 do:
+                   raise(
+                     "Recovery requires a settled original task and completed worker evidence"
+                   )
+
+          # Pin both attempts and all evidence-bearing inputs. Later retries or edits
+          # invalidate the relationship rather than rewriting either run's history.
+          target_snapshot = objective_snapshot(target, mission)
+          source_snapshot = evidence_snapshot(source, source_mission)
+
+          existing =
+            SQL.one(
+              "SELECT source_task_id,target_snapshot,source_snapshot,verification FROM chat_mission_recovery_evidence WHERE task_id=?",
+              [task_id]
+            )
+
+          values = [source.id, target_snapshot, source_snapshot, verification]
+
+          if existing != values do
+            SQL.exec(
+              "INSERT INTO chat_mission_recovery_evidence (task_id,source_task_id,target_snapshot,source_snapshot,verification,coordinator_registration_id) VALUES (?,?,?,?,?,?) ON CONFLICT(task_id) DO UPDATE SET source_task_id=excluded.source_task_id,target_snapshot=excluded.target_snapshot,source_snapshot=excluded.source_snapshot,verification=excluded.verification,coordinator_registration_id=excluded.coordinator_registration_id,created_at=datetime('now')",
+              [task_id] ++ values ++ [coordinator.id]
+            )
+
+            record_event(mission.id, %{
+              task_id: task_id,
+              kind: "recovery_evidence_linked",
+              run_id: source.run_id,
+              summary: "Recovery task #{source.id}: #{verification}",
+              attempt: target.attempt
+            })
+          end
+
+          refresh!(mission.id)
+        end)
+
+      {:ok, result}
+    else
+      nil -> {:error, "Mission task not found"}
+      {:error, _} = error -> error
+    end
+  rescue
+    error -> {:error, Exception.message(error)}
+  end
+
+  defp recovered_evidence_ready?(task, mission) do
+    case SQL.one(
+           "SELECT source_task_id,target_snapshot,source_snapshot FROM chat_mission_recovery_evidence WHERE task_id=?",
+           [task.id]
+         ) do
+      [source_id, target_snapshot, source_snapshot] ->
+        source = task_row(source_id)
+        source_mission = source && mission_row(source.mission_id)
+
+        ((task.status in @terminal_task_statuses and source) && source_mission &&
+           target_snapshot == objective_snapshot(task, mission)) and
+          source_snapshot == evidence_snapshot(source, source_mission) and
+          direct_evidence_ready?(source, source_mission)
+
+      _ ->
+        false
+    end
+  end
+
+  defp objective_snapshot(task, mission) do
+    digest(
+      {task.id, task.attempt, task.run_id, task.dispatch_id, task.title, task.prompt,
+       task.workspace_mode, task.work_item_id, mission.id, mission.objective, mission.created_by,
+       mission.vault_id, mission.channel_id, mission.coordinator_registration_id,
+       SQL.one("SELECT authority_json FROM chat_missions WHERE id=?", [mission.id])}
+    )
+  end
+
+  defp evidence_snapshot(task, mission) do
+    digest(
+      {objective_snapshot(task, mission), task.status, task.summary,
+       SQL.one("SELECT status,summary,chat_dispatch_id FROM runs WHERE id=?", [task.run_id]),
+       SQL.one("SELECT base_commit,worktree_path,verification FROM work_items WHERE id=?", [
+         task.work_item_id
+       ])}
+    )
+  end
+
+  def review_fingerprint(mission_id) do
+    mission = mission_row(mission_id)
+
+    digest(
+      Enum.map(task_rows(mission_id), fn task ->
+        {evidence_snapshot(task, mission),
+         SQL.one(
+           "SELECT source_task_id,target_snapshot,source_snapshot,verification FROM chat_mission_recovery_evidence WHERE task_id=?",
+           [task.id]
+         ), recovered_evidence_ready?(task, mission)}
+      end)
+    )
+  end
+
+  defp digest(value),
+    do:
+      value
+      |> :erlang.term_to_binary()
+      |> then(&:crypto.hash(:sha256, &1))
+      |> Base.encode16(case: :lower)
 
   defp current_primary?(task, mission, run_id) do
     is_integer(run_id) and task.run_id == run_id and task.title == "Primary task" and

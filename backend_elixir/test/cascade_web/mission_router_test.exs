@@ -81,6 +81,8 @@ defmodule CascadeWeb.MissionRouterTest do
              {"GET", "/api/vaults/:vault_id/channels/:channel_id/missions/:mission_id"},
              {"POST", "/api/vaults/:vault_id/channels/:channel_id/missions/:mission_id/tasks"},
              {"PATCH", "/api/vaults/:vault_id/channels/:channel_id/missions/tasks/:task_id"},
+             {"POST",
+              "/api/vaults/:vault_id/channels/:channel_id/missions/tasks/:task_id/recovery-evidence"},
              {"POST", "/api/vaults/:vault_id/channels/:channel_id/missions/:mission_id/finish"}
            ]
   end
@@ -263,6 +265,23 @@ defmodule CascadeWeb.MissionRouterTest do
 
     assert nested_task.status == 400
     assert json(nested_task) == %{"error" => "Mission workers cannot start or delegate missions"}
+
+    rejected =
+      request(
+        ctx,
+        :post,
+        base <> "/missions/tasks/#{task_id}/recovery-evidence",
+        %{
+          coordinatorRegistrationId: ctx.coordinator.id,
+          sourceTaskId: task_id,
+          objective: "Exercise every mission route.",
+          verification: "Claimed evidence"
+        },
+        worker_run.id
+      )
+
+    assert rejected.status == 400
+    assert json(rejected)["error"] == "Mission workers cannot finish the mission"
   end
 
   defp request(ctx, method, path, body \\ nil, run_id \\ nil) do

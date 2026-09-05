@@ -32,6 +32,7 @@ Usage:
   cascade-chat mission delegate --mission <id> --to @agent --task T --message P [--after <task-id,...>] [--priority N] [--effort E] [--anonymous] [--isolated]
   cascade-chat mission update --task <id> --status <status> [--summary S]
   cascade-chat mission retry --task <id> [--summary S]
+  cascade-chat mission link-recovery --task <original-id> --source-task <recovery-id> --source-run <id> --target-run <id> --target-attempt <n> --objective <original-objective> --verification <observed-evidence>
   cascade-chat mission finish --mission <id> [--summary S]
   cascade-chat avatar --file <path>     upload this agent's profile picture
   cascade-chat avatar --url <https-url> use an existing uploaded note image
@@ -624,6 +625,25 @@ async function main() {
       else process.stdout.write(sub === 'retry' ? `task ${taskId} queued for retry\n` : `task ${taskId} → ${status}\n`);
       return;
     }
+    if (sub === 'link-recovery') {
+      if (!registrationId) fail('mission link-recovery requires a registered coordinator.');
+      const taskId = String(args.task || '').trim();
+      if (!taskId || !args['source-task'] || !args['source-run'] || args['target-attempt'] === undefined || !args.objective || !args.verification) {
+        fail('link-recovery needs --task, --source-task, --source-run, --target-attempt, --objective, and --verification; use --target-run for an original bound run.');
+      }
+      const result = await api(url, token, 'POST',
+        `/api/vaults/${vaultId}/channels/${channelId}/missions/tasks/${encodeURIComponent(taskId)}/recovery-evidence`, {
+          coordinatorRegistrationId: registrationId,
+          sourceTaskId: String(args['source-task']),
+          sourceRunId: Number(args['source-run']),
+          targetRunId: args['target-run'] ? Number(args['target-run']) : null,
+          targetAttempt: Number(args['target-attempt']),
+          objective: String(args.objective),
+          verification: String(args.verification),
+        });
+      process.stdout.write(args.json ? JSON.stringify(result.mission) + '\n' : `recovery evidence linked to ${taskId}\n`);
+      return;
+    }
     if (sub === 'finish' || sub === 'cancel') {
       if (!registrationId) fail(`mission ${sub} can only be used from a registered coordinator run.`);
       const result = await api(
@@ -642,7 +662,7 @@ async function main() {
       else process.stdout.write(`mission ${result.mission.id} → ${result.mission.status}\n`);
       return;
     }
-    fail(`unknown mission command "${sub}". Use start|list|status|history|delegate|update|retry|finish|cancel.`);
+    fail(`unknown mission command "${sub}". Use start|list|status|history|delegate|update|retry|link-recovery|finish|cancel.`);
   }
 
   if (cmd === 'avatar') {

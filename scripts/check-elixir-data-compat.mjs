@@ -8,6 +8,7 @@ import process from 'node:process';
 import Database from 'better-sqlite3';
 
 const DEFAULT_ALLOWED_ADDITIONS = new Set(['cascade_elixir_schema_migrations']);
+const RECOVERY_EVIDENCE_SQL_SHA256 = '8039530f643ab926e1306c88d074dc731b6b5c248cd032ac3d591bbaf2ee185b';
 const FTS5_SHADOW_SUFFIXES = ['config', 'data', 'docsize', 'idx'];
 
 // These hashes pin the intentional one-time normalization performed by the
@@ -252,6 +253,11 @@ function databaseSnapshotFromCopy(filename) {
         WHERE authority_json <> '[]' OR verification <> '' OR review_attempt <> 0
       `).get().count;
     }
+    if (tables.chat_missions?.columns.some((column) => column.name === 'review_fingerprint')) {
+      compatibility.missionFingerprintNonDefaults = db.prepare(
+        "SELECT COUNT(*) AS count FROM chat_missions WHERE review_fingerprint <> ''",
+      ).get().count;
+    }
     if (tables.chat_mission_tasks) {
       const hasWorkspaceMode = tables.chat_mission_tasks.columns
         .some((column) => column.name === 'workspace_mode');
@@ -465,10 +471,12 @@ function exactRowsOrMissionTaskBackfill(table, before, after) {
   return true;
 }
 
-function exactMissionRecoveryMigration(before, after) {
+function exactMissionRecoveryMigration(before, after, fingerprintOnly = false) {
   const oldTable = before.tables.chat_missions;
   const newTable = after.tables.chat_missions;
-  const additions = [
+  const additions = fingerprintOnly ? [
+    { name: 'review_fingerprint', type: 'TEXT', notnull: 1, dflt_value: "''", pk: 0 },
+  ] : [
     { name: 'authority_json', type: 'TEXT', notnull: 1, dflt_value: "'[]'", pk: 0 },
     { name: 'verification', type: 'TEXT', notnull: 1, dflt_value: "''", pk: 0 },
     { name: 'review_attempt', type: 'INTEGER', notnull: 1, dflt_value: '0', pk: 0 },
@@ -490,7 +498,9 @@ function exactMissionRecoveryMigration(before, after) {
     && oldTable.rows.columns.every((column) => (
       oldTable.rows.columnSha256[column] === newTable.rows.columnSha256[column]
     ))
-    && after.compatibility.missionRecoveryNonDefaults === 0;
+    && (fingerprintOnly
+      ? after.compatibility.missionFingerprintNonDefaults
+      : after.compatibility.missionRecoveryNonDefaults) === 0;
 }
 
 function exactMissionWorkspaceModeMigration(before, after) {
@@ -775,8 +785,9 @@ export function compareDatabaseSnapshots(before, after, allowedAdditions = DEFAU
           `table changed outside pinned agent identity migration: ${table} (rows ${oldRows.count}/${oldRows.sha256.slice(0, 12)} -> ${newRows.count}/${newRows.sha256.slice(0, 12)})`,
         );
       }
-    } else if (table === 'chat_missions' && exactMissionRecoveryMigration(before, after)) {
-      // Add only empty instruction/evidence records and a zero recovery counter.
+    } else if (table === 'chat_missions' && (exactMissionRecoveryMigration(before, after)
+        || exactMissionRecoveryMigration(before, after, true))) {
+      // Add only pinned empty defaults; preserve all existing mission values.
     } else if (table === 'chat_mission_tasks'
         && exactMissionWorkspaceModeMigration(before, after)) {
       // workspace_mode is an additive, default-shared mission task migration.
@@ -805,6 +816,13 @@ export function compareDatabaseSnapshots(before, after, allowedAdditions = DEFAU
   }
   for (const table of afterTables) {
     if (beforeTables.has(table)) continue;
+    if (table === 'chat_mission_recovery_evidence') {
+      const added = after.tables[table];
+      if (added.schema.sqlSha256 !== RECOVERY_EVIDENCE_SQL_SHA256 || added.rows.count !== 0) {
+        failures.push('recovery evidence addition differs from pinned empty schema');
+      }
+      continue;
+    }
     if (!allowedAdditions.has(table)) {
       failures.push(`unexpected table added: ${table}`);
       continue;

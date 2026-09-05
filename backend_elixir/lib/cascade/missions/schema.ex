@@ -65,7 +65,7 @@ defmodule Cascade.Missions.Schema do
 
     SQL.ensure_column("chat_missions", "authority_json", "TEXT NOT NULL DEFAULT '[]'")
     SQL.ensure_column("chat_missions", "verification", "TEXT NOT NULL DEFAULT ''")
-    SQL.ensure_column("chat_missions", "review_attempt", "INTEGER NOT NULL DEFAULT 0")
+    SQL.ensure_column("chat_missions", "review_fingerprint", "TEXT NOT NULL DEFAULT ''")
 
     SQL.exec("""
     CREATE INDEX IF NOT EXISTS chat_missions_channel_idx
@@ -97,6 +97,18 @@ defmodule Cascade.Missions.Schema do
     Enum.each(@task_columns, fn {name, definition} ->
       SQL.ensure_column("chat_mission_tasks", name, definition)
     end)
+
+    SQL.exec("""
+    CREATE TABLE IF NOT EXISTS chat_mission_recovery_evidence (
+      task_id TEXT PRIMARY KEY REFERENCES chat_mission_tasks(id) ON DELETE CASCADE,
+      source_task_id TEXT NOT NULL REFERENCES chat_mission_tasks(id) ON DELETE CASCADE,
+      target_snapshot TEXT NOT NULL,
+      source_snapshot TEXT NOT NULL,
+      verification TEXT NOT NULL,
+      coordinator_registration_id TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+    """)
 
     SQL.exec("""
     CREATE INDEX IF NOT EXISTS chat_mission_tasks_mission_idx

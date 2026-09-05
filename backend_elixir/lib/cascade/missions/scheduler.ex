@@ -221,8 +221,8 @@ defmodule Cascade.Missions.Scheduler do
 
   defp materialize_wake!(wake) do
     SQL.exec(
-      "UPDATE chat_missions SET wake_sent=1,updated_at=datetime('now') WHERE id=?",
-      [wake.mission.id]
+      "UPDATE chat_missions SET wake_sent=1,review_fingerprint=?,updated_at=datetime('now') WHERE id=?",
+      [wake.generation, wake.mission.id]
     )
 
     carrier_id = "agent-trace-#{wake.mission.id}-#{wake.generation}"
@@ -252,7 +252,7 @@ defmodule Cascade.Missions.Scheduler do
         "",
         Cascade.Missions.Authority.context(wake.mission.id),
         "Before retrying any operation, inspect existing artifacts, running work, and deployment status. Do not duplicate side effects or overwrite concurrent work. Mission closure is coordinator bookkeeping and must not block independently authorized implementation. Finish with --verification containing independently observed checks and artifact or live revision evidence. If recovery repeatedly fails, leave a concrete limitation for the user; do not spin or expand authority.",
-        "Continue this existing mission; do not start a new mission for this review. Review the evidence, resolve or explain failures, and perform any authorized integration and verification still needed. Finish this mission when the user request is fulfilled, then reply once with the outcome."
+        "Continue this existing mission; do not start a new mission for this review. Review existing evidence once. If closure fails or a blocker is unchanged, stop and report the exact missing evidence or authority; do not dispatch verification workers merely to satisfy bookkeeping. Use the recovery-evidence relationship for authorized evidence from another task. Resolve or explain failures, and perform any authorized integration and verification still needed. Finish this mission when the user request is fulfilled, then reply once with the outcome."
       ])
       |> Enum.join("\n")
 

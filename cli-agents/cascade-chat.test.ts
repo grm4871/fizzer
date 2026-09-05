@@ -62,6 +62,10 @@ test('coordinator helper starts and delegates a mission with structured API call
       res.end(JSON.stringify({ mission: { id: 'mission-1', title: 'Release', status: 'blocked', tasks: [] } }));
       return;
     }
+    if (req.url === '/api/vaults/vault-1/channels/channel-1/missions/tasks/task-1/recovery-evidence') {
+      res.end(JSON.stringify({ mission: { id: 'mission-1' } }));
+      return;
+    }
     if (req.url === '/api/vaults/vault-1/channels/channel-1/missions/mission-1/finish') {
       res.end(JSON.stringify({ mission: { id: 'mission-1', title: 'Release', status: 'completed', tasks: [] } }));
       return;
@@ -122,6 +126,15 @@ test('coordinator helper starts and delegates a mission with structured API call
   await execFileAsync(process.execPath, [
     cli, 'mission', 'finish', '--mission', 'mission-1', '--summary', 'Integrated', '--verification', 'Tests passed; artifact inspected', ...common,
   ], { env: withCoordinator });
+  await execFileAsync(process.execPath, [
+    cli, 'mission', 'link-recovery', '--task', 'task-1', '--source-task', 'recovered-task',
+    '--source-run', '3131', '--target-run', '3099', '--target-attempt', '0',
+    '--objective', 'Ship safely', '--verification', 'Exact revision verified', ...common,
+  ], { env: withCoordinator });
+  assert.deepEqual(requests.at(-1)?.body, {
+    coordinatorRegistrationId: 'reg-sol', sourceTaskId: 'recovered-task', sourceRunId: 3131,
+    targetRunId: 3099, targetAttempt: 0, objective: 'Ship safely', verification: 'Exact revision verified',
+  });
   assert.deepEqual(requests.map((request) => `${request.method} ${request.path}`), [
     'POST /api/vaults/vault-1/channels/channel-1/messages',
     'POST /api/vaults/vault-1/channels/channel-1/missions',
@@ -132,6 +145,7 @@ test('coordinator helper starts and delegates a mission with structured API call
     'PATCH /api/vaults/vault-1/channels/channel-1/missions/tasks/task-1',
     'PATCH /api/vaults/vault-1/channels/channel-1/missions/tasks/task-1',
     'POST /api/vaults/vault-1/channels/channel-1/missions/mission-1/finish',
+    'POST /api/vaults/vault-1/channels/channel-1/missions/tasks/task-1/recovery-evidence',
   ]);
   assert.ok(requests.every((request) => request.runId === '777'));
   assert.equal(requests[0]?.body?.registrationId, 'reg-sol');
