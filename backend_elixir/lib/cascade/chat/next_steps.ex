@@ -44,11 +44,11 @@ For owner feedback on a recorded proposal, prefix your ordinary reply with <!-- 
 
       String.trim(body) == "[no-reply]" ->
         if not present?(message[:missionTaskId]), do: record_ordinary(message, channel_id)
-        %{message | body: "", blocks: []}
+        Map.merge(message, %{body: "", blocks: []})
 
       present?(message[:missionTaskId]) ->
         if String.starts_with?(body, "<!-- fizzer-next"),
-          do: %{message | body: "", blocks: []},
+          do: Map.merge(message, %{body: "", blocks: []}),
           else: message
 
       String.starts_with?(body, "<!-- fizzer-next-feedback:") or
@@ -62,7 +62,7 @@ For owner feedback on a recorded proposal, prefix your ordinary reply with <!-- 
                [channel_id, message[:registrationId], message.id]
              ) do
           [saved] ->
-            %{message | body: saved, blocks: []}
+            Map.merge(message, %{body: saved, blocks: []})
 
           _ ->
             if String.starts_with?(body, "<!-- fizzer-next-none:"),
@@ -100,7 +100,7 @@ For owner feedback on a recorded proposal, prefix your ordinary reply with <!-- 
              true <- record(message, channel_id, source_id, "proposed", "") do
           message
         else
-          _ -> %{message | body: "", blocks: []}
+          _ -> Map.merge(message, %{body: "", blocks: []})
         end
       end
     else
@@ -416,9 +416,9 @@ For owner feedback on a recorded proposal, prefix your ordinary reply with <!-- 
          evidence when not is_nil(evidence) <-
            source(channel, id, owner, message.registrationId),
          true <- record(message, channel, id, "none", String.slice(reason, 0, 400)) do
-      %{message | body: String.slice(String.trim(reason), 0, 400), blocks: []}
+      Map.merge(message, %{body: String.slice(String.trim(reason), 0, 400), blocks: []})
     else
-      _ -> %{message | body: "", blocks: []}
+      _ -> Map.merge(message, %{body: "", blocks: []})
     end
   end
 
@@ -466,9 +466,9 @@ For owner feedback on a recorded proposal, prefix your ordinary reply with <!-- 
         [decision, source_id, channel, message.registrationId, proposal, source_id, source_id]
       )
 
-      %{message | body: body, blocks: []}
+      Map.merge(message, %{body: body, blocks: []})
     else
-      _ -> %{message | body: "", blocks: []}
+      _ -> Map.merge(message, %{body: "", blocks: []})
     end
   end
 
