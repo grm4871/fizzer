@@ -973,7 +973,7 @@ export const ChatAgentPanel = forwardRef<ChatAgentPanelHandle, {
                   checked={agentForm.nextStepSuggestions === true}
                   onChange={(event) => setAgentForm((value) => ({ ...value, nextStepSuggestions: event.target.checked }))}
                   name="Suggest what to work on next"
-                  hint="Occasionally suggests a grounded next step during conversations or task updates. Off by default. Work starts only when you accept."
+                  hint="Considers a useful next step after work finishes and when you return. Off by default. Work starts only when you accept."
                 />
               )}
               <ChatAgentToggle

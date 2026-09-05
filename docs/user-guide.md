@@ -345,6 +345,8 @@ A channel may designate one agent as its coordinator. The coordinator can answer
 
 Enable coordination when the channel benefits from a single dispatcher—for example, a project room with one planning agent and several specialist agents. Do not enable several competing coordinators for the same channel.
 
+**Suggest what to work on next** is off by default. When enabled, the coordinator considers useful next work after completion and when you return, without interrupting an active request. It may suggest one grounded task or record why no suggestion is appropriate. Accepting authorizes only the proposed task; declining preserves your reason and suppresses that topic. An unanswered suggestion waits for your response.
+
 ## Missions and durable work
 
 A **mission** is a durable task record projected into the chat transcript. It is useful when a request has multiple steps, may take a long time, needs delegation, or requires review after workers finish.
