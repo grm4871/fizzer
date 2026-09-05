@@ -26,6 +26,8 @@ defmodule CascadeWeb.Authorization do
     {~w(POST), ~r<^/api/vaults/[^/]+/channels/[^/]+/missions/[^/]+/(?:tasks|finish|children)$>},
     {~w(POST), ~r<^/api/vaults/[^/]+/channels/[^/]+/missions/children/join$>},
     {~w(PATCH), ~r<^/api/vaults/[^/]+/channels/[^/]+/missions/tasks/[^/]+$>},
+    {~w(POST),
+     ~r<^/api/vaults/[^/]+/channels/[^/]+/missions/tasks/[^/]+/(?:steer|recovery-evidence)$>},
     {~w(POST), ~r<^/api/vaults/[^/]+/channels/[^/]+/distill$>},
     {~w(PUT), ~r<^/api/vaults/[^/]+/channels/[^/]+/agents/[^/]+/avatar$>},
     {~w(GET PUT DELETE), ~r<^/api/notes/[^/]+$>},

@@ -51,7 +51,7 @@ async function socketFor(token, vaultId) {
   return { socket, created, updated };
 }
 
-async function runnerFor(token) {
+async function runnerFor(token, activeRunIds = []) {
   const socket = io(`${API_BASE}/runners`, { auth: { token }, transports: ['websocket'] });
   const delegated = [];
   const canceled = [];
@@ -65,7 +65,7 @@ async function runnerFor(token) {
     });
     socket.on('connect', () => {
       socket.emit('runner:register', {
-        activeRunIds: [],
+        activeRunIds,
         runnerInstanceId: `mission-e2e-${Date.now()}`,
       });
     });
@@ -119,13 +119,15 @@ function check(label, condition) {
 }
 
 async function main() {
-  const server = await launchTestBackend({
+  const serverOptions = {
     name: 'chat-mission-e2e', repoRoot: root, port: API_PORT,
     env: {
       JWT_SECRET: 'mission-e2e-secret',
       CASCADE_ALLOW_OPEN_REGISTRATION: '1',
     },
-  });
+  };
+  let server = await launchTestBackend(serverOptions);
+  const initialServer = server;
 
   try {
     const stamp = Date.now();
@@ -308,7 +310,7 @@ async function main() {
     const archive = await must(`${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/missions`, { headers: agentAuth });
     check('mission archive is independent of the transcript window', archive.missions?.some((item) => item.id === mission.id));
 
-    const runner = await runnerFor(owner.token);
+    let runner = await runnerFor(owner.token);
     const parallel = [];
     for (const label of ['alpha', 'beta']) {
       const rootId = `sys-parallel-${label}-${stamp}`;
@@ -433,6 +435,93 @@ async function main() {
       ));
     }
 
+    const missionBase = `${API_BASE}/api/vaults/${vault.id}/channels/${channel.id}/missions`;
+    let parent = workers[0];
+    let workerAuth = { ...agentAuth, 'x-cascade-run-id': String(parent.runId) };
+    const createChild = (title) => must(`${missionBase}/current/children`, {
+      method: 'POST', headers: workerAuth, body: JSON.stringify({ title, prompt: title }),
+    });
+    const child = await createChild('Verify child artifact');
+    const duplicateChild = await createChild('Verify child artifact');
+    check('worker-token HTTP retry creates only one child', child.task.id === duplicateChild.task.id);
+    const canceledChild = await createChild('Explicitly canceled child');
+    const taskState = async (id) => {
+      const state = await must(`${missionBase}/${parallel[0].mission.id}`, { headers: agentAuth });
+      return state.mission.tasks.find((task) => task.id === id);
+    };
+    const runningChild = await waitUntil('child runner dispatch', async () => {
+      const task = await taskState(child.task.id);
+      return task.status === 'running' && task.runId ? task : null;
+    });
+    const runningCanceledChild = await waitUntil('cancelable child runner dispatch', async () => {
+      const task = await taskState(canceledChild.task.id);
+      return task.status === 'running' && task.runId ? task : null;
+    });
+    runner.socket.emit('runner:runEvent', {
+      runId: parent.runId, type: 'session', payload: { sessionId: 'mission-http-parent-session' },
+    });
+    await waitUntil('saved parent session', async () => {
+      const { run } = await must(`${API_BASE}/api/runs/${parent.runId}`, { headers: owner.auth });
+      return run.session_id === 'mission-http-parent-session';
+    });
+    const beforeSteering = parent;
+    await must(`${missionBase}/tasks/${parent.id}/steer`, {
+      method: 'POST', headers: agentAuth,
+      body: JSON.stringify({ coordinatorRegistrationId: sol.id, runId: parent.runId,
+        attempt: parent.attempt, message: 'Retain children and verify integration evidence' }),
+    });
+    parent = await waitUntil('steered parent dispatch', async () => {
+      const task = await taskState(beforeSteering.id);
+      return task.status === 'running' && task.runId !== beforeSteering.runId ? task : null;
+    }, 20_000);
+    workerAuth = { ...agentAuth, 'x-cascade-run-id': String(parent.runId) };
+    check('steering preserves child execution and parent workspace',
+      (await taskState(child.task.id)).runId === runningChild.runId && parent.workItemId === beforeSteering.workItemId);
+    const steeredRun = await waitUntil('steered runner delivery', () => runner.delegated.find((run) => run.runId === parent.runId));
+    check('steering resumes saved provider session', steeredRun.resumeSessionId === 'mission-http-parent-session');
+    await must(`${missionBase}/tasks/${canceledChild.task.id}`, {
+      method: 'PATCH', headers: workerAuth,
+      body: JSON.stringify({ status: 'canceled', summary: 'Explicit parent cancellation' }),
+    });
+    await waitUntil('explicit child provider stop', () => runner.canceled.includes(runningCanceledChild.runId));
+    const join = await must(`${missionBase}/children/join`, {
+      method: 'POST', headers: workerAuth, body: '{}',
+    });
+    check('worker-token join returns both child obligations', join.children.length === 2);
+    runner.socket.emit('runner:runEvent', {
+      runId: parent.runId, type: 'status', payload: { status: 'completed', summary: 'Independent work complete; joining' },
+    });
+    await waitUntil('parent waits for child evidence', async () => (await taskState(parent.id)).joiningChildren);
+    const activeRuns = await Promise.all(runner.delegated.map(async ({ runId }) => {
+      const { run } = await must(`${API_BASE}/api/runs/${runId}`, { headers: owner.auth });
+      return ['queued', 'running'].includes(run.status) ? runId : null;
+    }));
+    runner.socket.disconnect();
+    await server.stop({ cleanup: false });
+    server = await launchTestBackend({ ...serverOptions, tempRoot: server.tempRoot });
+    runner = await runnerFor(owner.token, activeRuns.filter((id) => id != null));
+    check('backend restart preserves waiting parent and running child',
+      (await taskState(parent.id)).joiningChildren && (await taskState(child.task.id)).runId === runningChild.runId);
+    const premature = await request(`${missionBase}/${parallel[0].mission.id}/finish`, {
+      method: 'POST', headers: agentAuth,
+      body: JSON.stringify({ coordinatorRegistrationId: sol.id, status: 'completed', verification: 'Not yet integrated' }),
+    });
+    check('completion gate rejects unintegrated child obligations', !premature.ok);
+    runner.socket.emit('runner:runEvent', {
+      runId: runningChild.runId, type: 'status', payload: { status: 'completed', summary: 'Child artifact verified over runner socket' },
+    });
+    workers[0] = await waitUntil('parent continuation after child result', async () => {
+      const task = await taskState(parent.id);
+      return task.status === 'running' && task.runId !== parent.runId ? task : null;
+    }, 20_000);
+    const continuation = await waitUntil('continuation delivered to runner', () => runner.delegated.find((run) => run.runId === workers[0].runId));
+    check('parent continuation carries child evidence', JSON.stringify(continuation).includes('Child artifact verified over runner socket'));
+    check('join retains parent workspace', workers[0].workItemId === parent.workItemId && workers[0].worktreePath === parent.worktreePath);
+    runner.socket.emit('runner:runEvent', {
+      runId: parent.runId, type: 'status', payload: { status: 'completed', summary: 'Duplicate old completion' },
+    });
+    check('duplicate old settlement retains current parent attempt', (await taskState(parent.id)).runId === workers[0].runId);
+
     for (const worker of workers) {
       runner.socket.emit('runner:runEvent', {
         runId: worker.runId,
@@ -499,6 +588,7 @@ async function main() {
     console.log('[mission-e2e] All chat-first mission checks passed');
   } finally {
     await server.stop();
+    await initialServer.stop();
   }
 }
 

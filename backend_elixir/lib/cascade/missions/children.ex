@@ -23,9 +23,7 @@ defmodule Cascade.Missions.Children do
           coordinatorRegistrationId: parent.coordinator,
           assignee: parent.assignee,
           title: input[:title],
-          prompt:
-            "Bounded child of task #{parent.id}. Complete only this piece and return artifacts and verification to your parent. Do not delegate or finish the mission.\n\n" <>
-              to_string(input[:prompt] || input[:title]),
+          prompt: to_string(input[:prompt] || input[:title]),
           anonymous: true,
           workspaceMode: "isolated",
           reasoningEffort: input[:reasoningEffort]
@@ -239,25 +237,4 @@ defmodule Cascade.Missions.Children do
       if run, do: [run], else: []
     end)
   end
-
-  # Retry provider cancellation after crashes/disconnects, outside SQL locks.
-  def replay_cancellations(cancel \\ &cancel_run/2) do
-    SQL.all("""
-    SELECT r.id,m.created_by FROM chat_mission_tasks t
-    JOIN chat_missions m ON m.id=t.mission_id JOIN runs r ON r.id=t.run_id
-    WHERE t.parent_task_id IS NOT NULL AND t.status='canceled' AND r.status IN ('queued','running')
-    """)
-    |> Enum.each(fn [run, user] ->
-      if cancel.(user, run) do
-        Cascade.Runs.Store.finish(run, "canceled", "Parent task stopped.")
-
-        Cascade.Runs.Store.publish(run, "status", %{
-          status: "canceled",
-          summary: "Parent task stopped."
-        })
-      end
-    end)
-  end
-
-  defp cancel_run(user, run), do: Cascade.Runs.RunnerLifecycle.cancel(user, run, 2_000)
 end

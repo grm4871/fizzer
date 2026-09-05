@@ -114,7 +114,9 @@ The parent keeps doing independent work, then ends its turn to join. Once its
 children settle, the same parent task resumes with each child's summary, branch,
 workspace and verification for integration. Failed or blocked children must be
 resolved before parent completion. Stopping a parent cancels unfinished children;
-steering the parent preserves them. Children do not trigger a separate mission
+steering the parent preserves them. Recovery retries unacknowledged stops for every
+canceled task, including parents, until the runner acknowledges cancellation.
+Children do not trigger a separate mission
 review. The parent owns integration and the coordinator performs the final review.
 
 `chat_missions` and `chat_mission_tasks` are authoritative, while

@@ -209,6 +209,7 @@ defmodule CascadeWeb.MissionRouterTest do
   end
 
   test "a worker run cannot start or delegate nested missions", ctx do
+    ctx = %{ctx | token: Token.sign_agent(ctx.user)}
     base = "/api/vaults/#{ctx.vault.id}/channels/#{ctx.channel.id}"
 
     created =
@@ -483,6 +484,8 @@ defmodule CascadeWeb.MissionRouterTest do
   end
 
   test "steering HTTP route pins the task snapshot and acknowledges queued delivery", ctx do
+    ctx = %{ctx | token: Token.sign_agent(ctx.user)}
+
     {:ok, mission} =
       Store.create(ctx.user.id, ctx.vault.id, ctx.channel.id, %{
         rootMessageId: ctx.root.id,
@@ -507,6 +510,12 @@ defmodule CascadeWeb.MissionRouterTest do
       runId: nil
     }
 
+    {:ok, worker_run} = RunStore.start(ctx.vault.id, nil, "Worker", "codex")
+    SQL.exec("UPDATE chat_mission_tasks SET run_id=? WHERE id=?", [worker_run.id, added.task.id])
+    rejected = request(ctx, :post, path, input, worker_run.id)
+    assert rejected.status == 409
+    assert json(rejected)["error"] == "Mission workers cannot steer other workers"
+    SQL.exec("UPDATE chat_mission_tasks SET run_id=NULL WHERE id=?", [added.task.id])
     assert request(ctx, :post, path, input).status == 409
     response = request(ctx, :post, path, %{input | attempt: 0})
     assert response.status == 202

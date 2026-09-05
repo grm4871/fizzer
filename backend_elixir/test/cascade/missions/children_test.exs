@@ -138,6 +138,28 @@ defmodule Cascade.Missions.ChildrenTest do
     assert Scheduler.schedule(mission.id).wakeDispatches == []
   end
 
+  test "restart recovery reconciles missed parent and child settlements exactly once", ctx do
+    {mission, parent, run} = parent(ctx)
+    {:ok, _} = Children.add(ctx.user.id, ctx.channel.id, mission.id, %{title: "Child"}, run.id)
+    [%{dispatch: dispatch}] = Scheduler.schedule(mission.id).dispatches
+    child_run = start(ctx, dispatch)
+    # Persist terminal runs without delivering their settlement callbacks, as at a crash.
+    :ok = RunStore.finish(run.id, "completed", "Parent independent work")
+    :ok = RunStore.finish(child_run.id, "completed", "Durable child evidence")
+    recovered = Scheduler.schedule(mission.id)
+    assert [%{dispatch: continuation, message: message}] = recovered.dispatches
+    assert message.missionTaskId == parent.id
+    assert message.body =~ "Durable child evidence"
+    assert recovered.wakeDispatches == []
+    assert Scheduler.schedule(mission.id).dispatches == []
+    assert {:ok, nil} = Store.settle_run(run.id, "completed", "Late callback")
+    resumed = start(ctx, continuation)
+    :ok = RunStore.finish(resumed.id, "completed", "Integrated evidence")
+    recovered = Scheduler.schedule(mission.id)
+    assert length(recovered.wakeDispatches) == 1
+    assert Scheduler.schedule(mission.id).wakeDispatches == []
+  end
+
   test "authority, one-level depth, stale runs, and fanout are bounded", ctx do
     {mission, parent, run} = parent(ctx)
     input = %{title: "Piece", prompt: "Only this piece"}
@@ -249,7 +271,7 @@ defmodule Cascade.Missions.ChildrenTest do
     :ok = RunStore.finish(run.id, "canceled", "Stopped")
     {:ok, _} = Scheduler.settle_run(run.id, "canceled", "Stopped")
 
-    Children.replay_cancellations(fn user, id ->
+    Cascade.Missions.Recovery.replay_cancellations(fn user, id ->
       assert user == ctx.user.id
       assert id == child_run.id
       false
@@ -257,15 +279,48 @@ defmodule Cascade.Missions.ChildrenTest do
 
     assert RunStore.get(child_run.id).status == child_run.status
 
-    Children.replay_cancellations(fn user, id ->
+    Cascade.Missions.Recovery.replay_cancellations(fn user, id ->
       assert user == ctx.user.id
       assert id == child_run.id
       true
     end)
 
     assert RunStore.get(child_run.id).status == "canceled"
-    Children.replay_cancellations(fn _, _ -> flunk("Canceled children must not be replayed") end)
+
+    Cascade.Missions.Recovery.replay_cancellations(fn _, _ ->
+      flunk("Canceled children must not be replayed")
+    end)
+
     assert {:error, _} = Children.authorize_update(ctx.user.id, ctx.channel.id, parent.id, run.id)
+  end
+
+  test "canceled parent and children retry stop acknowledgment from canonical task state", ctx do
+    {mission, parent, run} = parent(ctx)
+    {:ok, _} = Children.add(ctx.user.id, ctx.channel.id, mission.id, %{title: "Child"}, run.id)
+    [%{dispatch: dispatch}] = Scheduler.schedule(mission.id).dispatches
+    child_run = start(ctx, dispatch)
+    {:ok, _} = Store.update_task(ctx.user.id, ctx.channel.id, parent.id, %{status: "canceled"})
+
+    attempted = fn acknowledge ->
+      Cascade.Missions.Recovery.replay_cancellations(fn owner, id ->
+        assert owner == ctx.user.id
+        send(self(), {:stop, id})
+        acknowledge
+      end)
+    end
+
+    attempted.(false)
+    assert_receive {:stop, id} when id == run.id
+    assert_receive {:stop, id} when id == child_run.id
+    assert RunStore.get(run.id).status == run.status
+    assert RunStore.get(child_run.id).status == child_run.status
+    assert Scheduler.schedule(mission.id).dispatches == []
+
+    attempted.(true)
+    assert RunStore.get(run.id).status == "canceled"
+    assert RunStore.get(child_run.id).status == "canceled"
+    Cascade.Missions.Recovery.replay_cancellations(fn _, _ -> flunk("Already stopped") end)
+    assert Scheduler.schedule(mission.id).dispatches == []
   end
 
   test "steering a parent preserves its live children and join resumes the same task", ctx do
