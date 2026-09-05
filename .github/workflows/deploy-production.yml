@@ -4,6 +4,9 @@ on:
   push:
     branches: [master]
   workflow_dispatch:
+  workflow_run:
+    workflows: [Desktop builds]
+    types: [completed]
 
 concurrency:
   group: deploy-production
@@ -14,6 +17,10 @@ permissions:
 
 jobs:
   deploy:
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'master')
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 60
@@ -37,7 +44,7 @@ jobs:
           DEPLOY_HOST: ${{ secrets.PRODUCTION_DEPLOY_HOST }}
           DEPLOY_PORT: ${{ secrets.PRODUCTION_DEPLOY_PORT }}
           DEPLOY_USER: ${{ secrets.PRODUCTION_DEPLOY_USER }}
-          REVISION: ${{ github.sha }}
+          REVISION: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
           set -euo pipefail
           [[ "$REVISION" =~ ^[0-9a-f]{40}$ ]]
@@ -52,7 +59,7 @@ jobs:
           DEPLOY_HOST: ${{ secrets.PRODUCTION_DEPLOY_HOST }}
           DEPLOY_PORT: ${{ secrets.PRODUCTION_DEPLOY_PORT }}
           DEPLOY_USER: ${{ secrets.PRODUCTION_DEPLOY_USER }}
-          REVISION: ${{ github.sha }}
+          REVISION: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
           set -euo pipefail
           PORT="${DEPLOY_PORT:-22}"

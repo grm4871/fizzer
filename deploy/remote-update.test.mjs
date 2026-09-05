@@ -120,9 +120,10 @@ test('production promotes an exact staged image without requiring capacity certi
 test('GitHub Actions is the only exact-revision production deploy entrypoint', () => {
   assert.match(workflow, /name: Deploy Production/);
   assert.match(workflow, /push:\s+branches: \[master\]/);
+  assert.match(workflow, /workflow_run:\s+workflows: \[Desktop builds\]\s+types: \[completed\]/);
   assert.match(workflow, /group: deploy-production\s+cancel-in-progress: false/);
   assert.match(workflow, /environment: production/);
-  assert.match(workflow, /REVISION: \$\{\{ github\.sha \}\}/);
+  assert.match(workflow, /REVISION: \$\{\{ github\.event\.workflow_run\.head_sha \|\| github\.sha \}\}/);
   assert.match(workflow, /"deploy \$REVISION"/);
   assert.match(workflow, /"verify \$REVISION"/);
   assert.match(workflow, /https:\/\/cscd\.online\/api\/health/);
@@ -149,8 +150,8 @@ test('GitHub Actions is the only exact-revision production deploy entrypoint', (
 test('the post-cutover installer sync verifies a release manifest before replacing routes', () => {
   const sync = fs.readFileSync(path.join(deployDirectory, 'sync-desktop-installers.sh'), 'utf8');
   assert.match(source, /bash "\$ROOT\/deploy\/sync-desktop-installers\.sh"/);
-  assert.match(desktopWorkflow, /Refresh production download routes/);
-  assert.match(desktopWorkflow, /gh workflow run deploy-production\.yml --ref "\$\{GITHUB_SHA\}"/);
+  assert.doesNotMatch(desktopWorkflow, /gh workflow run deploy-production\.yml/);
+  assert.match(workflow, /github\.event\.workflow_run\.conclusion == 'success'/);
   assert.match(sync, /Fizzer-mac-arm64\.dmg/);
   assert.match(sync, /Fizzer-mac-x64\.dmg/);
   assert.match(sync, /Fizzer-Setup\.exe/);
