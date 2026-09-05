@@ -759,6 +759,7 @@ export function useChatDispatch({
       try {
         res = await createRun();
       } catch (error) {
+        if (error instanceof ApiError && error.data?.code === 'dispatch_deferred') throw error;
         if (!(error instanceof ApiError) || error.status !== 409) throw error;
         const activeId = Number(error.data?.activeRunId);
         if (Number.isFinite(activeId)) {
@@ -778,6 +779,7 @@ export function useChatDispatch({
               return await createRun();
             } catch (retryError) {
               lastError = retryError;
+              if (retryError instanceof ApiError && retryError.data?.code === 'dispatch_deferred') throw retryError;
               if (!(retryError instanceof ApiError) || retryError.status !== 409) throw retryError;
               const retryActiveId = Number(retryError.data?.activeRunId);
               if (Number.isFinite(retryActiveId)) {
@@ -839,11 +841,14 @@ export function useChatDispatch({
       }
       return true;
     } catch (error) {
-      // A coordinator can finish a mission before its queued synthetic review
-      // prompt reaches the provider session. The server removes that obsolete
-      // dispatch; quietly prune the optimistic shell instead of showing an
-      // empty failed Harness panel for work that is already complete.
-      if (dispatchId && error instanceof Error && error.message === 'Chat dispatch not found') {
+      // Obsolete reviews and deferred background suggestions have no active run.
+      // Keep the durable obligation on the server without a fake working/failed row.
+      if (dispatchId && error instanceof Error && (error.message === 'Chat dispatch not found'
+        || (error instanceof ApiError && error.data?.code === 'dispatch_deferred'))) {
+        pendingChatPatchRef.current.delete(agentMessageId);
+        const patchTimer = chatPatchTimerRef.current.get(agentMessageId);
+        if (patchTimer != null) window.clearTimeout(patchTimer);
+        chatPatchTimerRef.current.delete(agentMessageId);
         chatMessageStore.update(channelId, (existing) => (
           existing.filter((message) => message.id !== agentMessageId)
         ));

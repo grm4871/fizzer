@@ -76,7 +76,9 @@ defmodule Cascade.Missions.Dispatches do
             {:ok, dispatch}
             when dispatch.registration.ownerUserId == user_id or
                    dispatch.registration.pingableByOthers ->
-              [dispatch | acc]
+              if Cascade.Chat.NextSteps.dispatch_ready?(dispatch),
+                do: [dispatch | acc],
+                else: acc
 
             _ ->
               acc

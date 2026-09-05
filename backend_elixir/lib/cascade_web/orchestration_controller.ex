@@ -521,6 +521,9 @@ defmodule CascadeWeb.OrchestrationController do
 
         JSON.send(conn, 503, %{error: message})
 
+      {:deferred, message} ->
+        JSON.send(conn, 409, %{error: message, code: "dispatch_deferred"})
+
       {:error, status, message} ->
         JSON.send(conn, status, %{error: message})
     end
@@ -648,7 +651,7 @@ defmodule CascadeWeb.OrchestrationController do
          }}
       else
         false ->
-          {:error, 409, "Next-step checkpoint is waiting for idle work state or was disabled"}
+          {:deferred, "Next-step checkpoint is waiting for idle work state or was disabled"}
 
         {:error, status, message} ->
           {:error, status, message}

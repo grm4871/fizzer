@@ -205,7 +205,8 @@ For owner feedback on a recorded proposal, prefix your ordinary reply with <!-- 
             registration_id
           )
 
-        %{message: message, dispatch: dispatch, vaultId: vault, channelId: channel}
+        if dispatch_ready?(dispatch),
+          do: %{message: message, dispatch: dispatch, vaultId: vault, channelId: channel}
       else
         _ -> pending(channel, registration_id, source_id)
       end
@@ -340,7 +341,8 @@ For owner feedback on a recorded proposal, prefix your ordinary reply with <!-- 
            ),
          {:ok, route} <- Cascade.Missions.Store.owner_route(owner, vault, channel),
          {:ok, dispatch} <-
-           Cascade.Missions.Dispatches.get(owner, route.localChannelId, dispatch_id) do
+           Cascade.Missions.Dispatches.get(owner, route.localChannelId, dispatch_id),
+         true <- dispatch_ready?(dispatch) do
       %{message: dispatch.message, dispatch: dispatch, vaultId: vault, channelId: channel}
     else
       _ -> nil

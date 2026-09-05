@@ -240,6 +240,47 @@ defmodule CascadeWeb.OrchestrationChatDispatchTest do
     assert Store.get(worker.id).status == "canceled"
   end
 
+  test "a checkpoint deferred after browser discovery creates no run and remains durable", ctx do
+    SQL.exec("UPDATE chat_agent_members SET orchestrator=1,next_step_suggestions=1 WHERE id=?", [
+      ctx.registration.id
+    ])
+
+    {:ok, _mission} =
+      Cascade.Missions.Store.create(ctx.owner.id, ctx.owner_vault.id, ctx.owner_channel.id, %{
+        rootMessageId: ctx.dispatch.messageId,
+        coordinatorRegistrationId: ctx.registration.id,
+        title: "Existing work"
+      })
+
+    source = "sys-next-enable-#{ctx.registration.id}"
+
+    assert Cascade.Chat.NextSteps.enqueue(
+             ctx.owner_channel.id,
+             ctx.registration.id,
+             source,
+             "enable",
+             "Consider next work"
+           ) == nil
+
+    [dispatch_id] = SQL.one("SELECT id FROM chat_agent_dispatches WHERE message_id=?", [source])
+
+    response =
+      request(ctx, %{
+        prompt: "Consider next work",
+        chatDispatchId: dispatch_id,
+        chat: %{channelId: ctx.guest_channel.id, messageId: "agent-dispatch-#{dispatch_id}"}
+      })
+
+    assert response.status == 409
+    assert Jason.decode!(response.resp_body)["code"] == "dispatch_deferred"
+    assert SQL.one("SELECT run_id FROM chat_agent_dispatches WHERE id=?", [dispatch_id]) == [nil]
+    assert Store.find_by_chat_dispatch(dispatch_id) == nil
+
+    assert SQL.one("SELECT outcome FROM chat_next_step_checks WHERE source_id=?", [source]) == [
+             "pending"
+           ]
+  end
+
   test "enabled obligation is claimed without a chat page and retains owner authority", ctx do
     {:ok, registration} =
       Agents.add_to_channel(

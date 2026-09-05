@@ -541,7 +541,7 @@ defmodule Cascade.Chat.NextStepsTest do
     dispatch = Enum.find(pending, &(&1.messageId == source))
     assert NextSteps.dispatch_ready?(dispatch)
 
-    {:ok, _mission} =
+    {:ok, mission} =
       Missions.create(c.user.id, c.vault_id, c.channel.id, %{
         rootMessageId: c.source.id,
         coordinatorRegistrationId: c.member.id,
@@ -549,11 +549,21 @@ defmodule Cascade.Chat.NextStepsTest do
       })
 
     refute NextSteps.dispatch_ready?(dispatch)
+    assert {:ok, available} = Dispatches.list_pending(c.user.id, c.channel.id)
+    refute Enum.any?(available, &(&1.id == dispatch.id))
+    assert NextSteps.pending(c.channel.id, c.member.id, source) == nil
+    NextSteps.announce_pending(c.member.id, fn event -> send(self(), {:deferred, event}) end)
+    refute_receive {:deferred, _}
 
     assert SQL.one("SELECT outcome,reason FROM chat_next_step_checks WHERE source_id=?", [source]) ==
              ["pending", "Conversation/work state: waiting for active work to finish."]
 
     assert proposal(c).body == ""
+
+    SQL.exec("UPDATE chat_missions SET status='completed' WHERE id=?", [mission.mission.id])
+    assert {:ok, available} = Dispatches.list_pending(c.user.id, c.channel.id)
+    assert Enum.any?(available, &(&1.id == dispatch.id))
+    assert NextSteps.pending(c.channel.id, c.member.id, source).dispatch.id == dispatch.id
   end
 
   defp checks(c),

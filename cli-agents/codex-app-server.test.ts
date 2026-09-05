@@ -43,6 +43,9 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     const id = 'turn-' + (++turn);
     send({ id: message.id, result: { turn: { id } } });
     setImmediate(() => {
+      send({ method: 'item/started', params: { turnId: id, item: { id: 'reason-' + id, type: 'reasoning' } } });
+      send({ method: 'item/completed', params: { turnId: id, item: { id: 'reason-' + id, type: 'reasoning', summary: ['Thinking'] } } });
+      send({ method: 'item/started', params: { turnId: id, item: { id: 'answer-' + id, type: 'agentMessage' } } });
       send({ method: 'item/completed', params: { turnId: id, item: { id: 'answer-' + id, type: 'agentMessage', text: 'answer ' + turn } } });
       send({ method: 'turn/completed', params: { turn: { id, status: 'completed' } } });
     });
@@ -57,9 +60,13 @@ const { runCliAgent, shutdownPersistentCliAgents } = await import('./cli-agent.j
 
 test('Codex app-server is reused across sequential turns', async () => {
   const sessions: string[] = [];
+  const blocks: any[] = [];
   const first = await runCliAgent({
     agent: 'codex', context: '', userPrompt: 'first', cwd: scratch,
-    emit(type, payload: any) { if (type === 'session') sessions.push(payload.sessionId); },
+    emit(type, payload: any) {
+      if (type === 'session') sessions.push(payload.sessionId);
+      if (type === 'text') blocks.push(...(payload.message?.content || []));
+    },
   });
   const second = await runCliAgent({
     agent: 'codex', context: '', userPrompt: 'second', cwd: scratch,
@@ -69,6 +76,7 @@ test('Codex app-server is reused across sequential turns', async () => {
   assert.equal(first.summary, 'answer 1');
   assert.equal(second.summary, 'answer 2');
   assert.deepEqual(sessions, ['thread-1']);
+  assert.deepEqual(blocks.map(block => block.type), ['thinking', 'text']);
   assert.equal(fs.readFileSync(launchLog, 'utf8').trim().split('\n').length, 1);
   await new Promise((resolve) => setImmediate(resolve));
   assert.match(fs.readFileSync(protocolLog, 'utf8'), /thread\/unsubscribe:thread-1/);

@@ -1188,7 +1188,8 @@ class CodexAppServerClient {
 
   private emitItem(turn: CodexAppTurn, item: JsonObject | undefined, completed: boolean): void {
     if (!item?.type) return;
-    if (item.type === 'agentMessage' && completed) {
+    if (item.type === 'agentMessage') {
+      if (!completed) return;
       const text = String(item.text || '');
       if (text) {
         turn.summary = text;
@@ -1197,7 +1198,8 @@ class CodexAppServerClient {
       }
       return;
     }
-    if (item.type === 'reasoning' && completed) {
+    if (item.type === 'reasoning') {
+      if (!completed) return;
       const text = [...(item.summary || []), ...(item.content || [])].filter(Boolean).join('\n');
       if (text) turn.emit('text', { message: { content: [{ type: 'thinking', text }] } });
       return;
