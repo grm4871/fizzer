@@ -130,6 +130,11 @@ send({ type: 'result', subtype: 'success', result: 'CLI answer', session_id: 'cl
     chatChannelId: 'channel-1',
   }, (event) => events.push(event));
 
+  const timings = events.filter(event => event.type === 'timing').map(event => JSON.parse(event.payload_json));
+  assert.deepEqual(timings.map(event => event.phase), ['request_start', 'first_response', 'completion']);
+  assert.equal(new Set(timings.map(event => event.requestId)).size, 1);
+  assert.equal(timings[2].outcome, 'completed');
+  assert.ok(timings.every(event => event.boundary === 'claude_cli_stdout'));
   assert.equal(result.sessionId, 'claude-session-1');
   const args = JSON.parse(fs.readFileSync(argsFile, 'utf8'));
   assert.ok(args.includes('--output-format'));

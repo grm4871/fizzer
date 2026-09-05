@@ -43,6 +43,9 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     const id = 'turn-' + (++turn);
     send({ id: message.id, result: { turn: { id } } });
     setImmediate(() => {
+      if (message.params.input[0].text === 'empty turn') {
+        return send({ method: 'turn/completed', params: { turn: { id, status: 'completed' } } });
+      }
       send({ method: 'item/started', params: { turnId: id, item: { id: 'reason-' + id, type: 'reasoning' } } });
       send({ method: 'item/completed', params: { turnId: id, item: { id: 'reason-' + id, type: 'reasoning', summary: ['Thinking'] } } });
       send({ method: 'item/started', params: { turnId: id, item: { id: 'answer-' + id, type: 'agentMessage' } } });
@@ -61,9 +64,11 @@ const { runCliAgent, shutdownPersistentCliAgents } = await import('./cli-agent.j
 test('Codex app-server is reused across sequential turns', async () => {
   const sessions: string[] = [];
   const blocks: any[] = [];
+  const timings: any[] = [];
   const first = await runCliAgent({
     agent: 'codex', context: '', userPrompt: 'first', cwd: scratch,
     emit(type, payload: any) {
+      if (type === 'timing') timings.push(payload);
       if (type === 'session') sessions.push(payload.sessionId);
       if (type === 'text') blocks.push(...(payload.message?.content || []));
     },
@@ -73,6 +78,12 @@ test('Codex app-server is reused across sequential turns', async () => {
     resumeSessionId: first.sessionId, emit() {},
   });
 
+  assert.deepEqual(timings.map(event => event.phase), ['request_start', 'first_response', 'completion']);
+  assert.equal(new Set(timings.map(event => event.requestId)).size, 1);
+  assert.ok(timings.every(event => event.boundary === 'codex_app_server_turn' && Number.isFinite(Date.parse(event.observedAt))));
+  assert.ok(timings[1].elapsedMs >= timings[0].elapsedMs);
+  assert.ok(timings[2].elapsedMs >= timings[1].elapsedMs);
+  assert.equal(timings[2].outcome, 'completed');
   assert.equal(first.summary, 'answer 1');
   assert.equal(second.summary, 'answer 2');
   assert.deepEqual(sessions, ['thread-1']);
@@ -112,6 +123,14 @@ test('an idle writer that cannot be released falls back to a fresh thread', asyn
   assert.equal(result.sessionId, 'thread-1');
   assert.deepEqual(sessions, ['thread-1']);
   assert.match(harness.join('\n'), /continuing in a fresh session/);
+  shutdownPersistentCliAgents();
+});
+
+test('Codex acknowledgements and completion alone do not invent a first response', async () => {
+  const timings: any[] = [];
+  await runCliAgent({ agent: 'codex', context: '', userPrompt: 'empty turn', cwd: scratch,
+    emit(type, payload) { if (type === 'timing') timings.push(payload); } });
+  assert.deepEqual(timings.map(event => event.phase), ['request_start', 'completion']);
   shutdownPersistentCliAgents();
 });
 

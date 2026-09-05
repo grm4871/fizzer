@@ -625,18 +625,24 @@ async function runClaudeLocally(opts, emit) {
   if (images.length) args.push('--input-format', 'stream-json');
   else args.push(String(claudePrompt));
 
+  const { createRequestTiming } = await loadCliAgentModule();
+  const timing = createRequestTiming(emit, 'claude_cli_stdout');
   const child = spawn(process.env.CLAUDE_BIN || 'claude', args, {
     cwd,
     env: { ...process.env, ...helperEnv },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
+  child.stdout.once('data', () => timing.firstResponse());
   activeClaudeProcesses.set(runId, child);
   let stderr = '';
   child.stderr.setEncoding('utf8');
   child.stderr.on('data', (chunk) => { stderr += chunk; });
   const exited = new Promise((resolve) => {
-    child.once('error', (error) => resolve({ error }));
-    child.once('close', (code, signal) => resolve({ code, signal }));
+    child.once('error', (error) => { timing.complete('launch_failed'); resolve({ error }); });
+    child.once('close', (code, signal) => {
+      timing.complete(signal ? 'signaled' : code === 0 ? 'completed' : 'failed');
+      resolve({ code, signal });
+    });
   });
   if (images.length) {
     child.stdin.end(`${JSON.stringify({

@@ -309,8 +309,33 @@ export function cancelCliAgentRun(runId: number): boolean {
 // TYPES
 // ═══════════════════════════════════════════════════════════════
 
-export type AgentEmit = (type: 'text' | 'user' | 'harness' | 'session', payload: unknown) => void;
+export type AgentEmit = (type: 'text' | 'user' | 'harness' | 'session' | 'timing', payload: unknown) => void;
 export type CliImage = { media_type: string; data: string };
+
+/** Runner-clock observations, not provider queue or model execution measurements. */
+export function createRequestTiming(emit: AgentEmit | undefined, boundary: string) {
+  const requestId = randomBytes(12).toString('hex');
+  const started = performance.now();
+  let responded = false;
+  let completed = false;
+  const record = (phase: string, observation = { at: new Date().toISOString(), monotonic: performance.now() }, outcome?: string) => {
+    emit?.('timing', { requestId, boundary, phase, observedAt: observation.at,
+      elapsedMs: Math.max(0, observation.monotonic - started), ...(outcome ? { outcome } : {}) });
+  };
+  record('request_start');
+  return {
+    firstResponse(observation?: { at: string; monotonic: number }) {
+      if (responded || completed) return;
+      responded = true;
+      record('first_response', observation);
+    },
+    complete(outcome: string, observation?: { at: string; monotonic: number }) {
+      if (completed) return;
+      completed = true;
+      record('completion', observation, outcome);
+    },
+  };
+}
 
 /** Emit a raw harness/terminal chunk (stdout/stderr or formatted SDK lines). */
 function emitHarness(emit: AgentEmit | undefined, data: string): void {
@@ -699,6 +724,7 @@ function driveProcess(
   const idleTimeoutMs = hermes?.idleTimeoutMs ?? CLI_IDLE_TIMEOUT_MS;
 
   return new Promise((resolve, reject) => {
+    const timing = createRequestTiming(emit, 'cli_process_stdout');
     let child;
     const leaseToken = hermes ? randomBytes(16).toString('hex') : undefined;
     if (hermes) emitHarness(emit, `\x1b[2m# launching ${label} harness\x1b[0m\r\n`);
@@ -743,6 +769,7 @@ function driveProcess(
           clearAgentProcessLease(runId);
         }
       }
+      timing.complete('launch_failed');
       reject(new Error(`Failed to launch ${label} ('${bin}'): ${err instanceof Error ? err.message : String(err)}`));
       return;
     }
@@ -782,6 +809,7 @@ function driveProcess(
     const idle = createIdleTimer(() => {
       if (!settled) {
         settled = true;
+        timing.complete('idle_timeout');
         if (heartbeat) clearInterval(heartbeat);
         cleanUpProcess();
         if (hermes) terminateCliProcessWithEscalation(child, process.platform !== 'win32');
@@ -791,6 +819,7 @@ function driveProcess(
     }, idleTimeoutMs);
 
     child.stdout.on('data', (d: Buffer | string) => {
+      if (d.length) timing.firstResponse();
       const chunk = d.toString();
       quietSince = Date.now();
       idle.bump();
@@ -831,6 +860,7 @@ function driveProcess(
     });
 
     child.on('error', (err) => {
+      timing.complete('launch_failed');
       if (settled) return;
       settled = true;
       idle.clear();
@@ -839,7 +869,8 @@ function driveProcess(
       reject(new Error(`${label} ('${bin}') could not be started: ${err.message}. Is it installed and on PATH?`));
     });
 
-    child.on('close', (code) => {
+    child.on('close', (code, signal) => {
+      timing.complete(signal ? 'signaled' : code === 0 ? 'completed' : 'failed');
       if (settled) return;
       settled = true;
       idle.clear();
@@ -917,6 +948,7 @@ type CodexAppTurn = {
   resolve: (result: CliAgentResult) => void; reject: (error: Error) => void;
   summary: string; emittedText: boolean; emittedTools: Set<string>;
   idle: ReturnType<typeof createIdleTimer>;
+  timing: ReturnType<typeof createRequestTiming>;
 };
 
 /** Long-lived protocol peer; avoids rebuilding Codex's app-server every turn. */
@@ -988,47 +1020,53 @@ class CodexAppServerClient {
       effort: normalizeCodexEffort(options.reasoningEffort),
       approvalPolicy: 'never',
     };
-    let started: JsonObject;
+    const timing = createRequestTiming(options.emit, 'codex_app_server_turn');
     try {
-      started = await this.request('turn/start', turnParams);
-    } catch (error) {
-      if (!this.isActiveWriterError(error)) throw error;
-      emitHarness(options.emit, '\x1b[33m# Codex left this thread busy — interrupting its unfinished turn\x1b[0m\r\n');
-      const interrupted = await this.interruptActiveTurn(threadId);
+      let started: JsonObject;
       try {
-        if (!interrupted) throw error;
-        started = await this.requestWithActiveWriterRetry('turn/start', turnParams);
-      } catch (retryError) {
-        if (!this.isActiveWriterError(retryError)) throw retryError;
-        void this.request('thread/unsubscribe', { threadId }).catch(() => {});
-        emitHarness(options.emit, '\x1b[33m# Codex did not release that thread — continuing in a fresh session\x1b[0m\r\n');
-        response = await this.request('thread/start', common);
-        threadId = String(response?.thread?.id || '');
-        if (!threadId) throw new Error('Codex app-server did not return a replacement thread id.');
-        started = await this.request('turn/start', { ...turnParams, threadId });
+        started = await this.request('turn/start', turnParams);
+      } catch (error) {
+        if (!this.isActiveWriterError(error)) throw error;
+        emitHarness(options.emit, '\x1b[33m# Codex left this thread busy — interrupting its unfinished turn\x1b[0m\r\n');
+        const interrupted = await this.interruptActiveTurn(threadId);
+        try {
+          if (!interrupted) throw error;
+          started = await this.requestWithActiveWriterRetry('turn/start', turnParams);
+        } catch (retryError) {
+          if (!this.isActiveWriterError(retryError)) throw retryError;
+          void this.request('thread/unsubscribe', { threadId }).catch(() => {});
+          emitHarness(options.emit, '\x1b[33m# Codex did not release that thread — continuing in a fresh session\x1b[0m\r\n');
+          response = await this.request('thread/start', common);
+          threadId = String(response?.thread?.id || '');
+          if (!threadId) throw new Error('Codex app-server did not return a replacement thread id.');
+          started = await this.request('turn/start', { ...turnParams, threadId });
+        }
       }
+      options.emit('session', { sessionId: threadId });
+      emitHarness(options.emit, `\x1b[2m# codex app-server · ${options.cwd}\x1b[0m\r\n`);
+      if (options.model) emitCascadeStats(options.emit, { model: options.model });
+      const turnId = String(started?.turn?.id || '');
+      if (!turnId) throw new Error('Codex app-server did not return a turn id.');
+      return await new Promise<CliAgentResult>((resolve, reject) => {
+        const idle = createIdleTimer(() => {
+          void this.request('turn/interrupt', { threadId, turnId }).catch(() => {});
+          this.finishTurn(turnId, new Error(`Codex produced no output for ${CLI_IDLE_TIMEOUT_MS}ms and was stopped.`));
+        });
+        this.turns.set(turnId, {
+          threadId, turnId, runId: options.runId, emit: options.emit, resolve, reject,
+          summary: '', emittedText: false, emittedTools: new Set(), idle, timing,
+        });
+        if (options.runId !== undefined) activePersistentCancels.set(options.runId, () => {
+          void this.request('turn/interrupt', { threadId, turnId }).catch(() => {});
+        });
+        const buffered = this.earlyNotifications.get(turnId) || [];
+        this.earlyNotifications.delete(turnId);
+        for (const message of buffered) this.onMessage(message);
+      });
+    } catch (error) {
+      timing.complete('failed');
+      throw error;
     }
-    options.emit('session', { sessionId: threadId });
-    emitHarness(options.emit, `\x1b[2m# codex app-server · ${options.cwd}\x1b[0m\r\n`);
-    if (options.model) emitCascadeStats(options.emit, { model: options.model });
-    const turnId = String(started?.turn?.id || '');
-    if (!turnId) throw new Error('Codex app-server did not return a turn id.');
-    return new Promise<CliAgentResult>((resolve, reject) => {
-      const idle = createIdleTimer(() => {
-        void this.request('turn/interrupt', { threadId, turnId }).catch(() => {});
-        this.finishTurn(turnId, new Error(`Codex produced no output for ${CLI_IDLE_TIMEOUT_MS}ms and was stopped.`));
-      });
-      this.turns.set(turnId, {
-        threadId, turnId, runId: options.runId, emit: options.emit, resolve, reject,
-        summary: '', emittedText: false, emittedTools: new Set(), idle,
-      });
-      if (options.runId !== undefined) activePersistentCancels.set(options.runId, () => {
-        void this.request('turn/interrupt', { threadId, turnId }).catch(() => {});
-      });
-      const buffered = this.earlyNotifications.get(turnId) || [];
-      this.earlyNotifications.delete(turnId);
-      for (const message of buffered) this.onMessage(message);
-    });
   }
 
   private async openThread(options: {
@@ -1147,6 +1185,7 @@ class CodexAppServerClient {
   }
 
   private onMessage(message: JsonObject): void {
+    const observation = message.timingObservation || { at: new Date().toISOString(), monotonic: performance.now() };
     if (message.id !== undefined && (message.result !== undefined || message.error !== undefined)) {
       const pending = this.pending.get(message.id);
       if (!pending) return;
@@ -1169,19 +1208,25 @@ class CodexAppServerClient {
     if (!turn) {
       if (turnId && ['item/started', 'item/completed', 'turn/completed', 'error'].includes(message.method)) {
         const buffered = this.earlyNotifications.get(turnId) || [];
-        buffered.push(message);
+        buffered.push({ ...message, timingObservation: observation });
         this.earlyNotifications.set(turnId, buffered.slice(-100));
       }
       return;
     }
     turn.idle.bump();
+    if (['item/started', 'item/completed'].includes(message.method)
+      && params.item?.type && !['userMessage', 'contextCompaction'].includes(params.item.type)) {
+      turn.timing.firstResponse(observation);
+    }
     if (message.method === 'item/started') this.emitItem(turn, params.item, false);
     else if (message.method === 'item/completed') this.emitItem(turn, params.item, true);
     else if (message.method === 'thread/tokenUsage/updated') emitCascadeStats(turn.emit, statsFromUsageBlob(params.tokenUsage || params.usage));
     else if (message.method === 'turn/completed') {
       const status = params.turn?.status;
+      turn.timing.complete(status || 'failed', observation);
       this.finishTurn(turnId, status === 'completed' ? undefined : new Error(params.turn?.error?.message || `Codex turn ${status || 'failed'}.`));
     } else if (message.method === 'error') {
+      turn.timing.complete('failed', observation);
       this.finishTurn(turnId, new Error(params.error?.message || params.message || 'Codex app-server error.'));
     }
   }
@@ -1219,6 +1264,7 @@ class CodexAppServerClient {
   private finishTurn(turnId: string, error?: Error): void {
     const turn = this.turns.get(turnId);
     if (!turn) return;
+    turn.timing.complete(error ? 'failed' : 'completed');
     this.turns.delete(turnId);
     turn.idle.clear();
     if (turn.runId !== undefined) activePersistentCancels.delete(turn.runId);
@@ -1938,10 +1984,12 @@ function runCommand(
     emitHarness(emit, `\x1b[2m$ ${bin} ${args.map((a) => (/\s/.test(a) ? JSON.stringify(a) : a)).join(' ')}\x1b[0m\r\n`);
     emitHarness(emit, `\x1b[2m# antigravity ls ${env.ANTIGRAVITY_LS_ADDRESS} · project ${env.ANTIGRAVITY_PROJECT_ID || '?'}\x1b[0m\r\n`);
 
+    const timing = createRequestTiming(emit, 'agentapi_process_stdout');
     let child: ChildProcess;
     try {
       child = spawn(bin, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
     } catch (err) {
+      timing.complete('launch_failed');
       reject(new Error(`Failed to launch agentapi: ${err instanceof Error ? err.message : String(err)}`));
       return;
     }
@@ -1955,6 +2003,7 @@ function runCommand(
     };
 
     child.stdout?.on('data', (d: Buffer | string) => {
+      if (d.length) timing.firstResponse();
       const chunk = d.toString();
       stdout += chunk;
       // agentapi returns one JSON blob — keep harness tidy (no full prompt dump)
@@ -1965,12 +2014,14 @@ function runCommand(
       emitHarness(emit, `\x1b[31m${chunk}\x1b[0m`);
     });
     child.on('error', (err) => {
+      timing.complete('launch_failed');
       if (settled) return;
       settled = true;
       cleanup();
       reject(new Error(`agentapi could not start: ${err.message}`));
     });
-    child.on('close', (code) => {
+    child.on('close', (code, signal) => {
+      timing.complete(signal ? 'signaled' : code === 0 ? 'completed' : 'failed');
       if (settled) return;
       settled = true;
       cleanup();

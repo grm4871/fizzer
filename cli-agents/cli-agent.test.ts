@@ -475,12 +475,15 @@ test('the zero-exit variant of a dead session also falls back', async () => {
 
 test('an unrelated Codex failure still fails, rather than silently rerunning', async () => {
   resetArgs();
+  const timings: any[] = [];
   process.env.FAKE_CODEX_BROKEN = '1';
   await assert.rejects(
-    runCliAgent({ agent: 'codex', context: '', userPrompt: 'x', cwd: scratch, emit, resumeSessionId: 'sess-abc' }),
+    runCliAgent({ agent: 'codex', context: '', userPrompt: 'x', cwd: scratch, emit(type, payload) { if (type === 'timing') timings.push(payload); }, resumeSessionId: 'sess-abc' }),
     /disk on fire/,
   );
   delete process.env.FAKE_CODEX_BROKEN;
+  assert.deepEqual(timings.map(event => event.phase), ['request_start', 'completion']);
+  assert.equal(timings[1].outcome, 'failed');
   assert.equal(readArgs().length, 1, 'must not retry a failure that is not a dead session');
 });
 
