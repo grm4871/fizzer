@@ -912,7 +912,7 @@ export function useChatDispatch({
       ? ''
       : precedingMessageBatchText(contextMessages, triggeringMessage);
     const taskGuidance = triggeringMessage.missionTaskId
-      ? `Cascade mission task id: ${triggeringMessage.missionTaskId}. Execute this task only; do not start a mission or delegate further. The mission card updates when this run ends. If blocked, run \`cascade-chat mission update --task ${triggeringMessage.missionTaskId} --status blocked --summary "<what is needed>"\` before replying.`
+      ? `Cascade mission task id: ${triggeringMessage.missionTaskId}. Execute this task only; do not start another mission. Use only the bounded mission child path for authorized parallel work. The mission card updates when this run ends. If blocked, run \`cascade-chat mission update --task ${triggeringMessage.missionTaskId} --status blocked --summary "<what is needed>"\` before replying.`
       : '';
     // Built per recipient: the reply chain can carry asks aimed at other agents,
     // and only a recipient-specific prompt can say which ones are not theirs.

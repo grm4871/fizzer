@@ -271,7 +271,8 @@ export function ChatMissionCard({
                         <strong>{task.title}</strong>
                         <span>
                           @{task.assigneeMention || task.assignee} · {task.status}
-                          {task.anonymous ? ' · subagent' : ''}
+                          {task.parentTaskId ? ` · child of ${mission.tasks.find((parent) => parent.id === task.parentTaskId)?.title || task.parentTaskId}` : task.anonymous ? ' · subagent' : ''}
+                          {task.joiningChildren ? ' · joining children' : ''}
                           {task.attempt > 0 ? ` · attempt ${task.attempt + 1}` : ''}
                           {task.queueReason === 'dependency' ? ` · waiting for ${task.waitingFor.length}` : ''}
                           {task.queueReason === 'dependency-attention' ? ' · waiting on review' : ''}

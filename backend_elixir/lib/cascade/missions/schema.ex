@@ -4,6 +4,9 @@ defmodule Cascade.Missions.Schema do
   alias Cascade.Accounts.SQL
 
   @task_columns [
+    {"parent_task_id", "TEXT"},
+    {"child_result_delivered", "INTEGER NOT NULL DEFAULT 0"},
+    {"joining_children", "INTEGER NOT NULL DEFAULT 0"},
     {"prompt", "TEXT NOT NULL DEFAULT ''"},
     {"depends_on_json", "TEXT NOT NULL DEFAULT '[]'"},
     {"priority", "INTEGER NOT NULL DEFAULT 0"},

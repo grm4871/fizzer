@@ -238,10 +238,10 @@ defmodule Cascade.Missions.Store do
             SQL.one(
               """
               SELECT #{@task_select} FROM chat_mission_tasks
-              WHERE mission_id=? AND assignee_registration_id=? AND title=?
+              WHERE mission_id=? AND assignee_registration_id=? AND title=? AND parent_task_id IS ?
               ORDER BY created_at ASC,rowid ASC LIMIT 1
               """,
-              [mission.id, assignee.id, title]
+              [mission.id, assignee.id, title, Keyword.get(opts, :parent_task_id)]
             )
             |> task_from_nullable_row()
 
@@ -262,8 +262,8 @@ defmodule Cascade.Missions.Store do
               """
               INSERT INTO chat_mission_tasks
                 (id,mission_id,title,assignee_registration_id,prompt,depends_on_json,
-                 priority,reasoning_effort,anonymous,workspace_mode)
-              VALUES (?,?,?,?,?,?,?,?,?,?)
+                 priority,reasoning_effort,anonymous,workspace_mode,parent_task_id)
+              VALUES (?,?,?,?,?,?,?,?,?,?,?)
               """,
               [
                 task_id,
@@ -275,7 +275,8 @@ defmodule Cascade.Missions.Store do
                 priority,
                 effort,
                 anonymous_int,
-                workspace_mode
+                workspace_mode,
+                Keyword.get(opts, :parent_task_id)
               ]
             )
 
@@ -329,6 +330,7 @@ defmodule Cascade.Missions.Store do
   end
 
   def schedulable(mission_id \\ nil) do
+    Cascade.Missions.Children.resume_ready(mission_id)
     {filter, params} = if mission_id, do: {"AND id=?", [mission_id]}, else: {"", []}
 
     missions =
@@ -367,6 +369,7 @@ defmodule Cascade.Missions.Store do
           |> Enum.with_index()
           |> Enum.filter(fn {task, _index} ->
             task.status == "pending" and is_nil(task.dispatch_id) and
+              not Cascade.Missions.Children.joining?(task.id) and
               Enum.all?(dependencies(task), &(by_id[&1] && by_id[&1].status == "completed"))
           end)
           |> Enum.sort_by(fn {task, index} -> {-task.priority, index} end)
@@ -491,6 +494,9 @@ defmodule Cascade.Missions.Store do
       retrying = status == "pending" and row.status in @terminal_task_statuses
 
       cond do
+        status == "completed" and Cascade.Missions.Children.unresolved?(task_id) ->
+          {:error, "Join and integrate child results before completing the parent"}
+
         status == "pending" and row.status == "running" ->
           {:error, "Task is still running; cancel or wait for it before retrying"}
 
@@ -509,7 +515,7 @@ defmodule Cascade.Missions.Store do
                 SQL.exec(
                   """
                   UPDATE chat_mission_tasks
-                  SET status='pending',summary=?,dispatch_id=NULL,run_id=NULL,
+                  SET status='pending',summary=?,dispatch_id=NULL,run_id=NULL,child_result_delivered=0,
                     attempt=attempt+1,updated_at=datetime('now') WHERE id=?
                   """,
                   [summary, task_id]
@@ -574,11 +580,19 @@ defmodule Cascade.Missions.Store do
                 reset: retrying
               )
 
+              canceled =
+                if status in ~w(canceled failed blocked),
+                  do: Cascade.Missions.Children.cancel(task_id),
+                  else: []
+
               update = refresh!(row.mission_id)
 
-              if status == "canceled" and not is_nil(row.run_id),
-                do: Map.put(update, :canceledTaskRunIds, [row.run_id]),
-                else: update
+              runs =
+                if status == "canceled" and row.run_id,
+                  do: [row.run_id | canceled],
+                  else: canceled
+
+              Map.put(update, :canceledTaskRunIds, runs)
             end)
 
           {:ok, result}
@@ -747,7 +761,13 @@ defmodule Cascade.Missions.Store do
 
         result =
           SQL.transaction(fn ->
-            next = if status == "completed", do: "completed", else: status
+            next =
+              if task.status in @terminal_task_statuses,
+                do: status,
+                else: Cascade.Missions.Children.settlement(task.id, status)
+
+            if next == "joining", do: Cascade.Missions.Children.wait(task.id)
+            next = if next == "joining", do: "pending", else: next
             cleaned = clean(summary, 4_000)
 
             if task.status not in @terminal_task_statuses or
@@ -775,7 +795,7 @@ defmodule Cascade.Missions.Store do
 
             sync_work_item(mission.created_by, mission, settled,
               run_id: run_id,
-              release: true,
+              release: not Cascade.Missions.Children.joining?(task.id),
               verification: if(settled.status == "completed", do: settled.summary, else: nil)
             )
 
@@ -1001,6 +1021,7 @@ defmodule Cascade.Missions.Store do
         }
 
         base
+        |> Map.merge(Cascade.Missions.Children.projection(task.id))
         |> maybe_put(:runId, task.run_id)
         |> add_work_item_projection(mission.created_by, task.work_item_id)
       end)

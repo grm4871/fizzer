@@ -30,6 +30,8 @@ Usage:
   cascade-chat mission status [--mission <id|current>]
   cascade-chat mission history --mission <id>
   cascade-chat mission delegate --mission <id> --to @agent --task T --message P [--after <task-id,...>] [--priority N] [--effort E] [--anonymous] [--isolated]
+  cascade-chat mission child --task T --message P [--mission current] [--effort E]
+  cascade-chat mission join            inspect child results; end turn to wait and resume for integration
   cascade-chat mission update --task <id> --status <status> [--summary S]
   cascade-chat mission retry --task <id> [--summary S]
   cascade-chat mission link-recovery --task <original-id> --source-task <recovery-id> --source-run <id> --target-run <id> --target-attempt <n> --objective <original-objective> --verification <observed-evidence>
@@ -572,6 +574,21 @@ async function main() {
       }
       return;
     }
+    if (sub === 'child') {
+      const title = String(args.task || args.title || '').trim();
+      if (!title) fail('mission child needs --task <title>.');
+      const prompt = String(args.message === undefined || args.message === true ? await readStdin() : normalizeInlineMessage(args.message, args['raw-message'] === true)).trim() || title;
+      const result = await api(url, token, 'POST', `/api/vaults/${vaultId}/channels/${channelId}/missions/${encodeURIComponent(missionRef)}/children`, {
+        title, prompt, reasoningEffort: String(args.effort || '').trim().toLowerCase(),
+      });
+      process.stdout.write(args.json ? JSON.stringify(result) + '\n' : `child ${result.task.id}: ${result.task.title} (isolated worktree)\n`);
+      return;
+    }
+    if (sub === 'join') {
+      const result = await api(url, token, 'POST', `/api/vaults/${vaultId}/channels/${channelId}/missions/children/join`, {});
+      process.stdout.write(JSON.stringify(result) + '\n');
+      return;
+    }
     if (sub === 'delegate') {
       if (!registrationId) fail('mission delegate can only be used from a registered coordinator run.');
       const assignee = String(args.to || '').trim();
@@ -662,7 +679,7 @@ async function main() {
       else process.stdout.write(`mission ${result.mission.id} → ${result.mission.status}\n`);
       return;
     }
-    fail(`unknown mission command "${sub}". Use start|list|status|history|delegate|update|retry|link-recovery|finish|cancel.`);
+    fail(`unknown mission command "${sub}". Use start|list|status|history|delegate|child|join|update|retry|link-recovery|finish|cancel.`);
   }
 
   if (cmd === 'avatar') {

@@ -198,7 +198,7 @@ export const ORCHESTRATOR_VIRTUAL_WORKERS =
 
 /** Anonymous clones keep the coordinator's registration; they must not inherit its role. */
 export const ORCHESTRATOR_WORKER_ROLE =
-  ' You are a mission worker, not the channel control plane. Execute only this assigned task. Do not run `cascade-chat mission start` or `cascade-chat mission delegate`, and do not spawn subagents. If blocked, mark the task blocked with `cascade-chat mission update` and stop. The mission card updates when this run ends.';
+  ' You are a mission worker, not the channel control plane. Execute only this assigned task. Do not run `cascade-chat mission start` or `cascade-chat mission delegate`, and do not spawn provider subagents. For an authorized independent piece, use `cascade-chat mission child --task "Title" --message "Bounded scope"`: at most eight direct children, each in an isolated worktree using your own identity and existing concurrency limits. Children cannot delegate. Keep working independently, then use `cascade-chat mission join` and end the turn; you resume with child results to integrate and verify. You own integration and must resolve failed children before completing. If blocked, mark the task blocked with `cascade-chat mission update` and stop. The mission card updates when this run ends.';
 
 /**
  * Build the system-ish header the agent receives for a channel reply.

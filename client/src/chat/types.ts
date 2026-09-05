@@ -82,6 +82,8 @@ export interface ChatMessage {
 export type ChatMissionTaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'blocked' | 'canceled';
 
 export interface ChatMissionTask {
+  parentTaskId?: string | null;
+  joiningChildren?: boolean;
   id: string;
   title: string;
   assignee: string;

@@ -126,6 +126,37 @@ defmodule CascadeWeb.MissionRouter do
     end)
   end
 
+  post "/api/vaults/:vault_id/channels/:channel_id/missions/:mission_id/children" do
+    authenticated(conn, :vault, fn conn, user ->
+      input = %{
+        title: string_body(conn, "title"),
+        prompt: string_body(conn, "prompt"),
+        reasoningEffort: string_body(conn, "reasoningEffort")
+      }
+
+      with {:ok, added} <-
+             Cascade.Missions.Children.add(user.id, channel_id, mission_id, input, run_id(conn)),
+           {:ok, _} <- safe_schedule(added.update.mission.id, conn),
+           {:ok, latest} <- Store.get(user.id, channel_id, added.update.mission.id) do
+        JSON.send(conn, 201, %{
+          mission: latest.mission,
+          task: Enum.find(latest.mission.tasks, &(&1.id == added.task.id))
+        })
+      else
+        error -> route_error(conn, 400, error, "Could not create child task")
+      end
+    end)
+  end
+
+  post "/api/vaults/:vault_id/channels/:channel_id/missions/children/join" do
+    authenticated(conn, :vault, fn conn, user ->
+      case Cascade.Missions.Children.join(user.id, channel_id, run_id(conn)) do
+        {:ok, result} -> JSON.send(conn, 200, result)
+        error -> route_error(conn, 400, error, "Could not join children")
+      end
+    end)
+  end
+
   patch "/api/vaults/:vault_id/channels/:channel_id/missions/tasks/:task_id" do
     authenticated(conn, :vault, fn conn, user ->
       input = %{
@@ -133,7 +164,14 @@ defmodule CascadeWeb.MissionRouter do
         summary: string_body(conn, "summary")
       }
 
-      with {:ok, update} <- Store.update_task(user.id, channel_id, task_id, input),
+      with :ok <-
+             Cascade.Missions.Children.authorize_update(
+               user.id,
+               channel_id,
+               task_id,
+               run_id(conn)
+             ),
+           {:ok, update} <- Store.update_task(user.id, channel_id, task_id, input),
            :ok <- cancel_runs(conn, Map.get(update, :canceledTaskRunIds, []), []),
            {:ok, _scheduled} <- safe_schedule(update.mission.id, conn),
            {:ok, latest} <- Store.get(user.id, channel_id, update.mission.id) do
