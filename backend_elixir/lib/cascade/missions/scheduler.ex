@@ -85,16 +85,29 @@ defmodule Cascade.Missions.Scheduler do
         end
 
       case Dispatches.get(user_id, local_channel_id, dispatch_id) do
-        {:ok, dispatch} ->
-          Events.emit(events, %{
-            event: "vault:chatMessageUpdated",
-            vaultId: vault_id,
-            channelId: channel_id,
-            message: dispatch.message,
-            dispatches: [dispatch]
-          })
+        {:ok, dispatch} when is_nil(dispatch.runId) ->
+          if Cascade.Chat.NextSteps.dispatch_ready?(dispatch) do
+            Events.emit(events, %{
+              event: "vault:chatMessageUpdated",
+              vaultId: vault_id,
+              channelId: channel_id,
+              message: dispatch.message,
+              dispatches: [dispatch]
+            })
 
-          count + 1
+            count + 1
+          else
+            # A client may have discovered this checkpoint before work deferred it.
+            # Retract only its unstarted reply shell; retain the durable checkpoint.
+            Events.emit(events, %{
+              event: "vault:chatMessageDeleted",
+              vaultId: vault_id,
+              channelId: channel_id,
+              messageId: "agent-dispatch-#{dispatch.id}"
+            })
+
+            count
+          end
 
         _ ->
           count
