@@ -157,6 +157,10 @@ function runUpdateCommand(command, args, cwd) {
 async function updateDesktopInPlace() {
   const root = getProjectRoot();
   const gitBin = process.platform === 'win32' ? 'git.exe' : 'git';
+  const unmerged = await runUpdateCommand(gitBin, ['diff', '--name-only', '--diff-filter=U'], root);
+  if (unmerged.trim()) {
+    throw new Error(`Resolve existing checkout conflicts before retrying Update. Saved work remains in git stash list.\n${unmerged.trim()}`);
+  }
   const pullArgs = ['pull', '--rebase'];
   try {
     await runUpdateCommand(gitBin, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'], root);
@@ -175,8 +179,12 @@ async function updateDesktopInPlace() {
   // real local commits while also recovering when the same patch was merged
   // upstream under a different commit id (a common outcome of parallel agent
   // work); --ff-only permanently wedged the update button in that state.
-  const stashOut = await runUpdateCommand(gitBin, ['stash', '--include-untracked'], root);
+  const stashOut = await runUpdateCommand(gitBin, ['stash', 'push', '--include-untracked', '-m', 'Fizzer desktop update backup'], root);
   const didStash = !/No local changes to save/i.test(stashOut);
+  const backup = didStash
+    ? (await runUpdateCommand(gitBin, ['rev-parse', 'stash@{0}'], root)).trim()
+    : null;
+  let updateError;
   try {
     await runUpdateCommand(gitBin, pullArgs, root);
     const npmBin = process.platform === 'win32' ? 'npm.cmd' : 'npm';
@@ -185,12 +193,23 @@ async function updateDesktopInPlace() {
     // A conflicted rebase must not remain half-open when we restore the user's
     // uncommitted work below.
     try { await runUpdateCommand(gitBin, ['rebase', '--abort'], root); } catch { /* no rebase in progress */ }
-    throw error;
-  } finally {
-    if (didStash) {
-      await runUpdateCommand(gitBin, ['stash', 'pop'], root);
-    }
+    updateError = error;
   }
+  if (backup) {
+    try {
+      // Apply the exact backup; never consume another stash created during the build.
+      await runUpdateCommand(gitBin, ['stash', 'apply', backup], root);
+    } catch (error) {
+      throw new Error([
+        updateError?.message,
+        `Local work restoration failed. Backup ${backup} is retained in git stash list (including untracked files). Resolve checkout conflicts before retrying Update; do not drop the backup until your work is recovered.`,
+        error.message,
+      ].filter(Boolean).join('\n\n'));
+    }
+    const latest = (await runUpdateCommand(gitBin, ['rev-parse', 'stash@{0}'], root)).trim();
+    if (latest === backup) await runUpdateCommand(gitBin, ['stash', 'drop', 'stash@{0}'], root);
+  }
+  if (updateError) throw updateError;
 }
 
 /** Reload every renderer without terminating the Electron main process. */
