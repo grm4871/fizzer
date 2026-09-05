@@ -552,9 +552,6 @@ defmodule Cascade.Missions.Store do
       retrying = status == "pending" and row.status in @terminal_task_statuses
 
       cond do
-        status == "completed" and Cascade.Missions.Children.unresolved?(task_id) ->
-          {:error, "Join and integrate child results before completing the parent"}
-
         status == "pending" and row.status == "running" ->
           {:error, "Task is still running; cancel or wait for it before retrying"}
 
@@ -564,6 +561,9 @@ defmodule Cascade.Missions.Store do
         true ->
           result =
             SQL.transaction(fn ->
+              if status == "completed" and Cascade.Missions.Children.unresolved?(task_id),
+                do: raise("Join and integrate child results before completing the parent")
+
               if retrying do
                 SQL.exec(
                   "DELETE FROM chat_agent_dispatches WHERE run_id IS NULL AND id=?",

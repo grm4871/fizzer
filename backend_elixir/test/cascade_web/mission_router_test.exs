@@ -24,6 +24,16 @@ defmodule CascadeWeb.MissionRouterTest do
 
     vault = ContentStore.create_vault(user_id, %{name: "Mission HTTP #{suffix}"})
 
+    on_exit(fn ->
+      SQL.exec(
+        "DELETE FROM chat_mission_tasks WHERE mission_id IN (SELECT id FROM chat_missions WHERE vault_id=?)",
+        [vault.id]
+      )
+
+      SQL.exec("DELETE FROM chat_missions WHERE vault_id=?", [vault.id])
+      SQL.exec("DELETE FROM vaults WHERE id=?", [vault.id])
+    end)
+
     channel =
       ContentStore.create_note(vault.id, user_id, %{
         title: "Mission HTTP room",
@@ -361,6 +371,25 @@ defmodule CascadeWeb.MissionRouterTest do
              %{status: "canceled"},
              run.id
            ).status == 400
+
+    {:ok, coordinator_message} =
+      Messages.create(ctx.user, ctx.vault.id, ctx.channel.id, %{body: "Coordinator update"})
+
+    {:ok, coordinator_dispatch} =
+      Dispatches.create(ctx.user.id, ctx.channel.id, coordinator_message, ctx.coordinator.id)
+
+    {:ok, coordinator_run} =
+      RunStore.start(ctx.vault.id, nil, "coordinator", "codex",
+        chat_dispatch_id: coordinator_dispatch.id
+      )
+
+    assert request(
+             ctx,
+             :patch,
+             base <> "/missions/tasks/#{unrelated.task.id}",
+             %{status: "canceled"},
+             coordinator_run.id
+           ).status == 200
   end
 
   test "steering HTTP route pins the task snapshot and acknowledges queued delivery", ctx do

@@ -20,6 +20,16 @@ defmodule Cascade.Missions.ChildrenTest do
 
     vault = ContentStore.create_vault(user_id, %{name: "Mission #{suffix}"})
 
+    on_exit(fn ->
+      SQL.exec(
+        "DELETE FROM chat_mission_tasks WHERE mission_id IN (SELECT id FROM chat_missions WHERE vault_id=?)",
+        [vault.id]
+      )
+
+      SQL.exec("DELETE FROM chat_missions WHERE vault_id=?", [vault.id])
+      SQL.exec("DELETE FROM vaults WHERE id=?", [vault.id])
+    end)
+
     channel =
       ContentStore.create_note(vault.id, user_id, %{
         title: "Mission room",
@@ -231,6 +241,33 @@ defmodule Cascade.Missions.ChildrenTest do
              "blocked"
   end
 
+  test "cancellation retries survive missing runner acknowledgment", ctx do
+    {mission, parent, run} = parent(ctx)
+    {:ok, _} = Children.add(ctx.user.id, ctx.channel.id, mission.id, %{title: "Child"}, run.id)
+    [%{dispatch: dispatch}] = Scheduler.schedule(mission.id).dispatches
+    child_run = start(ctx, dispatch)
+    :ok = RunStore.finish(run.id, "canceled", "Stopped")
+    {:ok, _} = Scheduler.settle_run(run.id, "canceled", "Stopped")
+
+    Children.replay_cancellations(fn user, id ->
+      assert user == ctx.user.id
+      assert id == child_run.id
+      false
+    end)
+
+    assert RunStore.get(child_run.id).status == child_run.status
+
+    Children.replay_cancellations(fn user, id ->
+      assert user == ctx.user.id
+      assert id == child_run.id
+      true
+    end)
+
+    assert RunStore.get(child_run.id).status == "canceled"
+    Children.replay_cancellations(fn _, _ -> flunk("Canceled children must not be replayed") end)
+    assert {:error, _} = Children.authorize_update(ctx.user.id, ctx.channel.id, parent.id, run.id)
+  end
+
   test "steering a parent preserves its live children and join resumes the same task", ctx do
     {mission, parent, run} = parent(ctx)
 
@@ -309,6 +346,31 @@ defmodule Cascade.Missions.ChildrenTest do
     assert message.body =~ "independent correction"
     assert message.missionTaskId == parent.id
     assert Children.unresolved?(parent.id)
+  end
+
+  test "ready child results do not overtake an accepted steering request", ctx do
+    {mission, parent, run} = parent(ctx)
+    {:ok, _} = Children.add(ctx.user.id, ctx.channel.id, mission.id, %{title: "Child"}, run.id)
+    [%{dispatch: dispatch}] = Scheduler.schedule(mission.id).dispatches
+    child_run = start(ctx, dispatch)
+    :ok = RunStore.finish(run.id, "completed", "joining")
+    {:ok, _} = Scheduler.settle_run(run.id, "completed", "joining")
+
+    {:ok, request} =
+      Store.request_steering(ctx.user.id, ctx.channel.id, parent.id, %{
+        coordinatorRegistrationId: ctx.coordinator.id,
+        message: "Review the new constraint",
+        attempt: 0,
+        runId: nil
+      })
+
+    :ok = RunStore.finish(child_run.id, "completed", "Child ready")
+    {:ok, held} = Scheduler.settle_run(child_run.id, "completed", "Child ready")
+    assert held.scheduled.dispatches == []
+    Cascade.Missions.Steering.deliver(request, schedule: fn _ -> :ok end)
+    assert [%{message: message}] = Scheduler.schedule(mission.id).dispatches
+    assert message.body =~ "new constraint"
+    assert message.missionTaskId == parent.id
   end
 
   defp parent(ctx) do
