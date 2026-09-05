@@ -157,6 +157,14 @@ function runUpdateCommand(command, args, cwd) {
 async function updateDesktopInPlace() {
   const root = getProjectRoot();
   const gitBin = process.platform === 'win32' ? 'git.exe' : 'git';
+  const pullArgs = ['pull', '--rebase'];
+  try {
+    await runUpdateCommand(gitBin, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'], root);
+  } catch {
+    // Local launcher branches may have no tracking configuration. Follow the
+    // release branch in that case, while respecting explicitly tracked branches.
+    pullArgs.push('origin', 'master');
+  }
 
   // The desktop shell loads its UI from its selected instance, but its local
   // agent runner imports the generated dist/cli-agents module. dist is ignored,
@@ -170,7 +178,7 @@ async function updateDesktopInPlace() {
   const stashOut = await runUpdateCommand(gitBin, ['stash', '--include-untracked'], root);
   const didStash = !/No local changes to save/i.test(stashOut);
   try {
-    await runUpdateCommand(gitBin, ['pull', '--rebase'], root);
+    await runUpdateCommand(gitBin, pullArgs, root);
     const npmBin = process.platform === 'win32' ? 'npm.cmd' : 'npm';
     await runUpdateCommand(npmBin, ['run', 'build'], root);
   } catch (error) {

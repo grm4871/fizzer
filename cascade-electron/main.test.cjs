@@ -43,8 +43,59 @@ test('desktop repairs packaged macOS PATH before loading runner modules', () => 
   assert.ok(pathAt > 0 && runnerAt > pathAt);
 });
 
-test('source desktop update reconciles parallel equivalent commits', () => {
-  assert.match(source, /\['pull', '--rebase'\]/);
-  assert.match(source, /\['rebase', '--abort'\]/);
-  assert.doesNotMatch(source, /\['pull', '--ff-only'\]/);
-});
+for (const tracked of [false, true]) {
+  test(`source update preserves dirty work and equivalent commits (${tracked ? 'configured upstream' : 'no upstream'})`, async (t) => {
+    const { execFileSync, spawn } = require('node:child_process');
+    const dir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'fizzer-update-'));
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    const upstream = path.join(dir, 'upstream');
+    const checkout = path.join(dir, 'checkout');
+    const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    fs.mkdirSync(upstream);
+    git(upstream, 'init', '-b', 'master');
+    const configure = (cwd) => {
+      git(cwd, 'config', 'user.email', 'updater@example.test');
+      git(cwd, 'config', 'user.name', 'Updater Test');
+      git(cwd, 'config', 'commit.gpgsign', 'false');
+    };
+    configure(upstream);
+    fs.writeFileSync(path.join(upstream, '.gitignore'), 'build-output\n');
+    fs.writeFileSync(path.join(upstream, 'local.txt'), 'original\n');
+    fs.writeFileSync(path.join(upstream, 'package.json'), JSON.stringify({ scripts: {
+      build: `node -e "require('fs').writeFileSync('build-output', require('fs').readFileSync('release.txt'))"`,
+    } }));
+    git(upstream, 'add', '.');
+    git(upstream, 'commit', '-m', 'initial');
+    git(dir, 'clone', upstream, checkout);
+    configure(checkout);
+    git(checkout, 'checkout', '--no-track', '-b', 'fizzer-main');
+    // A configured non-master upstream must keep winning over the fallback.
+    if (tracked) {
+      git(upstream, 'checkout', '-b', 'custom');
+      git(checkout, 'fetch', 'origin');
+      git(checkout, 'branch', '--set-upstream-to=origin/custom');
+    }
+    for (const [cwd, message] of [[upstream, 'upstream patch'], [checkout, 'equivalent local patch']]) {
+      fs.writeFileSync(path.join(cwd, 'equivalent.txt'), 'same patch\n');
+      git(cwd, 'add', '.');
+      git(cwd, 'commit', '-m', message);
+    }
+    fs.writeFileSync(path.join(upstream, 'release.txt'), 'new release\n');
+    git(upstream, 'add', '.');
+    git(upstream, 'commit', '-m', 'release');
+    fs.writeFileSync(path.join(checkout, 'local.txt'), 'unsaved work\n');
+    fs.writeFileSync(path.join(checkout, 'untracked.txt'), 'untracked work\n');
+    // Execute the actual updater with real Git and npm, without Electron or a renderer.
+    const update = require('node:vm').runInNewContext(
+      source.slice(source.indexOf('function runUpdateCommand('), source.indexOf('/** Reload every renderer'))
+        + '\nupdateDesktopInPlace',
+      { spawn, process, getProjectRoot: () => checkout },
+    );
+    await update();
+    assert.equal(git(checkout, 'rev-parse', 'HEAD'), git(upstream, 'rev-parse', 'HEAD'));
+    assert.equal(fs.readFileSync(path.join(checkout, 'build-output'), 'utf8'), 'new release\n');
+    assert.equal(fs.readFileSync(path.join(checkout, 'local.txt'), 'utf8'), 'unsaved work\n');
+    assert.equal(fs.readFileSync(path.join(checkout, 'untracked.txt'), 'utf8'), 'untracked work\n');
+    assert.equal(git(checkout, 'stash', 'list'), '');
+  });
+}
