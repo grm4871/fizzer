@@ -251,6 +251,272 @@ defmodule CascadeWeb.OrchestrationChatDispatchTest do
              [0]
   end
 
+  for outcome <- [:proposal, :none] do
+    @tag checkpoint_outcome: outcome
+    test "next-step lifecycle reconsiders #{outcome} after evidence-gated closure and scheduler restart",
+         ctx do
+      alias Cascade.Chat.{NextSteps, Schema}
+      alias Cascade.Missions.{Authority, DispatchReannouncer, Scheduler}
+      alias Cascade.Missions.Store, as: Missions
+
+      {:ok, _source} =
+        Messages.create(ctx.owner, ctx.owner_vault.id, ctx.owner_channel.id, %{
+          body: "The updater keeps failing and interrupting my work."
+        })
+
+      {:ok, registration} =
+        Agents.add_to_channel(
+          ctx.owner.id,
+          ctx.owner_vault.id,
+          ctx.owner_channel.id,
+          ctx.registration.vaultAgentId,
+          %{orchestrator: true, nextStepSuggestions: true}
+        )
+
+      [source] =
+        SQL.one(
+          "SELECT source_id FROM chat_next_step_checks WHERE registration_id=? AND kind='enable'",
+          [registration.id]
+        )
+
+      # Use the actual recovery process and connected test runner; no provider is invoked.
+      scheduler = start_supervised!({DispatchReannouncer, interval: 60_000})
+      assert :sys.get_state(scheduler) == 60_000
+
+      [dispatch, run] =
+        SQL.one("SELECT id,run_id FROM chat_agent_dispatches WHERE message_id=?", [source])
+
+      assert is_integer(run)
+      assert Store.get(run).prompt =~ "must evaluate"
+      assert {:ok, packet} = Session.poll(ctx.sid, 1_000)
+      assert length(Regex.scan(~r/run:delegate/, packet)) == 1
+      :ok = stop_supervised(DispatchReannouncer)
+
+      body =
+        "<!-- fizzer-next:#{source} -->\n\nThe updater keeps interrupting you. Should fixing that failure be next?"
+
+      proposed = complete_checkpoint(ctx, dispatch, run, body)
+      assert proposed.body == body
+
+      assert SQL.one("SELECT COUNT(*) FROM chat_missions WHERE channel_id=?", [
+               ctx.owner_channel.id
+             ]) ==
+               [0]
+
+      {:ok, accepted} =
+        Messages.create(ctx.owner, ctx.owner_vault.id, ctx.owner_channel.id, %{
+          body: "Yes, fix that failure, but keep my editor open.",
+          replyTo: %{messageId: proposed.id, author: proposed.author, body: proposed.body}
+        })
+
+      assert {:ok, [accept_dispatch]} =
+               Dispatches.create_for_message(ctx.owner.id, ctx.owner_channel.id, accepted)
+
+      assert accept_dispatch.registration.id == registration.id
+
+      assert SQL.one("SELECT COUNT(*) FROM chat_missions WHERE channel_id=?", [
+               ctx.owner_channel.id
+             ]) ==
+               [0]
+
+      {:ok, feedback} =
+        Messages.create(
+          ctx.owner,
+          ctx.owner_vault.id,
+          ctx.owner_channel.id,
+          %{
+            agentId: "codex",
+            registrationId: registration.id,
+            body:
+              "<!-- fizzer-next-feedback:#{proposed.id}:#{accepted.id}:accepted --> I will fix only that failure and keep your editor open."
+          },
+          access: :agent
+        )
+
+      assert feedback.body == "I will fix only that failure and keep your editor open."
+
+      assert SQL.one(
+               "SELECT feedback,feedback_message_id FROM chat_next_step_checks WHERE message_id=?",
+               [proposed.id]
+             ) == ["accepted", accepted.id]
+
+      {:ok, created} =
+        Missions.create(ctx.owner.id, ctx.owner_vault.id, ctx.owner_channel.id, %{
+          rootMessageId: accepted.id,
+          coordinatorRegistrationId: registration.id,
+          title: "Fix updater failure",
+          objective: "Fix only the updater failure; keep the editor open."
+        })
+
+      authority = Authority.context(created.mission.id)
+      assert authority =~ accepted.body
+      assert authority =~ Jason.encode!(proposed.body)
+      assert authority =~ "bounded_proposal_context"
+
+      finish = %{
+        coordinatorRegistrationId: registration.id,
+        status: "completed",
+        summary:
+          "Updater repair verified; editor remained open." <>
+            if(ctx.checkpoint_outcome == :proposal,
+              do:
+                " Separate packaging failure still blocks release; outside the accepted repair.",
+              else: ""
+            )
+      }
+
+      assert {:error, "Mission has no completed worker evidence"} =
+               Missions.finish(ctx.owner.id, ctx.owner_channel.id, created.mission.id, finish)
+
+      {:ok, _task} =
+        Missions.add_task(ctx.owner.id, ctx.owner_channel.id, created.mission.id, %{
+          coordinatorRegistrationId: registration.id,
+          assignee: registration.id,
+          anonymous: true,
+          title: "Repair and verify updater",
+          workspaceMode: "shared"
+        })
+
+      [%{dispatch: worker}] = Scheduler.schedule(created.mission.id).dispatches
+
+      {:ok, worker_run} =
+        Store.start(ctx.owner_vault.id, nil, "Repair updater", "codex",
+          chat_dispatch_id: worker.id
+        )
+
+      :ok = Dispatches.attach_run(worker.id, worker_run.id)
+      {:ok, _} = Missions.attach_run(worker.id, worker_run.id)
+      evidence = "Fixture artifact: updater repair; focused checks passed."
+      :ok = Store.finish(worker_run.id, "completed", evidence)
+      {:ok, settled} = Scheduler.settle_run(worker_run.id, "completed", evidence)
+      assert settled.settled.update.mission.status == "reviewing"
+
+      assert {:error, reason} =
+               Missions.finish(ctx.owner.id, ctx.owner_channel.id, created.mission.id, finish)
+
+      assert reason =~ "Coordinator verification is required"
+
+      verification =
+        "Fixture verification: inspected artifact and passing focused checks; editor remained open."
+
+      assert {:ok, completed} =
+               Missions.finish(
+                 ctx.owner.id,
+                 ctx.owner_channel.id,
+                 created.mission.id,
+                 Map.put(finish, :verification, verification)
+               )
+
+      assert completed.mission.status == "completed"
+
+      assert SQL.one("SELECT verification FROM chat_missions WHERE id=?", [created.mission.id]) ==
+               [
+                 verification
+               ]
+
+      # Store.finish must persist the completion wake even if publication is interrupted.
+      completion_source = "sys-next-completed-#{created.mission.id}"
+
+      [completion_dispatch, nil] =
+        SQL.one("SELECT id,run_id FROM chat_agent_dispatches WHERE message_id=?", [
+          completion_source
+        ])
+
+      assert SQL.one("SELECT kind,outcome FROM chat_next_step_checks WHERE source_id=?", [
+               completion_source
+             ]) == ["completion", "pending"]
+
+      # Restart the scheduler with only persisted outbox/checkpoint state to recover.
+      Schema.ensure!()
+      recovered = start_supervised!({DispatchReannouncer, interval: 60_000})
+      refute recovered == scheduler
+      assert :sys.get_state(recovered) == 60_000
+
+      [completion_run] =
+        SQL.one("SELECT run_id FROM chat_agent_dispatches WHERE id=?", [completion_dispatch])
+
+      assert is_integer(completion_run)
+      assert Store.get(completion_run).prompt =~ "must evaluate"
+      assert Store.get(completion_run).prompt =~ finish.summary
+      assert Store.get(completion_run).prompt =~ accepted.body
+      assert {:ok, packet} = Session.poll(ctx.sid, 1_000)
+      assert length(Regex.scan(~r/run:delegate/, packet)) == 1
+
+      Scheduler.emit_projection(completed)
+      send(recovered, :reannounce)
+      assert :sys.get_state(recovered) == 60_000
+
+      assert {:ok, same} =
+               CascadeWeb.OrchestrationController.claim_mission_dispatch(
+                 ctx.owner.id,
+                 ctx.owner_channel.id,
+                 completion_dispatch
+               )
+
+      assert same.id == completion_run
+
+      assert SQL.one("SELECT COUNT(*) FROM runs WHERE chat_dispatch_id=?", [completion_dispatch]) ==
+               [1]
+
+      Session.emit(ctx.sid, "/runners", "boundary:barrier", [])
+      assert {:ok, replay_packet} = Session.poll(ctx.sid, 1_000)
+      refute replay_packet =~ "run:delegate"
+
+      reconsideration =
+        if ctx.checkpoint_outcome == :proposal,
+          do:
+            "<!-- fizzer-next:#{completion_source} -->\n\nThe separate packaging failure still blocks release. Should diagnosing it be next?",
+          else:
+            "<!-- fizzer-next-none:#{completion_source} --> The updater issue is resolved; no other grounded need remains."
+
+      expected_body =
+        if ctx.checkpoint_outcome == :proposal,
+          do: reconsideration,
+          else: "The updater issue is resolved; no other grounded need remains."
+
+      reconsidered =
+        complete_checkpoint(ctx, completion_dispatch, completion_run, reconsideration)
+
+      assert reconsidered.body == expected_body
+
+      assert NextSteps.context(ctx.owner_channel.id, registration.id, completion_source) =~
+               "already checked"
+
+      :ok = stop_supervised(DispatchReannouncer)
+      final_scheduler = start_supervised!({DispatchReannouncer, interval: 60_000})
+      assert :sys.get_state(final_scheduler) == 60_000
+
+      assert SQL.one("SELECT COUNT(*) FROM runs WHERE chat_dispatch_id=?", [completion_dispatch]) ==
+               [1]
+
+      assert SQL.one("SELECT COUNT(*) FROM chat_agent_dispatches WHERE message_id=?", [
+               completion_source
+             ]) == [1]
+
+      Session.emit(ctx.sid, "/runners", "boundary:barrier", [])
+      assert {:ok, final_packet} = Session.poll(ctx.sid, 1_000)
+      refute final_packet =~ "run:delegate"
+    end
+  end
+
+  defp complete_checkpoint(ctx, dispatch_id, run_id, body) do
+    assert {:ok, []} =
+             Cascade.Realtime.DomainAdapter.handle_event(
+               "/runners",
+               "runner:runEvent",
+               [%{runId: run_id, type: "status", payload: %{status: "completed", summary: body}}],
+               %{id: ctx.owner.id},
+               %{}
+             )
+
+    assert Store.get(run_id).status == "completed"
+
+    assert {:ok, message} =
+             Messages.get(ctx.owner_channel.id, ctx.owner.id, "agent-dispatch-#{dispatch_id}")
+
+    message
+  end
+
   test "coordinator reviews are claimed without a chat page and repeated claims reuse the run",
        ctx do
     SQL.exec("UPDATE chat_agent_members SET orchestrator=1,next_step_suggestions=1 WHERE id=?", [
