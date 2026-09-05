@@ -93,7 +93,7 @@ cascade-chat mission status --mission <id>
 cascade-chat mission list
 cascade-chat mission history --mission <id>
 cascade-chat mission retry --task <id> --summary "..."
-cascade-chat mission finish --mission <id> --summary "..."
+cascade-chat mission finish --mission <id> --summary "..." --verification "Observed checks and artifact/live revision evidence"
 ```
 
 Named assignees still get at most one active mission task at a time.
@@ -140,6 +140,38 @@ in the run trace. Coordinators keep mission finish summaries short as well.
 Stable application capability context is not re-sent to a resumed session.
 Private note blocks are redacted after all context assembly and immediately
 before delegation.
+
+## Durable authority and completion evidence
+
+Mission creation snapshots owner-authored messages in the root reply chain.
+Use `mission start --authority-messages <id,id>` to include earlier explicit
+instructions from the same channel. Agent-authored messages cannot be recorded
+as user grants. Saved instructions and the mission objective accompany worker
+and review dispatches. Existing missions have empty source records; recover their
+original user context when authority is unclear. Later user corrections and
+revocations take precedence over saved instructions.
+
+These records preserve context, not additional tool permissions. They do not
+constitute a general spend/deploy permission system. Coordinator completion
+requires `--verification` separately from the worker summary, alongside the
+existing bound-run evidence checks. Record actual check results and inspectable
+artifacts or live revisions. The server checks presence and provenance of run
+records; the coordinator remains responsible for verifying external claims.
+
+The server replays unclaimed worker and review dispatches and reconciles terminal
+run records whose mission callback was missed. A failed review, a successful
+review that left its mission open, or a removed unclaimed review can recover after
+one minute, only with no running or dispatched tasks or active coordinator run. Recovery creates a new
+review generation, never re-executes a worker, and stops after three retries with
+an `attention` state and a concrete mission-history explanation. Explicit canceled
+reviews and closed missions are not resumed. Adding or explicitly retrying work
+starts a new review budget. Recovery requires a running server and connected
+runner; schema-only boots do not schedule work.
+
+Dispatch/run uniqueness and task idempotency prevent duplicate admission. Shared
+workspaces still require agents to preserve unrelated files or use isolated
+worktrees; the mission scheduler cannot lock arbitrary external side effects.
+Production deployment serialization remains owned by GitHub Actions.
 
 ## Cancellation and recovery
 

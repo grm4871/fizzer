@@ -485,6 +485,7 @@ async function main() {
         body: JSON.stringify({
           coordinatorRegistrationId: sol.id,
           status: 'completed',
+          verification: 'Observed bound worker run completion and inspected parallel task results.',
           summary: 'Parallel worker evidence reconciled.',
         }),
       });

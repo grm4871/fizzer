@@ -1,5 +1,5 @@
 defmodule Cascade.Missions.Scheduler do
-  @moduledoc "Materializes ready mission tasks and one-shot coordinator review wakes into the dispatch outbox."
+  @moduledoc "Materializes ready mission tasks and idempotent coordinator review wakes into the dispatch outbox."
 
   alias Cascade.Accounts.SQL
   alias Cascade.Chat.{Events, Messages}
@@ -13,6 +13,7 @@ defmodule Cascade.Missions.Scheduler do
   defp do_schedule(mission_id, opts) do
     result =
       SQL.transaction(fn ->
+        Cascade.Missions.Recovery.reconcile(mission_id)
         scheduled = Store.schedulable(mission_id)
         dispatches = Enum.map(scheduled.candidates, &materialize_candidate!/1)
 
@@ -74,14 +75,7 @@ defmodule Cascade.Missions.Scheduler do
   def reannounce_pending(opts \\ []) do
     events = Keyword.get(opts, :events) || Cascade.Chat.Events.Noop
 
-    SQL.all("""
-    SELECT t.dispatch_id,m.created_by,m.vault_id,m.channel_id
-    FROM chat_mission_tasks t
-    JOIN chat_missions m ON m.id=t.mission_id
-    JOIN chat_agent_dispatches d ON d.id=t.dispatch_id
-    WHERE t.status='pending' AND t.run_id IS NULL
-      AND d.run_id IS NULL AND t.dispatch_id IS NOT NULL
-    """)
+    pending_dispatches()
     |> Enum.reduce(0, fn [dispatch_id, user_id, vault_id, channel_id], count ->
       local_channel_id =
         case Store.owner_route(user_id, vault_id, channel_id) do
@@ -105,6 +99,22 @@ defmodule Cascade.Missions.Scheduler do
           count
       end
     end)
+  end
+
+  def pending_dispatches do
+    SQL.all("""
+    SELECT d.id,m.created_by,m.vault_id,m.channel_id
+    FROM chat_agent_dispatches d
+    JOIN chat_missions m ON (
+      (d.message_id LIKE 'sys-mission-' || m.id || '-%' AND m.wake_sent=1
+        AND d.message_id=(SELECT msg.id FROM chat_messages msg
+          WHERE msg.id LIKE 'sys-mission-' || m.id || '-%' ORDER BY msg.rowid DESC LIMIT 1)
+        AND NOT EXISTS (SELECT 1 FROM chat_mission_tasks active WHERE active.mission_id=m.id
+          AND (active.status='running' OR (active.status='pending' AND active.dispatch_id IS NOT NULL))))
+      OR EXISTS (SELECT 1 FROM chat_mission_tasks t WHERE t.mission_id=m.id
+        AND t.dispatch_id=d.id AND t.status='pending' AND t.run_id IS NULL))
+    WHERE d.run_id IS NULL AND m.status NOT IN ('completed','canceled')
+    """)
   end
 
   def emit_projection(update, events \\ Cascade.Chat.Events.Noop) do
@@ -187,7 +197,8 @@ defmodule Cascade.Missions.Scheduler do
         route.localChannelId,
         %{
           id: message_id,
-          body: "@#{assignee_mention} #{candidate.prompt}",
+          body:
+            "@#{assignee_mention} #{candidate.prompt}\n\n#{Cascade.Missions.Authority.context(candidate.missionId)}",
           createdAt: now(),
           registrationId: candidate.coordinatorRegistrationId,
           missionTaskId: candidate.taskId
@@ -239,6 +250,8 @@ defmodule Cascade.Missions.Scheduler do
       ]
       |> Kernel.++([
         "",
+        Cascade.Missions.Authority.context(wake.mission.id),
+        "Before retrying any operation, inspect existing artifacts, running work, and deployment status. Do not duplicate side effects or overwrite concurrent work. Mission closure is coordinator bookkeeping and must not block independently authorized implementation. Finish with --verification containing independently observed checks and artifact or live revision evidence. If recovery repeatedly fails, leave a concrete limitation for the user; do not spin or expand authority.",
         "Continue this existing mission; do not start a new mission for this review. Review the evidence, resolve or explain failures, and perform any authorized integration and verification still needed. Finish this mission when the user request is fulfilled, then reply once with the outcome."
       ])
       |> Enum.join("\n")

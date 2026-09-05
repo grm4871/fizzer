@@ -12,7 +12,7 @@ import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import {
   workTraceAuthorKey,
-  workTraceDecals,
+  workTracePeek,
   isSteeringContinuationMessage,
   workTraceStatusLabel,
   workTraceSummary,
@@ -130,7 +130,7 @@ const WorkTraceLine = memo(function WorkTraceLine({
               <CascadeRunPanel
                 message={message}
                 onCancelRun={onCancelRun}
-                forceOpen={selected || message.status === 'running'}
+                forceOpen={selected || open}
                 vaultId={vaultId}
                 onHydrateMessage={onHydrateMessage}
               />
@@ -168,26 +168,19 @@ export const ChatWorkTrace = memo(function ChatWorkTrace({
   forceOpen?: boolean;
 }) {
   const live = trace.some((m) => m.status === 'running' || m.status === 'sending');
-  // Mission cards own the durable status surface. Their run stream stays behind
-  // explicit progressive disclosure, including while live. Standalone live
-  // flows open immediately so a steering continuation shows its actual work
-  // instead of collapsing to an ambiguous phase badge such as "route".
-  const [open, setOpen] = useState(Boolean(forceOpen || (live && !embedded)));
+  // Keep the current activity visible; expand the transcript on request.
+  const [open, setOpen] = useState(forceOpen);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const pinBottomRef = useRef(true);
   const summary = useMemo(() => workTraceSummary(trace), [trace]);
-  const decals = useMemo(() => workTraceDecals(trace), [trace]);
-  const currentPhase = decals[decals.length - 1]?.phase || 'working';
+  const peek = useMemo(() => workTracePeek(trace), [trace]);
+  const currentPhase = peek?.phase || 'working';
   const streamOpen = forceOpen || open;
 
   useEffect(() => {
     if (forceOpen) setOpen(true);
   }, [forceOpen]);
-
-  useEffect(() => {
-    if (live && !embedded) setOpen(true);
-  }, [embedded, live]);
 
   useEffect(() => {
     if (!selectedMessageId) return;
@@ -245,24 +238,11 @@ export const ChatWorkTrace = memo(function ChatWorkTrace({
             onClick={() => setOpen((value) => !value)}
             aria-expanded={streamOpen}
           >
-            {!embedded && <span className="chat-work-trace-kicker">flow</span>}
-            <span className="chat-work-decals" aria-label={`Workflow: ${decals.map((decal) => decal.label).join(', ')}`}>
-              {decals.map((decal, index) => {
-                const current = index === decals.length - 1;
-                return (
-                  <span
-                    key={`${decal.phase}-${index}`}
-                    className={`chat-work-decal phase-${decal.phase}${current ? ' is-current' : ''}${current && live ? ' is-live' : ''}`}
-                    title={decal.label}
-                  >
-                    <span className="chat-work-decal-mark" aria-hidden="true">{decal.mark}</span>
-                    <span className="chat-work-decal-label">{decal.label}</span>
-                  </span>
-                );
-              })}
+            {live && <ThinkingSpinner className="chat-work-trace-spinner" title="Working" />}
+            <span className="chat-work-trace-summary" title={summary}>
+              {live ? peek?.label || 'Working…' : currentPhase === 'blocked' ? 'Stopped · inspect activity' : 'Activity'}
             </span>
-            <span className="chat-work-trace-summary">{summary}</span>
-            {live && <ThinkingSpinner className="chat-work-trace-spinner" title="Thinking" />}
+            <span className="chat-work-trace-count">{trace.length} update{trace.length === 1 ? '' : 's'}</span>
             <ChevronRight size={13} className={`chat-work-trace-chevron${streamOpen ? ' open' : ''}`} />
           </button>
         )}
@@ -284,7 +264,7 @@ export const ChatWorkTrace = memo(function ChatWorkTrace({
                 <WorkTraceLine
                   key={message.id}
                   message={message}
-                  open={expandedIds.has(message.id) || message.status === 'running'}
+                  open={expandedIds.has(message.id)}
                   onToggle={() => toggleLine(message.id)}
                   onCancelRun={onCancelRun}
                   onContextMenu={onContextMenu}
@@ -296,11 +276,6 @@ export const ChatWorkTrace = memo(function ChatWorkTrace({
                 />
               );
             })}
-            {live && (
-              <div className="chat-work-cursor" aria-hidden="true">
-                <span>█</span>
-              </div>
-            )}
           </div>
         )}
       </div>

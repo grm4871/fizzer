@@ -321,7 +321,8 @@ describe('CascadeRunPanel raw fallback', () => {
       }),
       onCancelRun: () => {},
     }));
-    expect(markup).toContain('waiting for harness stream…');
+    expect(markup).toContain('Starting…');
+    expect(markup).toContain('aria-expanded="false"');
     expect(markup).not.toContain('crp-raw-wrap');
   });
 });

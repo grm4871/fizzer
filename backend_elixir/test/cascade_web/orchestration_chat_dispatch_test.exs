@@ -111,6 +111,65 @@ defmodule CascadeWeb.OrchestrationChatDispatchTest do
     }
   end
 
+  test "coordinator reviews are claimed without a chat page and repeated claims reuse the run",
+       ctx do
+    SQL.exec("UPDATE chat_agent_members SET orchestrator=1 WHERE id=?", [ctx.registration.id])
+
+    {:ok, root} =
+      Messages.create(ctx.owner, ctx.owner_vault.id, ctx.owner_channel.id, %{
+        id: "review-root-#{ctx.registration.id}",
+        body: "Finish the task"
+      })
+
+    {:ok, mission} =
+      Cascade.Missions.Store.create(ctx.owner.id, ctx.owner_vault.id, ctx.owner_channel.id, %{
+        rootMessageId: root.id,
+        coordinatorRegistrationId: ctx.registration.id,
+        title: "Review without UI"
+      })
+
+    {:ok, added} =
+      Cascade.Missions.Store.add_task(ctx.owner.id, ctx.owner_channel.id, mission.mission.id, %{
+        coordinatorRegistrationId: ctx.registration.id,
+        assignee: ctx.registration.id,
+        anonymous: true,
+        title: "Worker"
+      })
+
+    {:ok, _} =
+      Cascade.Missions.Store.update_task(ctx.owner.id, ctx.owner_channel.id, added.task.id, %{
+        status: "failed",
+        summary: "Needs review"
+      })
+
+    [wake] = Cascade.Missions.Scheduler.schedule(mission.mission.id).wakeDispatches
+
+    assert {:ok, run} =
+             CascadeWeb.OrchestrationController.claim_mission_dispatch(
+               ctx.owner.id,
+               ctx.owner_channel.id,
+               wake.dispatch.id
+             )
+
+    assert {:ok, duplicate} =
+             CascadeWeb.OrchestrationController.claim_mission_dispatch(
+               ctx.owner.id,
+               ctx.owner_channel.id,
+               wake.dispatch.id
+             )
+
+    assert duplicate.id == run.id
+    assert Store.get(run.id).prompt =~ "Finish with --verification"
+
+    assert SQL.one("SELECT COUNT(*) FROM runs WHERE chat_dispatch_id=?", [wake.dispatch.id]) == [
+             1
+           ]
+
+    assert SQL.one("SELECT COUNT(*) FROM chat_mission_tasks WHERE mission_id=?", [
+             mission.mission.id
+           ]) == [1]
+  end
+
   test "dispatch executes on the owner projection with authoritative settings and is idempotent",
        ctx do
     response_message_id = "agent-response-#{System.unique_integer([:positive])}"

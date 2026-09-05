@@ -19,8 +19,7 @@ defmodule Cascade.Application do
       ] ++
         qmd_children() ++
         [
-          {Cascade.Realtime.Supervisor, runner_callbacks: Cascade.Runs.RunnerLifecycle},
-          Cascade.Missions.DispatchReannouncer
+          {Cascade.Realtime.Supervisor, runner_callbacks: Cascade.Runs.RunnerLifecycle}
         ] ++ http_children()
 
     # Every child after the repository and write coordinator depends on their
@@ -44,6 +43,7 @@ defmodule Cascade.Application do
       connections_per_acceptor = div(max_connections + acceptors - 1, acceptors)
 
       [
+        Cascade.Missions.DispatchReannouncer,
         {Bandit,
          plug: CascadeWeb.Router,
          scheme: :http,

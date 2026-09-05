@@ -169,6 +169,36 @@ test('permits only the additive default-shared mission workspace migration', () 
   }
 });
 
+test('mission recovery migration preserves rows and cannot backfill authority or evidence', () => {
+  const files = fixture();
+  try {
+    const before = new Database(files.before);
+    before.exec("CREATE TABLE chat_missions (id TEXT PRIMARY KEY, summary TEXT); INSERT INTO chat_missions VALUES ('m1','pending review')");
+    before.close();
+    fs.copyFileSync(files.before, files.after);
+    const after = new Database(files.after);
+    after.exec(`
+      ALTER TABLE chat_missions ADD COLUMN authority_json TEXT NOT NULL DEFAULT '[]';
+      ALTER TABLE chat_missions ADD COLUMN verification TEXT NOT NULL DEFAULT '';
+      ALTER TABLE chat_missions ADD COLUMN review_attempt INTEGER NOT NULL DEFAULT 0;
+    `);
+    after.close();
+    assert.equal(runComparison(files).ok, true, runComparison(files).failures.join('\n'));
+    for (const [column, value] of [['authority_json', '["deploy"]'], ['verification', 'claimed'], ['review_attempt', 1], ['summary', 'changed']]) {
+      const changed = new Database(files.after);
+      const original = changed.prepare(`SELECT ${column} AS value FROM chat_missions`).get().value;
+      changed.prepare(`UPDATE chat_missions SET ${column}=?`).run(value);
+      changed.close();
+      assert.equal(runComparison(files).ok, false, column);
+      const restored = new Database(files.after);
+      restored.prepare(`UPDATE chat_missions SET ${column}=?`).run(original);
+      restored.close();
+    }
+  } finally {
+    fs.rmSync(files.directory, { recursive: true, force: true });
+  }
+});
+
 test('rolling eligibility requires exact data and corpus identity', () => {
   const files = fixture();
   try {

@@ -4,6 +4,11 @@ defmodule Cascade.ApplicationSupervisionTest do
   alias Cascade.DB.WriteCoordinator
   alias Cascade.Realtime.OrderedPublisher
 
+  test "schema-only boots do not schedule or recover mission work" do
+    refute Application.fetch_env!(:cascade_elixir, :server)
+    refute Process.whereis(Cascade.Missions.DispatchReannouncer)
+  end
+
   test "an ordered publisher restart replaces dependent run and realtime workers" do
     parent = self()
     publisher = Process.whereis(OrderedPublisher)

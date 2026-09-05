@@ -36,6 +36,7 @@ defmodule CascadeWeb.MissionRouter do
         coordinatorRegistrationId: string_body(conn, "coordinatorRegistrationId"),
         title: string_body(conn, "title"),
         objective: string_body(conn, "objective"),
+        authorityMessageIds: body(conn, "authorityMessageIds", []),
         controlPlane: js_truthy?(body(conn, "controlPlane", false))
       }
 
@@ -153,7 +154,8 @@ defmodule CascadeWeb.MissionRouter do
       input = %{
         coordinatorRegistrationId: string_body(conn, "coordinatorRegistrationId"),
         status: status,
-        summary: string_body(conn, "summary")
+        summary: string_body(conn, "summary"),
+        verification: string_body(conn, "verification")
       }
 
       opts = if run_id(conn), do: [current_run_id: run_id(conn)], else: []

@@ -20,13 +20,22 @@ defmodule CascadeWeb.OrchestrationController do
     with [username] <- SQL.one("SELECT username FROM users WHERE id=?", [user_id]),
          user <- %{id: user_id, username: username},
          {:ok, dispatch} <- Dispatches.get(user_id, channel_id, dispatch_id),
-         task_id when task_id != "" <- dispatch_message_value(dispatch, :missionTaskId, ""),
+         task_id <- dispatch_message_value(dispatch, :missionTaskId, ""),
+         true <- task_id != "" or String.starts_with?(dispatch.messageId, "sys-mission-"),
          registration_id <- dispatch_registration_id(dispatch, ""),
          {:ok, execution} <-
            resolve_chat_execution(user, nil, channel_id, registration_id, dispatch, %{}),
          true <- RunnerLifecycle.online?(execution.runner_user_id),
          {:ok, execution} <- prepare_work_item(execution),
-         conversation_id <- "mission:#{task_id}",
+         nil <-
+           if(task_id == "",
+             do: Store.find_open_for_chat_registration(registration_id, dispatch_id)
+           ),
+         conversation_id <-
+           if(task_id == "",
+             do: "mission-review:#{dispatch.messageId}",
+             else: "mission:#{task_id}"
+           ),
          resume <-
            Store.find_conversation_session(%{
              vault_id: execution.vault.id,

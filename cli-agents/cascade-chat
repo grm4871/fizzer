@@ -50,6 +50,8 @@ Options:
   --relation <type>         builds_on|review_request|question|contradiction|decision
   --status <status>         pending|running|completed|failed|blocked|canceled
   --summary <text>          concise task/mission outcome
+  --authority-messages <ids> comma-separated owner-authored instruction sources for a new mission
+  --verification <text>     coordinator-observed checks and artifact/live evidence required to finish
   --objective <text>        mission objective (defaults to triggering message)
   --after <task-id,...>     wait for these mission tasks to complete
   --priority <-100..100>    schedule higher-priority ready work first
@@ -504,6 +506,7 @@ async function main() {
           title,
           objective: String(args.objective || '').trim(),
           controlPlane: args['control-plane'] === true,
+          authorityMessageIds: String(args['authority-messages'] || '').split(',').map(id => id.trim()).filter(Boolean),
         },
       );
       if (args.json) process.stdout.write(JSON.stringify(result.mission) + '\n');
@@ -632,6 +635,7 @@ async function main() {
           coordinatorRegistrationId: registrationId,
           status: sub === 'cancel' ? 'canceled' : 'completed',
           summary: String(args.summary || '').trim(),
+          verification: String(args.verification || '').trim(),
         },
       );
       if (args.json) process.stdout.write(JSON.stringify(result.mission) + '\n');

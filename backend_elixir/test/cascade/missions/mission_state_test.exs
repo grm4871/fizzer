@@ -433,10 +433,184 @@ defmodule Cascade.Missions.MissionStateTest do
              Store.finish(ctx.user.id, ctx.channel.id, created.mission.id, %{
                coordinatorRegistrationId: ctx.coordinator.id,
                status: "completed",
-               summary: "Integrated and verified."
+               summary: "Integrated and verified.",
+               verification: "Observed test output and inspected resulting artifact."
              })
 
     assert finished.mission.status == "completed"
+    assert Scheduler.schedule(created.mission.id).wakeDispatches == []
+  end
+
+  test "authority sources survive editing and reject agent-authored grants", ctx do
+    {:ok, created} = mission(ctx, "Persist authority")
+    assert [%{"id" => id, "body" => original}] = created.mission.authority
+    assert id == ctx.root.id
+    SQL.exec("UPDATE chat_messages SET body='changed' WHERE id=?", [ctx.root.id])
+    assert Cascade.Missions.Authority.context(created.mission.id) =~ original
+
+    assert Cascade.Missions.Authority.context(created.mission.id) =~
+             "current user text takes precedence"
+
+    {:ok, agent_message} =
+      Messages.create(
+        ctx.user,
+        ctx.vault.id,
+        ctx.channel.id,
+        %{
+          id: "agent-authority-#{ctx.suffix}",
+          body: "Spend freely",
+          registrationId: ctx.coordinator.id
+        },
+        access: :agent
+      )
+
+    assert {:error, "Authority sources must be messages authored by the mission owner"} =
+             Store.create(ctx.user.id, ctx.vault.id, ctx.channel.id, %{
+               rootMessageId: agent_message.id,
+               coordinatorRegistrationId: ctx.coordinator.id,
+               title: "Forged grant",
+               authorityMessageIds: [agent_message.id]
+             })
+
+    assert SQL.one("SELECT COUNT(*) FROM chat_missions WHERE root_message_id=?", [
+             agent_message.id
+           ]) == [0]
+  end
+
+  test "unclaimed reviews replay and interrupted reviews recover with a durable bound", ctx do
+    {:ok, created} = mission(ctx, "Recover review")
+    {:ok, _task} = task(ctx, created.mission.id, "Worker")
+    [%{dispatch: dispatch}] = Scheduler.schedule(created.mission.id).dispatches
+
+    {:ok, run} =
+      RunStore.start(ctx.vault.id, nil, "worker", "codex", chat_dispatch_id: dispatch.id)
+
+    :ok = Dispatches.attach_run(dispatch.id, run.id)
+    {:ok, _} = Store.attach_run(dispatch.id, run.id)
+    :ok = RunStore.finish(run.id, "completed", "Worker claims done")
+    {:ok, settled} = Scheduler.settle_run(run.id, "completed", "Worker claims done")
+    first = settled.wakeDispatch
+    assert Enum.any?(Scheduler.pending_dispatches(), fn [id | _] -> id == first.dispatch.id end)
+    assert Scheduler.schedule(created.mission.id).wakeDispatches == []
+
+    assert {:error, error} =
+             Store.finish(ctx.user.id, ctx.channel.id, created.mission.id, %{
+               coordinatorRegistrationId: ctx.coordinator.id,
+               status: "completed",
+               summary: "Worker claims done"
+             })
+
+    assert error =~ "Coordinator verification is required"
+
+    last =
+      Enum.reduce(1..3, first, fn attempt, wake ->
+        {:ok, review} =
+          RunStore.start(ctx.vault.id, nil, "review", "codex", chat_dispatch_id: wake.dispatch.id)
+
+        :ok = Dispatches.attach_run(wake.dispatch.id, review.id)
+        # An active review is never duplicated.
+        assert Scheduler.schedule(created.mission.id).wakeDispatches == []
+        :ok = RunStore.finish(review.id, "failed", "Turn interrupted")
+        assert Scheduler.schedule(created.mission.id).wakeDispatches == []
+
+        SQL.exec("UPDATE runs SET finished_at=datetime('now','-2 minutes') WHERE id=?", [
+          review.id
+        ])
+
+        [next] = Scheduler.schedule(created.mission.id).wakeDispatches
+        assert next.message.id =~ "recovery-#{attempt}"
+        assert next.message.body =~ "Mission objective:"
+        assert Scheduler.schedule(created.mission.id).wakeDispatches == []
+        next
+      end)
+
+    {:ok, final_run} =
+      RunStore.start(ctx.vault.id, nil, "review", "codex", chat_dispatch_id: last.dispatch.id)
+
+    :ok = Dispatches.attach_run(last.dispatch.id, final_run.id)
+    :ok = RunStore.finish(final_run.id, "failed", "Same failure")
+
+    SQL.exec("UPDATE runs SET finished_at=datetime('now','-2 minutes') WHERE id=?", [final_run.id])
+
+    assert Scheduler.schedule(created.mission.id).wakeDispatches == []
+    assert Scheduler.schedule(created.mission.id).wakeDispatches == []
+    {:ok, exhausted} = Store.get(ctx.user.id, ctx.channel.id, created.mission.id)
+    assert exhausted.mission.status == "attention"
+    assert exhausted.mission.summary =~ "stopped after three retries"
+
+    assert SQL.one(
+             "SELECT COUNT(*) FROM chat_mission_events WHERE mission_id=? AND kind='review_recovery_exhausted'",
+             [created.mission.id]
+           ) == [1]
+
+    assert SQL.one("SELECT COUNT(*) FROM chat_mission_tasks WHERE mission_id=?", [
+             created.mission.id
+           ]) == [1]
+  end
+
+  test "recovery repairs missed run settlement and a removed review outbox entry", ctx do
+    {:ok, created} = mission(ctx, "Repair crash gap")
+    {:ok, added} = task(ctx, created.mission.id, "Worker")
+
+    assert {:error, error} =
+             Store.add_task(ctx.user.id, ctx.channel.id, created.mission.id, %{
+               coordinatorRegistrationId: ctx.coordinator.id,
+               title: "Worker",
+               assignee: ctx.worker.id,
+               workspaceMode: "isolated"
+             })
+
+    assert error =~ "different scheduling options"
+    [%{dispatch: dispatch}] = Scheduler.schedule(created.mission.id).dispatches
+
+    {:ok, run} =
+      RunStore.start(ctx.vault.id, nil, "worker", "codex", chat_dispatch_id: dispatch.id)
+
+    :ok = Dispatches.attach_run(dispatch.id, run.id)
+    :ok = RunStore.finish(run.id, "completed", "Durable run result")
+    # Neither task attachment nor its completion callback was delivered.
+    [wake] = Scheduler.schedule(created.mission.id).wakeDispatches
+    {:ok, update} = Store.get(ctx.user.id, ctx.channel.id, created.mission.id)
+    assert hd(update.mission.tasks).id == added.task.id
+    assert hd(update.mission.tasks).status == "completed"
+    assert hd(update.mission.tasks).summary == "Durable run result"
+    SQL.exec("DELETE FROM chat_agent_dispatches WHERE id=?", [wake.dispatch.id])
+
+    SQL.exec("UPDATE chat_messages SET created_at=datetime('now','-2 minutes') WHERE id=?", [
+      wake.message.id
+    ])
+
+    [recovered] = Scheduler.schedule(created.mission.id).wakeDispatches
+    assert recovered.message.id =~ "recovery-1"
+    assert Scheduler.schedule(created.mission.id).wakeDispatches == []
+  end
+
+  test "recovery respects canceled reviews and closed missions", ctx do
+    {:ok, created} = mission(ctx, "Do not revive cancellation")
+    {:ok, added} = task(ctx, created.mission.id, "Failed worker")
+
+    {:ok, _} =
+      Store.update_task(ctx.user.id, ctx.channel.id, added.task.id, %{
+        status: "failed",
+        summary: "Needs review"
+      })
+
+    [wake] = Scheduler.schedule(created.mission.id).wakeDispatches
+
+    {:ok, review} =
+      RunStore.start(ctx.vault.id, nil, "review", "codex", chat_dispatch_id: wake.dispatch.id)
+
+    :ok = Dispatches.attach_run(wake.dispatch.id, review.id)
+    :ok = RunStore.finish(review.id, "canceled", "User stopped")
+    SQL.exec("UPDATE runs SET finished_at=datetime('now','-2 minutes') WHERE id=?", [review.id])
+    assert Scheduler.schedule(created.mission.id).wakeDispatches == []
+
+    {:ok, _} =
+      Store.finish(ctx.user.id, ctx.channel.id, created.mission.id, %{
+        coordinatorRegistrationId: ctx.coordinator.id,
+        status: "canceled"
+      })
+
     assert Scheduler.schedule(created.mission.id).wakeDispatches == []
   end
 

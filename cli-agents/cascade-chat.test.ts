@@ -120,7 +120,7 @@ test('coordinator helper starts and delegates a mission with structured API call
     cli, 'mission', 'retry', '--task', 'task-1', '--summary', 'Try again', ...common,
   ], { env: withCoordinator });
   await execFileAsync(process.execPath, [
-    cli, 'mission', 'finish', '--mission', 'mission-1', '--summary', 'Integrated', ...common,
+    cli, 'mission', 'finish', '--mission', 'mission-1', '--summary', 'Integrated', '--verification', 'Tests passed; artifact inspected', ...common,
   ], { env: withCoordinator });
   assert.deepEqual(requests.map((request) => `${request.method} ${request.path}`), [
     'POST /api/vaults/vault-1/channels/channel-1/messages',
@@ -143,6 +143,7 @@ test('coordinator helper starts and delegates a mission with structured API call
     title: 'Release',
     objective: 'Ship safely',
     controlPlane: false,
+    authorityMessageIds: [],
   });
   assert.deepEqual(requests[2]?.body, {
     coordinatorRegistrationId: 'reg-sol',
@@ -161,6 +162,7 @@ test('coordinator helper starts and delegates a mission with structured API call
     coordinatorRegistrationId: 'reg-sol',
     status: 'completed',
     summary: 'Integrated',
+    verification: 'Tests passed; artifact inspected',
   });
   assert.equal(JSON.parse(fs.readFileSync(config, 'utf8')).usedChatSend, undefined);
 });

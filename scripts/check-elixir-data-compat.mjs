@@ -244,6 +244,14 @@ function databaseSnapshotFromCopy(filename) {
         FROM chat_messages ORDER BY id
       `).all();
     }
+    if (tables.chat_missions && ['authority_json', 'verification', 'review_attempt'].every(
+      (name) => tables.chat_missions.columns.some((column) => column.name === name),
+    )) {
+      compatibility.missionRecoveryNonDefaults = db.prepare(`
+        SELECT COUNT(*) AS count FROM chat_missions
+        WHERE authority_json <> '[]' OR verification <> '' OR review_attempt <> 0
+      `).get().count;
+    }
     if (tables.chat_mission_tasks) {
       const hasWorkspaceMode = tables.chat_mission_tasks.columns
         .some((column) => column.name === 'workspace_mode');
@@ -455,6 +463,33 @@ function exactRowsOrMissionTaskBackfill(table, before, after) {
     if (newLink.missionTaskId !== expected) return false;
   }
   return true;
+}
+
+function exactMissionRecoveryMigration(before, after) {
+  const oldTable = before.tables.chat_missions;
+  const newTable = after.tables.chat_missions;
+  const additions = [
+    { name: 'authority_json', type: 'TEXT', notnull: 1, dflt_value: "'[]'", pk: 0 },
+    { name: 'verification', type: 'TEXT', notnull: 1, dflt_value: "''", pk: 0 },
+    { name: 'review_attempt', type: 'INTEGER', notnull: 1, dflt_value: '0', pk: 0 },
+  ];
+  if (oldTable.columns.some((column) => additions.some(({ name }) => column.name === name))) return false;
+  const newColumns = newTable.columns.slice(oldTable.columns.length);
+  if (!same(newColumns.map(({ name, type, notnull, dflt_value, pk }) => (
+    { name, type, notnull, dflt_value, pk }
+  )), additions)) return false;
+  const suffix = additions.map(({ name, type, dflt_value }) => (
+    `, ${name} ${type} NOT NULL DEFAULT ${dflt_value}`
+  )).join('');
+  return newTable.schema.sql === oldTable.schema.sql.replace(/\)$/u, `${suffix})`)
+    && same(oldTable.columns, newTable.columns.slice(0, oldTable.columns.length))
+    && same(oldTable.normalizedForeignKeys, newTable.normalizedForeignKeys)
+    && oldTable.rows.count === newTable.rows.count
+    && oldTable.rows.includesRowid === newTable.rows.includesRowid
+    && oldTable.rows.columns.every((column) => (
+      oldTable.rows.columnSha256[column] === newTable.rows.columnSha256[column]
+    ))
+    && after.compatibility.missionRecoveryNonDefaults === 0;
 }
 
 function exactMissionWorkspaceModeMigration(before, after) {
@@ -739,6 +774,8 @@ export function compareDatabaseSnapshots(before, after, allowedAdditions = DEFAU
           `table changed outside pinned agent identity migration: ${table} (rows ${oldRows.count}/${oldRows.sha256.slice(0, 12)} -> ${newRows.count}/${newRows.sha256.slice(0, 12)})`,
         );
       }
+    } else if (table === 'chat_missions' && exactMissionRecoveryMigration(before, after)) {
+      // Add only empty instruction/evidence records and a zero recovery counter.
     } else if (table === 'chat_mission_tasks'
         && exactMissionWorkspaceModeMigration(before, after)) {
       // workspace_mode is an additive, default-shared mission task migration.

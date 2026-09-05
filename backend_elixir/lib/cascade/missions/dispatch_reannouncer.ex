@@ -3,7 +3,6 @@ defmodule Cascade.Missions.DispatchReannouncer do
 
   use GenServer
 
-  alias Cascade.Accounts.SQL
   alias Cascade.Missions.Scheduler
   alias CascadeWeb.OrchestrationController
 
@@ -22,17 +21,13 @@ defmodule Cascade.Missions.DispatchReannouncer do
 
   @impl true
   def handle_info(:reannounce, interval) do
+    Scheduler.schedule(nil, events: Cascade.Realtime.Events)
     Scheduler.reannounce_pending(events: Cascade.Realtime.Events)
 
-    SQL.all("""
-    SELECT m.created_by,m.channel_id,t.dispatch_id
-    FROM chat_mission_tasks t
-    JOIN chat_missions m ON m.id=t.mission_id
-    JOIN chat_agent_dispatches d ON d.id=t.dispatch_id
-    WHERE t.status='pending' AND t.run_id IS NULL AND d.run_id IS NULL
-    """)
-    |> Enum.each(fn [user_id, channel_id, dispatch_id] ->
-      OrchestrationController.claim_mission_dispatch(user_id, channel_id, dispatch_id)
+    Scheduler.pending_dispatches()
+    |> Enum.each(fn [dispatch_id, user_id, vault_id, channel_id] ->
+      {:ok, route} = Cascade.Missions.Store.owner_route(user_id, vault_id, channel_id)
+      OrchestrationController.claim_mission_dispatch(user_id, route.localChannelId, dispatch_id)
     end)
 
     Process.send_after(self(), :reannounce, interval)

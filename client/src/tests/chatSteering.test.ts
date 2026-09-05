@@ -118,7 +118,24 @@ describe('agent steering presentation', () => {
     expect(getSteeringPromptLabels(messages, [agent]).get('2')).toBe('sol');
   });
 
-  it.each([false, true])('opens standalone live traces but collapses mission traces (embedded: %s)', (embedded) => {
+  it('keeps running-step details folded even when the activity list is open', () => {
+    const live = message('live-fold', {
+      author: 'Sol', agentId: 'codex', registrationId: agent.id,
+      status: 'running', body: 'Checking the implementation.',
+      harnessLog: 'Private diagnostic detail', hasHarness: true,
+    });
+    const markup = renderToStaticMarkup(createElement(ChatWorkTrace, {
+      trace: [live], selectedMessageId: null, forceOpen: true,
+      onCancelRun: () => {}, onContextMenu: () => {}, onReply: () => {},
+      runningMessageState: new Map([[agent.id, { latestId: live.id, count: 1 }]]),
+    }));
+    expect(markup).toContain('chat-work-trace-body');
+    expect(markup).toContain('aria-expanded="false"');
+    expect(markup).not.toContain('chat-work-line-body');
+    expect(markup).not.toContain('crp-term-stream');
+  });
+
+  it.each([false, true])('shows current activity with the transcript collapsed (embedded: %s)', (embedded) => {
     const live = message('3', {
       author: 'Sol', agentId: 'codex', registrationId: agent.id,
       status: 'running', body: 'Applying the steering advice now.',
@@ -134,8 +151,10 @@ describe('agent steering presentation', () => {
     }));
     expect(markup).toContain('is-live');
     expect(markup.includes('is-embedded')).toBe(embedded);
-    expect(markup.includes('is-open')).toBe(!embedded);
-    expect(markup.includes(live.body)).toBe(!embedded);
+    expect(markup.includes('is-open')).toBe(false);
+    expect(markup).toContain(live.body);
+    expect(markup).not.toContain('chat-work-lines');
+    expect(markup).toContain('aria-expanded="false"');
   });
 });
 

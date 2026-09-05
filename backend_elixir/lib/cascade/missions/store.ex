@@ -81,6 +81,19 @@ defmodule Cascade.Missions.Store do
                 ]
               )
 
+              authority =
+                Cascade.Missions.Authority.capture!(
+                  user_id,
+                  channel_id,
+                  root,
+                  field(input, :authorityMessageIds) || []
+                )
+
+              SQL.exec("UPDATE chat_missions SET authority_json=? WHERE id=?", [
+                authority,
+                mission_id
+              ])
+
               record_event(mission_id, %{
                 kind: "mission_created",
                 title: title,
@@ -238,7 +251,8 @@ defmodule Cascade.Missions.Store do
             dependency_json,
             priority,
             effort,
-            anonymous
+            anonymous,
+            workspace_mode
           )
 
           task_id = if existing, do: existing.id, else: Ecto.UUID.generate()
@@ -266,7 +280,7 @@ defmodule Cascade.Missions.Store do
             )
 
             SQL.exec(
-              "UPDATE chat_missions SET status='active',wake_sent=0,updated_at=datetime('now') WHERE id=?",
+              "UPDATE chat_missions SET status='active',wake_sent=0,review_attempt=0,updated_at=datetime('now') WHERE id=?",
               [mission.id]
             )
 
@@ -502,7 +516,7 @@ defmodule Cascade.Missions.Store do
                 )
 
                 SQL.exec(
-                  "UPDATE chat_missions SET status='active',wake_sent=0,updated_at=datetime('now') WHERE id=?",
+                  "UPDATE chat_missions SET status='active',wake_sent=0,review_attempt=0,updated_at=datetime('now') WHERE id=?",
                   [row.mission_id]
                 )
 
@@ -635,6 +649,21 @@ defmodule Cascade.Missions.Store do
               raise "Mission task evidence is incomplete"
             end
 
+            verification = clean(field(input, :verification), 8_000)
+
+            if final_status == "completed" and verification == "",
+              do:
+                raise(
+                  "Coordinator verification is required: record observed checks and artifact or live revision evidence"
+                )
+
+            SQL.exec("UPDATE chat_missions SET verification=? WHERE id=?", [
+              verification,
+              mission.id
+            ])
+
+            record_event(mission.id, %{kind: "coordinator_verification", summary: verification})
+
             SQL.exec(
               "UPDATE chat_missions SET status=?,summary=?,wake_sent=1,updated_at=datetime('now') WHERE id=?",
               [final_status, summary, mission.id]
@@ -700,6 +729,14 @@ defmodule Cascade.Missions.Store do
           |> :erlang.term_to_binary()
           |> then(&:crypto.hash(:sha256, &1))
           |> Base.encode16(case: :lower)
+
+        [review_attempt] =
+          SQL.one("SELECT review_attempt FROM chat_missions WHERE id=?", [mission_id])
+
+        generation =
+          if review_attempt == 0,
+            do: generation,
+            else: generation <> "-recovery-#{review_attempt}"
 
         {:ok,
          Map.merge(update, %{
@@ -884,6 +921,9 @@ defmodule Cascade.Missions.Store do
     by_id = Map.new(tasks, &{&1.id, &1})
 
     cond do
+      SQL.one("SELECT review_attempt FROM chat_missions WHERE id=?", [mission.id]) == [4] ->
+        "attention"
+
       Enum.any?(tasks, &(&1.status in ~w(failed blocked))) ->
         "attention"
 
@@ -963,6 +1003,12 @@ defmodule Cascade.Missions.Store do
       rootMessageId: mission.root_message_id,
       title: mission.title,
       objective: mission.objective,
+      authority:
+        SQL.one("SELECT authority_json FROM chat_missions WHERE id=?", [mission.id])
+        |> hd()
+        |> Jason.decode!(),
+      verification:
+        SQL.one("SELECT verification FROM chat_missions WHERE id=?", [mission.id]) |> hd(),
       status: derive_status(mission, tasks),
       coordinator: if(coordinator, do: agent_name(coordinator), else: "Coordinator"),
       coordinatorMention: if(coordinator, do: coordinator.mention || "", else: ""),
@@ -1463,11 +1509,13 @@ defmodule Cascade.Missions.Store do
          "#{nonblank(effort, "Reasoning effort")} is not supported by @#{assignee.mention}"}
   end
 
-  defp validate_idempotent_task!(nil, _prompt, _deps, _priority, _effort, _anonymous), do: :ok
+  defp validate_idempotent_task!(nil, _prompt, _deps, _priority, _effort, _anonymous, _workspace),
+    do: :ok
 
-  defp validate_idempotent_task!(task, prompt, deps, priority, effort, anonymous) do
+  defp validate_idempotent_task!(task, prompt, deps, priority, effort, anonymous, workspace) do
     if task.prompt != prompt or task.depends_on_json != deps or task.priority != priority or
-         task.reasoning_effort != effort or task.anonymous != 0 != anonymous do
+         task.reasoning_effort != effort or task.anonymous != 0 != anonymous or
+         task.workspace_mode != workspace do
       raise "A task with this title already exists with different scheduling options; use a distinct title"
     end
   end

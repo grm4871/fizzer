@@ -63,6 +63,10 @@ defmodule Cascade.Missions.Schema do
     )
     """)
 
+    SQL.ensure_column("chat_missions", "authority_json", "TEXT NOT NULL DEFAULT '[]'")
+    SQL.ensure_column("chat_missions", "verification", "TEXT NOT NULL DEFAULT ''")
+    SQL.ensure_column("chat_missions", "review_attempt", "INTEGER NOT NULL DEFAULT 0")
+
     SQL.exec("""
     CREATE INDEX IF NOT EXISTS chat_missions_channel_idx
     ON chat_missions(channel_id, status, updated_at)

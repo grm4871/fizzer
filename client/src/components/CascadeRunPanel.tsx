@@ -399,7 +399,7 @@ function StructuredTranscript({
       {renderItems.length === 0 && (
         <div className="crp-term-line dim">
           {isRunning
-            ? (hasStructured ? 'waiting for provider output…' : 'waiting for harness stream…')
+            ? (hasStructured ? 'waiting for provider output…' : 'Starting…')
             : 'no structured output'}
         </div>
       )}
@@ -562,8 +562,8 @@ export const CascadeRunPanel = memo(function CascadeRunPanel({
       if (message.status === 'failed') return message.body?.trim() || 'Agent failed.';
       if (message.status === 'canceled') return message.body?.trim() || 'Run canceled.';
       return activity
-        ? (isRunning && !hasStructuredActivity ? 'waiting for harness stream…' : summarizeActivity(activity, isRunning))
-        : (isRunning ? 'waiting for harness stream…' : 'trace');
+        ? (isRunning && !hasStructuredActivity ? 'Starting…' : summarizeActivity(activity, isRunning))
+        : (isRunning ? 'Starting…' : 'trace');
     },
     [activity, hasStructuredActivity, isRunning, message.body, message.status],
   );
@@ -635,12 +635,14 @@ export const CascadeRunPanel = memo(function CascadeRunPanel({
             if (canExpand) setOpen((v) => !v);
           }}
           disabled={!canExpand}
+          aria-expanded={open && canExpand}
+          aria-label={`${open ? 'Collapse' : 'Inspect'} activity`}
           title={showUsage
             ? statChips.map((c) => c.title || c.label).join('\n')
             : summary}
         >
           <TerminalSquare size={13} className="crp-toggle-icon" />
-          <span className="crp-toggle-label">Harness</span>
+          <span className="crp-toggle-label">Activity</span>
           <span className="crp-toggle-summary">
             {hydrating ? 'loading…' : live?.detail ? (
               <>
