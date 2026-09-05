@@ -33,6 +33,8 @@ defmodule Cascade.Missions.DispatchReannouncer do
         do: Scheduler.schedule(mission_id, events: Cascade.Realtime.Events)
     end)
 
+    Cascade.Missions.Steering.replay()
+
     Scheduler.reannounce_pending(events: Cascade.Realtime.Events)
 
     Scheduler.pending_dispatches()

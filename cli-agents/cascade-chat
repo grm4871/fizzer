@@ -30,6 +30,7 @@ Usage:
   cascade-chat mission status [--mission <id|current>]
   cascade-chat mission history --mission <id>
   cascade-chat mission delegate --mission <id> --to @agent --task T --message P [--after <task-id,...>] [--priority N] [--effort E] [--anonymous] [--isolated]
+  cascade-chat mission steer --task <id> --message <instruction>
   cascade-chat mission update --task <id> --status <status> [--summary S]
   cascade-chat mission retry --task <id> [--summary S]
   cascade-chat mission link-recovery --task <original-id> --source-task <recovery-id> --source-run <id> --target-run <id> --target-attempt <n> --objective <original-objective> --verification <observed-evidence>
@@ -607,6 +608,25 @@ async function main() {
       }
       return;
     }
+    if (sub === 'steer') {
+      if (!registrationId) fail('mission steer requires a registered coordinator.');
+      const taskId = String(args.task || '').trim();
+      if (!taskId) fail('mission steer needs --task <id>.');
+      const fromStdin = args.message === true || args.message === undefined;
+      const raw = fromStdin ? await readStdin() : args.message;
+      const message = (fromStdin ? String(raw) : normalizeInlineMessage(raw, args['raw-message'] === true)).trim();
+      if (!message) fail('mission steer needs --message <instruction> or stdin.');
+      const base = `/api/vaults/${vaultId}/channels/${channelId}/missions`;
+      const listed = await api(url, token, 'GET', `${base}?coordinator=${encodeURIComponent(registrationId)}`);
+      const task = (listed.missions || []).flatMap((mission) => mission.tasks || []).find((item) => item.id === taskId);
+      if (!task) fail('Task not found among this coordinator’s missions.');
+      const result = await api(url, token, 'POST', `${base}/tasks/${encodeURIComponent(taskId)}/steer`, {
+        coordinatorRegistrationId: registrationId, message, attempt: task.attempt, runId: task.runId ?? null,
+      });
+      if (args.json) process.stdout.write(JSON.stringify(result.steering) + '\n');
+      else process.stdout.write(`${result.steering.status} steering ${result.steering.id}: ${result.steering.detail}\n`);
+      return;
+    }
     if (sub === 'update' || sub === 'retry') {
       const taskId = String(args.task || args._[2] || '').trim();
       const status = sub === 'retry' ? 'pending' : String(args.status || '').trim().toLowerCase();
@@ -662,7 +682,7 @@ async function main() {
       else process.stdout.write(`mission ${result.mission.id} → ${result.mission.status}\n`);
       return;
     }
-    fail(`unknown mission command "${sub}". Use start|list|status|history|delegate|update|retry|link-recovery|finish|cancel.`);
+    fail(`unknown mission command "${sub}". Use start|list|status|history|delegate|steer|update|retry|link-recovery|finish|cancel.`);
   }
 
   if (cmd === 'avatar') {

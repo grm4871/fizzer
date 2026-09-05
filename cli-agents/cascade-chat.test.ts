@@ -31,7 +31,7 @@ test('coordinator helper starts and delegates a mission with structured API call
       return;
     }
     if (req.method === 'GET' && req.url === '/api/vaults/vault-1/channels/channel-1/missions?coordinator=reg-sol') {
-      res.end(JSON.stringify({ missions: [{ id: 'mission-1', title: 'Release', status: 'attention', tasks: [{ id: 'task-1' }] }] }));
+      res.end(JSON.stringify({ missions: [{ id: 'mission-1', title: 'Release', status: 'attention', tasks: [{ id: 'task-1', attempt: 2, runId: 42 }] }] }));
       return;
     }
     if (req.method === 'GET' && req.url === '/api/vaults/vault-1/channels/channel-1/missions/mission-1/history') {
@@ -56,6 +56,10 @@ test('coordinator helper starts and delegates a mission with structured API call
       res.end(JSON.stringify({
         mission: { id: 'mission-1', title: 'Release', status: 'reviewing', tasks: [] },
       }));
+      return;
+    }
+    if (req.url === '/api/vaults/vault-1/channels/channel-1/missions/tasks/task-1/steer') {
+      res.end(JSON.stringify({ steering: { id: 7, status: 'queued', detail: 'Waiting for provider stop acknowledgment' } }));
       return;
     }
     if (req.url === '/api/vaults/vault-1/channels/channel-1/missions/tasks/task-1') {
@@ -93,6 +97,15 @@ test('coordinator helper starts and delegates a mission with structured API call
   t.after(() => fs.rmSync(fixtureDir, { recursive: true, force: true }));
   const withCoordinator = { ...process.env, CASCADE_HELPER_CONFIG: config, CASCADE_RUN_ID: '777' };
 
+  const steered = await execFileAsync(process.execPath, [
+    cli, 'mission', 'steer', '--task', 'task-1', '--message', 'Keep edits; narrow the test.', ...common,
+  ], { env: withCoordinator });
+  assert.match(steered.stdout, /queued steering 7: Waiting for provider stop acknowledgment/);
+  assert.deepEqual(requests.find((request) => request.path.endsWith('/steer'))?.body, {
+    coordinatorRegistrationId: 'reg-sol', message: 'Keep edits; narrow the test.', attempt: 2, runId: 42,
+  });
+
+  requests.length = 0;
   const started = await execFileAsync(process.execPath, [
     cli, 'mission', 'start', '--title', 'Release', '--objective', 'Ship safely',
     ...common,

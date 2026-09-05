@@ -80,6 +80,7 @@ defmodule CascadeWeb.MissionRouterTest do
              {"GET", "/api/vaults/:vault_id/channels/:channel_id/missions/:mission_id/history"},
              {"GET", "/api/vaults/:vault_id/channels/:channel_id/missions/:mission_id"},
              {"POST", "/api/vaults/:vault_id/channels/:channel_id/missions/:mission_id/tasks"},
+             {"POST", "/api/vaults/:vault_id/channels/:channel_id/missions/tasks/:task_id/steer"},
              {"PATCH", "/api/vaults/:vault_id/channels/:channel_id/missions/tasks/:task_id"},
              {"POST",
               "/api/vaults/:vault_id/channels/:channel_id/missions/tasks/:task_id/recovery-evidence"},
