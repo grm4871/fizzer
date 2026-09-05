@@ -298,6 +298,7 @@ defmodule CascadeWeb.MissionRouterTest do
   end
 
   test "worker HTTP child and join routes preserve identity and reject cross-task updates", ctx do
+    ctx = %{ctx | token: Token.sign_agent(ctx.user)}
     base = "/api/vaults/#{ctx.vault.id}/channels/#{ctx.channel.id}"
 
     {:ok, created} =
@@ -345,9 +346,98 @@ defmodule CascadeWeb.MissionRouterTest do
     assert request(ctx, :post, base <> "/missions/current/children", %{title: "No run"}).status ==
              400
 
+    assert request(
+             ctx,
+             :post,
+             base <> "/missions/another-mission/children",
+             %{title: "Wrong mission"},
+             run.id
+           ).status == 400
+
+    other_channel =
+      ContentStore.create_note(ctx.vault.id, ctx.user.id, %{
+        title: "Other room",
+        content: "cascade://chat-channel"
+      })
+
+    other_base = "/api/vaults/#{ctx.vault.id}/channels/#{other_channel.id}"
+    other_id = ctx.user.id + 10_000_000
+
+    SQL.exec(
+      "INSERT INTO users(id,username,password_hash,display_name,avatar_url,auth_version) VALUES(?,?,?,'','',0)",
+      [other_id, "other_#{other_id}", "x"]
+    )
+
+    foreign = %{
+      ctx
+      | token: Token.sign_agent(%{id: other_id, username: "other_#{other_id}", auth_version: 0})
+    }
+
+    for endpoint <- ["current/children", "children/join"] do
+      assert request(
+               ctx,
+               :post,
+               other_base <> "/missions/" <> endpoint,
+               %{title: "Wrong channel"},
+               run.id
+             ).status == 400
+
+      assert request(ctx, :post, base <> "/missions/" <> endpoint, %{title: "Missing run"}).status ==
+               400
+
+      assert request(
+               ctx,
+               :post,
+               base <> "/missions/" <> endpoint,
+               %{title: "Unknown run"},
+               999_999_999
+             ).status == 400
+
+      assert request(
+               foreign,
+               :post,
+               base <> "/missions/" <> endpoint,
+               %{title: "Foreign owner"},
+               run.id
+             ).status in [400, 403, 404]
+    end
+
     joined = request(ctx, :post, base <> "/missions/children/join", %{}, run.id)
     assert joined.status == 200
     assert hd(json(joined)["children"])["id"] == child["id"]
+
+    [child_dispatch_id] =
+      SQL.one("SELECT dispatch_id FROM chat_mission_tasks WHERE id=?", [child["id"]])
+
+    {:ok, child_run} =
+      RunStore.start(ctx.vault.id, nil, "child", "codex", chat_dispatch_id: child_dispatch_id)
+
+    :ok = Dispatches.attach_run(child_dispatch_id, child_run.id)
+    {:ok, _} = Store.attach_run(child_dispatch_id, child_run.id)
+
+    assert request(
+             ctx,
+             :post,
+             base <> "/missions/current/children",
+             %{title: "Recursive child"},
+             child_run.id
+           ).status == 400
+
+    child_join = request(ctx, :post, base <> "/missions/children/join", %{}, child_run.id)
+    assert json(child_join)["children"] == []
+    :ok = RunStore.finish(child_run.id, "completed", "Child HTTP artifact verified")
+    {:ok, _} = Scheduler.settle_run(child_run.id, "completed", "Child HTTP artifact verified")
+    result = request(ctx, :post, base <> "/missions/children/join", %{}, run.id)
+
+    assert [
+             %{
+               "id" => result_id,
+               "status" => "completed",
+               "summary" => "Child HTTP artifact verified"
+             }
+           ] = json(result)["children"]
+
+    assert result_id == child["id"]
 
     assert request(
              ctx,
